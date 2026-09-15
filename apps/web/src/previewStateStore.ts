@@ -47,6 +47,13 @@ export interface ThreadPreviewState {
   serverEpoch: string | null;
   /** Latest ordered server revision applied from a list response or event. */
   serverRevision: number;
+  /**
+   * Authoritative preview.list applications. Only a list result proves a tab's
+   * absence — events can only add or remove what they mention. Callers that
+   * need "this tab is gone" must compare against a baseline captured before
+   * their own refresh; a stale cached list must not count as fresh authority.
+   */
+  listSeq: number;
 }
 
 const EMPTY_THREAD_PREVIEW_STATE: ThreadPreviewState = Object.freeze({
@@ -59,6 +66,7 @@ const EMPTY_THREAD_PREVIEW_STATE: ThreadPreviewState = Object.freeze({
   recentlySeenUrls: [] as string[],
   serverEpoch: null,
   serverRevision: 0,
+  listSeq: 0,
 });
 
 const emptyPreviewStateAtom = Atom.make<ThreadPreviewState>(EMPTY_THREAD_PREVIEW_STATE).pipe(
@@ -351,6 +359,7 @@ export function reconcilePreviewServerSessions(
       recentlySeenUrls,
       serverEpoch: result.serverEpoch,
       serverRevision: result.revision,
+      listSeq: current.listSeq + 1,
     };
   });
 }

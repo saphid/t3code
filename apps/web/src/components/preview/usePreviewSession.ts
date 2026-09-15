@@ -95,3 +95,17 @@ export function usePreviewSession(threadRef: ScopedThreadRef): void {
 export function mountPreviewSessionSync(threadRef: ScopedThreadRef): () => void {
   return appAtomRegistry.mount(previewSessionSyncAtom(scopedThreadKey(threadRef)));
 }
+
+/**
+ * Force a fresh authoritative preview.list for the thread. Surface leases use
+ * it to arbitrate absent sessions: a list that lands after this call proves a
+ * missing tab is gone rather than merely unobserved.
+ */
+export function refreshPreviewSessionList(threadRef: ScopedThreadRef): void {
+  appAtomRegistry.refresh(
+    previewEnvironment.list({
+      environmentId: threadRef.environmentId,
+      input: { threadId: threadRef.threadId },
+    }),
+  );
+}

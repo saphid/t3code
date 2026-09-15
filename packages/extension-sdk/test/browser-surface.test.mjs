@@ -38,11 +38,13 @@ function makeSession() {
   };
 }
 
-// The hook observes DOM geometry; node tests stub the three globals it uses.
+// The hook observes DOM geometry; node tests stub the globals it uses.
 function domStubs() {
   const previous = {
     ResizeObserver: globalThis.ResizeObserver,
     window: globalThis.window,
+    document: globalThis.document,
+    getComputedStyle: globalThis.getComputedStyle,
   };
   const observed = [];
   globalThis.ResizeObserver = class {
@@ -53,6 +55,8 @@ function domStubs() {
   };
   const listeners = new Map();
   globalThis.window = {
+    innerWidth: 1280,
+    innerHeight: 800,
     addEventListener(type, fn) {
       listeners.set(type, [...(listeners.get(type) ?? []), fn]);
     },
@@ -63,16 +67,41 @@ function domStubs() {
       );
     },
   };
+  // Tests override elementsFromPoint to simulate occlusion.
+  const stub = {
+    documentElement: {},
+    defaultView: { innerWidth: 1280, innerHeight: 800 },
+    elementsFromPoint: () => [],
+  };
+  globalThis.document = stub;
+  globalThis.getComputedStyle = (node) =>
+    node?.computedStyle ?? { overflowX: "visible", overflowY: "visible" };
   return {
     observed,
     listeners,
+    document: stub,
     restore() {
-      if (previous.ResizeObserver === undefined) delete globalThis.ResizeObserver;
-      else globalThis.ResizeObserver = previous.ResizeObserver;
-      if (previous.window === undefined) delete globalThis.window;
-      else globalThis.window = previous.window;
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete globalThis[key];
+        else globalThis[key] = value;
+      }
     },
   };
+}
+
+// Minimal element mock: geometry + parent chain + ownerDocument.
+function fakeElement(rectValue, { parent = null, document, computedStyle } = {}) {
+  const element = {
+    rect: rectValue,
+    parentElement: parent,
+    ownerDocument: document,
+    computedStyle,
+    contains: (node) => node.parentElement === element,
+    getBoundingClientRect() {
+      return element.rect;
+    },
+  };
+  return element;
 }
 
 function fakeLeaseHost() {
@@ -151,7 +180,7 @@ NodeTest.test("useBrowserSurfaceSlot reports host-unavailable without the capabi
       }, [value]);
       return React.createElement("div", { ref: value.ref });
     }
-    const renderer = render(View, { getBoundingClientRect: () => rect });
+    const renderer = render(View, fakeElement(rect, { document: dom.document }));
     NodeAssert.equal(slot.lease, null);
     NodeAssert.equal(slot.denial.reason, "host-unavailable");
     await TestRenderer.act(async () => renderer.unmount());
@@ -177,7 +206,7 @@ NodeTest.test("useBrowserSurfaceSlot acquires, presents element bounds and relea
       }, [value]);
       return React.createElement("div", { ref: value.ref });
     }
-    const renderer = render(View, { getBoundingClientRect: () => rect });
+    const renderer = render(View, fakeElement(rect, { document: dom.document }));
     NodeAssert.equal(calls.acquire.length, 1);
     NodeAssert.deepEqual(calls.acquire[0].context, context);
     NodeAssert.deepEqual(calls.acquire[0].session, sessionRef);
@@ -227,7 +256,7 @@ NodeTest.test("useBrowserSurfaceSlot surfaces a named acquire denial", async () 
       }, [value]);
       return React.createElement("div", { ref: value.ref });
     }
-    const renderer = render(View, { getBoundingClientRect: () => rect });
+    const renderer = render(View, fakeElement(rect, { document: dom.document }));
     NodeAssert.equal(slot.lease, null);
     NodeAssert.equal(slot.denial.reason, "grant-denied");
     NodeAssert.equal(slot.denial.grant, BROWSER_SURFACE);
@@ -236,3 +265,66 @@ NodeTest.test("useBrowserSurfaceSlot surfaces a named acquire denial", async () 
     dom.restore();
   }
 });
+
+NodeTest.test(
+  "useBrowserSurfaceSlot clips to overflow ancestors and hides when occluded",
+  async () => {
+    const dom = domStubs();
+    try {
+      const session = makeSession();
+      const { host, calls } = fakeLeaseHost();
+      // Slot is taller than its overflow-hidden container: bottom clipped away.
+      const container = fakeElement(
+        { x: 0, y: 100, width: 1280, height: 600 },
+        { document: dom.document, computedStyle: { overflowX: "hidden", overflowY: "hidden" } },
+      );
+      const slotElement = fakeElement(rect, { parent: container, document: dom.document });
+      function View() {
+        const value = useBrowserSurfaceSlot(host, session, {
+          session: sessionRef,
+          visible: true,
+        });
+        return React.createElement("div", { ref: value.ref });
+      }
+      const renderer = render(View, slotElement);
+      try {
+        // Only the visible intersection may be presented — the webview is not a
+        // DOM descendant and would otherwise paint over the container's bounds.
+        NodeAssert.deepEqual(calls.presents, [
+          {
+            rect: { x: 4, y: 100, width: 320, height: 108 },
+            visible: true,
+            cornerRadius: 0,
+            zIndex: 30,
+          },
+        ]);
+        // A foreign overlay covering the slot hides the surface entirely.
+        const modal = { closest: () => null };
+        dom.document.elementsFromPoint = () => [modal, slotElement];
+        TestRenderer.act(() => {
+          for (const listener of dom.listeners.get("scroll") ?? []) listener();
+        });
+        NodeAssert.equal(calls.presents.at(-1).visible, false);
+        NodeAssert.deepEqual(calls.presents.at(-1).rect, {
+          x: 4,
+          y: 100,
+          width: 320,
+          height: 108,
+        });
+        // A presented native surface above the slot is not occlusion.
+        const presented = {
+          closest: (sel) => (sel === "[data-preview-viewport]" ? presented : null),
+        };
+        dom.document.elementsFromPoint = () => [presented, slotElement];
+        TestRenderer.act(() => {
+          for (const listener of dom.listeners.get("scroll") ?? []) listener();
+        });
+        NodeAssert.equal(calls.presents.at(-1).visible, true);
+      } finally {
+        await TestRenderer.act(async () => renderer.unmount());
+      }
+    } finally {
+      dom.restore();
+    }
+  },
+);

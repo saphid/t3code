@@ -4765,7 +4765,13 @@ export const BROWSER_SURFACE_VERSION = "1.0.0";
 /** Both grants are required to acquire a presentation lease. */
 export const BROWSER_SURFACE_REQUIRED_GRANTS = [BROWSER_SESSIONS, BROWSER_SURFACE] as const;
 
-/** Integer CSS-pixel bounds of the plugin-owned slot, viewport-relative. */
+/**
+ * Integer CSS-pixel bounds, viewport-relative. The composited surface is not
+ * a DOM descendant of the slot — ancestor overflow does not clip it — so the
+ * caller must present only the region the slot can actually show.
+ * `useBrowserSurfaceSlot` already clips to overflow ancestors, the viewport,
+ * and occlusion.
+ */
 export interface BrowserSurfaceRect {
   readonly x: number;
   readonly y: number;
@@ -4842,9 +4848,12 @@ export interface BrowserSurfaceLease {
   /** Fires on every state transition; the listener receives the new state. */
   onDidChangeState(listener: (state: BrowserSurfaceLeaseState) => void): () => void;
   /**
-   * Latest-wins, frame-coalesced bounds/visibility update. Rect fields must be
-   * finite numbers; width/height are clamped to at least one pixel, matching
-   * the native slot. Ended leases return "ended" and never present again.
+   * Latest-wins, frame-coalesced bounds/visibility update. The rect is the
+   * surface's footprint — pass the visible (clipped) region, not the raw slot
+   * bounds, and set `visible` false while the slot is clipped away or
+   * occluded. Rect fields must be finite numbers; width/height are clamped to
+   * at least one pixel, matching the native slot. Ended leases return "ended"
+   * and never present again.
    */
   present(
     rect: BrowserSurfaceRect,

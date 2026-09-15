@@ -23,6 +23,7 @@ import {
   type BrowserSurfaceAcquireResult,
   type BrowserSurfaceDenial,
   type BrowserSurfaceLease,
+  type BrowserSurfaceRect,
   type BrowserSurfaceSessionRef,
 } from "./catalogue.js";
 
@@ -298,12 +299,78 @@ export interface BrowserSurfaceSlot {
   readonly denial: BrowserSurfaceDenial | null;
 }
 
+const OVERFLOW_CLIP_PATTERN = /(auto|scroll|hidden|clip)/;
+const OCCLUSION_POLL_MS = 400;
+
+/**
+ * The composited webview is a fixed-position sibling, not a DOM descendant —
+ * ancestor `overflow` does not clip it. Intersect the slot's rect with every
+ * overflow-clipping ancestor's box and the viewport so `present` only ever
+ * covers pixels the slot could actually show. Returns null when fully clipped.
+ */
+function clippedSlotRect(element: HTMLElement): BrowserSurfaceRect | null {
+  const bounds = element.getBoundingClientRect();
+  let x1 = bounds.x;
+  let y1 = bounds.y;
+  let x2 = bounds.x + bounds.width;
+  let y2 = bounds.y + bounds.height;
+  let node = element.parentElement;
+  while (node && node !== element.ownerDocument.documentElement) {
+    const style = getComputedStyle(node);
+    if (
+      OVERFLOW_CLIP_PATTERN.test(style.overflowX) ||
+      OVERFLOW_CLIP_PATTERN.test(style.overflowY)
+    ) {
+      const clip = node.getBoundingClientRect();
+      x1 = Math.max(x1, clip.x);
+      y1 = Math.max(y1, clip.y);
+      x2 = Math.min(x2, clip.x + clip.width);
+      y2 = Math.min(y2, clip.y + clip.height);
+    }
+    node = node.parentElement;
+  }
+  const viewport = element.ownerDocument.defaultView;
+  x1 = Math.max(x1, 0);
+  y1 = Math.max(y1, 0);
+  x2 = Math.min(x2, viewport?.innerWidth ?? x2);
+  y2 = Math.min(y2, viewport?.innerHeight ?? y2);
+  if (x2 <= x1 || y2 <= y1) return null;
+  return {
+    x: Math.round(x1),
+    y: Math.round(y1),
+    width: Math.round(x2 - x1),
+    height: Math.round(y2 - y1),
+  };
+}
+
+/**
+ * Probe the center of the visible region: the only elements allowed to paint
+ * above the slot are the slot's own descendants and presented native surfaces
+ * (`data-preview-viewport`), which z-order correctly among themselves.
+ * Anything else — a modal, overlay, or covering panel — means hide.
+ */
+function slotOccluded(element: HTMLElement, clip: BrowserSurfaceRect): boolean {
+  const stack = element.ownerDocument.elementsFromPoint(
+    clip.x + clip.width / 2,
+    clip.y + clip.height / 2,
+  );
+  const index = stack.indexOf(element);
+  const covering = index === -1 ? stack : stack.slice(0, index);
+  return covering.some(
+    (node) =>
+      !element.contains(node) &&
+      !(typeof node.closest === "function" && node.closest("[data-preview-viewport]") !== null),
+  );
+}
+
 /**
  * The SDK mirror of the native BrowserSurfaceSlot: owns the acquire/present/
  * release cycle for a plugin-rendered slot element. Geometry is observed with
- * ResizeObserver + window resize + capture-phase scroll and forwarded through
- * the lease's frame-coalesced `present`. There is no automatic re-acquire —
- * a `superseded` end is terminal for the lease; re-render to acquire again.
+ * ResizeObserver + window resize + capture-phase scroll, clipped to the slot's
+ * visible region, and forwarded through the lease's frame-coalesced
+ * `present`. There is no automatic re-acquire — a `superseded` end is
+ * terminal for the lease; the caller must remount the slot element or change
+ * the session identity (clear it and open a fresh session) to acquire again.
  */
 /* oxlint-disable react/hooks -- hooks come from the injected host React identity. */
 export function useBrowserSurfaceSlot(
@@ -361,28 +428,49 @@ export function useBrowserSurfaceSlot(
     }
     const lease = acquired.lease;
     setResult(acquired);
-    const unsubscribe = lease.onDidChangeState(() => setLeaseVersion((value) => value + 1));
+    let poll: ReturnType<typeof setInterval> | null = null;
+    const unsubscribe = lease.onDidChangeState((next) => {
+      setLeaseVersion((value) => value + 1);
+      if (next.kind === "ended" && poll !== null) {
+        clearInterval(poll);
+        poll = null;
+      }
+    });
     const update = () => {
-      const bounds = element.getBoundingClientRect();
+      if (lease.state.kind === "ended") return;
+      // The webview is not clipped by the slot's overflow ancestors — present
+      // the visible intersection and hide when nothing of it is on screen.
+      const clip = clippedSlotRect(element);
+      const occluded = clip !== null && slotOccluded(element, clip);
+      const rect =
+        clip ??
+        (() => {
+          const bounds = element.getBoundingClientRect();
+          return {
+            x: Math.round(bounds.x),
+            y: Math.round(bounds.y),
+            width: Math.max(1, Math.round(bounds.width)),
+            height: Math.max(1, Math.round(bounds.height)),
+          };
+        })();
       lease.present(
-        {
-          x: Math.round(bounds.x),
-          y: Math.round(bounds.y),
-          width: Math.max(1, Math.round(bounds.width)),
-          height: Math.max(1, Math.round(bounds.height)),
-        },
-        presentationRef.current.visible && bounds.width > 0 && bounds.height > 0,
+        rect,
+        presentationRef.current.visible && clip !== null && !occluded,
         presentationRef.current.cornerRadius,
         presentationRef.current.zIndex,
       );
     };
     updateRef.current = update;
     update();
+    // Sibling overlays (modals, panels) do not trigger geometry events —
+    // poll the occlusion probe so a covered surface still hides.
+    poll = setInterval(update, OCCLUSION_POLL_MS);
     const observer = new ResizeObserver(update);
     observer.observe(element);
     window.addEventListener("resize", update);
     window.addEventListener("scroll", update, true);
     return () => {
+      if (poll !== null) clearInterval(poll);
       observer.disconnect();
       window.removeEventListener("resize", update);
       window.removeEventListener("scroll", update, true);

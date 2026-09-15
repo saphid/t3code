@@ -36,13 +36,17 @@ import {
   type BrowserSurfacePresentation,
 } from "~/browser/browserSurfaceStore";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
-import { mountPreviewSessionSync } from "~/components/preview/usePreviewSession";
+import {
+  mountPreviewSessionSync,
+  refreshPreviewSessionList,
+} from "~/components/preview/usePreviewSession";
 import {
   previewStateAtom,
   readThreadPreviewState,
   type ThreadPreviewState,
 } from "~/previewStateStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { environmentThreadShells } from "~/state/threads";
 
 export interface BrowserSurfaceBinding {
   /** The installation's grant set — the authority every acquire checks. */
@@ -69,6 +73,17 @@ export interface BrowserSurfaceBridgeDeps {
       readonly byTabId: Readonly<Record<string, BrowserSurfacePresentation>>;
     }) => void,
   ) => () => void;
+  /**
+   * Authoritative thread → project from the orchestration shell; null when the
+   * thread is unknown to this environment. The caller-supplied projectId in
+   * the view context is not authority — a granted project paired with a
+   * foreign thread must not claim that thread's surface.
+   */
+  readonly resolveThreadProject: (threadRef: ScopedThreadRef) => string | null;
+  /** Fires when the thread's shell record changes (project move, deletion). */
+  readonly subscribeThread: (threadRef: ScopedThreadRef, listener: () => void) => () => void;
+  /** Forces a fresh preview.list round-trip for the thread. */
+  readonly refreshSessions: (threadRef: ScopedThreadRef) => void;
 }
 
 const defaultSchedule = (flush: () => void) => {
@@ -104,6 +119,11 @@ export function createBrowserSurfaceBridge(
     ownerOf: (runtimeTabId) =>
       useBrowserSurfaceStore.getState().byTabId[runtimeTabId]?.owner ?? null,
     subscribeStore: (listener) => useBrowserSurfaceStore.subscribe(listener),
+    resolveThreadProject: (threadRef) =>
+      appAtomRegistry.get(environmentThreadShells.threadShellAtom(threadRef))?.projectId ?? null,
+    subscribeThread: (threadRef, listener) =>
+      appAtomRegistry.subscribe(environmentThreadShells.threadShellAtom(threadRef), listener),
+    refreshSessions: refreshPreviewSessionList,
     ...overrides,
   };
   // Plugin-vs-plugin supersession registry — covers clients with no
@@ -140,15 +160,27 @@ export function createBrowserSurfaceBridge(
           );
         }
         const resource = context.resource;
-        if (
-          resource.environmentId !== environmentId ||
-          !resource.threadId ||
-          !resource.projectId ||
-          !binding.grants.projectIds.includes(resource.projectId)
-        )
+        if (resource.environmentId !== environmentId || !resource.threadId || !resource.projectId)
           return deny(
             "scope-invalid",
             `${BROWSER_SURFACE} requires a thread-scoped context in this environment and a granted project.`,
+          );
+        const threadRef = {
+          environmentId: resource.environmentId,
+          threadId: resource.threadId,
+        } as ScopedThreadRef;
+        // The context's projectId is caller-supplied — resolve the thread's
+        // real project from the orchestration shell before mounting sync or
+        // claiming the store, matching the brokered sessions scope resolver.
+        const threadProjectId = deps.resolveThreadProject(threadRef);
+        if (
+          threadProjectId === null ||
+          threadProjectId !== resource.projectId ||
+          !binding.grants.projectIds.includes(threadProjectId)
+        )
+          return deny(
+            "scope-invalid",
+            `${BROWSER_SURFACE} requires a thread inside a granted project; the supplied project does not own this thread.`,
           );
         const tabId = request.session?.tabId;
         const serverEpoch = request.session?.serverEpoch;
@@ -166,10 +198,6 @@ export function createBrowserSurfaceBridge(
           );
         if (request.signal?.aborted)
           return deny("scope-invalid", "the calling view's lifetime has already ended.");
-        const threadRef = {
-          environmentId: resource.environmentId,
-          threadId: resource.threadId,
-        } as ScopedThreadRef;
         const synced = deps.readSessions(threadRef);
         if (synced.serverEpoch !== null && synced.serverEpoch !== serverEpoch)
           return deny(
@@ -182,6 +210,12 @@ export function createBrowserSurfaceBridge(
         const runtimeTabId = previewRuntimeTabId(threadRef, serverEpoch, tabId);
         const native = composite ? deps.acquireNative(runtimeTabId) : null;
         const nativeOwner = composite ? deps.ownerOf(runtimeTabId) : null;
+        // Read again after mounting: the mount may synchronously reconcile a
+        // cached list. Absence only becomes authoritative once a list applied
+        // AFTER this baseline still lacks the tab — a just-opened session that
+        // committed before the fetch lands inside it, and one committed after
+        // the subscription arrives as an event.
+        const baseline = deps.readSessions(threadRef);
 
         let state: BrowserSurfaceLeaseState = { kind: "active", presentation };
         const listeners = new Set<(next: BrowserSurfaceLeaseState) => void>();
@@ -194,10 +228,12 @@ export function createBrowserSurfaceBridge(
         let cancelFlush: (() => void) | null = null;
         let unsubscribeSessions: () => void = () => {};
         let unsubscribeStore: () => void = () => {};
+        let unsubscribeThread: () => void = () => {};
         let detachSignals: () => void = () => {};
-        // Session-close honesty needs a baseline: only a session the synced
-        // state has actually contained can be reported closed.
-        let sessionSeen = synced.sessions[tabId] !== undefined;
+        // Session-close honesty needs a baseline: a tab reported closed is one
+        // this client observed (sessionSeen) or one a post-acquire list proves
+        // absent (listSeq advanced past the baseline without the tab).
+        let sessionSeen = baseline.sessions[tabId] !== undefined;
 
         const entry = {
           supersede: () => end("superseded"),
@@ -213,6 +249,7 @@ export function createBrowserSurfaceBridge(
           pending = null;
           unsubscribeSessions();
           unsubscribeStore();
+          unsubscribeThread();
           detachSignals();
           if (pluginOwners.get(runtimeTabId) === entry) pluginOwners.delete(runtimeTabId);
           native?.release();
@@ -244,8 +281,16 @@ export function createBrowserSurfaceBridge(
             return;
           }
           if (current.sessions[tabId] !== undefined) sessionSeen = true;
-          else if (sessionSeen) end("session-closed");
+          else if (sessionSeen || current.listSeq > baseline.listSeq) end("session-closed");
         });
+        unsubscribeThread = deps.subscribeThread(threadRef, () => {
+          if (state.kind === "ended") return;
+          if (deps.resolveThreadProject(threadRef) !== resource.projectId) end("scope-invalidated");
+        });
+        // A tab absent despite an applied list may be stale cached state —
+        // force one authoritative round-trip to arbitrate before the lease
+        // can outlive a session that never existed.
+        if (!sessionSeen && synced.listSeq > 0) deps.refreshSessions(threadRef);
         if (composite) {
           unsubscribeStore = deps.subscribeStore((storeState) => {
             if (state.kind === "ended") return;
