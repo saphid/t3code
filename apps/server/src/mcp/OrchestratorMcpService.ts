@@ -1115,7 +1115,7 @@ const make = Effect.gen(function* () {
             "Scheduled-task changes require an active run owned by this MCP provider session.",
           ),
         )
-      : Effect.void;
+      : Effect.succeed(parentRun);
   };
 
   const requireTaskModeAccess = (
@@ -1179,8 +1179,11 @@ const make = Effect.gen(function* () {
         yield* requireCapability(scope);
         const parent = yield* loadProjection(scope.threadId);
         // The new task inherits this thread's runtime/interaction modes, so
-        // the only additional requirement is a live caller-owned run.
-        yield* requireActiveParentRun(scope, parent);
+        // the only additional requirement is a live caller-owned run. Both
+        // are pinned into the upsert: the destination modes are re-resolved
+        // and the run's liveness re-checked inside the write transaction, so
+        // a mode change or a settled run racing the snapshot fails the write.
+        const parentRun = yield* requireActiveParentRun(scope, parent);
         const bindToCurrentThread = input.bindToCurrentThread ?? true;
         const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
         const title =
@@ -1198,6 +1201,13 @@ const make = Effect.gen(function* () {
           interactionMode: parent.thread.interactionMode,
           createdBy: "agent",
           creationSource: "mcp",
+          expectedActiveRun: {
+            id: parentRun.id,
+            threadId: scope.threadId,
+            providerInstanceId: scope.providerInstanceId,
+          },
+          expectedExecutionRuntimeMode: parent.thread.runtimeMode,
+          expectedExecutionInteractionMode: parent.thread.interactionMode,
           // Scope the idempotency key by provider session so two callers
           // reusing the same clientRequestId cannot collide on one task row.
           ...(input.clientRequestId === undefined
@@ -1241,7 +1251,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* requireCapability(scope);
         const parent = yield* loadProjection(scope.threadId);
-        yield* requireActiveParentRun(scope, parent);
+        const parentRun = yield* requireActiveParentRun(scope, parent);
         const existing = yield* loadScopedScheduledTask(
           parent.thread.projectId,
           input.scheduledTaskId,
@@ -1276,6 +1286,14 @@ const make = Effect.gen(function* () {
           .update({
             id: input.scheduledTaskId,
             projectId: parent.thread.projectId,
+            // The live-run requirement is pinned into the transaction for
+            // every mutation — including de-escalation — so a change landing
+            // after the authorizing run settled is rejected, not applied.
+            expectedActiveRun: {
+              id: parentRun.id,
+              threadId: scope.threadId,
+              providerInstanceId: scope.providerInstanceId,
+            },
             ...(executionModes === undefined
               ? {}
               : {
@@ -1316,7 +1334,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* requireCapability(scope);
         const parent = yield* loadProjection(scope.threadId);
-        yield* requireActiveParentRun(scope, parent);
+        const parentRun = yield* requireActiveParentRun(scope, parent);
         const existing = yield* loadScopedScheduledTask(
           parent.thread.projectId,
           input.scheduledTaskId,
@@ -1326,11 +1344,18 @@ const make = Effect.gen(function* () {
         // modes exceed its own (the service-level delete carries no mode
         // check either). expectedProjectId keeps the operation scoped: a
         // task moved to another project between the lookup and the write
-        // cannot be deleted through this caller's project.
+        // cannot be deleted through this caller's project. The run pin is
+        // re-checked inside the transaction so a delete landing after the
+        // authorizing run settled is rejected rather than applied.
         yield* scheduledTasks
           .delete({
             id: existing.id,
             expectedProjectId: existing.projectId,
+            expectedActiveRun: {
+              id: parentRun.id,
+              threadId: scope.threadId,
+              providerInstanceId: scope.providerInstanceId,
+            },
           })
           .pipe(
             Effect.mapError((error) =>
