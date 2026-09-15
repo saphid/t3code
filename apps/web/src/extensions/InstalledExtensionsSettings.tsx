@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { AuthAccessWriteScope, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
-import { GENERIC_API_CATALOGUE } from "@t3tools/extension-sdk/catalogue";
+import { GENERIC_API_CATALOGUE, HOST_CAPABILITY_GRANTS } from "@t3tools/extension-sdk/catalogue";
 import { WORKSPACE_READ_TEXT } from "@t3tools/extension-sdk/workspace";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -90,13 +90,14 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
         Allow workspace text reads in selected projects
       </label>
       {[
-        ...new Set(
-          GENERIC_API_CATALOGUE.flatMap((api) =>
+        ...new Set([
+          ...GENERIC_API_CATALOGUE.flatMap((api) =>
             [...(api.methods ?? []), ...(api.streams ?? [])].flatMap(
               (operation) => operation.requiredGrants,
             ),
           ),
-        ),
+          ...HOST_CAPABILITY_GRANTS,
+        ]),
       ]
         .filter((grant) => grant !== WORKSPACE_READ_TEXT)
         .map((grant) => (

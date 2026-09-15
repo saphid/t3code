@@ -8,6 +8,7 @@ import {
   type TypedStreamApi,
 } from "./capabilities.js";
 import type { JsonObject } from "./environment.js";
+import type { ViewContext } from "./contracts.js";
 import type { WorkspaceReadTextInput, WorkspaceReadTextResult } from "./workspace.js";
 import { textEditsApi, textEditsApiV1 } from "./textEdits.js";
 
@@ -4738,6 +4739,162 @@ export const browserSessionsApi: TypedApi<{
   ],
 });
 export const BROWSER_SESSIONS_API = browserSessionsApi.definition;
+
+/* ------------------------------------------------------------------------
+ * t3.browser/surface — host-local presentation lease for a browser session
+ * (P08-D; engine-attachment row of the binding disposition).
+ *
+ * Unlike the brokered APIs above, this contract is a CLIENT HOST capability:
+ * `ClientHost.browserSurface`. `present()` runs at ResizeObserver rate and the
+ * compositor (the Electron `<webview>` host) lives in the renderer, so none of
+ * it crosses `invokeApi`. The string doubles as the installation grant —
+ * presenting requires it AND `t3.browser/sessions`, enforced by the host
+ * bridge on every acquire; both denials are named.
+ *
+ * Semantics mirror the private `browserSurfaceStore`: a lease binds one
+ * session (public tabId + serverEpoch) to one plugin-owned slot. Ownership is
+ * single — a second acquire supersedes the first lease (the named
+ * `superseded` end state reaches its `onDidChangeState` listeners; the first
+ * holder may acquire again). `present` is latest-wins and frame-coalesced:
+ * calls within one frame collapse to a single store write, so a plugin must
+ * re-send after every geometry change rather than stream per frame. `release`
+ * ends presentation only — it never closes the browser session.
+ * --------------------------------------------------------------------- */
+export const BROWSER_SURFACE = "t3.browser/surface";
+export const BROWSER_SURFACE_VERSION = "1.0.0";
+/** Both grants are required to acquire a presentation lease. */
+export const BROWSER_SURFACE_REQUIRED_GRANTS = [BROWSER_SESSIONS, BROWSER_SURFACE] as const;
+
+/** Integer CSS-pixel bounds of the plugin-owned slot, viewport-relative. */
+export interface BrowserSurfaceRect {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** Public session identity, as reported by `t3.browser/sessions`. */
+export interface BrowserSurfaceSessionRef {
+  readonly tabId: string;
+  readonly serverEpoch: string;
+}
+
+/**
+ * Where this client can composite native browser content. Only the Electron
+ * renderer has the engine host today; every other client reports the named
+ * `desktop-required` state instead of silently dropping `present` calls.
+ */
+export type BrowserSurfacePresentationSupport =
+  | { readonly supported: true }
+  | { readonly supported: false; readonly reason: "desktop-required" };
+
+export type BrowserSurfaceDenialReason =
+  /** `grant` names the missing installation grant. */
+  | "grant-denied"
+  /** Context is not a thread scope inside this environment and granted project. */
+  | "scope-invalid"
+  /** The session identity is malformed or not a `t3.browser/sessions` ref. */
+  | "session-invalid"
+  /** The synced server epoch already moved past the session's. */
+  | "epoch-changed"
+  /** The calling client's install lifetime already ended. */
+  | "host-unavailable";
+
+export interface BrowserSurfaceDenial {
+  readonly reason: BrowserSurfaceDenialReason;
+  readonly detail: string;
+  /** Set when reason is "grant-denied". */
+  readonly grant?: string;
+}
+
+export type BrowserSurfaceEndReason =
+  /** `release()` ran — the session itself is unaffected. */
+  | "released"
+  /** Another lease claimed the session; ownership is single. */
+  | "superseded"
+  /** The caller-supplied signal aborted — view disposed or thread closed. */
+  | "scope-invalidated"
+  /** The installation's grant set or lifetime ended underneath the lease. */
+  | "grant-revoked"
+  /** The session was observed in synced state and then removed. */
+  | "session-closed"
+  /** Synced state moved to a different server epoch. */
+  | "epoch-changed";
+
+export type BrowserSurfaceLeaseState =
+  | {
+      readonly kind: "active";
+      readonly presentation: BrowserSurfacePresentationSupport;
+    }
+  | { readonly kind: "ended"; readonly reason: BrowserSurfaceEndReason };
+
+export type BrowserSurfacePresentOutcome =
+  /** Accepted into the frame-coalesced channel; latest wins, one write/frame. */
+  | "accepted"
+  /** Lease held but this host cannot composite — nothing is on screen. */
+  | "uncomposited"
+  /** Lease is over; `state` carries the named reason. */
+  | "ended";
+
+export interface BrowserSurfaceLease {
+  readonly session: BrowserSurfaceSessionRef;
+  readonly state: BrowserSurfaceLeaseState;
+  /** Fires on every state transition; the listener receives the new state. */
+  onDidChangeState(listener: (state: BrowserSurfaceLeaseState) => void): () => void;
+  /**
+   * Latest-wins, frame-coalesced bounds/visibility update. Rect fields must be
+   * finite numbers; width/height are clamped to at least one pixel, matching
+   * the native slot. Ended leases return "ended" and never present again.
+   */
+  present(
+    rect: BrowserSurfaceRect,
+    visible: boolean,
+    cornerRadius?: number,
+    zIndex?: number,
+  ): BrowserSurfacePresentOutcome;
+  /** Idempotent. Ends the lease with reason "released"; the session survives. */
+  release(): void;
+}
+
+export interface BrowserSurfaceAcquireRequest {
+  /**
+   * The calling view's own context. It must resolve to a thread inside this
+   * environment and a granted project; a plugin cannot present a session from
+   * another environment or thread.
+   */
+  readonly context: ViewContext;
+  readonly session: BrowserSurfaceSessionRef;
+  /**
+   * Caller lifetime — pass `ViewSession.signal`. Its abort ends the lease
+   * with "scope-invalidated" so a disposed view never retains presentation.
+   */
+  readonly signal?: AbortSignal;
+}
+
+export type BrowserSurfaceAcquireResult =
+  | { readonly ok: true; readonly lease: BrowserSurfaceLease }
+  | { readonly ok: false; readonly denial: BrowserSurfaceDenial };
+
+/**
+ * The host side of `t3.browser/surface@1.0.0`. Present on `ClientHost` as
+ * `browserSurface`; absence means the host predates the contract (treat as
+ * `host-unavailable`).
+ */
+export interface BrowserSurfaceHost {
+  readonly id: typeof BROWSER_SURFACE;
+  readonly version: string;
+  /** Static for the host's lifetime — compositing cannot appear mid-session. */
+  readonly presentation: BrowserSurfacePresentationSupport;
+  acquire(request: BrowserSurfaceAcquireRequest): BrowserSurfaceAcquireResult;
+}
+
+/**
+ * Grants enforced by host-local capability contracts that have no brokered
+ * methods — the settings UI lists these alongside catalogue `requiredGrants`
+ * so they can be granted at install time. A grant id here is not an
+ * invocable API id.
+ */
+export const HOST_CAPABILITY_GRANTS: readonly string[] = [BROWSER_SURFACE];
 
 export const COMPOSER_CONTEXT = "t3.composer/context";
 export const COMPOSER_WRITE = "t3.composer/write";

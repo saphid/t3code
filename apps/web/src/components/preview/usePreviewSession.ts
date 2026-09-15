@@ -11,6 +11,7 @@ import {
   readThreadPreviewState,
   reconcilePreviewServerSessions,
 } from "~/previewStateStore";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { previewEnvironment } from "~/state/preview";
 
 class PreviewSessionThreadKeyParseError extends Schema.TaggedError<PreviewSessionThreadKeyParseError>()(
@@ -60,6 +61,10 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
       disposed = true;
     });
     const initialEvent = get.once(eventsAtom);
+    // `get.subscribe` alone never evaluates a lazy query atom — read the
+    // current result so `preview.list` actually runs; sessions that predate
+    // this mount (restored views, extension surface leases) only surface here.
+    reconcileSessions(get.once(sessionsAtom));
     get.subscribe(sessionsAtom, (result) => {
       reconcileSessions(result);
     });
@@ -80,4 +85,13 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
 
 export function usePreviewSession(threadRef: ScopedThreadRef): void {
   useAtomValue(previewSessionSyncAtom(scopedThreadKey(threadRef)));
+}
+
+/**
+ * Non-React mount for hosts that must keep a thread's preview session index
+ * live without rendering preview chrome (extension surface leases).
+ * Returns the unmount function; the atom's own idle TTL still applies.
+ */
+export function mountPreviewSessionSync(threadRef: ScopedThreadRef): () => void {
+  return appAtomRegistry.mount(previewSessionSyncAtom(scopedThreadKey(threadRef)));
 }

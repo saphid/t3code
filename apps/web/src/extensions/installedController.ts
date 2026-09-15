@@ -24,6 +24,8 @@ import type {
 } from "@t3tools/extension-sdk/capabilities";
 import type { SurfaceRenderer } from "@t3tools/extension-sdk/react";
 import type * as React from "react";
+import type { BrowserSurfaceBinding } from "./browserSurfaceBridge";
+import type { BrowserSurfaceHost } from "@t3tools/extension-sdk/catalogue";
 
 export type InstalledPackage = Omit<ExtensionInstallation, "package"> & {
   readonly package: EnvironmentPackage;
@@ -160,6 +162,12 @@ export function createInstalledExtensionController(options: {
   readonly load: (code: string, signal: AbortSignal) => Promise<unknown>;
   readonly register: (extension: Extension<SurfaceRenderer>, client: ClientHost) => () => void;
   readonly changed: (snapshot: InstalledSnapshot) => void;
+  /**
+   * `t3.browser/surface@1.0.0` host bridge factory — bound per installation so
+   * the resulting `host.browserSurface` enforces that installation's grants
+   * and ends its leases with the installation lifetime.
+   */
+  readonly browserSurface?: (binding: BrowserSurfaceBinding) => BrowserSurfaceHost;
 }) {
   const active = new Map<string, { signature: string; stop: () => void }>();
   let generation = 0;
@@ -309,6 +317,10 @@ export function createInstalledExtensionController(options: {
             if (typeof factory !== "function")
               throw new Error("Installed client must export a factory");
             const identity = signature(item);
+            const browserSurface = options.browserSurface?.({
+              grants: item.grants,
+              lifetime: lifetime.signal,
+            });
             const clientHost: ClientHost = {
               React: options.React,
               async invokeApi(request, callerSignal) {
@@ -437,6 +449,7 @@ export function createInstalledExtensionController(options: {
                   throw new Error("Installed tool invocation expired");
                 return copyJson(result);
               },
+              ...(browserSurface ? { browserSurface } : {}),
             };
             const extension = (factory as ClientFactory)(clientHost);
             if (canonical(extension.manifest) !== canonical(item.package.manifest))

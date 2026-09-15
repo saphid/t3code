@@ -18,6 +18,13 @@ import {
   type TypedApi,
   type ApiMethodTypes,
 } from "./capabilities.js";
+import {
+  BROWSER_SURFACE,
+  type BrowserSurfaceAcquireResult,
+  type BrowserSurfaceDenial,
+  type BrowserSurfaceLease,
+  type BrowserSurfaceSessionRef,
+} from "./catalogue.js";
 
 export type RestoreFieldType = "boolean" | "number" | "string";
 export interface RestoreStateSchema {
@@ -270,5 +277,126 @@ export function useApiRead<T extends ApiMethodTypes, K extends keyof T & string>
     return () => controller.abort();
   }, [key, host, session]);
   return state?.key === key ? state.result : { status: "loading" };
+}
+/* oxlint-enable react/hooks */
+
+export interface BrowserSurfaceSlotOptions {
+  /** Session identity from `t3.browser/sessions`; null presents nothing. */
+  readonly session: BrowserSurfaceSessionRef | null;
+  /** Combined visibility — the slot hides when the view or the surface is hidden. */
+  readonly visible: boolean;
+  readonly cornerRadius?: number;
+  readonly zIndex?: number;
+}
+
+export interface BrowserSurfaceSlot {
+  /** Attach to the element whose viewport-relative bounds carry the surface. */
+  readonly ref: (element: HTMLElement | null) => void;
+  /** The held lease; `lease.state` carries named unsupported and end states. */
+  readonly lease: BrowserSurfaceLease | null;
+  /** Named acquire failure — grant, scope, epoch or host. Render it as-is. */
+  readonly denial: BrowserSurfaceDenial | null;
+}
+
+/**
+ * The SDK mirror of the native BrowserSurfaceSlot: owns the acquire/present/
+ * release cycle for a plugin-rendered slot element. Geometry is observed with
+ * ResizeObserver + window resize + capture-phase scroll and forwarded through
+ * the lease's frame-coalesced `present`. There is no automatic re-acquire —
+ * a `superseded` end is terminal for the lease; re-render to acquire again.
+ */
+/* oxlint-disable react/hooks -- hooks come from the injected host React identity. */
+export function useBrowserSurfaceSlot(
+  host: ClientHost,
+  session: ViewSession,
+  options: BrowserSurfaceSlotOptions,
+): BrowserSurfaceSlot {
+  const { useCallback, useLayoutEffect, useRef, useState } = host.React;
+  const [element, setElement] = useState<HTMLElement | null>(null);
+  const [result, setResult] = useState<BrowserSurfaceAcquireResult | null>(null);
+  // Lease transitions are host-originated; the bump re-reads lease.state.
+  const [, setLeaseVersion] = useState(0);
+  const targetKey = options.session ? `${options.session.serverEpoch}${options.session.tabId}` : "";
+  const presentationRef = useRef({
+    visible: options.visible,
+    cornerRadius: options.cornerRadius ?? 0,
+    zIndex: options.zIndex ?? 30,
+  });
+  const updateRef = useRef<(() => void) | null>(null);
+
+  const ref = useCallback((node: HTMLElement | null) => setElement(node), []);
+
+  useLayoutEffect(() => {
+    presentationRef.current = {
+      visible: options.visible,
+      cornerRadius: options.cornerRadius ?? 0,
+      zIndex: options.zIndex ?? 30,
+    };
+    updateRef.current?.();
+  }, [options.visible, options.cornerRadius, options.zIndex]);
+
+  useLayoutEffect(() => {
+    setResult(null);
+    if (!element || !options.session) return;
+    const surface = host.browserSurface;
+    const major = Number.parseInt(surface?.version.split(".")[0] ?? "", 10);
+    if (!surface || surface.id !== BROWSER_SURFACE || major !== 1) {
+      setResult({
+        ok: false,
+        denial: {
+          reason: "host-unavailable",
+          detail: `This host does not implement ${BROWSER_SURFACE}@1.x.`,
+        },
+      });
+      return;
+    }
+    const acquired = surface.acquire({
+      context: session.context,
+      session: options.session,
+      signal: session.signal,
+    });
+    if (!acquired.ok) {
+      setResult(acquired);
+      return;
+    }
+    const lease = acquired.lease;
+    setResult(acquired);
+    const unsubscribe = lease.onDidChangeState(() => setLeaseVersion((value) => value + 1));
+    const update = () => {
+      const bounds = element.getBoundingClientRect();
+      lease.present(
+        {
+          x: Math.round(bounds.x),
+          y: Math.round(bounds.y),
+          width: Math.max(1, Math.round(bounds.width)),
+          height: Math.max(1, Math.round(bounds.height)),
+        },
+        presentationRef.current.visible && bounds.width > 0 && bounds.height > 0,
+        presentationRef.current.cornerRadius,
+        presentationRef.current.zIndex,
+      );
+    };
+    updateRef.current = update;
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+      if (updateRef.current === update) updateRef.current = null;
+      unsubscribe();
+      lease.release();
+    };
+    // The lease is re-acquired only when the element or session identity changes.
+  }, [element, targetKey, host, session]);
+
+  return {
+    ref,
+    lease: result?.ok ? result.lease : null,
+    denial: result && !result.ok ? result.denial : null,
+  };
 }
 /* oxlint-enable react/hooks */

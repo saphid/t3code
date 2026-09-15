@@ -1,20 +1,26 @@
 # @t3tools/extension-browser
 
-Skeleton of the first-party Browser panel (`t3.browser`) as an installable
-SDK extension — P08-A.
+First-party Browser panel (`t3.browser`) as an installable SDK extension —
+P08-A skeleton, P08-D presentation lease.
 
-This is a thin, honest slice, not a browser. No `t3.browser/*` contract
-exists in the SDK catalogue yet; the native engine attachment is the
-extraction blocker. The package therefore:
+The panel renders through public contracts only:
 
-- owns the chrome row + navigation state machine + requested-targets
-  history (`viewModel.ts`, pure and tested),
-- normalizes addresses with the same `normalizePreviewUrl` the native panel
-  uses (`@t3tools/shared/preview`),
-- provides `t3.file/presentation.open` for browser-previewable files
-  (`.html`/`.htm`/`.pdf`) so the ordinary open path can route to
-  `t3.browser/view`,
-- renders an explicit engine-unavailable notice where the page would be.
+- `t3.browser/sessions` (brokered, `requires`) opens/navigates/drives the
+  session; the `events` stream is the only source of engine and navigation
+  truth — receipts are dispatch records, never load confirmations.
+- `t3.browser/surface` (host capability on `ClientHost.browserSurface`,
+  reached through `useBrowserSurfaceSlot`) composites the native webview
+  into the plugin-owned slot element. Both `t3.browser/sessions` and
+  `t3.browser/surface` installation grants are required; denials and
+  unsupported clients (`desktop-required`) render as named states, never
+  silence.
+- `t3.file/presentation.open` routes browser-previewable files
+  (`.html`/`.htm`/`.pdf`) to `t3.browser/view`.
+
+Chrome row + navigation state stay panel-local (`viewModel.ts`, pure and
+tested); the persisted URL history lives in `historyStore.ts`; addresses
+normalize with the same `normalizePreviewUrl` the native panel uses
+(`@t3tools/shared/preview`).
 
 Package-owned helpers ported from the native panel (`historyStore.ts`,
 `runtimeTabId.ts`, `previewAnnotation.ts`, `elementContext.ts`) — see the
