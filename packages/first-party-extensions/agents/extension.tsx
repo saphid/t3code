@@ -11,7 +11,12 @@ import {
   type RuntimeSubagent,
   type VcsDiffPreviewStreamEvent,
 } from "@t3tools/extension-sdk/catalogue";
-import { defineExtension, requireApi, useApiRead } from "@t3tools/extension-sdk/authoring";
+import {
+  defineExtension,
+  requireApi,
+  useApiRead,
+  type ApiReadState,
+} from "@t3tools/extension-sdk/authoring";
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
@@ -51,6 +56,7 @@ import {
   workspaceFromRevision,
   type AgentsFeedState,
   type AgentsWorkflowGroup,
+  type OperationSupport,
   type ScriptRun,
   type ScriptWorkspace,
   type StreamFrameLike,
@@ -167,6 +173,68 @@ function useAgentsFeed(host: ClientHost, session: ViewSession, visible: boolean)
   }, [host, session, visible]);
 
   return { feed, problem };
+}
+
+/**
+ * Capability read that refetches when the projected inputs it derives from
+ * change. The adapter computes operation support from the folded agents
+ * (workflow script paths) and the thread's bound provider instance, so
+ * `useApiRead`'s context/visibility keying would leave controls stuck on the
+ * panel-open snapshot — a workflow that starts later would keep its Script
+ * button "unsupported" until reopen. The last value stays rendered during a
+ * refresh so controls don't flicker to disabled per frame.
+ */
+function useCapabilities(
+  host: ClientHost,
+  session: ViewSession,
+  feed: AgentsFeedState,
+): ApiReadState<OrchestrationCapabilities> {
+  const state = feed.state;
+  const fingerprint = useMemo(
+    () =>
+      JSON.stringify([
+        feed.streamEpoch,
+        state?.session?.providerInstanceId ?? null,
+        state?.session?.providerName ?? null,
+        state?.session?.runtimeMode ?? null,
+        state?.session?.status ?? null,
+        state?.agents.map((agent) =>
+          agent.kind === "workflow" ? (agent.runHandles?.scriptPath ?? null) : null,
+        ) ?? [],
+      ]),
+    [feed.streamEpoch, state],
+  );
+  const [visible, setVisible] = useState(session.visible);
+  const [entry, setEntry] = useState<{
+    readonly fingerprint: string;
+    readonly read: ApiReadState<OrchestrationCapabilities>;
+  }>();
+  useEffect(() => session.onVisibility(setVisible), [session]);
+  useEffect(() => {
+    if (!visible) return;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    void bindApi(orchestrationStatusApi, host, session.context)
+      .invoke("getCapabilities", {}, signal)
+      .then(
+        (value) => {
+          if (!signal.aborted) setEntry({ fingerprint, read: { status: "ready", value } });
+        },
+        (error: unknown) => {
+          if (!signal.aborted)
+            setEntry({
+              fingerprint,
+              read: {
+                status: "unavailable",
+                error: error instanceof Error ? error.message : "API unavailable",
+              },
+            });
+        },
+      );
+    return () => controller.abort();
+  }, [fingerprint, host, session, visible]);
+  // Keep rendering the last value while a refresh is in flight.
+  return entry?.read ?? { status: "loading" };
 }
 
 type OpOutcome =
@@ -361,9 +429,10 @@ function SessionControls(props: {
 function ApprovalRow(props: {
   readonly approval: PendingApproval;
   readonly pending: boolean;
+  readonly respondSupport: OperationSupport;
   readonly onRespond: (decision: ApprovalDecision) => void;
 }) {
-  const { approval, pending, onRespond } = props;
+  const { approval, pending, respondSupport, onRespond } = props;
   return (
     <li style={{ display: "flex", flexDirection: "column", gap: 4, padding: "4px 0" }}>
       <div style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
@@ -385,19 +454,23 @@ function ApprovalRow(props: {
           {approval.detail}
         </pre>
       )}
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {approvalOptions(approval).map((option) => (
-          <button
-            key={option.decision}
-            type="button"
-            disabled={pending}
-            onClick={() => onRespond(option.decision)}
-            style={control}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
+      {respondSupport.kind === "unsupported" ? (
+        <span style={{ fontSize: 11, color: muted }}>{respondSupport.detail}</span>
+      ) : (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {approvalOptions(approval).map((option) => (
+            <button
+              key={option.decision}
+              type="button"
+              disabled={pending || respondSupport.kind !== "ready"}
+              onClick={() => onRespond(option.decision)}
+              style={control}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
       {approvalOptions(approval)
         .filter((option) => option.warning)
         .map((option) => (
@@ -412,10 +485,12 @@ function ApprovalRow(props: {
 function UserInputRow(props: {
   readonly request: PendingUserInput;
   readonly pending: boolean;
+  readonly respondSupport: OperationSupport;
+  readonly dismissSupport: OperationSupport;
   readonly onRespond: (answers: Record<string, string | string[]>) => void;
   readonly onDismiss: () => void;
 }) {
-  const { request, pending, onRespond, onDismiss } = props;
+  const { request, pending, respondSupport, dismissSupport, onRespond, onDismiss } = props;
   const [drafts, setDrafts] = useState<Record<string, UserInputDraftAnswer>>({});
   const answered = countAnsweredQuestions(request.questions, drafts);
   const answers = buildUserInputAnswers(request.questions, drafts);
@@ -445,7 +520,7 @@ function UserInputRow(props: {
                     key={value}
                     type="button"
                     aria-pressed={isSelected}
-                    disabled={pending}
+                    disabled={pending || respondSupport.kind !== "ready"}
                     onClick={() => {
                       // One-question single-select submits on click — the native
                       // quick-pick behavior. Everything else stages a draft.
@@ -474,7 +549,7 @@ function UserInputRow(props: {
                 aria-label={`Custom answer for ${question.header}`}
                 placeholder="Type a custom answer…"
                 value={draft?.customAnswer ?? ""}
-                disabled={pending}
+                disabled={pending || respondSupport.kind !== "ready"}
                 onChange={(event) =>
                   setDraft(
                     question.id,
@@ -490,20 +565,32 @@ function UserInputRow(props: {
           </fieldset>
         );
       })}
-      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-        <button
-          type="button"
-          disabled={pending || answers === null}
-          onClick={() => answers && onRespond(answers)}
-          style={control}
-        >
-          Submit{request.questions.length > 1 ? ` (${answered}/${request.questions.length})` : ""}
-        </button>
-        {request.dismissible && (
-          <button type="button" disabled={pending} onClick={onDismiss} style={control}>
-            Dismiss
+      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+        {respondSupport.kind === "unsupported" ? (
+          <span style={{ fontSize: 11, color: muted }}>{respondSupport.detail}</span>
+        ) : (
+          <button
+            type="button"
+            disabled={pending || answers === null || respondSupport.kind !== "ready"}
+            onClick={() => answers && onRespond(answers)}
+            style={control}
+          >
+            Submit{request.questions.length > 1 ? ` (${answered}/${request.questions.length})` : ""}
           </button>
         )}
+        {request.dismissible &&
+          (dismissSupport.kind === "unsupported" ? (
+            <span style={{ fontSize: 11, color: muted }}>{dismissSupport.detail}</span>
+          ) : (
+            <button
+              type="button"
+              disabled={pending || dismissSupport.kind !== "ready"}
+              onClick={onDismiss}
+              style={control}
+            >
+              Dismiss
+            </button>
+          ))}
       </div>
     </li>
   );
@@ -512,16 +599,22 @@ function UserInputRow(props: {
 /** Pending approvals and user inputs (row 8). */
 function PendingSection(props: {
   readonly feed: AgentsFeedState;
+  readonly capabilities: OrchestrationCapabilities | null;
   readonly run: ReturnType<typeof useControls>["run"];
   readonly outcomeText: (key: string) => string | null;
 }) {
-  const { feed, run, outcomeText } = props;
+  const { feed, capabilities, run, outcomeText } = props;
   const state = feed.state;
   if (!state) return null;
   const approvals = state.pendingApprovals;
   const inputs = state.pendingUserInputs;
   if (approvals.length === 0 && inputs.length === 0) return null;
   const respondKey = (requestId: string) => `req:${requestId}`;
+  // Each operation is gated independently — the capability map can support
+  // respond but not dismiss, or vice versa.
+  const approvalRespond = operationSupport(capabilities, "approval.respond");
+  const inputRespond = operationSupport(capabilities, "userInput.respond");
+  const inputDismiss = operationSupport(capabilities, "userInput.dismiss");
 
   return (
     <section
@@ -544,6 +637,7 @@ function PendingSection(props: {
             key={approval.requestId}
             approval={approval}
             pending={outcomeText(respondKey(approval.requestId)) === "dispatching…"}
+            respondSupport={approvalRespond}
             onRespond={(decision) =>
               run(respondKey(approval.requestId), "approval.respond", {
                 requestId: approval.requestId,
@@ -557,6 +651,8 @@ function PendingSection(props: {
             key={request.requestId}
             request={request}
             pending={outcomeText(respondKey(request.requestId)) === "dispatching…"}
+            respondSupport={inputRespond}
+            dismissSupport={inputDismiss}
             onRespond={(answers) =>
               run(respondKey(request.requestId), "userInput.respond", {
                 requestId: request.requestId,
@@ -995,9 +1091,9 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
   const scriptsRead = useApiRead(host, session, workspaceFilesApi, "readText", {
     relativePath: "t3.json",
   });
-  const capabilitiesRead = useApiRead(host, session, orchestrationStatusApi, "getCapabilities", {});
-  const capabilities = capabilitiesRead.status === "ready" ? capabilitiesRead.value : null;
   const { feed, problem } = useAgentsFeed(host, session, visible);
+  const capabilitiesRead = useCapabilities(host, session, feed);
+  const capabilities = capabilitiesRead.status === "ready" ? capabilitiesRead.value : null;
   const { run, outcomeText } = useControls(host, session, feed);
   const [runs, setRuns] = useState<Record<string, ScriptRun>>({});
   // Fresh per panel mount: recreated panels never re-pick overflow ids their
@@ -1107,7 +1203,12 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
               run={run}
               outcomeText={outcomeText}
             />
-            <PendingSection feed={feed} run={run} outcomeText={outcomeText} />
+            <PendingSection
+              feed={feed}
+              capabilities={capabilities}
+              run={run}
+              outcomeText={outcomeText}
+            />
             <section
               aria-label="Agent roster"
               style={{ padding: "6px 10px", borderBottom: border }}
