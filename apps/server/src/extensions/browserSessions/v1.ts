@@ -165,7 +165,11 @@ const decodeResizeInput = closedDecoder({
   ...CommandGuardFields,
   viewport: PreviewViewportSetting,
 });
-const decodeEventsInput = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Never), {
+const EmptyInput = Schema.Record(Schema.String, Schema.Never);
+const decodeReadInput = Schema.decodeUnknownEffect(EmptyInput, {
+  onExcessProperty: "error",
+});
+const decodeEventsInput = Schema.decodeUnknownSync(EmptyInput, {
   onExcessProperty: "error",
 });
 
@@ -316,17 +320,35 @@ export function createBrowserSessionsApiProvider(
           .pipe(Effect.mapError(operationError(operation)));
 
       if (method === "getCapabilities") {
+        yield* decodeReadInput(input).pipe(
+          Effect.mapError(() =>
+            named(
+              operation,
+              "BrowserSessionInputError",
+              "getCapabilities input fails the declared schema.",
+            ),
+          ),
+        );
         yield* postChecks(operation, scope.context, metadata, signal);
         return {
           metadata: { supported: true },
           // Presentation requires an attached engine on a desktop host —
           // a named deferral, not a capability this slice claims.
           presentation: { supported: false, reason: "desktop-required" },
-          commands: [...BROWSER_SESSION_COMMANDS],
+          // Discovery lists only commands with real dispatch today.
+          // back/forward/reload/hardReload/zoom/setAppearance/setAudioMuted
+          // stay in the contract but fail by name until an authenticated
+          // host dispatch exists (P08-ENGINE-ATTACH / P08-HOST-AUTHORITY).
+          commands: ["resize"],
         } satisfies BrowserSessionCapabilities;
       }
 
       if (method === "list") {
+        yield* decodeReadInput(input).pipe(
+          Effect.mapError(() =>
+            named(operation, "BrowserSessionInputError", "list input fails the declared schema."),
+          ),
+        );
         const listed = yield* listDetails();
         if (listed.sessions.length > BROWSER_SESSION_LIMIT) {
           return yield* named(
@@ -466,7 +488,6 @@ export function createBrowserSessionsApiProvider(
           Effect.mapError(() => named(operation, "BrowserSessionInputError", detail)),
         );
 
-      const noDispatch = Effect.void;
       const lookupRemoved = () =>
         Effect.fail(
           named(operation, "BrowserSessionNotFound", "the session was removed before dispatch."),
@@ -488,49 +509,63 @@ export function createBrowserSessionsApiProvider(
               ),
           );
         }
-        // No server-side dispatch exists for the remaining verbs in this
-        // slice; acceptance is metadata-level only (see the design doc's
-        // engine honesty clause). Verb-specific fields still validate.
+        // These verbs have no engine dispatch in this slice:
+        // back/forward/zoom/setAppearance/setAudioMuted have no server-side
+        // path at all, and PreviewManager.refresh is an existence check that
+        // emits nothing — a metadata "accepted" for it would be a false
+        // proof of reload (design doc §3). Every one fails by name until an
+        // authenticated host dispatch exists; verb-specific fields still
+        // validate so malformed input is rejected by the contract schema.
         case "back":
         case "forward": {
-          const safe = yield* decodeGuard(
-            decodeGuardInput,
-            "command input fails the declared schema.",
+          yield* decodeGuard(decodeGuardInput, "command input fails the declared schema.");
+          return yield* named(
+            operation,
+            "BrowserSessionCommandUnsupported",
+            `'${method}' requires an authenticated engine host that does not exist in this slice.`,
           );
-          return yield* command(safe, noDispatch);
         }
         case "zoom": {
-          const safe = yield* decodeGuard(decodeZoomInput, "zoom input fails the declared schema.");
-          return yield* command(safe, noDispatch);
+          yield* decodeGuard(decodeZoomInput, "zoom input fails the declared schema.");
+          return yield* named(
+            operation,
+            "BrowserSessionCommandUnsupported",
+            "'zoom' requires an authenticated engine host that does not exist in this slice.",
+          );
         }
         case "setAppearance": {
-          const safe = yield* decodeGuard(
+          yield* decodeGuard(
             decodeAppearanceInput,
             "setAppearance input fails the declared schema.",
           );
-          return yield* command(safe, noDispatch);
+          return yield* named(
+            operation,
+            "BrowserSessionCommandUnsupported",
+            "'setAppearance' requires an authenticated engine host that does not exist in this slice.",
+          );
         }
         case "setAudioMuted": {
-          const safe = yield* decodeGuard(
-            decodeMutedInput,
-            "setAudioMuted input fails the declared schema.",
+          yield* decodeGuard(decodeMutedInput, "setAudioMuted input fails the declared schema.");
+          return yield* named(
+            operation,
+            "BrowserSessionCommandUnsupported",
+            "'setAudioMuted' requires an authenticated engine host that does not exist in this slice.",
           );
-          return yield* command(safe, noDispatch);
         }
-        case "reload":
-        case "hardReload": {
-          const safe = yield* decodeGuard(
-            decodeGuardInput,
-            "command input fails the declared schema.",
+        case "reload": {
+          yield* decodeGuard(decodeGuardInput, "command input fails the declared schema.");
+          return yield* named(
+            operation,
+            "BrowserSessionCommandUnsupported",
+            "'reload' has no engine dispatch — PreviewManager.refresh is an existence check, not a reload.",
           );
-          return yield* command(
-            safe,
-            dependencies.preview
-              .refresh({ threadId, tabId: safe.tabId })
-              .pipe(
-                Effect.catchTag("PreviewSessionLookupError", lookupRemoved),
-                Effect.mapError(operationError(operation)),
-              ),
+        }
+        case "hardReload": {
+          yield* decodeGuard(decodeGuardInput, "command input fails the declared schema.");
+          return yield* named(
+            operation,
+            "BrowserSessionCommandUnsupported",
+            "'hardReload' is separately unsupported: no host-side hard/soft distinction exists to honor it.",
           );
         }
         case "resize": {
@@ -648,10 +683,13 @@ export function createBrowserSessionsApiProvider(
         tombstones.add(event.tabId);
         // Bound the entry with the longest removal reason's encoded size.
         const bytes = sessionBytes({
-          kind: "session-removed",
-          revision: event.revision,
-          tabId: event.tabId,
-          reason: "thread-deleted",
+          type: "data",
+          value: {
+            kind: "session-removed",
+            revision: event.revision,
+            tabId: event.tabId,
+            reason: "thread-deleted",
+          },
         });
         enqueue({
           bytes,
@@ -688,7 +726,7 @@ export function createBrowserSessionsApiProvider(
           session,
         } satisfies BrowserSessionStreamValue,
       };
-      enqueue({ bytes: sessionBytes(value.value), make: () => Promise.resolve(value) });
+      enqueue({ bytes: sessionBytes(value), make: () => Promise.resolve(value) });
     };
 
     const iterable: AsyncIterable<ApiStreamEvent> = {
@@ -787,48 +825,51 @@ export function createBrowserSessionsApiProvider(
                   }
                 }
                 if (current.length > 0) chunks.push(current);
+                // Queue accounting charges each emitted envelope once —
+                // start/complete carry snapshot metadata only, so the
+                // session bytes live exclusively in the chunk frames.
+                const startEvent: ApiStreamEvent = {
+                  type: "snapshot",
+                  value: {
+                    kind: "snapshot-start",
+                    snapshotId,
+                    serverEpoch: listed.serverEpoch,
+                    revision: listed.revision,
+                    sessionCount: sessions.length,
+                  } satisfies BrowserSessionStreamValue,
+                };
                 enqueue({
-                  bytes: sessionBytes(sessions),
-                  make: () =>
-                    Promise.resolve({
-                      type: "snapshot",
-                      value: {
-                        kind: "snapshot-start",
-                        snapshotId,
-                        serverEpoch: listed.serverEpoch,
-                        revision: listed.revision,
-                        sessionCount: sessions.length,
-                      } satisfies BrowserSessionStreamValue,
-                    }),
+                  bytes: sessionBytes(startEvent),
+                  make: () => Promise.resolve(startEvent),
                 });
-                chunks.forEach((sessionsChunk, chunkIndex) =>
+                chunks.forEach((sessionsChunk, chunkIndex) => {
+                  const chunkEvent: ApiStreamEvent = {
+                    type: "data",
+                    value: {
+                      kind: "snapshot-chunk",
+                      snapshotId,
+                      chunkIndex,
+                      sessions: sessionsChunk,
+                    } satisfies BrowserSessionStreamValue,
+                  };
                   enqueue({
-                    bytes: sessionBytes(sessionsChunk),
-                    make: () =>
-                      Promise.resolve({
-                        type: "data",
-                        value: {
-                          kind: "snapshot-chunk",
-                          snapshotId,
-                          chunkIndex,
-                          sessions: sessionsChunk,
-                        } satisfies BrowserSessionStreamValue,
-                      }),
-                  }),
-                );
+                    bytes: sessionBytes(chunkEvent),
+                    make: () => Promise.resolve(chunkEvent),
+                  });
+                });
+                const completeEvent: ApiStreamEvent = {
+                  type: "data",
+                  value: {
+                    kind: "snapshot-complete",
+                    snapshotId,
+                    serverEpoch: listed.serverEpoch,
+                    revision: listed.revision,
+                    sessionCount: sessions.length,
+                  } satisfies BrowserSessionStreamValue,
+                };
                 enqueue({
-                  bytes: sessionBytes(sessions),
-                  make: () =>
-                    Promise.resolve({
-                      type: "data",
-                      value: {
-                        kind: "snapshot-complete",
-                        snapshotId,
-                        serverEpoch: listed.serverEpoch,
-                        revision: listed.revision,
-                        sessionCount: sessions.length,
-                      } satisfies BrowserSessionStreamValue,
-                    }),
+                  bytes: sessionBytes(completeEvent),
+                  make: () => Promise.resolve(completeEvent),
                 });
                 // The pump drains the subscription until the stream ends;
                 // a rejected take after scope close means the source is gone.

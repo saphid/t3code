@@ -316,7 +316,18 @@ describe("browser sessions adapter", () => {
         supported: false,
         reason: "desktop-required",
       });
-      expect(capabilities.commands).toHaveLength(8);
+      // Only verbs with real dispatch are advertised; the rest fail by name.
+      expect(capabilities.commands).toEqual(["resize"]);
+    }),
+  );
+
+  it.effect("unary reads reject excess input properties by name", () =>
+    Effect.gen(function* () {
+      const { provider } = yield* harness;
+      for (const method of ["getCapabilities", "list"]) {
+        const error = yield* invokeError(provider, method, { unexpected: true });
+        expect(error.detail).toContain("BrowserSessionInputError");
+      }
     }),
   );
 
@@ -479,9 +490,10 @@ describe("browser sessions adapter", () => {
         readonly serverEpoch: string;
         readonly session: { readonly tabId: string };
       };
-      const error = yield* invokeError(provider, "back", {
+      const error = yield* invokeError(provider, "navigate", {
         tabId: opened.session.tabId,
         serverEpoch: opened.serverEpoch,
+        url: "localhost:5173",
         expectedEngineGeneration: "gen-7",
       });
       expect(error.detail).toContain("BrowserStaleEngineGeneration");
@@ -556,7 +568,7 @@ describe("browser sessions adapter", () => {
     }),
   );
 
-  it.effect("metadata-level commands accept without fabricating engine state", () =>
+  it.effect("commands without engine dispatch fail by name, never silently accepted", () =>
     Effect.gen(function* () {
       const { provider } = yield* harness;
       const opened = (yield* invoke(provider, "open", {})) as {
@@ -580,18 +592,22 @@ describe("browser sessions adapter", () => {
               : method === "setAudioMuted"
                 ? { muted: true }
                 : {};
-        const receipt = (yield* invoke(provider, method, {
+        const error = yield* invokeError(provider, method, {
           tabId: opened.session.tabId,
           serverEpoch: opened.serverEpoch,
           expectedEngineGeneration: null,
           ...extra,
-        })) as {
-          readonly outcome: string;
-          readonly session: { readonly engine: { readonly state: string } };
-        };
-        expect(receipt.outcome).toBe("accepted");
-        expect(receipt.session.engine.state).toBe("unavailable");
+        });
+        expect(error.detail).toContain("BrowserSessionCommandUnsupported");
       }
+      // Verb-specific schema still applies before the unsupported error.
+      const badZoom = yield* invokeError(provider, "zoom", {
+        tabId: opened.session.tabId,
+        serverEpoch: opened.serverEpoch,
+        expectedEngineGeneration: null,
+        zoomFactor: 99,
+      });
+      expect(badZoom.detail).toContain("BrowserSessionInputError");
     }),
   );
 
@@ -812,6 +828,51 @@ describe("browser sessions adapter", () => {
           }
         }
         expect(sawOverflow).toBe(true);
+      } finally {
+        yield* Effect.promise(() => iterator.return!());
+      }
+    }),
+  );
+
+  it.effect("a large but valid initial snapshot completes without overflow", () =>
+    Effect.gen(function* () {
+      const { provider, preview } = yield* harness;
+      const threadId = ThreadId.make(THREAD_ID);
+      // 64 sessions × ~2 KiB URLs ≈ 280 KiB of session data — comfortably
+      // inside the 512 KiB snapshot cap. Queue accounting must charge the
+      // actual emitted envelopes once, not the session array per marker.
+      const url = `https://example.com/${"a".repeat(2000)}`;
+      for (let index = 0; index < 64; index += 1) {
+        yield* preview.open({ threadId, url });
+      }
+      const iterable = provider.subscribe!(
+        "events",
+        {},
+        context(),
+        signal,
+        meta(provider, { scopes: [AuthOrchestrationReadScope] }),
+      );
+      const iterator = iterable[Symbol.asyncIterator]();
+      try {
+        const kinds: string[] = [];
+        for (;;) {
+          const next = yield* Effect.promise(() => iterator.next());
+          expect(next.done).toBe(false);
+          const value = eventValue(next.value!);
+          kinds.push(value.kind);
+          expect(value.kind).not.toBe("closed");
+          if (value.kind === "snapshot-complete") break;
+        }
+        expect(kinds[0]).toBe("snapshot-start");
+        expect(kinds.at(-1)).toBe("snapshot-complete");
+        // The snapshot needed multiple <64 KiB chunk frames between markers.
+        expect(kinds.filter((kind) => kind === "snapshot-chunk").length).toBeGreaterThan(1);
+        // The stream survives: a live upsert still arrives after the
+        // snapshot — no overflow was tripped by queue accounting.
+        yield* preview.open({ threadId });
+        const live = yield* Effect.promise(() => iterator.next());
+        expect(live.done).not.toBe(true);
+        expect(eventValue(live.value!).kind).toBe("session-upsert");
       } finally {
         yield* Effect.promise(() => iterator.return!());
       }

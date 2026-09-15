@@ -36,6 +36,7 @@ export default defineExtension({
         write("open"),
         write("navigate"),
         write("close"),
+        write("back"),
       ],
       streams: [
         {

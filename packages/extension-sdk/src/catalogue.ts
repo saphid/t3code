@@ -2618,11 +2618,16 @@ export const RESOURCES_LEASE_API_V1 = resourcesLeaseApiV1.definition;
  * t3.browser/sessions — per-thread browser session metadata (P08-B).
  *
  * Metadata only: the API projects the server's preview-manager state and
- * dispatches the native commands that exist today (open/navigate/resize/
- * reload/close). It deliberately exposes no reportStatus/registerWebview/
- * createTab/automation path — engine status may only enter through the
- * authenticated engine-host registration that P08-HOST-AUTHORITY owns, and
- * presentation lives behind the separate P08 attach/slot work.
+ * dispatches the native commands that exist today (open/navigate/close/
+ * resize). The remaining command verbs stay in the contract but return a
+ * named BrowserSessionCommandUnsupported error — a receipt must mean
+ * accepted-for-work, and no server-side dispatch exists for them until
+ * authenticated host command routing lands. getCapabilities therefore
+ * advertises only `resize`. The API deliberately exposes no reportStatus/
+ * registerWebview/createTab/automation path — engine status may only
+ * enter through the authenticated engine-host registration that
+ * P08-HOST-AUTHORITY owns, and presentation lives behind the separate
+ * P08 attach/slot work.
  *
  * Grants: `t3.browser/sessions` is the read grant (shared with the
  * `browser-surface` lease mint above). Every write additionally requires

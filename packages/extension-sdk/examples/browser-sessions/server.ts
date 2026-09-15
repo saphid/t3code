@@ -1,7 +1,7 @@
 import type { ServerExtension } from "@t3tools/extension-sdk/environment";
 
 const sessions = "t3.browser/sessions";
-const methods = ["getCapabilities", "list", "open", "navigate", "close"];
+const methods = ["getCapabilities", "list", "open", "navigate", "close", "back"];
 
 export default {
   tools: [],
