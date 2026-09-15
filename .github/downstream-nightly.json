@@ -195,6 +195,12 @@
       "repository": "saphid/t3code",
       "sha": "6a43b55eb7f3d11ac9fd1871cf3f0d9893345248",
       "name": "GPT Live voice with fast commands and existing-thread updates"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "28952b8aa7ae14e375c5cc7652f3e9b00795d915",
+      "name": "Voice settings with secure key management and persistent fast commands"
     }
   ]
 }
