@@ -13,7 +13,9 @@ terminal.
   snapshot/update frames; `getCapabilities` drives per-operation gating and
   is re-fetched whenever the folded inputs it derives from change (workflow
   script paths, bound provider instance, session), so operations that become
-  available mid-session light up without reopening the panel;
+  available mid-session light up without reopening the panel. Provider changes
+  made from another client produce no thread-scoped feed event, so the session
+  controls carry an explicit Refresh button as the recovery path for those;
   `getWorkflowScript` and the `getTurnDiff`/`getThreadDiff` chunked streams
   serve the script viewer and checkpoint diffs. Diff frames are reassembled
   and verified end-to-end (chunk order, byte lengths, per-source and

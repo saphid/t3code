@@ -188,10 +188,19 @@ function useCapabilities(
   host: ClientHost,
   session: ViewSession,
   feed: AgentsFeedState,
-): ApiReadState<OrchestrationCapabilities> {
+): {
+  readonly read: ApiReadState<OrchestrationCapabilities>;
+  readonly refresh: () => void;
+} {
   const state = feed.state;
-  const fingerprint = useMemo(
+  // `tick` backs the explicit Refresh control: a provider enabled from another
+  // client produces no thread-scoped feed event (the stream only publishes on
+  // aggregateKind "thread"), so support changes the feed cannot signal need a
+  // manual recovery path.
+  const [tick, setTick] = useState(0);
+  const key = useMemo(
     () =>
+      `${tick}:` +
       JSON.stringify([
         feed.streamEpoch,
         state?.session?.providerInstanceId ?? null,
@@ -202,11 +211,11 @@ function useCapabilities(
           agent.kind === "workflow" ? (agent.runHandles?.scriptPath ?? null) : null,
         ) ?? [],
       ]),
-    [feed.streamEpoch, state],
+    [tick, feed.streamEpoch, state],
   );
   const [visible, setVisible] = useState(session.visible);
   const [entry, setEntry] = useState<{
-    readonly fingerprint: string;
+    readonly key: string;
     readonly read: ApiReadState<OrchestrationCapabilities>;
   }>();
   useEffect(() => session.onVisibility(setVisible), [session]);
@@ -218,12 +227,12 @@ function useCapabilities(
       .invoke("getCapabilities", {}, signal)
       .then(
         (value) => {
-          if (!signal.aborted) setEntry({ fingerprint, read: { status: "ready", value } });
+          if (!signal.aborted) setEntry({ key, read: { status: "ready", value } });
         },
         (error: unknown) => {
           if (!signal.aborted)
             setEntry({
-              fingerprint,
+              key,
               read: {
                 status: "unavailable",
                 error: error instanceof Error ? error.message : "API unavailable",
@@ -232,9 +241,12 @@ function useCapabilities(
         },
       );
     return () => controller.abort();
-  }, [fingerprint, host, session, visible]);
+  }, [key, host, session, visible]);
   // Keep rendering the last value while a refresh is in flight.
-  return entry?.read ?? { status: "loading" };
+  return {
+    read: entry?.read ?? { status: "loading" },
+    refresh: useCallback(() => setTick((current) => current + 1), []),
+  };
 }
 
 type OpOutcome =
@@ -349,8 +361,9 @@ function SessionControls(props: {
   readonly capabilities: OrchestrationCapabilities | null;
   readonly run: ReturnType<typeof useControls>["run"];
   readonly outcomeText: (key: string) => string | null;
+  readonly onRefreshCapabilities: () => void;
 }) {
-  const { feed, capabilities, run, outcomeText } = props;
+  const { feed, capabilities, run, outcomeText, onRefreshCapabilities } = props;
   const state = feed.state;
   const [draft, setDraft] = useState("");
   const turnRunning = state?.turn?.state === "running";
@@ -400,7 +413,19 @@ function SessionControls(props: {
           support={operationSupport(capabilities, "thread.unsettle")}
           onClick={() => run("thread.unsettle", "thread.unsettle", {})}
         />
+        <button
+          type="button"
+          aria-label="Refresh capabilities"
+          onClick={onRefreshCapabilities}
+          style={{ ...control, marginLeft: "auto" }}
+        >
+          Refresh
+        </button>
       </div>
+      <p style={{ margin: "4px 0 0", color: muted, fontSize: 11 }}>
+        Provider enabled elsewhere? Refresh re-reads the operation support map — the live feed
+        carries no provider-registry signal.
+      </p>
       {(
         [
           "turn.start",
@@ -1092,7 +1117,11 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
     relativePath: "t3.json",
   });
   const { feed, problem } = useAgentsFeed(host, session, visible);
-  const capabilitiesRead = useCapabilities(host, session, feed);
+  const { read: capabilitiesRead, refresh: refreshCapabilities } = useCapabilities(
+    host,
+    session,
+    feed,
+  );
   const capabilities = capabilitiesRead.status === "ready" ? capabilitiesRead.value : null;
   const { run, outcomeText } = useControls(host, session, feed);
   const [runs, setRuns] = useState<Record<string, ScriptRun>>({});
@@ -1202,6 +1231,7 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
               capabilities={capabilities}
               run={run}
               outcomeText={outcomeText}
+              onRefreshCapabilities={refreshCapabilities}
             />
             <PendingSection
               feed={feed}
