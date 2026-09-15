@@ -2,9 +2,39 @@
 
 The first-party Version Control panel (`t3.version-control`) as an
 installable SDK extension — P10-A reads + P10-B mutations + P10-C
-repository ops, on the `t3.vcs/*` contracts (P09, repository at 1.1.0).
+repository ops on the `t3.vcs/*` contracts (P09, repository at 1.1.0),
+plus a read-only pull-request browser on `t3.prs/read@^1.0.0`.
 
-Reads consume the `t3.vcs/read` grant:
+The PR browser consumes the `t3.prs/read` grant:
+
+- a PR list (open/closed/merged/all, `all`/`reviewing`/`authored`
+  involvement, debounced search, `limit`-paged "Load more") keyed on
+  `prs.list` rows — state/decision/checks/labels/branches per row;
+- a detail pane (`prs.summary` + `prs.detail`): title/body, state,
+  author, branches, checks with verdict, review decision;
+- review threads and comments via `prs.activity`, with
+  `prs.threadComments` paging when a thread arrives truncated;
+- linked orchestration threads via `prs.linkedThreads` (display only —
+  no thread-navigation capability exists on `ClientHost`);
+- a verified PR diff via `prs.streamDiff` — the manifest/chunk/complete
+  frames are folded and verified (ordered chunk counts, declared byte
+  length, per-source hash, terminal `payloadSha256`) before any patch
+  text reaches the renderer; continuation frames use `nextCursor`;
+- freshness via `prs.subscribeRefreshes` and an explicit Refresh that
+  calls `prs.invalidate` then re-reads the list;
+- `prs.stack`/`prs.reviewerCandidates`/`prs.labelCandidates`/`prs.listStats`
+  remain unwired — no row needs them yet.
+
+The capability gate (`prs.getCapabilities`) renders every named
+unavailable state — no configured host, `cli-missing`,
+`cli-unauthenticated`, `provider-unsupported` — and each section falls
+back to a named note when its `operations` flag is false, so an
+unsupported provider never masquerades as an empty list. PR mutations
+(comment, review, merge, state changes) are deferred: they belong to a
+later `t3.prs/*` control contract, and the panel says so rather than
+rendering dead controls.
+
+Repository reads consume the `t3.vcs/read` grant:
 
 - repository capability gate via `t3.vcs/repository.getCapabilities`
   (detected driver, per-operation support — no fabricated clean state),
@@ -53,12 +83,12 @@ so the panel still loads against a 1.0.0 host; the 1.1.0 additions
 (push/fetch/listRemotes) gate on `operations` keys a 1.0.0 host never
 reports and simply hide.
 
-Still deferred: publish/clone flows (no remote-creation contract —
-`sourceControl.*` provisioning is host-side), pull-request UI (no
-`pullRequests.*` contract), stash (no native binding exists to mirror),
-branch rename/delete (internal driver methods only), diff rendering (P11),
-AI commit text (no contract), discard/revert and checkpoint diffs (P12
-orchestration boundary).
+Still deferred: PR mutations (a later `t3.prs/*` control contract),
+publish/clone flows (no remote-creation contract — `sourceControl.*`
+provisioning is host-side), stash (no native binding exists to mirror),
+branch rename/delete (internal driver methods only), working-tree diff
+rendering (P11's `t3.vcs/diff` surface), AI commit text (no contract),
+discard/revert and checkpoint diffs (P12 orchestration boundary).
 
 Per-row dispositions and native citations:
 `docs/internals/extensions/vcs-diff-binding-disposition.md`.
