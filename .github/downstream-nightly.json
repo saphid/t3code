@@ -17,7 +17,7 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "693f43c67e030ab16e2bc53b2cd645be2ec2fed5",
+      "sha": "08e2bf85b9a9044e9f006d15a58b18341327f2c4",
       "name": "Context-limit handovers"
     },
     {
@@ -39,12 +39,12 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "eae750159cffc15c6dd29b2b770cc4beb4d25438"
+      "sha": "1f002dd0ef3eecd6fc858dd78ed53d52564f1b8a"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "c1aa902da5a0190ca5cf9fb10f7715b80a8886e3"
+      "sha": "42739c04b98e5183fb179d5fb51aa97a05e353b5"
     },
     {
       "type": "commit",
@@ -201,6 +201,75 @@
       "repository": "saphid/t3code",
       "sha": "9564754a07a8516834c0ab9d9e23bc1d6cf3037f",
       "name": "Voice settings with secure key management and persistent fast commands"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "5c5fce249f1a60d715c29d240ad8814ecb8a0a9f",
+      "name": "Voice panel transcript as ordered speaker-labeled chat"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "bc26a56da4cb75aa3c045546f0d1668121e051f0"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "fc102a83ff214ba39598e1731ecda5330f931f61",
+      "name": "Voice control discovery and activation of the attached UI"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "cef0d3bd1bbac0763b1dfc06997f6d5316a28503"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "bb60bcd4a6785956b84af2c394775c09598e050f",
+      "name": "Durable recoverable voice session history"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "ef8234842da84789262d06e6a6c2f7ae011399a2"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "893f1540240ea7f3f0314ed61f5768109a26419b"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "f57f4ee7b82327cbf9431e5ec8c4132c0e72c718"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "d9bc70920acc261f6c67f0c1d927c5bcb6785669"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "36baf582ddc636bb70a9b7be450b24ed1f5d51ca"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "aadf55466bb9233e5069e837128fc134bb3db3f5"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "245c345cd8b8d67e2d6ccc34dc5ebe270c2d11b9",
+      "name": "Minimized draggable voice overlay with silence auto-collapse and activation modes"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "6e8d9fcb87ebb37ff8bfdb61e77ea039d1d00a08"
     }
   ]
 }
