@@ -29,7 +29,7 @@ import {
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   PRS_INVOLVEMENTS,
@@ -226,6 +226,8 @@ function usePrsRefreshes(host: ClientHost, session: ViewSession, enabled: boolea
 
 interface PrsListModel {
   readonly key: string;
+  /** Query identity without the refresh tick — same question, newer ask. */
+  readonly inputKey: string;
   readonly entries: readonly PrsListEntry[];
   readonly result: PrsListResult | null;
   readonly error: string | null;
@@ -236,8 +238,14 @@ interface PrsListModel {
 /**
  * `prs.list` with re-read + continuation: the key folds the input and
  * the refresh tick; each fresh read replaces entries in place, and
- * "load more" appends the next host-cursored page. A failed re-read
- * keeps the last page — same rule the staging lanes follow.
+ * "load more" appends the next host-cursored page. Rows are displayed
+ * only for the query that produced them — a filter change never shows
+ * another question's rows, and a revision bump keeps the last answer
+ * until the fresh page lands. A failed re-read keeps the last page of
+ * the same query — same rule the staging lanes follow. In-flight
+ * continuations are aborted on any key change and merge only into the
+ * generation that requested them, so a late page can't contaminate a
+ * newer query.
  */
 function usePrsList(
   host: ClientHost,
@@ -249,6 +257,7 @@ function usePrsList(
   const inputKey = useMemo(() => JSON.stringify(input), [input]);
   const key = `${revision}|${inputKey}`;
   const [state, setState] = useState<PrsListModel | null>(null);
+  const continuation = useRef<AbortController | null>(null);
   useEffect(() => {
     if (!enabled) return;
     const controller = new AbortController();
@@ -260,6 +269,7 @@ function usePrsList(
           if (!signal.aborted)
             setState(() => ({
               key,
+              inputKey,
               // A re-read answers the same question — a row that left the
               // fresh page (a closed PR under the open filter, a renamed
               // search hit) must leave the list rather than linger stale.
@@ -275,23 +285,37 @@ function usePrsList(
           if (!signal.aborted)
             setState((prev) => ({
               key,
-              entries: prev?.entries ?? [],
-              result: prev?.result ?? null,
+              inputKey,
+              entries: prev?.inputKey === inputKey ? prev.entries : [],
+              result: prev?.inputKey === inputKey ? prev.result : null,
               error: message(error, "Pull requests unavailable"),
               pending: false,
               loadingMore: false,
             }));
         },
       );
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      // A continuation still in flight belongs to this generation.
+      continuation.current?.abort();
+      continuation.current = null;
+    };
     // input identity is folded into key.
-  }, [host, session, enabled, key, input]);
+  }, [host, session, enabled, key, inputKey, input]);
 
   const loadMore = () => {
-    if (state === null || state.result === null || !prsListHasMore(state.result)) return;
+    if (
+      state === null ||
+      state.key !== key ||
+      state.result === null ||
+      !prsListHasMore(state.result)
+    )
+      return;
     const cursors = state.result.nextCursors;
-    setState((prev) => (prev === null ? prev : { ...prev, loadingMore: true }));
+    setState((prev) => (prev === null || prev.key !== key ? prev : { ...prev, loadingMore: true }));
+    continuation.current?.abort();
     const controller = new AbortController();
+    continuation.current = controller;
     const signal = AbortSignal.any([controller.signal, session.signal]);
     void bindApi(prsReadApi, host, session.context)
       .invoke("list", { ...input, cursors }, signal)
@@ -299,7 +323,7 @@ function usePrsList(
         (page) => {
           if (!signal.aborted)
             setState((prev) =>
-              prev === null
+              prev === null || prev.key !== key
                 ? prev
                 : {
                     ...prev,
@@ -312,27 +336,33 @@ function usePrsList(
         (error) => {
           if (!signal.aborted)
             setState((prev) =>
-              prev === null
+              prev === null || prev.key !== key
                 ? prev
                 : { ...prev, error: message(error, "Next page unavailable"), loadingMore: false },
             );
         },
       )
-      .finally(() => controller.abort());
+      .finally(() => {
+        if (continuation.current === controller) continuation.current = null;
+        controller.abort();
+      });
   };
 
+  const sameQuestion = state !== null && state.inputKey === inputKey;
   return {
-    entries: state?.entries ?? [],
-    result: state?.result ?? null,
+    entries: sameQuestion ? state.entries : [],
+    result: sameQuestion ? state.result : null,
     error: state?.key === key ? state.error : null,
     pending: state?.key !== key || state.pending,
-    loadingMore: state?.loadingMore ?? false,
+    loadingMore: state?.key === key ? state.loadingMore : false,
     loadMore,
   };
 }
 
 interface PrsDetailSections {
   key: string;
+  /** PR identity — retention and display never cross this boundary. */
+  refKey: string;
   detail: PrsDetail | null;
   detailError: string | null;
   activity: PrsActivity | null;
@@ -343,7 +373,7 @@ interface PrsDetailSections {
   stackError: string | null;
 }
 
-const EMPTY_SECTIONS: Omit<PrsDetailSections, "key"> = {
+const EMPTY_SECTIONS: Omit<PrsDetailSections, "key" | "refKey"> = {
   detail: null,
   detailError: null,
   activity: null,
@@ -370,53 +400,60 @@ function usePrsDetail(
   const key = refKey === null ? null : `${revision}|${refKey}`;
   const [sections, setSections] = useState<PrsDetailSections | null>(null);
   useEffect(() => {
-    if (ref === null || key === null || operations === null) return;
+    if (ref === null || refKey === null || key === null || operations === null) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
     const api = bindApi(prsReadApi, host, session.context);
-    const reads: Promise<readonly [string, unknown, string | null]>[] = [];
-    const read = <T,>(name: string, supported: boolean, run: () => Promise<T>) => {
+    // Each section publishes as its own read settles — a slow or failing
+    // read never withholds a sibling that already resolved. Retained
+    // fields require the same PR (refKey): a failed re-read keeps
+    // last-good data alongside its disclosed error, and nothing ever
+    // crosses a selection boundary.
+    const read = <T,>(
+      field: "detail" | "activity" | "linked" | "stack",
+      errorField: "detailError" | "activityError" | "linkedError" | "stackError",
+      supported: boolean,
+      run: () => Promise<T>,
+    ) => {
       if (!supported) return;
-      reads.push(
-        run().then(
-          (value) => [name, value, null] as const,
-          (error: unknown) => [name, null, message(error, `${name} unavailable`)] as const,
-        ),
+      void run().then(
+        (value) => {
+          if (!signal.aborted)
+            setSections((prev) => ({
+              ...(prev?.refKey === refKey ? prev : { ...EMPTY_SECTIONS }),
+              key,
+              refKey,
+              [field]: value,
+              [errorField]: null,
+            }));
+        },
+        (error: unknown) => {
+          if (!signal.aborted)
+            setSections((prev) => ({
+              ...(prev?.refKey === refKey ? prev : { ...EMPTY_SECTIONS }),
+              key,
+              refKey,
+              [errorField]: message(error, `${field} unavailable`),
+            }));
+        },
       );
     };
-    read("detail", operations["prs.detail"], () => api.invoke("detail", ref, signal));
-    read("activity", operations["prs.activity"], () => api.invoke("activity", ref, signal));
-    read("linked", operations["prs.linkedThreads"], () => api.invoke("linkedThreads", ref, signal));
-    read("stack", operations["prs.stack"], () => api.invoke("stack", ref, signal));
-    void Promise.all(reads).then((settled) => {
-      if (signal.aborted) return;
-      setSections((prev) => {
-        const next: PrsDetailSections = {
-          ...(prev?.key === key ? prev : { key, ...EMPTY_SECTIONS }),
-          key,
-        };
-        for (const [name, value, error] of settled) {
-          if (name === "detail") {
-            next.detail = (value as PrsDetail | null) ?? prev?.detail ?? null;
-            next.detailError = error;
-          } else if (name === "activity") {
-            next.activity = (value as PrsActivity | null) ?? prev?.activity ?? null;
-            next.activityError = error;
-          } else if (name === "linked") {
-            next.linked = (value as PrsLinkedThreadsResult | null) ?? prev?.linked ?? null;
-            next.linkedError = error;
-          } else {
-            next.stack = (value as PrsStack | null) ?? prev?.stack ?? null;
-            next.stackError = error;
-          }
-        }
-        return { ...next };
-      });
-    });
+    read("detail", "detailError", operations["prs.detail"], () =>
+      api.invoke("detail", ref, signal),
+    );
+    read("activity", "activityError", operations["prs.activity"], () =>
+      api.invoke("activity", ref, signal),
+    );
+    read("linked", "linkedError", operations["prs.linkedThreads"], () =>
+      api.invoke("linkedThreads", ref, signal),
+    );
+    read("stack", "stackError", operations["prs.stack"], () => api.invoke("stack", ref, signal));
     return () => controller.abort();
     // ref identity is folded into key.
-  }, [host, session, ref, operations, key]);
-  return sections?.key === key ? sections : { key, ...EMPTY_SECTIONS };
+  }, [host, session, ref, refKey, operations, key]);
+  return sections?.refKey === refKey && refKey !== null
+    ? sections
+    : { key: key ?? "", refKey: refKey ?? "", ...EMPTY_SECTIONS };
 }
 
 type PrsDiffState =
@@ -784,8 +821,10 @@ function ReviewThreadSection(props: {
   paging: boolean;
   /** The host cut the tail and issued no cursor — a lossy terminal state, named. */
   unrecoverable: boolean;
+  /** A paged continuation failed; the cursor is preserved so the button retries it. */
+  pageError: string | null;
 }) {
-  const { thread, canPage, onLoadMore, paging, unrecoverable } = props;
+  const { thread, canPage, onLoadMore, paging, unrecoverable, pageError } = props;
   return (
     <section
       aria-label={`Thread on ${prsThreadAnchor(thread)}`}
@@ -828,6 +867,11 @@ function ReviewThreadSection(props: {
       {canPage === false && thread.nextCommentsCursor !== undefined && (
         <p style={{ ...noteStyle, fontSize: 11 }}>
           More comments exist; paging is not supported by this host.
+        </p>
+      )}
+      {pageError !== null && (
+        <p role="alert" style={{ ...noteStyle, fontSize: 11 }}>
+          {pageError} — retry with the button above.
         </p>
       )}
       {unrecoverable && (
@@ -1048,18 +1092,27 @@ export function PullRequestsPanel(props: {
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [pagingThread, setPagingThread] = useState<string | null>(null);
   // Paged-in comment tails keep the new cursor + truncation flag so a
-  // thread pages forward instead of refetching the same page. Keys fold
-  // the selected ref in — a thread id is only unique within its PR.
-  const [pagedThreads, setPagedThreads] = useState<
-    ReadonlyMap<
+  // thread pages forward instead of refetching the same page. Tails are
+  // bound to the exact `activity` payload they extend — a re-read (new
+  // object), a refresh, or a selection change retires them wholesale,
+  // so a stale page can never append to a freshly read thread head. At
+  // most one scope is retained; the next write replaces it.
+  const [pagedThreads, setPagedThreads] = useState<{
+    readonly scope: string;
+    readonly activity: PrsActivity;
+    readonly map: ReadonlyMap<
       string,
       {
         readonly comments: readonly PrsThreadComment[];
         readonly nextCursor: string | null;
         readonly truncated: boolean;
+        readonly error: string | null;
       }
-    >
-  >(new Map());
+    >;
+  } | null>(null);
+  // Advances whenever the scope changes; a page that resolves under an
+  // older generation is dropped before it can touch the map.
+  const pagedGeneration = useRef({ scope: null as string | null, generation: 0 });
 
   const { capabilities, error: capsError } = usePrsCapabilities(host, session, visible, tick);
   const gate = prsGate(capabilities, capsError);
@@ -1099,22 +1152,48 @@ export function PullRequestsPanel(props: {
   const runInvalidate = () => {
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
-    void bindApi(prsReadApi, host, session.context)
-      .invoke("invalidate", {}, signal)
+    const api = bindApi(prsReadApi, host, session.context);
+    // Listing freshness needs the empty invalidation; the selected PR's
+    // detail cache needs its own reference — send both, and re-read only
+    // after the host has actually invalidated.
+    const invalidations = [api.invoke("invalidate", {}, signal)];
+    if (selected !== null)
+      invalidations.push(api.invoke("invalidate", { reference: selected }, signal));
+    void Promise.all(invalidations)
       .then(
-        () => setRefreshError(null),
-        (error) => setRefreshError(message(error, "Pull-request refresh unavailable")),
+        () => {
+          if (signal.aborted) return;
+          setRefreshError(null);
+          setTick((value) => value + 1);
+        },
+        (error) => {
+          if (!signal.aborted) setRefreshError(message(error, "Pull-request refresh unavailable"));
+        },
       )
       .finally(() => controller.abort());
-    setTick((value) => value + 1);
   };
 
   const selectedKey = selected === null ? null : prsRefKey(selected);
+  const pagedScope = selectedKey === null ? null : `${revision}\n${selectedKey}`;
+  useEffect(() => {
+    if (pagedGeneration.current.scope !== pagedScope)
+      pagedGeneration.current = {
+        scope: pagedScope,
+        generation: pagedGeneration.current.generation + 1,
+      };
+  }, [pagedScope]);
   const loadThreadComments = (thread: PrsReviewThread) => {
-    if (selected === null || selectedKey === null || thread.nextCommentsCursor === undefined)
+    if (
+      selected === null ||
+      pagedScope === null ||
+      sections.activity === null ||
+      thread.nextCommentsCursor === undefined
+    )
       return;
     const cursor = thread.nextCommentsCursor;
-    const pageKey = `${selectedKey}\n${thread.id}`;
+    const scope = pagedScope;
+    const head = sections.activity;
+    const generation = pagedGeneration.current.generation;
     setPagingThread(thread.id);
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -1122,19 +1201,39 @@ export function PullRequestsPanel(props: {
       .invoke("threadComments", { ...selected, threadId: thread.id, cursor }, signal)
       .then(
         (page) => {
-          if (!signal.aborted)
-            setPagedThreads((prev) => {
-              const next = new Map(prev);
-              const prior = next.get(pageKey);
-              next.set(pageKey, {
-                comments: [...(prior?.comments ?? []), ...page.comments],
-                nextCursor: page.nextCursor,
-                truncated: page.truncated,
-              });
-              return next;
+          if (signal.aborted || generation !== pagedGeneration.current.generation) return;
+          setPagedThreads((prev) => {
+            const map = new Map(
+              prev?.scope === scope && prev?.activity === head ? prev.map : undefined,
+            );
+            const prior = map.get(thread.id);
+            map.set(thread.id, {
+              comments: [...(prior?.comments ?? []), ...page.comments],
+              nextCursor: page.nextCursor,
+              truncated: page.truncated,
+              error: null,
             });
+            return { scope, activity: head, map };
+          });
         },
-        () => undefined,
+        (error) => {
+          if (signal.aborted || generation !== pagedGeneration.current.generation) return;
+          // The fetched tail and the failed cursor survive — the failure
+          // is named on the thread and the same button retries the page.
+          setPagedThreads((prev) => {
+            const map = new Map(
+              prev?.scope === scope && prev?.activity === head ? prev.map : undefined,
+            );
+            const prior = map.get(thread.id);
+            map.set(thread.id, {
+              comments: prior?.comments ?? [],
+              nextCursor: prior?.nextCursor ?? thread.nextCommentsCursor ?? null,
+              truncated: prior?.truncated ?? false,
+              error: message(error, "Comments unavailable"),
+            });
+            return { scope, activity: head, map };
+          });
+        },
       )
       .finally(() => {
         setPagingThread(null);
@@ -1299,13 +1398,18 @@ export function PullRequestsPanel(props: {
                     />
                   ))}
                 </ul>
-                {!list.pending && list.result !== null && list.entries.length === 0 && (
-                  <p style={noteStyle}>
-                    No {listState === "all" ? "" : `${listState} `}pull requests
-                    {involvement !== "all" ? ` (${involvement})` : ""}
-                    {debouncedQuery.trim() !== "" ? ` matching “${debouncedQuery.trim()}”` : ""}.
-                  </p>
-                )}
+                {!list.pending &&
+                  list.error === null &&
+                  list.result !== null &&
+                  list.result.errors.length === 0 &&
+                  list.entries.length === 0 &&
+                  ops?.["prs.list"] === true && (
+                    <p style={noteStyle}>
+                      No {listState === "all" ? "" : `${listState} `}pull requests
+                      {involvement !== "all" ? ` (${involvement})` : ""}
+                      {debouncedQuery.trim() !== "" ? ` matching “${debouncedQuery.trim()}”` : ""}.
+                    </p>
+                  )}
                 {list.pending && list.entries.length === 0 && (
                   <p style={noteStyle}>Reading pull requests…</p>
                 )}
@@ -1332,9 +1436,10 @@ export function PullRequestsPanel(props: {
                 {detail === null && sections.detailError === null && (
                   <p style={noteStyle}>Reading pull request…</p>
                 )}
-                {sections.detailError !== null && detail === null && (
+                {sections.detailError !== null && (
                   <p role="alert" style={noteStyle}>
                     {sections.detailError}
+                    {detail !== null ? " — showing the last successful read." : ""}
                   </p>
                 )}
                 {detail !== null && (
@@ -1427,6 +1532,11 @@ export function PullRequestsPanel(props: {
                 {sections.stackError !== null && (
                   <p role="alert" style={{ ...noteStyle, fontSize: 11 }}>
                     {sections.stackError}
+                  </p>
+                )}
+                {ops !== null && ops["prs.stack"] !== true && (
+                  <p role="note" style={{ ...noteStyle, fontSize: 11 }}>
+                    Stack information is not supported by this host (prs.stack).
                   </p>
                 )}
                 {sections.stack !== null && sections.stack.layers.length > 0 && (
@@ -1525,7 +1635,12 @@ export function PullRequestsPanel(props: {
                         <p style={{ ...noteStyle, fontSize: 11 }}>No review threads.</p>
                       )}
                       {activity.reviewThreads.map((thread) => {
-                        const paged = pagedThreads.get(`${selectedKey}\n${thread.id}`);
+                        const paged =
+                          pagedThreads !== null &&
+                          pagedThreads.scope === pagedScope &&
+                          pagedThreads.activity === activity
+                            ? pagedThreads.map.get(thread.id)
+                            : undefined;
                         const merged: PrsReviewThread =
                           paged === undefined
                             ? thread
@@ -1547,6 +1662,7 @@ export function PullRequestsPanel(props: {
                                   thread.commentCount !== undefined &&
                                   thread.commentCount > thread.comments.length
                             }
+                            pageError={paged?.error ?? null}
                             onLoadMore={loadThreadComments}
                           />
                         );

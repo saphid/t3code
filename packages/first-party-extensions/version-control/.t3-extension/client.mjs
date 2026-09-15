@@ -5442,6 +5442,7 @@ ${ref.number}`;
     const inputKey = (0, import_react.useMemo)(() => JSON.stringify(input), [input]);
     const key = `${revision2}|${inputKey}`;
     const [state2, setState] = (0, import_react.useState)(null);
+    const continuation = (0, import_react.useRef)(null);
     (0, import_react.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
@@ -5451,6 +5452,7 @@ ${ref.number}`;
           if (!signal.aborted)
             setState(() => ({
               key,
+              inputKey,
               // A re-read answers the same question — a row that left the
               // fresh page (a closed PR under the open filter, a renamed
               // search hit) must leave the list rather than linger stale.
@@ -5466,27 +5468,35 @@ ${ref.number}`;
           if (!signal.aborted)
             setState((prev) => ({
               key,
-              entries: prev?.entries ?? [],
-              result: prev?.result ?? null,
+              inputKey,
+              entries: prev?.inputKey === inputKey ? prev.entries : [],
+              result: prev?.inputKey === inputKey ? prev.result : null,
               error: message(error, "Pull requests unavailable"),
               pending: false,
               loadingMore: false
             }));
         }
       );
-      return () => controller.abort();
-    }, [host, session, enabled, key, input]);
+      return () => {
+        controller.abort();
+        continuation.current?.abort();
+        continuation.current = null;
+      };
+    }, [host, session, enabled, key, inputKey, input]);
     const loadMore = () => {
-      if (state2 === null || state2.result === null || !prsListHasMore(state2.result)) return;
+      if (state2 === null || state2.key !== key || state2.result === null || !prsListHasMore(state2.result))
+        return;
       const cursors = state2.result.nextCursors;
-      setState((prev) => prev === null ? prev : { ...prev, loadingMore: true });
+      setState((prev) => prev === null || prev.key !== key ? prev : { ...prev, loadingMore: true });
+      continuation.current?.abort();
       const controller = new AbortController();
+      continuation.current = controller;
       const signal = AbortSignal.any([controller.signal, session.signal]);
       void bindApi(prsReadApi, host, session.context).invoke("list", { ...input, cursors }, signal).then(
         (page) => {
           if (!signal.aborted)
             setState(
-              (prev) => prev === null ? prev : {
+              (prev) => prev === null || prev.key !== key ? prev : {
                 ...prev,
                 entries: mergePrsEntries(prev.entries, page.entries),
                 result: page,
@@ -5497,17 +5507,21 @@ ${ref.number}`;
         (error) => {
           if (!signal.aborted)
             setState(
-              (prev) => prev === null ? prev : { ...prev, error: message(error, "Next page unavailable"), loadingMore: false }
+              (prev) => prev === null || prev.key !== key ? prev : { ...prev, error: message(error, "Next page unavailable"), loadingMore: false }
             );
         }
-      ).finally(() => controller.abort());
+      ).finally(() => {
+        if (continuation.current === controller) continuation.current = null;
+        controller.abort();
+      });
     };
+    const sameQuestion = state2 !== null && state2.inputKey === inputKey;
     return {
-      entries: state2?.entries ?? [],
-      result: state2?.result ?? null,
+      entries: sameQuestion ? state2.entries : [],
+      result: sameQuestion ? state2.result : null,
       error: state2?.key === key ? state2.error : null,
       pending: state2?.key !== key || state2.pending,
-      loadingMore: state2?.loadingMore ?? false,
+      loadingMore: state2?.key === key ? state2.loadingMore : false,
       loadMore
     };
   }
@@ -5526,52 +5540,56 @@ ${ref.number}`;
     const key = refKey === null ? null : `${revision2}|${refKey}`;
     const [sections, setSections] = (0, import_react.useState)(null);
     (0, import_react.useEffect)(() => {
-      if (ref === null || key === null || operations === null) return;
+      if (ref === null || refKey === null || key === null || operations === null) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       const api = bindApi(prsReadApi, host, session.context);
-      const reads = [];
-      const read = (name, supported, run) => {
+      const read = (field, errorField, supported, run) => {
         if (!supported) return;
-        reads.push(
-          run().then(
-            (value) => [name, value, null],
-            (error) => [name, null, message(error, `${name} unavailable`)]
-          )
+        void run().then(
+          (value) => {
+            if (!signal.aborted)
+              setSections((prev) => ({
+                ...prev?.refKey === refKey ? prev : { ...EMPTY_SECTIONS },
+                key,
+                refKey,
+                [field]: value,
+                [errorField]: null
+              }));
+          },
+          (error) => {
+            if (!signal.aborted)
+              setSections((prev) => ({
+                ...prev?.refKey === refKey ? prev : { ...EMPTY_SECTIONS },
+                key,
+                refKey,
+                [errorField]: message(error, `${field} unavailable`)
+              }));
+          }
         );
       };
-      read("detail", operations["prs.detail"], () => api.invoke("detail", ref, signal));
-      read("activity", operations["prs.activity"], () => api.invoke("activity", ref, signal));
-      read("linked", operations["prs.linkedThreads"], () => api.invoke("linkedThreads", ref, signal));
-      read("stack", operations["prs.stack"], () => api.invoke("stack", ref, signal));
-      void Promise.all(reads).then((settled) => {
-        if (signal.aborted) return;
-        setSections((prev) => {
-          const next = {
-            ...prev?.key === key ? prev : { key, ...EMPTY_SECTIONS },
-            key
-          };
-          for (const [name, value, error] of settled) {
-            if (name === "detail") {
-              next.detail = value ?? prev?.detail ?? null;
-              next.detailError = error;
-            } else if (name === "activity") {
-              next.activity = value ?? prev?.activity ?? null;
-              next.activityError = error;
-            } else if (name === "linked") {
-              next.linked = value ?? prev?.linked ?? null;
-              next.linkedError = error;
-            } else {
-              next.stack = value ?? prev?.stack ?? null;
-              next.stackError = error;
-            }
-          }
-          return { ...next };
-        });
-      });
+      read(
+        "detail",
+        "detailError",
+        operations["prs.detail"],
+        () => api.invoke("detail", ref, signal)
+      );
+      read(
+        "activity",
+        "activityError",
+        operations["prs.activity"],
+        () => api.invoke("activity", ref, signal)
+      );
+      read(
+        "linked",
+        "linkedError",
+        operations["prs.linkedThreads"],
+        () => api.invoke("linkedThreads", ref, signal)
+      );
+      read("stack", "stackError", operations["prs.stack"], () => api.invoke("stack", ref, signal));
       return () => controller.abort();
-    }, [host, session, ref, operations, key]);
-    return sections?.key === key ? sections : { key, ...EMPTY_SECTIONS };
+    }, [host, session, ref, refKey, operations, key]);
+    return sections?.refKey === refKey && refKey !== null ? sections : { key: key ?? "", refKey: refKey ?? "", ...EMPTY_SECTIONS };
   }
   function prsDiffFailure(detail) {
     switch (detail.kind) {
@@ -5886,7 +5904,7 @@ ${ref.number}`;
     );
   }
   function ReviewThreadSection(props) {
-    const { thread, canPage, onLoadMore, paging, unrecoverable } = props;
+    const { thread, canPage, onLoadMore, paging, unrecoverable, pageError } = props;
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "section",
       {
@@ -5921,6 +5939,10 @@ ${ref.number}`;
             }
           ),
           canPage === false && thread.nextCommentsCursor !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 11 }, children: "More comments exist; paging is not supported by this host." }),
+          pageError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "alert", style: { ...noteStyle, fontSize: 11 }, children: [
+            pageError,
+            " \u2014 retry with the button above."
+          ] }),
           unrecoverable && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11 }, children: "Some comments could not be shown \u2014 the host cut this thread's tail without a cursor." })
         ]
       }
@@ -6109,7 +6131,8 @@ ${ref.number}`;
     const [query, setQuery] = (0, import_react.useState)("");
     const [refreshError, setRefreshError] = (0, import_react.useState)(null);
     const [pagingThread, setPagingThread] = (0, import_react.useState)(null);
-    const [pagedThreads, setPagedThreads] = (0, import_react.useState)(/* @__PURE__ */ new Map());
+    const [pagedThreads, setPagedThreads] = (0, import_react.useState)(null);
+    const pagedGeneration = (0, import_react.useRef)({ scope: null, generation: 0 });
     const { capabilities, error: capsError } = usePrsCapabilities(host, session, visible, tick);
     const gate = prsGate(capabilities, capsError);
     const ready = gate.kind === "ready";
@@ -6143,37 +6166,74 @@ ${ref.number}`;
     const runInvalidate = () => {
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
-      void bindApi(prsReadApi, host, session.context).invoke("invalidate", {}, signal).then(
-        () => setRefreshError(null),
-        (error) => setRefreshError(message(error, "Pull-request refresh unavailable"))
+      const api = bindApi(prsReadApi, host, session.context);
+      const invalidations = [api.invoke("invalidate", {}, signal)];
+      if (selected !== null)
+        invalidations.push(api.invoke("invalidate", { reference: selected }, signal));
+      void Promise.all(invalidations).then(
+        () => {
+          if (signal.aborted) return;
+          setRefreshError(null);
+          setTick((value) => value + 1);
+        },
+        (error) => {
+          if (!signal.aborted) setRefreshError(message(error, "Pull-request refresh unavailable"));
+        }
       ).finally(() => controller.abort());
-      setTick((value) => value + 1);
     };
     const selectedKey = selected === null ? null : prsRefKey(selected);
+    const pagedScope = selectedKey === null ? null : `${revision2}
+${selectedKey}`;
+    (0, import_react.useEffect)(() => {
+      if (pagedGeneration.current.scope !== pagedScope)
+        pagedGeneration.current = {
+          scope: pagedScope,
+          generation: pagedGeneration.current.generation + 1
+        };
+    }, [pagedScope]);
     const loadThreadComments = (thread) => {
-      if (selected === null || selectedKey === null || thread.nextCommentsCursor === void 0)
+      if (selected === null || pagedScope === null || sections.activity === null || thread.nextCommentsCursor === void 0)
         return;
       const cursor = thread.nextCommentsCursor;
-      const pageKey = `${selectedKey}
-${thread.id}`;
+      const scope = pagedScope;
+      const head = sections.activity;
+      const generation = pagedGeneration.current.generation;
       setPagingThread(thread.id);
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       void bindApi(prsReadApi, host, session.context).invoke("threadComments", { ...selected, threadId: thread.id, cursor }, signal).then(
         (page) => {
-          if (!signal.aborted)
-            setPagedThreads((prev) => {
-              const next = new Map(prev);
-              const prior = next.get(pageKey);
-              next.set(pageKey, {
-                comments: [...prior?.comments ?? [], ...page.comments],
-                nextCursor: page.nextCursor,
-                truncated: page.truncated
-              });
-              return next;
+          if (signal.aborted || generation !== pagedGeneration.current.generation) return;
+          setPagedThreads((prev) => {
+            const map = new Map(
+              prev?.scope === scope && prev?.activity === head ? prev.map : void 0
+            );
+            const prior = map.get(thread.id);
+            map.set(thread.id, {
+              comments: [...prior?.comments ?? [], ...page.comments],
+              nextCursor: page.nextCursor,
+              truncated: page.truncated,
+              error: null
             });
+            return { scope, activity: head, map };
+          });
         },
-        () => void 0
+        (error) => {
+          if (signal.aborted || generation !== pagedGeneration.current.generation) return;
+          setPagedThreads((prev) => {
+            const map = new Map(
+              prev?.scope === scope && prev?.activity === head ? prev.map : void 0
+            );
+            const prior = map.get(thread.id);
+            map.set(thread.id, {
+              comments: prior?.comments ?? [],
+              nextCursor: prior?.nextCursor ?? thread.nextCommentsCursor ?? null,
+              truncated: prior?.truncated ?? false,
+              error: message(error, "Comments unavailable")
+            });
+            return { scope, activity: head, map };
+          });
+        }
       ).finally(() => {
         setPagingThread(null);
         controller.abort();
@@ -6288,7 +6348,7 @@ ${thread.id}`;
                   },
                   prsRefKey(prEntry)
                 )) }),
-                !list.pending && list.result !== null && list.entries.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { style: noteStyle, children: [
+                !list.pending && list.error === null && list.result !== null && list.result.errors.length === 0 && list.entries.length === 0 && ops?.["prs.list"] === true && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { style: noteStyle, children: [
                   "No ",
                   listState === "all" ? "" : `${listState} `,
                   "pull requests",
@@ -6311,7 +6371,10 @@ ${thread.id}`;
               selected !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
                 ops !== null && ops["prs.detail"] !== true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: noteStyle, children: "Pull-request detail is not supported by this host (prs.detail)." }),
                 detail === null && sections.detailError === null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: noteStyle, children: "Reading pull request\u2026" }),
-                sections.detailError !== null && detail === null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: noteStyle, children: sections.detailError }),
+                sections.detailError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "alert", style: noteStyle, children: [
+                  sections.detailError,
+                  detail !== null ? " \u2014 showing the last successful read." : ""
+                ] }),
                 detail !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { padding: "6px 10px 2px" }, children: [
                     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
@@ -6383,6 +6446,7 @@ ${thread.id}`;
                   detail.bodyTruncated === true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11 }, children: "Description truncated by the contract bound \u2014 read the rest on the host." })
                 ] }),
                 sections.stackError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 11 }, children: sections.stackError }),
+                ops !== null && ops["prs.stack"] !== true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11 }, children: "Stack information is not supported by this host (prs.stack)." }),
                 sections.stack !== null && sections.stack.layers.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Stack", style: { paddingBottom: 4 }, children: [
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("h3", { style: headingStyle, children: [
                     "Stack \u2014 base ",
@@ -6449,8 +6513,7 @@ ${thread.id}`;
                     ] }),
                     activity.reviewThreads.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 11 }, children: "No review threads." }),
                     activity.reviewThreads.map((thread) => {
-                      const paged = pagedThreads.get(`${selectedKey}
-${thread.id}`);
+                      const paged = pagedThreads !== null && pagedThreads.scope === pagedScope && pagedThreads.activity === activity ? pagedThreads.map.get(thread.id) : void 0;
                       const merged = paged === void 0 ? thread : {
                         ...thread,
                         comments: [...thread.comments, ...paged.comments],
@@ -6463,6 +6526,7 @@ ${thread.id}`);
                           canPage: ops?.["prs.threadComments"] === true,
                           paging: pagingThread === thread.id,
                           unrecoverable: paged !== void 0 ? paged.truncated && paged.nextCursor === null : thread.nextCommentsCursor === void 0 && thread.commentCount !== void 0 && thread.commentCount > thread.comments.length,
+                          pageError: paged?.error ?? null,
                           onLoadMore: loadThreadComments
                         },
                         thread.id
