@@ -6,6 +6,19 @@ export function usageSeriesColor(key: string, palette: readonly string[]): strin
 }
 
 /** Custom dates always describe complete local calendar days, including DST. */
+export function customDatesFromWindow(from: string, to: string) {
+  const earliest = new Date(Date.parse(`${to}T00:00:00Z`) - 89 * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+  let start = from < earliest ? earliest : from;
+  // A fall-back clock change can make 90 calendar days longer than the wire limit.
+  if (customUsageRange(start, to).error !== undefined) {
+    start = new Date(Date.parse(`${start}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+  }
+  return { from: start, to };
+}
+
+/** Validates user-entered dates without changing the last valid window. */
 export function customUsageRange(from: string, to: string) {
   const parse = (day: string) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
@@ -25,5 +38,10 @@ export function customUsageRange(from: string, to: string) {
     (Date.parse(to + "T00:00:00Z") - Date.parse(from + "T00:00:00Z")) / 86_400_000 + 1;
   if (calendarDays > 90) return { error: "Choose a range of up to 90 days." };
   end.setDate(end.getDate() + 1);
+  if (end.getTime() - start.getTime() > 90 * 86_400_000) {
+    return {
+      error: "This range exceeds 90 days because of daylight saving. Choose one fewer day.",
+    };
+  }
   return { sinceTime: start.toISOString(), untilTime: end.toISOString() };
 }

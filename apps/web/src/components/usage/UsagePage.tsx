@@ -1,4 +1,4 @@
-import { customUsageRange, usageSeriesColor } from "./usagePresentation";
+import { customDatesFromWindow, customUsageRange, usageSeriesColor } from "./usagePresentation";
 import type { UsageProviderKind } from "@t3tools/contracts";
 import {
   AlertTriangleIcon,
@@ -379,10 +379,12 @@ export function UsagePage() {
   const sort = breakdownSortForMetric(
     preferences.sort[dimension] ?? defaultBreakdownSort(metric, preferences.hiddenColumns),
     metric,
+    preferences.hiddenColumns,
   );
   const threadSort = breakdownSortForMetric(
     preferences.sort.threads ?? defaultBreakdownSort(metric, preferences.hiddenColumns),
     metric,
+    preferences.hiddenColumns,
   );
   const onSort = (column: BreakdownColumn) =>
     updatePreferences({
@@ -505,8 +507,7 @@ export function UsagePage() {
                     onValueChange={(next) => {
                       const value = next[0];
                       if (value === "custom") {
-                        setWindowSelection({ preset: "custom", window });
-                        applyCustomDates({ from: window.sinceDay, to: window.untilDay });
+                        applyCustomDates(customDatesFromWindow(window.sinceDay, window.untilDay));
                         return;
                       }
                       const days = WINDOW_OPTIONS.find((o) => String(o.days) === value)?.days;
@@ -549,15 +550,6 @@ export function UsagePage() {
                     </span>
                   )}
                   <span className="text-xs text-muted-foreground">{window.timeZone}</span>
-                  {dateError ? (
-                    <span
-                      id="usage-date-error"
-                      role="alert"
-                      className="basis-full text-xs text-destructive"
-                    >
-                      {dateError} Showing the last valid range.
-                    </span>
-                  ) : null}
                   <ToggleGroup
                     aria-label="Metric"
                     variant="segmented"
@@ -572,6 +564,15 @@ export function UsagePage() {
                     <Toggle value="cost">Cost</Toggle>
                     <Toggle value="tokens">Tokens</Toggle>
                   </ToggleGroup>
+                  {dateError ? (
+                    <span
+                      id="usage-date-error"
+                      role="alert"
+                      className="basis-full text-xs text-destructive"
+                    >
+                      {dateError} Showing the last valid range.
+                    </span>
+                  ) : null}
                 </div>
 
                 <section aria-label="Usage summary">

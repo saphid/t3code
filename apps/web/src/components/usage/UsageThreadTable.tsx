@@ -203,7 +203,7 @@ export function ThreadRowGroup({
                     type="button"
                     onClick={onToggle}
                     aria-expanded={open}
-                    aria-label={`${open ? "Collapse" : "Expand"} ${row.title} details and subagents`}
+                    aria-label={`${open ? "Collapse" : "Expand"} ${row.title} details${row.agents.length > 0 ? " and subagents" : ""}`}
                     className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   />
                 }

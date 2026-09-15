@@ -156,4 +156,12 @@ describe("sortBreakdownRows", () => {
     sortBreakdownRows(rows, { column: "tokens", direction: "asc" });
     expect(rows).toEqual(copy);
   });
+  it("does not retain a hidden total or component sort after changing metrics", () => {
+    expect(
+      breakdownSortForMetric({ column: "cost", direction: "desc" }, "tokens", ["tokens"]),
+    ).toEqual({ column: "name", direction: "asc" });
+    expect(
+      breakdownSortForMetric({ column: "input", direction: "desc" }, "cost", ["input"]),
+    ).toEqual({ column: "name", direction: "asc" });
+  });
 });

@@ -102,6 +102,11 @@ export function sortBreakdownRows<T extends SortableBreakdownRow>(
 export function breakdownSortForMetric(
   sort: BreakdownSort,
   metric: UsageStackMetric,
+  hiddenColumns: readonly BreakdownColumn[] = [],
 ): BreakdownSort {
-  return sort.column === "cost" || sort.column === "tokens" ? { ...sort, column: metric } : sort;
+  const effective =
+    sort.column === "cost" || sort.column === "tokens" ? { ...sort, column: metric } : sort;
+  return hiddenColumns.includes(effective.column)
+    ? { column: "name", direction: "asc" }
+    : effective;
 }

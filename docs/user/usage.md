@@ -77,6 +77,8 @@ Choose **Custom** in the date row to type a start and end day. Custom ranges can
 days, and picking a preset again returns to a rolling window. Custom ranges cover whole local
 calendar days, even after zooming into part of a day. Invalid ranges show an explanation and keep
 the last valid data visible. The period controls identify the timezone.
+If a daylight-saving clock change makes 90 calendar days exceed the server's elapsed-time limit,
+choose one fewer day; the date controls explain this instead of submitting an unsupported range.
 
 Drag across the chart in either direction to select a narrower time range. The selection snaps
 to half-hour source buckets. A subtle neutral band with a thin border marks only the selected
