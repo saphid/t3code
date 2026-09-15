@@ -199,7 +199,7 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "28952b8aa7ae14e375c5cc7652f3e9b00795d915",
+      "sha": "9564754a07a8516834c0ab9d9e23bc1d6cf3037f",
       "name": "Voice settings with secure key management and persistent fast commands"
     }
   ]
