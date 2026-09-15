@@ -239,7 +239,16 @@ export type OrchestrationCapabilities = {
   readonly streamEpoch: string;
   readonly revision: number;
 };
-export type TurnDiffInput = { readonly turnId: string } | { readonly turnCount: number };
+/**
+ * The wire `oneOf` is the authority; `?: null` markers are the tightest
+ * `Json`-compatible spelling of "the other key is absent" under
+ * `exactOptionalPropertyTypes` (`?: never` falls out of `Json`). An
+ * explicit `null` is still rejected by `additionalProperties: false` —
+ * omit the key rather than nulling it.
+ */
+export type TurnDiffInput =
+  | { readonly turnId: string; readonly turnCount?: null }
+  | { readonly turnCount: number; readonly turnId?: null };
 
 const str = { type: "string", maxLength: 32768 } as const;
 const id = { type: "string", minLength: 1, maxLength: 160 } as const;

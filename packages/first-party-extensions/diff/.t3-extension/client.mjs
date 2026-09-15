@@ -5613,30 +5613,35 @@ ${prefix}`;
   }
   function useTurnDiff(host, session, enabled, requestKey, selection) {
     const [result, setResult] = (0, import_react.useState)(null);
-    const selectionKey = selection === null ? "" : selection.kind === "thread" ? "thread" : `turn:${selection.turnId}`;
+    const selectionKey = selection === null ? null : selection.kind === "thread" ? "thread" : `turn:${selection.turnId}`;
+    const selectionTurnId = selection?.kind === "turn" ? selection.turnId : null;
     (0, import_react.useEffect)(() => {
-      if (!enabled || selection === null) return;
+      if (!enabled || selectionKey === null) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       const streams = bindStreamApi(orchestrationStatusApi, host, session.context);
-      const stream = selection.kind === "thread" ? streams.subscribe("getThreadDiff", {}, signal) : streams.subscribe("getTurnDiff", { turnId: selection.turnId }, signal);
+      const stream = selectionTurnId === null ? streams.subscribe("getThreadDiff", {}, signal) : streams.subscribe("getTurnDiff", { turnId: selectionTurnId }, signal);
       void fetchTurnDiff(stream, signal).then((outcome) => {
         if (signal.aborted || outcome.kind === "cancelled") return;
         setResult(
-          (prev) => outcome.kind === "ready" ? { key: requestKey, preview: outcome.result, error: null, pending: false } : {
+          (prev) => outcome.kind === "ready" ? { key: requestKey, selection: selectionKey, preview: outcome.result, error: null } : {
             key: requestKey,
-            preview: prev?.preview ?? null,
-            error: outcome.detail,
-            pending: false
+            selection: selectionKey,
+            // Last-good data is kept only within the same selection — a
+            // reverted checkpoint's patch must never stand in for a
+            // survivor's diff.
+            preview: prev?.selection === selectionKey ? prev.preview : null,
+            error: outcome.detail
           }
         );
       });
       return () => controller.abort();
-    }, [host, session, enabled, requestKey, selectionKey]);
+    }, [host, session, enabled, requestKey, selectionKey, selectionTurnId]);
+    const retained = selectionKey !== null && result?.selection === selectionKey ? result : null;
     return {
-      preview: result?.preview ?? null,
+      preview: retained?.preview ?? null,
       error: result?.key === requestKey ? result.error : null,
-      pending: result?.key !== requestKey || result.pending
+      pending: enabled && selectionKey !== null && result?.key !== requestKey
     };
   }
   var control = {
@@ -5896,6 +5901,10 @@ ${prefix}`;
       turnDiff.preview,
       turnDiff.preview === null ? turnDiff.error : null
     );
+    const revertChoice = revertTarget(turnSelection, choices);
+    if (revert?.status === "confirming" && revert.choice.turnId !== (revertChoice?.turnId ?? null)) {
+      setRevert(null);
+    }
     const activePreview = mode === "turns" ? turnPreview : preview;
     const activePending = mode === "turns" ? turnDiff.pending : pending;
     const source = mode === "turns" ? activePreview.kind === "ready" ? activePreview.result.sources[0] ?? null : null : selectSource(preview.kind === "ready" ? preview.result : null, sourceId);
@@ -5934,20 +5943,26 @@ ${prefix}`;
         ...next.turnId !== void 0 ? { turnId: next.turnId } : {}
       });
     };
-    const persistSelection = (nextMode, nextFile) => persist({
-      mode: nextMode,
-      sourceId: nextMode === "turns" ? null : source?.id ?? null,
-      fileKey: nextFile,
-      baseRef,
-      ignoreWhitespace,
-      turnId: nextMode === "turns" && turnSelection?.kind === "turn" ? turnSelection.turnId : void 0
+    const persistSelection = (next) => persist({
+      mode: next.mode,
+      sourceId: next.mode === "turns" ? null : next.sourceId,
+      fileKey: next.fileKey,
+      baseRef: next.baseRef,
+      ignoreWhitespace: next.ignoreWhitespace,
+      turnId: next.mode === "turns" && turnSelection?.kind === "turn" ? turnSelection.turnId : void 0
     });
     const chooseMode = (nextMode) => {
       if (nextMode === mode) return;
       setMode(nextMode);
       setFileKey(null);
       setRevert(null);
-      persistSelection(nextMode, null);
+      persistSelection({
+        mode: nextMode,
+        sourceId: source?.id ?? null,
+        fileKey: null,
+        baseRef,
+        ignoreWhitespace
+      });
     };
     const chooseTurn = (selection) => {
       setTurnWanted(selection);
@@ -5965,7 +5980,7 @@ ${prefix}`;
     const chooseSource = (id2) => {
       setSourceId(id2);
       setFileKey(null);
-      persistSelection(mode, null);
+      persistSelection({ mode, sourceId: id2, fileKey: null, baseRef, ignoreWhitespace });
     };
     const revealFile = (row) => {
       setCollapsedFiles((current) => {
@@ -5976,43 +5991,69 @@ ${prefix}`;
       setFileKey(row.key);
       revealTarget.current = row.key;
       setRevealTick((tick2) => tick2 + 1);
-      persistSelection(mode, row.key);
+      persistSelection({
+        mode,
+        sourceId: source?.id ?? null,
+        fileKey: row.key,
+        baseRef,
+        ignoreWhitespace
+      });
     };
     const chooseBaseRef = (value) => {
       setBaseRef(value);
-      persistSelection(mode, fileKey);
+      persistSelection({
+        mode,
+        sourceId: source?.id ?? null,
+        fileKey,
+        baseRef: value,
+        ignoreWhitespace
+      });
     };
     const chooseWhitespace = (value) => {
       setIgnoreWhitespace(value);
-      persistSelection(mode, fileKey);
+      persistSelection({
+        mode,
+        sourceId: source?.id ?? null,
+        fileKey,
+        baseRef,
+        ignoreWhitespace: value
+      });
     };
     const confirmRevert = (choice) => {
       setRevert({
-        turnCount: choice.turnCount,
+        choice,
         status: "confirming",
-        detail: `Restore the workspace to ${choice.label}? Checkpoints from later turns are discarded.`
+        detail: `Restore the workspace to ${choice.label}? Checkpoints from later turns are discarded.`,
+        // Guards freeze with the target: a world that moved on while the
+        // dialog sat open rejects by name instead of reverting a surprise.
+        // Before the agents stream delivers an epoch there is nothing honest
+        // to compare against, so they stay omitted.
+        ...agents.streamEpoch !== null ? {
+          guards: {
+            expectedEpoch: agents.streamEpoch,
+            expectedRevision: agents.revision
+          }
+        } : {}
       });
     };
     const runRevert = () => {
-      const target = revertTarget(turnSelection, choices);
-      if (target === null) return;
+      if (revert === null || revert.status !== "confirming") return;
+      const confirmed = revert;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
-      setRevert({ turnCount: target.turnCount, status: "pending", detail: "Reverting\u2026" });
+      setRevert({ ...confirmed, status: "pending", detail: "Reverting\u2026" });
       void bindApi(orchestrationControlApi, host, session.context).invoke(
         "checkpoint.revert",
-        checkpointRevertInput(target, {
+        checkpointRevertInput(confirmed.choice, {
           commandId: crypto.randomUUID(),
-          // Guards only exist once the agents stream has delivered an epoch;
-          // before that there is nothing honest to compare against.
-          ...agents.streamEpoch !== null ? { expectedEpoch: agents.streamEpoch, expectedRevision: agents.revision } : {}
+          ...confirmed.guards
         }),
         signal
       ).then(
         (receipt2) => {
           if (!signal.aborted)
             setRevert({
-              turnCount: target.turnCount,
+              ...confirmed,
               status: "resolved",
               detail: describeRevertReceipt(receipt2)
             });
@@ -6020,7 +6061,7 @@ ${prefix}`;
         (error) => {
           if (!signal.aborted)
             setRevert({
-              turnCount: target.turnCount,
+              ...confirmed,
               status: "error",
               detail: error instanceof Error ? error.message : "Revert unavailable"
             });
@@ -6105,7 +6146,6 @@ ${prefix}`;
     const muted = "var(--muted-foreground, #667085)";
     const sources = preview.kind === "ready" ? preview.result.sources : [];
     const filteredBaseChoices = filterBaseRefChoices(baseRefChoices, baseRef);
-    const revertChoice = revertTarget(turnSelection, choices);
     const revertCapable = orchGate.kind === "ready" && orchGate.operations["checkpoint.revert"] === true;
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "section",

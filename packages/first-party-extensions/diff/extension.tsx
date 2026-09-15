@@ -60,6 +60,7 @@ import {
   type DiffFileRow,
   type DiffMode,
   type DiffStatusRefresh,
+  type TurnChoice,
   type TurnSelection,
 } from "./viewModel.js";
 
@@ -425,41 +426,47 @@ function useTurnDiff(
 ) {
   const [result, setResult] = useState<{
     key: string;
+    /** Which picker selection produced `preview`; mismatches never render. */
+    selection: string;
     preview: VcsDiffPreviewResult | null;
     error: string | null;
-    pending: boolean;
   } | null>(null);
   const selectionKey =
-    selection === null ? "" : selection.kind === "thread" ? "thread" : `turn:${selection.turnId}`;
+    selection === null ? null : selection.kind === "thread" ? "thread" : `turn:${selection.turnId}`;
+  const selectionTurnId = selection?.kind === "turn" ? selection.turnId : null;
   useEffect(() => {
-    if (!enabled || selection === null) return;
+    if (!enabled || selectionKey === null) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
     const streams = bindStreamApi(orchestrationStatusApi, host, session.context);
     const stream =
-      selection.kind === "thread"
+      selectionTurnId === null
         ? streams.subscribe("getThreadDiff", {}, signal)
-        : streams.subscribe("getTurnDiff", { turnId: selection.turnId }, signal);
+        : streams.subscribe("getTurnDiff", { turnId: selectionTurnId }, signal);
     void fetchTurnDiff(stream, signal).then((outcome) => {
       if (signal.aborted || outcome.kind === "cancelled") return;
       setResult((prev) =>
         outcome.kind === "ready"
-          ? { key: requestKey, preview: outcome.result, error: null, pending: false }
+          ? { key: requestKey, selection: selectionKey, preview: outcome.result, error: null }
           : {
               key: requestKey,
-              preview: prev?.preview ?? null,
+              selection: selectionKey,
+              // Last-good data is kept only within the same selection — a
+              // reverted checkpoint's patch must never stand in for a
+              // survivor's diff.
+              preview: prev?.selection === selectionKey ? prev.preview : null,
               error: outcome.detail,
-              pending: false,
             },
       );
     });
     return () => controller.abort();
     // selectionKey folds turnId/thread identity into requestKey's deps.
-  }, [host, session, enabled, requestKey, selectionKey]);
+  }, [host, session, enabled, requestKey, selectionKey, selectionTurnId]);
+  const retained = selectionKey !== null && result?.selection === selectionKey ? result : null;
   return {
-    preview: result?.preview ?? null,
+    preview: retained?.preview ?? null,
     error: result?.key === requestKey ? result.error : null,
-    pending: result?.key !== requestKey || result.pending,
+    pending: enabled && selectionKey !== null && result?.key !== requestKey,
   };
 }
 
@@ -714,9 +721,14 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
     null,
   );
   const [revert, setRevert] = useState<{
-    turnCount: number;
-    status: "confirming" | "pending" | "resolved" | "error";
-    detail: string;
+    /** The checkpoint the dialog named — frozen at confirm-open, never re-resolved. */
+    readonly choice: TurnChoice;
+    readonly status: "confirming" | "pending" | "resolved" | "error";
+    readonly detail: string;
+    readonly guards?: {
+      readonly expectedEpoch: string;
+      readonly expectedRevision: number;
+    };
   } | null>(null);
   const expandControllers = useRef(new Map<string, AbortController>());
   const contentStreamKeys = useRef(new Set<string>());
@@ -781,6 +793,15 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
     turnDiff.preview === null ? turnDiff.error : null,
   );
 
+  // A confirmation is bound to the checkpoint it named: if the projection
+  // drops that checkpoint or reconciliation moves the selection to a
+  // survivor, the frozen text would lie about what Confirm sends — dismiss
+  // it rather than revert a checkpoint the user never saw named.
+  const revertChoice = revertTarget(turnSelection, choices);
+  if (revert?.status === "confirming" && revert.choice.turnId !== (revertChoice?.turnId ?? null)) {
+    setRevert(null);
+  }
+
   const activePreview = mode === "turns" ? turnPreview : preview;
   const activePending = mode === "turns" ? turnDiff.pending : pending;
   const source =
@@ -840,22 +861,36 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
       ...(next.turnId !== undefined ? { turnId: next.turnId } : {}),
     });
   };
-  const persistSelection = (nextMode: DiffMode, nextFile: string | null) =>
+  // Every field the caller just changed is passed explicitly — reading the
+  // current render's state here would persist the previous values.
+  const persistSelection = (next: {
+    readonly mode: DiffMode;
+    readonly sourceId: string | null;
+    readonly fileKey: string | null;
+    readonly baseRef: string;
+    readonly ignoreWhitespace: boolean;
+  }) =>
     persist({
-      mode: nextMode,
-      sourceId: nextMode === "turns" ? null : (source?.id ?? null),
-      fileKey: nextFile,
-      baseRef,
-      ignoreWhitespace,
+      mode: next.mode,
+      sourceId: next.mode === "turns" ? null : next.sourceId,
+      fileKey: next.fileKey,
+      baseRef: next.baseRef,
+      ignoreWhitespace: next.ignoreWhitespace,
       turnId:
-        nextMode === "turns" && turnSelection?.kind === "turn" ? turnSelection.turnId : undefined,
+        next.mode === "turns" && turnSelection?.kind === "turn" ? turnSelection.turnId : undefined,
     });
   const chooseMode = (nextMode: DiffMode) => {
     if (nextMode === mode) return;
     setMode(nextMode);
     setFileKey(null);
     setRevert(null);
-    persistSelection(nextMode, null);
+    persistSelection({
+      mode: nextMode,
+      sourceId: source?.id ?? null,
+      fileKey: null,
+      baseRef,
+      ignoreWhitespace,
+    });
   };
   const chooseTurn = (selection: TurnSelection) => {
     setTurnWanted(selection);
@@ -873,7 +908,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
   const chooseSource = (id: string) => {
     setSourceId(id);
     setFileKey(null);
-    persistSelection(mode, null);
+    persistSelection({ mode, sourceId: id, fileKey: null, baseRef, ignoreWhitespace });
   };
   const revealFile = (row: DiffFileRow) => {
     setCollapsedFiles((current) => {
@@ -884,40 +919,66 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
     setFileKey(row.key);
     revealTarget.current = row.key;
     setRevealTick((tick) => tick + 1);
-    persistSelection(mode, row.key);
+    persistSelection({
+      mode,
+      sourceId: source?.id ?? null,
+      fileKey: row.key,
+      baseRef,
+      ignoreWhitespace,
+    });
   };
   const chooseBaseRef = (value: string) => {
     setBaseRef(value);
-    persistSelection(mode, fileKey);
+    persistSelection({
+      mode,
+      sourceId: source?.id ?? null,
+      fileKey,
+      baseRef: value,
+      ignoreWhitespace,
+    });
   };
   const chooseWhitespace = (value: boolean) => {
     setIgnoreWhitespace(value);
-    persistSelection(mode, fileKey);
+    persistSelection({
+      mode,
+      sourceId: source?.id ?? null,
+      fileKey,
+      baseRef,
+      ignoreWhitespace: value,
+    });
   };
 
-  const confirmRevert = (choice: { turnId: string; turnCount: number; label: string }) => {
+  const confirmRevert = (choice: TurnChoice) => {
     setRevert({
-      turnCount: choice.turnCount,
+      choice,
       status: "confirming",
       detail: `Restore the workspace to ${choice.label}? Checkpoints from later turns are discarded.`,
+      // Guards freeze with the target: a world that moved on while the
+      // dialog sat open rejects by name instead of reverting a surprise.
+      // Before the agents stream delivers an epoch there is nothing honest
+      // to compare against, so they stay omitted.
+      ...(agents.streamEpoch !== null
+        ? {
+            guards: {
+              expectedEpoch: agents.streamEpoch,
+              expectedRevision: agents.revision,
+            },
+          }
+        : {}),
     });
   };
   const runRevert = () => {
-    const target = revertTarget(turnSelection, choices);
-    if (target === null) return;
+    if (revert === null || revert.status !== "confirming") return;
+    const confirmed = revert;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
-    setRevert({ turnCount: target.turnCount, status: "pending", detail: "Reverting…" });
+    setRevert({ ...confirmed, status: "pending", detail: "Reverting…" });
     void bindApi(orchestrationControlApi, host, session.context)
       .invoke(
         "checkpoint.revert",
-        checkpointRevertInput(target, {
+        checkpointRevertInput(confirmed.choice, {
           commandId: crypto.randomUUID(),
-          // Guards only exist once the agents stream has delivered an epoch;
-          // before that there is nothing honest to compare against.
-          ...(agents.streamEpoch !== null
-            ? { expectedEpoch: agents.streamEpoch, expectedRevision: agents.revision }
-            : {}),
+          ...confirmed.guards,
         }),
         signal,
       )
@@ -925,7 +986,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
         (receipt: OrchestrationReceipt) => {
           if (!signal.aborted)
             setRevert({
-              turnCount: target.turnCount,
+              ...confirmed,
               status: "resolved",
               detail: describeRevertReceipt(receipt),
             });
@@ -933,7 +994,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
         (error) => {
           if (!signal.aborted)
             setRevert({
-              turnCount: target.turnCount,
+              ...confirmed,
               status: "error",
               detail: error instanceof Error ? error.message : "Revert unavailable",
             });
@@ -1029,7 +1090,6 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
   const muted = "var(--muted-foreground, #667085)";
   const sources = preview.kind === "ready" ? preview.result.sources : [];
   const filteredBaseChoices = filterBaseRefChoices(baseRefChoices, baseRef);
-  const revertChoice = revertTarget(turnSelection, choices);
   const revertCapable =
     orchGate.kind === "ready" && orchGate.operations["checkpoint.revert"] === true;
   return (
