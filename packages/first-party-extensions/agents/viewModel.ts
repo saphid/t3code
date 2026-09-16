@@ -1,21 +1,38 @@
 /**
- * Pure view-model for the Agents panel skeleton (AGENTS-SHELL). Owns the two
- * halves of the parity matrix that shipped contracts can serve today:
+ * Pure view-model for the Agents panel. Two halves:
  *
- * - checked-in `t3.json` script derivation (rows 17/18 — the native settings
- *   script list has no public read contract, but the checked-in project file
- *   is readable through `t3.workspace/files` `readText`), and
- * - the script-run terminal plan over `t3.terminal/control` (row 18 —
- *   attach-or-spawn with a client-chosen id, busy sessions overflow to a
- *   numbered id, then a `command + "\r"` write exactly as the native
- *   `runProjectScript` does).
+ * - checked-in `t3.json` script derivation plus the script-run terminal plan
+ *   over `t3.terminal/control` (rows 17/18 — the native settings script list
+ *   has no public read contract; the checked-in file is readable through
+ *   `t3.workspace/files` `readText`), and
+ * - the live fleet view over `t3.orchestration/status` + `t3.orchestration/
+ *   control` (rows 2-12, 14, 16, 19): the subscribe stream already delivers
+ *   the server-folded `RuntimeSubagent[]`, pending requests, checkpoints,
+ *   session and turn — this module derives the panel model (workflow groups,
+ *   status visuals, activity lines, counts), the per-operation capability
+ *   gating, and the verified checkpoint-diff reassembly.
  *
- * Everything the native fleet view draws from the orchestration fold (roster,
- * status, metrics, workflows, actions, checkpoints) rides the unshipped
- * `t3.orchestration/*` family (P12-gated). Those sections render as named
- * deferred states — never as a loading spinner.
+ * The roster/status derivation ports `deriveAgentPanelModel` and friends from
+ * the native fold module semantics — the server adapter delivers rows in the
+ * same shape the native panel renders, and the port keeps the plugin's
+ * grouping/count rules identical rather than approximated.
  */
 import { projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
+import type {
+  AgentsEvent,
+  AgentsState,
+  ApprovalOption,
+  OrchestrationCapabilities,
+  OrchestrationCheckpoint,
+  OrchestrationControlMethods,
+  OrchestrationReceipt,
+  PendingApproval,
+  RuntimeSubagent,
+  RuntimeSubagentStatus,
+  UserInputQuestion,
+  VcsDiffPreviewStreamEvent,
+  VcsDiffStreamSource,
+} from "@t3tools/extension-sdk/catalogue";
 
 /** One runnable entry parsed from the checked-in t3.json (`T3ProjectFileScript` shape). */
 export interface WorkspaceScript {
@@ -382,29 +399,9 @@ export interface DeferredSection {
  */
 export const DEFERRED_SECTIONS: readonly DeferredSection[] = [
   {
-    title: "Agent roster, status, and per-agent metrics",
-    blocker: "t3.orchestration/* status/subscribe is not a shipped contract (P12-gated)",
-    rows: "2–5, 14, 19",
-  },
-  {
-    title: "Start, cancel, approvals, settle",
-    blocker: "t3.orchestration/* write commands are P12-gated",
-    rows: "6–8, 12",
-  },
-  {
-    title: "Checkpoints and turn diffs",
-    blocker: "P12 checkpoint boundary",
-    rows: "9–11",
-  },
-  {
     title: "Workflow launch",
     blocker: "no native binding exists to extract — net-new design, not fakeable",
     rows: "15",
-  },
-  {
-    title: "Workflow script view",
-    blocker: "native RPC exists but is outside the shipped contract surface (NEW-NARROW)",
-    rows: "16",
   },
   {
     title: "Agent logs and session deep links",
@@ -417,6 +414,11 @@ export const DEFERRED_SECTIONS: readonly DeferredSection[] = [
       "native provisioning scan exists (agentSessions scan/import RPC) but is not in the shipped contract surface — needs a narrow public scan contract (NEW-NARROW)",
     rows: "22",
   },
+  {
+    title: "Mobile Agents surface",
+    blocker: "web/desktop only — the same client restriction the native manifest declares",
+    rows: "23",
+  },
 ];
 
 /** Why the scripts list covers only the checked-in file (row 17's deferred half). */
@@ -427,6 +429,734 @@ export const SCRIPTS_SCOPE_NOTE =
 export const HOST_CHROME_NOTE =
   "The chat badge and spawn CTA rows are host chat UI a plugin cannot install; this surface is the plugin-owned half of Agents navigation.";
 
-/** The roster area's headline — the panel's primary content is the deferred fleet view. */
-export const ROSTER_UNAVAILABLE_NOTICE =
-  "Agent roster unavailable — the fleet view reads t3.orchestration/* status/subscribe, which is not a shipped contract (P12-gated).";
+/**
+ * The status contract does not project whether the thread is settled, so a
+ * capability-gated settle control cannot render a stateful toggle — both
+ * directions are offered and the command receipt reports the outcome.
+ */
+export const SETTLED_STATE_NOTE =
+  "Thread settled state is not projected by t3.orchestration/status, so Settle and Unsettle are both offered when the provider supports them; the receipt reports the outcome.";
+
+// ---------------------------------------------------------------------------
+// Live orchestration model — t3.orchestration/status + t3.orchestration/control
+// ---------------------------------------------------------------------------
+
+/** Native terminal-status set (the client-runtime subagent fold). */
+const TERMINAL_AGENT_STATUSES: ReadonlySet<RuntimeSubagentStatus> = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+]);
+
+export const isTerminalAgentStatus = (status: RuntimeSubagentStatus): boolean =>
+  TERMINAL_AGENT_STATUSES.has(status);
+
+/** pending/running/waiting — the statuses the native panel groups as "Working". */
+export const isActiveAgentStatus = (status: RuntimeSubagentStatus): boolean =>
+  status === "pending" || status === "running" || status === "waiting";
+
+export type AgentStatusTone = "info" | "muted" | "success" | "danger";
+
+export interface AgentStatusVisual {
+  readonly tone: AgentStatusTone;
+  readonly label: string;
+}
+
+/** Native visual collapse: working/idle/completed/failed/stopped. */
+export const AGENT_STATUS_VISUALS: Record<RuntimeSubagentStatus, AgentStatusVisual> = {
+  pending: { tone: "info", label: "Working" },
+  running: { tone: "info", label: "Working" },
+  waiting: { tone: "info", label: "Working" },
+  idle: { tone: "muted", label: "Idle · resumable" },
+  completed: { tone: "success", label: "Completed" },
+  failed: { tone: "danger", label: "Failed" },
+  cancelled: { tone: "muted", label: "Stopped" },
+  interrupted: { tone: "muted", label: "Stopped" },
+};
+
+export const agentStatusVisual = (status: RuntimeSubagentStatus): AgentStatusVisual =>
+  AGENT_STATUS_VISUALS[status] ?? { tone: "muted", label: status };
+
+/** Native special case: a batch row at rest reads "Idle", not "Idle · resumable". */
+export function agentStatusLabel(agent: RuntimeSubagent): string {
+  return agent.kind === "subagent_batch" && agent.status === "idle"
+    ? "Idle"
+    : agentStatusVisual(agent.status).label;
+}
+
+/**
+ * Native activity-line precedence (`AgentsPanel.agentActivityText`): a live
+ * row shows progress, then last tool, then result, then error; a settled row
+ * inverts to error, result, progress, last tool. Bounded strings only — the
+ * contract already caps these fields.
+ */
+export function agentActivityText(agent: RuntimeSubagent): string | null {
+  const tool = agent.lastToolName ? `▸ ${agent.lastToolName}` : null;
+  if (isActiveAgentStatus(agent.status)) {
+    return agent.progress ?? tool ?? agent.result ?? agent.error;
+  }
+  return agent.error ?? agent.result ?? agent.progress ?? tool;
+}
+
+/** Native elapsed format: `45s`, `3m 05s`, `1h 04m`. */
+export function formatElapsedSeconds(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const minutes = Math.floor(seconds / 60);
+  if (minutes === 0) return `${seconds}s`;
+  const hours = Math.floor(minutes / 60);
+  if (hours === 0) return `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`;
+  return `${hours}h ${String(minutes % 60).padStart(2, "0")}m`;
+}
+
+/** `startedAt` → `endIso` (or now) as elapsed text; "" on unparseable input. */
+export function elapsedBetween(startedAt: string, endIso: string | null, now = Date.now()): string {
+  const start = Date.parse(startedAt);
+  const end = endIso ? Date.parse(endIso) : now;
+  if (Number.isNaN(start) || Number.isNaN(end)) return "";
+  return formatElapsedSeconds((end - start) / 1000);
+}
+
+/**
+ * Compact model chip text (native `formatSubagentModelLabel`): strips vendor
+ * prefixes/date-or-context suffixes; unknown ids pass through; effort appends
+ * as "· high".
+ */
+export function formatAgentModelLabel(
+  model: string | null | undefined,
+  effort: string | null | undefined,
+): string | null {
+  if (!model) return null;
+  const compact = model
+    .replace(/^claude-/, "")
+    .replace(/-\d{8}$/, "")
+    .replace(/-latest$/, "");
+  return effort ? `${compact} · ${effort}` : compact;
+}
+
+/** Native token formatting (native `formatSubagentTokenCount`). */
+export function formatAgentTokenCount(totalTokens: number): string {
+  if (totalTokens < 1000) return `${totalTokens}`;
+  if (totalTokens < 1_000_000) {
+    const value = totalTokens / 1000;
+    return `${value >= 100 ? Math.round(value) : value.toFixed(1)}k`;
+  }
+  return `${(totalTokens / 1_000_000).toFixed(1)}M`;
+}
+
+/** Native metadata line: model chip, token count, tool uses, activation run. */
+export function agentMetadataLine(agent: RuntimeSubagent): readonly string[] {
+  return [
+    formatAgentModelLabel(agent.model, agent.effort),
+    agent.usage ? `${formatAgentTokenCount(agent.usage.totalTokens)} tok` : "— tok",
+    agent.usage?.toolUses !== undefined ? `${agent.usage.toolUses} tools` : null,
+    agent.activationCount > 1 ? `run ${agent.activationCount}` : null,
+  ].filter((value): value is string => value !== null);
+}
+
+/** Native role-chip suppression: a role that just restates the title is hidden. */
+export function agentVisibleRole(agent: RuntimeSubagent): string | null {
+  return agent.role?.trim().toLocaleLowerCase() === agent.title.trim().toLocaleLowerCase()
+    ? null
+    : agent.role;
+}
+
+// --- Workflow grouping (port of native `deriveAgentPanelModel`) ---
+
+export interface AgentsWorkflowPhaseGroup {
+  readonly index: number;
+  readonly title: string;
+  readonly members: RuntimeSubagent[];
+  readonly state: "pending" | "running" | "done";
+  readonly activeCount: number;
+  readonly settledCount: number;
+}
+
+export interface AgentsWorkflowGroup {
+  readonly workflow: RuntimeSubagent;
+  readonly phases: AgentsWorkflowPhaseGroup[];
+  readonly unphasedMembers: RuntimeSubagent[];
+}
+
+export interface AgentsPanelModel {
+  readonly workflows: AgentsWorkflowGroup[];
+  readonly directAgents: RuntimeSubagent[];
+  readonly runningCount: number;
+  readonly waitingCount: number;
+  readonly idleCount: number;
+  readonly settledCount: number;
+  readonly totalTokens: number;
+  readonly hasAgents: boolean;
+  readonly liveCount: number;
+}
+
+const EMPTY_PANEL_MODEL: AgentsPanelModel = {
+  workflows: [],
+  directAgents: [],
+  runningCount: 0,
+  waitingCount: 0,
+  idleCount: 0,
+  settledCount: 0,
+  totalTokens: 0,
+  hasAgents: false,
+  liveCount: 0,
+};
+
+const byFirstSeen = (a: RuntimeSubagent, b: RuntimeSubagent): number =>
+  a.firstSeenAt.localeCompare(b.firstSeenAt) || a.id.localeCompare(b.id);
+const byAgentIndex = (a: RuntimeSubagent, b: RuntimeSubagent): number =>
+  (a.agentIndex ?? 0) - (b.agentIndex ?? 0);
+
+/**
+ * Port of the native `deriveAgentPanelModel`. Workflow coordinators with
+ * members are containers — they group phases but do not double-count work or
+ * tokens. Members whose coordinator left the roster window fall back to the
+ * flat list so nothing is silently hidden.
+ */
+export function deriveAgentsPanelModel(agents: readonly RuntimeSubagent[]): AgentsPanelModel {
+  if (agents.length === 0) return EMPTY_PANEL_MODEL;
+
+  const workflows = agents
+    .filter((agent) => agent.kind === "workflow")
+    .slice()
+    .sort(byFirstSeen);
+  const workflowIds = new Set(workflows.map((workflow) => workflow.id));
+  const members = new Map<string, RuntimeSubagent[]>();
+  const direct: RuntimeSubagent[] = [];
+
+  for (const agent of agents) {
+    if (agent.kind === "workflow") continue;
+    if (agent.parentAgentId !== null && workflowIds.has(agent.parentAgentId)) {
+      const list = members.get(agent.parentAgentId) ?? [];
+      list.push(agent);
+      members.set(agent.parentAgentId, list);
+    } else {
+      // Orphaned members (coordinator aged out) fall back to the direct list.
+      direct.push(agent);
+    }
+  }
+
+  const workflowGroups: AgentsWorkflowGroup[] = workflows.map((workflow) => {
+    const workflowMembers = members.get(workflow.id) ?? [];
+    const knownPhases =
+      workflow.phases.length > 0
+        ? workflow.phases
+        : (() => {
+            const derived = new Map<number, string>();
+            for (const member of workflowMembers) {
+              if (member.phaseIndex !== null && !derived.has(member.phaseIndex)) {
+                derived.set(
+                  member.phaseIndex,
+                  member.phaseTitle ?? `Phase ${member.phaseIndex + 1}`,
+                );
+              }
+            }
+            return Array.from(derived.entries())
+              .map(([index, title]) => ({ index, title }))
+              .sort((a, b) => a.index - b.index);
+          })();
+
+    const knownPhaseIndices = new Set(knownPhases.map((phase) => phase.index));
+    const phases = knownPhases.map((phase): AgentsWorkflowPhaseGroup => {
+      const phaseMembers = workflowMembers
+        .filter((member) => member.phaseIndex === phase.index)
+        .slice()
+        .sort(byAgentIndex);
+      const activeCount = phaseMembers.filter(
+        // Idle members count as active for phase-liveness: a resumable member
+        // has not finished the phase.
+        (member) => isActiveAgentStatus(member.status) || member.status === "idle",
+      ).length;
+      const settledCount = phaseMembers.filter((member) =>
+        isTerminalAgentStatus(member.status),
+      ).length;
+      return {
+        index: phase.index,
+        title: phase.title,
+        members: phaseMembers,
+        state:
+          phaseMembers.length === 0
+            ? "pending"
+            : activeCount > 0
+              ? "running"
+              : settledCount === phaseMembers.length
+                ? "done"
+                : "pending",
+        activeCount,
+        settledCount,
+      };
+    });
+
+    // Unknown phase indices land here too — a member must never vanish just
+    // because its phase row was lost.
+    const unphasedMembers = workflowMembers
+      .filter((member) => member.phaseIndex === null || !knownPhaseIndices.has(member.phaseIndex))
+      .slice()
+      .sort(byAgentIndex);
+
+    return { workflow: workflow, phases, unphasedMembers };
+  });
+
+  let runningCount = 0;
+  let waitingCount = 0;
+  let idleCount = 0;
+  let settledCount = 0;
+  let totalTokens = 0;
+  for (const agent of agents) {
+    // A workflow coordinator with members is a container for those members, not
+    // work of its own: it reports running for the whole run and aggregates their
+    // usage upstream in some providers. Counting it would report one more agent
+    // working than there are, and double count tokens.
+    if (agent.kind === "workflow" && (members.get(agent.id) ?? []).length > 0) continue;
+    if (agent.status === "running" || agent.status === "pending") runningCount += 1;
+    else if (agent.status === "waiting") waitingCount += 1;
+    else if (agent.status === "idle") idleCount += 1;
+    else settledCount += 1;
+    totalTokens += agent.usage?.totalTokens ?? 0;
+  }
+
+  return {
+    workflows: workflowGroups,
+    // Updates and the retention ranking must never reshuffle rows that remain
+    // visible.
+    directAgents: direct.slice().sort(byFirstSeen),
+    runningCount,
+    waitingCount,
+    idleCount,
+    settledCount,
+    totalTokens,
+    hasAgents: true,
+    liveCount: runningCount + waitingCount,
+  };
+}
+
+// --- Stream fold -----------------------------------------------------------
+
+export interface AgentsFeedState {
+  /** Latest delivered projection, or null before the first snapshot. */
+  readonly state: AgentsState | null;
+  readonly streamEpoch: string | null;
+  readonly revision: number;
+  /** Most recent control receipt projected by the stream. */
+  readonly lastReceipt: OrchestrationReceipt | null;
+  /** Set when the stream closes itself (e.g. queue overflow). */
+  readonly ended: { readonly reason: string } | null;
+}
+
+export const EMPTY_AGENTS_FEED: AgentsFeedState = {
+  state: null,
+  streamEpoch: null,
+  revision: 0,
+  lastReceipt: null,
+  ended: null,
+};
+
+/**
+ * Fold one `AgentsEvent` frame. Every snapshot/updated frame carries the full
+ * bounded projection, so the fold is "latest wins" — epoch changes (adapter
+ * restart) are handled by simply adopting the new frame's epoch and state.
+ */
+export function applyAgentsEvent(feed: AgentsFeedState, event: AgentsEvent): AgentsFeedState {
+  switch (event.kind) {
+    case "snapshot":
+    case "updated":
+      return {
+        state: event,
+        streamEpoch: event.streamEpoch,
+        revision: event.revision,
+        lastReceipt: feed.lastReceipt,
+        ended: null,
+      };
+    case "receipt":
+      return { ...feed, lastReceipt: event.receipt };
+    case "closed":
+      return { ...feed, ended: { reason: event.reason } };
+  }
+}
+
+// --- Capability gating ------------------------------------------------------
+
+export type OrchestrationOpName = keyof OrchestrationControlMethods;
+
+export type OperationSupport =
+  | { readonly kind: "ready" }
+  | { readonly kind: "unsupported"; readonly detail: string }
+  | { readonly kind: "unknown" };
+
+/**
+ * Per-operation support from the provider-advertised capability surface.
+ * `unknown` covers the not-yet-loaded case so the UI can render an honest
+ * pending state instead of guessing.
+ */
+export function operationSupport(
+  capabilities: OrchestrationCapabilities | null,
+  operation: string,
+): OperationSupport {
+  if (!capabilities) return { kind: "unknown" };
+  if (capabilities.operations[operation] === true) return { kind: "ready" };
+  return {
+    kind: "unsupported",
+    detail: `${operation} is not supported by this provider`,
+  };
+}
+
+/** Receipt line shown next to a control: `accepted · seq N` or the named rejection. */
+export function describeReceipt(receipt: OrchestrationReceipt): string {
+  return receipt.status === "accepted"
+    ? `accepted · seq ${receipt.sequence}`
+    : `rejected — ${receipt.error ?? "no detail"}`;
+}
+
+// --- Pending approvals ------------------------------------------------------
+
+export const APPROVAL_REQUEST_KIND_LABELS: Record<string, string> = {
+  command: "Command approval",
+  "file-read": "File read approval",
+  "file-change": "File change approval",
+  "mcp-elicitation": "App access approval",
+};
+
+export const approvalKindLabel = (requestKind: string): string =>
+  APPROVAL_REQUEST_KIND_LABELS[requestKind] ?? requestKind;
+
+/**
+ * Native default approval options (client-runtime pendingRequests) — used when
+ * a provider request carries no explicit option list.
+ */
+export const DEFAULT_APPROVAL_OPTIONS: readonly ApprovalOption[] = [
+  { decision: "cancel", label: "Cancel" },
+  { decision: "decline", label: "Decline" },
+  { decision: "acceptForSession", label: "Always allow this session" },
+  { decision: "accept", label: "Approve" },
+];
+
+export const approvalOptions = (approval: PendingApproval): readonly ApprovalOption[] =>
+  approval.options && approval.options.length > 0 ? approval.options : DEFAULT_APPROVAL_OPTIONS;
+
+// --- Pending user inputs ----------------------------------------------------
+//
+// Draft model ported from the native pendingUserInput module: a custom answer
+// (when allowed) wins over option selection; multi-select answers are string
+// arrays, single-select a string; a request submits only when every question
+// resolves.
+
+export const userInputOptionValue = (option: {
+  readonly label: string;
+  readonly value?: string;
+}): string => option.value ?? option.label;
+
+export interface UserInputDraftAnswer {
+  readonly customAnswer?: string;
+  readonly selectedOptionValues?: readonly string[];
+}
+
+/** One question's resolved answer: custom text wins, else the option pick(s). */
+export function resolveQuestionAnswer(
+  question: UserInputQuestion,
+  draft: UserInputDraftAnswer | undefined,
+): string | string[] | null {
+  const custom = question.allowCustomAnswer === false ? null : draft?.customAnswer?.trim() || null;
+  if (custom) return custom;
+  const selected = (draft?.selectedOptionValues ?? []).filter((value) =>
+    question.options.some((option) => userInputOptionValue(option) === value),
+  );
+  if (question.multiSelect) {
+    return selected.length > 0 ? [...selected] : null;
+  }
+  return selected[0] ?? null;
+}
+
+export function toggleQuestionOption(
+  question: UserInputQuestion,
+  draft: UserInputDraftAnswer | undefined,
+  optionValue: string,
+): UserInputDraftAnswer {
+  if (question.multiSelect) {
+    const selected = [...(draft?.selectedOptionValues ?? [])];
+    const next = selected.includes(optionValue)
+      ? selected.filter((value) => value !== optionValue)
+      : [...selected, optionValue];
+    return {
+      customAnswer: "",
+      ...(next.length > 0 ? { selectedOptionValues: next } : {}),
+    };
+  }
+  return { customAnswer: "", selectedOptionValues: [optionValue] };
+}
+
+/** Typing a custom answer clears the option pick (native behavior). */
+export function setQuestionCustomAnswer(
+  _question: UserInputQuestion,
+  draft: UserInputDraftAnswer | undefined,
+  customAnswer: string,
+): UserInputDraftAnswer {
+  const selected = customAnswer.trim().length > 0 ? undefined : (draft?.selectedOptionValues ?? []);
+  return {
+    customAnswer,
+    ...(selected && selected.length > 0 ? { selectedOptionValues: [...selected] } : {}),
+  };
+}
+
+/** All-or-nothing: null until every question resolves — the native submit rule. */
+export function buildUserInputAnswers(
+  questions: readonly UserInputQuestion[],
+  drafts: Readonly<Record<string, UserInputDraftAnswer | undefined>>,
+): Record<string, string | string[]> | null {
+  const answers: Record<string, string | string[]> = {};
+  for (const question of questions) {
+    const answer = resolveQuestionAnswer(question, drafts[question.id]);
+    if (answer === null) return null;
+    answers[question.id] = answer;
+  }
+  return answers;
+}
+
+export function countAnsweredQuestions(
+  questions: readonly UserInputQuestion[],
+  drafts: Readonly<Record<string, UserInputDraftAnswer | undefined>>,
+): number {
+  return questions.filter(
+    (question) => resolveQuestionAnswer(question, drafts[question.id]) !== null,
+  ).length;
+}
+
+// --- Checkpoints ------------------------------------------------------------
+
+export type CheckpointVisualStatus = "ready" | "missing" | "error";
+
+export function checkpointVisualStatus(
+  checkpoint: OrchestrationCheckpoint,
+): CheckpointVisualStatus {
+  switch (checkpoint.status) {
+    case "ready":
+      return "ready";
+    case "missing":
+      return "missing";
+    default:
+      return "error";
+  }
+}
+
+/** `turn N · M files · +a −d` — the native checkpoint list line. */
+export function checkpointLabel(checkpoint: OrchestrationCheckpoint): string {
+  const adds = checkpoint.files.reduce((sum, file) => sum + (file.additions ?? 0), 0);
+  const dels = checkpoint.files.reduce((sum, file) => sum + (file.deletions ?? 0), 0);
+  return `turn ${checkpoint.checkpointTurnCount} · ${checkpoint.files.length} file${
+    checkpoint.files.length === 1 ? "" : "s"
+  } · +${adds} −${dels}`;
+}
+
+// --- Verified diff reassembly -----------------------------------------------
+//
+// getTurnDiff/getThreadDiff stream `t3.vcs/diff` frames: a manifest snapshot,
+// then chunk frames, then a complete frame carrying the whole-payload sha256.
+// This assembly mirrors the diff package's verifier — manifest order, source
+// indexes, chunk ordering/counts, UTF-8 byte lengths, per-source and whole
+// payload hashes — and nothing is rendered until verification passes.
+
+export interface DiffPatchSource {
+  readonly id: string;
+  readonly title: string;
+  readonly kind: "working-tree" | "branch-range";
+  readonly baseRef: string | null;
+  readonly headRef: string | null;
+  readonly diff: string;
+  readonly diffHash: string;
+  readonly truncated: boolean;
+}
+
+export interface VerifiedDiffPatch {
+  readonly generatedAt: string;
+  readonly sources: readonly DiffPatchSource[];
+}
+
+export type DiffStreamOutcome =
+  | { readonly kind: "verified"; readonly patch: VerifiedDiffPatch }
+  | { readonly kind: "protocol" | "incomplete" | "mismatch"; readonly detail: string }
+  | { readonly kind: "cancelled" };
+
+/** Minimal transport frame shape — same shape the diff package declares. */
+export interface StreamFrameLike<T> {
+  readonly type: string;
+  readonly value: T;
+}
+
+export interface DiffAssembly {
+  readonly manifest: {
+    readonly generatedAt: string;
+    readonly sources: readonly VcsDiffStreamSource[];
+  } | null;
+  /** Per-source chunks in arrival order; strict `chunkIndex` sequence. */
+  readonly chunks: readonly (readonly string[])[];
+  readonly complete: string | null;
+}
+
+export const createDiffAssembly = (): DiffAssembly => ({
+  manifest: null,
+  chunks: [],
+  complete: null,
+});
+
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+const utf8Length = (text: string): number => new TextEncoder().encode(text).length;
+
+type DiffFoldResult =
+  | { readonly ok: true; readonly assembly: DiffAssembly }
+  | { readonly ok: false; readonly detail: string };
+
+/**
+ * Fold one diff-stream event. Frames must arrive manifest → ordered chunks →
+ * complete; out-of-order, duplicated, or undeclared chunks are protocol
+ * failures — accepting them would hide transport breakage. Mirrors the diff
+ * package's `applyPreviewStreamEvent`.
+ */
+export function applyDiffStreamEvent(
+  assembly: DiffAssembly,
+  event: VcsDiffPreviewStreamEvent,
+): DiffFoldResult {
+  if (assembly.complete !== null) {
+    return { ok: false, detail: "stream continued after the complete frame" };
+  }
+  if (event.kind === "manifest") {
+    if (assembly.manifest !== null) return { ok: false, detail: "duplicate manifest frame" };
+    return {
+      ok: true,
+      assembly: {
+        manifest: { generatedAt: event.generatedAt, sources: event.sources },
+        chunks: event.sources.map(() => []),
+        complete: null,
+      },
+    };
+  }
+  if (assembly.manifest === null) {
+    return { ok: false, detail: `${event.kind} frame arrived before the manifest` };
+  }
+  if (event.kind === "chunk") {
+    const source = assembly.manifest.sources[event.sourceIndex];
+    if (source === undefined) {
+      return { ok: false, detail: `chunk for unknown sourceIndex ${event.sourceIndex}` };
+    }
+    if (event.chunkIndex >= source.chunkCount) {
+      return {
+        ok: false,
+        detail: `chunkIndex ${event.chunkIndex} exceeds declared chunkCount ${source.chunkCount} for source ${source.id}`,
+      };
+    }
+    const received = assembly.chunks[event.sourceIndex] ?? [];
+    if (event.chunkIndex !== received.length) {
+      return {
+        ok: false,
+        detail: `out-of-order chunk ${event.chunkIndex} for source ${source.id} (expected ${received.length})`,
+      };
+    }
+    const chunks = assembly.chunks.slice();
+    chunks[event.sourceIndex] = [...received, event.data];
+    return { ok: true, assembly: { ...assembly, chunks } };
+  }
+  return { ok: true, assembly: { ...assembly, complete: event.payloadSha256 } };
+}
+
+/**
+ * Terminal verification: declared chunk counts, reassembled UTF-8 byte
+ * lengths, per-source sha256, then the whole-payload sha256 — in that order,
+ * before a single byte reaches the render path. Mirrors the diff package's
+ * `verifyPreviewAssembly`.
+ */
+export async function verifyDiffAssembly(assembly: DiffAssembly): Promise<DiffStreamOutcome> {
+  if (assembly.manifest === null) {
+    return { kind: "incomplete", detail: "stream ended before the manifest" };
+  }
+  if (assembly.complete === null) {
+    return { kind: "incomplete", detail: "stream ended before the complete frame" };
+  }
+  const manifest = assembly.manifest;
+  const bodies: string[] = [];
+  for (const [index, source] of manifest.sources.entries()) {
+    const chunks = assembly.chunks[index] ?? [];
+    if (chunks.length !== source.chunkCount) {
+      return {
+        kind: "incomplete",
+        detail: `source ${source.id}: received ${chunks.length} of ${source.chunkCount} declared chunks`,
+      };
+    }
+    const body = chunks.join("");
+    if (utf8Length(body) !== source.diffByteLength) {
+      return {
+        kind: "mismatch",
+        detail: `source ${source.id}: reassembled byte length does not match the manifest`,
+      };
+    }
+    if ((await sha256Hex(body)) !== source.diffHash) {
+      return {
+        kind: "mismatch",
+        detail: `source ${source.id}: reassembled bytes do not match the manifest hash`,
+      };
+    }
+    bodies.push(body);
+  }
+  if ((await sha256Hex(bodies.join(""))) !== assembly.complete) {
+    return { kind: "mismatch", detail: "reassembled payload does not match the terminal checksum" };
+  }
+  return {
+    kind: "verified",
+    patch: {
+      generatedAt: manifest.generatedAt,
+      sources: manifest.sources.map((source, index) => ({
+        id: source.id,
+        kind: source.kind,
+        title: source.title,
+        baseRef: source.baseRef,
+        headRef: source.headRef,
+        diff: bodies[index] ?? "",
+        diffHash: source.diffHash,
+        truncated: source.truncated,
+      })),
+    },
+  };
+}
+
+/**
+ * Consume a `getTurnDiff`/`getThreadDiff` stream into a verified patch. The
+ * abort signal is checked before every frame and leaving the loop abandons
+ * the iterator — the contract's cancellation mechanism. Nothing is produced
+ * before the terminal checksum verifies.
+ */
+export async function collectDiffStream(
+  stream: AsyncIterable<StreamFrameLike<VcsDiffPreviewStreamEvent>>,
+  signal: AbortSignal,
+): Promise<DiffStreamOutcome> {
+  let assembly = createDiffAssembly();
+  try {
+    for await (const frame of stream) {
+      if (signal.aborted) return { kind: "cancelled" };
+      const next = applyDiffStreamEvent(assembly, frame.value);
+      if (!next.ok) return { kind: "protocol", detail: next.detail };
+      assembly = next.assembly;
+    }
+  } catch (error) {
+    if (signal.aborted) return { kind: "cancelled" };
+    return {
+      kind: "protocol",
+      detail: error instanceof Error ? error.message : "diff stream failed",
+    };
+  }
+  if (signal.aborted) return { kind: "cancelled" };
+  return verifyDiffAssembly(assembly);
+}
+
+// --- Footer ------------------------------------------------------------------
+
+/** Native footer line: live/idle/settled counts plus the cumulative token total. */
+export function agentsFooterSummary(model: AgentsPanelModel): string {
+  const parts = [
+    `${model.liveCount} working`,
+    `${model.idleCount} idle`,
+    `${model.settledCount} settled`,
+  ];
+  if (model.totalTokens > 0) parts.push(`${formatAgentTokenCount(model.totalTokens)} tokens`);
+  return parts.join(" · ");
+}

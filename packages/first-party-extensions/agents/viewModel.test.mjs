@@ -2,15 +2,37 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 
 import {
+  DEFAULT_APPROVAL_OPTIONS,
   DEFERRED_SECTIONS,
+  EMPTY_AGENTS_FEED,
   HOST_CHROME_NOTE,
-  ROSTER_UNAVAILABLE_NOTICE,
   SCRIPTS_SCOPE_NOTE,
   SCRIPT_RUN_MAX_CANDIDATES,
   T3_PROJECT_FILE_MAX_SCRIPTS,
+  agentActivityText,
+  agentStatusLabel,
+  agentsFooterSummary,
+  applyAgentsEvent,
+  applyDiffStreamEvent,
+  approvalOptions,
+  buildUserInputAnswers,
+  checkpointLabel,
   claimableTerminal,
+  collectDiffStream,
+  countAnsweredQuestions,
+  createDiffAssembly,
+  deriveAgentsPanelModel,
+  describeReceipt,
   describeScriptRun,
+  elapsedBetween,
+  formatAgentModelLabel,
+  formatAgentTokenCount,
+  formatElapsedSeconds,
+  isActiveAgentStatus,
+  isTerminalAgentStatus,
+  operationSupport,
   parseT3ProjectFile,
+  resolveQuestionAnswer,
   runWorkspaceScript,
   scriptRunNonce,
   scriptRuntimeEnv,
@@ -18,7 +40,10 @@ import {
   scriptTerminalBaseId,
   scriptTerminalCandidates,
   scriptWriteData,
+  setQuestionCustomAnswer,
   terminalBusy,
+  toggleQuestionOption,
+  userInputOptionValue,
   workspaceFromRevision,
 } from "./viewModel.ts";
 
@@ -395,14 +420,15 @@ NodeTest.describe("runWorkspaceScript glue", () => {
 });
 
 NodeTest.describe("deferred sections", () => {
-  NodeTest.it("name every blocked row family with its blocker", () => {
+  NodeTest.it("name only the rows the shipped contracts cannot serve", () => {
     const blockers = DEFERRED_SECTIONS.map((section) => section.blocker).join(" | ");
-    NodeAssert.match(blockers, /t3\.orchestration/);
-    NodeAssert.match(blockers, /P12/);
     NodeAssert.match(blockers, /net-new design/);
     const rows = new Set(DEFERRED_SECTIONS.flatMap((section) => section.rows.split(/[–,]\s*/)));
-    for (const row of ["2", "6", "9", "15", "16", "20", "22"])
+    // The P12-gated rows moved live; only genuinely unblocked-free rows stay.
+    for (const row of ["15", "20", "21", "22", "23"])
       NodeAssert.ok(rows.has(row), `deferred sections name parity row ${row}`);
+    for (const row of ["2", "3", "4", "5", "6", "9", "14", "16", "19"])
+      NodeAssert.ok(!rows.has(row), `row ${row} is live, not deferred`);
   });
 
   NodeTest.it("separates the scan/import row (22) from the net-new rows (20-21)", () => {
@@ -419,6 +445,474 @@ NodeTest.describe("deferred sections", () => {
   NodeTest.it("name the scripts-list and host-chrome boundaries", () => {
     NodeAssert.match(SCRIPTS_SCOPE_NOTE, /settings/i);
     NodeAssert.match(HOST_CHROME_NOTE, /host chat UI/);
-    NodeAssert.match(ROSTER_UNAVAILABLE_NOTICE, /t3\.orchestration/);
+  });
+});
+
+// --- Live orchestration model -------------------------------------------------
+
+const makeAgent = (overrides = {}) => ({
+  id: "agent-1",
+  kind: "subagent",
+  title: "Explorer",
+  role: null,
+  model: "claude-sonnet-5",
+  effort: "high",
+  status: "running",
+  activationCount: 1,
+  usage: { totalTokens: 1200, toolUses: 3 },
+  progress: null,
+  lastToolName: null,
+  result: null,
+  error: null,
+  outputFile: null,
+  parentAgentId: null,
+  agentIndex: null,
+  phaseIndex: null,
+  phaseTitle: null,
+  attempt: null,
+  workflowName: null,
+  phases: [],
+  runHandles: null,
+  recentActivity: [],
+  firstSeenAt: "2026-01-01T00:00:00.000Z",
+  startedAt: "2026-01-01T00:00:10.000Z",
+  completedAt: null,
+  updatedAt: "2026-01-01T00:00:20.000Z",
+  ...overrides,
+});
+
+const makeSnapshot = (overrides = {}) => ({
+  kind: "snapshot",
+  streamEpoch: "epoch-1",
+  revision: 1,
+  agents: [],
+  pendingApprovals: [],
+  pendingUserInputs: [],
+  checkpoints: [],
+  session: null,
+  turn: null,
+  receipts: [],
+  retention: { agentsCap: 100, receiptsCap: 100 },
+  ...overrides,
+});
+
+NodeTest.describe("status semantics", () => {
+  NodeTest.it("collapses to the native visual buckets", () => {
+    for (const status of ["pending", "running", "waiting"])
+      NodeAssert.equal(isActiveAgentStatus(status), true);
+    for (const status of ["completed", "failed", "cancelled", "interrupted"])
+      NodeAssert.equal(isTerminalAgentStatus(status), true);
+    NodeAssert.equal(isActiveAgentStatus("idle"), false);
+    NodeAssert.equal(isTerminalAgentStatus("idle"), false);
+    NodeAssert.equal(agentStatusLabel(makeAgent({ status: "running" })), "Working");
+    NodeAssert.equal(agentStatusLabel(makeAgent({ status: "idle" })), "Idle · resumable");
+    NodeAssert.equal(
+      agentStatusLabel(makeAgent({ kind: "subagent_batch", status: "idle" })),
+      "Idle",
+    );
+    NodeAssert.equal(agentStatusLabel(makeAgent({ status: "cancelled" })), "Stopped");
+  });
+
+  NodeTest.it("orders the activity line with the native precedence", () => {
+    const base = { progress: "thinking", lastToolName: "Read", result: "done", error: "boom" };
+    NodeAssert.equal(agentActivityText(makeAgent({ ...base, status: "running" })), "thinking");
+    NodeAssert.equal(
+      agentActivityText(makeAgent({ ...base, status: "running", progress: null })),
+      "▸ Read",
+    );
+    NodeAssert.equal(
+      agentActivityText(
+        makeAgent({ ...base, status: "running", progress: null, lastToolName: null }),
+      ),
+      "done",
+    );
+    NodeAssert.equal(
+      agentActivityText(
+        makeAgent({
+          ...base,
+          status: "running",
+          progress: null,
+          lastToolName: null,
+          result: null,
+        }),
+      ),
+      "boom",
+    );
+    NodeAssert.equal(agentActivityText(makeAgent({ ...base, status: "failed" })), "boom");
+    NodeAssert.equal(
+      agentActivityText(makeAgent({ ...base, status: "completed", error: null })),
+      "done",
+    );
+  });
+
+  NodeTest.it("formats elapsed, model, and token chips like the native panel", () => {
+    NodeAssert.equal(formatElapsedSeconds(45), "45s");
+    NodeAssert.equal(formatElapsedSeconds(185), "3m 05s");
+    NodeAssert.equal(formatElapsedSeconds(3900), "1h 05m");
+    NodeAssert.equal(elapsedBetween("2026-01-01T00:00:00Z", "2026-01-01T00:01:05Z"), "1m 05s");
+    NodeAssert.equal(elapsedBetween("not-a-date", null), "");
+    NodeAssert.equal(formatAgentModelLabel("claude-sonnet-5", "high"), "sonnet-5 · high");
+    NodeAssert.equal(formatAgentModelLabel("claude-opus-4-20250514", null), "opus-4");
+    NodeAssert.equal(formatAgentModelLabel("gpt-6-astra-latest", null), "gpt-6-astra");
+    NodeAssert.equal(formatAgentModelLabel(null, "high"), null);
+    NodeAssert.equal(formatAgentTokenCount(999), "999");
+    NodeAssert.equal(formatAgentTokenCount(1200), "1.2k");
+    NodeAssert.equal(formatAgentTokenCount(120_000), "120k");
+    NodeAssert.equal(formatAgentTokenCount(2_500_000), "2.5M");
+  });
+});
+
+NodeTest.describe("deriveAgentsPanelModel", () => {
+  NodeTest.it("returns the empty model for an empty roster", () => {
+    const model = deriveAgentsPanelModel([]);
+    NodeAssert.equal(model.hasAgents, false);
+    NodeAssert.equal(model.liveCount, 0);
+  });
+
+  NodeTest.it("groups workflow members under phases and skips container counts", () => {
+    const coordinator = makeAgent({
+      id: "wf",
+      kind: "workflow",
+      title: "Ship it",
+      status: "running",
+      usage: { totalTokens: 999999 },
+      phases: [
+        { index: 0, title: "Plan" },
+        { index: 1, title: "Build" },
+      ],
+    });
+    const planner = makeAgent({
+      id: "m1",
+      parentAgentId: "wf",
+      phaseIndex: 0,
+      agentIndex: 0,
+      status: "completed",
+      usage: { totalTokens: 500 },
+    });
+    const builder = makeAgent({
+      id: "m2",
+      parentAgentId: "wf",
+      phaseIndex: 1,
+      agentIndex: 0,
+      status: "running",
+      usage: { totalTokens: 1500 },
+    });
+    const direct = makeAgent({ id: "d1", status: "idle", usage: { totalTokens: 100 } });
+    const model = deriveAgentsPanelModel([coordinator, builder, planner, direct]);
+    NodeAssert.equal(model.workflows.length, 1);
+    NodeAssert.equal(model.workflows[0].phases.length, 2);
+    NodeAssert.deepEqual(
+      model.workflows[0].phases.map((phase) => phase.title),
+      ["Plan", "Build"],
+    );
+    NodeAssert.equal(model.workflows[0].phases[0].state, "done");
+    NodeAssert.equal(model.workflows[0].phases[1].state, "running");
+    NodeAssert.equal(model.directAgents.length, 1);
+    // Coordinator's inflated aggregate usage must not double-count.
+    NodeAssert.equal(model.totalTokens, 2100);
+    NodeAssert.equal(model.runningCount, 1);
+    NodeAssert.equal(model.idleCount, 1);
+    NodeAssert.equal(model.settledCount, 1);
+    NodeAssert.equal(model.liveCount, 1);
+  });
+
+  NodeTest.it("counts an idle member as phase-live but roster-idle", () => {
+    const coordinator = makeAgent({
+      id: "wf",
+      kind: "workflow",
+      phases: [{ index: 0, title: "Work" }],
+    });
+    const member = makeAgent({
+      id: "m1",
+      parentAgentId: "wf",
+      phaseIndex: 0,
+      status: "idle",
+    });
+    const model = deriveAgentsPanelModel([coordinator, member]);
+    NodeAssert.equal(model.workflows[0].phases[0].state, "running");
+    NodeAssert.equal(model.idleCount, 1);
+    NodeAssert.equal(model.liveCount, 0);
+  });
+
+  NodeTest.it("keeps orphan members and member-less coordinators visible", () => {
+    const orphan = makeAgent({ id: "o1", parentAgentId: "gone", status: "completed" });
+    const lone = makeAgent({ id: "wf", kind: "workflow", status: "completed" });
+    const model = deriveAgentsPanelModel([orphan, lone]);
+    NodeAssert.equal(model.workflows.length, 1);
+    NodeAssert.deepEqual(model.directAgents.map((agent) => agent.id).sort(), ["o1"]);
+    NodeAssert.equal(model.settledCount, 2);
+  });
+
+  NodeTest.it("keeps stable first-seen order for the direct list", () => {
+    const late = makeAgent({ id: "b", firstSeenAt: "2026-01-01T00:00:02Z" });
+    const early = makeAgent({ id: "a", firstSeenAt: "2026-01-01T00:00:01Z" });
+    const model = deriveAgentsPanelModel([late, early]);
+    NodeAssert.deepEqual(
+      model.directAgents.map((agent) => agent.id),
+      ["a", "b"],
+    );
+  });
+
+  NodeTest.it("summarizes the footer like the native panel", () => {
+    const model = deriveAgentsPanelModel([
+      makeAgent({ id: "a", status: "running", usage: { totalTokens: 1500 } }),
+      makeAgent({ id: "b", status: "idle", usage: null }),
+      makeAgent({ id: "c", status: "completed", usage: null }),
+    ]);
+    NodeAssert.equal(agentsFooterSummary(model), "1 working · 1 idle · 1 settled · 1.5k tokens");
+  });
+});
+
+NodeTest.describe("applyAgentsEvent", () => {
+  NodeTest.it("adopts the snapshot projection", () => {
+    const snapshot = makeSnapshot({ agents: [makeAgent()] });
+    const feed = applyAgentsEvent(EMPTY_AGENTS_FEED, snapshot);
+    NodeAssert.equal(feed.state?.agents.length, 1);
+    NodeAssert.equal(feed.streamEpoch, "epoch-1");
+    NodeAssert.equal(feed.revision, 1);
+    NodeAssert.equal(feed.ended, null);
+  });
+
+  NodeTest.it("latest wins across epochs (adapter restart)", () => {
+    let feed = applyAgentsEvent(EMPTY_AGENTS_FEED, makeSnapshot({ revision: 3 }));
+    feed = applyAgentsEvent(feed, {
+      ...makeSnapshot({ agents: [makeAgent(), makeAgent({ id: "agent-2" })] }),
+      kind: "updated",
+      streamEpoch: "epoch-2",
+      revision: 1,
+    });
+    NodeAssert.equal(feed.streamEpoch, "epoch-2");
+    NodeAssert.equal(feed.state?.agents.length, 2);
+  });
+
+  NodeTest.it("retains the last receipt and marks server close", () => {
+    const receipt = { commandId: "c1", status: "accepted", sequence: 7, error: null };
+    let feed = applyAgentsEvent(EMPTY_AGENTS_FEED, makeSnapshot());
+    feed = applyAgentsEvent(feed, {
+      kind: "receipt",
+      streamEpoch: "epoch-1",
+      revision: 2,
+      receipt,
+    });
+    NodeAssert.equal(feed.lastReceipt, receipt);
+    NodeAssert.equal(feed.state?.agents.length, 0);
+    feed = applyAgentsEvent(feed, {
+      kind: "closed",
+      streamEpoch: "epoch-1",
+      reason: "overflow",
+    });
+    NodeAssert.deepEqual(feed.ended, { reason: "overflow" });
+  });
+});
+
+NodeTest.describe("operation gating and receipts", () => {
+  const caps = {
+    operations: {
+      "turn.start": true,
+      "turn.interrupt": false,
+      "thread.settle": true,
+    },
+    streamEpoch: "epoch-1",
+    revision: 4,
+  };
+
+  NodeTest.it("names unsupported operations instead of hiding the failure", () => {
+    NodeAssert.deepEqual(operationSupport(caps, "turn.start"), { kind: "ready" });
+    NodeAssert.deepEqual(operationSupport(caps, "turn.interrupt"), {
+      kind: "unsupported",
+      detail: "turn.interrupt is not supported by this provider",
+    });
+    NodeAssert.deepEqual(operationSupport(caps, "session.stop"), {
+      kind: "unsupported",
+      detail: "session.stop is not supported by this provider",
+    });
+    NodeAssert.deepEqual(operationSupport(null, "turn.start"), { kind: "unknown" });
+  });
+
+  NodeTest.it("describes receipts with their terminal status and sequence", () => {
+    NodeAssert.equal(
+      describeReceipt({ commandId: "c", status: "accepted", sequence: 3, error: null }),
+      "accepted · seq 3",
+    );
+    NodeAssert.equal(
+      describeReceipt({
+        commandId: "c",
+        status: "rejected",
+        sequence: 4,
+        error: "OrchestrationUnsupported: checkpoint.revert",
+      }),
+      "rejected — OrchestrationUnsupported: checkpoint.revert",
+    );
+  });
+});
+
+NodeTest.describe("pending approvals", () => {
+  NodeTest.it("falls back to the native default options", () => {
+    const approval = { requestId: "r1", requestKind: "command", createdAt: "t" };
+    NodeAssert.deepEqual(approvalOptions(approval), DEFAULT_APPROVAL_OPTIONS);
+    const custom = [{ decision: "accept", label: "Allow" }];
+    NodeAssert.deepEqual(approvalOptions({ ...approval, options: custom }), custom);
+  });
+});
+
+NodeTest.describe("pending user inputs", () => {
+  const question = {
+    id: "q1",
+    header: "Pick",
+    question: "Which?",
+    options: [
+      { label: "Alpha", description: "a", value: "alpha" },
+      { label: "Beta", description: "b" },
+    ],
+  };
+
+  NodeTest.it("uses option values over labels and requires every question", () => {
+    NodeAssert.equal(userInputOptionValue(question.options[0]), "alpha");
+    NodeAssert.equal(userInputOptionValue(question.options[1]), "Beta");
+    const drafts = { q1: toggleQuestionOption(question, undefined, "alpha") };
+    NodeAssert.deepEqual(buildUserInputAnswers([question], drafts), { q1: "alpha" });
+    NodeAssert.equal(buildUserInputAnswers([question], {}), null);
+    NodeAssert.equal(countAnsweredQuestions([question], drafts), 1);
+  });
+
+  NodeTest.it("multi-select answers stay arrays and toggle", () => {
+    const multi = { ...question, multiSelect: true };
+    let draft = toggleQuestionOption(multi, undefined, "alpha");
+    draft = toggleQuestionOption(multi, draft, "Beta");
+    NodeAssert.deepEqual(buildUserInputAnswers([multi], { q1: draft }), {
+      q1: ["alpha", "Beta"],
+    });
+    draft = toggleQuestionOption(multi, draft, "alpha");
+    NodeAssert.deepEqual(resolveQuestionAnswer(multi, draft), ["Beta"]);
+  });
+
+  NodeTest.it("custom answers win and clear the option pick", () => {
+    let draft = toggleQuestionOption(question, undefined, "alpha");
+    draft = setQuestionCustomAnswer(question, draft, "something else");
+    NodeAssert.deepEqual(buildUserInputAnswers([question], { q1: draft }), {
+      q1: "something else",
+    });
+    const locked = { ...question, allowCustomAnswer: false };
+    NodeAssert.equal(
+      resolveQuestionAnswer(locked, { customAnswer: "nope", selectedOptionValues: ["alpha"] }),
+      "alpha",
+    );
+  });
+});
+
+NodeTest.describe("checkpoints", () => {
+  NodeTest.it("labels a checkpoint with turn, file count, and delta", () => {
+    NodeAssert.equal(
+      checkpointLabel({
+        turnId: "t1",
+        checkpointTurnCount: 3,
+        checkpointRef: "refs/t3/checkpoints/x",
+        status: "ready",
+        files: [
+          { path: "a.ts", kind: "modified", additions: 4, deletions: 2 },
+          { path: "b.ts", kind: "added", additions: 10, deletions: 0 },
+        ],
+        assistantMessageId: null,
+        completedAt: "t",
+      }),
+      "turn 3 · 2 files · +14 −2",
+    );
+  });
+});
+
+NodeTest.describe("verified diff reassembly", () => {
+  const sha256 = async (text) => {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  };
+  const utf8 = (text) => new TextEncoder().encode(text).length;
+
+  const buildFrames = async (bodies, splitAt = 3) => {
+    const sources = [];
+    const chunks = [];
+    for (const [index, body] of bodies.entries()) {
+      const parts = [];
+      for (let start = 0; start < body.length; start += splitAt)
+        parts.push(body.slice(start, start + splitAt));
+      if (parts.length === 0) parts.push("");
+      sources.push({
+        id: `src-${index}`,
+        kind: "working-tree",
+        title: `Source ${index}`,
+        baseRef: null,
+        headRef: null,
+        truncated: false,
+        diffHash: await sha256(body),
+        diffByteLength: utf8(body),
+        chunkCount: parts.length,
+      });
+      parts.forEach((data, chunkIndex) =>
+        chunks.push({ kind: "chunk", sourceIndex: index, chunkIndex, data }),
+      );
+    }
+    return [
+      { kind: "manifest", generatedAt: "2026-01-01T00:00:00Z", sources },
+      ...chunks,
+      { kind: "complete", payloadSha256: await sha256(bodies.join("")) },
+    ];
+  };
+
+  const toStream = (events) =>
+    (async function* () {
+      for (const [index, event] of events.entries())
+        yield { type: index === 0 ? "snapshot" : "data", value: event };
+    })();
+
+  NodeTest.it("reassembles chunked sources and verifies end-to-end", async () => {
+    const bodies = ["diff --git a/x b/x\n+one\n", "diff --git a/y b/y\n-two\n+2\n"];
+    const outcome = await collectDiffStream(
+      toStream(await buildFrames(bodies)),
+      new AbortController().signal,
+    );
+    NodeAssert.equal(outcome.kind, "verified");
+    NodeAssert.deepEqual(
+      outcome.patch.sources.map((source) => source.diff),
+      bodies,
+    );
+    NodeAssert.equal(outcome.patch.sources[0].diffHash, await sha256(bodies[0]));
+  });
+
+  NodeTest.it("rejects an out-of-order chunk before any byte is produced", async () => {
+    const events = await buildFrames(["abcdef"], 2);
+    const bad = [events[0], events[2], events[1], events[3]];
+    let assembly = createDiffAssembly();
+    let failed = null;
+    for (const event of bad) {
+      const next = applyDiffStreamEvent(assembly, event);
+      if (!next.ok) {
+        failed = next.detail;
+        break;
+      }
+      assembly = next.assembly;
+    }
+    NodeAssert.match(failed, /out-of-order chunk/);
+  });
+
+  NodeTest.it("rejects a tampered body at the per-source hash", async () => {
+    const events = await buildFrames(["abc"], 3);
+    events[1] = { ...events[1], data: "abd" };
+    const outcome = await collectDiffStream(toStream(events), new AbortController().signal);
+    NodeAssert.equal(outcome.kind, "mismatch");
+    NodeAssert.match(outcome.detail, /manifest hash/);
+  });
+
+  NodeTest.it("rejects a stream that ends before the complete frame", async () => {
+    const events = (await buildFrames(["abc"], 3)).slice(0, -1);
+    const outcome = await collectDiffStream(toStream(events), new AbortController().signal);
+    NodeAssert.equal(outcome.kind, "incomplete");
+  });
+
+  NodeTest.it("rejects frames that arrive before the manifest", () => {
+    const result = applyDiffStreamEvent(createDiffAssembly(), {
+      kind: "complete",
+      payloadSha256: "0".repeat(64),
+    });
+    NodeAssert.equal(result.ok, false);
+    NodeAssert.match(result.detail, /before the manifest/);
   });
 });
