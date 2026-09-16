@@ -5356,7 +5356,11 @@ ${ref.number}`;
   var mergeThreadComments = (head, tail) => {
     const seen = new Set(head.map((comment) => comment.id));
     const merged = [...head];
-    for (const comment of tail) if (!seen.has(comment.id)) merged.push(comment);
+    for (const comment of tail)
+      if (!seen.has(comment.id)) {
+        seen.add(comment.id);
+        merged.push(comment);
+      }
     return merged;
   };
   var message = (error, fallback) => error instanceof Error ? error.message : fallback;
@@ -6136,7 +6140,7 @@ ${ref.number}`;
     const [involvement, setInvolvement] = (0, import_react.useState)("all");
     const [query, setQuery] = (0, import_react.useState)("");
     const [refreshError, setRefreshError] = (0, import_react.useState)(null);
-    const [pagingThreads, setPagingThreads] = (0, import_react.useState)(/* @__PURE__ */ new Set());
+    const [pagingThreads, setPagingThreads] = (0, import_react.useState)(/* @__PURE__ */ new Map());
     const [pagedThreads, setPagedThreads] = (0, import_react.useState)(null);
     const pagedGeneration = (0, import_react.useRef)({
       scope: null,
@@ -6212,16 +6216,19 @@ ${selectedKey}`;
       const generation = pagedGeneration.current.generation;
       const pendingKey = `${scope}
 ${thread.id}`;
-      if (pagingThreads.has(pendingKey)) return;
-      setPagingThreads((prev) => new Set(prev).add(pendingKey));
+      if (pagingThreads.get(pendingKey) === head) return;
+      setPagingThreads((prev) => new Map(prev).set(pendingKey, head));
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       void bindApi(prsReadApi, host, session.context).invoke("threadComments", { ...selected, threadId: thread.id, cursor }, signal).then(
         (page) => {
           if (signal.aborted || generation !== pagedGeneration.current.generation) return;
           setPagedThreads((prev) => {
-            if (prev !== null && prev.scope === scope && prev.activity !== head) return prev;
-            const map = new Map(prev?.scope === scope ? prev.map : void 0);
+            const current = pagedGeneration.current;
+            if (scope !== current.scope || head !== current.activity) return prev;
+            const map = new Map(
+              prev !== null && prev.scope === scope && prev.activity === head ? prev.map : void 0
+            );
             const prior = map.get(thread.id);
             map.set(thread.id, {
               comments: mergeThreadComments(prior?.comments ?? [], page.comments),
@@ -6235,8 +6242,11 @@ ${thread.id}`;
         (error) => {
           if (signal.aborted || generation !== pagedGeneration.current.generation) return;
           setPagedThreads((prev) => {
-            if (prev !== null && prev.scope === scope && prev.activity !== head) return prev;
-            const map = new Map(prev?.scope === scope ? prev.map : void 0);
+            const current = pagedGeneration.current;
+            if (scope !== current.scope || head !== current.activity) return prev;
+            const map = new Map(
+              prev !== null && prev.scope === scope && prev.activity === head ? prev.map : void 0
+            );
             const prior = map.get(thread.id);
             map.set(thread.id, {
               comments: prior?.comments ?? [],
@@ -6249,8 +6259,8 @@ ${thread.id}`;
         }
       ).finally(() => {
         setPagingThreads((prev) => {
-          if (!prev.has(pendingKey)) return prev;
-          const next = new Set(prev);
+          if (prev.get(pendingKey) !== head) return prev;
+          const next = new Map(prev);
           next.delete(pendingKey);
           return next;
         });
@@ -6542,8 +6552,8 @@ ${thread.id}`;
                         {
                           thread: merged,
                           canPage: ops?.["prs.threadComments"] === true,
-                          paging: pagedScope !== null && pagingThreads.has(`${pagedScope}
-${thread.id}`),
+                          paging: pagedScope !== null && pagingThreads.get(`${pagedScope}
+${thread.id}`) === activity,
                           unrecoverable: paged !== void 0 ? paged.truncated && paged.nextCursor === null : thread.nextCommentsCursor === void 0 && thread.commentCount !== void 0 && thread.commentCount > thread.comments.length,
                           pageError: paged?.error ?? null,
                           onLoadMore: loadThreadComments

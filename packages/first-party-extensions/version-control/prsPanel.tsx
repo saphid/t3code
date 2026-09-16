@@ -126,7 +126,11 @@ const mergeThreadComments = (
 ) => {
   const seen = new Set(head.map((comment) => comment.id));
   const merged = [...head];
-  for (const comment of tail) if (!seen.has(comment.id)) merged.push(comment);
+  for (const comment of tail)
+    if (!seen.has(comment.id)) {
+      seen.add(comment.id);
+      merged.push(comment);
+    }
   return merged;
 };
 
@@ -1105,10 +1109,11 @@ export function PullRequestsPanel(props: {
   const [involvement, setInvolvement] = useState<PrsInvolvement>("all");
   const [query, setQuery] = useState("");
   const [refreshError, setRefreshError] = useState<string | null>(null);
-  // One pending comment-page request per (scope, thread) — keyed entries
-  // so paging a second thread neither re-arms the first thread's button
-  // nor lets one settle clear another's loading marker.
-  const [pagingThreads, setPagingThreads] = useState<ReadonlySet<string>>(new Set());
+  // One pending comment-page request per (scope, thread), keyed to the
+  // activity head it serves — paging a second thread neither re-arms the
+  // first thread's button nor lets one settle clear another's marker,
+  // and a stale head's in-flight request never suppresses a fresh click.
+  const [pagingThreads, setPagingThreads] = useState<ReadonlyMap<string, PrsActivity>>(new Map());
   // Paged-in comment tails keep the new cursor + truncation flag so a
   // thread pages forward instead of refetching the same page. Tails are
   // bound to the exact `activity` payload they extend — a re-read (new
@@ -1222,8 +1227,10 @@ export function PullRequestsPanel(props: {
     const pendingKey = `${scope}\n${thread.id}`;
     // A second click while the same page is in flight would re-request the
     // identical cursor — the response would re-append the same comments.
-    if (pagingThreads.has(pendingKey)) return;
-    setPagingThreads((prev) => new Set(prev).add(pendingKey));
+    // A marker carrying an older head belongs to a dead generation and
+    // must not suppress the click.
+    if (pagingThreads.get(pendingKey) === head) return;
+    setPagingThreads((prev) => new Map(prev).set(pendingKey, head));
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
     void bindApi(prsReadApi, host, session.context)
@@ -1232,10 +1239,16 @@ export function PullRequestsPanel(props: {
         (page) => {
           if (signal.aborted || generation !== pagedGeneration.current.generation) return;
           setPagedThreads((prev) => {
-            // A response carrying an older head inside the current scope
-            // must not replace the newer map — drop it instead.
-            if (prev !== null && prev.scope === scope && prev.activity !== head) return prev;
-            const map = new Map(prev?.scope === scope ? prev.map : undefined);
+            // Re-validate inside the updater: the response must answer the
+            // live scope AND head. A stale-head response is dropped; a
+            // current response replaces a stored map whose head is obsolete.
+            const current = pagedGeneration.current;
+            if (scope !== current.scope || head !== current.activity) return prev;
+            const map = new Map(
+              prev !== null && prev.scope === scope && prev.activity === head
+                ? prev.map
+                : undefined,
+            );
             const prior = map.get(thread.id);
             map.set(thread.id, {
               comments: mergeThreadComments(prior?.comments ?? [], page.comments),
@@ -1251,8 +1264,13 @@ export function PullRequestsPanel(props: {
           // The fetched tail and the failed cursor survive — the failure
           // is named on the thread and the same button retries the page.
           setPagedThreads((prev) => {
-            if (prev !== null && prev.scope === scope && prev.activity !== head) return prev;
-            const map = new Map(prev?.scope === scope ? prev.map : undefined);
+            const current = pagedGeneration.current;
+            if (scope !== current.scope || head !== current.activity) return prev;
+            const map = new Map(
+              prev !== null && prev.scope === scope && prev.activity === head
+                ? prev.map
+                : undefined,
+            );
             const prior = map.get(thread.id);
             map.set(thread.id, {
               comments: prior?.comments ?? [],
@@ -1265,10 +1283,11 @@ export function PullRequestsPanel(props: {
         },
       )
       .finally(() => {
-        // Clear only this request's marker — other threads may still page.
+        // Clear only this request's marker — a newer request for the same
+        // thread under a different head must not lose its own entry.
         setPagingThreads((prev) => {
-          if (!prev.has(pendingKey)) return prev;
-          const next = new Set(prev);
+          if (prev.get(pendingKey) !== head) return prev;
+          const next = new Map(prev);
           next.delete(pendingKey);
           return next;
         });
@@ -1691,7 +1710,7 @@ export function PullRequestsPanel(props: {
                             canPage={ops?.["prs.threadComments"] === true}
                             paging={
                               pagedScope !== null &&
-                              pagingThreads.has(`${pagedScope}\n${thread.id}`)
+                              pagingThreads.get(`${pagedScope}\n${thread.id}`) === activity
                             }
                             unrecoverable={
                               paged !== undefined
