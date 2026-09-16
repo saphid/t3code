@@ -172,7 +172,20 @@ export function createOrchestrationApiProviders(deps: Dependencies): readonly Ho
       throw fail(`OrchestrationAuthorityDenied: ${scope}`);
     if (!context.resource.threadId) throw fail("OrchestrationThreadScopeRequired");
     await Effect.runPromise(resolve(context), { signal });
-    await metadata.assertAuthority?.();
+    try {
+      await metadata.assertAuthority?.();
+    } catch (error) {
+      if (isOperationError(error)) throw error;
+      // The broker's scope revalidation reduces a resolver failure to a
+      // boolean and rethrows a plain error. Re-resolve so a workspace
+      // revision race inside that callback still reports its honest name.
+      try {
+        await Effect.runPromise(resolve(context), { signal });
+      } catch (stale) {
+        if (isOperationError(stale)) throw stale;
+      }
+      throw error;
+    }
   };
   const capabilities = Effect.fn("OrchestrationApi.capabilities")(function* (
     state: OrchestrationThreadDetailSnapshot,

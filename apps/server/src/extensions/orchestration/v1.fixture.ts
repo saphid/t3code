@@ -13,6 +13,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { OrchestrationCommandInvariantError } from "../../orchestration/Errors.ts";
 import type { OrchestrationCommandReceipt } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
+import { makeExtensionScopeResolver } from "../scope.ts";
 import { createOrchestrationApiProviders } from "./v1.ts";
 
 export const context = {
@@ -138,6 +139,7 @@ export async function createFixture() {
     },
   };
   const providers = createOrchestrationApiProviders(deps);
+  const resolveScope = makeExtensionScopeResolver(deps);
   return {
     deps,
     providers,
@@ -167,6 +169,16 @@ export async function createFixture() {
     },
     onRead(value: () => void) {
       onRead = value;
+    },
+    // Mirrors the broker's validateScope wiring (EnvironmentExtensions): a
+    // resolver failure is reduced to a boolean, losing the tagged error.
+    async validateScope() {
+      return Effect.runPromise(
+        resolveScope(context).pipe(
+          Effect.as(true),
+          Effect.catch(() => Effect.succeed(false)),
+        ),
+      );
     },
     async publish(sequence: number) {
       state = { ...state, snapshotSequence: sequence };

@@ -442,6 +442,33 @@ it("names a stale workspace revision race instead of reporting authority denied"
   expect(f.calls).toHaveLength(0);
 });
 
+it("keeps the stale name when the workspace races inside broker scope revalidation", async () => {
+  const f = await fixture();
+  let checks = 0;
+  const error = await Promise.resolve(
+    f.control.invoke("thread.settle", {}, context, signal, {
+      ...meta(f.control),
+      // The production broker's scope check reduces a resolver failure to a
+      // boolean and rethrows a plain error — reproduce that shape exactly.
+      assertAuthority: async () => {
+        checks += 1;
+        if (checks !== 2) return;
+        f.setWorkspaceRoot("/moved");
+        if (!(await f.validateScope())) throw new Error("Resource scope changed");
+      },
+    }),
+  ).then(
+    () => {
+      throw new Error("expected rejection");
+    },
+    (cause: unknown) => cause,
+  );
+  const operationError = isOperationError(error) ? error : null;
+  expect(operationError?.detail).toContain("stale");
+  expect(operationError?.detail).not.toContain("AuthorityDenied");
+  expect(f.calls).toHaveLength(0);
+});
+
 it("truncates workflow scripts without splitting a surrogate pair", async () => {
   const f = await fixture();
   const workflow = decodeActivity({
