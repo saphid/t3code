@@ -448,13 +448,45 @@ it("keeps the stale name when the workspace races inside broker scope revalidati
   const error = await Promise.resolve(
     f.control.invoke("thread.settle", {}, context, signal, {
       ...meta(f.control),
-      // The production broker's scope check reduces a resolver failure to a
-      // boolean and rethrows a plain error — reproduce that shape exactly.
+      // The production broker's scope check runs the same resolver; a
+      // rejection carries the tagged error through assertAuthority.
       assertAuthority: async () => {
         checks += 1;
         if (checks !== 2) return;
         f.setWorkspaceRoot("/moved");
-        if (!(await f.validateScope())) throw new Error("Resource scope changed");
+        await f.validateScope();
+      },
+    }),
+  ).then(
+    () => {
+      throw new Error("expected rejection");
+    },
+    (cause: unknown) => cause,
+  );
+  const operationError = isOperationError(error) ? error : null;
+  expect(operationError?.detail).toContain("stale");
+  expect(operationError?.detail).not.toContain("AuthorityDenied");
+  expect(f.calls).toHaveLength(0);
+});
+
+it("keeps the stale name when the workspace change reverts before any later read", async () => {
+  const f = await fixture();
+  let checks = 0;
+  const error = await Promise.resolve(
+    f.control.invoke("thread.settle", {}, context, signal, {
+      ...meta(f.control),
+      // ABA schedule: the broker validation fails while the workspace is
+      // moved, then the state reverts. Stale detection is captured at
+      // failure time, so the later revert cannot leak an authority label.
+      assertAuthority: async () => {
+        checks += 1;
+        if (checks !== 2) return;
+        f.setWorkspaceRoot("/moved");
+        try {
+          await f.validateScope();
+        } finally {
+          f.setWorkspaceRoot("/workspace");
+        }
       },
     }),
   ).then(

@@ -170,15 +170,10 @@ export async function createFixture() {
     onRead(value: () => void) {
       onRead = value;
     },
-    // Mirrors the broker's validateScope wiring (EnvironmentExtensions): a
-    // resolver failure is reduced to a boolean, losing the tagged error.
+    // Mirrors the broker's validateScope wiring (EnvironmentExtensions):
+    // a resolver failure rejects with the tagged ExtensionOperationError.
     async validateScope() {
-      return Effect.runPromise(
-        resolveScope(context).pipe(
-          Effect.as(true),
-          Effect.catch(() => Effect.succeed(false)),
-        ),
-      );
+      return Effect.runPromise(resolveScope(context).pipe(Effect.as(true)));
     },
     async publish(sequence: number) {
       state = { ...state, snapshotSequence: sequence };
