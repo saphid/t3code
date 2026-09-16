@@ -35,29 +35,40 @@ var __t3Client = (() => {
   ));
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-  // host-react:react
   var require_react = __commonJS({
     "host-react:react"(exports, module) {
       module.exports = __t3Host.React;
     }
   });
 
-  // host-react:react/jsx-runtime
   var require_jsx_runtime = __commonJS({
     "host-react:react/jsx-runtime"(exports) {
       var R = __t3Host.React;
       exports.Fragment = R.Fragment;
-      exports.jsx = exports.jsxs = exports.jsxDEV = (type, props, key) => R.createElement(type, key === void 0 ? props : { ...props, key });
+      var mark = (n) => {
+        if (n && typeof n === "object" && n._store) n._store.validated = 1;
+      };
+      var el = (type, props, key, isStatic) => {
+        const c = props == null ? void 0 : props.children;
+        if (Array.isArray(c)) {
+          if (isStatic) {
+            for (const x of c) mark(x);
+            Object.freeze(c);
+          }
+        } else mark(c);
+        return R.createElement(type, key === void 0 ? props : { ...props, key });
+      };
+      exports.jsx = (t, p, k) => el(t, p, k, false);
+      exports.jsxs = (t, p, k) => el(t, p, k, true);
+      exports.jsxDEV = (t, p, k, s) => el(t, p, k, s === true);
     }
   });
 
-  // generated-client.ts
   var generated_client_exports = {};
   __export(generated_client_exports, {
     default: () => generated_client_default
   });
 
-  // ../../extension-sdk/dist/contracts.js
   var API_VERSION = 1;
   var MAX_PAYLOAD_BYTES = 64 * 1024;
   function assertId(value) {
@@ -129,6 +140,8 @@ var __t3Client = (() => {
       if (!Array.isArray(surface.capabilities))
         throw new Error("Invalid capabilities");
       surface.capabilities.forEach(assertId);
+      if (surface.claimsTerminalFocus !== void 0 && typeof surface.claimsTerminalFocus !== "boolean")
+        throw new Error("Invalid terminal focus claim");
     }
     for (const descriptors of [manifest.composerContexts ?? [], manifest.messageDecorations ?? []]) {
       if (!Array.isArray(descriptors) || descriptors.length > 16)
@@ -145,7 +158,6 @@ var __t3Client = (() => {
     return manifest;
   }
 
-  // ../../extension-sdk/dist/capabilities.js
   function defineApi(definition) {
     return { definition: validateApiDefinition(definition) };
   }
@@ -238,7 +250,6 @@ var __t3Client = (() => {
     return api;
   }
 
-  // ../../extension-sdk/dist/orchestration.js
   var ORCHESTRATION_STATUS = "t3.orchestration/status";
   var ORCHESTRATION_CONTROL = "t3.orchestration/control";
   var ORCHESTRATION_READ = "t3.orchestration/read";
@@ -464,7 +475,6 @@ var __t3Client = (() => {
   }
   var ORCHESTRATION_CONTROL_API = orchestrationControlApi.definition;
 
-  // ../../extension-sdk/dist/textEdits.js
   var WORKSPACE_READ_TEXT_EDITS = "t3.workspace/text-edits";
   var WORKSPACE_READ_TEXT_GRANT = "t3.workspace/read-text";
   var WORKSPACE_WRITE_TEXT = "t3.workspace/write-text";
@@ -657,7 +667,245 @@ var __t3Client = (() => {
     ]
   });
 
-  // ../../extension-sdk/dist/catalogue.js
+  var WORKSPACE_RESOURCES = "t3.workspace/resources";
+  var WORKSPACE_RESOURCE_CHUNK_UNITS = 8192;
+  var WORKSPACE_RESOURCE_MAX_CHUNKS = 2048;
+  var WORKSPACE_RESOURCE_MAX_BYTES = 8 * 1024 * 1024;
+  var WORKSPACE_RESOURCE_REASONS = [
+    "not-found",
+    "not-regular-file",
+    "binary",
+    "invalid-utf8",
+    "oversized",
+    "outside-workspace",
+    "unsafe-path",
+    "changed-during-read",
+    "aborted",
+    "io-error",
+    "unknown-upload",
+    "upload-limit",
+    "upload-incomplete",
+    "digest-mismatch"
+  ];
+  var resourcePath = { type: "string", minLength: 1, maxLength: 512 };
+  var resourceDigest = {
+    type: "string",
+    minLength: 64,
+    maxLength: 64,
+    pattern: "^[0-9a-f]{64}$"
+  };
+  var resourceReason = { enum: WORKSPACE_RESOURCE_REASONS };
+  var uploadId = { type: "string", minLength: 1, maxLength: 128 };
+  var resourceByteLength = {
+    type: "integer",
+    minimum: 0,
+    maximum: WORKSPACE_RESOURCE_MAX_BYTES
+  };
+  var resourceChunkCount = {
+    type: "integer",
+    minimum: 0,
+    maximum: WORKSPACE_RESOURCE_MAX_CHUNKS
+  };
+  var saveUnavailableOutput = {
+    type: "object",
+    additionalProperties: false,
+    required: ["kind", "reason"],
+    properties: {
+      kind: { const: "unavailable" },
+      relativePath: resourcePath,
+      reason: resourceReason
+    }
+  };
+  var workspaceResourcesApi = defineStreamApi({
+    id: WORKSPACE_RESOURCES,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "save.begin",
+        effect: "write",
+        requiredGrants: [WORKSPACE_WRITE_TEXT],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["relativePath", "expectedRevision", "byteLength", "chunkCount", "sha256"],
+          properties: {
+            relativePath: resourcePath,
+            expectedRevision: resourceDigest,
+            byteLength: resourceByteLength,
+            chunkCount: resourceChunkCount,
+            sha256: resourceDigest
+          }
+        },
+        outputSchema: {
+          type: "object",
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "uploadId"],
+              properties: { kind: { const: "session" }, uploadId }
+            },
+            saveUnavailableOutput
+          ]
+        }
+      },
+      {
+        name: "save.chunk",
+        effect: "write",
+        requiredGrants: [WORKSPACE_WRITE_TEXT],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["uploadId", "chunkIndex", "data"],
+          properties: {
+            uploadId,
+            chunkIndex: {
+              type: "integer",
+              minimum: 0,
+              maximum: WORKSPACE_RESOURCE_MAX_CHUNKS - 1
+            },
+            data: { type: "string", maxLength: WORKSPACE_RESOURCE_CHUNK_UNITS }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "received"],
+              properties: {
+                kind: { const: "accepted" },
+                received: resourceChunkCount
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "reason"],
+              properties: { kind: { const: "unavailable" }, reason: resourceReason }
+            }
+          ]
+        }
+      },
+      {
+        name: "save.commit",
+        effect: "write",
+        requiredGrants: [WORKSPACE_WRITE_TEXT],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["uploadId"],
+          properties: { uploadId }
+        },
+        outputSchema: {
+          type: "object",
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "relativePath", "revision"],
+              properties: {
+                kind: { const: "saved" },
+                relativePath: resourcePath,
+                revision: resourceDigest
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "relativePath"],
+              properties: { kind: { const: "conflict" }, relativePath: resourcePath }
+            },
+            saveUnavailableOutput
+          ]
+        }
+      },
+      {
+        name: "save.abort",
+        effect: "write",
+        requiredGrants: [WORKSPACE_WRITE_TEXT],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["uploadId"],
+          properties: { uploadId }
+        },
+        outputSchema: { type: "object", additionalProperties: false, properties: {} }
+      }
+    ],
+    streams: [
+      {
+        name: "read",
+        requiredGrants: [WORKSPACE_RESOURCES],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["relativePath"],
+          properties: {
+            relativePath: resourcePath,
+            maxBytes: { type: "integer", minimum: 1, maximum: WORKSPACE_RESOURCE_MAX_BYTES }
+          }
+        },
+        eventSchema: {
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: [
+                "kind",
+                "relativePath",
+                "byteLength",
+                "deliveredByteLength",
+                "chunkCount",
+                "truncated"
+              ],
+              properties: {
+                kind: { const: "manifest" },
+                relativePath: resourcePath,
+                byteLength: { type: "integer", minimum: 0 },
+                deliveredByteLength: resourceByteLength,
+                chunkCount: resourceChunkCount,
+                truncated: { type: "boolean" }
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "chunkIndex", "data"],
+              properties: {
+                kind: { const: "chunk" },
+                chunkIndex: {
+                  type: "integer",
+                  minimum: 0,
+                  maximum: WORKSPACE_RESOURCE_MAX_CHUNKS - 1
+                },
+                data: { type: "string", maxLength: WORKSPACE_RESOURCE_CHUNK_UNITS }
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "sha256"],
+              properties: { kind: { const: "complete" }, sha256: resourceDigest }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "relativePath", "reason"],
+              properties: {
+                kind: { const: "unavailable" },
+                relativePath: resourcePath,
+                reason: resourceReason
+              }
+            }
+          ]
+        }
+      }
+    ]
+  });
+  var WORKSPACE_RESOURCES_API = workspaceResourcesApi.definition;
+
   var BROWSER_LOCAL_SERVERS = "t3.browser/local-servers";
   var BROWSER_READ_LOCAL_SERVERS = "t3.browser/read-local-servers";
   var browserLocalServersApi = defineStreamApi({
@@ -701,6 +949,55 @@ var __t3Client = (() => {
               properties: { kind: { const: "closed" }, reason: { const: "source-unavailable" } }
             }
           ]
+        }
+      }
+    ]
+  });
+  var PROVIDERS_STATUS = "t3.providers/status";
+  var PROVIDERS_READ = "t3.providers/read";
+  var PROVIDER_STATUS_DISPLAY_NAME_MAX_LENGTH = 200;
+  var PROVIDER_STATUS_ENTRY_SCHEMA = {
+    type: "object",
+    additionalProperties: false,
+    required: ["instanceId", "driver", "enabled", "installed", "status", "availability", "checkedAt"],
+    properties: {
+      instanceId: { type: "string", minLength: 1, maxLength: 160 },
+      driver: { type: "string", minLength: 1, maxLength: 64 },
+      displayName: {
+        type: "string",
+        minLength: 1,
+        maxLength: PROVIDER_STATUS_DISPLAY_NAME_MAX_LENGTH
+      },
+      enabled: { type: "boolean" },
+      installed: { type: "boolean" },
+      status: { enum: ["ready", "warning", "error", "disabled"] },
+      availability: { enum: ["available", "unavailable"] },
+      checkedAt: { type: "string", minLength: 1, maxLength: 40 },
+      supportsConversationRollback: { type: "boolean" },
+      supportsTextGeneration: { type: "boolean" },
+      requiresNewThreadForModelChange: { type: "boolean" },
+      showInteractionModeToggle: { type: "boolean" },
+      reportsContextWindow: { type: "boolean" }
+    }
+  };
+  var providersStatusApi = defineStreamApi({
+    id: PROVIDERS_STATUS,
+    version: "1.0.0",
+    methods: [],
+    streams: [
+      {
+        name: "subscribe",
+        requiredGrants: [PROVIDERS_READ],
+        inputSchema: { type: "object", additionalProperties: false, properties: {} },
+        eventSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["kind", "scope", "providers"],
+          properties: {
+            kind: { const: "snapshot" },
+            scope: { const: "environment" },
+            providers: { type: "array", maxItems: 64, items: PROVIDER_STATUS_ENTRY_SCHEMA }
+          }
         }
       }
     ]
@@ -2272,7 +2569,6 @@ var __t3Client = (() => {
   var VCS_REPOSITORY_API = vcsRepositoryApi.definition;
   var VCS_REPOSITORY_API_V1 = vcsRepositoryApiV1.definition;
   var RESOURCES_LEASE = "t3.resources/lease";
-  var WORKSPACE_RESOURCES = "t3.workspace/resources";
   var BROWSER_SESSIONS = "t3.browser/sessions";
   var BROWSER_SURFACE_COMMANDS = ["attach", "present", "release"];
   var RESOURCE_LEASE_KIND_GRANTS = {
@@ -3407,6 +3703,401 @@ var __t3Client = (() => {
     ]
   });
   var PRS_READ_API = prsReadApi.definition;
+  var BROWSER_OPERATE = "t3.browser/operate";
+  var BROWSER_SESSION_COMMANDS = [
+    "back",
+    "forward",
+    "reload",
+    "hardReload",
+    "resize",
+    "zoom",
+    "setAppearance",
+    "setAudioMuted"
+  ];
+  var BROWSER_SESSION_URL_MAX_LENGTH = 2048;
+  var BROWSER_SESSION_TITLE_MAX_LENGTH = 512;
+  var BROWSER_SESSION_LIMIT = 64;
+  var browserSessionTabId = {
+    type: "string",
+    minLength: 1,
+    maxLength: 128
+  };
+  var browserSessionEpoch = {
+    type: "string",
+    minLength: 1,
+    maxLength: 128
+  };
+  var browserSessionRevision = { type: "integer", minimum: 0 };
+  var browserSessionUrl = {
+    type: "string",
+    minLength: 1,
+    maxLength: BROWSER_SESSION_URL_MAX_LENGTH
+  };
+  var browserSessionViewport = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["_tag"],
+        properties: { _tag: { const: "fill" } }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["_tag", "width", "height"],
+        properties: {
+          _tag: { const: "freeform" },
+          width: { type: "integer", minimum: 240, maximum: 3840 },
+          height: { type: "integer", minimum: 240, maximum: 3840 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["_tag", "width", "height", "presetId"],
+        properties: {
+          _tag: { const: "preset" },
+          width: { type: "integer", minimum: 240, maximum: 3840 },
+          height: { type: "integer", minimum: 240, maximum: 3840 },
+          presetId: { type: "string", minLength: 1, maxLength: 64 }
+        }
+      }
+    ]
+  };
+  var browserSessionObject = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "tabId",
+      "requestedUrl",
+      "navigation",
+      "canGoBack",
+      "canGoForward",
+      "viewport",
+      "engine",
+      "zoomFactor",
+      "appearance",
+      "audioMuted",
+      "audible"
+    ],
+    properties: {
+      tabId: browserSessionTabId,
+      requestedUrl: {
+        type: ["string", "null"],
+        minLength: 1,
+        maxLength: BROWSER_SESSION_URL_MAX_LENGTH
+      },
+      navigation: {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "url", "title"],
+        properties: {
+          kind: { enum: ["idle", "pending", "loading", "loaded", "failed"] },
+          url: {
+            type: ["string", "null"],
+            minLength: 1,
+            maxLength: BROWSER_SESSION_URL_MAX_LENGTH
+          },
+          title: { type: "string", maxLength: BROWSER_SESSION_TITLE_MAX_LENGTH },
+          failureCode: {
+            enum: [
+              "aborted",
+              "dns",
+              "offline",
+              "timeout",
+              "refused",
+              "reset",
+              "certificate",
+              "blocked",
+              "redirect",
+              "invalid-url",
+              "crash",
+              "unknown"
+            ]
+          }
+        }
+      },
+      canGoBack: { type: "boolean" },
+      canGoForward: { type: "boolean" },
+      viewport: browserSessionViewport,
+      profileId: { type: "string", minLength: 1, maxLength: 64 },
+      engine: {
+        type: "object",
+        additionalProperties: false,
+        required: ["state", "generation"],
+        properties: {
+          state: { enum: ["unavailable", "starting", "ready", "recovering", "crashed"] },
+          generation: { type: ["string", "null"], minLength: 1, maxLength: 128 },
+          reason: { type: "string", minLength: 1, maxLength: 256 }
+        }
+      },
+      zoomFactor: { type: ["number", "null"] },
+      appearance: { enum: ["system", "light", "dark", null] },
+      audioMuted: { type: ["boolean", "null"] },
+      audible: { type: ["boolean", "null"] }
+    }
+  };
+  var browserSessionReceipt = {
+    type: "object",
+    additionalProperties: false,
+    required: ["commandId", "outcome", "serverEpoch", "revision", "session"],
+    properties: {
+      commandId: { type: "string", minLength: 1, maxLength: 64 },
+      outcome: { enum: ["accepted", "rejected", "unknown"] },
+      serverEpoch: browserSessionEpoch,
+      revision: browserSessionRevision,
+      session: browserSessionObject
+    }
+  };
+  var browserSessionCommandGuard = {
+    tabId: browserSessionTabId,
+    serverEpoch: browserSessionEpoch,
+    expectedEngineGeneration: { type: ["string", "null"], minLength: 1, maxLength: 128 }
+  };
+  var browserSessionGuardRequired = ["tabId", "serverEpoch", "expectedEngineGeneration"];
+  var browserSessionCommandMethod = (name, extraProperties = {}, extraRequired = []) => ({
+    name,
+    effect: "write",
+    requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: [...browserSessionGuardRequired, ...extraRequired],
+      properties: { ...browserSessionCommandGuard, ...extraProperties }
+    },
+    outputSchema: browserSessionReceipt
+  });
+  var BROWSER_SESSION_ZOOM_LEVELS = [
+    0.25,
+    0.33,
+    0.5,
+    0.67,
+    0.75,
+    0.8,
+    0.9,
+    1,
+    1.1,
+    1.25,
+    1.5,
+    1.75,
+    2,
+    2.5,
+    3,
+    4,
+    5
+  ];
+  var browserSessionEmptyInput = {
+    type: "object",
+    additionalProperties: false,
+    properties: {}
+  };
+  var browserSessionsApi = defineStreamApi({
+    id: BROWSER_SESSIONS,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [BROWSER_SESSIONS],
+        inputSchema: browserSessionEmptyInput,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["metadata", "presentation", "commands"],
+          properties: {
+            metadata: {
+              type: "object",
+              additionalProperties: false,
+              required: ["supported"],
+              properties: { supported: { const: true } }
+            },
+            presentation: {
+              type: "object",
+              additionalProperties: false,
+              required: ["supported"],
+              properties: {
+                supported: { type: "boolean" },
+                reason: { enum: ["desktop-required"] }
+              }
+            },
+            commands: {
+              type: "array",
+              maxItems: BROWSER_SESSION_COMMANDS.length,
+              uniqueItems: true,
+              items: { enum: [...BROWSER_SESSION_COMMANDS] }
+            }
+          }
+        }
+      },
+      {
+        name: "list",
+        effect: "read",
+        requiredGrants: [BROWSER_SESSIONS],
+        inputSchema: browserSessionEmptyInput,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["serverEpoch", "revision", "sessions"],
+          properties: {
+            serverEpoch: browserSessionEpoch,
+            revision: browserSessionRevision,
+            sessions: {
+              type: "array",
+              maxItems: BROWSER_SESSION_LIMIT,
+              items: browserSessionObject
+            }
+          }
+        }
+      },
+      {
+        name: "open",
+        effect: "write",
+        requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            url: browserSessionUrl,
+            viewport: browserSessionViewport,
+            profileId: { type: "string", minLength: 1, maxLength: 64 }
+          }
+        },
+        outputSchema: browserSessionReceipt
+      },
+      {
+        name: "navigate",
+        effect: "write",
+        requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["tabId", "serverEpoch", "url", "expectedEngineGeneration"],
+          properties: { ...browserSessionCommandGuard, url: browserSessionUrl }
+        },
+        outputSchema: browserSessionReceipt
+      },
+      {
+        name: "close",
+        effect: "write",
+        requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["tabId", "serverEpoch"],
+          properties: { tabId: browserSessionTabId, serverEpoch: browserSessionEpoch }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["outcome", "serverEpoch", "revision"],
+          properties: {
+            outcome: { enum: ["closed", "already-closed"] },
+            serverEpoch: browserSessionEpoch,
+            revision: browserSessionRevision
+          }
+        }
+      },
+      browserSessionCommandMethod("back"),
+      browserSessionCommandMethod("forward"),
+      browserSessionCommandMethod("reload"),
+      browserSessionCommandMethod("hardReload"),
+      browserSessionCommandMethod("resize", { viewport: browserSessionViewport }, ["viewport"]),
+      browserSessionCommandMethod("zoom", { zoomFactor: { enum: [...BROWSER_SESSION_ZOOM_LEVELS] } }, ["zoomFactor"]),
+      browserSessionCommandMethod("setAppearance", { appearance: { enum: ["system", "light", "dark"] } }, ["appearance"]),
+      browserSessionCommandMethod("setAudioMuted", { muted: { type: "boolean" } }, ["muted"])
+    ],
+    streams: [
+      {
+        name: "events",
+        requiredGrants: [BROWSER_SESSIONS],
+        inputSchema: browserSessionEmptyInput,
+        eventSchema: {
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "snapshotId", "serverEpoch", "revision", "sessionCount"],
+              properties: {
+                kind: { const: "snapshot-start" },
+                snapshotId: { type: "string", minLength: 1, maxLength: 64 },
+                serverEpoch: browserSessionEpoch,
+                revision: browserSessionRevision,
+                sessionCount: { type: "integer", minimum: 0, maximum: BROWSER_SESSION_LIMIT }
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "snapshotId", "chunkIndex", "sessions"],
+              properties: {
+                kind: { const: "snapshot-chunk" },
+                snapshotId: { type: "string", minLength: 1, maxLength: 64 },
+                chunkIndex: { type: "integer", minimum: 0 },
+                sessions: {
+                  type: "array",
+                  maxItems: BROWSER_SESSION_LIMIT,
+                  items: browserSessionObject
+                }
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "snapshotId", "serverEpoch", "revision", "sessionCount"],
+              properties: {
+                kind: { const: "snapshot-complete" },
+                snapshotId: { type: "string", minLength: 1, maxLength: 64 },
+                serverEpoch: browserSessionEpoch,
+                revision: browserSessionRevision,
+                sessionCount: { type: "integer", minimum: 0, maximum: BROWSER_SESSION_LIMIT }
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "revision", "session"],
+              properties: {
+                kind: { const: "session-upsert" },
+                revision: browserSessionRevision,
+                session: browserSessionObject
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "revision", "tabId", "reason"],
+              properties: {
+                kind: { const: "session-removed" },
+                revision: browserSessionRevision,
+                tabId: browserSessionTabId,
+                reason: { enum: ["user-closed", "thread-deleted"] }
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "reason"],
+              properties: {
+                kind: { const: "closed" },
+                reason: {
+                  enum: [
+                    "epoch-changed",
+                    "host-disconnected",
+                    "scope-invalidated",
+                    "grant-revoked",
+                    "installation-changed",
+                    "overflow",
+                    "source-unavailable"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    ]
+  });
+  var BROWSER_SESSIONS_API = browserSessionsApi.definition;
   var COMPOSER_CONTEXT = "t3.composer/context";
   var COMPOSER_WRITE = "t3.composer/write";
   var MESSAGES_ENRICHMENT = "t3.messages/enrichment";
@@ -3598,6 +4289,7 @@ var __t3Client = (() => {
     orchestrationStatusApi.definition,
     orchestrationControlApi.definition,
     browserLocalServersApi.definition,
+    browserSessionsApi.definition,
     workspaceFilesApi.definition,
     workspaceTreeApi.definition,
     workspaceSearchApi.definition,
@@ -3619,6 +4311,7 @@ var __t3Client = (() => {
     vcsDiffApiV1.definition,
     resourcesLeaseApi.definition,
     resourcesLeaseApiV1.definition,
+    workspaceResourcesApi.definition,
     prsReadApi.definition,
     composerContextApi.definition,
     messagesEnrichmentApi.definition
@@ -3647,7 +4340,6 @@ var __t3Client = (() => {
   var TERMINAL_OUTPUT_EVENTS_API = terminalOutputEventsApi.definition;
   var TERMINAL_CONTROL_API = terminalControlApi.definition;
 
-  // ../../extension-sdk/dist/environment.js
   var ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
   var ENVIRONMENT_ASSET_MEDIA_TYPES = [
     "application/wasm",
@@ -3785,7 +4477,6 @@ var __t3Client = (() => {
     return { ...pkg, manifest };
   }
 
-  // ../../extension-sdk/dist/authoring.js
   var statePreview = (state2) => {
     const encoded = JSON.stringify(state2);
     return encoded.length > 200 ? encoded.slice(0, 200) + "\u2026" : encoded;
@@ -3837,13 +4528,14 @@ var __t3Client = (() => {
       id: source.id,
       version: source.version,
       apiVersion: 1,
-      surfaces: surfaces.map(({ name, title, scope, placements, clients, capabilities, stateVersion }) => ({
+      surfaces: surfaces.map(({ name, title, scope, placements, clients, capabilities, claimsTerminalFocus, stateVersion }) => ({
         id: source.id + "/" + name,
         title,
         scope,
         placements: placements ?? ["side-panel"],
         clients: clients ?? ["web", "desktop"],
         capabilities: capabilities ?? [],
+        ...claimsTerminalFocus === true ? { claimsTerminalFocus: true } : {},
         stateVersion: stateVersion ?? 1
       }))
     };
@@ -3882,10 +4574,8 @@ var __t3Client = (() => {
     return { id: api.definition.id, versionRange };
   }
 
-  // extension.tsx
   var import_react2 = __toESM(require_react(), 1);
 
-  // viewModel.ts
   var CHANGE_LANES = ["conflicted", "staged", "changes", "untracked"];
   function lanesFromChanges(entries) {
     const groups = { conflicted: [], staged: [], changes: [], untracked: [] };
@@ -4183,10 +4873,8 @@ var __t3Client = (() => {
     return { kind: "ready", capabilities };
   }
 
-  // prsPanel.tsx
   var import_react = __toESM(require_react(), 1);
 
-  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/constants.js
   var DIFFS_DEVELOPMENT_BUILD = (() => {
     try {
       return true;
@@ -4215,7 +4903,6 @@ var __t3Client = (() => {
     fromEnd: 0
   });
 
-  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/cleanLastNewline.js
   function cleanLastNewline(contents2) {
     let end = contents2.length;
     if (contents2.charCodeAt(end - 1) === 10) {
@@ -4225,7 +4912,6 @@ var __t3Client = (() => {
     return contents2.slice(0, end);
   }
 
-  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/detachString.js
   var stringDetachEncoder = new TextEncoder();
   var stringDetachDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
   var SURROGATE_CODE_UNIT_PATTERN = /[\uD800-\uDFFF]/;
@@ -4243,7 +4929,6 @@ var __t3Client = (() => {
     return stringDetachDecoder.decode(stringDetachBuffer.subarray(0, written));
   }
 
-  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/realignChangeContent.js
   var MAX_ALIGNMENT_COMPARISONS = 4096;
   var MIN_IMPROVEMENT_PER_PAIR = 0.5;
   function realignChangeContentBySimilarity(diff) {
@@ -4362,7 +5047,6 @@ var __t3Client = (() => {
     return (prefix + suffix) / maxLength;
   }
 
-  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/parsePatchFiles.js
   function processPatch(data, cacheKeyPrefix, throwOnError) {
     try {
       return _processPatch(data, cacheKeyPrefix, throwOnError);
@@ -4843,7 +5527,6 @@ ${prefix}`;
     };
   }
 
-  // prsViewModel.ts
   function prsGate(capabilities, error) {
     if (error !== null) return { kind: "error", detail: error };
     if (capabilities === null) return { kind: "loading" };
@@ -5313,7 +5996,6 @@ ${ref.number}`;
   }
   var PRS_MUTATIONS_DEFERRED = "Pull-request mutations are not part of this contract \u2014 merge and update actions, comments, reviews, thread resolution, reactions, reviewers, and labels are deferred to a later control contract.";
 
-  // prsPanel.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
   var muted = "var(--muted-foreground, #667085)";
   var control = {
@@ -6620,7 +7302,6 @@ ${thread.id}`) === activity,
     );
   }
 
-  // extension.tsx
   var import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
   var manifestId = "t3.version-control";
   var REPOSITORY_API_RANGE = "^1.0.0";
@@ -7807,10 +8488,8 @@ ${thread.id}`) === activity,
     ]
   });
 
-  // extension.ts
   var extension_default2 = extension_default;
 
-  // generated-client.ts
   var generated_client_default = extension_default2.client;
   return __toCommonJS(generated_client_exports);
 })();

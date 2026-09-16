@@ -9,8 +9,13 @@
         "id": "example.editable-files/view",
         "title": "Editable files",
         "scope": "project",
-        "placements": ["side-panel"],
-        "clients": ["web", "desktop"],
+        "placements": [
+          "side-panel"
+        ],
+        "clients": [
+          "web",
+          "desktop"
+        ],
         "capabilities": [],
         "stateVersion": 1
       }
