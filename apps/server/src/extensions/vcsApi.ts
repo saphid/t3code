@@ -137,7 +137,7 @@ const removeWorktreeInput = Schema.decodeUnknownSync(
   { onExcessProperty: "error" },
 );
 /** Mirrors the contract-side remote-name bound: no `-` prefix or whitespace/controls. */
-const VCS_REMOTE_NAME_PATTERN = /^[^-\s][^\s\p{Cc}]{0,255}$/u;
+const VCS_REMOTE_NAME_PATTERN = /^[^-\s\p{Cc}][^\s\p{Cc}]{0,255}$/u;
 const remoteNameSchema = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(MAX_REF_NAME),
@@ -327,6 +327,24 @@ const toPublicListRefs = (result: {
 
 const unsupported = (operation: string, kind: VcsDriverKind, detail: string) =>
   new VcsUnsupportedOperationError({ operation, kind, detail });
+
+/**
+ * Remote URLs can carry `user:password@` userinfo; the wire shape never
+ * transports credentials, so a URL with a password loses its userinfo
+ * verbatim. Scp-style and path remotes are not URLs, and username-only
+ * userinfo (ssh `git@host`) carries no secret — both pass through untouched.
+ */
+const redactRemoteUrl = (value: string): string => {
+  try {
+    const url = new URL(value);
+    if (url.password === "") return value;
+    url.username = "";
+    url.password = "";
+    return url.toString();
+  } catch {
+    return value;
+  }
+};
 
 const operationsSupport = (
   handle: {
@@ -954,19 +972,19 @@ export function createVcsApiProviders(dependencies: VcsApiDependencies): HostApi
           }
           const result = yield* handle.driver.listRemotes(scope.cwd);
           const remotes = result.remotes
+            .map((remote) => ({
+              name: remote.name,
+              url: redactRemoteUrl(remote.url),
+              pushUrl: Option.isNone(remote.pushUrl) ? null : redactRemoteUrl(remote.pushUrl.value),
+              isPrimary: remote.isPrimary,
+            }))
             .filter(
               (remote) =>
                 remote.name.length <= MAX_REF_NAME &&
                 remote.url.length <= 2048 &&
-                (Option.isNone(remote.pushUrl) || remote.pushUrl.value.length <= 2048),
+                (remote.pushUrl === null || remote.pushUrl.length <= 2048),
             )
-            .slice(0, 64)
-            .map((remote) => ({
-              name: remote.name,
-              url: remote.url,
-              pushUrl: Option.getOrNull(remote.pushUrl),
-              isPrimary: remote.isPrimary,
-            }));
+            .slice(0, 64);
           return { isRepo: true, remotes } satisfies VcsListRemotesResult;
         }),
       }),
