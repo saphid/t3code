@@ -46,12 +46,11 @@ export function DynamicList${suffix}() {
 }
 `;
 
-const extension = (
-  suffix,
-) => `import { StaticList${suffix}, DynamicList${suffix} } from "./component.js";
+const extension = (suffix) => `import dep from "fixture-dep";
+import { StaticList${suffix}, DynamicList${suffix} } from "./component.js";
 const surface = (name: string) => ({
   id: "test.bundler/" + name,
-  title: name,
+  title: name + "-" + dep.value,
   placements: ["side-panel"],
   clients: ["web"],
   scope: "environment",
@@ -94,13 +93,43 @@ export default {
 };
 `;
 
-const SERVER = "export default { tools: [] };\n";
+// The template literal embeds a line shaped exactly like a bundled-module
+// banner comment — it is string data and must survive the build verbatim.
+const TEXT = "before\n// pkg:server.ts\nafter";
+const SERVER = `import dep from "fixture-dep";
+const text = \`before
+// pkg:server.ts
+after\`;
+export default { tools: [], depValue: dep.value, text };
+`;
+
+// A real CommonJS dependency that lives OUTSIDE the package directory and
+// is reached through a node_modules symlink — before canonical module ids
+// its resolved path leaked into the emitted __commonJS wrapper key.
+async function writeSharedDep(dir) {
+  await NodeFSP.mkdir(dir, { recursive: true });
+  await NodeFSP.writeFile(
+    NodePath.join(dir, "package.json"),
+    JSON.stringify({
+      name: "fixture-dep",
+      version: "1.0.0",
+      type: "commonjs",
+      main: "index.cjs",
+      types: "index.d.ts",
+    }),
+  );
+  await NodeFSP.writeFile(NodePath.join(dir, "index.cjs"), "module.exports = { value: 42 };\n");
+  await NodeFSP.writeFile(
+    NodePath.join(dir, "index.d.ts"),
+    "declare const dep: { value: number };\nexport default dep;\n",
+  );
+}
 
 // Fixtures live outside the package root: `test/` is in the package's
 // `files` list, so temp dirs under it would ship in `npm pack` and race the
 // pack scan. A local node_modules symlink gives tsc the real React types —
 // exactly what a consuming project gets from its install.
-async function writeFixture(dir, jsx = "react-jsx") {
+async function writeFixture(dir, jsx = "react-jsx", depDir) {
   const suffix = jsx === "react-jsxdev" ? "Dev" : "Prod";
   const list = jsx === "react-jsxdev" ? "ol" : "ul";
   await NodeFSP.mkdir(NodePath.join(dir, "node_modules", "@types"), { recursive: true });
@@ -112,6 +141,7 @@ async function writeFixture(dir, jsx = "react-jsx") {
     NodePath.join(sdk, "node_modules/@types/react"),
     NodePath.join(dir, "node_modules", "@types", "react"),
   );
+  await NodeFSP.symlink(depDir, NodePath.join(dir, "node_modules", "fixture-dep"));
   await NodeFSP.writeFile(NodePath.join(dir, "tsconfig.json"), tsconfig(jsx));
   await NodeFSP.writeFile(NodePath.join(dir, "extension.ts"), extension(suffix));
   await NodeFSP.writeFile(NodePath.join(dir, "component.tsx"), component(suffix, list));
@@ -131,36 +161,61 @@ function build(dir, cwd) {
 const readBundle = (dir, entry) => NodeFSP.readFile(NodePath.join(dir, ".t3-extension", entry));
 
 NodeTest.test("bundler output is deterministic across build cwd and checkout path", async (t) => {
-  // Two fixture copies at different depths, each built from a different cwd.
+  // Two fixture copies at different depths, each built from a different cwd,
+  // each consuming the same out-of-package CommonJS dep through a symlink.
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-bundler-"));
   t.after(() => NodeFSP.rm(root, { recursive: true, force: true }));
+  const depDir = NodePath.join(root, "shared-dep");
+  await writeSharedDep(depDir);
   for (const jsx of ["react-jsx", "react-jsxdev"]) {
     const first = NodePath.join(root, "a", jsx, "proj");
     const second = NodePath.join(root, "b", "nested", "deep", jsx, "proj");
-    await writeFixture(first, jsx);
-    await writeFixture(second, jsx);
+    await writeFixture(first, jsx, depDir);
+    await writeFixture(second, jsx, depDir);
     build(first, root);
-    const firstBytes = await readBundle(first, "client.mjs");
+    const firstBytes = {
+      client: await readBundle(first, "client.mjs"),
+      server: await readBundle(first, "server.mjs"),
+    };
     build(first, sdk);
     NodeAssert.deepEqual(
       await readBundle(first, "client.mjs"),
-      firstBytes,
+      firstBytes.client,
       `rebuild from another cwd changed bytes (${jsx})`,
     );
     build(second, first);
-    NodeAssert.deepEqual(
-      await readBundle(second, "client.mjs"),
-      firstBytes,
-      `checkout path leaked into the bundle (${jsx})`,
-    );
-    for (const entry of ["client.mjs", "server.mjs"]) {
-      const text = (await readBundle(second, entry)).toString("utf8");
-      NodeAssert.ok(
-        // Module banners are single-token `// <path>` lines; esbuild's own
-        // helper comments are sentences and stay.
-        !/^[ \t]*\/\/ \S+$/m.test(text),
-        `${entry} still embeds a module path comment (${jsx})`,
+    for (const entry of ["client", "server"]) {
+      NodeAssert.deepEqual(
+        await readBundle(second, `${entry}.mjs`),
+        firstBytes[entry],
+        `checkout path leaked into ${entry}.mjs (${jsx})`,
       );
+    }
+    const server = firstBytes.server.toString("utf8");
+    // The CommonJS wrapper key is the canonical npm: id, never the
+    // depth-dependent relative path the module resolved from.
+    NodeAssert.ok(server.includes('"npm:fixture-dep/index.cjs"'), `no canonical dep key: ${jsx}`);
+    // The built server module imports with the template content intact.
+    const built = (
+      await import(
+        NodeURL.pathToFileURL(NodePath.join(second, ".t3-extension/server.mjs")).href +
+          "?t=" +
+          Date.now()
+      )
+    ).default;
+    NodeAssert.equal(built.text, TEXT, `template-literal content was eaten (${jsx})`);
+    NodeAssert.equal(built.depValue, 42, `bundled dep not wired (${jsx})`);
+    for (const entry of ["client", "server"]) {
+      const text = firstBytes[entry].toString("utf8");
+      for (const line of text.split("\n"))
+        // Module banners are single-token `// <id>` lines; esbuild's own
+        // helper comments are sentences and stay.
+        if (/^[ \t]*\/\/ \S+\s*$/.test(line))
+          NodeAssert.match(
+            line.trim(),
+            /^\/\/ (pkg|npm|dep|host-react):|generated-\w+\.ts$/,
+            `${entry}.mjs embeds a location-dependent comment (${jsx}): ${line.trim()}`,
+          );
     }
   }
 });
@@ -170,9 +225,11 @@ NodeTest.test(
   async (t) => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-bundler-"));
     t.after(() => NodeFSP.rm(root, { recursive: true, force: true }));
+    const depDir = NodePath.join(root, "shared-dep");
+    await writeSharedDep(depDir);
     for (const jsx of ["react-jsx", "react-jsxdev"]) {
       const dir = NodePath.join(root, jsx, "proj");
-      await writeFixture(dir, jsx);
+      await writeFixture(dir, jsx, depDir);
       build(dir, root);
       const factory = (
         await import(

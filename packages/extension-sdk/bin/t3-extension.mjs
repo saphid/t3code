@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
@@ -11,21 +12,109 @@ const sdk = NodePath.resolve(NodeURL.fileURLToPath(new URL("..", import.meta.url
 const require = NodeModule.createRequire(import.meta.url);
 const [command, target = "."] = process.argv.slice(2);
 const sha = (bytes) => NodeCrypto.createHash("sha256").update(bytes).digest("hex");
-// esbuild prefixes each bundled module with a `// <pretty path>` line whose
-// text is exactly the module's metafile input key. Those labels — like the
-// `fileName` debug data the dev JSX transform emits — are resolved against
-// the process working directory, so the emitted bytes (and every hash in
-// the receipt) used to depend on where the build ran. The builds below pin
-// absWorkingDir to the package directory, then this strips precisely the
-// reported labels: packageSha256 verifies regardless of build cwd, checkout
-// location, or machine, and no other comment can be eaten by accident.
-const stripModuleComments = (text, metafile) => {
-  const labels = new Set(Object.keys(metafile.inputs).map((input) => "// " + input));
-  return text
-    .split("\n")
-    .filter((line) => !labels.has(line.trimStart()))
-    .join("\n");
+const LOADER_BY_EXT = {
+  ".ts": "ts",
+  ".mts": "ts",
+  ".cts": "ts",
+  ".tsx": "tsx",
+  ".js": "js",
+  ".mjs": "js",
+  ".cjs": "js",
+  ".jsx": "jsx",
+  ".json": "json",
+  ".css": "css",
+  ".txt": "text",
 };
+// esbuild stamps each bundled module's resolved path — relative to the
+// process working directory — into `//` banner comments, CommonJS wrapper
+// keys ("../../dep/index.js"(exports, module){…}), and jsxdev fileName
+// metadata, so emitted bytes (and every receipt hash) used to depend on
+// where the build ran and where the checkout lived. Post-hoc text removal
+// cannot fix that safely: an identical line inside a template literal is
+// data, and locating real comment positions needs a full JS lexer. Instead
+// every module is resolved through this plugin into a custom namespace with
+// a location-independent id, so emitted labels are canonical by
+// construction: pkg/<package-relative> for authored sources,
+// npm/<package>/<inner> for modules owned by a package.json, and
+// dep/<sha256> for package-less files. packageSha256 now verifies
+// regardless of build cwd, checkout location, or machine.
+const canonicalIds = (dir) => ({
+  name: "t3-canonical-ids",
+  async setup(build) {
+    const root = await NodeFSP.realpath(dir);
+    const seen = new Map();
+    const ownerCache = new Map();
+    const owner = (file) => {
+      let at = NodePath.dirname(file);
+      for (;;) {
+        if (ownerCache.has(at)) return ownerCache.get(at);
+        const manifest = NodePath.join(at, "package.json");
+        if (NodeFS.existsSync(manifest)) {
+          const { name } = JSON.parse(NodeFS.readFileSync(manifest, "utf8"));
+          const found = typeof name === "string" && name !== "" ? { name, root: at } : null;
+          ownerCache.set(at, found);
+          return found;
+        }
+        const up = NodePath.dirname(at);
+        if (up === at) {
+          ownerCache.set(at, null);
+          return null;
+        }
+        at = up;
+      }
+    };
+    const canonicalId = (real) => {
+      const rel = NodePath.relative(root, real).split(NodePath.sep).join("/");
+      if (rel !== ".." && !rel.startsWith("../")) return { namespace: "pkg", path: rel };
+      const pkg = owner(real);
+      if (pkg)
+        return {
+          namespace: "npm",
+          path: pkg.name + "/" + NodePath.relative(pkg.root, real).split(NodePath.sep).join("/"),
+        };
+      return { namespace: "dep", path: sha(NodeFS.readFileSync(real)).slice(0, 16) };
+    };
+    // build.resolve re-runs the whole plugin pipeline for the nested call;
+    // this marker lets our own callback pass through so resolution bottoms
+    // out at esbuild's built-in file resolution instead of recursing.
+    const SELF = {};
+    build.onResolve({ filter: /.*/ }, async (args) => {
+      if (args.pluginData === SELF) return undefined;
+      const resolved = await build.resolve(args.path, {
+        importer: args.importer,
+        kind: args.kind,
+        namespace: args.namespace,
+        resolveDir: args.resolveDir,
+        pluginData: SELF,
+      });
+      if (resolved.errors.length > 0 || resolved.external || resolved.namespace !== "file")
+        return resolved;
+      const real = NodeFS.realpathSync(resolved.path);
+      let id = canonicalId(real);
+      // Two real files claiming one id would merge into a single module;
+      // fall back to content addressing for the collision.
+      if (seen.has(id.namespace + ":" + id.path) && seen.get(id.namespace + ":" + id.path) !== real)
+        id = { namespace: "dep", path: sha(NodeFS.readFileSync(real)).slice(0, 16) };
+      seen.set(id.namespace + ":" + id.path, real);
+      return {
+        path: id.path,
+        namespace: id.namespace,
+        pluginData: real,
+        ...(resolved.suffix === "" || resolved.suffix === undefined
+          ? {}
+          : { suffix: resolved.suffix }),
+        ...(resolved.sideEffects === undefined ? {} : { sideEffects: resolved.sideEffects }),
+      };
+    });
+    const load = async (args) => ({
+      contents: await NodeFSP.readFile(args.pluginData),
+      loader: LOADER_BY_EXT[NodePath.extname(args.pluginData)] ?? "file",
+      resolveDir: NodePath.dirname(args.pluginData),
+      watchFiles: [args.pluginData],
+    });
+    for (const namespace of ["pkg", "npm", "dep"]) build.onLoad({ filter: /.*/, namespace }, load);
+  },
+});
 async function check(dir) {
   const pkg = validateEnvironmentPackage(
     JSON.parse(await NodeFSP.readFile(NodePath.join(dir, "t3-extension.json"), "utf8")),
@@ -97,7 +186,9 @@ async function main() {
     throw new Error(
       "Usage: t3-extension create <new-directory> | build <source-directory> | check <built-directory>",
     );
-  const dir = NodePath.resolve(target);
+  // Realpath so labels esbuild derives from absWorkingDir never mix
+  // symlinked and physical spellings of the same directory.
+  const dir = await NodeFSP.realpath(NodePath.resolve(target));
   const out = NodePath.join(dir, ".t3-extension");
   const temp = await NodeFSP.mkdtemp(NodePath.join(dir, ".t3-extension-build-"));
   const backup = temp + "-previous";
@@ -172,24 +263,26 @@ async function main() {
     if (typecheck.status !== 0)
       throw new Error("Declared entry typecheck failed (exit " + typecheck.status + ")");
     await NodeFSP.rm(config);
-    const bundle = async (contents, platform) => {
-      const result = await build({
-        absWorkingDir: dir,
-        stdin: { contents, resolveDir: dir, sourcefile: "generated-entry.ts", loader: "ts" },
-        bundle: true,
-        write: false,
-        metafile: true,
-        platform,
-        format: "esm",
-        target: platform === "browser" ? "es2022" : "node24",
-        logLevel: "silent",
-      });
-      return stripModuleComments(result.outputFiles[0].text, result.metafile);
-    };
+    const bundle = async (contents, platform) =>
+      (
+        await build({
+          absWorkingDir: dir,
+          tsconfig: NodePath.join(dir, "tsconfig.json"),
+          stdin: { contents, resolveDir: dir, sourcefile: "generated-entry.ts", loader: "ts" },
+          bundle: true,
+          write: false,
+          platform,
+          format: "esm",
+          target: platform === "browser" ? "es2022" : "node24",
+          logLevel: "silent",
+          plugins: [canonicalIds(dir)],
+        })
+      ).outputFiles[0].text;
     if (pkg.clientEntry) {
       // Evaluate dependency modules inside each factory so imported hooks share the host identity.
       const client = await build({
         absWorkingDir: dir,
+        tsconfig: NodePath.join(dir, "tsconfig.json"),
         stdin: {
           contents: 'import extension from "./extension.ts"; export default extension.client;',
           resolveDir: dir,
@@ -198,7 +291,6 @@ async function main() {
         },
         bundle: true,
         write: false,
-        metafile: true,
         platform: "browser",
         format: "iife",
         globalName: "__t3Client",
@@ -248,12 +340,15 @@ async function main() {
               }));
             },
           },
+          // host-react first so react/* specifiers keep their shim before the
+          // catch-all canonical resolver sees them.
+          canonicalIds(dir),
         ],
       });
       await NodeFSP.writeFile(
         NodePath.join(temp, pkg.clientEntry),
         "export default function (__t3Host) {\n" +
-          stripModuleComments(client.outputFiles[0].text, client.metafile) +
+          client.outputFiles[0].text +
           "\nreturn __t3Client.default(__t3Host);\n}\n",
       );
     }
