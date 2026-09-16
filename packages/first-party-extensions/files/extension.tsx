@@ -660,11 +660,18 @@ function FileBreadcrumbBar(props: {
   // Host-absolute paths are outside the workspace — labels only, no menus.
   const hostPath = isAbsolutePath(selected);
   // The open menu is keyed to the path it opened under — a selection change
-  // closes it by derivation, no reset effect needed.
-  const [openMenu, setOpenMenu] = useState<{ crumb: string; forPath: string } | null>(null);
-  const openCrumb = openMenu !== null && openMenu.forPath === selected ? openMenu.crumb : null;
+  // closes it by derivation, no reset effect needed. `left`/`top` anchor it
+  // below the crumb, measured in wrapper-box coordinates at click time.
+  const [openMenu, setOpenMenu] = useState<{
+    crumb: string;
+    forPath: string;
+    left: number;
+    top: number;
+  } | null>(null);
+  const openCrumb = openMenu !== null && openMenu.forPath === selected ? openMenu : null;
   const [menuDir, setMenuDir] = useState("");
   const navRef = useRef<HTMLElement | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     navRef.current
       ?.querySelector("[data-current-file-crumb]")
@@ -674,88 +681,118 @@ function FileBreadcrumbBar(props: {
   }, [selected]);
   const muted = "var(--muted-foreground, #667085)";
   return (
-    <nav
-      aria-label="File path"
-      ref={navRef}
+    // The menu must live outside the scrolling nav — anything inside an
+    // `overflow-x` container is clipped to its box.
+    <div
+      ref={wrapRef}
+      style={{
+        position: "relative",
+        borderTop: "1px solid var(--border, #dfe3e8)",
+        flexShrink: 0,
+      }}
       onKeyDown={(event) => {
         if (event.key === "Escape") setOpenMenu(null);
       }}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 2,
-        padding: "4px 10px",
-        borderTop: "1px solid var(--border, #dfe3e8)",
-        overflowX: "auto",
-        whiteSpace: "nowrap",
-        flexShrink: 0,
-        fontSize: 12,
-        color: "var(--foreground, #20252d)",
-      }}
     >
-      {crumbs.map((crumb, index) => {
-        const last = index === crumbs.length - 1;
-        const menuable = !hostPath && !last;
-        return (
-          <span key={crumb.path || crumb.label} style={{ position: "relative", flexShrink: 0 }}>
-            {menuable ? (
-              <button
-                type="button"
-                aria-haspopup="menu"
-                aria-expanded={openCrumb === crumb.path}
-                onClick={() => {
-                  if (openCrumb === crumb.path) {
-                    setOpenMenu(null);
-                  } else {
+      <nav
+        aria-label="File path"
+        ref={navRef}
+        onScroll={() => setOpenMenu(null)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 2,
+          padding: "4px 10px",
+          overflowX: "auto",
+          whiteSpace: "nowrap",
+          fontSize: 12,
+          color: "var(--foreground, #20252d)",
+        }}
+      >
+        {crumbs.map((crumb, index) => {
+          const last = index === crumbs.length - 1;
+          const menuable = !hostPath && !last;
+          return (
+            <span key={crumb.path || crumb.label} style={{ flexShrink: 0 }}>
+              {menuable ? (
+                <button
+                  type="button"
+                  aria-haspopup="menu"
+                  aria-expanded={openCrumb?.crumb === crumb.path}
+                  {...(crumb.kind === "project"
+                    ? {
+                        // Honest label: the extension API surface gives a
+                        // project-scope view no project title to show here.
+                        title: `${WORKSPACE_ROOT_LABEL} root — extensions can't read the project title`,
+                      }
+                    : {})}
+                  onClick={(event) => {
+                    if (openCrumb?.crumb === crumb.path) {
+                      setOpenMenu(null);
+                      return;
+                    }
+                    const wrap = wrapRef.current;
+                    const anchor = event.currentTarget.getBoundingClientRect();
+                    const box = wrap?.getBoundingClientRect();
                     setMenuDir(crumb.path);
-                    setOpenMenu({ crumb: crumb.path, forPath: selected });
-                  }
-                }}
-                style={{
-                  border: "none",
-                  background: openCrumb === crumb.path ? "var(--accent, #e8eef7)" : "none",
-                  font: "inherit",
-                  color: "inherit",
-                  padding: "1px 4px",
-                  borderRadius: 4,
-                  cursor: "pointer",
-                }}
-              >
-                {crumb.label}
-              </button>
-            ) : (
-              <span
-                {...(last ? { "data-current-file-crumb": "" } : {})}
-                aria-current={last ? "page" : undefined}
-                style={{ padding: "1px 4px", fontWeight: last ? 600 : 400 }}
-              >
-                {crumb.label}
-              </span>
-            )}
-            {!last && (
-              <span aria-hidden="true" style={{ color: muted, padding: "0 1px" }}>
-                /
-              </span>
-            )}
-            {openCrumb === crumb.path && (
-              <CrumbMenu
-                rootPath={crumb.path}
-                menuDir={menuDir}
-                entries={entries}
-                selected={selected}
-                truncated={truncated}
-                onNavigate={setMenuDir}
-                onSelect={(path) => {
-                  onSelect(path);
-                  setOpenMenu(null);
-                }}
-                onClose={() => setOpenMenu(null)}
-              />
-            )}
-          </span>
-        );
-      })}
-    </nav>
+                    setOpenMenu({
+                      crumb: crumb.path,
+                      forPath: selected,
+                      left:
+                        wrap !== null && box !== undefined
+                          ? Math.max(0, Math.min(anchor.left - box.left, box.width - 190))
+                          : 0,
+                      top: wrap !== null && box !== undefined ? anchor.bottom - box.top : 0,
+                    });
+                  }}
+                  style={{
+                    border: "none",
+                    background: openCrumb?.crumb === crumb.path ? "var(--accent, #e8eef7)" : "none",
+                    font: "inherit",
+                    color: "inherit",
+                    padding: "1px 4px",
+                    borderRadius: 4,
+                    cursor: "pointer",
+                  }}
+                >
+                  {crumb.label}
+                </button>
+              ) : (
+                <span
+                  {...(last ? { "data-current-file-crumb": "" } : {})}
+                  aria-current={last ? "page" : undefined}
+                  style={{ padding: "1px 4px", fontWeight: last ? 600 : 400 }}
+                >
+                  {crumb.label}
+                </span>
+              )}
+              {!last && (
+                <span aria-hidden="true" style={{ color: muted, padding: "0 1px" }}>
+                  /
+                </span>
+              )}
+            </span>
+          );
+        })}
+      </nav>
+      {openCrumb !== null && (
+        <CrumbMenu
+          rootPath={openCrumb.crumb}
+          menuDir={menuDir}
+          left={openCrumb.left}
+          top={openCrumb.top}
+          entries={entries}
+          selected={selected}
+          truncated={truncated}
+          onNavigate={setMenuDir}
+          onSelect={(path) => {
+            onSelect(path);
+            setOpenMenu(null);
+          }}
+          onClose={() => setOpenMenu(null)}
+        />
+      )}
+    </div>
   );
 }
 
@@ -763,6 +800,8 @@ function FileBreadcrumbBar(props: {
 function CrumbMenu(props: {
   readonly rootPath: string;
   readonly menuDir: string;
+  readonly left: number;
+  readonly top: number;
   readonly entries: readonly TreeEntry[];
   readonly selected: string;
   readonly truncated: boolean;
@@ -770,7 +809,18 @@ function CrumbMenu(props: {
   readonly onSelect: (path: string) => void;
   readonly onClose: () => void;
 }) {
-  const { rootPath, menuDir, entries, selected, truncated, onNavigate, onSelect, onClose } = props;
+  const {
+    rootPath,
+    menuDir,
+    left,
+    top,
+    entries,
+    selected,
+    truncated,
+    onNavigate,
+    onSelect,
+    onClose,
+  } = props;
   const children = fileBreadcrumbChildren(entries, menuDir);
   const parent = fileBreadcrumbParent(menuDir);
   const muted = "var(--muted-foreground, #667085)";
@@ -810,8 +860,8 @@ function CrumbMenu(props: {
         aria-label={`Contents of ${menuDir === "" ? WORKSPACE_ROOT_LABEL : menuDir}`}
         style={{
           position: "absolute",
-          top: "100%",
-          left: 0,
+          top,
+          left,
           zIndex: 10,
           minWidth: 180,
           maxWidth: 320,
@@ -904,6 +954,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const handledRevealRef = useRef<{ path: string; line: number } | null>(null);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const readOnlyRef = useRef<HTMLPreElement | null>(null);
+  const treeListRef = useRef<HTMLUListElement | null>(null);
   const selectedKind: PreviewKind = selected ? previewKind(selected) : "text";
   const editor = useFileEditor(host, session, selected, selectedKind, revision, visible);
   const media = useMediaLease(host, session, selected, selectedKind, revision, visible);
@@ -1008,7 +1059,14 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     setSelected(path);
     session.save({ relativePath: path });
     // A plain selection also cancels any reveal still pending for another path.
-    setRevealRequest(line !== undefined && line > 0 ? { path, line } : null);
+    if (line !== undefined && line > 0) {
+      setRevealRequest({ path, line });
+      // A line target can only reveal in the source surface — the rendered
+      // preview has no line geometry to scroll to.
+      setRenderMarkdown(false);
+    } else {
+      setRevealRequest(null);
+    }
     const ancestors: string[] = [];
     for (let ancestor = parentPath(path); ancestor !== null; ancestor = parentPath(ancestor))
       ancestors.push(ancestor);
@@ -1125,20 +1183,33 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       ? undefined
       : {
           baseDir: parentPath(selected) ?? "",
-          openPath: (path, line) =>
-            kindByPath.get(path) === "directory"
-              ? setExpanded((previous) => {
-                  const next = new Set(previous);
-                  for (
-                    let ancestor: string | null = path;
-                    ancestor !== null;
-                    ancestor = parentPath(ancestor)
-                  )
-                    next.add(ancestor);
-                  return next;
-                })
-              : select(path, line),
-          revealLine: (line) => setRevealRequest({ path: selected, line }),
+          openPath: (path, line) => {
+            if (path === "") {
+              // The workspace root resolves to "" — no tree entry exists for
+              // it, so the affordance is revealing the tree's top level.
+              setQuery("");
+              treeListRef.current?.scrollTo({ top: 0 });
+              return;
+            }
+            if (kindByPath.get(path) === "directory") {
+              setExpanded((previous) => {
+                const next = new Set(previous);
+                for (
+                  let ancestor: string | null = path;
+                  ancestor !== null;
+                  ancestor = parentPath(ancestor)
+                )
+                  next.add(ancestor);
+                return next;
+              });
+              return;
+            }
+            select(path, line);
+          },
+          revealLine: (line) => {
+            setRevealRequest({ path: selected, line });
+            setRenderMarkdown(false);
+          },
         };
 
   // Centered line reveal (F1 #23). Waits for the selected file's content
@@ -1253,6 +1324,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
         </select>
       </header>
       <ul
+        ref={treeListRef}
         aria-label="Workspace files"
         style={{
           listStyle: "none",

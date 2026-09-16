@@ -93,6 +93,19 @@ NodeTest.describe("file navigation helpers", () => {
       NodeAssert.deepEqual(resolveWorkspaceLink("../../x.md", "a"), { kind: "not-a-path" });
     });
 
+    NodeTest.it("accepts the workspace root itself as a directory target", () => {
+      NodeAssert.deepEqual(resolveWorkspaceLink("..", "docs"), {
+        kind: "workspace",
+        path: "",
+      });
+      NodeAssert.deepEqual(resolveWorkspaceLink(".", ""), {
+        kind: "workspace",
+        path: "",
+      });
+      NodeAssert.deepEqual(resolveWorkspaceLink("../..", "docs"), { kind: "not-a-path" });
+      NodeAssert.deepEqual(resolveWorkspaceLink("..", ""), { kind: "not-a-path" });
+    });
+
     NodeTest.it("carries line positions through", () => {
       NodeAssert.deepEqual(resolveWorkspaceLink("app.ts:12", "src"), {
         kind: "workspace",
