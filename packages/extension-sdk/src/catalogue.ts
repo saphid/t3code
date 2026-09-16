@@ -98,6 +98,81 @@ export const browserLocalServersApi = defineStreamApi<{
   ],
 });
 
+/**
+ * Live provider-instance status for the environment — the same signal the
+ * shell's status indicators render. Subscribe instead of polling so capability
+ * staleness resolves as the registry refreshes, without a manual refresh.
+ * The projection carries identity, lifecycle and capability flags only:
+ * credentials, auth details, workspace paths and free-text diagnostics stay
+ * server-side.
+ */
+export const PROVIDERS_STATUS = "t3.providers/status";
+export const PROVIDERS_READ = "t3.providers/read";
+export type ProviderStatusEntry = {
+  readonly instanceId: string;
+  readonly driver: string;
+  readonly displayName?: string;
+  readonly enabled: boolean;
+  readonly installed: boolean;
+  readonly status: "ready" | "warning" | "error" | "disabled";
+  readonly availability: "available" | "unavailable";
+  readonly checkedAt: string;
+  readonly supportsConversationRollback?: boolean;
+  readonly supportsTextGeneration?: boolean;
+  readonly requiresNewThreadForModelChange?: boolean;
+  readonly showInteractionModeToggle?: boolean;
+  readonly reportsContextWindow?: boolean;
+};
+export type ProvidersStatusEvent = {
+  readonly kind: "snapshot";
+  readonly scope: "environment";
+  readonly providers: readonly ProviderStatusEntry[];
+};
+const PROVIDER_STATUS_ENTRY_SCHEMA: JsonObject = {
+  type: "object",
+  additionalProperties: false,
+  required: ["instanceId", "driver", "enabled", "installed", "status", "availability", "checkedAt"],
+  properties: {
+    instanceId: { type: "string", minLength: 1, maxLength: 160 },
+    driver: { type: "string", minLength: 1, maxLength: 64 },
+    displayName: { type: "string", minLength: 1, maxLength: 200 },
+    enabled: { type: "boolean" },
+    installed: { type: "boolean" },
+    status: { enum: ["ready", "warning", "error", "disabled"] },
+    availability: { enum: ["available", "unavailable"] },
+    checkedAt: { type: "string", minLength: 1, maxLength: 40 },
+    supportsConversationRollback: { type: "boolean" },
+    supportsTextGeneration: { type: "boolean" },
+    requiresNewThreadForModelChange: { type: "boolean" },
+    showInteractionModeToggle: { type: "boolean" },
+    reportsContextWindow: { type: "boolean" },
+  },
+};
+export const providersStatusApi = defineStreamApi<{
+  subscribe: { input: Record<string, never>; event: ProvidersStatusEvent };
+}>({
+  id: PROVIDERS_STATUS,
+  version: "1.0.0",
+  methods: [],
+  streams: [
+    {
+      name: "subscribe",
+      requiredGrants: [PROVIDERS_READ],
+      inputSchema: { type: "object", additionalProperties: false, properties: {} },
+      eventSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "scope", "providers"],
+        properties: {
+          kind: { const: "snapshot" },
+          scope: { const: "environment" },
+          providers: { type: "array", maxItems: 64, items: PROVIDER_STATUS_ENTRY_SCHEMA },
+        },
+      },
+    },
+  ],
+});
+
 export const WORKSPACE_FILES = "t3.workspace/files";
 export const WORKSPACE_LIST_ENTRIES = "t3.workspace/list-entries";
 export const FILE_PRESENTATION = "t3.file/presentation";

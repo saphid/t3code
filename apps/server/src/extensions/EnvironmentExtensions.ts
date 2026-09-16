@@ -51,6 +51,7 @@ import { makeVcsApiProviders } from "./vcsApi.ts";
 import { makeVcsDiffApiProvider } from "./vcsDiffApi.ts";
 import { makeComposerApiProviders } from "./composerApi.ts";
 import { makePrsApiProvider } from "./prs/v1.ts";
+import { makeProvidersStatusApiProvider } from "./providersStatusApi.ts";
 import { boundedWorkspaceText } from "./workspaceText.ts";
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.Json);
@@ -94,6 +95,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   const composerApis = yield* makeComposerApiProviders();
   const orchestrationApis = yield* makeOrchestrationApiProviders();
   const prsApi = yield* makePrsApiProvider();
+  const providersStatusApi = yield* makeProvidersStatusApiProvider();
   const catalogueChanges = yield* ExtensionCatalogueChanges;
   const resolve = makeExtensionScopeResolver({ environmentId, projects, threads });
   const authorize = async (entry: Installation, capability: string, context: ViewContext) => {
@@ -170,6 +172,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
             vcsDiffApi,
             ...orchestrationApis,
             prsApi,
+            providersStatusApi,
             resourcesLeaseApi,
             ...composerApis,
           ],
