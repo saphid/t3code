@@ -47,6 +47,8 @@ function domStubs() {
     getComputedStyle: globalThis.getComputedStyle,
     setInterval: globalThis.setInterval,
     clearInterval: globalThis.clearInterval,
+    setTimeout: globalThis.setTimeout,
+    clearTimeout: globalThis.clearTimeout,
   };
   const polls = [];
   let intervalId = 0;
@@ -57,6 +59,17 @@ function domStubs() {
   globalThis.clearInterval = (id) => {
     polls.splice(0, polls.length);
     return id;
+  };
+  // Retry timers are captured, not scheduled — tests fire them explicitly.
+  const timeouts = new Map();
+  let timeoutId = 0;
+  globalThis.setTimeout = (fn) => {
+    const id = ++timeoutId;
+    timeouts.set(id, fn);
+    return id;
+  };
+  globalThis.clearTimeout = (id) => {
+    timeouts.delete(id);
   };
   const observed = [];
   globalThis.ResizeObserver = class {
@@ -92,6 +105,12 @@ function domStubs() {
     observed,
     listeners,
     polls,
+    timeouts,
+    fireTimeouts() {
+      const pending = [...timeouts.values()];
+      timeouts.clear();
+      for (const fn of pending) fn();
+    },
     document: stub,
     restore() {
       for (const [key, value] of Object.entries(previous)) {
@@ -212,6 +231,8 @@ NodeTest.test("useBrowserSurfaceSlot reports host-unavailable without the capabi
     const renderer = render(View, fakeElement(rect, { document: dom.document }));
     NodeAssert.equal(slot.lease, null);
     NodeAssert.equal(slot.denial.reason, "host-unavailable");
+    // A missing capability is not transient — no retry is scheduled.
+    NodeAssert.equal(dom.timeouts.size, 0);
     await TestRenderer.act(async () => renderer.unmount());
   } finally {
     dom.restore();
@@ -289,6 +310,8 @@ NodeTest.test("useBrowserSurfaceSlot surfaces a named acquire denial", async () 
     NodeAssert.equal(slot.lease, null);
     NodeAssert.equal(slot.denial.reason, "grant-denied");
     NodeAssert.equal(slot.denial.grant, BROWSER_SURFACE);
+    // Only host-unavailable is transient — a grant denial never retries.
+    NodeAssert.equal(dom.timeouts.size, 0);
     await TestRenderer.act(async () => renderer.unmount());
   } finally {
     dom.restore();
@@ -467,6 +490,104 @@ NodeTest.test(
         await TestRenderer.act(async () => unsupportedRenderer.unmount());
       }
       NodeAssert.equal(unsupported.calls.released, 1);
+    } finally {
+      dom.restore();
+    }
+  },
+);
+
+NodeTest.test(
+  "useBrowserSurfaceSlot retries a transient host-unavailable denial and recovers",
+  async () => {
+    const dom = domStubs();
+    try {
+      const session = makeSession();
+      const { host, calls, lease } = fakeLeaseHost();
+      let denied = true;
+      host.browserSurface.acquire = (request) => {
+        calls.acquire.push(request);
+        return denied
+          ? {
+              ok: false,
+              denial: { reason: "host-unavailable", detail: "shell synchronizing" },
+            }
+          : { ok: true, lease };
+      };
+      let slot;
+      function View() {
+        const value = useBrowserSurfaceSlot(host, session, {
+          session: sessionRef,
+          visible: true,
+        });
+        React.useEffect(() => {
+          slot = value;
+        }, [value]);
+        return React.createElement("div", { ref: value.ref });
+      }
+      const renderer = render(View, fakeElement(rect, { document: dom.document }));
+      try {
+        NodeAssert.equal(calls.acquire.length, 1);
+        NodeAssert.equal(slot.lease, null);
+        NodeAssert.equal(slot.denial.reason, "host-unavailable");
+        NodeAssert.equal(dom.timeouts.size, 1);
+        // The host recovers before the first retry — the slot acquires and
+        // presents without a remount or identity change.
+        denied = false;
+        TestRenderer.act(() => dom.fireTimeouts());
+        NodeAssert.equal(calls.acquire.length, 2);
+        NodeAssert.equal(slot.lease, lease);
+        NodeAssert.equal(slot.denial, null);
+        NodeAssert.equal(calls.presents.at(-1).visible, true);
+      } finally {
+        await TestRenderer.act(async () => renderer.unmount());
+      }
+      NodeAssert.equal(calls.released, 1);
+    } finally {
+      dom.restore();
+    }
+  },
+);
+
+NodeTest.test(
+  "useBrowserSurfaceSlot stops retrying when the bounded backoff is exhausted",
+  async () => {
+    const dom = domStubs();
+    try {
+      const session = makeSession();
+      const { host, calls } = fakeLeaseHost();
+      host.browserSurface.acquire = (request) => {
+        calls.acquire.push(request);
+        return {
+          ok: false,
+          denial: { reason: "host-unavailable", detail: "shell synchronizing" },
+        };
+      };
+      let slot;
+      function View() {
+        const value = useBrowserSurfaceSlot(host, session, {
+          session: sessionRef,
+          visible: true,
+        });
+        React.useEffect(() => {
+          slot = value;
+        }, [value]);
+        return React.createElement("div", { ref: value.ref });
+      }
+      const renderer = render(View, fakeElement(rect, { document: dom.document }));
+      try {
+        let rounds = 0;
+        while (dom.timeouts.size > 0 && rounds < 20) {
+          rounds += 1;
+          TestRenderer.act(() => dom.fireTimeouts());
+        }
+        // 1 initial attempt + 5 bounded retries, then the denial is terminal.
+        NodeAssert.equal(calls.acquire.length, 6);
+        NodeAssert.equal(dom.timeouts.size, 0);
+        NodeAssert.equal(slot.lease, null);
+        NodeAssert.equal(slot.denial.reason, "host-unavailable");
+      } finally {
+        await TestRenderer.act(async () => renderer.unmount());
+      }
     } finally {
       dom.restore();
     }

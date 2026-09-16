@@ -4,10 +4,14 @@ import {
   BROWSER_SURFACE,
   type BrowserSurfaceLease,
 } from "@t3tools/extension-sdk/catalogue";
+import { Cause } from "effect";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { createBrowserSurfaceBridge } from "~/extensions/browserSurfaceBridge";
+import {
+  createBrowserSurfaceBridge,
+  type BrowserSurfaceBridgeDeps,
+} from "~/extensions/browserSurfaceBridge";
 import { readThreadPreviewState } from "~/previewStateStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
@@ -82,7 +86,7 @@ const listResult = (revision: number, tabIds: string[]): PreviewListResult => ({
   ),
 });
 
-function bridgeHost() {
+function bridgeHost(overrides: Partial<BrowserSurfaceBridgeDeps> = {}) {
   const lifetime = new AbortController();
   const bind = createBrowserSurfaceBridge("env-sync", {
     composites: () => true,
@@ -100,6 +104,7 @@ function bridgeHost() {
     subscribeThread: () => () => {},
     // mountSessionSync / readSessions / subscribeSessions / refreshSessions
     // stay at production defaults: the real sync atom + real store.
+    ...overrides,
   });
   const host = bind({
     grants: {
@@ -175,5 +180,60 @@ describe("previewSessionSync arbitration", () => {
     expect(lease.state.kind).toBe("active");
     expect(readThreadPreviewState(threadRef).sessions["tab-new"]).toBeDefined();
     lease.release();
+  });
+
+  it("counts a completed Failure as an attempt, retries, and verifies on a later list", async () => {
+    appAtomRegistry.set(listAtom(), AsyncResult.success(listResult(5, []), { timestamp: 5 }));
+    const { acquire } = bridgeHost();
+    const acquired = acquire();
+    if (!acquired.ok) throw new Error("expected lease");
+    const lease = acquired.lease;
+    const baselineFailures = readThreadPreviewState(threadRef).listFailures;
+    const baselineSeq = readThreadPreviewState(threadRef).listSeq;
+    await Promise.resolve();
+
+    // The arbitrating request completes with Failure — a completed attempt,
+    // not evidence the tab is absent. The lease survives and a retry fires.
+    appAtomRegistry.set(
+      listAtom(),
+      AsyncResult.failure<PreviewListResult, never>(Cause.die("offline")),
+    );
+    expect(readThreadPreviewState(threadRef).listFailures).toBe(baselineFailures + 1);
+    expect(readThreadPreviewState(threadRef).listSeq).toBe(baselineSeq);
+    expect(lease.state.kind).toBe("active");
+
+    // A waiting re-emission of the same failure is not another attempt.
+    appAtomRegistry.set(
+      listAtom(),
+      AsyncResult.failure<PreviewListResult, never>(Cause.die("offline"), { waiting: true }),
+    );
+    expect(readThreadPreviewState(threadRef).listFailures).toBe(baselineFailures + 1);
+    expect(lease.state.kind).toBe("active");
+
+    // A later completed list containing the tab verifies the session.
+    appAtomRegistry.set(
+      listAtom(),
+      AsyncResult.success(listResult(7, ["tab-new"]), { timestamp: 7 }),
+    );
+    expect(lease.state.kind).toBe("active");
+    expect(readThreadPreviewState(threadRef).sessions["tab-new"]).toBeDefined();
+    lease.release();
+  });
+
+  it("ends an unverified lease when no completed list arrives before the deadline", async () => {
+    const deferred: (() => void)[] = [];
+    appAtomRegistry.set(listAtom(), AsyncResult.success(listResult(8, []), { timestamp: 8 }));
+    const { acquire } = bridgeHost({
+      defer: (fn) => {
+        deferred.push(fn);
+        return () => {};
+      },
+    });
+    const acquired = acquire();
+    if (!acquired.ok) throw new Error("expected lease");
+    await Promise.resolve();
+    // The arbitrating request never resolves — the bound ends the lease.
+    for (const fn of deferred) fn();
+    expect(acquired.lease.state).toEqual({ kind: "ended", reason: "session-unverified" });
   });
 });

@@ -4805,7 +4805,12 @@ export type BrowserSurfaceDenialReason =
   | "session-invalid"
   /** The synced server epoch already moved past the session's. */
   | "epoch-changed"
-  /** The calling client's install lifetime already ended. */
+  /**
+   * The host could not verify the lease scope right now — the thread's
+   * shell state is still synchronizing, or the calling client's install
+   * lifetime ended. Transient for a live installation; SDK callers retry
+   * with bounded backoff before treating the slot as dead.
+   */
   | "host-unavailable";
 
 export interface BrowserSurfaceDenial {
@@ -4826,6 +4831,13 @@ export type BrowserSurfaceEndReason =
   | "grant-revoked"
   /** The session was observed in synced state and then removed. */
   | "session-closed"
+  /**
+   * The session was never verified: every arbitrating `preview.list`
+   * request failed or the bounded wait elapsed with no completed list.
+   * Unlike `session-closed` this asserts nothing about the session — the
+   * host simply could not prove it exists within the bound.
+   */
+  | "session-unverified"
   /** Synced state moved to a different server epoch. */
   | "epoch-changed";
 

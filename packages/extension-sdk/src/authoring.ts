@@ -301,6 +301,15 @@ export interface BrowserSurfaceSlot {
 
 const OVERFLOW_CLIP_PATTERN = /(auto|scroll|hidden|clip)/;
 const OCCLUSION_POLL_MS = 400;
+/**
+ * `host-unavailable` is the only transient denial — the host says "retry
+ * once synchronization completes". A mounted slot must recover without a
+ * remount, so acquisition retries on a bounded backoff; exhausting it leaves
+ * the named denial rendered, which is terminal until the caller remounts or
+ * changes the session identity. Every other denial is stable and never
+ * retried.
+ */
+const ACQUIRE_RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000];
 
 /**
  * The composited webview is a fixed-position sibling, not a DOM descendant —
@@ -379,6 +388,11 @@ function slotOccluded(element: HTMLElement, clip: BrowserSurfaceRect): boolean {
  * `present`. There is no automatic re-acquire — a `superseded` end is
  * terminal for the lease; the caller must remount the slot element or change
  * the session identity (clear it and open a fresh session) to acquire again.
+ * The one exception is a `host-unavailable` acquire denial, which is
+ * explicitly transient ("retry when synchronization completes"): the hook
+ * retries it on a bounded backoff, and a lease that ends `session-unverified`
+ * may likewise be re-acquired by remount or identity change once the host
+ * recovers.
  */
 /* oxlint-disable react/hooks -- hooks come from the injected host React identity. */
 export function useBrowserSurfaceSlot(
@@ -425,88 +439,115 @@ export function useBrowserSurfaceSlot(
       });
       return;
     }
-    const acquired = surface.acquire({
-      context: session.context,
-      session: options.session,
-      signal: session.signal,
-    });
-    if (!acquired.ok) {
-      setResult(acquired);
-      return;
-    }
-    const lease = acquired.lease;
-    setResult(acquired);
-    let poll: ReturnType<typeof setInterval> | null = null;
-    const unsubscribe = lease.onDidChangeState((next) => {
-      setLeaseVersion((value) => value + 1);
-      if (next.kind === "ended" && poll !== null) {
-        clearInterval(poll);
-        poll = null;
-      }
-    });
-    // Nothing composites on an unsupported host — the lease still reports
-    // its named state, but no geometry or occlusion work is worth running.
-    if (!surface.presentation.supported) {
-      return () => {
-        unsubscribe();
-        lease.release();
-      };
-    }
-    // A suppressed slot keeps its last footprint and skips every DOM read —
-    // one present flips the native surface off and the occlusion poll stops
-    // until the slot is visible again; nothing remains to probe.
-    let hidden = !presentationRef.current.visible;
-    let lastRect: BrowserSurfaceRect = { x: 0, y: 0, width: 1, height: 1 };
-    const update = () => {
-      if (lease.state.kind === "ended") return;
-      const prefs = presentationRef.current;
-      if (!prefs.visible) {
-        if (poll !== null) {
+    const surfaceSession = options.session;
+    let detach: () => void = () => {};
+    let retry: ReturnType<typeof setTimeout> | null = null;
+    let attempts = 0;
+    let disposed = false;
+
+    const attach = (held: BrowserSurfaceLease) => {
+      let poll: ReturnType<typeof setInterval> | null = null;
+      const unsubscribe = held.onDidChangeState((next) => {
+        setLeaseVersion((value) => value + 1);
+        if (next.kind === "ended" && poll !== null) {
           clearInterval(poll);
           poll = null;
         }
-        if (!hidden) {
-          hidden = true;
-          lease.present(lastRect, false, prefs.cornerRadius, prefs.zIndex);
+      });
+      // Nothing composites on an unsupported host — the lease still reports
+      // its named state, but no geometry or occlusion work is worth running.
+      if (!surface.presentation.supported) {
+        detach = () => {
+          unsubscribe();
+          held.release();
+        };
+        return;
+      }
+      // A suppressed slot keeps its last footprint and skips every DOM read —
+      // one present flips the native surface off and the occlusion poll stops
+      // until the slot is visible again; nothing remains to probe.
+      let hidden = !presentationRef.current.visible;
+      let lastRect: BrowserSurfaceRect = { x: 0, y: 0, width: 1, height: 1 };
+      const update = () => {
+        if (held.state.kind === "ended") return;
+        const prefs = presentationRef.current;
+        if (!prefs.visible) {
+          if (poll !== null) {
+            clearInterval(poll);
+            poll = null;
+          }
+          if (!hidden) {
+            hidden = true;
+            held.present(lastRect, false, prefs.cornerRadius, prefs.zIndex);
+          }
+          return;
+        }
+        hidden = false;
+        // Sibling overlays (modals, panels) do not trigger geometry events —
+        // poll the occlusion probe so a covered surface still hides.
+        if (poll === null) poll = setInterval(update, OCCLUSION_POLL_MS);
+        // The webview is not clipped by the slot's overflow ancestors —
+        // present the visible intersection and hide when nothing of it is on
+        // screen.
+        const clip = clippedSlotRect(element);
+        const occluded = clip !== null && slotOccluded(element, clip);
+        const rect =
+          clip ??
+          (() => {
+            const bounds = element.getBoundingClientRect();
+            return {
+              x: Math.round(bounds.x),
+              y: Math.round(bounds.y),
+              width: Math.max(1, Math.round(bounds.width)),
+              height: Math.max(1, Math.round(bounds.height)),
+            };
+          })();
+        lastRect = rect;
+        held.present(rect, clip !== null && !occluded, prefs.cornerRadius, prefs.zIndex);
+      };
+      updateRef.current = update;
+      update();
+      const observer = new ResizeObserver(update);
+      observer.observe(element);
+      window.addEventListener("resize", update);
+      window.addEventListener("scroll", update, true);
+      detach = () => {
+        if (poll !== null) clearInterval(poll);
+        observer.disconnect();
+        window.removeEventListener("resize", update);
+        window.removeEventListener("scroll", update, true);
+        if (updateRef.current === update) updateRef.current = null;
+        unsubscribe();
+        held.release();
+      };
+    };
+
+    const tryAcquire = () => {
+      if (disposed) return;
+      const acquired = surface.acquire({
+        context: session.context,
+        session: surfaceSession,
+        signal: session.signal,
+      });
+      if (!acquired.ok) {
+        setResult(acquired);
+        if (
+          acquired.denial.reason === "host-unavailable" &&
+          attempts < ACQUIRE_RETRY_DELAYS_MS.length
+        ) {
+          retry = setTimeout(tryAcquire, ACQUIRE_RETRY_DELAYS_MS[attempts]);
+          attempts += 1;
         }
         return;
       }
-      hidden = false;
-      // Sibling overlays (modals, panels) do not trigger geometry events —
-      // poll the occlusion probe so a covered surface still hides.
-      if (poll === null) poll = setInterval(update, OCCLUSION_POLL_MS);
-      // The webview is not clipped by the slot's overflow ancestors — present
-      // the visible intersection and hide when nothing of it is on screen.
-      const clip = clippedSlotRect(element);
-      const occluded = clip !== null && slotOccluded(element, clip);
-      const rect =
-        clip ??
-        (() => {
-          const bounds = element.getBoundingClientRect();
-          return {
-            x: Math.round(bounds.x),
-            y: Math.round(bounds.y),
-            width: Math.max(1, Math.round(bounds.width)),
-            height: Math.max(1, Math.round(bounds.height)),
-          };
-        })();
-      lastRect = rect;
-      lease.present(rect, clip !== null && !occluded, prefs.cornerRadius, prefs.zIndex);
+      setResult(acquired);
+      attach(acquired.lease);
     };
-    updateRef.current = update;
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(element);
-    window.addEventListener("resize", update);
-    window.addEventListener("scroll", update, true);
+    tryAcquire();
     return () => {
-      if (poll !== null) clearInterval(poll);
-      observer.disconnect();
-      window.removeEventListener("resize", update);
-      window.removeEventListener("scroll", update, true);
-      if (updateRef.current === update) updateRef.current = null;
-      unsubscribe();
-      lease.release();
+      disposed = true;
+      if (retry !== null) clearTimeout(retry);
+      detach();
     };
     // The lease is re-acquired only when the element or session identity changes.
   }, [element, targetKey, host, session]);

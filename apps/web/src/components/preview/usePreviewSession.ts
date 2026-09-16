@@ -10,6 +10,7 @@ import {
   applyPreviewServerEvent,
   readThreadPreviewState,
   reconcilePreviewServerSessions,
+  recordPreviewListFailure,
 } from "~/previewStateStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { previewEnvironment } from "~/state/preview";
@@ -43,12 +44,18 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
     let eventsVersion = 0;
 
     const reconcileSessions = (result: Atom.Type<typeof sessionsAtom>) => {
-      // A refresh re-emits the previous Success with `waiting` while the
+      // A refresh re-emits the previous result with `waiting` while the
       // request is in flight — replayed data is not fresh authority for a
-      // tab's absence, so only completed responses reconcile (and advance
-      // the store's listSeq arbitration counter).
-      if (result.waiting || !AsyncResult.isSuccess(result)) return;
-      reconcilePreviewServerSessions(threadRef, result.value);
+      // tab's absence, so only completed responses update the store: a
+      // Success reconciles (advancing listSeq), a Failure records the
+      // completed attempt (advancing listFailures) so arbitration waiters
+      // can retry instead of hanging on a request that already resolved.
+      if (result.waiting) return;
+      if (AsyncResult.isSuccess(result)) {
+        reconcilePreviewServerSessions(threadRef, result.value);
+      } else if (AsyncResult.isFailure(result)) {
+        recordPreviewListFailure(threadRef);
+      }
     };
 
     const applyLatestEvent = (result: Atom.Type<typeof eventsAtom>) => {

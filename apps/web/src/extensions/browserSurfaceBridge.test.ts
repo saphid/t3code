@@ -40,11 +40,13 @@ function harness({ composites = true }: { composites?: boolean } = {}) {
     serverEpoch: "epoch-1" as string | null,
     sessions: { "tab-1": {} } as Record<string, unknown>,
     listSeq: 1,
+    listFailures: 0,
   };
   let threadProjects: Record<string, string | null> = { "thread-a": "project-a" };
   let shellLive = true;
   const threadListeners = new Set<() => void>();
   const sessionRefreshes: string[] = [];
+  const deferred: { fn: () => void; ms: number; canceled: boolean }[] = [];
   const sessionListeners = new Set<() => void>();
   const storeListeners = new Set<
     (state: { readonly byTabId: Readonly<Record<string, BrowserSurfacePresentation>> }) => void
@@ -113,6 +115,13 @@ function harness({ composites = true }: { composites?: boolean } = {}) {
     refreshSessions: (threadRef) => {
       sessionRefreshes.push(`${threadRef.environmentId}/${threadRef.threadId}`);
     },
+    defer: (fn, ms) => {
+      const entry = { fn, ms, canceled: false };
+      deferred.push(entry);
+      return () => {
+        entry.canceled = true;
+      };
+    },
   };
   const lifetime = new AbortController();
   const bind = createBrowserSurfaceBridge("env-a", deps);
@@ -138,6 +147,10 @@ function harness({ composites = true }: { composites?: boolean } = {}) {
     fireSessions: () => {
       for (const listener of sessionListeners) listener();
     },
+    fireDeferred: () => {
+      for (const entry of deferred) if (!entry.canceled) entry.fn();
+    },
+    deferred,
     fireThreads: () => {
       for (const listener of threadListeners) listener();
     },
@@ -267,7 +280,7 @@ describe("browserSurfaceBridge", () => {
     expect(malformed.ok).toBe(false);
     if (!malformed.ok) expect(malformed.denial.reason).toBe("session-invalid");
 
-    h.setPreviewState({ serverEpoch: "epoch-2", sessions: {}, listSeq: 1 });
+    h.setPreviewState({ serverEpoch: "epoch-2", sessions: {}, listSeq: 1, listFailures: 0 });
     const stale = host.acquire({ context, session: sessionRef });
     expect(stale.ok).toBe(false);
     if (!stale.ok) expect(stale.denial.reason).toBe("epoch-changed");
@@ -323,14 +336,24 @@ describe("browserSurfaceBridge", () => {
     const h = harness();
     const acquired = h.host().acquire({ context, session: sessionRef });
     if (!acquired.ok) throw new Error("expected lease");
-    h.setPreviewState({ serverEpoch: "epoch-1", sessions: {}, listSeq: 2 });
+    h.setPreviewState({ serverEpoch: "epoch-1", sessions: {}, listSeq: 2, listFailures: 0 });
     h.fireSessions();
     expect(acquired.lease.state).toEqual({ kind: "ended", reason: "session-closed" });
 
-    h.setPreviewState({ serverEpoch: "epoch-1", sessions: { "tab-1": {} }, listSeq: 3 });
+    h.setPreviewState({
+      serverEpoch: "epoch-1",
+      sessions: { "tab-1": {} },
+      listSeq: 3,
+      listFailures: 0,
+    });
     const again = h.host().acquire({ context, session: sessionRef });
     if (!again.ok) throw new Error("expected lease");
-    h.setPreviewState({ serverEpoch: "epoch-2", sessions: { "tab-1": {} }, listSeq: 4 });
+    h.setPreviewState({
+      serverEpoch: "epoch-2",
+      sessions: { "tab-1": {} },
+      listSeq: 4,
+      listFailures: 0,
+    });
     h.fireSessions();
     expect(again.lease.state).toEqual({ kind: "ended", reason: "epoch-changed" });
   });
@@ -338,7 +361,7 @@ describe("browserSurfaceBridge", () => {
   it("ends a missing-session lease once a post-acquire list proves absence", () => {
     const h = harness();
     // Warm sync: a list has already been applied and the tab is absent.
-    h.setPreviewState({ serverEpoch: "epoch-1", sessions: {}, listSeq: 7 });
+    h.setPreviewState({ serverEpoch: "epoch-1", sessions: {}, listSeq: 7, listFailures: 0 });
     const acquired = h.host().acquire({ context, session: sessionRef });
     expect(acquired.ok).toBe(true);
     if (!acquired.ok) return;
@@ -351,7 +374,7 @@ describe("browserSurfaceBridge", () => {
       presentation: { supported: true },
     });
     // The post-acquire list landing without the tab is authoritative.
-    h.setPreviewState({ serverEpoch: "epoch-1", sessions: {}, listSeq: 8 });
+    h.setPreviewState({ serverEpoch: "epoch-1", sessions: {}, listSeq: 8, listFailures: 0 });
     h.fireSessions();
     expect(acquired.lease.state).toEqual({ kind: "ended", reason: "session-closed" });
   });
@@ -359,15 +382,85 @@ describe("browserSurfaceBridge", () => {
   it("keeps the open-before-sync race alive until the first list lands", () => {
     const h = harness();
     // Cold sync: no list has ever been applied for this thread.
-    h.setPreviewState({ serverEpoch: null, sessions: {}, listSeq: 0 });
+    h.setPreviewState({ serverEpoch: null, sessions: {}, listSeq: 0, listFailures: 0 });
     const acquired = h.host().acquire({ context, session: sessionRef });
     expect(acquired.ok).toBe(true);
     if (!acquired.ok) return;
-    // No forced refresh — the mount's own fetch arbitrates.
-    expect(h.sessionRefreshes).toEqual([]);
+    // The bridge always dispatches its own post-acquire arbitrating request.
+    expect(h.sessionRefreshes).toEqual(["env-a/thread-a"]);
     // A list applied after acquire that contains the tab keeps the lease.
-    h.setPreviewState({ serverEpoch: "epoch-1", sessions: { "tab-1": {} }, listSeq: 1 });
+    h.setPreviewState({
+      serverEpoch: "epoch-1",
+      sessions: { "tab-1": {} },
+      listSeq: 1,
+      listFailures: 0,
+    });
     h.fireSessions();
+    expect(acquired.lease.state).toEqual({
+      kind: "active",
+      presentation: { supported: true },
+    });
+  });
+
+  it("retries a failed arbitration inside the bound instead of ending early", () => {
+    const h = harness();
+    // Warm sync: the tab is absent from applied state but unverified.
+    h.setPreviewState({ serverEpoch: "epoch-1", sessions: {}, listSeq: 7, listFailures: 0 });
+    const acquired = h.host().acquire({ context, session: sessionRef });
+    if (!acquired.ok) throw new Error("expected lease");
+    expect(h.sessionRefreshes).toEqual(["env-a/thread-a"]);
+    // A completed Failure is a completed attempt, not evidence of absence —
+    // the lease stays active and a retry is dispatched within the bound.
+    for (const failures of [1, 2]) {
+      h.setPreviewState({
+        serverEpoch: "epoch-1",
+        sessions: {},
+        listSeq: 7,
+        listFailures: failures,
+      });
+      h.fireSessions();
+      expect(acquired.lease.state).toEqual({
+        kind: "active",
+        presentation: { supported: true },
+      });
+    }
+    expect(h.sessionRefreshes).toEqual(["env-a/thread-a", "env-a/thread-a", "env-a/thread-a"]);
+    // Attempt bound reached — further failures only wait out the deadline.
+    h.setPreviewState({ serverEpoch: "epoch-1", sessions: {}, listSeq: 7, listFailures: 3 });
+    h.fireSessions();
+    expect(h.sessionRefreshes).toHaveLength(3);
+    expect(acquired.lease.state).toEqual({
+      kind: "active",
+      presentation: { supported: true },
+    });
+  });
+
+  it("ends a never-verified lease at the arbitration deadline", () => {
+    const h = harness();
+    h.setPreviewState({ serverEpoch: "epoch-1", sessions: {}, listSeq: 7, listFailures: 0 });
+    const acquired = h.host().acquire({ context, session: sessionRef });
+    if (!acquired.ok) throw new Error("expected lease");
+    // The arbitrating request never resolves — the bound ends it honestly.
+    h.fireDeferred();
+    expect(acquired.lease.state).toEqual({ kind: "ended", reason: "session-unverified" });
+    expect(h.nativeLeases[0]?.released).toBe(true);
+    expect(h.syncUnmounts).toEqual(["env-a/thread-a"]);
+  });
+
+  it("cancels the arbitration deadline once the session verifies", () => {
+    const h = harness();
+    h.setPreviewState({ serverEpoch: "epoch-1", sessions: {}, listSeq: 7, listFailures: 0 });
+    const acquired = h.host().acquire({ context, session: sessionRef });
+    if (!acquired.ok) throw new Error("expected lease");
+    h.setPreviewState({
+      serverEpoch: "epoch-1",
+      sessions: { "tab-1": {} },
+      listSeq: 8,
+      listFailures: 0,
+    });
+    h.fireSessions();
+    expect(h.deferred.every((entry) => entry.canceled)).toBe(true);
+    h.fireDeferred();
     expect(acquired.lease.state).toEqual({
       kind: "active",
       presentation: { supported: true },

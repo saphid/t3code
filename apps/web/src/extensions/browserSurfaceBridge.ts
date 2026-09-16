@@ -94,6 +94,8 @@ export interface BrowserSurfaceBridgeDeps {
   readonly subscribeThread: (threadRef: ScopedThreadRef, listener: () => void) => () => void;
   /** Forces a fresh preview.list round-trip for the thread. */
   readonly refreshSessions: (threadRef: ScopedThreadRef) => void;
+  /** Bounded-delay scheduler for the arbitration deadline — returns a cancel. */
+  readonly defer: (fn: () => void, ms: number) => () => void;
 }
 
 const defaultSchedule = (flush: () => void) => {
@@ -107,6 +109,16 @@ const defaultSchedule = (flush: () => void) => {
 
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
+
+/**
+ * Bound for verifying a session the synced state has never reported. A
+ * `preview.list` request that stays pending (the query awaits connectivity
+ * forever) or completes in Failure is not evidence of absence — but an
+ * unverified lease must not hold its claim and sync mount indefinitely, so
+ * arbitration retries a few failed requests inside one overall deadline.
+ */
+const VERIFY_ATTEMPT_LIMIT = 3;
+const VERIFY_TIMEOUT_MS = 30_000;
 
 const deny = (reason: BrowserSurfaceDenialReason, detail: string, grant?: string) =>
   ({
@@ -142,6 +154,10 @@ export function createBrowserSurfaceBridge(
     subscribeThread: (threadRef, listener) =>
       appAtomRegistry.subscribe(environmentShell.stateValueAtom(threadRef.environmentId), listener),
     refreshSessions: refreshPreviewSessionList,
+    defer: (fn, ms) => {
+      const id = setTimeout(fn, ms);
+      return () => clearTimeout(id);
+    },
     ...overrides,
   };
   // Plugin-vs-plugin supersession registry — covers clients with no
@@ -251,6 +267,7 @@ export function createBrowserSurfaceBridge(
           zIndex: number;
         } | null = null;
         let cancelFlush: (() => void) | null = null;
+        let cancelVerifyDeadline: (() => void) | null = null;
         let unsubscribeSessions: () => void = () => {};
         let unsubscribeStore: () => void = () => {};
         let unsubscribeThread: () => void = () => {};
@@ -259,6 +276,12 @@ export function createBrowserSurfaceBridge(
         // this client observed (sessionSeen) or one a post-acquire list proves
         // absent (listSeq advanced past the baseline without the tab).
         let sessionSeen = baseline.sessions[tabId] !== undefined;
+        let seenFailures = baseline.listFailures;
+        let verifyAttempts = 0;
+        const beginVerify = () => {
+          verifyAttempts += 1;
+          deps.refreshSessions(threadRef);
+        };
 
         const entry = {
           supersede: () => end("superseded"),
@@ -272,6 +295,10 @@ export function createBrowserSurfaceBridge(
             cancelFlush = null;
           }
           pending = null;
+          if (cancelVerifyDeadline) {
+            cancelVerifyDeadline();
+            cancelVerifyDeadline = null;
+          }
           unsubscribeSessions();
           unsubscribeStore();
           unsubscribeThread();
@@ -305,8 +332,20 @@ export function createBrowserSurfaceBridge(
             end("epoch-changed");
             return;
           }
-          if (current.sessions[tabId] !== undefined) sessionSeen = true;
-          else if (sessionSeen || current.listSeq > baseline.listSeq) end("session-closed");
+          if (current.sessions[tabId] !== undefined) {
+            sessionSeen = true;
+            if (cancelVerifyDeadline) {
+              cancelVerifyDeadline();
+              cancelVerifyDeadline = null;
+            }
+          } else if (sessionSeen || current.listSeq > baseline.listSeq) {
+            end("session-closed");
+          } else if (current.listFailures > seenFailures) {
+            // A failed arbitration request proves nothing about the tab —
+            // retry inside the attempt bound; the deadline still applies.
+            seenFailures = current.listFailures;
+            if (verifyAttempts < VERIFY_ATTEMPT_LIMIT) beginVerify();
+          }
         });
         unsubscribeThread = deps.subscribeThread(threadRef, () => {
           if (state.kind === "ended") return;
@@ -317,10 +356,17 @@ export function createBrowserSurfaceBridge(
           if (scope.authoritative && scope.projectId !== resource.projectId)
             end("scope-invalidated");
         });
-        // A tab absent despite an applied list may be stale cached state —
-        // force one authoritative round-trip to arbitrate before the lease
-        // can outlive a session that never existed.
-        if (!sessionSeen && synced.listSeq > 0) deps.refreshSessions(threadRef);
+        // A never-seen tab must be verified, not trusted: force an
+        // arbitrating preview.list dispatched after this acquire. Success
+        // decides presence vs. session-closed; failures retry within the
+        // attempt bound; the deadline ends an unverifiable lease honestly
+        // instead of letting it hold the claim forever.
+        if (!sessionSeen) {
+          beginVerify();
+          cancelVerifyDeadline = deps.defer(() => {
+            if (!sessionSeen) end("session-unverified");
+          }, VERIFY_TIMEOUT_MS);
+        }
         if (composite) {
           unsubscribeStore = deps.subscribeStore((storeState) => {
             if (state.kind === "ended") return;
