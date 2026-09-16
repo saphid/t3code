@@ -124,7 +124,10 @@ export function resolveWorkspaceLink(href: string, baseDir: string): WorkspaceLi
     ...(baseDir === "" ? [] : baseDir.split("/")),
     ...path.split("/"),
   ]);
-  if (segments === null || segments.length === 0) return { kind: "not-a-path" };
+  // `null` is an escape above the root and stays inert; the empty result is
+  // the workspace root itself — a valid directory target the caller maps to
+  // "reveal the tree's top level" (the snapshot has no entry for it).
+  if (segments === null) return { kind: "not-a-path" };
   return {
     kind: "workspace",
     path: segments.join("/"),
