@@ -12,8 +12,19 @@ import { defineExtension, requireApi } from "@t3tools/extension-sdk/authoring";
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 
+import {
+  COMPOSER_MENTION_DRAG_TYPE,
+  dragMentionPayload,
+  fileBreadcrumbChildren,
+  fileBreadcrumbParent,
+  fileBreadcrumbs,
+  isAbsolutePath,
+  lineStartOffset,
+  resolveCenteredFileLineScrollTop,
+  resolveWorkspaceLink,
+} from "./fileNavigation.js";
 import { parseMarkdown, type MarkdownBlock, type MarkdownInline } from "./markdown.js";
 import {
   FILE_SAVE_DEBOUNCE_MS,
@@ -84,6 +95,7 @@ function useWorkspaceTree(host: ClientHost, session: ViewSession) {
     entries: readonly TreeEntry[];
     status: string;
     revision: number;
+    truncated: boolean;
   } | null>(null);
   const [refresh, setRefresh] = useState(0);
   const [visible, setVisible] = useState(session.visible);
@@ -124,6 +136,7 @@ function useWorkspaceTree(host: ClientHost, session: ViewSession) {
         setSnapshot({
           entries: next,
           revision: refresh,
+          truncated,
           status: truncated ? "Files ready (index truncated)" : "Files ready",
         });
       } catch (error) {
@@ -131,6 +144,7 @@ function useWorkspaceTree(host: ClientHost, session: ViewSession) {
           setSnapshot((previous) => ({
             entries: previous?.entries ?? emptyEntries,
             revision: refresh,
+            truncated: previous?.truncated ?? false,
             status: error instanceof Error ? error.message : "Workspace tree unavailable",
           }));
       }
@@ -140,6 +154,7 @@ function useWorkspaceTree(host: ClientHost, session: ViewSession) {
   return {
     entries: snapshot?.entries ?? emptyEntries,
     status: snapshot?.revision === refresh ? snapshot.status : "Loading files",
+    truncated: snapshot?.revision === refresh ? snapshot.truncated : false,
     revision: refresh,
     visible,
     refresh: () => setRefresh((value) => value + 1),
@@ -334,6 +349,28 @@ function useMediaLease(
 
 const HEADING_SIZE: readonly number[] = [0, 22, 18, 16, 14, 13, 12];
 
+/**
+ * What a workspace link in rendered markdown can do. `baseDir` is the
+ * directory of the document being rendered; `openPath` selects (and reveals
+ * a line in) a workspace file; `revealLine` scrolls the current document.
+ */
+interface MarkdownLinkActions {
+  readonly baseDir: string;
+  readonly openPath: (path: string, line?: number) => void;
+  readonly revealLine: (line: number) => void;
+}
+
+const linkButtonStyle = {
+  display: "inline",
+  padding: 0,
+  border: "none",
+  background: "none",
+  font: "inherit",
+  cursor: "pointer",
+  color: "var(--primary, #175cd3)",
+  textDecoration: "underline",
+} as const;
+
 /** Short content digest — enough for sibling-unique, rerender-stable keys. */
 function nodeDigest(value: unknown): string {
   const text = JSON.stringify(value);
@@ -358,8 +395,12 @@ function keyed<T>(items: readonly T[], keyOf: (item: T) => string) {
 }
 
 /** One inline markdown node → a host-React element. */
-function MarkdownInlineNode(props: { readonly node: MarkdownInline }) {
+function MarkdownInlineNode(props: {
+  readonly node: MarkdownInline;
+  readonly links?: MarkdownLinkActions;
+}) {
   const node = props.node;
+  const links = props.links;
   switch (node.type) {
     case "text":
       return node.text;
@@ -380,32 +421,66 @@ function MarkdownInlineNode(props: { readonly node: MarkdownInline }) {
     case "strong":
       return (
         <strong>
-          <MarkdownInlines nodes={node.children} />
+          <MarkdownInlines nodes={node.children} links={links} />
         </strong>
       );
     case "em":
       return (
         <em>
-          <MarkdownInlines nodes={node.children} />
+          <MarkdownInlines nodes={node.children} links={links} />
         </em>
       );
     case "delete":
       return (
         <del>
-          <MarkdownInlines nodes={node.children} />
+          <MarkdownInlines nodes={node.children} links={links} />
         </del>
       );
-    case "link":
-      return node.safe ? (
-        <a href={node.href} target="_blank" rel="noreferrer">
-          <MarkdownInlines nodes={node.children} />
-        </a>
+    case "link": {
+      if (node.href.startsWith("#")) {
+        // `#L…` anchors reveal a line in this document; other fragments have
+        // no heading targets in this view, so they stay inert rather than
+        // rewriting the host page's location hash.
+        const anchor = links === undefined ? null : resolveWorkspaceLink(node.href, "");
+        return links !== undefined && anchor?.kind === "anchor" && anchor.line !== undefined ? (
+          <button
+            type="button"
+            style={linkButtonStyle}
+            onClick={() => links.revealLine(anchor.line ?? 0)}
+          >
+            <MarkdownInlines nodes={node.children} links={links} />
+          </button>
+        ) : (
+          <span>
+            <MarkdownInlines nodes={node.children} links={links} /> ({node.href})
+          </span>
+        );
+      }
+      if (node.safe) {
+        return (
+          <a href={node.href} target="_blank" rel="noreferrer">
+            <MarkdownInlines nodes={node.children} links={links} />
+          </a>
+        );
+      }
+      // Relative destinations resolve against the rendered document's
+      // directory; only workspace paths become navigable.
+      const target = links === undefined ? null : resolveWorkspaceLink(node.href, links.baseDir);
+      return links !== undefined && target?.kind === "workspace" ? (
+        <button
+          type="button"
+          style={linkButtonStyle}
+          onClick={() => links.openPath(target.path, target.line)}
+        >
+          <MarkdownInlines nodes={node.children} links={links} />
+        </button>
       ) : (
-        // Unsafe/relative destinations stay visible but never navigable.
+        // Unsafe/unresolvable destinations stay visible but never navigable.
         <span>
-          <MarkdownInlines nodes={node.children} /> ({node.href})
+          <MarkdownInlines nodes={node.children} links={links} /> ({node.href})
         </span>
       );
+    }
     case "image":
       return (
         <span style={{ color: "var(--muted-foreground, #667085)" }}>
@@ -422,14 +497,20 @@ function MarkdownInlineNode(props: { readonly node: MarkdownInline }) {
  * the only attribute ever emitted is `href` on a safe-scheme anchor, so the
  * markup source has no injection surface at all.
  */
-function MarkdownInlines(props: { readonly nodes: readonly MarkdownInline[] }) {
+function MarkdownInlines(props: {
+  readonly nodes: readonly MarkdownInline[];
+  readonly links?: MarkdownLinkActions;
+}) {
   return keyed(props.nodes, (node) => `i:${nodeDigest(node)}`).map(({ item, key }) => (
-    <MarkdownInlineNode key={key} node={item} />
+    <MarkdownInlineNode key={key} node={item} links={props.links} />
   ));
 }
 
 /** One block → host-React elements; plain elements only, no raw HTML. */
-function MarkdownBlockNode(props: { readonly block: MarkdownBlock }) {
+function MarkdownBlockNode(props: {
+  readonly block: MarkdownBlock;
+  readonly links?: MarkdownLinkActions;
+}) {
   const block = props.block;
   switch (block.type) {
     case "heading": {
@@ -442,14 +523,14 @@ function MarkdownBlockNode(props: { readonly block: MarkdownBlock }) {
             margin: "14px 0 6px",
           }}
         >
-          <MarkdownInlines nodes={block.children} />
+          <MarkdownInlines nodes={block.children} links={props.links} />
         </Tag>
       );
     }
     case "paragraph":
       return (
         <p style={{ margin: "0 0 10px" }}>
-          <MarkdownInlines nodes={block.children} />
+          <MarkdownInlines nodes={block.children} links={props.links} />
         </p>
       );
     case "code":
@@ -491,7 +572,7 @@ function MarkdownBlockNode(props: { readonly block: MarkdownBlock }) {
             color: "var(--muted-foreground, #667085)",
           }}
         >
-          <MarkdownBlocks blocks={block.children} />
+          <MarkdownBlocks blocks={block.children} links={props.links} />
         </blockquote>
       );
     case "list": {
@@ -510,7 +591,7 @@ function MarkdownBlockNode(props: { readonly block: MarkdownBlock }) {
                   style={{ marginRight: 6 }}
                 />
               )}
-              <MarkdownBlocks blocks={item.children} />
+              <MarkdownBlocks blocks={item.children} links={props.links} />
             </li>
           ))}
         </ListTag>
@@ -529,21 +610,27 @@ function MarkdownBlockNode(props: { readonly block: MarkdownBlock }) {
  * Block tree → host-React elements for the rendered-markdown preview (F1 #22).
  * Plain elements only — no raw HTML, no user-controlled attributes.
  */
-function MarkdownBlocks(props: { readonly blocks: readonly MarkdownBlock[] }) {
+function MarkdownBlocks(props: {
+  readonly blocks: readonly MarkdownBlock[];
+  readonly links?: MarkdownLinkActions;
+}) {
   return keyed(props.blocks, (block) => `b:${nodeDigest(block)}`).map(({ item, key }) => (
-    <MarkdownBlockNode key={key} block={item} />
+    <MarkdownBlockNode key={key} block={item} links={props.links} />
   ));
 }
 
 /** The rendered-markdown surface: block view plus the named-subset caption. */
-function RenderedMarkdown(props: { readonly blocks: readonly MarkdownBlock[] }) {
+function RenderedMarkdown(props: {
+  readonly blocks: readonly MarkdownBlock[];
+  readonly links?: MarkdownLinkActions;
+}) {
   return (
     <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 12 }}>
       <article
         aria-label="Rendered markdown"
         style={{ lineHeight: 1.55, overflowWrap: "break-word" }}
       >
-        <MarkdownBlocks blocks={props.blocks} />
+        <MarkdownBlocks blocks={props.blocks} links={props.links} />
       </article>
       <footer style={{ color: "var(--muted-foreground, #667085)", fontSize: 11, marginTop: 12 }}>
         Rendered preview — markdown subset (raw HTML, tables and images are not rendered; task lists
@@ -553,9 +640,238 @@ function RenderedMarkdown(props: { readonly blocks: readonly MarkdownBlock[] }) 
   );
 }
 
+/**
+ * Breadcrumbs for the selected path (F1 #23). The root crumb is labeled
+ * "Workspace" because no public contract reports the project title to a
+ * project-scope view — naming it anything else would fabricate. Crumb menus
+ * list children from the tree snapshot the panel already holds; drilling into
+ * a subdirectory re-targets the menu, bounded back at the crumb's own dir.
+ */
+const WORKSPACE_ROOT_LABEL = "Workspace";
+
+function FileBreadcrumbBar(props: {
+  readonly selected: string;
+  readonly entries: readonly TreeEntry[];
+  readonly truncated: boolean;
+  readonly onSelect: (path: string) => void;
+}) {
+  const { selected, entries, truncated, onSelect } = props;
+  const crumbs = fileBreadcrumbs(WORKSPACE_ROOT_LABEL, selected);
+  // Host-absolute paths are outside the workspace — labels only, no menus.
+  const hostPath = isAbsolutePath(selected);
+  // The open menu is keyed to the path it opened under — a selection change
+  // closes it by derivation, no reset effect needed.
+  const [openMenu, setOpenMenu] = useState<{ crumb: string; forPath: string } | null>(null);
+  const openCrumb = openMenu !== null && openMenu.forPath === selected ? openMenu.crumb : null;
+  const [menuDir, setMenuDir] = useState("");
+  const navRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    navRef.current
+      ?.querySelector("[data-current-file-crumb]")
+      ?.scrollIntoView({ block: "nearest", inline: "end" });
+    // `selected` is the intentional trigger — the body reads DOM state only.
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies
+  }, [selected]);
+  const muted = "var(--muted-foreground, #667085)";
+  return (
+    <nav
+      aria-label="File path"
+      ref={navRef}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") setOpenMenu(null);
+      }}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 2,
+        padding: "4px 10px",
+        borderTop: "1px solid var(--border, #dfe3e8)",
+        overflowX: "auto",
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+        fontSize: 12,
+        color: "var(--foreground, #20252d)",
+      }}
+    >
+      {crumbs.map((crumb, index) => {
+        const last = index === crumbs.length - 1;
+        const menuable = !hostPath && !last;
+        return (
+          <span key={crumb.path || crumb.label} style={{ position: "relative", flexShrink: 0 }}>
+            {menuable ? (
+              <button
+                type="button"
+                aria-haspopup="menu"
+                aria-expanded={openCrumb === crumb.path}
+                onClick={() => {
+                  if (openCrumb === crumb.path) {
+                    setOpenMenu(null);
+                  } else {
+                    setMenuDir(crumb.path);
+                    setOpenMenu({ crumb: crumb.path, forPath: selected });
+                  }
+                }}
+                style={{
+                  border: "none",
+                  background: openCrumb === crumb.path ? "var(--accent, #e8eef7)" : "none",
+                  font: "inherit",
+                  color: "inherit",
+                  padding: "1px 4px",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                }}
+              >
+                {crumb.label}
+              </button>
+            ) : (
+              <span
+                {...(last ? { "data-current-file-crumb": "" } : {})}
+                aria-current={last ? "page" : undefined}
+                style={{ padding: "1px 4px", fontWeight: last ? 600 : 400 }}
+              >
+                {crumb.label}
+              </span>
+            )}
+            {!last && (
+              <span aria-hidden="true" style={{ color: muted, padding: "0 1px" }}>
+                /
+              </span>
+            )}
+            {openCrumb === crumb.path && (
+              <CrumbMenu
+                rootPath={crumb.path}
+                menuDir={menuDir}
+                entries={entries}
+                selected={selected}
+                truncated={truncated}
+                onNavigate={setMenuDir}
+                onSelect={(path) => {
+                  onSelect(path);
+                  setOpenMenu(null);
+                }}
+                onClose={() => setOpenMenu(null)}
+              />
+            )}
+          </span>
+        );
+      })}
+    </nav>
+  );
+}
+
+/** The open crumb's child-entry menu — files select, directories drill in. */
+function CrumbMenu(props: {
+  readonly rootPath: string;
+  readonly menuDir: string;
+  readonly entries: readonly TreeEntry[];
+  readonly selected: string;
+  readonly truncated: boolean;
+  readonly onNavigate: (dir: string) => void;
+  readonly onSelect: (path: string) => void;
+  readonly onClose: () => void;
+}) {
+  const { rootPath, menuDir, entries, selected, truncated, onNavigate, onSelect, onClose } = props;
+  const children = fileBreadcrumbChildren(entries, menuDir);
+  const parent = fileBreadcrumbParent(menuDir);
+  const muted = "var(--muted-foreground, #667085)";
+  const itemStyle = {
+    display: "block",
+    width: "100%",
+    textAlign: "left",
+    font: "inherit",
+    fontSize: 12,
+    padding: "4px 8px",
+    border: "none",
+    borderRadius: 4,
+    cursor: "pointer",
+    background: "none",
+    color: "var(--foreground, #20252d)",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  } as const;
+  return (
+    <>
+      <button
+        type="button"
+        aria-label="Close directory menu"
+        onClick={onClose}
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 9,
+          border: "none",
+          background: "transparent",
+          cursor: "default",
+        }}
+      />
+      <div
+        role="menu"
+        aria-label={`Contents of ${menuDir === "" ? WORKSPACE_ROOT_LABEL : menuDir}`}
+        style={{
+          position: "absolute",
+          top: "100%",
+          left: 0,
+          zIndex: 10,
+          minWidth: 180,
+          maxWidth: 320,
+          maxHeight: 260,
+          overflow: "auto",
+          padding: 4,
+          border: "1px solid var(--border, #dfe3e8)",
+          borderRadius: 6,
+          background: "var(--background, #fff)",
+          boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)",
+        }}
+      >
+        {menuDir !== rootPath && parent !== null && (
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => onNavigate(parent)}
+            style={itemStyle}
+          >
+            ‹ Back to {parent === "" ? WORKSPACE_ROOT_LABEL : (parent.split("/").at(-1) ?? parent)}
+          </button>
+        )}
+        {children.map((child) => (
+          <button
+            key={child.path}
+            type="button"
+            role="menuitem"
+            aria-current={child.path === selected ? "true" : undefined}
+            onClick={() =>
+              child.kind === "directory" ? onNavigate(child.path) : onSelect(child.path)
+            }
+            style={{
+              ...itemStyle,
+              background: child.path === selected ? "var(--accent, #e8eef7)" : "none",
+            }}
+          >
+            {child.kind === "directory" ? `${child.label}/` : child.label}
+          </button>
+        ))}
+        {children.length === 0 && (
+          <div role="none" style={{ padding: "4px 8px", color: muted, fontSize: 11 }}>
+            Empty
+          </div>
+        )}
+        {truncated && (
+          <div role="none" style={{ padding: "4px 8px", color: muted, fontSize: 11 }}>
+            Index truncated — some entries are not shown
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const { host, session } = props;
-  const { entries, status, refresh, revision, visible } = useWorkspaceTree(host, session);
+  const { entries, status, refresh, revision, visible, truncated } = useWorkspaceTree(
+    host,
+    session,
+  );
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const [query, setQuery] = useState("");
   const [searchMode, setSearchMode] = useState<"names" | "contents">("names");
@@ -582,6 +898,12 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     status: string;
     truncated: boolean;
   } | null>(null);
+  // F1 #23: the latest centered line reveal request — set by search hits and
+  // link targets, tracked as handled once the content surface scrolls.
+  const [revealRequest, setRevealRequest] = useState<{ path: string; line: number } | null>(null);
+  const handledRevealRef = useRef<{ path: string; line: number } | null>(null);
+  const editorRef = useRef<HTMLTextAreaElement | null>(null);
+  const readOnlyRef = useRef<HTMLPreElement | null>(null);
   const selectedKind: PreviewKind = selected ? previewKind(selected) : "text";
   const editor = useFileEditor(host, session, selected, selectedKind, revision, visible);
   const media = useMediaLease(host, session, selected, selectedKind, revision, visible);
@@ -682,13 +1004,29 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       ? search
       : null;
 
-  const select = (path: string) => {
+  const select = (path: string, line?: number) => {
     setSelected(path);
     session.save({ relativePath: path });
+    // A plain selection also cancels any reveal still pending for another path.
+    setRevealRequest(line !== undefined && line > 0 ? { path, line } : null);
     const ancestors: string[] = [];
     for (let ancestor = parentPath(path); ancestor !== null; ancestor = parentPath(ancestor))
       ancestors.push(ancestor);
     if (ancestors.length) setExpanded((previous) => new Set([...previous, ...ancestors]));
+  };
+
+  // F1 #23: rows drag a serialized composer mention on the MIME the host
+  // composer claims — the drop handler there does the insertion, so the
+  // plugin needs no composer contract. No text/plain fallback, matching the
+  // native tree so mention drags stay distinguishable from selected text.
+  const startMentionDrag = (event: DragEvent, path: string) => {
+    const payload = dragMentionPayload([path]);
+    if (payload === null) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.setData(COMPOSER_MENTION_DRAG_TYPE, payload);
+    event.dataTransfer.effectAllowed = "copy";
   };
 
   // F1 #17: the public open path is `t3.file/presentation.open` — the host's
@@ -779,6 +1117,79 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     return () => controller.abort();
   }, [host, selected, selectedKind, session, revision, visible, editorSurface]);
 
+  // F1 #23: workspace links in rendered markdown open through the same
+  // select path; a link to a directory expands the tree there instead of
+  // attempting a text read.
+  const linkActions: MarkdownLinkActions | undefined =
+    selected === null
+      ? undefined
+      : {
+          baseDir: parentPath(selected) ?? "",
+          openPath: (path, line) =>
+            kindByPath.get(path) === "directory"
+              ? setExpanded((previous) => {
+                  const next = new Set(previous);
+                  for (
+                    let ancestor: string | null = path;
+                    ancestor !== null;
+                    ancestor = parentPath(ancestor)
+                  )
+                    next.add(ancestor);
+                  return next;
+                })
+              : select(path, line),
+          revealLine: (line) => setRevealRequest({ path: selected, line }),
+        };
+
+  // Centered line reveal (F1 #23). Waits for the selected file's content
+  // surface — the editable textarea or the bounded read-only <pre> — then
+  // scrolls the target line into the viewport center and marks the request
+  // handled. The read-only pre's text node gives exact rendered geometry via
+  // a Range rect; the textarea falls back to line-height estimation and gets
+  // the caret on the line. A request that can't run yet (read in flight,
+  // rendered-markdown view) stays pending until the surface appears or a
+  // plain selection replaces it.
+  useEffect(() => {
+    const reveal = revealRequest;
+    if (reveal === null || reveal === handledRevealRef.current) return;
+    if (reveal.path !== selected || selectedKind !== "text" || markdownBlocks !== null) return;
+    const editable = editorSurface?.open.editable === true;
+    const text = editable ? editorSurface.contents : currentRead?.contents;
+    const element = editable ? editorRef.current : readOnlyRef.current;
+    if (text === undefined || element === null) return;
+    const style = getComputedStyle(element);
+    const paddingTop = Number.parseFloat(style.paddingTop) || 0;
+    const lineHeight = Number.parseFloat(style.lineHeight) || 16;
+    let renderedLine: { top: number; height: number } | undefined;
+    if (!editable) {
+      const node = element.firstChild;
+      if (node !== null && node.nodeType === Node.TEXT_NODE) {
+        const offset = Math.min(lineStartOffset(text, reveal.line), node.textContent?.length ?? 0);
+        const range = element.ownerDocument.createRange();
+        range.setStart(node, offset);
+        range.setEnd(node, offset);
+        const rect = range.getBoundingClientRect();
+        if (rect.height > 0) renderedLine = { top: rect.top, height: rect.height };
+      }
+    }
+    const viewport = element.getBoundingClientRect();
+    element.scrollTop = resolveCenteredFileLineScrollTop({
+      scrollTop: element.scrollTop,
+      scrollHeight: element.scrollHeight,
+      viewportTop: viewport.top,
+      viewportHeight: element.clientHeight,
+      fileTop: paddingTop,
+      estimatedLine: { top: (reveal.line - 1) * lineHeight, height: lineHeight },
+      ...(renderedLine !== undefined ? { renderedLine } : {}),
+    });
+    if (editable && element instanceof HTMLTextAreaElement) {
+      const offset = lineStartOffset(text, reveal.line);
+      element.focus({ preventScroll: true });
+      element.setSelectionRange(offset, offset);
+    }
+    handledRevealRef.current = reveal;
+  }, [revealRequest, selected, selectedKind, markdownBlocks, editorSurface, currentRead]);
+
   const muted = "var(--muted-foreground, #667085)";
   return (
     <section
@@ -862,7 +1273,9 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                   <button
                     type="button"
                     aria-current={match.path === selected ? "true" : undefined}
-                    onClick={() => select(match.path)}
+                    draggable
+                    onDragStart={(event) => startMentionDrag(event, match.path)}
+                    onClick={() => select(match.path, match.lineNumber)}
                     style={{
                       display: "block",
                       width: "100%",
@@ -927,6 +1340,8 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                   <button
                     type="button"
                     aria-current={entry.path === selected ? "true" : undefined}
+                    draggable
+                    onDragStart={(event) => startMentionDrag(event, entry.path)}
                     onClick={() =>
                       entry.kind === "directory"
                         ? (setQuery(""),
@@ -971,6 +1386,8 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                   type="button"
                   aria-expanded={row.expandable ? expanded.has(row.entry.path) : undefined}
                   aria-current={row.entry.path === selected ? "true" : undefined}
+                  draggable
+                  onDragStart={(event) => startMentionDrag(event, row.entry.path)}
                   onClick={() =>
                     row.expandable
                       ? setExpanded((previous) => toggleExpanded(previous, row.entry.path))
@@ -1019,6 +1436,14 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           : status + (kindByPath.size > 0 ? ` — ${entries.length} entries` : "")) +
           (changes.status === "degraded" ? " · agent updates unavailable — use Refresh files" : "")}
       </output>
+      {selected !== null && (
+        <FileBreadcrumbBar
+          selected={selected}
+          entries={entries}
+          truncated={truncated}
+          onSelect={select}
+        />
+      )}
       {selected && (
         <output
           aria-label="File status"
@@ -1076,9 +1501,10 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           }}
         >
           {markdownBlocks !== null ? (
-            <RenderedMarkdown blocks={markdownBlocks} />
+            <RenderedMarkdown blocks={markdownBlocks} links={linkActions} />
           ) : (
             <textarea
+              ref={editorRef}
               aria-label="File editor"
               value={editorSurface.contents}
               onChange={(event) => editor.change(event.target.value)}
@@ -1157,10 +1583,11 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               borderTop: "1px solid var(--border, #dfe3e8)",
             }}
           >
-            <RenderedMarkdown blocks={markdownBlocks} />
+            <RenderedMarkdown blocks={markdownBlocks} links={linkActions} />
           </div>
         ) : (
           <pre
+            ref={readOnlyRef}
             aria-label="File contents"
             style={{
               overflow: "auto",
