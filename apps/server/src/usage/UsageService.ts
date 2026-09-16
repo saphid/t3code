@@ -77,6 +77,7 @@ import {
   dedupeWithinFile,
   encodeScanCache,
   pruneScanCache,
+  USAGE_SCAN_CACHE_VERSION,
   type ScanCache,
 } from "./usageScanCache.ts";
 
@@ -128,8 +129,10 @@ const ScanCacheJson = Schema.fromJsonString(Schema.Unknown as unknown as Schema.
 const decodeScanCacheFile = Schema.decodeUnknownEffect(ScanCacheJson);
 const encodeScanCacheFile = Schema.encodeEffect(ScanCacheJson);
 
+// Derived totals must be rebuilt whenever the transcript parser cache changes.
 const UsageSnapshotFile = Schema.Struct({
   version: Schema.Literal(1),
+  scanCacheVersion: Schema.Literal(USAGE_SCAN_CACHE_VERSION),
   entries: Schema.Array(
     Schema.Struct({
       key: Schema.String,
@@ -218,6 +221,7 @@ const UsageLedgerFileV1 = Schema.Struct({
 });
 const UsageLedgerFile = Schema.Struct({
   version: Schema.Literal(2),
+  scanCacheVersion: Schema.Literal(USAGE_SCAN_CACHE_VERSION),
   generatedAtMs: Schema.Number,
   aggregates: Schema.Array(UsageLedgerAggregate),
   sources: Schema.Array(UsageSourceSchema),
@@ -898,7 +902,11 @@ export const make = Effect.gen(function* () {
       )
       .slice(0, MAX_USAGE_SNAPSHOTS)
       .map(([key, summary]) => ({ key, summary }));
-    yield* encodeUsageSnapshotFile({ version: 1, entries }).pipe(
+    yield* encodeUsageSnapshotFile({
+      version: 1,
+      scanCacheVersion: USAGE_SCAN_CACHE_VERSION,
+      entries,
+    }).pipe(
       Effect.flatMap((serialized) =>
         writeFileStringAtomically({ filePath: usageSnapshotPath, contents: serialized }).pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -920,6 +928,7 @@ export const make = Effect.gen(function* () {
     const aggregates = [...usageLedger.values()];
     yield* encodeUsageLedgerFile({
       version: 2,
+      scanCacheVersion: USAGE_SCAN_CACHE_VERSION,
       generatedAtMs: usageLedgerGeneratedAtMs,
       aggregates,
       sources: [...usageLedgerSources.values()],

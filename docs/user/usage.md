@@ -6,7 +6,8 @@ processed tokens, cache savings, provider shares, and model breakdowns. Subscrip
 separate from this local estimate.
 
 Claude Code accounting keeps the final progressive snapshot for each response and prices every
-attempt in a model-fallback sequence. Five-minute and one-hour cache writes use their distinct
+attempt in a model-fallback sequence. Attempts without a separate model name use the response's
+model. Five-minute and one-hour cache writes use their distinct
 public rates when the transcript provides the TTL. Thinking tokens remain part of output rather
 than being charged twice.
 
@@ -38,6 +39,7 @@ half-hour source buckets, including **24 hours**, **30 days**, and **90 days**. 
 the exact totals for the selected grouping. The page labels the latest time represented by the data.
 Usage refreshes in the background when the server starts and every 30 minutes, so opening the page
 can use the last successful snapshot without waiting for a transcript scan. The Cost and Tokens switch sits with the graph.
+After an accounting update, the next background refresh rebuilds saved totals from session history.
 Manually refreshing rescans every connected environment and refetches model pricing on each
 of them, so a newly released model that showed $0.00 gets a price without waiting for the daily
 pricing update.

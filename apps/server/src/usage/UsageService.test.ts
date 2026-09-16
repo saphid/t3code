@@ -37,6 +37,7 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageService from "./UsageService.ts";
+import { USAGE_SCAN_CACHE_VERSION } from "./usageScanCache.ts";
 
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -157,6 +158,84 @@ function currentCanonicalWindow(): UsageSummaryInput {
 }
 
 describe("UsageService", () => {
+  it.live("rebuilds usage after restarting with caches from the model-less iteration parser", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const canonical = currentCanonicalWindow();
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          transcript,
+          JSON.stringify({
+            type: "assistant",
+            timestamp: `${canonical.untilDay}T10:00:00Z`,
+            message: {
+              id: "msg_cached_iteration",
+              model: "claude-fable-5",
+              usage: {
+                input_tokens: 10,
+                output_tokens: 7,
+                iterations: [{ type: "message", model: null, input_tokens: 10, output_tokens: 7 }],
+              },
+            },
+          }) + "\n",
+        ),
+      );
+      const baseDir = NodePath.join(home, "parser-upgrade-state");
+      const layers = serviceLayers({ prefix: "usage-parser-upgrade", baseDir, home, settings });
+      const first = yield* UsageService.make.pipe(Effect.provide(layers));
+      yield* first.refreshSummary(canonical);
+      const stateDir = NodePath.join(baseDir, "userdata");
+      const snapshotPath = NodePath.join(stateDir, "usage-snapshot.json");
+      const snapshots = yield* Effect.promise(() => NodeFSP.readFile(snapshotPath, "utf8"));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          snapshotPath,
+          JSON.stringify(JSON.parse(snapshots), (key, value) =>
+            key === "scanCacheVersion" ? undefined : key === "buckets" ? [] : value,
+          ),
+        ),
+      );
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(stateDir, "usage-record-ledger.json"),
+          JSON.stringify({ version: 2, generatedAtMs: Date.now(), aggregates: [], sources: [] }),
+        ),
+      );
+      const stat = yield* Effect.promise(() => NodeFSP.stat(transcript));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(stateDir, "usage-scan-cache.json"),
+          JSON.stringify({
+            version: 5,
+            models: [],
+            sessions: [],
+            cwds: [],
+            files: {
+              [transcript]: {
+                s: stat.size,
+                m: stat.mtimeMs,
+                p: "claude",
+                r: [],
+                t: [],
+                o: stat.size,
+                gl: 0,
+                gh: 0,
+                cs: null,
+              },
+            },
+          }),
+        ),
+      );
+
+      const restarted = yield* UsageService.make.pipe(Effect.provide(layers));
+      assert.isTrue(Exit.isFailure(yield* restarted.readSummary(canonical).pipe(Effect.exit)));
+      yield* restarted.refreshSummary(canonical);
+      assert.strictEqual(totalOutputTokens(yield* restarted.readSummary(canonical)), 7);
+      const restartedAgain = yield* UsageService.make.pipe(Effect.provide(layers));
+      assert.strictEqual(totalOutputTokens(yield* restartedAgain.readSummary(canonical)), 7);
+    }).pipe(Effect.scoped),
+  );
+
   it.live("reads configured and disabled accounts once across shared and aliased homes", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
@@ -746,6 +825,7 @@ describe("UsageService", () => {
           NodePath.join(stateDir, "usage-record-ledger.json"),
           JSON.stringify({
             version: 2,
+            scanCacheVersion: USAGE_SCAN_CACHE_VERSION,
             generatedAtMs: Date.now(),
             aggregates: [
               {
@@ -821,6 +901,7 @@ describe("UsageService", () => {
           NodePath.join(stateDir, "usage-record-ledger.json"),
           JSON.stringify({
             version: 2,
+            scanCacheVersion: USAGE_SCAN_CACHE_VERSION,
             generatedAtMs: Date.parse("2026-09-03T00:00:00.000Z"),
             aggregates: [
               {
@@ -886,6 +967,7 @@ describe("UsageService", () => {
           NodePath.join(stateDir, "usage-record-ledger.json"),
           JSON.stringify({
             version: 2,
+            scanCacheVersion: USAGE_SCAN_CACHE_VERSION,
             // At 01:00 UTC, June 4 is still the previous local day in Los Angeles.
             generatedAtMs: Date.parse("2026-09-03T01:00:00.000Z"),
             aggregates: [
@@ -950,6 +1032,7 @@ describe("UsageService", () => {
           NodePath.join(stateDir, "usage-record-ledger.json"),
           JSON.stringify({
             version: 2,
+            scanCacheVersion: USAGE_SCAN_CACHE_VERSION,
             // The 92-day retention cutoff is 00:00 UTC on April 24. Cairo's
             // April 24 midnight gap begins at 22:00 UTC on April 23, so the
             // first two hours of the local day are outside the ledger.
@@ -1018,6 +1101,7 @@ describe("UsageService", () => {
           NodePath.join(stateDir, "usage-record-ledger.json"),
           JSON.stringify({
             version: 2,
+            scanCacheVersion: USAGE_SCAN_CACHE_VERSION,
             // Apia skipped December 30, 2011 when it moved across the date
             // line. The old iterative resolver could return a prior instant.
             generatedAtMs: Date.parse("2012-03-28T00:00:00.000Z"),
@@ -1124,7 +1208,11 @@ describe("UsageService", () => {
       yield* Effect.promise(() =>
         NodeFSP.writeFile(
           snapshotPath,
-          JSON.stringify({ version: 1, entries: [{ key: snapshotKey, summary: stale }] }),
+          JSON.stringify({
+            version: 1,
+            scanCacheVersion: USAGE_SCAN_CACHE_VERSION,
+            entries: [{ key: snapshotKey, summary: stale }],
+          }),
         ),
       );
       yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));

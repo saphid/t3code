@@ -40,6 +40,40 @@ function claudeLine(overrides: {
 }
 
 describe("parseClaudeLine", () => {
+  it.each([undefined, null, ""])("keeps serving usage when iteration model is %s", (model) => {
+    const records = parseClaudeLineRecords(
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-09-15T23:21:36.988Z",
+        message: {
+          id: "msg_unnamed_iteration",
+          model: "claude-fable-5-1",
+          usage: {
+            input_tokens: 2,
+            output_tokens: 466,
+            cache_read_input_tokens: 11387,
+            cache_creation_input_tokens: 13703,
+            iterations: [
+              {
+                type: "message",
+                model,
+                input_tokens: 2,
+                output_tokens: 466,
+                cache_read_input_tokens: 11387,
+                cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 13703 },
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    expect(records).toHaveLength(1);
+    expect(records[0]?.model).toBe("claude-fable-5-1");
+    expect(records[0]?.totals.cacheCreation1hTokens).toBe(13703);
+    expect(records.map((record) => totalTokens(record.totals))).toEqual([25558]);
+  });
+
   it("extracts token totals and a dedupe key", () => {
     const record = parseClaudeLine(claudeLine({ messageId: "msg_1", contentType: "text" }));
 
