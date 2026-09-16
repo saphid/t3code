@@ -75,7 +75,7 @@ var __t3Client = (() => {
     default: () => generated_client_default
   });
 
-  // npm:@t3tools/extension-sdk/dist/contracts.js
+  // node_modules/@t3tools/extension-sdk/dist/contracts.js
   var API_VERSION = 1;
   var MAX_PAYLOAD_BYTES = 64 * 1024;
   function assertId(value) {
@@ -165,7 +165,7 @@ var __t3Client = (() => {
     return manifest;
   }
 
-  // npm:@t3tools/extension-sdk/dist/capabilities.js
+  // node_modules/@t3tools/extension-sdk/dist/capabilities.js
   function defineApi(definition) {
     return { definition: validateApiDefinition(definition) };
   }
@@ -236,7 +236,7 @@ var __t3Client = (() => {
     return api;
   }
 
-  // npm:@t3tools/extension-sdk/dist/orchestration.js
+  // node_modules/@t3tools/extension-sdk/dist/orchestration.js
   var ORCHESTRATION_STATUS = "t3.orchestration/status";
   var ORCHESTRATION_CONTROL = "t3.orchestration/control";
   var ORCHESTRATION_READ = "t3.orchestration/read";
@@ -462,7 +462,7 @@ var __t3Client = (() => {
   }
   var ORCHESTRATION_CONTROL_API = orchestrationControlApi.definition;
 
-  // npm:@t3tools/extension-sdk/dist/textEdits.js
+  // node_modules/@t3tools/extension-sdk/dist/textEdits.js
   var WORKSPACE_READ_TEXT_EDITS = "t3.workspace/text-edits";
   var WORKSPACE_READ_TEXT_GRANT = "t3.workspace/read-text";
   var WORKSPACE_WRITE_TEXT = "t3.workspace/write-text";
@@ -655,7 +655,7 @@ var __t3Client = (() => {
     ]
   });
 
-  // npm:@t3tools/extension-sdk/dist/workspaceResources.js
+  // node_modules/@t3tools/extension-sdk/dist/workspaceResources.js
   var WORKSPACE_RESOURCES = "t3.workspace/resources";
   var WORKSPACE_RESOURCE_CHUNK_UNITS = 8192;
   var WORKSPACE_RESOURCE_MAX_CHUNKS = 2048;
@@ -895,7 +895,7 @@ var __t3Client = (() => {
   });
   var WORKSPACE_RESOURCES_API = workspaceResourcesApi.definition;
 
-  // npm:@t3tools/extension-sdk/dist/catalogue.js
+  // node_modules/@t3tools/extension-sdk/dist/catalogue.js
   var BROWSER_LOCAL_SERVERS = "t3.browser/local-servers";
   var BROWSER_READ_LOCAL_SERVERS = "t3.browser/read-local-servers";
   var browserLocalServersApi = defineStreamApi({
@@ -4330,7 +4330,7 @@ var __t3Client = (() => {
   var TERMINAL_OUTPUT_EVENTS_API = terminalOutputEventsApi.definition;
   var TERMINAL_CONTROL_API = terminalControlApi.definition;
 
-  // npm:@t3tools/extension-sdk/dist/environment.js
+  // node_modules/@t3tools/extension-sdk/dist/environment.js
   var ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
   var ENVIRONMENT_ASSET_MEDIA_TYPES = [
     "application/wasm",
@@ -4468,7 +4468,7 @@ var __t3Client = (() => {
     return { ...pkg, manifest };
   }
 
-  // npm:@t3tools/extension-sdk/dist/authoring.js
+  // node_modules/@t3tools/extension-sdk/dist/authoring.js
   var statePreview = (state2) => {
     const encoded = JSON.stringify(state2);
     return encoded.length > 200 ? encoded.slice(0, 200) + "\u2026" : encoded;
@@ -4563,10 +4563,10 @@ var __t3Client = (() => {
     };
   }
 
-  // pkg:extension.tsx
-  var import_react = __toESM(require_react());
+  // extension.tsx
+  var import_react = __toESM(require_react(), 1);
 
-  // pkg:state.ts
+  // state.ts
   var persistedCounterSchema = {
     fields: { count: "number", label: "string" },
     optional: ["label"]
@@ -4584,8 +4584,8 @@ var __t3Client = (() => {
     return state2;
   }
 
-  // pkg:extension.tsx
-  var import_jsx_runtime = __toESM(require_jsx_runtime());
+  // extension.tsx
+  var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
   var manifestId = "example.persisted-state";
   function CounterView(props) {
     const { session } = props;
@@ -4619,7 +4619,7 @@ var __t3Client = (() => {
     ]
   });
 
-  // pkg:extension.ts
+  // extension.ts
   var extension_default2 = extension_default;
 
   // generated-client.ts
