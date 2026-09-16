@@ -51,13 +51,13 @@ var __t3Client = (() => {
     }
   });
 
-  // generated-client.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/generated-client.ts
   var generated_client_exports = {};
   __export(generated_client_exports, {
     default: () => generated_client_default
   });
 
-  // ../../extension-sdk/dist/contracts.js
+  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/contracts.js
   var API_VERSION = 1;
   var MAX_PAYLOAD_BYTES = 64 * 1024;
   function assertId(value) {
@@ -145,7 +145,7 @@ var __t3Client = (() => {
     return manifest;
   }
 
-  // ../../extension-sdk/dist/capabilities.js
+  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/capabilities.js
   function defineApi(definition) {
     return { definition: validateApiDefinition(definition) };
   }
@@ -238,7 +238,7 @@ var __t3Client = (() => {
     return api;
   }
 
-  // ../../extension-sdk/dist/orchestration.js
+  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/orchestration.js
   var ORCHESTRATION_STATUS = "t3.orchestration/status";
   var ORCHESTRATION_CONTROL = "t3.orchestration/control";
   var ORCHESTRATION_READ = "t3.orchestration/read";
@@ -464,7 +464,7 @@ var __t3Client = (() => {
   }
   var ORCHESTRATION_CONTROL_API = orchestrationControlApi.definition;
 
-  // ../../extension-sdk/dist/textEdits.js
+  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/textEdits.js
   var WORKSPACE_READ_TEXT_EDITS = "t3.workspace/text-edits";
   var WORKSPACE_READ_TEXT_GRANT = "t3.workspace/read-text";
   var WORKSPACE_WRITE_TEXT = "t3.workspace/write-text";
@@ -657,7 +657,7 @@ var __t3Client = (() => {
     ]
   });
 
-  // ../../extension-sdk/dist/catalogue.js
+  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/catalogue.js
   var BROWSER_LOCAL_SERVERS = "t3.browser/local-servers";
   var BROWSER_READ_LOCAL_SERVERS = "t3.browser/read-local-servers";
   var browserLocalServersApi = defineStreamApi({
@@ -4043,7 +4043,7 @@ var __t3Client = (() => {
   var TERMINAL_OUTPUT_EVENTS_API = terminalOutputEventsApi.definition;
   var TERMINAL_CONTROL_API = terminalControlApi.definition;
 
-  // ../../extension-sdk/dist/environment.js
+  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/environment.js
   var ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
   var ENVIRONMENT_ASSET_MEDIA_TYPES = [
     "application/wasm",
@@ -4181,7 +4181,7 @@ var __t3Client = (() => {
     return { ...pkg, manifest };
   }
 
-  // ../../extension-sdk/dist/authoring.js
+  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/authoring.js
   var statePreview = (state2) => {
     const encoded = JSON.stringify(state2);
     return encoded.length > 200 ? encoded.slice(0, 200) + "\u2026" : encoded;
@@ -4278,7 +4278,7 @@ var __t3Client = (() => {
     return { id: api.definition.id, versionRange };
   }
 
-  // ../../shared/src/projectScripts.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/shared/src/projectScripts.ts
   function projectScriptRuntimeEnv(input) {
     const env = {
       T3CODE_PROJECT_ROOT: input.project.cwd
@@ -4292,10 +4292,10 @@ var __t3Client = (() => {
     return env;
   }
 
-  // extension.tsx
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/extension.tsx
   var import_react = __toESM(require_react(), 1);
 
-  // ghostty/runtime.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/runtime.ts
   var textDecoder = new TextDecoder();
   var GhosttyRuntime = class _GhosttyRuntime {
     memory;
@@ -4481,15 +4481,15 @@ var __t3Client = (() => {
     return promise;
   }
 
-  // ghostty/platform.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/platform.ts
   function isMacPlatform(platform) {
     return /mac|iphone|ipad|ipod/i.test(platform);
   }
 
-  // ghostty/selection.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/selection.ts
   var SELECTION_MULTI_CLICK_INTERVAL_MS = 500;
 
-  // ghostty/terminal-links.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/terminal-links.ts
   var URL_PATTERN = /https?:\/\/[^\s"'`<>]+/giu;
   var FILE_PATH_PATTERN = /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
   var TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
@@ -4578,7 +4578,7 @@ var __t3Client = (() => {
     };
   }
 
-  // ghostty/keyCodes.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/keyCodes.ts
   var ghosttyKeyboardCodes = [
     "Unidentified",
     "Backquote",
@@ -4818,7 +4818,7 @@ var __t3Client = (() => {
     return event.key.codePointAt(0) ?? 0;
   }
 
-  // ghostty/core.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/core.ts
   var GHOSTTY_SUCCESS = 0;
   var GHOSTTY_OUT_OF_SPACE = -3;
   var MAX_SCROLLBACK_ROWS = 1e4;
@@ -5001,6 +5001,18 @@ var __t3Client = (() => {
       this.runtime.bytes(pointer, bytes.length).set(bytes);
       this.runtime.call("ghostty_terminal_vt_write", this.terminal, pointer, bytes.length);
       this.runtime.free(pointer, bytes.length);
+    }
+    /**
+     * Erase the viewport and scrollback (ED 2 + ED 3) without an RIS: modes,
+     * cursor position, and screen selection survive. This is the parser-side
+     * equivalent of a host history clear, which never reaches the process —
+     * `resetAndWrite` would drop negotiated modes (application cursor,
+     * bracketed paste, kitty keyboard, mouse tracking) and desync input
+     * encoding.
+     */
+    clearScreen() {
+      this.ensureActive();
+      this.write("\x1B[2J\x1B[3J");
     }
     resetAndWrite(data) {
       this.ensureActive();
@@ -5786,7 +5798,7 @@ var __t3Client = (() => {
     return sameColor(left, right);
   }
 
-  // ghostty/renderer.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/renderer.ts
   var DEFAULT_SELECTION_BACKGROUND = "rgba(72, 122, 191, 0.35)";
   function cssColor(color) {
     return `rgb(${color.r}, ${color.g}, ${color.b})`;
@@ -5971,7 +5983,7 @@ var __t3Client = (() => {
     }
   }
 
-  // ghostty/monospaceFonts.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/monospaceFonts.ts
   function quoteFontFamilyName(name) {
     const bare = name.trim();
     if (bare.length === 0) return "";
@@ -6014,7 +6026,7 @@ var __t3Client = (() => {
     }
   }
 
-  // ghostty/surface.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/surface.ts
   var DEFAULT_TERMINAL_FONT_SIZE = 12;
   var MIN_TERMINAL_FONT_SIZE = 6;
   var MAX_TERMINAL_FONT_SIZE = 32;
@@ -6474,6 +6486,23 @@ var __t3Client = (() => {
       this.cursorOn = true;
       this.forceFullRender = true;
       this.scrollbarDirty = true;
+      this.requestRender();
+    }
+    /**
+     * Host history clear: the server dropped retained output only — the
+     * process and its negotiated modes keep running. ED2+ED3 erase the
+     * viewport and scrollback without the RIS that resetAndWrite performs, so
+     * application-cursor, bracketed-paste, kitty-keyboard, and mouse state
+     * survive and input keeps encoding the way the process expects.
+     */
+    clearScreen() {
+      if (this.disposed) return;
+      this.core.clearScreen();
+      this.synchronizeMouseTrackingState();
+      this.cursorOn = true;
+      this.forceFullRender = true;
+      this.scrollbarDirty = true;
+      this.scrollToBottom();
       this.requestRender();
     }
     setTheme(theme) {
@@ -7438,7 +7467,7 @@ var __t3Client = (() => {
     }
   };
 
-  // ghostty/surfaceKeys.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/surfaceKeys.ts
   var TERMINAL_WORD_BACKWARD = "\x1Bb";
   var TERMINAL_WORD_FORWARD = "\x1Bf";
   var TERMINAL_LINE_START = "";
@@ -7501,7 +7530,7 @@ var __t3Client = (() => {
     return null;
   }
 
-  // terminalTheme.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/terminalTheme.ts
   function parseTerminalColor(value, fallback) {
     if (typeof document === "undefined") return fallback;
     const canvas = document.createElement("canvas");
@@ -7590,7 +7619,7 @@ var __t3Client = (() => {
     };
   }
 
-  // ../../shared/src/terminalLabels.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/shared/src/terminalLabels.ts
   function getTerminalLabel(terminalId) {
     const numericSuffix = /^term(?:inal)?-(\d+)$/i.exec(terminalId)?.[1];
     if (numericSuffix) {
@@ -7614,7 +7643,7 @@ var __t3Client = (() => {
     return `term-${nextIndex}`;
   }
 
-  // inputQueue.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/inputQueue.ts
   var TERMINAL_INPUT_SERIALIZED_BUDGET = 48 * 1024;
   var TERMINAL_INPUT_PENDING_BUDGET = 256 * 1024;
   var TERMINAL_INPUT_WRITE_TIMEOUT_MS = 3e4;
@@ -7684,6 +7713,14 @@ var __t3Client = (() => {
         queuedCount: this.#pending.length,
         queuedBytes: this.#pendingSerialized
       };
+    }
+    /**
+     * Disposal is terminal for the queue object: a revived owner (StrictMode
+     * effect replay) must construct a fresh queue rather than resurrect this
+     * one — pending bytes dropped at dispose are never resent.
+     */
+    get disposed() {
+      return this.#disposed;
     }
     enqueue(data) {
       if (this.#disposed || this.#stopped !== null) return "dropped-stopped";
@@ -7805,7 +7842,7 @@ var __t3Client = (() => {
     }
   };
 
-  // viewModel.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/viewModel.ts
   var TERMINAL_BUFFER_MAX_BYTES = 512 * 1024;
   var OVERFLOW_RESUBSCRIBE_WINDOW_MS = 1e4;
   var OVERFLOW_RESUBSCRIBE_MAX = 3;
@@ -7854,6 +7891,7 @@ var __t3Client = (() => {
     exitCode: null,
     epoch: null,
     sequence: 0,
+    nativeWatermark: -1,
     ended: false
   };
   function applyOutputEvent(current, frame, value, pending) {
@@ -7881,6 +7919,7 @@ var __t3Client = (() => {
           exitCode: null,
           epoch: value.streamEpoch,
           sequence,
+          nativeWatermark: value.boundarySequence,
           ended
         },
         pending: null
@@ -7903,6 +7942,9 @@ var __t3Client = (() => {
     }
     if (!Number.isSafeInteger(value.sequence)) return fail("Output native sequence is invalid.");
     if (value.kind === "reset") {
+      if (pending) return fail("Output chunk group is discontinuous.");
+      if (value.sequence <= base.nativeWatermark)
+        return fail("Output event sequence is not monotonic.");
       return {
         buffer: {
           ...base,
@@ -7910,19 +7952,23 @@ var __t3Client = (() => {
           retainedBytes: 0,
           truncated: false,
           status: "live",
-          statusText: "Terminal history cleared. Watching live output."
+          statusText: "Terminal history cleared. Watching live output.",
+          nativeWatermark: value.sequence
         },
         pending: null
       };
     }
     if (value.kind === "exit") {
       if (pending) return fail("Terminal exited with incomplete output.");
+      if (value.sequence <= base.nativeWatermark)
+        return fail("Output event sequence is not monotonic.");
       return {
         buffer: {
           ...base,
           status: "exited",
           statusText: `Terminal exited (code ${value.exitCode ?? "unknown"}).`,
           exitCode: value.exitCode,
+          nativeWatermark: value.sequence,
           ended: true
         },
         pending: null
@@ -7930,19 +7976,42 @@ var __t3Client = (() => {
     }
     if (!Number.isSafeInteger(value.chunkCount) || value.chunkCount < 1 || value.chunkCount > 64 || !Number.isSafeInteger(value.chunkIndex) || value.chunkIndex < 0 || value.chunkIndex >= value.chunkCount || typeof value.data !== "string" || value.data.length > 8192)
       return fail("Output chunk exceeds the public contract.");
-    const group = pending && pending.sequence === value.sequence && pending.count === value.chunkCount ? pending : value.chunkIndex === 0 ? { sequence: value.sequence, count: value.chunkCount, parts: [] } : null;
-    if (group === null || group.parts.length !== value.chunkIndex)
-      return fail("Output chunk group is discontinuous.");
-    group.parts.push(value.data);
-    if (group.parts.length < group.count) return { buffer: base, pending: group };
-    const contents2 = tailByBytes(base.contents + group.parts.join(""), TERMINAL_BUFFER_MAX_BYTES);
+    if (pending) {
+      if (value.sequence !== pending.sequence || value.chunkCount !== pending.count || value.chunkIndex !== pending.parts.length)
+        return fail("Output chunk group is discontinuous.");
+      pending.parts.push(value.data);
+      if (pending.parts.length < pending.count) return { buffer: base, pending };
+      const data = pending.parts.join("");
+      const contents3 = tailByBytes(base.contents + data, TERMINAL_BUFFER_MAX_BYTES);
+      return {
+        buffer: {
+          ...base,
+          contents: contents3,
+          retainedBytes: utf8Bytes(contents3),
+          status: "live",
+          statusText: "Watching live output.",
+          nativeWatermark: value.sequence
+        },
+        pending: null
+      };
+    }
+    if (value.chunkIndex !== 0) return fail("Output chunk group is discontinuous.");
+    if (value.sequence <= base.nativeWatermark)
+      return fail("Output event sequence is not monotonic.");
+    if (value.chunkCount > 1)
+      return {
+        buffer: base,
+        pending: { sequence: value.sequence, count: value.chunkCount, parts: [value.data] }
+      };
+    const contents2 = tailByBytes(base.contents + value.data, TERMINAL_BUFFER_MAX_BYTES);
     return {
       buffer: {
         ...base,
         contents: contents2,
         retainedBytes: utf8Bytes(contents2),
         status: "live",
-        statusText: "Watching live output."
+        statusText: "Watching live output.",
+        nativeWatermark: value.sequence
       },
       pending: null
     };
@@ -8037,17 +8106,31 @@ var __t3Client = (() => {
     #emit() {
       this.#onChange?.();
     }
+    #newInputQueue(terminalId) {
+      return new TerminalInputQueue({
+        terminalId,
+        write: (data) => this.#control.write({ terminalId, data }),
+        onChange: () => this.#emit()
+      });
+    }
+    /**
+     * A queue whose panel was disposed is permanently dead — React StrictMode
+     * replays effect setup/cleanup/setup in dev and revives the panel, but the
+     * old queue would keep dropping every send with no stopped banner. A fresh
+     * queue takes over; the disposed one's pending bytes were dropped at
+     * dispose and are never resent.
+     */
+    #liveInput(terminalId, tab) {
+      if (tab.input.disposed) tab.input = this.#newInputQueue(terminalId);
+      return tab.input;
+    }
     #tab(terminalId) {
       let tab = this.#tabs.get(terminalId);
       if (!tab) {
         tab = {
           meta: null,
           starting: false,
-          input: new TerminalInputQueue({
-            terminalId,
-            write: (data) => this.#control.write({ terminalId, data }),
-            onChange: () => this.#emit()
-          }),
+          input: this.#newInputQueue(terminalId),
           exiting: false,
           exitBanner: null,
           confirm: null,
@@ -8058,6 +8141,8 @@ var __t3Client = (() => {
         };
         this.#tabs.set(terminalId, tab);
         if (!this.#ids.includes(terminalId)) this.#ids = [...this.#ids, terminalId];
+      } else {
+        this.#liveInput(terminalId, tab);
       }
       return tab;
     }
@@ -8118,6 +8203,7 @@ var __t3Client = (() => {
      */
     beginListStream() {
       this.#disposed = false;
+      for (const [terminalId, tab] of this.#tabs) this.#liveInput(terminalId, tab);
       if (this.#stream === "connecting") return;
       this.#stream = "connecting";
       this.#emit();
@@ -8178,7 +8264,7 @@ var __t3Client = (() => {
       if (!tab || !launch || tab.starting) return;
       if (tab.meta !== null && tab.meta.status !== "exited" && tab.meta.status !== "error") return;
       tab.starting = true;
-      tab.input.setReady(false);
+      this.#liveInput(terminalId, tab).setReady(false);
       tab.exiting = false;
       tab.exitBanner = null;
       tab.error = null;
@@ -8194,12 +8280,12 @@ var __t3Client = (() => {
           ...launch.env !== void 0 ? { env: launch.env } : {}
         });
         tab.starting = false;
-        tab.input.setReady(true);
+        this.#liveInput(terminalId, tab).setReady(true);
         this.#observeMeta(meta);
         await this.#drain(terminalId);
       } catch (error) {
         tab.starting = false;
-        tab.input.setReady(true);
+        this.#liveInput(terminalId, tab).setReady(true);
         tab.error = error instanceof Error ? error.message : "Terminal attach failed";
         this.#emit();
       }
@@ -8221,7 +8307,7 @@ var __t3Client = (() => {
     sendInput(terminalId, data) {
       const tab = this.#tabs.get(terminalId);
       if (!tab || data.length === 0 || this.#disposed) return;
-      const result = tab.input.enqueue(data);
+      const result = this.#liveInput(terminalId, tab).enqueue(data);
       if (result === "dropped-full") {
         tab.error = "Input dropped: the pending-input queue is full.";
         this.#emit();
@@ -8229,11 +8315,13 @@ var __t3Client = (() => {
     }
     /** Explicit user resume after input-stopped. */
     resumeInput(terminalId) {
-      this.#tabs.get(terminalId)?.input.resume();
+      const tab = this.#tabs.get(terminalId);
+      if (tab) this.#liveInput(terminalId, tab).resume();
     }
     /** Output stream signalled a new process epoch or lifecycle end — pending input is stale. */
     resetInput(terminalId) {
-      this.#tabs.get(terminalId)?.input.reset();
+      const tab = this.#tabs.get(terminalId);
+      if (tab) this.#liveInput(terminalId, tab).reset();
     }
     /** Latest-wins resize: a new fit while one is in flight replaces the pending one. */
     resize(terminalId, cols, rows) {
@@ -8304,7 +8392,7 @@ var __t3Client = (() => {
         } else {
           if (!launch) throw new Error("Terminal requires a workspace scope.");
           tab.starting = true;
-          tab.input.reset();
+          this.#liveInput(terminalId, tab).reset();
           tab.input.setReady(false);
           this.#emit();
           const meta = await this.#control.restart({
@@ -8325,7 +8413,7 @@ var __t3Client = (() => {
         }
       } catch (error) {
         tab.starting = false;
-        tab.input.setReady(true);
+        this.#liveInput(terminalId, tab).setReady(true);
         tab.error = error instanceof Error ? error.message : "Terminal action failed";
       }
       this.#emit();
@@ -8341,17 +8429,41 @@ var __t3Client = (() => {
     }
   };
 
-  // vtAttachment.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/vtAttachment.ts
   var MAX_OUTPUT_CHUNK_DATA_LENGTH = 8192;
   var MAX_OUTPUT_CHUNKS = 64;
+  var MAX_PRE_SINK_OUTPUT_LENGTH = 512 * 1024;
   var TerminalVtAttachment = class {
     terminalId;
     #onChange;
     #sink = null;
-    /** Live output held while the surface is loading; replayed on attach. */
+    /**
+     * Retained post-base output for remount replay — both pre-sink bytes and
+     * the bounded tail of what a live sink already rendered, so a recreated
+     * surface (theme/font swap) sees the same screen instead of losing every
+     * byte since the snapshot. Bounded by MAX_PRE_SINK_OUTPUT_LENGTH.
+     */
     #buffered = [];
-    /** The last snapshot/reset contents that seeded parser state, if any. */
+    #bufferedLength = 0;
+    /** The last snapshot contents that seeded parser state, if any. */
     #base = null;
+    /**
+     * Whether `#base` + `#buffered` reconstructs full parser state — i.e. the
+     * base was seeded by a non-truncated snapshot carrying every byte since
+     * process start. A history clear or a dropped pre-sink overflow makes the
+     * replay base unfaithful; a remount still replays it and flags degraded
+     * instead of pretending the modes are known.
+     */
+    #replayFaithful = true;
+    /**
+     * Epoch in which a history clear was observed. The server reports
+     * `truncated:false` on post-clear snapshots (nothing was dropped by
+     * retention — it was explicitly cleared), but the retained bytes no longer
+     * contain the mode-establishing output, so a replayed snapshot in that
+     * epoch is NOT a faithful parser resync. Only a new epoch (a fresh
+     * process incarnation) re-proves mode state.
+     */
+    #clearedEpoch = null;
     #pending = null;
     #state = {
       status: "connecting",
@@ -8362,6 +8474,14 @@ var __t3Client = (() => {
     };
     #sequence = 0;
     #epoch = null;
+    /**
+     * Last accepted native event sequence (the session's monotonic
+     * eventSequence — distinct from the broker's per-subscription frame
+     * sequence). Seeded by the snapshot's boundarySequence; every later
+     * output/reset/exit must strictly increase, catching replays and gaps the
+     * outer fence cannot see. `closed` frames carry no native sequence.
+     */
+    #nativeWatermark = -1;
     constructor(terminalId, onChange) {
       this.terminalId = terminalId;
       this.#onChange = onChange;
@@ -8372,13 +8492,22 @@ var __t3Client = (() => {
     /**
      * Surface mounted (or remounted after a theme/font swap): replay the base
      * snapshot plus every live byte seen since. `resetAndWrite` rebuilds parser
-     * state, so a late surface sees the same screen as a live one.
+     * state, so a late surface sees the same screen as a live one — unless the
+     * replay base is unfaithful (truncated attach, history clear, dropped
+     * pre-sink overflow), in which case the modes it cannot reconstruct leave
+     * the pane degraded.
      */
     attach(sink) {
       this.#sink = sink;
       if (this.#base !== null) sink.resetAndWrite(this.#base);
       for (const chunk of this.#buffered) sink.write(chunk);
-      this.#buffered = [];
+      if (!this.#replayFaithful && !this.#state.degraded && !this.#state.ended) {
+        this.#emit({
+          ...this.#state,
+          degraded: true,
+          statusText: "Replayed without full history \u2014 modes and screen state before the retained tail are unknown, so interactive parity is not claimed (B4)."
+        });
+      }
     }
     detach() {
       this.#sink = null;
@@ -8392,6 +8521,8 @@ var __t3Client = (() => {
     beginStream() {
       this.#sequence = 0;
       this.#pending = null;
+      this.#epoch = null;
+      this.#nativeWatermark = -1;
       this.#emit({
         ...this.#state,
         status: "connecting",
@@ -8410,6 +8541,20 @@ var __t3Client = (() => {
         ended: true
       });
     }
+    /**
+     * The surface failed to mount (asset decode, DOM). The stream keeps
+     * running into the bounded pre-sink buffer so a later remount can still
+     * attach; the failure is visible instead of a silently dead pane.
+     */
+    applySinkFailure(message) {
+      this.#emit({
+        status: "error",
+        statusText: message,
+        degraded: this.#state.degraded,
+        exitCode: null,
+        ended: false
+      });
+    }
     #emit(state2) {
       this.#state = state2;
       this.#onChange?.();
@@ -8425,8 +8570,22 @@ var __t3Client = (() => {
       });
     }
     #deliver(data) {
-      if (this.#sink) this.#sink.write(data);
-      else this.#buffered.push(data);
+      this.#sink?.write(data);
+      this.#buffered.push(data);
+      this.#bufferedLength += data.length;
+      if (this.#bufferedLength <= MAX_PRE_SINK_OUTPUT_LENGTH) return;
+      while (this.#buffered.length > 0 && this.#bufferedLength > MAX_PRE_SINK_OUTPUT_LENGTH) {
+        this.#bufferedLength -= this.#buffered[0].length;
+        this.#buffered.shift();
+      }
+      this.#replayFaithful = false;
+      if (this.#sink === null && !this.#state.degraded && !this.#state.ended) {
+        this.#emit({
+          ...this.#state,
+          degraded: true,
+          statusText: "Output outran the renderer before it attached \u2014 early bytes were dropped, so interactive parity is not claimed."
+        });
+      }
     }
     /**
      * Apply one public `t3.terminal/output-events` frame. Mirrors the native
@@ -8447,14 +8606,18 @@ var __t3Client = (() => {
         }
         this.#pending = null;
         this.#epoch = value.streamEpoch;
+        this.#nativeWatermark = value.boundarySequence;
         this.#base = value.contents;
         this.#buffered = [];
+        this.#bufferedLength = 0;
+        this.#replayFaithful = !value.truncated && value.streamEpoch !== this.#clearedEpoch;
+        const unfaithful = !this.#replayFaithful;
         this.#sink?.resetAndWrite(value.contents);
         const ended = value.status === "exited" || value.status === "error";
         this.#emit({
           status: ended ? "exited" : "live",
-          statusText: ended ? `Terminal is ${value.status}.` : value.truncated ? "Watching live output \u2014 earlier history was truncated, so terminal state may be incomplete." : "Watching live output.",
-          degraded: value.truncated && !ended,
+          statusText: ended ? `Terminal is ${value.status}.` : value.truncated ? "Watching live output \u2014 earlier history was truncated, so terminal state may be incomplete." : unfaithful ? "Watching live output \u2014 history was cleared, so terminal modes may be incomplete." : "Watching live output.",
+          degraded: unfaithful && !ended,
           exitCode: null,
           ended
         });
@@ -8480,14 +8643,28 @@ var __t3Client = (() => {
         return;
       }
       if (value.kind === "reset") {
+        if (this.#pending !== null) {
+          this.#fail("Output chunk group is discontinuous.");
+          return;
+        }
+        if (value.sequence <= this.#nativeWatermark) {
+          this.#fail("Output event sequence is not monotonic.");
+          return;
+        }
+        this.#nativeWatermark = value.sequence;
         this.#pending = null;
         this.#base = "";
         this.#buffered = [];
-        this.#sink?.resetAndWrite("");
+        this.#bufferedLength = 0;
+        this.#replayFaithful = false;
+        this.#clearedEpoch = this.#epoch;
+        if (this.#sink) {
+          this.#sink.clearScreen();
+        }
         this.#emit({
           status: "live",
-          statusText: "Terminal history cleared. Watching live output.",
-          degraded: false,
+          statusText: this.#sink !== null ? "Terminal history cleared. Watching live output." : "Terminal history cleared before the renderer attached \u2014 earlier modes are unknown.",
+          degraded: this.#sink === null || this.#state.degraded,
           exitCode: null,
           ended: false
         });
@@ -8498,6 +8675,11 @@ var __t3Client = (() => {
           this.#fail("Terminal exited with incomplete output.");
           return;
         }
+        if (value.sequence <= this.#nativeWatermark) {
+          this.#fail("Output event sequence is not monotonic.");
+          return;
+        }
+        this.#nativeWatermark = value.sequence;
         this.#emit({
           status: "exited",
           statusText: `Terminal exited (code ${value.exitCode ?? "unknown"}).`,
@@ -8511,14 +8693,37 @@ var __t3Client = (() => {
         this.#fail("Output chunk exceeds the public contract.");
         return;
       }
-      const group = this.#pending !== null && this.#pending.sequence === value.sequence && this.#pending.count === value.chunkCount ? this.#pending : value.chunkIndex === 0 ? { sequence: value.sequence, count: value.chunkCount, parts: [] } : null;
-      if (group === null || group.parts.length !== value.chunkIndex) {
+      if (this.#pending !== null) {
+        if (value.sequence !== this.#pending.sequence || value.chunkCount !== this.#pending.count || value.chunkIndex !== this.#pending.parts.length) {
+          this.#fail("Output chunk group is discontinuous.");
+          return;
+        }
+        this.#pending.parts.push(value.data);
+        if (this.#pending.parts.length < this.#pending.count) return;
+        const data = this.#pending.parts.join("");
+        this.#pending = null;
+        this.#nativeWatermark = value.sequence;
+        this.#deliver(data);
+        return;
+      }
+      if (value.chunkIndex !== 0) {
         this.#fail("Output chunk group is discontinuous.");
         return;
       }
-      group.parts.push(value.data);
-      this.#pending = group.parts.length < group.count ? group : null;
-      if (this.#pending === null) this.#deliver(group.parts.join(""));
+      if (value.sequence <= this.#nativeWatermark) {
+        this.#fail("Output event sequence is not monotonic.");
+        return;
+      }
+      if (value.chunkCount > 1) {
+        this.#pending = {
+          sequence: value.sequence,
+          count: value.chunkCount,
+          parts: [value.data]
+        };
+        return;
+      }
+      this.#nativeWatermark = value.sequence;
+      this.#deliver(value.data);
     }
   };
   async function pumpTerminalOutput(options) {
@@ -8557,7 +8762,7 @@ var __t3Client = (() => {
     }
   }
 
-  // extension.tsx
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/extension.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
   var manifestId = "t3.terminal";
   var GHOSTTY_VT_ASSET = "assets/ghostty-vt.wasm";
@@ -8762,7 +8967,12 @@ var __t3Client = (() => {
         };
         try {
           surface = await GhosttyTerminalSurface.create(mount, options);
-        } catch {
+        } catch (error) {
+          if (!cancelled) {
+            attachment.applySinkFailure(
+              error instanceof Error ? `Terminal renderer failed to start: ${error.message}` : "Terminal renderer failed to start."
+            );
+          }
           return;
         }
         if (cancelled) {
@@ -9336,10 +9546,10 @@ var __t3Client = (() => {
     ]
   });
 
-  // extension.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/extension.ts
   var extension_default2 = extension_default;
 
-  // generated-client.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/generated-client.ts
   var generated_client_default = extension_default2.client;
   return __toCommonJS(generated_client_exports);
 })();

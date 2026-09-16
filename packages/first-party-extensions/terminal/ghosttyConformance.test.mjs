@@ -225,4 +225,38 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       core.dispose();
     },
   );
+
+  NodeTest.it(
+    "clearScreen erases viewport + scrollback but preserves negotiated modes (P1)",
+    async () => {
+      // Astra r1 repro: seed application-cursor + bracketed-paste, clear,
+      // then paste — the bracketed wrapper must survive. An RIS reset would
+      // drop mode 2004 and encode "a\nb" as "a\rb" (interactive commands).
+      const { core } = await makeCore();
+      core.write("\x1b[?1h"); // application cursor keys
+      core.write("\x1b[?2004h"); // bracketed paste
+      core.write("scrollback filler\r\n".repeat(40));
+      NodeAssert.equal(core.isApplicationCursorKeys(), true);
+      core.clearScreen();
+      const snap = core.snapshot();
+      NodeAssert.ok(!rowText(snap, 0).includes("filler"));
+      // Modes survived the erase.
+      NodeAssert.equal(core.isApplicationCursorKeys(), true);
+      NodeAssert.equal(core.encodePaste("a\nb"), "\x1b[200~a\nb\x1b[201~");
+      NodeAssert.equal(core.encodeKey(fakeKey({ code: "ArrowUp", key: "ArrowUp" })), "\x1bOA");
+      core.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "resetAndWrite DOES drop modes — proving clearScreen is the correct primitive (P1)",
+    async () => {
+      const { core } = await makeCore();
+      core.write("\x1b[?2004h");
+      NodeAssert.equal(core.encodePaste("a\nb"), "\x1b[200~a\nb\x1b[201~");
+      core.resetAndWrite("");
+      NodeAssert.equal(core.encodePaste("a\nb"), "a\rb");
+      core.dispose();
+    },
+  );
 });

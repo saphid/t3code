@@ -528,6 +528,30 @@ NodeTest.describe("terminal panel — input, resize, lifecycle", () => {
     panel.dispose();
   });
 
+  NodeTest.it(
+    "StrictMode replay revives input: dispose + beginListStream does not leave dead queues (P2)",
+    async () => {
+      const control = fakeControl();
+      const panel = new TerminalPanel({
+        control,
+        launch,
+        restored: { terminalIds: ["term-1"], activeTerminalId: "term-1" },
+      });
+      // Dev StrictMode runs setup → cleanup → setup: panel.dispose() kills
+      // the queues, then the sessions effect calls beginListStream() again.
+      panel.dispose();
+      panel.beginListStream();
+      panel.sendInput("term-1", "hello");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const writes = control.calls.filter(([m]) => m === "write").map(([, i]) => i.data);
+      NodeAssert.deepEqual(writes, ["hello"]);
+      const tab = panel.snapshot.tabs[0];
+      NodeAssert.equal(tab.inputStopped, false);
+      NodeAssert.equal(tab.inputMessage, null);
+      panel.dispose();
+    },
+  );
+
   NodeTest.it("resizes latest-wins while a resize is in flight", async () => {
     const control = fakeControl();
     const inFlight = deferred();

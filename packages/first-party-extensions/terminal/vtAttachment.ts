@@ -17,6 +17,14 @@ import {
 export interface TerminalVtSink {
   resetAndWrite(data: string): void;
   write(data: string): void;
+  /**
+   * Erase the viewport and scrollback WITHOUT resetting parser state. A host
+   * history clear never reaches the process — the modes it negotiated
+   * (application cursor, bracketed paste, kitty keyboard, mouse tracking)
+   * still apply, so an RIS-style `resetAndWrite` would desync input
+   * encoding: pasted newlines would run as interactive commands.
+   */
+  clearScreen(): void;
 }
 
 export type TerminalVtStatus = "connecting" | "live" | "exited" | "closed" | "error";
@@ -44,15 +52,45 @@ interface PendingChunkGroup {
 
 const MAX_OUTPUT_CHUNK_DATA_LENGTH = 8192;
 const MAX_OUTPUT_CHUNKS = 64;
+/**
+ * Pre-sink buffer bound (UTF-16 units): output that arrives before the
+ * surface mounts is held for replay, but a stalled WASM/font load must not
+ * grow it forever. Past the cap the oldest chunks drop and the replay base
+ * becomes unfaithful — the same honesty rule as a truncated attach.
+ */
+export const MAX_PRE_SINK_OUTPUT_LENGTH = 512 * 1024;
 
 export class TerminalVtAttachment {
   readonly terminalId: string;
   readonly #onChange: (() => void) | undefined;
   #sink: TerminalVtSink | null = null;
-  /** Live output held while the surface is loading; replayed on attach. */
+  /**
+   * Retained post-base output for remount replay — both pre-sink bytes and
+   * the bounded tail of what a live sink already rendered, so a recreated
+   * surface (theme/font swap) sees the same screen instead of losing every
+   * byte since the snapshot. Bounded by MAX_PRE_SINK_OUTPUT_LENGTH.
+   */
   #buffered: string[] = [];
-  /** The last snapshot/reset contents that seeded parser state, if any. */
+  #bufferedLength = 0;
+  /** The last snapshot contents that seeded parser state, if any. */
   #base: string | null = null;
+  /**
+   * Whether `#base` + `#buffered` reconstructs full parser state — i.e. the
+   * base was seeded by a non-truncated snapshot carrying every byte since
+   * process start. A history clear or a dropped pre-sink overflow makes the
+   * replay base unfaithful; a remount still replays it and flags degraded
+   * instead of pretending the modes are known.
+   */
+  #replayFaithful = true;
+  /**
+   * Epoch in which a history clear was observed. The server reports
+   * `truncated:false` on post-clear snapshots (nothing was dropped by
+   * retention — it was explicitly cleared), but the retained bytes no longer
+   * contain the mode-establishing output, so a replayed snapshot in that
+   * epoch is NOT a faithful parser resync. Only a new epoch (a fresh
+   * process incarnation) re-proves mode state.
+   */
+  #clearedEpoch: string | null = null;
   #pending: PendingChunkGroup | null = null;
   #state: TerminalVtAttachmentState = {
     status: "connecting",
@@ -63,6 +101,14 @@ export class TerminalVtAttachment {
   };
   #sequence = 0;
   #epoch: string | null = null;
+  /**
+   * Last accepted native event sequence (the session's monotonic
+   * eventSequence — distinct from the broker's per-subscription frame
+   * sequence). Seeded by the snapshot's boundarySequence; every later
+   * output/reset/exit must strictly increase, catching replays and gaps the
+   * outer fence cannot see. `closed` frames carry no native sequence.
+   */
+  #nativeWatermark = -1;
 
   constructor(terminalId: string, onChange?: () => void) {
     this.terminalId = terminalId;
@@ -76,13 +122,23 @@ export class TerminalVtAttachment {
   /**
    * Surface mounted (or remounted after a theme/font swap): replay the base
    * snapshot plus every live byte seen since. `resetAndWrite` rebuilds parser
-   * state, so a late surface sees the same screen as a live one.
+   * state, so a late surface sees the same screen as a live one — unless the
+   * replay base is unfaithful (truncated attach, history clear, dropped
+   * pre-sink overflow), in which case the modes it cannot reconstruct leave
+   * the pane degraded.
    */
   attach(sink: TerminalVtSink) {
     this.#sink = sink;
     if (this.#base !== null) sink.resetAndWrite(this.#base);
     for (const chunk of this.#buffered) sink.write(chunk);
-    this.#buffered = [];
+    if (!this.#replayFaithful && !this.#state.degraded && !this.#state.ended) {
+      this.#emit({
+        ...this.#state,
+        degraded: true,
+        statusText:
+          "Replayed without full history — modes and screen state before the retained tail are unknown, so interactive parity is not claimed (B4).",
+      });
+    }
   }
 
   detach() {
@@ -98,6 +154,10 @@ export class TerminalVtAttachment {
   beginStream() {
     this.#sequence = 0;
     this.#pending = null;
+    // The next subscription must re-prove itself: only its snapshot reseeds
+    // the epoch and native watermark, so a stray pre-snapshot frame fails.
+    this.#epoch = null;
+    this.#nativeWatermark = -1;
     this.#emit({
       ...this.#state,
       status: "connecting",
@@ -118,6 +178,21 @@ export class TerminalVtAttachment {
     });
   }
 
+  /**
+   * The surface failed to mount (asset decode, DOM). The stream keeps
+   * running into the bounded pre-sink buffer so a later remount can still
+   * attach; the failure is visible instead of a silently dead pane.
+   */
+  applySinkFailure(message: string) {
+    this.#emit({
+      status: "error",
+      statusText: message,
+      degraded: this.#state.degraded,
+      exitCode: null,
+      ended: false,
+    });
+  }
+
   #emit(state: TerminalVtAttachmentState) {
     this.#state = state;
     this.#onChange?.();
@@ -135,8 +210,27 @@ export class TerminalVtAttachment {
   }
 
   #deliver(data: string) {
-    if (this.#sink) this.#sink.write(data);
-    else this.#buffered.push(data);
+    this.#sink?.write(data);
+    // Always retain for remount replay; trim the tail past the bound.
+    this.#buffered.push(data);
+    this.#bufferedLength += data.length;
+    if (this.#bufferedLength <= MAX_PRE_SINK_OUTPUT_LENGTH) return;
+    while (this.#buffered.length > 0 && this.#bufferedLength > MAX_PRE_SINK_OUTPUT_LENGTH) {
+      this.#bufferedLength -= this.#buffered[0]!.length;
+      this.#buffered.shift();
+    }
+    // Replay needs bytes we no longer hold. A live surface still shows
+    // everything, so only flag the visible pane when there is no sink — a
+    // later remount flags itself degraded via #replayFaithful.
+    this.#replayFaithful = false;
+    if (this.#sink === null && !this.#state.degraded && !this.#state.ended) {
+      this.#emit({
+        ...this.#state,
+        degraded: true,
+        statusText:
+          "Output outran the renderer before it attached — early bytes were dropped, so interactive parity is not claimed.",
+      });
+    }
   }
 
   /**
@@ -162,8 +256,15 @@ export class TerminalVtAttachment {
       }
       this.#pending = null;
       this.#epoch = value.streamEpoch;
+      this.#nativeWatermark = value.boundarySequence;
       this.#base = value.contents;
       this.#buffered = [];
+      this.#bufferedLength = 0;
+      // A snapshot only restores fidelity when the epoch's retained bytes
+      // cover process start — an untruncated snapshot in a post-clear epoch
+      // is still missing the mode-establishing output.
+      this.#replayFaithful = !value.truncated && value.streamEpoch !== this.#clearedEpoch;
+      const unfaithful = !this.#replayFaithful;
       this.#sink?.resetAndWrite(value.contents);
       const ended = value.status === "exited" || value.status === "error";
       this.#emit({
@@ -172,8 +273,10 @@ export class TerminalVtAttachment {
           ? `Terminal is ${value.status}.`
           : value.truncated
             ? "Watching live output — earlier history was truncated, so terminal state may be incomplete."
-            : "Watching live output.",
-        degraded: value.truncated && !ended,
+            : unfaithful
+              ? "Watching live output — history was cleared, so terminal modes may be incomplete."
+              : "Watching live output.",
+        degraded: unfaithful && !ended,
         exitCode: null,
         ended,
       });
@@ -203,16 +306,37 @@ export class TerminalVtAttachment {
     }
 
     if (value.kind === "reset") {
+      if (this.#pending !== null) {
+        this.#fail("Output chunk group is discontinuous.");
+        return;
+      }
+      if (value.sequence <= this.#nativeWatermark) {
+        this.#fail("Output event sequence is not monotonic.");
+        return;
+      }
+      this.#nativeWatermark = value.sequence;
       this.#pending = null;
       this.#base = "";
       this.#buffered = [];
-      this.#sink?.resetAndWrite("");
-      // A full reset re-bases the parser: every byte from here on is live and
-      // known, so the truncated-attach degradation no longer applies.
+      this.#bufferedLength = 0;
+      // history-cleared drops retained output only — the process and its
+      // negotiated modes keep running. A parser reset (RIS) would wipe the
+      // application-cursor/bracketed-paste/kitty state the shell still
+      // expects, so a live surface gets a mode-preserving erase and keeps
+      // its fidelity claim. With no surface the replay base is all that
+      // exists, and it no longer contains the mode-establishing bytes.
+      this.#replayFaithful = false;
+      this.#clearedEpoch = this.#epoch;
+      if (this.#sink) {
+        this.#sink.clearScreen();
+      }
       this.#emit({
         status: "live",
-        statusText: "Terminal history cleared. Watching live output.",
-        degraded: false,
+        statusText:
+          this.#sink !== null
+            ? "Terminal history cleared. Watching live output."
+            : "Terminal history cleared before the renderer attached — earlier modes are unknown.",
+        degraded: this.#sink === null || this.#state.degraded,
         exitCode: null,
         ended: false,
       });
@@ -224,6 +348,11 @@ export class TerminalVtAttachment {
         this.#fail("Terminal exited with incomplete output.");
         return;
       }
+      if (value.sequence <= this.#nativeWatermark) {
+        this.#fail("Output event sequence is not monotonic.");
+        return;
+      }
+      this.#nativeWatermark = value.sequence;
       this.#emit({
         status: "exited",
         statusText: `Terminal exited (code ${value.exitCode ?? "unknown"}).`,
@@ -247,21 +376,45 @@ export class TerminalVtAttachment {
       this.#fail("Output chunk exceeds the public contract.");
       return;
     }
-    const group =
-      this.#pending !== null &&
-      this.#pending.sequence === value.sequence &&
-      this.#pending.count === value.chunkCount
-        ? this.#pending
-        : value.chunkIndex === 0
-          ? { sequence: value.sequence, count: value.chunkCount, parts: [] as string[] }
-          : null;
-    if (group === null || group.parts.length !== value.chunkIndex) {
+    if (this.#pending !== null) {
+      // A chunk that does not continue the open group abandoned it — output
+      // bytes are missing, so fail rather than silently swap groups.
+      if (
+        value.sequence !== this.#pending.sequence ||
+        value.chunkCount !== this.#pending.count ||
+        value.chunkIndex !== this.#pending.parts.length
+      ) {
+        this.#fail("Output chunk group is discontinuous.");
+        return;
+      }
+      this.#pending.parts.push(value.data);
+      if (this.#pending.parts.length < this.#pending.count) return;
+      const data = this.#pending.parts.join("");
+      this.#pending = null;
+      this.#nativeWatermark = value.sequence;
+      this.#deliver(data);
+      return;
+    }
+    // A new group must start at chunk 0 on a fresh native sequence — never
+    // at-or-before the watermark, and never mid-group.
+    if (value.chunkIndex !== 0) {
       this.#fail("Output chunk group is discontinuous.");
       return;
     }
-    group.parts.push(value.data);
-    this.#pending = group.parts.length < group.count ? group : null;
-    if (this.#pending === null) this.#deliver(group.parts.join(""));
+    if (value.sequence <= this.#nativeWatermark) {
+      this.#fail("Output event sequence is not monotonic.");
+      return;
+    }
+    if (value.chunkCount > 1) {
+      this.#pending = {
+        sequence: value.sequence,
+        count: value.chunkCount,
+        parts: [value.data],
+      };
+      return;
+    }
+    this.#nativeWatermark = value.sequence;
+    this.#deliver(value.data);
   }
 }
 

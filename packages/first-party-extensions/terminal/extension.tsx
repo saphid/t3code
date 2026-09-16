@@ -314,7 +314,17 @@ function TerminalPane(props: {
       };
       try {
         surface = await GhosttyTerminalSurface.create(mount, options);
-      } catch {
+      } catch (error) {
+        // A failed mount must not leave a silently dead pane: the stream
+        // keeps landing in the bounded pre-sink buffer and the error is
+        // visible until a remount succeeds.
+        if (!cancelled) {
+          attachment.applySinkFailure(
+            error instanceof Error
+              ? `Terminal renderer failed to start: ${error.message}`
+              : "Terminal renderer failed to start.",
+          );
+        }
         return;
       }
       if (cancelled) {

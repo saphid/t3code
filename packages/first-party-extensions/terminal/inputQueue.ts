@@ -119,6 +119,15 @@ export class TerminalInputQueue {
     };
   }
 
+  /**
+   * Disposal is terminal for the queue object: a revived owner (StrictMode
+   * effect replay) must construct a fresh queue rather than resurrect this
+   * one — pending bytes dropped at dispose are never resent.
+   */
+  get disposed(): boolean {
+    return this.#disposed;
+  }
+
   enqueue(data: string): TerminalInputEnqueue {
     if (this.#disposed || this.#stopped !== null) return "dropped-stopped";
     if (data.length === 0) return "accepted";

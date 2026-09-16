@@ -326,6 +326,19 @@ export class GhosttyTerminalCore {
     this.runtime.free(pointer, bytes.length);
   }
 
+  /**
+   * Erase the viewport and scrollback (ED 2 + ED 3) without an RIS: modes,
+   * cursor position, and screen selection survive. This is the parser-side
+   * equivalent of a host history clear, which never reaches the process —
+   * `resetAndWrite` would drop negotiated modes (application cursor,
+   * bracketed paste, kitty keyboard, mouse tracking) and desync input
+   * encoding.
+   */
+  clearScreen(): void {
+    this.ensureActive();
+    this.write("\x1b[2J\x1b[3J");
+  }
+
   resetAndWrite(data: string): void {
     this.ensureActive();
     this.runtime.call("ghostty_terminal_reset", this.terminal);

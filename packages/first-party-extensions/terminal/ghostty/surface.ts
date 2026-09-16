@@ -782,6 +782,25 @@ export class GhosttyTerminalSurface {
     this.requestRender();
   }
 
+  /**
+   * Host history clear: the server dropped retained output only — the
+   * process and its negotiated modes keep running. ED2+ED3 erase the
+   * viewport and scrollback without the RIS that resetAndWrite performs, so
+   * application-cursor, bracketed-paste, kitty-keyboard, and mouse state
+   * survive and input keeps encoding the way the process expects.
+   */
+  clearScreen(): void {
+    if (this.disposed) return;
+    this.core.clearScreen();
+    this.synchronizeMouseTrackingState();
+    this.cursorOn = true;
+    this.forceFullRender = true;
+    this.scrollbarDirty = true;
+    // The scrollback is gone; a scrolled-up viewport would show nothing.
+    this.scrollToBottom();
+    this.requestRender();
+  }
+
   setTheme(theme: GhosttyTheme): void {
     if (this.disposed) return;
     this.theme = theme;

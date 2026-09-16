@@ -16,6 +16,9 @@ function sink() {
     write(data) {
       calls.push(["write", data]);
     },
+    clearScreen() {
+      calls.push(["clearScreen"]);
+    },
   };
 }
 
@@ -105,13 +108,16 @@ NodeTest.describe("TerminalVtAttachment — snapshot + attach", () => {
     ]);
   });
 
-  NodeTest.it("reset re-bases the parser and clears the degraded flag", () => {
+  NodeTest.it("history clear erases a live surface WITHOUT resetting parser modes (P1)", () => {
+    // The server's `cleared` event only drops retained history — the
+    // process keeps running with its negotiated modes. A live surface gets
+    // a mode-preserving erase, not resetAndWrite (an RIS would wipe
+    // application-cursor/bracketed-paste and mis-encode the next paste).
     const vt = new TerminalVtAttachment("term-1");
     const s = sink();
     vt.attach(s);
     vt.beginStream();
-    vt.applyFrame(frame(1, snapshot({ truncated: true })), snapshot({ truncated: true }));
-    NodeAssert.equal(vt.state.degraded, true);
+    vt.applyFrame(frame(1, snapshot()), snapshot());
     const reset = {
       kind: "reset",
       terminalId: "term-1",
@@ -120,10 +126,130 @@ NodeTest.describe("TerminalVtAttachment — snapshot + attach", () => {
       reason: "history-cleared",
     };
     vt.applyFrame(frame(2, reset), reset);
-    NodeAssert.equal(vt.state.degraded, false);
     NodeAssert.equal(vt.state.status, "live");
-    NodeAssert.deepEqual(s.calls.at(-1), ["resetAndWrite", ""]);
+    NodeAssert.equal(vt.state.degraded, false);
+    NodeAssert.deepEqual(s.calls.at(-1), ["clearScreen"]);
   });
+
+  NodeTest.it(
+    "history clear after a truncated attach stays degraded — clearing history is not a resync (P1)",
+    () => {
+      const vt = new TerminalVtAttachment("term-1");
+      const s = sink();
+      vt.attach(s);
+      vt.beginStream();
+      vt.applyFrame(frame(1, snapshot({ truncated: true })), snapshot({ truncated: true }));
+      NodeAssert.equal(vt.state.degraded, true);
+      const reset = {
+        kind: "reset",
+        terminalId: "term-1",
+        streamEpoch: EPOCH,
+        sequence: 20,
+        reason: "history-cleared",
+      };
+      vt.applyFrame(frame(2, reset), reset);
+      NodeAssert.equal(vt.state.degraded, true);
+      NodeAssert.equal(vt.state.status, "live");
+      NodeAssert.deepEqual(s.calls.at(-1), ["clearScreen"]);
+      // Only a full-fidelity snapshot in a NEW epoch re-bases the parser —
+      // a same-epoch post-clear snapshot still lacks the mode bytes.
+      vt.beginStream();
+      const snap2 = {
+        ...snapshot({ contents: "fresh", boundarySequence: 40 }),
+        streamEpoch: "epoch-2",
+      };
+      vt.applyFrame(frame(1, snap2), snap2);
+      NodeAssert.equal(vt.state.degraded, false);
+    },
+  );
+
+  NodeTest.it(
+    "history clear with no surface leaves the replay base unfaithful — degraded until a full snapshot (P1)",
+    () => {
+      const vt = new TerminalVtAttachment("term-1");
+      vt.beginStream();
+      vt.applyFrame(frame(1, snapshot()), snapshot());
+      const reset = {
+        kind: "reset",
+        terminalId: "term-1",
+        streamEpoch: EPOCH,
+        sequence: 20,
+        reason: "history-cleared",
+      };
+      vt.applyFrame(frame(2, reset), reset);
+      NodeAssert.equal(vt.state.degraded, true);
+      NodeAssert.match(vt.state.statusText, /modes are unknown/);
+    },
+  );
+
+  NodeTest.it(
+    "a remount after history clear replays without mode history and flags degraded (P1)",
+    () => {
+      const vt = new TerminalVtAttachment("term-1");
+      const s = sink();
+      vt.attach(s);
+      vt.beginStream();
+      vt.applyFrame(frame(1, snapshot()), snapshot());
+      const reset = {
+        kind: "reset",
+        terminalId: "term-1",
+        streamEpoch: EPOCH,
+        sequence: 20,
+        reason: "history-cleared",
+      };
+      vt.applyFrame(frame(2, reset), reset);
+      vt.applyFrame(frame(3, output(21, "post-clear")), output(21, "post-clear"));
+      NodeAssert.equal(vt.state.degraded, false);
+      // Detach + remount: the replay (empty base + post-clear bytes) cannot
+      // reconstruct the pre-clear modes — honesty requires the banner.
+      vt.detach();
+      const s2 = sink();
+      vt.attach(s2);
+      NodeAssert.equal(vt.state.degraded, true);
+      NodeAssert.deepEqual(s2.calls, [
+        ["resetAndWrite", ""],
+        ["write", "post-clear"],
+      ]);
+    },
+  );
+
+  NodeTest.it(
+    "a post-clear snapshot in the same epoch is NOT a fidelity restore — mode bytes are gone (P1)",
+    () => {
+      // The server reports truncated:false after a clear (retention dropped
+      // nothing; history was explicitly cleared), but the snapshot still
+      // lacks the mode-establishing bytes — replaying it cannot resync
+      // parser modes. Degraded must persist until a new process epoch.
+      const vt = new TerminalVtAttachment("term-1");
+      vt.attach(sink());
+      vt.beginStream();
+      vt.applyFrame(frame(1, snapshot()), snapshot());
+      const reset = {
+        kind: "reset",
+        terminalId: "term-1",
+        streamEpoch: EPOCH,
+        sequence: 20,
+        reason: "history-cleared",
+      };
+      vt.applyFrame(frame(2, reset), reset);
+      NodeAssert.equal(vt.state.degraded, false); // live sink preserved modes
+      // Resubscribe (same epoch): the snapshot claims truncated:false but
+      // its contents start after the clear — still degraded.
+      vt.beginStream();
+      const snap2 = snapshot({ contents: "post-clear", boundarySequence: 30 });
+      vt.applyFrame(frame(1, snap2), snap2);
+      NodeAssert.equal(vt.state.degraded, true);
+      NodeAssert.match(vt.state.statusText, /history was cleared/);
+      // A new process epoch re-proves everything.
+      vt.beginStream();
+      const snap3 = {
+        ...snapshot({ contents: "fresh epoch" }),
+        streamEpoch: "epoch-2",
+      };
+      vt.applyFrame(frame(1, snap3), snap3);
+      NodeAssert.equal(vt.state.degraded, false);
+    },
+  );
 
   NodeTest.it("exit records the code and ends the stream", () => {
     const vt = new TerminalVtAttachment("term-1");
@@ -198,6 +324,76 @@ NodeTest.describe("TerminalVtAttachment — failure paths", () => {
     vt.applyFrame(frame(2, bad), bad);
     NodeAssert.equal(vt.state.status, "error");
     NodeAssert.equal(s.calls.filter(([m]) => m === "write").length, 0);
+  });
+
+  NodeTest.it("a new group starting over an incomplete group fails instead of swapping", () => {
+    // Regression: the reducer used to accept chunkIndex 0 of group N+1
+    // while group N was incomplete, silently losing bytes mid-stream.
+    const vt = new TerminalVtAttachment("term-1");
+    const s = sink();
+    vt.attach(s);
+    vt.beginStream();
+    vt.applyFrame(frame(1, snapshot()), snapshot());
+    vt.applyFrame(frame(2, output(10, "lost-head", 0, 2)), output(10, "lost-head", 0, 2));
+    vt.applyFrame(frame(3, output(11, "next", 0, 1)), output(11, "next", 0, 1));
+    NodeAssert.equal(vt.state.status, "error");
+    NodeAssert.match(vt.state.statusText, /discontinuous/);
+    NodeAssert.equal(s.calls.filter(([m]) => m === "write").length, 0);
+  });
+
+  NodeTest.it("a native sequence that does not strictly increase fails", () => {
+    const vt = new TerminalVtAttachment("term-1");
+    const s = sink();
+    vt.attach(s);
+    vt.beginStream();
+    vt.applyFrame(frame(1, snapshot()), snapshot()); // boundarySequence 7
+    vt.applyFrame(frame(2, output(10, "a")), output(10, "a"));
+    // Replay at the boundary and a regression are both rejected.
+    vt.applyFrame(frame(3, output(7, "replayed")), output(7, "replayed"));
+    NodeAssert.equal(vt.state.status, "error");
+    NodeAssert.match(vt.state.statusText, /monotonic/);
+  });
+
+  NodeTest.it("the pre-sink buffer is bounded and dropping bytes marks degraded", () => {
+    const vt = new TerminalVtAttachment("term-1");
+    vt.beginStream();
+    vt.applyFrame(frame(1, snapshot()), snapshot());
+    // No surface attached: >512KiB of live output must not accumulate.
+    let seq = 1;
+    let native = 8;
+    for (let i = 0; i < 70; i += 1) {
+      const value = output(native, "x".repeat(8192));
+      native += 1;
+      seq += 1;
+      vt.applyFrame(frame(seq, value), value);
+    }
+    NodeAssert.equal(vt.state.status, "live");
+    NodeAssert.equal(vt.state.degraded, true);
+    // A late surface replays only the retained tail and sees the banner.
+    const s = sink();
+    vt.attach(s);
+    const replayed = s.calls.filter(([m]) => m === "write").reduce((n, [, d]) => n + d.length, 0);
+    NodeAssert.ok(replayed <= 512 * 1024);
+    NodeAssert.ok(replayed > 0);
+  });
+
+  NodeTest.it("a surface-create failure is a visible error, not a dead pane", () => {
+    const vt = new TerminalVtAttachment("term-1");
+    vt.beginStream();
+    vt.applyFrame(frame(1, snapshot()), snapshot());
+    vt.applySinkFailure("Terminal renderer failed to start: no canvas");
+    NodeAssert.equal(vt.state.status, "error");
+    NodeAssert.match(vt.state.statusText, /renderer failed/);
+    NodeAssert.equal(vt.state.ended, false);
+    // The stream keeps applying into the bounded buffer — a remount can
+    // still attach and replay.
+    vt.applyFrame(frame(2, output(10, "still-live")), output(10, "still-live"));
+    const s = sink();
+    vt.attach(s);
+    NodeAssert.deepEqual(s.calls, [
+      ["resetAndWrite", "prompt$ "],
+      ["write", "still-live"],
+    ]);
   });
 });
 
