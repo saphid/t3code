@@ -11,6 +11,21 @@ const sdk = NodePath.resolve(NodeURL.fileURLToPath(new URL("..", import.meta.url
 const require = NodeModule.createRequire(import.meta.url);
 const [command, target = "."] = process.argv.slice(2);
 const sha = (bytes) => NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+// esbuild prefixes each bundled module with a `// <pretty path>` line whose
+// text is exactly the module's metafile input key. Those labels — like the
+// `fileName` debug data the dev JSX transform emits — are resolved against
+// the process working directory, so the emitted bytes (and every hash in
+// the receipt) used to depend on where the build ran. The builds below pin
+// absWorkingDir to the package directory, then this strips precisely the
+// reported labels: packageSha256 verifies regardless of build cwd, checkout
+// location, or machine, and no other comment can be eaten by accident.
+const stripModuleComments = (text, metafile) => {
+  const labels = new Set(Object.keys(metafile.inputs).map((input) => "// " + input));
+  return text
+    .split("\n")
+    .filter((line) => !labels.has(line.trimStart()))
+    .join("\n");
+};
 async function check(dir) {
   const pkg = validateEnvironmentPackage(
     JSON.parse(await NodeFSP.readFile(NodePath.join(dir, "t3-extension.json"), "utf8")),
@@ -157,19 +172,24 @@ async function main() {
     if (typecheck.status !== 0)
       throw new Error("Declared entry typecheck failed (exit " + typecheck.status + ")");
     await NodeFSP.rm(config);
-    const bundle = async (contents, outfile, platform) =>
-      build({
+    const bundle = async (contents, platform) => {
+      const result = await build({
+        absWorkingDir: dir,
         stdin: { contents, resolveDir: dir, sourcefile: "generated-entry.ts", loader: "ts" },
-        outfile: NodePath.join(temp, outfile),
         bundle: true,
+        write: false,
+        metafile: true,
         platform,
         format: "esm",
         target: platform === "browser" ? "es2022" : "node24",
         logLevel: "silent",
       });
+      return stripModuleComments(result.outputFiles[0].text, result.metafile);
+    };
     if (pkg.clientEntry) {
       // Evaluate dependency modules inside each factory so imported hooks share the host identity.
       const client = await build({
+        absWorkingDir: dir,
         stdin: {
           contents: 'import extension from "./extension.ts"; export default extension.client;',
           resolveDir: dir,
@@ -178,6 +198,7 @@ async function main() {
         },
         bundle: true,
         write: false,
+        metafile: true,
         platform: "browser",
         format: "iife",
         globalName: "__t3Client",
@@ -203,8 +224,27 @@ async function main() {
                   path === "react"
                     ? "module.exports = __t3Host.React;"
                     : "const R = __t3Host.React; exports.Fragment = R.Fragment; " +
-                      "exports.jsx = exports.jsxs = exports.jsxDEV = (type, props, key) => " +
-                      "R.createElement(type, key === undefined ? props : { ...props, key });",
+                      // Dev React warns for array children whose
+                      // _store.validated is falsy, but createElement only
+                      // marks its vararg children — the automatic runtime
+                      // passes children inside props, so nothing was marked
+                      // and every static sibling group warned. Mirror the
+                      // real runtimes: jsxs and isStaticChildren jsxDEV
+                      // mark each child element; jsx marks only the
+                      // children node itself, so unkeyed dynamic lists
+                      // still warn.
+                      "const mark = (n) => { " +
+                      "if (n && typeof n === 'object' && n._store) n._store.validated = 1; }; " +
+                      "const el = (type, props, key, isStatic) => { " +
+                      "const c = props == null ? undefined : props.children; " +
+                      "if (Array.isArray(c)) { " +
+                      "if (isStatic) { for (const x of c) mark(x); Object.freeze(c); } " +
+                      "} else mark(c); " +
+                      "return R.createElement(type, key === undefined ? props : { ...props, key }); " +
+                      "}; " +
+                      "exports.jsx = (t, p, k) => el(t, p, k, false); " +
+                      "exports.jsxs = (t, p, k) => el(t, p, k, true); " +
+                      "exports.jsxDEV = (t, p, k, s) => el(t, p, k, s === true);",
               }));
             },
           },
@@ -213,7 +253,7 @@ async function main() {
       await NodeFSP.writeFile(
         NodePath.join(temp, pkg.clientEntry),
         "export default function (__t3Host) {\n" +
-          client.outputFiles[0].text +
+          stripModuleComments(client.outputFiles[0].text, client.metafile) +
           "\nreturn __t3Client.default(__t3Host);\n}\n",
       );
     }
@@ -224,12 +264,14 @@ async function main() {
         authored.serverEntry.split(/[\\/]/).includes("..")
       )
         throw new Error("serverEntry must stay inside the source directory");
-      await bundle(
-        "import server from " +
-          JSON.stringify("./" + authored.serverEntry) +
-          "; export default { tools: [], ...server };",
-        pkg.serverEntry,
-        "node",
+      await NodeFSP.writeFile(
+        NodePath.join(temp, pkg.serverEntry),
+        await bundle(
+          "import server from " +
+            JSON.stringify("./" + authored.serverEntry) +
+            "; export default { tools: [], ...server };",
+          "node",
+        ),
       );
     }
     await NodeFSP.rm(NodePath.join(temp, "definition.mjs"));
