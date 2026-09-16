@@ -36,10 +36,11 @@ import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointDiffQuery } from "../../checkpointing/CheckpointDiffQuery.ts";
 import { readWorkflowScript } from "../../orchestration/workflowScriptQuery.ts";
 import { makeExtensionScopeResolver } from "../scope.ts";
-import { streamDiffPreview } from "../vcsDiffApi.ts";
+import { boundedPrefix, streamDiffPreview } from "../vcsDiffApi.ts";
 
 const fail = (detail: string) =>
   new ExtensionOperationError({ operation: "orchestration", detail });
+const isOperationError = Schema.is(ExtensionOperationError);
 const decode = Schema.decodeUnknownSync(OrchestrationCommand, { onExcessProperty: "error" });
 const json = Schema.decodeUnknownSync(Schema.Json);
 const decodeCommandId = Schema.decodeUnknownSync(CommandId);
@@ -58,6 +59,8 @@ const turnDiffInput = Schema.decodeUnknownSync(
 const queueCap = 64;
 const queueBytesCap = 1024 * 1024;
 const frameBytesCap = 60 * 1024;
+/** The contract caps getWorkflowScript contents at 8 192 units. */
+const workflowScriptUnitsCap = 8_192;
 const nativeTypes = {
   "turn.start": "thread.turn.start",
   "turn.interrupt": "thread.turn.interrupt",
@@ -295,7 +298,11 @@ export function createOrchestrationApiProviders(deps: Dependencies): readonly Ho
         if (Option.isNone(command)) return reject("OrchestrationInvalidInput");
         yield* Effect.tryPromise({
           try: () => guard(context, signal, metadata, true),
-          catch: () => fail("OrchestrationAuthorityDenied"),
+          // Guard failures already carry their honest name — a stale
+          // workspace revision is not an authority denial. Wrap only the
+          // foreign throws (revocation hooks, aborts).
+          catch: (cause) =>
+            isOperationError(cause) ? cause : fail("OrchestrationAuthorityDenied"),
         });
         const result = yield* deps.engine.dispatch(command.value).pipe(
           Effect.map((value) => ({
@@ -348,9 +355,10 @@ export function createOrchestrationApiProviders(deps: Dependencies): readonly Ho
         { signal },
       );
       await guard(context, signal, metadata);
+      const contents = boundedPrefix(script.contents, workflowScriptUnitsCap);
       return {
-        contents: script.contents.slice(0, 8192),
-        truncated: script.truncated || script.contents.length > 8192,
+        contents,
+        truncated: script.truncated || contents.length < script.contents.length,
       };
     },
     subscribe(name, input, context, signal, metadata, cursor) {
@@ -471,13 +479,20 @@ export function createOrchestrationApiProviders(deps: Dependencies): readonly Ho
       const receipts = [...recent.values()]
         .filter((item) => item.threadId === threadId)
         .map((item) => item.receipt);
+      const projected = projectAgents(state, receipts);
+      // The wire schema caps phases at 100 items and the fold never bounds
+      // them; a pathological roster must fail by name, not as a broker
+      // schema rejection.
+      for (const agent of projected.agents) {
+        if (agent.phases.length > 100) throw fail("OrchestrationProjectionTooLarge");
+      }
       offer({
         type: initial ? "snapshot" : "data",
         value: json({
           kind: initial ? "snapshot" : "updated",
           streamEpoch: epoch,
           revision,
-          ...projectAgents(state, receipts),
+          ...projected,
         }),
       });
     };

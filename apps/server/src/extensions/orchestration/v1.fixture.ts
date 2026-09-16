@@ -60,14 +60,15 @@ export async function createFixture() {
   let driver = ProviderDriverKind.make("codex");
   let enabled = true;
   let rollback = true;
+  let workspaceRoot = "/workspace";
+  let scriptContents = "export default 1;";
   let onRead = () => {};
   const calls: OrchestrationCommand[] = [];
   const receipts = new Map<string, OrchestrationCommandReceipt>();
   const deps: Parameters<typeof createOrchestrationApiProviders>[0] = {
     environmentId: "env",
     projects: {
-      getById: ({ projectId }) =>
-        Effect.succeedSome({ projectId, workspaceRoot: "/workspace", deletedAt: null }),
+      getById: ({ projectId }) => Effect.succeedSome({ projectId, workspaceRoot, deletedAt: null }),
     },
     threads: {
       getById: () =>
@@ -103,7 +104,7 @@ export async function createFixture() {
         Effect.succeed({ ...input, fromTurnCount: 0, diff: "diff --git a/a b/a\n-a\n+b\n" }),
     },
     readScript: (input) =>
-      Effect.succeed({ ...input, contents: "export default 1;", truncated: false }),
+      Effect.sync(() => ({ ...input, contents: scriptContents, truncated: false })),
     engine: {
       subscribeDomainEvents: PubSub.subscribe(events).pipe(
         Effect.map((subscription) => Stream.fromSubscription(subscription)),
@@ -157,6 +158,12 @@ export async function createFixture() {
       driver = ProviderDriverKind.make(value);
       rollback = canRollback;
       enabled = active;
+    },
+    setWorkspaceRoot(value: string) {
+      workspaceRoot = value;
+    },
+    setScriptContents(value: string) {
+      scriptContents = value;
     },
     onRead(value: () => void) {
       onRead = value;

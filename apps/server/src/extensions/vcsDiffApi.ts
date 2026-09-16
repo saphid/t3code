@@ -117,6 +117,23 @@ const toPublicSource = (source: {
 };
 
 /**
+ * A cut at `end` must not separate a surrogate pair — back off one unit so a
+ * consumer that encodes each piece to UTF-8 reassembles the exact bytes.
+ */
+const pairSafeEnd = (data: string, end: number): number =>
+  end < data.length &&
+  data.charCodeAt(end - 1) >= 0xd800 &&
+  data.charCodeAt(end - 1) <= 0xdbff &&
+  data.charCodeAt(end) >= 0xdc00 &&
+  data.charCodeAt(end) <= 0xdfff
+    ? end - 1
+    : end;
+
+/** Bounds a prefix to `maxUnits` without splitting a surrogate pair. */
+export const boundedPrefix = (data: string, maxUnits: number): string =>
+  data.slice(0, pairSafeEnd(data, Math.min(maxUnits, data.length)));
+
+/**
  * Fixed-unit chunks, split so a surrogate pair never straddles a boundary —
  * the same rule terminal output uses, so a consumer that encodes each chunk
  * to UTF-8 separately still reassembles the exact delivered bytes.
@@ -124,14 +141,7 @@ const toPublicSource = (source: {
 const splitStreamChunks = (data: string): string[] => {
   const chunks: string[] = [];
   for (let start = 0; start < data.length;) {
-    let end = Math.min(start + STREAM_CHUNK_UNITS, data.length);
-    if (end < data.length) {
-      const previous = data.charCodeAt(end - 1);
-      const next = data.charCodeAt(end);
-      if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
-        end -= 1;
-      }
-    }
+    const end = pairSafeEnd(data, Math.min(start + STREAM_CHUNK_UNITS, data.length));
     chunks.push(data.slice(start, end));
     start = end;
   }

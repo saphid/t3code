@@ -1,5 +1,10 @@
 import { afterEach, expect, it } from "@effect/vitest";
-import { OrchestrationThreadActivity, TurnId, CheckpointRef } from "@t3tools/contracts";
+import {
+  ExtensionOperationError,
+  OrchestrationThreadActivity,
+  TurnId,
+  CheckpointRef,
+} from "@t3tools/contracts";
 import { foldSubagentActivities } from "@t3tools/client-runtime/state/subagentRuntime";
 import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
 import { ORCHESTRATION_CONTROL_OPS } from "@t3tools/extension-sdk/catalogue";
@@ -10,6 +15,7 @@ import { createFixture, context } from "./v1.fixture.ts";
 import { projectAgents } from "./v1.ts";
 
 const decodeActivity = Schema.decodeUnknownSync(OrchestrationThreadActivity);
+const isOperationError = Schema.is(ExtensionOperationError);
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).toReversed()) await cleanup();
@@ -385,6 +391,83 @@ it("fails oversized projections by name rather than silently dropping native fie
   );
   f.setState({ ...f.state, thread: { ...f.state.thread, activities } });
   await expect(subscribe(f.status).next()).rejects.toThrow("OrchestrationProjectionTooLarge");
+});
+
+it("fails a pathological phase roster by name instead of a schema rejection", async () => {
+  const f = await fixture();
+  // The fold never bounds payload.phases; the wire schema caps it at 100.
+  const activity = decodeActivity({
+    id: "workflow",
+    kind: "task.started",
+    tone: "info",
+    summary: "Workflow",
+    createdAt: "2026-09-13T00:00:00.000Z",
+    turnId: null,
+    payload: {
+      taskId: "workflow",
+      agentKind: "agent",
+      taskType: "local_workflow",
+      phases: Array.from({ length: 101 }, (_, index) => ({
+        index,
+        title: `Phase ${index}`,
+      })),
+    },
+  });
+  f.setState({ ...f.state, thread: { ...f.state.thread, activities: [activity] } });
+  await expect(subscribe(f.status).next()).rejects.toThrow("OrchestrationProjectionTooLarge");
+});
+
+it("names a stale workspace revision race instead of reporting authority denied", async () => {
+  const f = await fixture();
+  let checks = 0;
+  const error = await Promise.resolve(
+    f.control.invoke("thread.settle", {}, context, signal, {
+      ...meta(f.control),
+      // The workspace moves between the entry guard and the pre-dispatch
+      // re-guard — the race must surface as a stale context, not authority.
+      assertAuthority: async () => {
+        checks += 1;
+        if (checks === 1) f.setWorkspaceRoot("/moved");
+      },
+    }),
+  ).then(
+    () => {
+      throw new Error("expected rejection");
+    },
+    (cause: unknown) => cause,
+  );
+  const operationError = isOperationError(error) ? error : null;
+  expect(operationError?.detail).toContain("stale");
+  expect(operationError?.detail).not.toContain("AuthorityDenied");
+  expect(f.calls).toHaveLength(0);
+});
+
+it("truncates workflow scripts without splitting a surrogate pair", async () => {
+  const f = await fixture();
+  const workflow = decodeActivity({
+    id: "workflow",
+    kind: "task.started",
+    tone: "info",
+    summary: "Workflow",
+    createdAt: "2026-09-13T00:00:00.000Z",
+    turnId: null,
+    payload: {
+      taskId: "workflow",
+      agentKind: "agent",
+      taskType: "local_workflow",
+      runHandles: { scriptPath: "/home/workflow.js" },
+    },
+  });
+  f.setState({ ...f.state, thread: { ...f.state.thread, activities: [workflow] } });
+  // An astral pair straddles the 8 192-unit bound, so the delivered contents
+  // must shrink to 8 191 units rather than emit a lone surrogate.
+  const crafted = `${"a".repeat(8_191)}\u{1F980}${"z".repeat(100)}`;
+  f.setScriptContents(crafted);
+  const result = (await invoke(f.status, "getWorkflowScript", {
+    workflowId: "workflow",
+  })) as { contents: string; truncated: boolean };
+  expect(result.contents).toBe("a".repeat(8_191));
+  expect(result.truncated).toBe(true);
 });
 
 it("resolves workflow scripts only from this thread's folded workflow handles", async () => {
