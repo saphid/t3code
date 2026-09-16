@@ -1616,11 +1616,22 @@ export function getThemeColorVariable(role: ThemeColorRole): string {
 export const THEME_PREVIEW_ID = "__preview";
 
 /**
+ * Identifies who painted the current `__preview`. The same draft colors can
+ * come from the editor or an extension overlay, so the writer tags itself and
+ * foreign drafts stay distinguishable even when identical.
+ */
+export const THEME_PREVIEW_OWNER_EDITOR = "t3.theme-editor";
+
+/**
  * Paint a draft palette onto the live app without installing it, so the editor
  * can be judged against the real interface instead of a miniature. Callers
  * restore the stored theme (refreshTheme) when the draft goes away.
  */
-export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeAppearance): void {
+export function applyThemeColorPreview(
+  colors: ThemeColors,
+  appearance: ThemeAppearance,
+  owner: string = THEME_PREVIEW_OWNER_EDITOR,
+): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   if (!root?.style) return;
@@ -1629,6 +1640,7 @@ export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeApp
   // the fixed stage artwork hidden even when it was seeded from a built-in.
   setThemePreviewSidebarArtwork(false);
   root.dataset.themeId = THEME_PREVIEW_ID;
+  root.dataset.themePreviewOwner = owner;
   root.classList.toggle("dark", appearance === "dark");
   for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
     // A half-typed hex keeps the last good value instead of blanking the role.
@@ -1643,6 +1655,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   if (!root?.style) return;
 
   setThemePreviewSidebarArtwork(null);
+  delete root.dataset.themePreviewOwner;
   const palette = getThemeDefinition(theme);
 
   if (palette) {

@@ -354,6 +354,28 @@ describe("theme files", () => {
     vi.unstubAllGlobals();
   });
 
+  it("tags the preview writer and clears the tag when a stored theme applies", () => {
+    const documentElement = {
+      classList: { toggle: vi.fn() },
+      dataset: {} as Record<string, string>,
+      style: { removeProperty: vi.fn(), setProperty: vi.fn() },
+    };
+    vi.stubGlobal("document", { documentElement });
+    try {
+      applyThemeColorPreview(T3_CHAT_THEME.colors, "light");
+      expect(documentElement.dataset.themeId).toBe("__preview");
+      expect(documentElement.dataset.themePreviewOwner).toBe("t3.theme-editor");
+      // A foreign overlay writing the same colors is distinguishable by owner.
+      applyThemeColorPreview(T3_CHAT_THEME.colors, "light", "community.overlay");
+      expect(documentElement.dataset.themePreviewOwner).toBe("community.overlay");
+      applyThemePalette("system");
+      expect(documentElement.dataset.themeId).toBeUndefined();
+      expect(documentElement.dataset.themePreviewOwner).toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("keeps optional light and dark palettes under one theme id", () => {
     const theme = parseThemeFile({
       version: THEME_FILE_VERSION,
