@@ -95,34 +95,98 @@ export default {
 
 // The template literal embeds a line shaped exactly like a bundled-module
 // banner comment — it is string data and must survive the build verbatim.
-const TEXT = "before\n// pkg:server.ts\nafter";
+const TEXT = "before\n// server.ts\nafter";
 const SERVER = `import dep from "fixture-dep";
+import left from "left-dep";
+import right from "right-dep";
+import inner from "inner-dep";
+import glob from "glob-dep";
 const text = \`before
-// pkg:server.ts
+// server.ts
 after\`;
-export default { tools: [], depValue: dep.value, text };
+export default {
+  tools: [],
+  depValue: dep.value,
+  text,
+  values: [left, right],
+  interop: inner,
+  globbed: glob("a"),
+};
 `;
 
-// A real CommonJS dependency that lives OUTSIDE the package directory and
-// is reached through a node_modules symlink — before canonical module ids
-// its resolved path leaked into the emitted __commonJS wrapper key.
-async function writeSharedDep(dir) {
-  await NodeFSP.mkdir(dir, { recursive: true });
-  await NodeFSP.writeFile(
-    NodePath.join(dir, "package.json"),
-    JSON.stringify({
-      name: "fixture-dep",
-      version: "1.0.0",
-      type: "commonjs",
-      main: "index.cjs",
-      types: "index.d.ts",
+// Real external dependencies that live OUTSIDE the package directory and
+// are reached through node_modules symlinks — the shapes that used to leak
+// checkout-relative paths into emitted module identities:
+// - fixture-dep: ordinary named CJS package.
+// - left-dep/right-dep: nameless packages (no "name" in package.json) whose
+//   index.cjs bytes are IDENTICAL but whose relative imports must resolve
+//   into different sibling files — content-equal modules that must not merge.
+// - inner-dep: "type": "module" package whose .js entry default-imports a
+//   transpiled-looking .cjs — native interop must yield module.exports.
+// - glob-dep: dynamic require glob — expanded files never reach onResolve.
+async function writeSharedDeps(dir) {
+  const w = async (pkg, files) => {
+    await NodeFSP.mkdir(pkg, { recursive: true });
+    await Promise.all(
+      Object.entries(files).map(async ([name, body]) => {
+        const file = NodePath.join(pkg, name);
+        await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
+        await NodeFSP.writeFile(file, body);
+      }),
+    );
+  };
+  await Promise.all([
+    w(NodePath.join(dir, "fixture-dep"), {
+      "package.json": JSON.stringify({
+        name: "fixture-dep",
+        version: "1.0.0",
+        type: "commonjs",
+        main: "index.cjs",
+        types: "index.d.ts",
+      }),
+      "index.cjs": "module.exports = { value: 42 };\n",
+      "index.d.ts": "declare const dep: { value: number };\nexport default dep;\n",
     }),
-  );
-  await NodeFSP.writeFile(NodePath.join(dir, "index.cjs"), "module.exports = { value: 42 };\n");
-  await NodeFSP.writeFile(
-    NodePath.join(dir, "index.d.ts"),
-    "declare const dep: { value: number };\nexport default dep;\n",
-  );
+    // left-dep / right-dep (nameless, byte-identical index.cjs)
+    ...["left", "right"].map((value) =>
+      w(NodePath.join(dir, value), {
+        "package.json": JSON.stringify({
+          version: "1.0.0",
+          type: "commonjs",
+          main: "index.cjs",
+          types: "index.d.ts",
+        }),
+        "index.cjs": 'module.exports = require("./value.cjs");\n',
+        "value.cjs": "module.exports = " + JSON.stringify(value) + ";\n",
+        "index.d.ts": "declare const v: string;\nexport default v;\n",
+      }),
+    ),
+    w(NodePath.join(dir, "inner"), {
+      "package.json": JSON.stringify({
+        name: "inner-dep",
+        version: "1.0.0",
+        type: "module",
+        main: "entry.js",
+        types: "entry.d.ts",
+      }),
+      "entry.js": 'import dep from "./dep.cjs";\nexport default dep;\n',
+      "dep.cjs":
+        'exports.__esModule = true;\nexports.default = "inner";\nexports.extra = "outer";\n',
+      "entry.d.ts": "declare const v: { default: string; extra: string };\nexport default v;\n",
+    }),
+    w(NodePath.join(dir, "glob-dep"), {
+      "package.json": JSON.stringify({
+        name: "glob-dep",
+        version: "1.0.0",
+        type: "commonjs",
+        main: "index.cjs",
+        types: "index.d.ts",
+      }),
+      "index.cjs": 'module.exports = (name) => require("./features/" + name + ".cjs");\n',
+      "features/a.cjs": 'module.exports = "loaded";\n',
+      "index.d.ts": "declare const load: (name: string) => unknown;\nexport default load;\n",
+    }),
+  ]);
 }
 
 // Fixtures live outside the package root: `test/` is in the package's
@@ -141,7 +205,14 @@ async function writeFixture(dir, jsx = "react-jsx", depDir) {
     NodePath.join(sdk, "node_modules/@types/react"),
     NodePath.join(dir, "node_modules", "@types", "react"),
   );
-  await NodeFSP.symlink(depDir, NodePath.join(dir, "node_modules", "fixture-dep"));
+  for (const [entry, target] of [
+    ["fixture-dep", "fixture-dep"],
+    ["left-dep", "left"],
+    ["right-dep", "right"],
+    ["inner-dep", "inner"],
+    ["glob-dep", "glob-dep"],
+  ])
+    await NodeFSP.symlink(NodePath.join(depDir, target), NodePath.join(dir, "node_modules", entry));
   await NodeFSP.writeFile(NodePath.join(dir, "tsconfig.json"), tsconfig(jsx));
   await NodeFSP.writeFile(NodePath.join(dir, "extension.ts"), extension(suffix));
   await NodeFSP.writeFile(NodePath.join(dir, "component.tsx"), component(suffix, list));
@@ -165,8 +236,8 @@ NodeTest.test("bundler output is deterministic across build cwd and checkout pat
   // each consuming the same out-of-package CommonJS dep through a symlink.
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-bundler-"));
   t.after(() => NodeFSP.rm(root, { recursive: true, force: true }));
-  const depDir = NodePath.join(root, "shared-dep");
-  await writeSharedDep(depDir);
+  const depDir = NodePath.join(root, "shared-deps");
+  await writeSharedDeps(depDir);
   for (const jsx of ["react-jsx", "react-jsxdev"]) {
     const first = NodePath.join(root, "a", jsx, "proj");
     const second = NodePath.join(root, "b", "nested", "deep", jsx, "proj");
@@ -192,10 +263,18 @@ NodeTest.test("bundler output is deterministic across build cwd and checkout pat
       );
     }
     const server = firstBytes.server.toString("utf8");
-    // The CommonJS wrapper key is the canonical npm: id, never the
-    // depth-dependent relative path the module resolved from.
-    NodeAssert.ok(server.includes('"npm:fixture-dep/index.cjs"'), `no canonical dep key: ${jsx}`);
-    // The built server module imports with the template content intact.
+    // The CommonJS wrapper key is the node_modules spelling, never the
+    // depth-dependent relative path the module resolved from — including
+    // glob-expanded files, which never reach an onResolve hook.
+    NodeAssert.ok(
+      server.includes('"node_modules/fixture-dep/index.cjs"'),
+      `no canonical dep key: ${jsx}`,
+    );
+    NodeAssert.ok(
+      server.includes('"node_modules/glob-dep/features/a.cjs"'),
+      `glob-expanded file lost its canonical key: ${jsx}`,
+    );
+    // The built server module imports with everything intact.
     const built = (
       await import(
         NodeURL.pathToFileURL(NodePath.join(second, ".t3-extension/server.mjs")).href +
@@ -205,15 +284,27 @@ NodeTest.test("bundler output is deterministic across build cwd and checkout pat
     ).default;
     NodeAssert.equal(built.text, TEXT, `template-literal content was eaten (${jsx})`);
     NodeAssert.equal(built.depValue, 42, `bundled dep not wired (${jsx})`);
+    // Byte-identical nameless packages are distinct modules: their relative
+    // imports resolve into different siblings.
+    NodeAssert.deepEqual(built.values, ["left", "right"], `content-equal modules merged (${jsx})`);
+    // .js inside "type": "module" keeps native interop: a default import of
+    // transpiled-looking CJS yields the whole module.exports object.
+    NodeAssert.deepEqual(
+      built.interop,
+      { __esModule: true, default: "inner", extra: "outer" },
+      `package-type interop changed (${jsx})`,
+    );
+    NodeAssert.equal(built.globbed, "loaded", `glob-expanded dep not wired (${jsx})`);
     for (const entry of ["client", "server"]) {
       const text = firstBytes[entry].toString("utf8");
       for (const line of text.split("\n"))
         // Module banners are single-token `// <id>` lines; esbuild's own
-        // helper comments are sentences and stay.
+        // helper comments are sentences and stay. With preserveSymlinks a
+        // banner is always the import spelling — never ".." or absolute.
         if (/^[ \t]*\/\/ \S+\s*$/.test(line))
           NodeAssert.match(
             line.trim(),
-            /^\/\/ (pkg|npm|dep|host-react):|generated-\w+\.ts$/,
+            /^\/\/ (?!.*(\.\.|\/private\/|\/tmp\/|\/var\/))\S+$/,
             `${entry}.mjs embeds a location-dependent comment (${jsx}): ${line.trim()}`,
           );
     }
@@ -225,8 +316,8 @@ NodeTest.test(
   async (t) => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-bundler-"));
     t.after(() => NodeFSP.rm(root, { recursive: true, force: true }));
-    const depDir = NodePath.join(root, "shared-dep");
-    await writeSharedDep(depDir);
+    const depDir = NodePath.join(root, "shared-deps");
+    await writeSharedDeps(depDir);
     for (const jsx of ["react-jsx", "react-jsxdev"]) {
       const dir = NodePath.join(root, jsx, "proj");
       await writeFixture(dir, jsx, depDir);

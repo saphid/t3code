@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
@@ -12,109 +11,20 @@ const sdk = NodePath.resolve(NodeURL.fileURLToPath(new URL("..", import.meta.url
 const require = NodeModule.createRequire(import.meta.url);
 const [command, target = "."] = process.argv.slice(2);
 const sha = (bytes) => NodeCrypto.createHash("sha256").update(bytes).digest("hex");
-const LOADER_BY_EXT = {
-  ".ts": "ts",
-  ".mts": "ts",
-  ".cts": "ts",
-  ".tsx": "tsx",
-  ".js": "js",
-  ".mjs": "js",
-  ".cjs": "js",
-  ".jsx": "jsx",
-  ".json": "json",
-  ".css": "css",
-  ".txt": "text",
-};
 // esbuild stamps each bundled module's resolved path — relative to the
 // process working directory — into `//` banner comments, CommonJS wrapper
 // keys ("../../dep/index.js"(exports, module){…}), and jsxdev fileName
 // metadata, so emitted bytes (and every receipt hash) used to depend on
 // where the build ran and where the checkout lived. Post-hoc text removal
-// cannot fix that safely: an identical line inside a template literal is
-// data, and locating real comment positions needs a full JS lexer. Instead
-// every module is resolved through this plugin into a custom namespace with
-// a location-independent id, so emitted labels are canonical by
-// construction: pkg/<package-relative> for authored sources,
-// npm/<package>/<inner> for modules owned by a package.json, and
-// dep/<sha256> for package-less files. packageSha256 now verifies
-// regardless of build cwd, checkout location, or machine.
-const canonicalIds = (dir) => ({
-  name: "t3-canonical-ids",
-  async setup(build) {
-    const root = await NodeFSP.realpath(dir);
-    const seen = new Map();
-    const ownerCache = new Map();
-    const owner = (file) => {
-      let at = NodePath.dirname(file);
-      for (;;) {
-        if (ownerCache.has(at)) return ownerCache.get(at);
-        const manifest = NodePath.join(at, "package.json");
-        if (NodeFS.existsSync(manifest)) {
-          const { name } = JSON.parse(NodeFS.readFileSync(manifest, "utf8"));
-          const found = typeof name === "string" && name !== "" ? { name, root: at } : null;
-          ownerCache.set(at, found);
-          return found;
-        }
-        const up = NodePath.dirname(at);
-        if (up === at) {
-          ownerCache.set(at, null);
-          return null;
-        }
-        at = up;
-      }
-    };
-    const canonicalId = (real) => {
-      const rel = NodePath.relative(root, real).split(NodePath.sep).join("/");
-      if (rel !== ".." && !rel.startsWith("../")) return { namespace: "pkg", path: rel };
-      const pkg = owner(real);
-      if (pkg)
-        return {
-          namespace: "npm",
-          path: pkg.name + "/" + NodePath.relative(pkg.root, real).split(NodePath.sep).join("/"),
-        };
-      return { namespace: "dep", path: sha(NodeFS.readFileSync(real)).slice(0, 16) };
-    };
-    // build.resolve re-runs the whole plugin pipeline for the nested call;
-    // this marker lets our own callback pass through so resolution bottoms
-    // out at esbuild's built-in file resolution instead of recursing.
-    const SELF = {};
-    build.onResolve({ filter: /.*/ }, async (args) => {
-      if (args.pluginData === SELF) return undefined;
-      const resolved = await build.resolve(args.path, {
-        importer: args.importer,
-        kind: args.kind,
-        namespace: args.namespace,
-        resolveDir: args.resolveDir,
-        pluginData: SELF,
-      });
-      if (resolved.errors.length > 0 || resolved.external || resolved.namespace !== "file")
-        return resolved;
-      const real = NodeFS.realpathSync(resolved.path);
-      let id = canonicalId(real);
-      // Two real files claiming one id would merge into a single module;
-      // fall back to content addressing for the collision.
-      if (seen.has(id.namespace + ":" + id.path) && seen.get(id.namespace + ":" + id.path) !== real)
-        id = { namespace: "dep", path: sha(NodeFS.readFileSync(real)).slice(0, 16) };
-      seen.set(id.namespace + ":" + id.path, real);
-      return {
-        path: id.path,
-        namespace: id.namespace,
-        pluginData: real,
-        ...(resolved.suffix === "" || resolved.suffix === undefined
-          ? {}
-          : { suffix: resolved.suffix }),
-        ...(resolved.sideEffects === undefined ? {} : { sideEffects: resolved.sideEffects }),
-      };
-    });
-    const load = async (args) => ({
-      contents: await NodeFSP.readFile(args.pluginData),
-      loader: LOADER_BY_EXT[NodePath.extname(args.pluginData)] ?? "file",
-      resolveDir: NodePath.dirname(args.pluginData),
-      watchFiles: [args.pluginData],
-    });
-    for (const namespace of ["pkg", "npm", "dep"]) build.onLoad({ filter: /.*/, namespace }, load);
-  },
-});
+// cannot fix that safely (an identical line inside a template literal is
+// data), and virtual namespaces can't either (they bypass glob-expansion
+// resolution and drop package.json module-type semantics). The builds
+// below instead pin absWorkingDir to the realpath'd package directory and
+// resolve with preserveSymlinks, so every module's emitted identity is its
+// import spelling — extension.ts, node_modules/<name>/index.cjs — which is
+// location-independent by construction, keeps nameless or duplicated
+// installs distinct, and keeps native CJS/ESM interop. packageSha256 now
+// verifies regardless of build cwd, checkout location, or machine.
 async function check(dir) {
   const pkg = validateEnvironmentPackage(
     JSON.parse(await NodeFSP.readFile(NodePath.join(dir, "t3-extension.json"), "utf8")),
@@ -203,6 +113,7 @@ async function main() {
       format: "esm",
       target: "node24",
       logLevel: "silent",
+      preserveSymlinks: true,
     });
     const authored = (
       await import(NodeURL.pathToFileURL(NodePath.join(temp, "definition.mjs")).href)
@@ -275,7 +186,7 @@ async function main() {
           format: "esm",
           target: platform === "browser" ? "es2022" : "node24",
           logLevel: "silent",
-          plugins: [canonicalIds(dir)],
+          preserveSymlinks: true,
         })
       ).outputFiles[0].text;
     if (pkg.clientEntry) {
@@ -296,6 +207,7 @@ async function main() {
         globalName: "__t3Client",
         target: "es2022",
         logLevel: "silent",
+        preserveSymlinks: true,
         plugins: [
           {
             name: "host-react",
@@ -340,9 +252,6 @@ async function main() {
               }));
             },
           },
-          // host-react first so react/* specifiers keep their shim before the
-          // catch-all canonical resolver sees them.
-          canonicalIds(dir),
         ],
       });
       await NodeFSP.writeFile(
