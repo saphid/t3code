@@ -847,6 +847,24 @@ it.layer(NodeServices.layer)("t3.vcs adapters", (it) => {
                     pushUrl: Option.none(),
                     isPrimary: false,
                   },
+                  {
+                    name: "single-slash",
+                    url: "https:/user:password@[broken",
+                    pushUrl: Option.none(),
+                    isPrimary: false,
+                  },
+                  {
+                    name: "backslash-sep",
+                    url: "https:\\\\user:password@[broken",
+                    pushUrl: Option.none(),
+                    isPrimary: false,
+                  },
+                  {
+                    name: "mixed-sep",
+                    url: "https:\\/user:password@[broken",
+                    pushUrl: Option.some("https:/user:password@[also-broken"),
+                    isPrimary: false,
+                  },
                 ],
                 freshness: {
                   source: "live-local",
@@ -930,6 +948,26 @@ it.layer(NodeServices.layer)("t3.vcs adapters", (it) => {
                 name: "empty-host",
                 url: "https://",
                 pushUrl: null,
+                isPrimary: false,
+              },
+              // Alternate separator spellings a special-scheme URL would
+              // normalize lose their userinfo prefix just the same.
+              {
+                name: "single-slash",
+                url: "https:/[broken",
+                pushUrl: null,
+                isPrimary: false,
+              },
+              {
+                name: "backslash-sep",
+                url: "https:\\\\[broken",
+                pushUrl: null,
+                isPrimary: false,
+              },
+              {
+                name: "mixed-sep",
+                url: "https:\\/[broken",
+                pushUrl: "https:/[also-broken",
                 isPrimary: false,
               },
             ],
