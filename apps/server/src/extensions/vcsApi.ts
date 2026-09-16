@@ -333,7 +333,10 @@ const unsupported = (operation: string, kind: VcsDriverKind, detail: string) =>
  * transports credentials, so a URL with a password loses its userinfo
  * verbatim. Scp-style and path remotes are not URLs, and username-only
  * userinfo (ssh `git@host`) carries no secret — both pass through untouched.
+ * A malformed URL still loses a `scheme://userinfo@` prefix — unvalidated
+ * text must not transport credentials either.
  */
+const MALFORMED_URL_USERINFO = /^([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^/?#]*@/;
 const redactRemoteUrl = (value: string): string => {
   try {
     const url = new URL(value);
@@ -342,7 +345,7 @@ const redactRemoteUrl = (value: string): string => {
     url.password = "";
     return url.toString();
   } catch {
-    return value;
+    return value.replace(MALFORMED_URL_USERINFO, "$1");
   }
 };
 

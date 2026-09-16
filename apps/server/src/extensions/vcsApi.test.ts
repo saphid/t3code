@@ -829,6 +829,24 @@ it.layer(NodeServices.layer)("t3.vcs adapters", (it) => {
                     pushUrl: Option.some("git@example.com:org/repo.git"),
                     isPrimary: true,
                   },
+                  {
+                    name: "broken-bracket",
+                    url: "https://user:password@[unclosed",
+                    pushUrl: Option.none(),
+                    isPrimary: false,
+                  },
+                  {
+                    name: "encoded-userinfo",
+                    url: "https://user%40x:password@[unclosed",
+                    pushUrl: Option.none(),
+                    isPrimary: false,
+                  },
+                  {
+                    name: "empty-host",
+                    url: "https://user:password@",
+                    pushUrl: Option.none(),
+                    isPrimary: false,
+                  },
                 ],
                 freshness: {
                   source: "live-local",
@@ -893,6 +911,26 @@ it.layer(NodeServices.layer)("t3.vcs adapters", (it) => {
                 url: "https://example.com/repo.git",
                 pushUrl: "git@example.com:org/repo.git",
                 isPrimary: true,
+              },
+              // Malformed URLs must not pass userinfo through verbatim — the
+              // `scheme://userinfo@` prefix is stripped at the boundary.
+              {
+                name: "broken-bracket",
+                url: "https://[unclosed",
+                pushUrl: null,
+                isPrimary: false,
+              },
+              {
+                name: "encoded-userinfo",
+                url: "https://[unclosed",
+                pushUrl: null,
+                isPrimary: false,
+              },
+              {
+                name: "empty-host",
+                url: "https://",
+                pushUrl: null,
+                isPrimary: false,
               },
             ],
           });
