@@ -334,10 +334,12 @@ const unsupported = (operation: string, kind: VcsDriverKind, detail: string) =>
  * verbatim. Scp-style and path remotes are not URLs, and username-only
  * userinfo (ssh `git@host`) carries no secret — both pass through untouched.
  * A malformed URL still loses a `scheme:userinfo@` prefix — unvalidated
- * text must not transport credentials either. The separator class covers
- * the `//`, `/`, `\\`, and mixed variants a special-scheme URL normalizes.
+ * text must not transport credentials either. Control characters are
+ * non-printable: they are stripped before matching so they cannot
+ * interrupt the prefix, and separators may be `/`, `\`, mixed, or absent.
  */
-const MALFORMED_URL_USERINFO = /^(\s*[a-zA-Z][a-zA-Z0-9+.-]*:[/\\]+)[^/?#\\]*@/;
+const MALFORMED_URL_USERINFO = /^(\s*[a-zA-Z][a-zA-Z0-9+.-]*:[/\\\s]*)[^/?#\\\s]*@/;
+const CONTROL_CHARS = /[\p{Cc}]/gu;
 const redactRemoteUrl = (value: string): string => {
   try {
     const url = new URL(value);
@@ -346,7 +348,7 @@ const redactRemoteUrl = (value: string): string => {
     url.password = "";
     return url.toString();
   } catch {
-    return value.replace(MALFORMED_URL_USERINFO, "$1");
+    return value.replace(CONTROL_CHARS, "").replace(MALFORMED_URL_USERINFO, "$1");
   }
 };
 

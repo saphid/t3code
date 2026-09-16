@@ -865,6 +865,18 @@ it.layer(NodeServices.layer)("t3.vcs adapters", (it) => {
                     pushUrl: Option.some("https:/user:password@[also-broken"),
                     isPrimary: false,
                   },
+                  {
+                    name: "control-in-prefix",
+                    url: "https:/\u0001/user:password@[broken",
+                    pushUrl: Option.none(),
+                    isPrimary: false,
+                  },
+                  {
+                    name: "zero-separator",
+                    url: "https:user:password@[broken",
+                    pushUrl: Option.some("https:\tuser:password@[pushed"),
+                    isPrimary: false,
+                  },
                 ],
                 freshness: {
                   source: "live-local",
@@ -968,6 +980,21 @@ it.layer(NodeServices.layer)("t3.vcs adapters", (it) => {
                 name: "mixed-sep",
                 url: "https:\\/[broken",
                 pushUrl: "https:/[also-broken",
+                isPrimary: false,
+              },
+              // Control characters are non-printable: stripped before the
+              // userinfo match, and absent separators do not save a
+              // credential-bearing scheme prefix.
+              {
+                name: "control-in-prefix",
+                url: "https://[broken",
+                pushUrl: null,
+                isPrimary: false,
+              },
+              {
+                name: "zero-separator",
+                url: "https:[broken",
+                pushUrl: "https:[pushed",
                 isPrimary: false,
               },
             ],
