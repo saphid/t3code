@@ -230,6 +230,39 @@ describe("generic extension placements", () => {
     expect(normalized.extensionDockByThreadKey["env:pull-requests-panel"]).toBeUndefined();
     expect(migratePersistedRightPanelState(normalized)).toEqual(normalized);
   });
+  it("stores a user-chosen dock height per thread and carries it through hydration", () => {
+    const store = useRightPanelStore.getState();
+    store.openExtension(a, record());
+    store.openExtension(b, record());
+    store.setExtensionDockHeight(a, 480);
+    store.setExtensionDockHeight(a, Number.NaN);
+    store.setExtensionDockHeight(a, Number.POSITIVE_INFINITY);
+    expect(dock().height).toBe(480);
+    expect(dock(b).height).toBeUndefined();
+    const surface = dock().surfaces[0]!;
+    const normalized = migratePersistedRightPanelState({
+      extensionDockByThreadKey: {
+        [scopedThreadKey(a)]: {
+          isOpen: true,
+          activeSurfaceId: surface.id,
+          surfaces: [surface],
+          height: 480,
+        },
+        [scopedThreadKey(b)]: {
+          isOpen: true,
+          activeSurfaceId: surface.id,
+          surfaces: [surface],
+          height: "tall",
+        },
+      },
+    });
+    expect(normalized.extensionDockByThreadKey[scopedThreadKey(a)]?.height).toBe(480);
+    expect(normalized.extensionDockByThreadKey[scopedThreadKey(b)]?.height).toBeUndefined();
+    expect(migratePersistedRightPanelState(normalized)).toEqual(normalized);
+    store.closeDockExtension(a, surface.id);
+    expect(dock().height).toBeUndefined();
+  });
+
   it("rejects misplaced dock entries before deduplicating or consuming the view limit", () => {
     const valid = extensionPanelSurface(a, { ...record(), restoreState: 8 })!;
     const invalidPlacements = Array.from({ length: 64 }, (_, i) =>

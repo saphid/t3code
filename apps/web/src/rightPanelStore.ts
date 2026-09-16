@@ -132,6 +132,8 @@ export interface ExtensionDockState {
   isOpen: boolean;
   activeSurfaceId: string | null;
   surfaces: ExtensionPanelSurface[];
+  /** User-dragged frame height in CSS pixels; absent means the dock default. */
+  height?: number;
 }
 
 interface RightPanelStoreState {
@@ -167,6 +169,7 @@ interface RightPanelStoreState {
   ) => boolean;
   showExtensionDock: (ref: ScopedThreadRef) => void;
   hideExtensionDock: (ref: ScopedThreadRef) => void;
+  setExtensionDockHeight: (ref: ScopedThreadRef, height: number) => void;
   activateDockExtension: (ref: ScopedThreadRef, surfaceId: string) => void;
   closeDockExtension: (ref: ScopedThreadRef, surfaceId: string) => void;
   moveSurface: (ref: ScopedThreadRef, surfaceId: string, toIndex: number) => void;
@@ -620,12 +623,25 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
     if (dockSurfaces.length) {
       const preferredId =
         currentDock?.activeSurfaceId ?? (movedActive ? previous.activeSurfaceId : null);
+      const rawHeight =
+        dockInput && typeof dockInput === "object"
+          ? (dockInput as Record<string, unknown>)[threadKey]
+          : undefined;
+      const height =
+        rawHeight &&
+        typeof rawHeight === "object" &&
+        "height" in rawHeight &&
+        typeof rawHeight.height === "number" &&
+        Number.isFinite(rawHeight.height)
+          ? rawHeight.height
+          : undefined;
       extensionDockByThreadKey[threadKey] = {
         isOpen: currentDock ? currentDock.isOpen : movedActive && previous.isOpen,
         activeSurfaceId: dockSurfaces.some((surface) => surface.id === preferredId)
           ? preferredId
           : dockSurfaces[0]!.id,
         surfaces: dockSurfaces,
+        ...(height !== undefined ? { height } : {}),
       };
     }
   }
@@ -802,6 +818,14 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           updateExtensionDock(state, scopedThreadKey(ref), (dock) =>
             dock.isOpen ? { ...dock, isOpen: false } : dock,
           ),
+        ),
+      setExtensionDockHeight: (ref, height) =>
+        set((state) =>
+          Number.isFinite(height)
+            ? updateExtensionDock(state, scopedThreadKey(ref), (dock) =>
+                dock.height === height ? dock : { ...dock, height },
+              )
+            : state,
         ),
       activateDockExtension: (ref, surfaceId) =>
         set((state) =>

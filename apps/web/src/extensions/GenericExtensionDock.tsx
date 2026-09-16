@@ -1,4 +1,5 @@
-import { useId, useState, type KeyboardEvent } from "react";
+import { useCallback, useId, useRef, useState, type KeyboardEvent } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { PanelBottomCloseIcon, XIcon } from "lucide-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
@@ -10,6 +11,29 @@ import {
   type ExtensionDockState,
 } from "../rightPanelStore";
 import { WorkspaceExtensionSurface, useWorkspaceSurfaceTitles } from "./workspaceRegistry";
+
+// The dock frame stays host-owned: the user drags its height within these
+// bounds and the surface adapts its own content to the frame it is given.
+const DEFAULT_EXTENSION_DOCK_HEIGHT = 256;
+const MIN_EXTENSION_DOCK_HEIGHT = 160;
+const MAX_EXTENSION_DOCK_HEIGHT_RATIO = 0.75;
+
+function maxExtensionDockHeight(): number {
+  if (typeof window === "undefined") return DEFAULT_EXTENSION_DOCK_HEIGHT;
+  return Math.max(
+    MIN_EXTENSION_DOCK_HEIGHT,
+    Math.floor(window.innerHeight * MAX_EXTENSION_DOCK_HEIGHT_RATIO),
+  );
+}
+
+export function clampExtensionDockHeight(height: number | undefined): number {
+  const safeHeight =
+    height !== undefined && Number.isFinite(height) ? height : DEFAULT_EXTENSION_DOCK_HEIGHT;
+  return Math.min(
+    Math.max(Math.round(safeHeight), MIN_EXTENSION_DOCK_HEIGHT),
+    maxExtensionDockHeight(),
+  );
+}
 
 export function GenericExtensionDock({ threadRef }: { threadRef: ScopedThreadRef }) {
   const dock = useRightPanelStore((state) =>
@@ -49,6 +73,58 @@ function ThreadExtensionDock({
     animations.durationMs,
   );
   const selectedIndex = dock.surfaces.findIndex((surface) => surface.id === dock.activeSurfaceId);
+  const committedHeight = clampExtensionDockHeight(dock.height);
+  const [dragHeight, setDragHeight] = useState<number | null>(null);
+  const dockHeight = dragHeight ?? committedHeight;
+  const resizeStateRef = useRef<{
+    pointerId: number;
+    startY: number;
+    startHeight: number;
+    height: number;
+    moved: boolean;
+  } | null>(null);
+  const handleResizePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      resizeStateRef.current = {
+        pointerId: event.pointerId,
+        startY: event.clientY,
+        startHeight: dockHeight,
+        height: dockHeight,
+        moved: false,
+      };
+    },
+    [dockHeight],
+  );
+  const handleResizePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const resizeState = resizeStateRef.current;
+    if (!resizeState || resizeState.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const next = clampExtensionDockHeight(
+      resizeState.startHeight + (resizeState.startY - event.clientY),
+    );
+    if (next === resizeState.height) return;
+    resizeState.height = next;
+    resizeState.moved = true;
+    setDragHeight(next);
+  }, []);
+  const handleResizePointerEnd = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const resizeState = resizeStateRef.current;
+      if (!resizeState || resizeState.pointerId !== event.pointerId) return;
+      resizeStateRef.current = null;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      setDragHeight(null);
+      if (resizeState.moved) {
+        useRightPanelStore.getState().setExtensionDockHeight(threadRef, resizeState.height);
+      }
+    },
+    [threadRef],
+  );
   const activate = (index: number) => {
     const surface = dock.surfaces[index];
     if (surface) useRightPanelStore.getState().activateDockExtension(threadRef, surface.id);
@@ -74,14 +150,28 @@ function ThreadExtensionDock({
       aria-hidden={!dock.isOpen}
       inert={!dock.isOpen}
       hidden={!presence.present}
-      className="flex min-h-0 min-w-0 shrink flex-col overflow-hidden border-t border-border/80 bg-background"
+      className="relative flex min-h-0 min-w-0 shrink flex-col overflow-hidden border-t border-border/80 bg-background"
       style={{
         display: presence.present ? undefined : "none",
-        height: dock.isOpen ? "min(16rem, 25vh)" : 0,
-        maxHeight: "25%",
-        transition: animations.active ? `height ${animations.durationMs}ms ease-out` : "none",
+        height: dock.isOpen ? `${dockHeight}px` : 0,
+        // The persisted height stays a pixel value; the chat column still caps
+        // the frame when the window shrinks below the stored size.
+        maxHeight: "75%",
+        transition:
+          animations.active && dragHeight === null
+            ? `height ${animations.durationMs}ms ease-out`
+            : "none",
       }}
     >
+      {dock.isOpen ? (
+        <div
+          className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize"
+          onPointerDown={handleResizePointerDown}
+          onPointerMove={handleResizePointerMove}
+          onPointerUp={handleResizePointerEnd}
+          onPointerCancel={handleResizePointerEnd}
+        />
+      ) : null}
       <div className="flex min-w-0 shrink-0 items-center gap-1 border-b border-border/60 px-1">
         <div
           role="tablist"
