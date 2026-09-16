@@ -21,7 +21,9 @@ import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { GlobalCommandDescriptor } from "@t3tools/extension-sdk/environment";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 
-/** Matches the native client retained-output cap (client-runtime terminalOutput.ts:45). */
+import { TerminalInputQueue } from "./inputQueue.ts";
+
+/** Matches the native client retained-output cap; bounds only the <pre> fallback path. */
 export const TERMINAL_BUFFER_MAX_BYTES = 512 * 1024;
 
 /**
@@ -404,6 +406,9 @@ export interface TerminalTabState {
   readonly confirmAction: TerminalConfirmAction | null;
   readonly error: string | null;
   readonly queuedInputCount: number;
+  /** A write failed with unknown outcome; input halts until Resume (B6). */
+  readonly inputStopped: boolean;
+  readonly inputMessage: string | null;
 }
 
 export interface TerminalPanelSnapshot {
@@ -414,15 +419,10 @@ export interface TerminalPanelSnapshot {
   readonly panelError: string | null;
 }
 
-const MAX_QUEUED_INPUT_BYTES = 64 * 1024;
-const MAX_QUEUED_INPUT_WRITES = 128;
-const MAX_WRITE_DATA_LENGTH = 65_536;
-
 interface TabInternal {
   meta: TerminalSessionMetadata | null;
   starting: boolean;
-  queue: string[];
-  queueBytes: number;
+  input: TerminalInputQueue;
   exiting: boolean;
   exitBanner: string | null;
   confirm: TerminalConfirmAction | null;
@@ -431,20 +431,6 @@ interface TabInternal {
   resizePending: { cols: number; rows: number } | null;
   resizeSent: { cols: number; rows: number } | null;
 }
-
-const newTab = (): TabInternal => ({
-  meta: null,
-  starting: false,
-  queue: [],
-  queueBytes: 0,
-  exiting: false,
-  exitBanner: null,
-  confirm: null,
-  error: null,
-  resizeInFlight: null,
-  resizePending: null,
-  resizeSent: null,
-});
 
 const clampDimension = (value: number, max: number) =>
   Number.isSafeInteger(value) && value >= 1 && value <= max ? value : null;
@@ -484,7 +470,7 @@ export class TerminalPanel {
     this.#onChange = options.onChange;
     this.#ids = normalizeTerminalIds(options.restored?.terminalIds ?? []);
     this.#active = resolveActiveTerminalId(this.#ids, options.restored?.activeTerminalId ?? null);
-    for (const id of this.#ids) this.#tabs.set(id, newTab());
+    for (const id of this.#ids) this.#tab(id);
   }
 
   get snapshot(): TerminalPanelSnapshot {
@@ -504,7 +490,9 @@ export class TerminalPanel {
           exitBanner: tab.exitBanner,
           confirmAction: tab.confirm,
           error: tab.error,
-          queuedInputCount: tab.queue.length,
+          queuedInputCount: tab.input.state.queuedCount,
+          inputStopped: tab.input.state.stopped,
+          inputMessage: tab.input.state.message,
         } satisfies TerminalTabState;
       }),
       stream: this.#stream,
@@ -524,7 +512,22 @@ export class TerminalPanel {
   #tab(terminalId: string): TabInternal {
     let tab = this.#tabs.get(terminalId);
     if (!tab) {
-      tab = newTab();
+      tab = {
+        meta: null,
+        starting: false,
+        input: new TerminalInputQueue({
+          terminalId,
+          write: (data) => this.#control.write({ terminalId, data }),
+          onChange: () => this.#emit(),
+        }),
+        exiting: false,
+        exitBanner: null,
+        confirm: null,
+        error: null,
+        resizeInFlight: null,
+        resizePending: null,
+        resizeSent: null,
+      };
       this.#tabs.set(terminalId, tab);
       if (!this.#ids.includes(terminalId)) this.#ids = [...this.#ids, terminalId];
     }
@@ -532,6 +535,7 @@ export class TerminalPanel {
   }
 
   #removeTab(terminalId: string) {
+    this.#tabs.get(terminalId)?.input.dispose();
     this.#tabs.delete(terminalId);
     this.#ids = this.#ids.filter((id) => id !== terminalId);
     this.#active = resolveActiveTerminalId(this.#ids, this.#active);
@@ -642,6 +646,10 @@ export class TerminalPanel {
     const terminalId = nextTerminalId(this.allocatableTerminalIds);
     const tab = this.#tab(terminalId);
     tab.starting = true;
+    // A fresh process epoch: stale queued input and a stale input-stopped
+    // flag both belong to the previous incarnation.
+    tab.input.reset();
+    tab.input.setReady(false);
     tab.error = null;
     this.#ids = [...this.#ids.filter((id) => id !== terminalId), terminalId];
     this.#active = terminalId;
@@ -656,12 +664,13 @@ export class TerminalPanel {
         ...(launch.env !== undefined ? { env: launch.env } : {}),
       });
       tab.starting = false;
+      tab.input.setReady(true);
       this.#observeMeta(meta);
       await this.#drain(terminalId);
     } catch (error) {
       tab.starting = false;
-      tab.queue = [];
-      tab.queueBytes = 0;
+      tab.input.reset();
+      tab.input.setReady(true);
       tab.error = error instanceof Error ? error.message : "Terminal open failed";
       this.#emit();
     }
@@ -675,6 +684,7 @@ export class TerminalPanel {
     if (!tab || !launch || tab.starting) return;
     if (tab.meta !== null && tab.meta.status !== "exited" && tab.meta.status !== "error") return;
     tab.starting = true;
+    tab.input.setReady(false);
     tab.exiting = false;
     tab.exitBanner = null;
     tab.error = null;
@@ -690,62 +700,50 @@ export class TerminalPanel {
         ...(launch.env !== undefined ? { env: launch.env } : {}),
       });
       tab.starting = false;
+      tab.input.setReady(true);
       this.#observeMeta(meta);
       await this.#drain(terminalId);
     } catch (error) {
       tab.starting = false;
+      tab.input.setReady(true);
       tab.error = error instanceof Error ? error.message : "Terminal attach failed";
       this.#emit();
     }
   }
 
-  /** Flush queued input and the pending fit-resize after a start resolves. */
+  /** Flush the pending fit-resize after a start resolves. */
   async #drain(terminalId: string) {
     const tab = this.#tabs.get(terminalId);
     if (!tab) return;
-    const queued = tab.queue;
-    tab.queue = [];
-    tab.queueBytes = 0;
-    for (const data of queued) {
-      try {
-        await this.#control.write({ terminalId, data });
-      } catch (error) {
-        tab.error = error instanceof Error ? error.message : "Terminal write failed";
-        break;
-      }
-    }
     const pending = tab.resizePending;
     tab.resizePending = null;
     if (pending) await this.#sendResize(terminalId, pending);
     this.#emit();
   }
 
-  /** Type into a terminal; input sent while the session starts is queued. */
+  /**
+   * Type into a terminal. Batches by serialized invocation bytes and stops on
+   * an unknown write outcome — the queue owns ordering, bounds, and the
+   * input-stopped halt (B6); the panel only gates draining on `starting`.
+   */
   sendInput(terminalId: string, data: string) {
     const tab = this.#tabs.get(terminalId);
     if (!tab || data.length === 0 || this.#disposed) return;
-    if (data.length > MAX_WRITE_DATA_LENGTH) {
-      tab.error = "Input exceeds the 64 KiB write bound.";
+    const result = tab.input.enqueue(data);
+    if (result === "dropped-full") {
+      tab.error = "Input dropped: the pending-input queue is full.";
       this.#emit();
-      return;
     }
-    if (tab.starting) {
-      if (
-        tab.queue.length >= MAX_QUEUED_INPUT_WRITES ||
-        tab.queueBytes + data.length > MAX_QUEUED_INPUT_BYTES
-      ) {
-        tab.error = "Input dropped: the pending-input queue is full.";
-      } else {
-        tab.queue.push(data);
-        tab.queueBytes += data.length;
-      }
-      this.#emit();
-      return;
-    }
-    this.#control.write({ terminalId, data }).catch((error: unknown) => {
-      tab.error = error instanceof Error ? error.message : "Terminal write failed";
-      this.#emit();
-    });
+  }
+
+  /** Explicit user resume after input-stopped. */
+  resumeInput(terminalId: string) {
+    this.#tabs.get(terminalId)?.input.resume();
+  }
+
+  /** Output stream signalled a new process epoch or lifecycle end — pending input is stale. */
+  resetInput(terminalId: string) {
+    this.#tabs.get(terminalId)?.input.reset();
   }
 
   /** Latest-wins resize: a new fit while one is in flight replaces the pending one. */
@@ -822,6 +820,9 @@ export class TerminalPanel {
       } else {
         if (!launch) throw new Error("Terminal requires a workspace scope.");
         tab.starting = true;
+        // New process epoch — input queued against the old one is stale.
+        tab.input.reset();
+        tab.input.setReady(false);
         this.#emit();
         const meta = await this.#control.restart({
           terminalId,
@@ -832,6 +833,7 @@ export class TerminalPanel {
           ...(launch.env !== undefined ? { env: launch.env } : {}),
         });
         tab.starting = false;
+        tab.input.setReady(true);
         tab.exiting = false;
         tab.exitBanner = null;
         this.#observeMeta(meta);
@@ -840,6 +842,7 @@ export class TerminalPanel {
       }
     } catch (error) {
       tab.starting = false;
+      tab.input.setReady(true);
       tab.error = error instanceof Error ? error.message : "Terminal action failed";
     }
     this.#emit();
@@ -853,6 +856,7 @@ export class TerminalPanel {
 
   dispose() {
     this.#disposed = true;
+    for (const tab of this.#tabs.values()) tab.input.dispose();
   }
 }
 

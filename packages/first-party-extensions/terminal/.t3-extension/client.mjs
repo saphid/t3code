@@ -657,568 +657,6 @@ var __t3Client = (() => {
     ]
   });
 
-  // ../../extension-sdk/dist/clientProviders.js
-  var targetSchema = {
-    type: "object",
-    additionalProperties: false,
-    required: ["kind"],
-    properties: {
-      kind: { enum: ["self", "connection"] },
-      connectionId: { type: "string", minLength: 1, maxLength: 160 }
-    }
-  };
-  var withTarget = (properties, required = []) => ({
-    type: "object",
-    additionalProperties: false,
-    required: ["target", ...required],
-    properties: { target: targetSchema, ...properties }
-  });
-  var okOutput = {
-    type: "object",
-    additionalProperties: false,
-    required: ["applied"],
-    properties: { applied: { type: "boolean" } }
-  };
-  var themeAppearance = { enum: ["light", "dark"] };
-  var themeHalvesSchema = {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      light: { type: "string", maxLength: 160 },
-      dark: { type: "string", maxLength: 160 }
-    }
-  };
-  var themeProviderStateSchema = {
-    type: "object",
-    additionalProperties: false,
-    required: [
-      "theme",
-      "resolvedTheme",
-      "systemDark",
-      "followSystem",
-      "appearanceMode",
-      "themeHalves",
-      "effectiveTheme",
-      "sessionOverlay"
-    ],
-    properties: {
-      theme: { type: "string", maxLength: 160 },
-      resolvedTheme: themeAppearance,
-      systemDark: { type: "boolean" },
-      followSystem: { type: "boolean" },
-      appearanceMode: { enum: ["light", "dark", "system"] },
-      themeHalves: { anyOf: [themeHalvesSchema, { type: "null" }] },
-      effectiveTheme: {
-        type: "object",
-        additionalProperties: false,
-        required: ["kind"],
-        properties: {
-          kind: { enum: ["stored", "session-overlay", "external-preview"] },
-          theme: { type: "string", maxLength: 160 },
-          writer: { type: "string", maxLength: 160 },
-          tokens: {
-            type: "object",
-            additionalProperties: { type: "string", maxLength: 400 }
-          }
-        }
-      },
-      sessionOverlay: {
-        anyOf: [
-          {
-            type: "object",
-            additionalProperties: false,
-            required: ["theme", "writer"],
-            properties: {
-              theme: { type: "string", maxLength: 160 },
-              appearanceMode: { enum: ["light", "dark", "system"] },
-              themeHalves: themeHalvesSchema,
-              writer: { type: "string", minLength: 1, maxLength: 160 }
-            }
-          },
-          { type: "null" }
-        ]
-      }
-    }
-  };
-  var themeTokensOutput = {
-    type: "object",
-    additionalProperties: false,
-    required: ["tokens", "cssVars"],
-    properties: {
-      tokens: { type: "object", additionalProperties: { type: "string", maxLength: 400 } },
-      cssVars: { type: "object", additionalProperties: { type: "string", maxLength: 80 } }
-    }
-  };
-  var terminalAppearanceSchema = {
-    type: "object",
-    additionalProperties: false,
-    required: ["theme", "font", "appearance"],
-    properties: {
-      theme: {
-        type: "object",
-        additionalProperties: false,
-        required: ["background", "foreground", "cursor"],
-        properties: {
-          background: { type: "string", maxLength: 400 },
-          foreground: { type: "string", maxLength: 400 },
-          cursor: { type: "string", maxLength: 400 },
-          selectionBackground: { type: "string", maxLength: 400 }
-        }
-      },
-      font: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          family: { type: "string", maxLength: 400 },
-          size: { type: "number", minimum: 1, maximum: 128 },
-          lineHeight: { type: "number", minimum: 0.1, maximum: 10 },
-          ligatures: { type: "boolean" }
-        }
-      },
-      appearance: themeAppearance
-    }
-  };
-  var CLIENT_THEME_API = validateApiDefinition({
-    id: "t3.client/theme",
-    version: "1.0.0",
-    methods: [
-      {
-        name: "getState",
-        effect: "read",
-        requiredGrants: [],
-        inputSchema: withTarget({}),
-        outputSchema: themeProviderStateSchema
-      },
-      {
-        name: "resolveTokens",
-        effect: "read",
-        requiredGrants: [],
-        inputSchema: withTarget({ appearance: themeAppearance }),
-        outputSchema: themeTokensOutput
-      },
-      {
-        name: "applyPreference",
-        effect: "write",
-        requiredGrants: [],
-        inputSchema: withTarget({
-          writer: { type: "string", minLength: 1, maxLength: 160 },
-          preference: {
-            type: "object",
-            additionalProperties: false,
-            required: ["mode"],
-            properties: {
-              theme: { type: "string", minLength: 1, maxLength: 160 },
-              appearanceMode: { enum: ["light", "dark", "system"] },
-              themeHalves: themeHalvesSchema,
-              mode: { enum: ["persist", "session"] },
-              clear: { type: "boolean" }
-            }
-          }
-        }, ["writer", "preference"]),
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["applied"],
-          properties: {
-            applied: { type: "boolean" },
-            reason: { type: "string", maxLength: 200 },
-            propagatedTo: { enum: ["storage-origin", "connection"] }
-          }
-        }
-      }
-    ],
-    streams: [
-      {
-        name: "watchState",
-        inputSchema: withTarget({}),
-        eventSchema: themeProviderStateSchema,
-        requiredGrants: []
-      }
-    ]
-  });
-  var notificationActionSchema = {
-    type: "object",
-    additionalProperties: false,
-    required: ["id", "label"],
-    properties: {
-      id: { type: "string", minLength: 1, maxLength: 80 },
-      label: { type: "string", minLength: 1, maxLength: 80 },
-      variant: { enum: ["default", "primary", "destructive"] }
-    }
-  };
-  var notificationBodySchema = {
-    type: "object",
-    additionalProperties: false,
-    required: ["notificationId", "severity", "title"],
-    properties: {
-      notificationId: { type: "string", minLength: 1, maxLength: 160 },
-      severity: { enum: ["info", "success", "warning", "error", "loading"] },
-      title: { type: "string", minLength: 1, maxLength: 200 },
-      body: { type: "string", maxLength: 2e3 },
-      threadId: { type: "string", maxLength: 128 },
-      projectId: { type: "string", maxLength: 128 },
-      anchor: { enum: ["global", "thread"] },
-      dismissible: { type: "boolean" },
-      durationMs: { type: "integer", minimum: 0, maximum: 6e4 },
-      actions: {
-        type: "array",
-        maxItems: 3,
-        items: notificationActionSchema
-      }
-    }
-  };
-  var CLIENT_NOTIFICATIONS_API = validateApiDefinition({
-    id: "t3.client/notifications",
-    version: "1.0.0",
-    methods: [
-      {
-        name: "notify",
-        effect: "write",
-        requiredGrants: [],
-        inputSchema: withTarget({ notification: notificationBodySchema }, ["notification"]),
-        outputSchema: okOutput
-      },
-      {
-        name: "update",
-        effect: "write",
-        requiredGrants: [],
-        inputSchema: withTarget({
-          notificationId: { type: "string", minLength: 1, maxLength: 160 },
-          patch: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              severity: { enum: ["info", "success", "warning", "error", "loading"] },
-              title: { type: "string", minLength: 1, maxLength: 200 },
-              body: { type: "string", maxLength: 2e3 },
-              dismissible: { type: "boolean" }
-            }
-          }
-        }, ["notificationId", "patch"]),
-        outputSchema: okOutput
-      },
-      {
-        name: "dismiss",
-        effect: "write",
-        requiredGrants: [],
-        inputSchema: withTarget({ notificationId: { type: "string", minLength: 1, maxLength: 160 } }, ["notificationId"]),
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["dismissed"],
-          properties: { dismissed: { type: "boolean" } }
-        }
-      }
-    ]
-  });
-  var commandDescriptorSchema = {
-    type: "object",
-    additionalProperties: false,
-    required: ["id", "title", "scope"],
-    properties: {
-      id: { type: "string", minLength: 1, maxLength: 80 },
-      title: { type: "string", minLength: 1, maxLength: 200 },
-      description: { type: "string", maxLength: 1e3 },
-      defaultKey: { type: "string", minLength: 1, maxLength: 64 },
-      when: { type: "string", minLength: 1, maxLength: 256 },
-      scope: { enum: ["surface", "thread", "global"] },
-      activation: {
-        type: "object",
-        additionalProperties: false,
-        required: ["surfaceId", "placement"],
-        properties: {
-          surfaceId: { type: "string", minLength: 1, maxLength: 160 },
-          placement: { enum: ["side-panel", "bottom-dock"] }
-        }
-      }
-    }
-  };
-  var commandResultSchema = {
-    type: "object",
-    additionalProperties: false,
-    required: ["commandId", "status"],
-    properties: {
-      commandId: { type: "string", minLength: 1, maxLength: 80 },
-      status: { enum: ["registered", "rejected"] },
-      reason: { type: "string", maxLength: 400 }
-    }
-  };
-  var CLIENT_KEYBINDINGS_API = validateApiDefinition({
-    id: "t3.client/keybindings",
-    version: "1.0.0",
-    methods: [
-      {
-        name: "registerCommands",
-        effect: "write",
-        requiredGrants: [],
-        inputSchema: withTarget({
-          installationScoped: { type: "boolean" },
-          commands: {
-            type: "array",
-            minItems: 1,
-            maxItems: 64,
-            items: commandDescriptorSchema
-          }
-        }, ["commands"]),
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["commandSetToken", "results"],
-          properties: {
-            commandSetToken: { type: "string", minLength: 1, maxLength: 160 },
-            results: { type: "array", maxItems: 64, items: commandResultSchema }
-          }
-        }
-      },
-      {
-        name: "unregisterCommands",
-        effect: "write",
-        requiredGrants: [],
-        inputSchema: withTarget({ commandSetToken: { type: "string", minLength: 1, maxLength: 160 } }, ["commandSetToken"]),
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["unregistered"],
-          properties: { unregistered: { type: "boolean" } }
-        }
-      },
-      {
-        name: "listConflicts",
-        effect: "read",
-        requiredGrants: [],
-        inputSchema: withTarget({}),
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["conflicts"],
-          properties: {
-            conflicts: {
-              type: "array",
-              maxItems: 256,
-              items: {
-                type: "object",
-                additionalProperties: false,
-                required: ["command", "key", "winner", "loser"],
-                properties: {
-                  command: { type: "string", maxLength: 256 },
-                  key: { type: "string", maxLength: 64 },
-                  winner: { enum: ["user", "native", "plugin"] },
-                  loser: { type: "string", maxLength: 256 }
-                }
-              }
-            }
-          }
-        }
-      }
-    ]
-  });
-  var panelThreadInput = {
-    threadId: { type: "string", minLength: 1, maxLength: 128 }
-  };
-  var CLIENT_PANELS_API = validateApiDefinition({
-    id: "t3.client/panels",
-    version: "1.0.0",
-    methods: [
-      {
-        name: "openSurface",
-        effect: "write",
-        requiredGrants: [],
-        inputSchema: withTarget(
-          {
-            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
-            title: { type: "string", minLength: 1, maxLength: 200 },
-            placement: { enum: ["side-panel", "bottom-dock"] },
-            ...panelThreadInput
-          },
-          // Optional fields mirror the public contract: the client fills them
-          // from the surface's own declared metadata when omitted.
-          ["surfaceId", "threadId"]
-        ),
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["surfaceId"],
-          properties: { surfaceId: { type: "string", maxLength: 160 } }
-        }
-      },
-      {
-        name: "activateSurface",
-        effect: "write",
-        requiredGrants: [],
-        inputSchema: withTarget({
-          surfaceId: { type: "string", minLength: 1, maxLength: 160 },
-          ...panelThreadInput
-        }, ["surfaceId", "threadId"]),
-        outputSchema: okOutput
-      },
-      {
-        name: "closeSurface",
-        effect: "write",
-        requiredGrants: [],
-        inputSchema: withTarget({
-          surfaceId: { type: "string", minLength: 1, maxLength: 160 },
-          ...panelThreadInput
-        }, ["surfaceId", "threadId"]),
-        outputSchema: okOutput
-      },
-      {
-        name: "listSurfaces",
-        effect: "read",
-        requiredGrants: [],
-        inputSchema: withTarget({ ...panelThreadInput }, ["threadId"]),
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["surfaces"],
-          properties: {
-            surfaces: {
-              type: "array",
-              maxItems: 64,
-              items: {
-                type: "object",
-                additionalProperties: false,
-                required: ["id", "title", "placement", "active"],
-                properties: {
-                  id: { type: "string", maxLength: 160 },
-                  title: { type: "string", maxLength: 200 },
-                  placement: { enum: ["side-panel", "bottom-dock"] },
-                  active: { type: "boolean" }
-                }
-              }
-            }
-          }
-        }
-      },
-      {
-        name: "hideDock",
-        effect: "write",
-        requiredGrants: [],
-        inputSchema: withTarget({ ...panelThreadInput }, ["threadId"]),
-        outputSchema: okOutput
-      },
-      {
-        name: "showDock",
-        effect: "write",
-        requiredGrants: [],
-        inputSchema: withTarget({ ...panelThreadInput }, ["threadId"]),
-        outputSchema: okOutput
-      }
-    ]
-  });
-  var composerRefSchema = {
-    type: "object",
-    additionalProperties: false,
-    required: ["path"],
-    properties: {
-      path: { type: "string", minLength: 1, maxLength: 512 },
-      startLine: { type: "integer", minimum: 1, maximum: 1e6 },
-      endLine: { type: "integer", minimum: 1, maximum: 1e6 },
-      excerpt: { type: "string", maxLength: 512 }
-    }
-  };
-  var CLIENT_COMPOSER_API = validateApiDefinition({
-    id: "t3.client/composer",
-    version: "1.0.0",
-    methods: [
-      {
-        name: "insertContext",
-        effect: "write",
-        requiredGrants: [],
-        inputSchema: withTarget({
-          threadId: { type: "string", minLength: 1, maxLength: 128 },
-          refs: { type: "array", minItems: 1, maxItems: 8, items: composerRefSchema }
-        }, ["threadId", "refs"]),
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["inserted", "target"],
-          properties: {
-            inserted: { type: "integer", minimum: 0, maximum: 8 },
-            target: { type: "string", minLength: 1, maxLength: 256 }
-          }
-        }
-      },
-      {
-        name: "getDraftState",
-        effect: "read",
-        requiredGrants: [],
-        inputSchema: withTarget({ threadId: { type: "string", minLength: 1, maxLength: 128 } }, [
-          "threadId"
-        ]),
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["draft"],
-          properties: {
-            draft: {
-              type: ["object", "null"],
-              properties: {
-                prompt: { type: "string", maxLength: 1e4 },
-                promptTruncated: { type: "boolean" },
-                contextCounts: { type: "object" }
-              }
-            }
-          }
-        }
-      },
-      {
-        name: "attachAnnotation",
-        effect: "write",
-        requiredGrants: [],
-        inputSchema: withTarget({
-          threadId: { type: "string", minLength: 1, maxLength: 128 },
-          annotation: {
-            type: "object",
-            additionalProperties: false,
-            required: ["filePath", "startLine", "endLine", "body"],
-            properties: {
-              filePath: { type: "string", minLength: 1, maxLength: 512 },
-              startLine: { type: "integer", minimum: 1, maximum: 1e6 },
-              endLine: { type: "integer", minimum: 1, maximum: 1e6 },
-              body: { type: "string", minLength: 1, maxLength: 4096 },
-              excerpt: { type: "string", maxLength: 4096 }
-            }
-          }
-        }, ["threadId", "annotation"]),
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["annotationId"],
-          properties: { annotationId: { type: "string", minLength: 1, maxLength: 256 } }
-        }
-      }
-    ]
-  });
-  var CLIENT_TERMINAL_APPEARANCE_API = validateApiDefinition({
-    id: "t3.client/terminal-appearance",
-    version: "1.0.0",
-    methods: [
-      {
-        name: "getAppearance",
-        effect: "read",
-        requiredGrants: [],
-        inputSchema: withTarget({}),
-        outputSchema: terminalAppearanceSchema
-      }
-    ],
-    streams: [
-      {
-        name: "watchAppearance",
-        inputSchema: withTarget({}),
-        eventSchema: terminalAppearanceSchema,
-        requiredGrants: []
-      }
-    ]
-  });
-  var CLIENT_PROVIDER_APIS = new Map([
-    CLIENT_THEME_API,
-    CLIENT_NOTIFICATIONS_API,
-    CLIENT_KEYBINDINGS_API,
-    CLIENT_PANELS_API,
-    CLIENT_COMPOSER_API,
-    CLIENT_TERMINAL_APPEARANCE_API
-  ].map((definition) => [definition.id, definition]));
-
   // ../../extension-sdk/dist/catalogue.js
   var BROWSER_LOCAL_SERVERS = "t3.browser/local-servers";
   var BROWSER_READ_LOCAL_SERVERS = "t3.browser/read-local-servers";
@@ -4549,515 +3987,6 @@ var __t3Client = (() => {
   });
   var COMPOSER_CONTEXT_API = composerContextApi.definition;
   var MESSAGES_ENRICHMENT_API = messagesEnrichmentApi.definition;
-  var UI_THEME = "t3.ui/theme";
-  var UI_THEME_READ = "t3.ui/theme.read";
-  var UI_THEME_WRITE = "t3.ui/theme.write";
-  var UI_KEYBINDINGS = "t3.ui/keybindings";
-  var UI_NOTIFY = "t3.ui/notify";
-  var UI_PANELS = "t3.ui/panels";
-  var uiClientTargetSchema = {
-    type: "object",
-    additionalProperties: false,
-    required: ["connectionId", "providers", "connectedAt"],
-    properties: {
-      connectionId: { type: "string", minLength: 1, maxLength: 160 },
-      announcedOrigin: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          surface: { type: "string", maxLength: 80 },
-          appVersion: { type: "string", maxLength: 80 },
-          os: { type: "string", maxLength: 120 },
-          deviceType: { type: "string", maxLength: 80 },
-          connectionMethod: { type: "string", maxLength: 40 }
-        }
-      },
-      providers: {
-        type: "array",
-        maxItems: 16,
-        items: {
-          type: "object",
-          additionalProperties: false,
-          required: ["id", "version"],
-          properties: {
-            id: { type: "string", maxLength: 80 },
-            version: { type: "string", maxLength: 40 }
-          }
-        }
-      },
-      connectedAt: { type: "string", maxLength: 80 }
-    }
-  };
-  var uiCapabilitiesOutput = (operations) => ({
-    type: "object",
-    additionalProperties: false,
-    required: ["adapter", "operations", "clients"],
-    properties: {
-      adapter: { type: "string", maxLength: 64 },
-      operations: {
-        type: "object",
-        additionalProperties: false,
-        required: [...operations],
-        properties: Object.fromEntries(operations.map((name) => [name, { type: "boolean" }]))
-      },
-      clients: { type: "array", maxItems: 64, items: uiClientTargetSchema }
-    }
-  });
-  var uiThemeApi = defineApi({
-    id: UI_THEME,
-    version: "1.0.0",
-    methods: [
-      {
-        name: "getCapabilities",
-        effect: "read",
-        requiredGrants: [],
-        inputSchema: composerEmptyInputSchema,
-        outputSchema: uiCapabilitiesOutput([
-          "getState",
-          "getTokens",
-          "setPreference",
-          "subscribeState",
-          "getTerminalAppearance",
-          "subscribeTerminalAppearance"
-        ])
-      },
-      {
-        name: "getState",
-        effect: "read",
-        requiredGrants: [UI_THEME_READ],
-        inputSchema: composerEmptyInputSchema,
-        outputSchema: themeProviderStateSchema
-      },
-      {
-        name: "getTokens",
-        effect: "read",
-        requiredGrants: [UI_THEME_READ],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          properties: { appearance: { enum: ["light", "dark"] } }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["tokens", "cssVars"],
-          properties: {
-            tokens: { type: "object", additionalProperties: { type: "string", maxLength: 400 } },
-            cssVars: { type: "object", additionalProperties: { type: "string", maxLength: 80 } }
-          }
-        }
-      },
-      {
-        name: "setPreference",
-        effect: "write",
-        requiredGrants: [UI_THEME_WRITE],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["mode"],
-          properties: {
-            theme: { type: "string", minLength: 1, maxLength: 160 },
-            appearanceMode: { enum: ["light", "dark", "system"] },
-            themeHalves: themeHalvesSchema,
-            mode: { enum: ["persist", "session"] },
-            clear: { type: "boolean" }
-          }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["applied"],
-          properties: {
-            applied: { type: "boolean" },
-            reason: { type: "string", maxLength: 200 },
-            propagatedTo: { enum: ["storage-origin", "connection"] }
-          }
-        }
-      },
-      {
-        name: "getTerminalAppearance",
-        effect: "read",
-        requiredGrants: [UI_THEME_READ],
-        inputSchema: composerEmptyInputSchema,
-        outputSchema: terminalAppearanceSchema
-      }
-    ],
-    streams: [
-      {
-        name: "subscribeState",
-        inputSchema: composerEmptyInputSchema,
-        eventSchema: themeProviderStateSchema,
-        requiredGrants: [UI_THEME_READ]
-      },
-      {
-        name: "subscribeTerminalAppearance",
-        inputSchema: composerEmptyInputSchema,
-        eventSchema: terminalAppearanceSchema,
-        requiredGrants: [UI_THEME_READ]
-      }
-    ]
-  });
-  var uiKeybindingsApi = defineApi({
-    id: UI_KEYBINDINGS,
-    version: "1.0.0",
-    methods: [
-      {
-        name: "getCapabilities",
-        effect: "read",
-        requiredGrants: [],
-        inputSchema: composerEmptyInputSchema,
-        outputSchema: uiCapabilitiesOutput([
-          "registerCommands",
-          "unregisterCommands",
-          "listConflicts"
-        ])
-      },
-      {
-        name: "registerCommands",
-        effect: "write",
-        requiredGrants: [UI_KEYBINDINGS],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["commands"],
-          properties: {
-            commands: {
-              type: "array",
-              minItems: 1,
-              maxItems: 64,
-              items: commandDescriptorSchema
-            }
-          }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["commandSetToken", "results"],
-          properties: {
-            commandSetToken: { type: "string", minLength: 1, maxLength: 160 },
-            results: { type: "array", maxItems: 64, items: commandResultSchema }
-          }
-        }
-      },
-      {
-        name: "unregisterCommands",
-        effect: "write",
-        requiredGrants: [UI_KEYBINDINGS],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["commandSetToken"],
-          properties: {
-            commandSetToken: { type: "string", minLength: 1, maxLength: 160 }
-          }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["unregistered"],
-          properties: { unregistered: { type: "boolean" } }
-        }
-      },
-      {
-        name: "listConflicts",
-        effect: "read",
-        requiredGrants: [UI_KEYBINDINGS],
-        inputSchema: composerEmptyInputSchema,
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["conflicts"],
-          properties: {
-            conflicts: {
-              type: "array",
-              maxItems: 256,
-              items: {
-                type: "object",
-                additionalProperties: false,
-                required: ["command", "key", "winner", "loser"],
-                properties: {
-                  command: { type: "string", maxLength: 256 },
-                  key: { type: "string", maxLength: 64 },
-                  winner: { enum: ["user", "native", "plugin"] },
-                  loser: { type: "string", maxLength: 256 }
-                }
-              }
-            }
-          }
-        }
-      }
-    ]
-  });
-  var uiNotificationActionSchema = {
-    type: "object",
-    additionalProperties: false,
-    required: ["id", "label"],
-    properties: {
-      id: { type: "string", minLength: 1, maxLength: 80 },
-      label: { type: "string", minLength: 1, maxLength: 80 },
-      variant: { enum: ["default", "primary", "destructive"] }
-    }
-  };
-  var uiNotificationsApi = defineApi({
-    id: "t3.ui/notifications",
-    version: "1.0.0",
-    methods: [
-      {
-        name: "getCapabilities",
-        effect: "read",
-        requiredGrants: [],
-        inputSchema: composerEmptyInputSchema,
-        outputSchema: uiCapabilitiesOutput(["notify", "update", "dismiss", "awaitAction"])
-      },
-      {
-        name: "notify",
-        effect: "write",
-        requiredGrants: [UI_NOTIFY],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["severity", "title"],
-          properties: {
-            severity: { enum: ["info", "success", "warning", "error", "loading"] },
-            title: { type: "string", minLength: 1, maxLength: 200 },
-            body: { type: "string", maxLength: 2e3 },
-            threadId: { type: "string", maxLength: 128 },
-            projectId: { type: "string", maxLength: 128 },
-            anchor: { enum: ["global", "thread"] },
-            dismissible: { type: "boolean" },
-            durationMs: { type: "integer", minimum: 0, maximum: 6e4 },
-            actions: { type: "array", maxItems: 3, items: uiNotificationActionSchema }
-          }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["notificationId"],
-          properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } }
-        }
-      },
-      {
-        name: "update",
-        effect: "write",
-        requiredGrants: [UI_NOTIFY],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["notificationId"],
-          properties: {
-            notificationId: { type: "string", minLength: 1, maxLength: 160 },
-            severity: { enum: ["info", "success", "warning", "error", "loading"] },
-            title: { type: "string", minLength: 1, maxLength: 200 },
-            body: { type: "string", maxLength: 2e3 },
-            dismissible: { type: "boolean" }
-          }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["applied"],
-          properties: { applied: { type: "boolean" } }
-        }
-      },
-      {
-        name: "dismiss",
-        effect: "write",
-        requiredGrants: [UI_NOTIFY],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["notificationId"],
-          properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["dismissed"],
-          properties: { dismissed: { type: "boolean" } }
-        }
-      },
-      {
-        name: "awaitAction",
-        effect: "read",
-        requiredGrants: [UI_NOTIFY],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["notificationId"],
-          properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } }
-        },
-        outputSchema: {
-          anyOf: [
-            {
-              type: "object",
-              additionalProperties: false,
-              required: ["actionId"],
-              properties: { actionId: { type: "string", minLength: 1, maxLength: 80 } }
-            },
-            {
-              type: "object",
-              additionalProperties: false,
-              required: ["dismissed"],
-              properties: { dismissed: { const: true } }
-            }
-          ]
-        }
-      }
-    ]
-  });
-  var uiPanelsApi = defineApi({
-    id: "t3.ui/panels",
-    version: "1.0.0",
-    methods: [
-      {
-        name: "getCapabilities",
-        effect: "read",
-        requiredGrants: [],
-        inputSchema: composerEmptyInputSchema,
-        outputSchema: uiCapabilitiesOutput([
-          "openSurface",
-          "activateSurface",
-          "closeSurface",
-          "listSurfaces",
-          "hideDock",
-          "showDock"
-        ])
-      },
-      {
-        name: "openSurface",
-        effect: "write",
-        requiredGrants: [UI_PANELS],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["surfaceId"],
-          properties: {
-            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
-            title: { type: "string", minLength: 1, maxLength: 200 },
-            placement: { enum: ["side-panel", "bottom-dock"] },
-            threadId: { type: "string", maxLength: 128 }
-          }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["surfaceId"],
-          properties: { surfaceId: { type: "string", maxLength: 160 } }
-        }
-      },
-      {
-        name: "activateSurface",
-        effect: "write",
-        requiredGrants: [UI_PANELS],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["surfaceId"],
-          properties: {
-            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
-            threadId: { type: "string", maxLength: 128 }
-          }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["applied"],
-          properties: { applied: { type: "boolean" } }
-        }
-      },
-      {
-        name: "closeSurface",
-        effect: "write",
-        requiredGrants: [UI_PANELS],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["surfaceId"],
-          properties: {
-            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
-            threadId: { type: "string", maxLength: 128 }
-          }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["applied"],
-          properties: { applied: { type: "boolean" } }
-        }
-      },
-      {
-        name: "listSurfaces",
-        effect: "read",
-        requiredGrants: [UI_PANELS],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["threadId"],
-          properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["surfaces"],
-          properties: {
-            surfaces: {
-              type: "array",
-              maxItems: 64,
-              items: {
-                type: "object",
-                additionalProperties: false,
-                required: ["id", "title", "placement", "active"],
-                properties: {
-                  id: { type: "string", maxLength: 160 },
-                  title: { type: "string", maxLength: 200 },
-                  placement: { enum: ["side-panel", "bottom-dock"] },
-                  active: { type: "boolean" }
-                }
-              }
-            }
-          }
-        }
-      },
-      {
-        name: "hideDock",
-        effect: "write",
-        requiredGrants: [UI_PANELS],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["threadId"],
-          properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["applied"],
-          properties: { applied: { type: "boolean" } }
-        }
-      },
-      {
-        name: "showDock",
-        effect: "write",
-        requiredGrants: [UI_PANELS],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["threadId"],
-          properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["applied"],
-          properties: { applied: { type: "boolean" } }
-        }
-      }
-    ]
-  });
-  var UI_THEME_API = uiThemeApi.definition;
-  var UI_KEYBINDINGS_API = uiKeybindingsApi.definition;
-  var UI_NOTIFICATIONS_API = uiNotificationsApi.definition;
-  var UI_PANELS_API = uiPanelsApi.definition;
   var orchestrationStatusApi = defineOrchestrationStatusApi(vcsDiffPreviewStreamEventSchema);
   var ORCHESTRATION_STATUS_API = orchestrationStatusApi.definition;
   var GENERIC_API_CATALOGUE = [
@@ -5088,11 +4017,7 @@ var __t3Client = (() => {
     resourcesLeaseApiV1.definition,
     prsReadApi.definition,
     composerContextApi.definition,
-    messagesEnrichmentApi.definition,
-    uiThemeApi.definition,
-    uiKeybindingsApi.definition,
-    uiNotificationsApi.definition,
-    uiPanelsApi.definition
+    messagesEnrichmentApi.definition
   ];
   function canonical(value) {
     if (Array.isArray(value))
@@ -5370,6 +4295,3301 @@ var __t3Client = (() => {
   // extension.tsx
   var import_react = __toESM(require_react(), 1);
 
+  // ghostty/runtime.ts
+  var textDecoder = new TextDecoder();
+  var GhosttyRuntime = class _GhosttyRuntime {
+    memory;
+    layouts;
+    exports;
+    memoryView;
+    ptyWriters = /* @__PURE__ */ new Map();
+    nextPtyWriterId = 1;
+    writePtyFunctionIndex = 0;
+    constructor(instance) {
+      this.exports = instance.exports;
+      const memory = instance.exports.memory;
+      if (!(memory instanceof WebAssembly.Memory)) {
+        throw new Error("libghostty-vt did not export WebAssembly memory");
+      }
+      this.memory = memory;
+      this.memoryView = new DataView(memory.buffer);
+      const jsonPointer = this.call("ghostty_type_json");
+      const bytes = new Uint8Array(memory.buffer);
+      let end = jsonPointer;
+      while (end < bytes.length && bytes[end] !== 0) end += 1;
+      this.layouts = JSON.parse(textDecoder.decode(bytes.subarray(jsonPointer, end)));
+    }
+    static async load(sources) {
+      let instance;
+      const imports = {
+        env: {
+          log: (pointer, length) => {
+            if (!instance) return;
+            const memory = instance.exports.memory;
+            if (!(memory instanceof WebAssembly.Memory)) return;
+            const message = textDecoder.decode(new Uint8Array(memory.buffer, pointer, length));
+            console.debug("[libghostty-vt]", message);
+          }
+        }
+      };
+      const result = await WebAssembly.instantiate(sources.vt, imports);
+      instance = result.instance;
+      const runtime = new _GhosttyRuntime(result.instance);
+      await runtime.installWritePtyTrampoline(sources.writePty);
+      return runtime;
+    }
+    call(name, ...args) {
+      const fn = this.exports[name];
+      if (typeof fn !== "function") {
+        throw new Error(`libghostty-vt export is unavailable: ${name}`);
+      }
+      return fn(...args);
+    }
+    layout(name) {
+      const layout = this.layouts[name];
+      if (!layout) throw new Error(`libghostty-vt type layout is unavailable: ${name}`);
+      return layout;
+    }
+    alloc(size) {
+      const pointer = this.call("ghostty_wasm_alloc_u8_array", size);
+      if (pointer === 0) throw new Error(`libghostty-vt failed to allocate ${size} bytes`);
+      new Uint8Array(this.memory.buffer, pointer, size).fill(0);
+      return pointer;
+    }
+    free(pointer, size) {
+      if (pointer !== 0) this.call("ghostty_wasm_free_u8_array", pointer, size);
+    }
+    allocOpaque() {
+      const pointer = this.call("ghostty_wasm_alloc_opaque");
+      if (pointer === 0) throw new Error("libghostty-vt failed to allocate an opaque pointer");
+      new DataView(this.memory.buffer).setUint32(pointer, 0, true);
+      return pointer;
+    }
+    freeOpaque(pointer) {
+      if (pointer !== 0) this.call("ghostty_wasm_free_opaque", pointer);
+    }
+    readPointer(slot) {
+      return this.currentMemoryView().getUint32(slot, true);
+    }
+    attachPtyWriter(terminal, writer) {
+      if (this.writePtyFunctionIndex === 0) {
+        throw new Error("libghostty-vt PTY callback trampoline is unavailable");
+      }
+      const id2 = this.nextPtyWriterId++;
+      this.ptyWriters.set(id2, writer);
+      this.call("ghostty_terminal_set", terminal, 0, id2);
+      this.call("ghostty_terminal_set", terminal, 1, this.writePtyFunctionIndex);
+      return id2;
+    }
+    detachPtyWriter(terminal, id2) {
+      this.call("ghostty_terminal_set", terminal, 1, 0);
+      this.call("ghostty_terminal_set", terminal, 0, 0);
+      this.ptyWriters.delete(id2);
+    }
+    view(pointer, size) {
+      return new DataView(this.memory.buffer, pointer, size);
+    }
+    bytes(pointer, size) {
+      return new Uint8Array(this.memory.buffer, pointer, size);
+    }
+    /** Reuse scalar reads across cells, refreshing after any terminal grows shared WASM memory. */
+    currentMemoryView() {
+      if (this.memoryView.buffer !== this.memory.buffer) {
+        this.memoryView = new DataView(this.memory.buffer);
+      }
+      return this.memoryView;
+    }
+    setField(pointer, structName, fieldName, value) {
+      const field = this.layout(structName).fields[fieldName];
+      if (!field) throw new Error(`libghostty-vt field is unavailable: ${structName}.${fieldName}`);
+      const view = this.currentMemoryView();
+      const offset = pointer + field.offset;
+      switch (field.type) {
+        case "bool":
+        case "u8":
+          view.setUint8(offset, value);
+          return;
+        case "u16":
+          view.setUint16(offset, value, true);
+          return;
+        case "i32":
+          view.setInt32(offset, value, true);
+          return;
+        case "u32":
+        case "enum":
+          view.setUint32(offset, value, true);
+          return;
+        case "u64":
+          view.setBigUint64(offset, BigInt(value), true);
+          return;
+        default:
+          throw new Error(`Unsupported libghostty-vt field type: ${field.type}`);
+      }
+    }
+    readField(pointer, structName, fieldName) {
+      const field = this.layout(structName).fields[fieldName];
+      if (!field) throw new Error(`libghostty-vt field is unavailable: ${structName}.${fieldName}`);
+      const view = this.currentMemoryView();
+      const offset = pointer + field.offset;
+      switch (field.type) {
+        case "bool":
+        case "u8":
+          return view.getUint8(offset);
+        case "u16":
+          return view.getUint16(offset, true);
+        case "i32":
+          return view.getInt32(offset, true);
+        case "u32":
+        case "enum":
+          return view.getUint32(offset, true);
+        case "u64":
+          return Number(view.getBigUint64(offset, true));
+        default:
+          throw new Error(`Unsupported libghostty-vt field type: ${field.type}`);
+      }
+    }
+    async installWritePtyTrampoline(writePty) {
+      const result = await WebAssembly.instantiate(writePty, {
+        env: {
+          t3_write_pty: (_terminal, userdata, pointer, length) => {
+            const writer = this.ptyWriters.get(userdata);
+            if (!writer || length === 0) return;
+            writer(textDecoder.decode(new Uint8Array(this.memory.buffer, pointer, length)));
+          }
+        }
+      });
+      const trampoline = result.instance.exports.ghostty_write_pty;
+      const table = this.exports.__indirect_function_table;
+      if (typeof trampoline !== "function" || !(table instanceof WebAssembly.Table)) {
+        throw new Error("libghostty-vt did not expose its callback table");
+      }
+      const index = table.length;
+      table.grow(1);
+      table.set(index, trampoline);
+      this.writePtyFunctionIndex = index;
+    }
+  };
+  var runtimePromises = /* @__PURE__ */ new WeakMap();
+  function loadGhosttyRuntime(sources) {
+    const existing = runtimePromises.get(sources);
+    if (existing) return existing;
+    const promise = GhosttyRuntime.load(sources).catch((error) => {
+      if (runtimePromises.get(sources) === promise) runtimePromises.delete(sources);
+      throw error;
+    });
+    runtimePromises.set(sources, promise);
+    return promise;
+  }
+
+  // ghostty/platform.ts
+  function isMacPlatform(platform) {
+    return /mac|iphone|ipad|ipod/i.test(platform);
+  }
+
+  // ghostty/selection.ts
+  var SELECTION_MULTI_CLICK_INTERVAL_MS = 500;
+
+  // ghostty/terminal-links.ts
+  var URL_PATTERN = /https?:\/\/[^\s"'`<>]+/giu;
+  var FILE_PATH_PATTERN = /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
+  var TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
+  function trimClosingDelimiters(value) {
+    let output = value.replace(TRAILING_PUNCTUATION_PATTERN, "");
+    if (output.length === 0) return output;
+    const trimUnbalanced = (open, close) => {
+      while (output.endsWith(close)) {
+        const opens = output.split(open).length - 1;
+        const closes = output.split(close).length - 1;
+        if (opens >= closes) return;
+        output = output.slice(0, -1);
+      }
+    };
+    trimUnbalanced("(", ")");
+    trimUnbalanced("[", "]");
+    trimUnbalanced("{", "}");
+    return output;
+  }
+  function overlaps(a, b) {
+    return a.start < b.end && b.start < a.end;
+  }
+  function collectMatches(line, kind, pattern, existing) {
+    const matches = [];
+    pattern.lastIndex = 0;
+    for (const rawMatch of line.matchAll(pattern)) {
+      const raw = rawMatch[0];
+      const start = rawMatch.index ?? -1;
+      if (start < 0 || raw.length === 0) continue;
+      const trimmed = trimClosingDelimiters(raw);
+      if (trimmed.length === 0) continue;
+      if (kind === "path" && isTerminalUrl(trimmed)) continue;
+      const candidate = {
+        kind,
+        text: trimmed,
+        start,
+        end: start + trimmed.length
+      };
+      const collides = [...existing, ...matches].some((other) => overlaps(candidate, other));
+      if (collides) continue;
+      matches.push(candidate);
+    }
+    return matches;
+  }
+  function extractTerminalLinks(line) {
+    const urlMatches = collectMatches(line, "url", URL_PATTERN, []);
+    const pathMatches = collectMatches(line, "path", FILE_PATH_PATTERN, urlMatches);
+    return [...urlMatches, ...pathMatches].toSorted((a, b) => a.start - b.start);
+  }
+  function isTerminalUrl(value) {
+    return /^https?:\/\//iu.test(value);
+  }
+  function collectWrappedTerminalLinkLine(bufferLineNumber, getLine) {
+    const anchorLine = getLine(bufferLineNumber - 1);
+    if (!anchorLine) return null;
+    let startBufferLineNumber = bufferLineNumber;
+    let startLine = anchorLine;
+    while (startBufferLineNumber > 1 && startLine.isWrapped) {
+      const previousLine = getLine(startBufferLineNumber - 2);
+      if (!previousLine) return null;
+      startBufferLineNumber -= 1;
+      startLine = previousLine;
+    }
+    const segments = [];
+    let nextStartIndex = 0;
+    let currentBufferLineNumber = startBufferLineNumber;
+    while (true) {
+      const currentLine = getLine(currentBufferLineNumber - 1);
+      if (!currentLine) break;
+      const nextLine = getLine(currentBufferLineNumber);
+      const hasWrappedContinuation = nextLine?.isWrapped === true;
+      const text = currentLine.translateToString(!hasWrappedContinuation);
+      segments.push({
+        bufferLineNumber: currentBufferLineNumber,
+        text,
+        startIndex: nextStartIndex,
+        endIndex: nextStartIndex + text.length
+      });
+      nextStartIndex += text.length;
+      if (!hasWrappedContinuation) break;
+      currentBufferLineNumber += 1;
+    }
+    return {
+      text: segments.map((segment) => segment.text).join(""),
+      segments
+    };
+  }
+
+  // ghostty/keyCodes.ts
+  var ghosttyKeyboardCodes = [
+    "Unidentified",
+    "Backquote",
+    "Backslash",
+    "BracketLeft",
+    "BracketRight",
+    "Comma",
+    "Digit0",
+    "Digit1",
+    "Digit2",
+    "Digit3",
+    "Digit4",
+    "Digit5",
+    "Digit6",
+    "Digit7",
+    "Digit8",
+    "Digit9",
+    "Equal",
+    "IntlBackslash",
+    "IntlRo",
+    "IntlYen",
+    "KeyA",
+    "KeyB",
+    "KeyC",
+    "KeyD",
+    "KeyE",
+    "KeyF",
+    "KeyG",
+    "KeyH",
+    "KeyI",
+    "KeyJ",
+    "KeyK",
+    "KeyL",
+    "KeyM",
+    "KeyN",
+    "KeyO",
+    "KeyP",
+    "KeyQ",
+    "KeyR",
+    "KeyS",
+    "KeyT",
+    "KeyU",
+    "KeyV",
+    "KeyW",
+    "KeyX",
+    "KeyY",
+    "KeyZ",
+    "Minus",
+    "Period",
+    "Quote",
+    "Semicolon",
+    "Slash",
+    "AltLeft",
+    "AltRight",
+    "Backspace",
+    "CapsLock",
+    "ContextMenu",
+    "ControlLeft",
+    "ControlRight",
+    "Enter",
+    "MetaLeft",
+    "MetaRight",
+    "ShiftLeft",
+    "ShiftRight",
+    "Space",
+    "Tab",
+    "Convert",
+    "KanaMode",
+    "NonConvert",
+    "Delete",
+    "End",
+    "Help",
+    "Home",
+    "Insert",
+    "PageDown",
+    "PageUp",
+    "ArrowDown",
+    "ArrowLeft",
+    "ArrowRight",
+    "ArrowUp",
+    "NumLock",
+    "Numpad0",
+    "Numpad1",
+    "Numpad2",
+    "Numpad3",
+    "Numpad4",
+    "Numpad5",
+    "Numpad6",
+    "Numpad7",
+    "Numpad8",
+    "Numpad9",
+    "NumpadAdd",
+    "NumpadBackspace",
+    "NumpadClear",
+    "NumpadClearEntry",
+    "NumpadComma",
+    "NumpadDecimal",
+    "NumpadDivide",
+    "NumpadEnter",
+    "NumpadEqual",
+    "NumpadMemoryAdd",
+    "NumpadMemoryClear",
+    "NumpadMemoryRecall",
+    "NumpadMemoryStore",
+    "NumpadMemorySubtract",
+    "NumpadMultiply",
+    "NumpadParenLeft",
+    "NumpadParenRight",
+    "NumpadSubtract",
+    "NumpadSeparator",
+    "NumpadArrowUp",
+    "NumpadArrowDown",
+    "NumpadArrowRight",
+    "NumpadArrowLeft",
+    "NumpadBegin",
+    "NumpadHome",
+    "NumpadEnd",
+    "NumpadInsert",
+    "NumpadDelete",
+    "NumpadPageUp",
+    "NumpadPageDown",
+    "Escape",
+    "F1",
+    "F2",
+    "F3",
+    "F4",
+    "F5",
+    "F6",
+    "F7",
+    "F8",
+    "F9",
+    "F10",
+    "F11",
+    "F12",
+    "F13",
+    "F14",
+    "F15",
+    "F16",
+    "F17",
+    "F18",
+    "F19",
+    "F20",
+    "F21",
+    "F22",
+    "F23",
+    "F24",
+    "F25",
+    "Fn",
+    "FnLock",
+    "PrintScreen",
+    "ScrollLock",
+    "Pause",
+    "BrowserBack",
+    "BrowserFavorites",
+    "BrowserForward",
+    "BrowserHome",
+    "BrowserRefresh",
+    "BrowserSearch",
+    "BrowserStop",
+    "Eject",
+    "LaunchApp1",
+    "LaunchApp2",
+    "LaunchMail",
+    "MediaPlayPause",
+    "MediaSelect",
+    "MediaStop",
+    "MediaTrackNext",
+    "MediaTrackPrevious",
+    "Power",
+    "Sleep",
+    "AudioVolumeDown",
+    "AudioVolumeMute",
+    "AudioVolumeUp",
+    "WakeUp",
+    "Copy",
+    "Cut",
+    "Paste"
+  ];
+  var codeToGhosttyKey = new Map(
+    ghosttyKeyboardCodes.map((code, index) => [code, index])
+  );
+  function ghosttyKeyForCode(code) {
+    return codeToGhosttyKey.get(code) ?? 0;
+  }
+  var shiftedToUnshiftedCharacter = /* @__PURE__ */ new Map([
+    ["!", "1"],
+    ["@", "2"],
+    ["#", "3"],
+    ["$", "4"],
+    ["%", "5"],
+    ["^", "6"],
+    ["&", "7"],
+    ["*", "8"],
+    ["(", "9"],
+    [")", "0"],
+    ["~", "`"],
+    ["_", "-"],
+    ["+", "="],
+    ["{", "["],
+    ["}", "]"],
+    ["|", "\\"],
+    [":", ";"],
+    ['"', "'"],
+    ["<", ","],
+    [">", "."],
+    ["?", "/"]
+  ]);
+  var keyboardLayoutMapPromise;
+  function loadGhosttyKeyboardLayoutMap() {
+    if (keyboardLayoutMapPromise) return keyboardLayoutMapPromise;
+    const browserNavigator = globalThis.navigator;
+    const keyboard = browserNavigator?.keyboard;
+    const promise = keyboard?.getLayoutMap().catch(() => void 0) ?? Promise.resolve(void 0);
+    keyboardLayoutMapPromise = promise;
+    return promise;
+  }
+  function ghosttyConsumedMods(event) {
+    if (!event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return 0;
+    return [...event.key].length === 1 ? 1 : 0;
+  }
+  function ghosttyUnshiftedCodepoint(event, layoutMap) {
+    if ([...event.key].length !== 1) return 0;
+    const layoutCharacter = layoutMap?.get(event.code);
+    if (layoutCharacter && [...layoutCharacter].length === 1) {
+      return layoutCharacter.codePointAt(0) ?? 0;
+    }
+    if (/^[A-Z]$/u.test(event.key)) return event.key.charCodeAt(0) + 32;
+    if (event.shiftKey) {
+      const unshiftedCharacter = shiftedToUnshiftedCharacter.get(event.key);
+      if (unshiftedCharacter) return unshiftedCharacter.codePointAt(0) ?? 0;
+      const lowercase = event.key.toLowerCase();
+      if (lowercase !== event.key && [...lowercase].length === 1) {
+        return lowercase.codePointAt(0) ?? 0;
+      }
+      return 0;
+    }
+    return event.key.codePointAt(0) ?? 0;
+  }
+
+  // ghostty/core.ts
+  var GHOSTTY_SUCCESS = 0;
+  var GHOSTTY_OUT_OF_SPACE = -3;
+  var MAX_SCROLLBACK_ROWS = 1e4;
+  var SELECTION_FORMAT_OPTIONS_SIZE = 16;
+  var RENDER_DATA = {
+    cols: 1,
+    rows: 2,
+    dirty: 3,
+    rowIterator: 4,
+    background: 5,
+    foreground: 6,
+    cursor: 7,
+    cursorHasValue: 8,
+    cursorStyle: 10,
+    cursorVisible: 11,
+    cursorBlinking: 12,
+    cursorInViewport: 14,
+    cursorX: 15,
+    cursorY: 16
+  };
+  var ROW_DATA = {
+    dirty: 1,
+    raw: 2,
+    cells: 3
+  };
+  var CELL_DATA = {
+    raw: 1,
+    style: 2,
+    graphemesLength: 3,
+    graphemes: 4,
+    background: 5,
+    foreground: 6,
+    selected: 7
+  };
+  var RAW_CELL_DATA = {
+    wide: 3
+  };
+  var GHOSTTY_CELL_WIDE = {
+    narrow: 0,
+    wide: 1,
+    spacerTail: 2,
+    spacerHead: 3
+  };
+  var decoder = new TextDecoder();
+  var encoder = new TextEncoder();
+  function blend(foreground, background) {
+    const channel = (front, back) => Math.floor((front * 155 + back * 100) / 255);
+    return {
+      r: channel(foreground.r, background.r),
+      g: channel(foreground.g, background.g),
+      b: channel(foreground.b, background.b)
+    };
+  }
+  function sameColor(left, right) {
+    return left.r === right.r && left.g === right.g && left.b === right.b;
+  }
+  function ghosttyCellText(codepointView, graphemeLength) {
+    if (graphemeLength === 1) return String.fromCodePoint(codepointView.getUint32(0, true));
+    const CHUNK_SIZE = 4096;
+    let text = "";
+    for (let start = 0; start < graphemeLength; start += CHUNK_SIZE) {
+      const count = Math.min(CHUNK_SIZE, graphemeLength - start);
+      const codes = new Array(count);
+      for (let index = 0; index < count; index += 1) {
+        codes[index] = codepointView.getUint32((start + index) * 4, true);
+      }
+      text += String.fromCodePoint(...codes);
+    }
+    return text;
+  }
+  var GhosttyTerminalCore = class _GhosttyTerminalCore {
+    runtime;
+    terminalSlot = 0;
+    terminal = 0;
+    renderStateSlot = 0;
+    renderState = 0;
+    rowIteratorSlot = 0;
+    rowCellsSlot = 0;
+    keyEncoderSlot = 0;
+    keyEncoder = 0;
+    keyEventSlot = 0;
+    keyEvent = 0;
+    mouseEncoderSlot = 0;
+    mouseEncoder = 0;
+    mouseEventSlot = 0;
+    mouseEvent = 0;
+    ptyWriterId = 0;
+    ptyWriter = null;
+    scratch = 0;
+    graphemes = 0;
+    graphemeCapacity = 0;
+    style = 0;
+    scrollbar = 0;
+    rows = [];
+    disposed = false;
+    keyboardLayoutMap;
+    constructor(runtime) {
+      this.runtime = runtime;
+      void loadGhosttyKeyboardLayoutMap().then((layoutMap) => {
+        if (!this.disposed) this.keyboardLayoutMap = layoutMap;
+      });
+    }
+    static async create(runtime, cols, rows, cellWidth, cellHeight, theme, onPtyData) {
+      const core = new _GhosttyTerminalCore(runtime);
+      try {
+        core.initialize(cols, rows, cellWidth, cellHeight, theme, onPtyData);
+        return core;
+      } catch (error) {
+        core.dispose();
+        throw error;
+      }
+    }
+    initialize(cols, rows, cellWidth, cellHeight, theme, onPtyData) {
+      const optionsSize = this.runtime.layout("GhosttyTerminalOptions").size;
+      const options = this.runtime.alloc(optionsSize);
+      this.runtime.setField(options, "GhosttyTerminalOptions", "cols", cols);
+      this.runtime.setField(options, "GhosttyTerminalOptions", "rows", rows);
+      this.runtime.setField(options, "GhosttyTerminalOptions", "max_scrollback", MAX_SCROLLBACK_ROWS);
+      this.terminalSlot = this.runtime.allocOpaque();
+      const terminalResult = this.runtime.call("ghostty_terminal_new", 0, this.terminalSlot, options);
+      this.runtime.free(options, optionsSize);
+      this.assertSuccess("ghostty_terminal_new", terminalResult);
+      this.terminal = this.runtime.readPointer(this.terminalSlot);
+      this.applyDefaultCursorBlink();
+      this.ptyWriter = onPtyData;
+      this.ptyWriterId = this.runtime.attachPtyWriter(this.terminal, onPtyData);
+      this.renderStateSlot = this.runtime.allocOpaque();
+      this.assertSuccess(
+        "ghostty_render_state_new",
+        this.runtime.call("ghostty_render_state_new", 0, this.renderStateSlot)
+      );
+      this.renderState = this.runtime.readPointer(this.renderStateSlot);
+      this.rowIteratorSlot = this.runtime.allocOpaque();
+      this.assertSuccess(
+        "ghostty_render_state_row_iterator_new",
+        this.runtime.call("ghostty_render_state_row_iterator_new", 0, this.rowIteratorSlot)
+      );
+      this.rowCellsSlot = this.runtime.allocOpaque();
+      this.assertSuccess(
+        "ghostty_render_state_row_cells_new",
+        this.runtime.call("ghostty_render_state_row_cells_new", 0, this.rowCellsSlot)
+      );
+      this.keyEncoderSlot = this.runtime.allocOpaque();
+      this.assertSuccess(
+        "ghostty_key_encoder_new",
+        this.runtime.call("ghostty_key_encoder_new", 0, this.keyEncoderSlot)
+      );
+      this.keyEncoder = this.runtime.readPointer(this.keyEncoderSlot);
+      this.keyEventSlot = this.runtime.allocOpaque();
+      this.assertSuccess(
+        "ghostty_key_event_new",
+        this.runtime.call("ghostty_key_event_new", 0, this.keyEventSlot)
+      );
+      this.keyEvent = this.runtime.readPointer(this.keyEventSlot);
+      this.mouseEncoderSlot = this.runtime.allocOpaque();
+      this.assertSuccess(
+        "ghostty_mouse_encoder_new",
+        this.runtime.call("ghostty_mouse_encoder_new", 0, this.mouseEncoderSlot)
+      );
+      this.mouseEncoder = this.runtime.readPointer(this.mouseEncoderSlot);
+      this.mouseEventSlot = this.runtime.allocOpaque();
+      this.assertSuccess(
+        "ghostty_mouse_event_new",
+        this.runtime.call("ghostty_mouse_event_new", 0, this.mouseEventSlot)
+      );
+      this.mouseEvent = this.runtime.readPointer(this.mouseEventSlot);
+      this.scratch = this.runtime.alloc(16);
+      const styleSize = this.runtime.layout("GhosttyStyle").size;
+      this.style = this.runtime.alloc(styleSize);
+      this.runtime.setField(this.style, "GhosttyStyle", "size", styleSize);
+      this.scrollbar = this.runtime.alloc(this.runtime.layout("GhosttyTerminalScrollbar").size);
+      this.setTheme(theme);
+      this.resize(cols, rows, cellWidth, cellHeight);
+    }
+    write(data) {
+      this.ensureActive();
+      const bytes = typeof data === "string" ? encoder.encode(data) : data;
+      if (bytes.length === 0) return;
+      const pointer = this.runtime.alloc(bytes.length);
+      this.runtime.bytes(pointer, bytes.length).set(bytes);
+      this.runtime.call("ghostty_terminal_vt_write", this.terminal, pointer, bytes.length);
+      this.runtime.free(pointer, bytes.length);
+    }
+    resetAndWrite(data) {
+      this.ensureActive();
+      this.runtime.call("ghostty_terminal_reset", this.terminal);
+      this.applyDefaultCursorBlink();
+      this.rows = [];
+      if (data.length === 0) return;
+      const writer = this.ptyWriter;
+      if (this.ptyWriterId !== 0) {
+        this.runtime.detachPtyWriter(this.terminal, this.ptyWriterId);
+        this.ptyWriterId = 0;
+      }
+      try {
+        this.write(data);
+      } finally {
+        if (writer !== null && !this.disposed) {
+          this.ptyWriterId = this.runtime.attachPtyWriter(this.terminal, writer);
+        }
+      }
+    }
+    resize(cols, rows, cellWidth, cellHeight) {
+      this.ensureActive();
+      this.assertSuccess(
+        "ghostty_terminal_resize",
+        this.runtime.call(
+          "ghostty_terminal_resize",
+          this.terminal,
+          Math.max(1, Math.min(65535, cols)),
+          Math.max(1, Math.min(65535, rows)),
+          Math.max(1, Math.round(cellWidth)),
+          Math.max(1, Math.round(cellHeight))
+        )
+      );
+    }
+    /**
+     * Ghostty's built-in default cursor is steady, while the xterm.js renderer
+     * this replaced ran with `cursorBlink: true`. Option 23 is the embedder's
+     * default blink, which is the state a session starts in and returns to on
+     * DECSCUSR reset (CSI 0 q), so programs that ask for a specific cursor
+     * through DECSCUSR or DEC mode 12 still win.
+     */
+    applyDefaultCursorBlink() {
+      const blink = this.runtime.alloc(1);
+      this.runtime.bytes(blink, 1)[0] = 1;
+      this.runtime.call("ghostty_terminal_set", this.terminal, 23, blink);
+      this.runtime.free(blink, 1);
+    }
+    setTheme(theme) {
+      this.ensureActive();
+      const color = this.runtime.alloc(3);
+      for (const [option, value] of [
+        [11, theme.foreground],
+        [12, theme.background],
+        [13, theme.cursor]
+      ]) {
+        this.runtime.bytes(color, 3).set([value.r, value.g, value.b]);
+        this.runtime.call("ghostty_terminal_set", this.terminal, option, color);
+      }
+      this.runtime.free(color, 3);
+    }
+    scroll(deltaRows) {
+      this.ensureActive();
+      const layout = this.runtime.layout("GhosttyTerminalScrollViewport");
+      const scroll = this.runtime.alloc(layout.size);
+      this.runtime.setField(scroll, "GhosttyTerminalScrollViewport", "tag", 2);
+      const value = layout.fields.value;
+      this.runtime.view(scroll + value.offset, value.size).setInt32(0, deltaRows, true);
+      this.runtime.call("ghostty_terminal_scroll_viewport", this.terminal, scroll);
+      this.runtime.free(scroll, layout.size);
+    }
+    scrollToBottom() {
+      this.ensureActive();
+      const layout = this.runtime.layout("GhosttyTerminalScrollViewport");
+      const scroll = this.runtime.alloc(layout.size);
+      this.runtime.setField(scroll, "GhosttyTerminalScrollViewport", "tag", 1);
+      this.runtime.call("ghostty_terminal_scroll_viewport", this.terminal, scroll);
+      this.runtime.free(scroll, layout.size);
+    }
+    isViewportActive() {
+      this.ensureActive();
+      this.runtime.bytes(this.scratch, 1)[0] = 0;
+      return this.runtime.call("ghostty_terminal_get", this.terminal, 32, this.scratch) === GHOSTTY_SUCCESS && this.runtime.bytes(this.scratch, 1)[0] !== 0;
+    }
+    scrollbarState() {
+      this.ensureActive();
+      const layout = this.runtime.layout("GhosttyTerminalScrollbar");
+      this.runtime.bytes(this.scrollbar, layout.size).fill(0);
+      if (this.runtime.call("ghostty_terminal_get", this.terminal, 9, this.scrollbar) !== GHOSTTY_SUCCESS) {
+        return null;
+      }
+      return {
+        total: this.runtime.readField(this.scrollbar, "GhosttyTerminalScrollbar", "total"),
+        offset: this.runtime.readField(this.scrollbar, "GhosttyTerminalScrollbar", "offset"),
+        len: this.runtime.readField(this.scrollbar, "GhosttyTerminalScrollbar", "len")
+      };
+    }
+    isMouseTracking() {
+      this.ensureActive();
+      this.runtime.bytes(this.scratch, 1)[0] = 0;
+      return this.runtime.call("ghostty_terminal_get", this.terminal, 11, this.scratch) === GHOSTTY_SUCCESS && this.runtime.bytes(this.scratch, 1)[0] !== 0;
+    }
+    isMouseAnyEventTracking() {
+      this.ensureActive();
+      this.runtime.bytes(this.scratch, 1)[0] = 0;
+      return this.runtime.call("ghostty_terminal_mode_get", this.terminal, 1003, this.scratch) === GHOSTTY_SUCCESS && this.runtime.bytes(this.scratch, 1)[0] !== 0;
+    }
+    isAlternateScreen() {
+      this.ensureActive();
+      this.runtime.bytes(this.scratch, 4).fill(0);
+      return this.runtime.call("ghostty_terminal_get", this.terminal, 6, this.scratch) === GHOSTTY_SUCCESS && this.runtime.view(this.scratch, 4).getUint32(0, true) === 1;
+    }
+    isApplicationCursorKeys() {
+      this.ensureActive();
+      this.runtime.bytes(this.scratch, 1)[0] = 0;
+      return this.runtime.call("ghostty_terminal_mode_get", this.terminal, 1, this.scratch) === GHOSTTY_SUCCESS && this.runtime.bytes(this.scratch, 1)[0] !== 0;
+    }
+    encodeKey(event, action = "press") {
+      this.ensureActive();
+      this.runtime.call("ghostty_key_encoder_setopt_from_terminal", this.keyEncoder, this.terminal);
+      this.runtime.call(
+        "ghostty_key_event_set_action",
+        this.keyEvent,
+        action === "release" ? 0 : event.repeat ? 2 : 1
+      );
+      this.runtime.call("ghostty_key_event_set_key", this.keyEvent, ghosttyKeyForCode(event.code));
+      const mods = (event.shiftKey ? 1 : 0) | (event.ctrlKey ? 1 << 1 : 0) | (event.altKey ? 1 << 2 : 0) | (event.metaKey ? 1 << 3 : 0) | (event.getModifierState("CapsLock") ? 1 << 4 : 0) | (event.getModifierState("NumLock") ? 1 << 5 : 0);
+      this.runtime.call("ghostty_key_event_set_mods", this.keyEvent, mods);
+      this.runtime.call(
+        "ghostty_key_event_set_consumed_mods",
+        this.keyEvent,
+        ghosttyConsumedMods(event)
+      );
+      this.runtime.call("ghostty_key_event_set_composing", this.keyEvent, event.isComposing ? 1 : 0);
+      this.runtime.call(
+        "ghostty_key_event_set_unshifted_codepoint",
+        this.keyEvent,
+        ghosttyUnshiftedCodepoint(event, this.keyboardLayoutMap)
+      );
+      const text = event.key.length === 1 ? event.key : "";
+      const textBytes = encoder.encode(text);
+      const textPointer = textBytes.length === 0 ? 0 : this.runtime.alloc(textBytes.length);
+      if (textPointer !== 0) this.runtime.bytes(textPointer, textBytes.length).set(textBytes);
+      this.runtime.call("ghostty_key_event_set_utf8", this.keyEvent, textPointer, textBytes.length);
+      const written = this.runtime.call("ghostty_wasm_alloc_usize");
+      const encoded = this.encodeOutput(
+        written,
+        (output, outputSize) => this.runtime.call(
+          "ghostty_key_encoder_encode",
+          this.keyEncoder,
+          this.keyEvent,
+          output,
+          outputSize,
+          written
+        )
+      );
+      this.runtime.call("ghostty_wasm_free_usize", written);
+      if (textPointer !== 0) this.runtime.free(textPointer, textBytes.length);
+      return encoded;
+    }
+    encodePaste(data) {
+      this.ensureActive();
+      const input = encoder.encode(data);
+      if (input.length === 0) return "";
+      const inputPointer = this.runtime.alloc(input.length);
+      this.runtime.bytes(inputPointer, input.length).set(input);
+      this.runtime.bytes(this.scratch, 1)[0] = 0;
+      const bracketed = this.runtime.call("ghostty_terminal_mode_get", this.terminal, 2004, this.scratch) === GHOSTTY_SUCCESS && this.runtime.bytes(this.scratch, 1)[0] !== 0;
+      const written = this.runtime.call("ghostty_wasm_alloc_usize");
+      let encoded = "";
+      const sizeResult = this.runtime.call(
+        "ghostty_paste_encode",
+        inputPointer,
+        input.length,
+        bracketed ? 1 : 0,
+        0,
+        0,
+        written
+      );
+      const outputSize = this.runtime.view(written, 4).getUint32(0, true);
+      if (sizeResult === GHOSTTY_OUT_OF_SPACE && outputSize > 0) {
+        const output = this.runtime.alloc(outputSize);
+        const result = this.runtime.call(
+          "ghostty_paste_encode",
+          inputPointer,
+          input.length,
+          bracketed ? 1 : 0,
+          output,
+          outputSize,
+          written
+        );
+        const outputLength = this.runtime.view(written, 4).getUint32(0, true);
+        encoded = result === GHOSTTY_SUCCESS ? decoder.decode(this.runtime.bytes(output, outputLength)) : "";
+        this.runtime.free(output, outputSize);
+      }
+      this.runtime.call("ghostty_wasm_free_usize", written);
+      this.runtime.free(inputPointer, input.length);
+      return encoded;
+    }
+    encodeMouse(input) {
+      this.ensureActive();
+      this.runtime.call(
+        "ghostty_mouse_encoder_setopt_from_terminal",
+        this.mouseEncoder,
+        this.terminal
+      );
+      const sizeLayout = this.runtime.layout("GhosttyMouseEncoderSize");
+      const size = this.runtime.alloc(sizeLayout.size);
+      for (const [field, value] of [
+        ["size", sizeLayout.size],
+        ["screen_width", input.screenWidth],
+        ["screen_height", input.screenHeight],
+        ["cell_width", input.cellWidth],
+        ["cell_height", input.cellHeight],
+        ["padding_top", input.paddingTop],
+        ["padding_bottom", input.paddingBottom],
+        ["padding_right", input.paddingRight],
+        ["padding_left", input.paddingLeft]
+      ]) {
+        this.runtime.setField(size, "GhosttyMouseEncoderSize", field, Math.max(0, Math.round(value)));
+      }
+      this.runtime.call("ghostty_mouse_encoder_setopt", this.mouseEncoder, 2, size);
+      this.runtime.free(size, sizeLayout.size);
+      this.runtime.bytes(this.scratch, 1)[0] = input.anyButtonPressed ? 1 : 0;
+      this.runtime.call("ghostty_mouse_encoder_setopt", this.mouseEncoder, 3, this.scratch);
+      this.runtime.bytes(this.scratch, 1)[0] = 1;
+      this.runtime.call("ghostty_mouse_encoder_setopt", this.mouseEncoder, 4, this.scratch);
+      this.runtime.call(
+        "ghostty_mouse_event_set_action",
+        this.mouseEvent,
+        input.action === "press" ? 0 : input.action === "release" ? 1 : 2
+      );
+      if (input.button === null) {
+        this.runtime.call("ghostty_mouse_event_clear_button", this.mouseEvent);
+      } else {
+        this.runtime.call("ghostty_mouse_event_set_button", this.mouseEvent, input.button);
+      }
+      this.runtime.call("ghostty_mouse_event_set_mods", this.mouseEvent, input.mods);
+      const positionLayout = this.runtime.layout("GhosttyMousePosition");
+      const position = this.runtime.alloc(positionLayout.size);
+      const positionView = this.runtime.view(position, positionLayout.size);
+      positionView.setFloat32(positionLayout.fields.x.offset, input.x, true);
+      positionView.setFloat32(positionLayout.fields.y.offset, input.y, true);
+      this.runtime.call("ghostty_mouse_event_set_position", this.mouseEvent, position);
+      this.runtime.free(position, positionLayout.size);
+      const written = this.runtime.call("ghostty_wasm_alloc_usize");
+      const encoded = this.encodeOutput(
+        written,
+        (output, outputSize) => this.runtime.call(
+          "ghostty_mouse_encoder_encode",
+          this.mouseEncoder,
+          this.mouseEvent,
+          output,
+          outputSize,
+          written
+        )
+      );
+      this.runtime.call("ghostty_wasm_free_usize", written);
+      return encoded;
+    }
+    setSelection(anchor, end) {
+      this.ensureActive();
+      const selectionLayout = this.runtime.layout("GhosttySelection");
+      const gridRefSize = this.runtime.layout("GhosttyGridRef").size;
+      const selection = this.runtime.alloc(selectionLayout.size);
+      let start = 0;
+      let endRef = 0;
+      try {
+        this.runtime.setField(selection, "GhosttySelection", "size", selectionLayout.size);
+        start = this.gridRef(anchor.x, anchor.y, anchor.tag ?? 1);
+        endRef = this.gridRef(end.x, end.y, end.tag ?? 1);
+        const startField = selectionLayout.fields.start;
+        const endField = selectionLayout.fields.end;
+        this.runtime.bytes(selection + startField.offset, startField.size).set(this.runtime.bytes(start, startField.size));
+        this.runtime.bytes(selection + endField.offset, endField.size).set(this.runtime.bytes(endRef, endField.size));
+        this.runtime.call("ghostty_terminal_set", this.terminal, 21, selection);
+      } finally {
+        this.runtime.free(start, gridRefSize);
+        this.runtime.free(endRef, gridRefSize);
+        this.runtime.free(selection, selectionLayout.size);
+      }
+    }
+    selectAll() {
+      this.ensureActive();
+      const layout = this.runtime.layout("GhosttySelection");
+      const selection = this.runtime.alloc(layout.size);
+      this.runtime.setField(selection, "GhosttySelection", "size", layout.size);
+      if (this.runtime.call("ghostty_terminal_select_all", this.terminal, selection) === GHOSTTY_SUCCESS) {
+        this.runtime.call("ghostty_terminal_set", this.terminal, 21, selection);
+      }
+      this.runtime.free(selection, layout.size);
+    }
+    selectWord(col, row) {
+      return this.selectAt(
+        "GhosttyTerminalSelectWordOptions",
+        "ghostty_terminal_select_word",
+        col,
+        row
+      );
+    }
+    selectLine(col, row) {
+      return this.selectAt(
+        "GhosttyTerminalSelectLineOptions",
+        "ghostty_terminal_select_line",
+        col,
+        row
+      );
+    }
+    hyperlinkAt(col, row) {
+      this.ensureActive();
+      const ref = this.gridRef(col, row);
+      const written = this.runtime.call("ghostty_wasm_alloc_usize");
+      const sizeResult = this.runtime.call("ghostty_grid_ref_hyperlink_uri", ref, 0, 0, written);
+      const outputSize = this.runtime.view(written, 4).getUint32(0, true);
+      let hyperlink = null;
+      if (sizeResult === GHOSTTY_OUT_OF_SPACE && outputSize > 0) {
+        const output = this.runtime.alloc(outputSize);
+        const result = this.runtime.call(
+          "ghostty_grid_ref_hyperlink_uri",
+          ref,
+          output,
+          outputSize,
+          written
+        );
+        const outputLength = this.runtime.view(written, 4).getUint32(0, true);
+        if (result === GHOSTTY_SUCCESS && outputLength > 0) {
+          hyperlink = decoder.decode(this.runtime.bytes(output, outputLength));
+        }
+        this.runtime.free(output, outputSize);
+      }
+      this.runtime.call("ghostty_wasm_free_usize", written);
+      this.runtime.free(ref, this.runtime.layout("GhosttyGridRef").size);
+      return hyperlink;
+    }
+    clearSelection() {
+      this.ensureActive();
+      this.runtime.call("ghostty_terminal_set", this.terminal, 21, 0);
+    }
+    snapshot() {
+      this.ensureActive();
+      this.assertSuccess(
+        "ghostty_render_state_update",
+        this.runtime.call("ghostty_render_state_update", this.renderState, this.terminal)
+      );
+      const cols = this.getU16(RENDER_DATA.cols);
+      const rowCount = this.getU16(RENDER_DATA.rows);
+      const dirty = this.getU32(RENDER_DATA.dirty);
+      const foreground = this.getColor(RENDER_DATA.foreground, { r: 229, g: 231, b: 235 });
+      const background = this.getColor(RENDER_DATA.background, { r: 0, g: 0, b: 0 });
+      const cursorHasValue = this.getBool(RENDER_DATA.cursorHasValue);
+      const cursor = cursorHasValue ? this.getColor(RENDER_DATA.cursor, foreground) : foreground;
+      const cursorInViewport = this.getBool(RENDER_DATA.cursorInViewport);
+      const cursorVisible = this.getBool(RENDER_DATA.cursorVisible) && cursorInViewport;
+      const cursorX = cursorInViewport ? this.getU16(RENDER_DATA.cursorX) : -1;
+      const cursorY = cursorInViewport ? this.getU16(RENDER_DATA.cursorY) : -1;
+      if (this.rows.length !== rowCount || this.rows.some((row) => row.cells.length !== cols)) {
+        this.rows = Array.from({ length: rowCount }, () => ({
+          cells: Array.from({ length: cols }, () => this.emptyCell(foreground, background)),
+          text: "",
+          isWrapContinuation: false,
+          wrapsToNext: false
+        }));
+      }
+      const dirtyRows = /* @__PURE__ */ new Set();
+      if (dirty !== 0) {
+        this.assertSuccess(
+          "ghostty_render_state_get(row iterator)",
+          this.runtime.call(
+            "ghostty_render_state_get",
+            this.renderState,
+            RENDER_DATA.rowIterator,
+            this.rowIteratorSlot
+          )
+        );
+        const iterator = this.runtime.readPointer(this.rowIteratorSlot);
+        let rowIndex = 0;
+        while (rowIndex < rowCount && this.runtime.call("ghostty_render_state_row_iterator_next", iterator) !== 0) {
+          const rowDirty = dirty === 2 || this.getRowBool(iterator, ROW_DATA.dirty);
+          if (rowDirty) {
+            this.rows[rowIndex] = this.readRow(iterator, cols, foreground, background);
+            dirtyRows.add(rowIndex);
+            this.runtime.bytes(this.scratch, 1)[0] = 0;
+            this.runtime.call("ghostty_render_state_row_set", iterator, 0, this.scratch);
+          }
+          rowIndex += 1;
+        }
+        this.runtime.view(this.scratch, 4).setUint32(0, 0, true);
+        this.runtime.call("ghostty_render_state_set", this.renderState, 0, this.scratch);
+      }
+      return {
+        cols,
+        rows: rowCount,
+        foreground,
+        background,
+        cursor,
+        cursorX,
+        cursorY,
+        cursorVisible,
+        cursorBlinking: this.getBool(RENDER_DATA.cursorBlinking),
+        cursorStyle: this.getU32(RENDER_DATA.cursorStyle),
+        dirtyRows,
+        rowData: this.rows
+      };
+    }
+    selectionText() {
+      this.ensureActive();
+      const options = this.runtime.alloc(SELECTION_FORMAT_OPTIONS_SIZE);
+      const optionsView = this.runtime.view(options, SELECTION_FORMAT_OPTIONS_SIZE);
+      optionsView.setUint32(0, SELECTION_FORMAT_OPTIONS_SIZE, true);
+      optionsView.setUint32(4, 0, true);
+      optionsView.setUint8(8, 1);
+      optionsView.setUint8(9, 1);
+      optionsView.setUint32(12, 0, true);
+      const written = this.runtime.call("ghostty_wasm_alloc_usize");
+      const sizeResult = this.runtime.call(
+        "ghostty_terminal_selection_format_buf",
+        this.terminal,
+        options,
+        0,
+        0,
+        written
+      );
+      const outputSize = this.runtime.view(written, 4).getUint32(0, true);
+      let text = "";
+      if (sizeResult === GHOSTTY_OUT_OF_SPACE && outputSize > 0) {
+        const output = this.runtime.alloc(outputSize);
+        const result = this.runtime.call(
+          "ghostty_terminal_selection_format_buf",
+          this.terminal,
+          options,
+          output,
+          outputSize,
+          written
+        );
+        const outputLength = this.runtime.view(written, 4).getUint32(0, true);
+        if (result === GHOSTTY_SUCCESS) {
+          text = decoder.decode(this.runtime.bytes(output, outputLength));
+        }
+        this.runtime.free(output, outputSize);
+      }
+      this.runtime.call("ghostty_wasm_free_usize", written);
+      this.runtime.free(options, SELECTION_FORMAT_OPTIONS_SIZE);
+      return text;
+    }
+    viewportPointToScreen(col, row) {
+      return this.convertPoint(col, row, 1, 2);
+    }
+    screenPointToViewport(col, row) {
+      return this.convertPoint(col, row, 2, 1);
+    }
+    convertPoint(col, row, fromTag, toTag) {
+      this.ensureActive();
+      const ref = this.gridRef(col, row, fromTag);
+      const point = this.pointFromGridRef(ref, toTag);
+      this.runtime.free(ref, this.runtime.layout("GhosttyGridRef").size);
+      return point;
+    }
+    dispose() {
+      if (this.disposed) return;
+      this.disposed = true;
+      if (this.mouseEvent) this.runtime.call("ghostty_mouse_event_free", this.mouseEvent);
+      if (this.mouseEncoder) this.runtime.call("ghostty_mouse_encoder_free", this.mouseEncoder);
+      if (this.keyEvent) this.runtime.call("ghostty_key_event_free", this.keyEvent);
+      if (this.keyEncoder) this.runtime.call("ghostty_key_encoder_free", this.keyEncoder);
+      if (this.rowCellsSlot) {
+        const cells = this.runtime.readPointer(this.rowCellsSlot);
+        if (cells) this.runtime.call("ghostty_render_state_row_cells_free", cells);
+      }
+      if (this.rowIteratorSlot) {
+        const iterator = this.runtime.readPointer(this.rowIteratorSlot);
+        if (iterator) this.runtime.call("ghostty_render_state_row_iterator_free", iterator);
+      }
+      if (this.renderState) this.runtime.call("ghostty_render_state_free", this.renderState);
+      if (this.terminal) {
+        if (this.ptyWriterId) this.runtime.detachPtyWriter(this.terminal, this.ptyWriterId);
+        this.runtime.call("ghostty_terminal_free", this.terminal);
+      }
+      if (this.style) this.runtime.free(this.style, this.runtime.layout("GhosttyStyle").size);
+      if (this.scrollbar) {
+        this.runtime.free(this.scrollbar, this.runtime.layout("GhosttyTerminalScrollbar").size);
+      }
+      if (this.scratch) this.runtime.free(this.scratch, 16);
+      if (this.graphemes) this.runtime.free(this.graphemes, this.graphemeCapacity);
+      for (const slot of [
+        this.mouseEventSlot,
+        this.mouseEncoderSlot,
+        this.keyEventSlot,
+        this.keyEncoderSlot,
+        this.rowCellsSlot,
+        this.rowIteratorSlot,
+        this.renderStateSlot,
+        this.terminalSlot
+      ]) {
+        this.runtime.freeOpaque(slot);
+      }
+    }
+    encodeOutput(written, encode) {
+      const sizeResult = encode(0, 0);
+      const outputSize = this.runtime.view(written, 4).getUint32(0, true);
+      if (sizeResult === GHOSTTY_SUCCESS && outputSize === 0) return "";
+      if (sizeResult !== GHOSTTY_OUT_OF_SPACE || outputSize === 0) return "";
+      const output = this.runtime.alloc(outputSize);
+      const result = encode(output, outputSize);
+      const outputLength = this.runtime.view(written, 4).getUint32(0, true);
+      const encoded = result === GHOSTTY_SUCCESS ? decoder.decode(this.runtime.bytes(output, outputLength)) : "";
+      this.runtime.free(output, outputSize);
+      return encoded;
+    }
+    readRow(iterator, cols, defaultForeground, defaultBackground) {
+      this.assertSuccess(
+        "ghostty_render_state_row_get(raw)",
+        this.runtime.call("ghostty_render_state_row_get", iterator, ROW_DATA.raw, this.scratch)
+      );
+      const rawRow = this.runtime.view(this.scratch, 8).getBigUint64(0, true);
+      this.runtime.bytes(this.scratch + 8, 1)[0] = 0;
+      this.assertSuccess(
+        "ghostty_row_get(wrap continuation)",
+        this.runtime.call("ghostty_row_get", rawRow, 2, this.scratch + 8)
+      );
+      const isWrapContinuation = this.runtime.bytes(this.scratch + 8, 1)[0] !== 0;
+      this.runtime.bytes(this.scratch + 8, 1)[0] = 0;
+      this.assertSuccess(
+        "ghostty_row_get(wrap)",
+        this.runtime.call("ghostty_row_get", rawRow, 1, this.scratch + 8)
+      );
+      const wrapsToNext = this.runtime.bytes(this.scratch + 8, 1)[0] !== 0;
+      this.assertSuccess(
+        "ghostty_render_state_row_get(cells)",
+        this.runtime.call(
+          "ghostty_render_state_row_get",
+          iterator,
+          ROW_DATA.cells,
+          this.rowCellsSlot
+        )
+      );
+      const cellsIterator = this.runtime.readPointer(this.rowCellsSlot);
+      const { size: styleSize, fields: styleFields } = this.runtime.layout("GhosttyStyle");
+      const cells = [];
+      while (cells.length < cols && this.runtime.call("ghostty_render_state_row_cells_next", cellsIterator) !== 0) {
+        let foreground = this.getCellColor(cellsIterator, CELL_DATA.foreground, defaultForeground);
+        let background = this.getCellColor(cellsIterator, CELL_DATA.background, defaultBackground);
+        this.runtime.bytes(this.style, styleSize).fill(0);
+        this.runtime.setField(this.style, "GhosttyStyle", "size", styleSize);
+        this.runtime.call(
+          "ghostty_render_state_row_cells_get",
+          cellsIterator,
+          CELL_DATA.style,
+          this.style
+        );
+        const graphemeLength = this.getCellU32(cellsIterator, CELL_DATA.graphemesLength);
+        let text = "";
+        if (graphemeLength > 0) {
+          const bufferSize = graphemeLength * 4;
+          if (bufferSize > this.graphemeCapacity) {
+            const capacity = Math.max(bufferSize, this.graphemeCapacity * 2);
+            const buffer = this.runtime.alloc(capacity);
+            this.runtime.free(this.graphemes, this.graphemeCapacity);
+            this.graphemes = buffer;
+            this.graphemeCapacity = capacity;
+          }
+          if (this.runtime.call(
+            "ghostty_render_state_row_cells_get",
+            cellsIterator,
+            CELL_DATA.graphemes,
+            this.graphemes
+          ) === GHOSTTY_SUCCESS) {
+            const codepointView = this.runtime.view(this.graphemes, bufferSize);
+            text = ghosttyCellText(codepointView, graphemeLength);
+          }
+        }
+        let wide = 0;
+        if (text.length === 0 && cells.at(-1)?.text.length) {
+          this.assertSuccess(
+            "ghostty_render_state_row_cells_get(raw)",
+            this.runtime.call(
+              "ghostty_render_state_row_cells_get",
+              cellsIterator,
+              CELL_DATA.raw,
+              this.scratch
+            )
+          );
+          const rawCell = this.runtime.view(this.scratch, 8).getBigUint64(0, true);
+          this.runtime.view(this.scratch + 8, 4).setUint32(0, 0, true);
+          this.assertSuccess(
+            "ghostty_cell_get(wide)",
+            this.runtime.call("ghostty_cell_get", rawCell, RAW_CELL_DATA.wide, this.scratch + 8)
+          );
+          wide = this.runtime.view(this.scratch + 8, 4).getUint32(0, true);
+        }
+        const selected = this.getCellBool(cellsIterator, CELL_DATA.selected);
+        const styleView = this.runtime.view(this.style, styleSize);
+        if (styleView.getUint8(styleFields.inverse.offset) !== 0) {
+          [foreground, background] = [background, foreground];
+        }
+        if (styleView.getUint8(styleFields.faint.offset) !== 0) {
+          foreground = blend(foreground, background);
+        }
+        cells.push({
+          text,
+          wide,
+          foreground,
+          background,
+          bold: styleView.getUint8(styleFields.bold.offset) !== 0,
+          italic: styleView.getUint8(styleFields.italic.offset) !== 0,
+          invisible: styleView.getUint8(styleFields.invisible.offset) !== 0,
+          strikethrough: styleView.getUint8(styleFields.strikethrough.offset) !== 0,
+          overline: styleView.getUint8(styleFields.overline.offset) !== 0,
+          underline: styleView.getInt32(styleFields.underline.offset, true) !== 0,
+          selected
+        });
+      }
+      while (cells.length < cols) cells.push(this.emptyCell(defaultForeground, defaultBackground));
+      return {
+        cells,
+        text: cells.map((cell) => cell.text || " ").join("").trimEnd(),
+        isWrapContinuation,
+        wrapsToNext
+      };
+    }
+    gridRef(col, row, tag = 1) {
+      const pointLayout = this.runtime.layout("GhosttyPoint");
+      const point = this.runtime.alloc(pointLayout.size);
+      this.runtime.setField(point, "GhosttyPoint", "tag", tag);
+      const pointValue = pointLayout.fields.value;
+      const valueOffset = pointValue.offset;
+      const view = this.runtime.view(point + valueOffset, pointValue.size);
+      view.setUint16(0, Math.max(0, col), true);
+      view.setUint32(4, Math.max(0, row), true);
+      const gridRefSize = this.runtime.layout("GhosttyGridRef").size;
+      const gridRef = this.runtime.alloc(gridRefSize);
+      this.runtime.setField(gridRef, "GhosttyGridRef", "size", gridRefSize);
+      const result = this.runtime.call("ghostty_terminal_grid_ref", this.terminal, point, gridRef);
+      this.runtime.free(point, pointLayout.size);
+      if (result !== GHOSTTY_SUCCESS) {
+        this.runtime.free(gridRef, gridRefSize);
+        this.assertSuccess("ghostty_terminal_grid_ref", result);
+      }
+      return gridRef;
+    }
+    selectAt(optionsName, operation, col, row) {
+      this.ensureActive();
+      const optionsLayout = this.runtime.layout(optionsName);
+      const selectionLayout = this.runtime.layout("GhosttySelection");
+      const options = this.runtime.alloc(optionsLayout.size);
+      let ref = 0;
+      let selection = 0;
+      let range = null;
+      try {
+        this.runtime.setField(options, optionsName, "size", optionsLayout.size);
+        ref = this.gridRef(col, row);
+        const refField = optionsLayout.fields.ref;
+        this.runtime.bytes(options + refField.offset, refField.size).set(this.runtime.bytes(ref, refField.size));
+        selection = this.runtime.alloc(selectionLayout.size);
+        this.runtime.setField(selection, "GhosttySelection", "size", selectionLayout.size);
+        const result = this.runtime.call(operation, this.terminal, options, selection);
+        if (result === GHOSTTY_SUCCESS) {
+          const start = selection + selectionLayout.fields.start.offset;
+          const end = selection + selectionLayout.fields.end.offset;
+          const viewportStart = this.pointFromGridRef(start, 1);
+          const viewportEnd = this.pointFromGridRef(end, 1);
+          const screenStart = this.pointFromGridRef(start, 2);
+          const screenEnd = this.pointFromGridRef(end, 2);
+          if (viewportStart && viewportEnd && screenStart && screenEnd) {
+            range = {
+              viewport: { start: viewportStart, end: viewportEnd },
+              screen: { start: screenStart, end: screenEnd }
+            };
+          }
+          this.runtime.call("ghostty_terminal_set", this.terminal, 21, selection);
+        }
+      } finally {
+        this.runtime.free(selection, selectionLayout.size);
+        this.runtime.free(ref, this.runtime.layout("GhosttyGridRef").size);
+        this.runtime.free(options, optionsLayout.size);
+      }
+      return range;
+    }
+    pointFromGridRef(ref, tag) {
+      const coordinateLayout = this.runtime.layout("GhosttyPointCoordinate");
+      const coordinate = this.runtime.alloc(coordinateLayout.size);
+      const result = this.runtime.call(
+        "ghostty_terminal_point_from_grid_ref",
+        this.terminal,
+        ref,
+        tag,
+        coordinate
+      );
+      const point = result === GHOSTTY_SUCCESS ? {
+        x: this.runtime.readField(coordinate, "GhosttyPointCoordinate", "x"),
+        y: this.runtime.readField(coordinate, "GhosttyPointCoordinate", "y")
+      } : null;
+      this.runtime.free(coordinate, coordinateLayout.size);
+      return point;
+    }
+    getU16(data) {
+      this.runtime.bytes(this.scratch, 2).fill(0);
+      this.assertSuccess(
+        "ghostty_render_state_get",
+        this.runtime.call("ghostty_render_state_get", this.renderState, data, this.scratch)
+      );
+      return this.runtime.view(this.scratch, 2).getUint16(0, true);
+    }
+    getU32(data) {
+      this.runtime.bytes(this.scratch, 4).fill(0);
+      this.assertSuccess(
+        "ghostty_render_state_get",
+        this.runtime.call("ghostty_render_state_get", this.renderState, data, this.scratch)
+      );
+      return this.runtime.view(this.scratch, 4).getUint32(0, true);
+    }
+    getBool(data) {
+      this.runtime.bytes(this.scratch, 1)[0] = 0;
+      this.assertSuccess(
+        "ghostty_render_state_get",
+        this.runtime.call("ghostty_render_state_get", this.renderState, data, this.scratch)
+      );
+      return this.runtime.bytes(this.scratch, 1)[0] !== 0;
+    }
+    getColor(data, fallback) {
+      this.runtime.bytes(this.scratch, 3).fill(0);
+      const result = this.runtime.call(
+        "ghostty_render_state_get",
+        this.renderState,
+        data,
+        this.scratch
+      );
+      return result === GHOSTTY_SUCCESS ? this.readColor(this.scratch) : fallback;
+    }
+    getRowBool(iterator, data) {
+      this.runtime.bytes(this.scratch, 1)[0] = 0;
+      return this.runtime.call("ghostty_render_state_row_get", iterator, data, this.scratch) === GHOSTTY_SUCCESS && this.runtime.bytes(this.scratch, 1)[0] !== 0;
+    }
+    getCellU32(iterator, data) {
+      this.runtime.bytes(this.scratch, 4).fill(0);
+      const result = this.runtime.call(
+        "ghostty_render_state_row_cells_get",
+        iterator,
+        data,
+        this.scratch
+      );
+      return result === GHOSTTY_SUCCESS ? this.runtime.view(this.scratch, 4).getUint32(0, true) : 0;
+    }
+    getCellBool(iterator, data) {
+      this.runtime.bytes(this.scratch, 1)[0] = 0;
+      return this.runtime.call("ghostty_render_state_row_cells_get", iterator, data, this.scratch) === GHOSTTY_SUCCESS && this.runtime.bytes(this.scratch, 1)[0] !== 0;
+    }
+    getCellColor(iterator, data, fallback) {
+      this.runtime.bytes(this.scratch, 3).fill(0);
+      const result = this.runtime.call(
+        "ghostty_render_state_row_cells_get",
+        iterator,
+        data,
+        this.scratch
+      );
+      return result === GHOSTTY_SUCCESS ? this.readColor(this.scratch) : fallback;
+    }
+    readColor(pointer) {
+      const bytes = this.runtime.bytes(pointer, 3);
+      return { r: bytes[0] ?? 0, g: bytes[1] ?? 0, b: bytes[2] ?? 0 };
+    }
+    emptyCell(foreground, background) {
+      return {
+        text: "",
+        wide: 0,
+        foreground,
+        background,
+        bold: false,
+        italic: false,
+        invisible: false,
+        strikethrough: false,
+        overline: false,
+        underline: false,
+        selected: false
+      };
+    }
+    assertSuccess(operation, result) {
+      if (result !== GHOSTTY_SUCCESS) throw new Error(`${operation} failed with result ${result}`);
+    }
+    ensureActive() {
+      if (this.disposed) throw new Error("libghostty-vt terminal has been disposed");
+    }
+  };
+  function ghosttyColorsEqual(left, right) {
+    return sameColor(left, right);
+  }
+
+  // ghostty/renderer.ts
+  var DEFAULT_SELECTION_BACKGROUND = "rgba(72, 122, 191, 0.35)";
+  function cssColor(color) {
+    return `rgb(${color.r}, ${color.g}, ${color.b})`;
+  }
+  function sameTextStyle(left, right) {
+    return ghosttyColorsEqual(left.foreground, right.foreground) && left.bold === right.bold && left.italic === right.italic && left.invisible === right.invisible;
+  }
+  function ghosttyTextRunEnd(cells, start, sameStyle) {
+    let end = start + 1;
+    while (end < cells.length) {
+      const next = cells[end];
+      if (!next) break;
+      if (next.wide === GHOSTTY_CELL_WIDE.spacerTail) {
+        end += 1;
+        continue;
+      }
+      if (next.text.length === 0 || !sameStyle(next)) break;
+      end += 1;
+    }
+    return end;
+  }
+  function fontForCell(cell, fontSize, fontFamily) {
+    const style = cell.italic ? "italic" : "normal";
+    const weight = cell.bold ? "700" : "400";
+    return `${style} ${weight} ${fontSize}px ${fontFamily}`;
+  }
+  function measureGhosttyCell(context, fontSize, fontFamily) {
+    context.font = `normal 400 ${fontSize}px ${fontFamily}`;
+    const widthMeasurement = context.measureText("M");
+    const verticalMeasurement = context.measureText("Mg");
+    const ascent = verticalMeasurement.actualBoundingBoxAscent || fontSize;
+    const descent = verticalMeasurement.actualBoundingBoxDescent;
+    const glyphHeight = ascent + descent;
+    const height = Math.max(1, Math.round(fontSize * 1.35), Math.ceil(glyphHeight));
+    return {
+      width: Math.max(1, widthMeasurement.width),
+      height,
+      baseline: Math.round((height - glyphHeight) / 2 + ascent)
+    };
+  }
+  function terminalGridSize(width, height, metrics, padding) {
+    return {
+      cols: Math.max(1, Math.floor((width - padding * 2) / metrics.width)),
+      rows: Math.max(1, Math.floor((height - padding * 2) / metrics.height))
+    };
+  }
+  function renderGhosttySnapshot(options) {
+    const {
+      context,
+      snapshot,
+      metrics,
+      fontSize,
+      fontFamily,
+      padding,
+      forceFull,
+      cursorOn,
+      previousCursorY
+    } = options;
+    const focused = options.focused ?? true;
+    const selectionBackground = options.selectionBackground ?? DEFAULT_SELECTION_BACKGROUND;
+    const hoveredLinkRange = options.hoveredLinkRange ?? null;
+    const originY = options.originY ?? padding;
+    const rowsToDraw = forceFull ? Array.from({ length: snapshot.rows }, (_, index) => index) : [...snapshot.dirtyRows];
+    if (previousCursorY !== null && previousCursorY !== void 0 && previousCursorY >= 0 && !rowsToDraw.includes(previousCursorY)) {
+      rowsToDraw.push(previousCursorY);
+    }
+    if (snapshot.cursorVisible && snapshot.cursorY >= 0 && !rowsToDraw.includes(snapshot.cursorY)) {
+      rowsToDraw.push(snapshot.cursorY);
+    }
+    if (forceFull) {
+      context.save();
+      context.resetTransform();
+      context.fillStyle = cssColor(snapshot.background);
+      context.fillRect(0, 0, context.canvas.width, context.canvas.height);
+      context.restore();
+    }
+    context.textBaseline = "alphabetic";
+    for (const rowIndex of rowsToDraw) {
+      const row = snapshot.rowData[rowIndex];
+      if (!row) continue;
+      const top = originY + rowIndex * metrics.height;
+      context.fillStyle = cssColor(snapshot.background);
+      context.fillRect(padding, top, snapshot.cols * metrics.width, metrics.height);
+      let backgroundStart = 0;
+      while (backgroundStart < row.cells.length) {
+        const first = row.cells[backgroundStart];
+        if (!first) break;
+        let backgroundEnd = backgroundStart + 1;
+        while (backgroundEnd < row.cells.length) {
+          const next = row.cells[backgroundEnd];
+          if (!next || next.selected !== first.selected || !ghosttyColorsEqual(next.background, first.background)) {
+            break;
+          }
+          backgroundEnd += 1;
+        }
+        if (first.selected || !ghosttyColorsEqual(first.background, snapshot.background)) {
+          const left = padding + backgroundStart * metrics.width;
+          const width = (backgroundEnd - backgroundStart) * metrics.width;
+          if (!ghosttyColorsEqual(first.background, snapshot.background)) {
+            context.fillStyle = cssColor(first.background);
+            context.fillRect(left, top, width, metrics.height);
+          }
+          if (first.selected) {
+            context.fillStyle = selectionBackground;
+            context.fillRect(left, top, width, metrics.height);
+          }
+        }
+        backgroundStart = backgroundEnd;
+      }
+      let runStart = 0;
+      while (runStart < row.cells.length) {
+        const first = row.cells[runStart];
+        if (!first) break;
+        if (first.text.length === 0) {
+          runStart += 1;
+          continue;
+        }
+        const runEnd = ghosttyTextRunEnd(row.cells, runStart, (cell) => sameTextStyle(cell, first));
+        const text = row.cells.slice(runStart, runEnd).map((cell) => cell.text).join("");
+        if (!first.invisible && text.trim().length > 0) {
+          context.save();
+          context.beginPath();
+          context.rect(
+            padding + runStart * metrics.width,
+            top,
+            (runEnd - runStart) * metrics.width,
+            metrics.height
+          );
+          context.clip();
+          context.font = fontForCell(first, fontSize, fontFamily);
+          context.fillStyle = cssColor(first.foreground);
+          context.fillText(
+            text,
+            padding + runStart * metrics.width,
+            top + metrics.baseline,
+            (runEnd - runStart) * metrics.width
+          );
+          context.restore();
+        }
+        runStart = runEnd;
+      }
+      for (let column = 0; column < row.cells.length; column += 1) {
+        const cell = row.cells[column];
+        const hoveredLink = hoveredLinkRange !== null && rowIndex >= hoveredLinkRange.start.y && rowIndex <= hoveredLinkRange.end.y && (rowIndex > hoveredLinkRange.start.y || column >= hoveredLinkRange.start.x) && (rowIndex < hoveredLinkRange.end.y || column <= hoveredLinkRange.end.x);
+        if (!cell || !cell.underline && !cell.strikethrough && !cell.overline && !hoveredLink) {
+          continue;
+        }
+        context.fillStyle = cssColor(cell.foreground);
+        const left = padding + column * metrics.width;
+        if (cell.underline || hoveredLink) {
+          context.fillRect(left, top + metrics.height - 2, metrics.width, 1);
+        }
+        if (cell.strikethrough) {
+          context.fillRect(left, top + Math.floor(metrics.height * 0.55), metrics.width, 1);
+        }
+        if (cell.overline) context.fillRect(left, top + 1, metrics.width, 1);
+      }
+    }
+    if (cursorOn && snapshot.cursorVisible && snapshot.cursorX >= 0 && snapshot.cursorY >= 0) {
+      const left = padding + snapshot.cursorX * metrics.width;
+      const top = originY + snapshot.cursorY * metrics.height;
+      context.fillStyle = cssColor(snapshot.cursor);
+      if (!focused) {
+        context.strokeStyle = cssColor(snapshot.cursor);
+        context.strokeRect(left + 0.5, top + 0.5, metrics.width - 1, metrics.height - 1);
+      } else if (snapshot.cursorStyle === 0) {
+        context.fillRect(left, top, 2, metrics.height);
+      } else if (snapshot.cursorStyle === 2) {
+        context.fillRect(left, top + metrics.height - 2, metrics.width, 2);
+      } else if (snapshot.cursorStyle === 3) {
+        context.strokeStyle = cssColor(snapshot.cursor);
+        context.strokeRect(left + 0.5, top + 0.5, metrics.width - 1, metrics.height - 1);
+      } else {
+        context.fillRect(left, top, metrics.width, metrics.height);
+        const cell = snapshot.rowData[snapshot.cursorY]?.cells[snapshot.cursorX];
+        if (cell?.text) {
+          context.font = fontForCell(cell, fontSize, fontFamily);
+          context.fillStyle = cssColor(snapshot.background);
+          context.fillText(cell.text, left, top + metrics.baseline, metrics.width);
+        }
+      }
+    }
+  }
+
+  // ghostty/monospaceFonts.ts
+  function quoteFontFamilyName(name) {
+    const bare = name.trim();
+    if (bare.length === 0) return "";
+    if (/^(['"]).*\1$/.test(bare)) return bare;
+    if (/^[a-zA-Z][a-zA-Z0-9-]*$/.test(bare)) return bare;
+    return `"${bare.replaceAll('"', "")}"`;
+  }
+  function cssFontFamilies(input) {
+    const families = input.split(",").map(quoteFontFamilyName).filter((name) => name.length > 0).join(", ");
+    return families.length === 0 ? null : families;
+  }
+  var fontProbeContext;
+  var MONOSPACE_PROBE_VARIANTS = ["normal 400", "normal 700", "italic 400", "italic 700"];
+  var MONOSPACE_PROBE_GLYPHS = ["i", "M", "W", "0", "@", "#", ".", " "];
+  var MONOSPACE_ADVANCE_TOLERANCE = 0.01;
+  function areFontAdvancesMonospace(advances) {
+    const reference = advances[0];
+    if (reference === void 0 || reference <= 0 || advances.some((advance) => !Number.isFinite(advance) || advance <= 0)) {
+      return true;
+    }
+    return advances.every((advance) => Math.abs(advance - reference) < MONOSPACE_ADVANCE_TOLERANCE);
+  }
+  function isMonospaceFamily(family) {
+    const families = cssFontFamilies(family);
+    if (families === null) return true;
+    try {
+      if (fontProbeContext === void 0) {
+        fontProbeContext = document.createElement("canvas").getContext("2d");
+      }
+      if (fontProbeContext === null) return true;
+      const context = fontProbeContext;
+      for (const variant of MONOSPACE_PROBE_VARIANTS) {
+        context.font = `${variant} 32px ${families}, monospace`;
+        const advances = MONOSPACE_PROBE_GLYPHS.map((glyph) => context.measureText(glyph).width);
+        if (!areFontAdvancesMonospace(advances)) return false;
+      }
+      return true;
+    } catch {
+      return true;
+    }
+  }
+
+  // ghostty/surface.ts
+  var DEFAULT_TERMINAL_FONT_SIZE = 12;
+  var MIN_TERMINAL_FONT_SIZE = 6;
+  var MAX_TERMINAL_FONT_SIZE = 32;
+  var TERMINAL_GLYPH_FALLBACKS = '"Symbols Nerd Font Mono", "Symbols Nerd Font", "JetBrainsMono Nerd Font", "JetBrainsMono NF", "FiraCode Nerd Font", "Hack Nerd Font", "MesloLGS NF", "CaskaydiaCove Nerd Font", "PowerlineSymbols", monospace';
+  var DEFAULT_TERMINAL_FONT_FAMILY = '"SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", ' + TERMINAL_GLYPH_FALLBACKS;
+  var CONTENT_PADDING = 4;
+  var MIN_SCROLLBAR_THUMB_HEIGHT = 18;
+  var CURSOR_BLINK_INTERVAL_MS = 500;
+  var TERMINAL_FONT_LOAD_TEXT = "iMW0@# .";
+  var TERMINAL_FONT_LOAD_VARIANTS = [
+    "normal 400",
+    "normal 700",
+    "italic 400",
+    "italic 700"
+  ];
+  var symbolsFontLoad = null;
+  function ensureTerminalSymbolsFont(symbolsFontUrl) {
+    if (symbolsFontLoad !== null) return symbolsFontLoad;
+    symbolsFontLoad = (async () => {
+      try {
+        if (symbolsFontUrl === void 0) return;
+        const face = new FontFace("Symbols Nerd Font Mono", `url(${symbolsFontUrl})`);
+        document.fonts.add(await face.load());
+      } catch {
+      }
+    })();
+    return symbolsFontLoad;
+  }
+  function quoteTerminalFontFamilies(list) {
+    return list.split(",").map((name) => {
+      const bare = name.trim();
+      if (bare.length === 0) return "";
+      if (/^(['"]).*\1$/.test(bare)) return bare;
+      if (/^[a-zA-Z][a-zA-Z0-9-]*$/.test(bare)) return bare;
+      return `"${bare.replaceAll('"', "")}"`;
+    }).filter((name) => name.length > 0).join(", ");
+  }
+  function uncheckedTerminalFontFamily(family) {
+    const custom = family === void 0 ? "" : quoteTerminalFontFamilies(family);
+    return custom.length === 0 ? DEFAULT_TERMINAL_FONT_FAMILY : `${custom}, ${TERMINAL_GLYPH_FALLBACKS}`;
+  }
+  function terminalFontFamily(family) {
+    const custom = family === void 0 ? "" : quoteTerminalFontFamilies(family);
+    if (custom.length === 0) return DEFAULT_TERMINAL_FONT_FAMILY;
+    if (!isMonospaceFamily(custom)) return DEFAULT_TERMINAL_FONT_FAMILY;
+    return uncheckedTerminalFontFamily(custom);
+  }
+  async function loadTerminalFontFamily(family, size, environment) {
+    const candidate = uncheckedTerminalFontFamily(family);
+    const load = environment?.load ?? ((font, text) => document.fonts.load(font, text));
+    try {
+      await Promise.all(
+        TERMINAL_FONT_LOAD_VARIANTS.map(
+          (variant) => load(`${variant} ${size}px ${candidate}`, TERMINAL_FONT_LOAD_TEXT)
+        )
+      );
+    } catch {
+    }
+    return (environment?.resolve ?? terminalFontFamily)(family);
+  }
+  function terminalFontSize(size) {
+    if (size === void 0 || !Number.isFinite(size)) return DEFAULT_TERMINAL_FONT_SIZE;
+    return Math.max(MIN_TERMINAL_FONT_SIZE, Math.min(MAX_TERMINAL_FONT_SIZE, Math.round(size)));
+  }
+  function shouldBlinkTerminalCursor(state2) {
+    return state2.focused && state2.cursorBlinking && state2.cursorVisible && !state2.reducedMotion;
+  }
+  function terminalContentOriginY(mountHeight, padding, rows, cellHeight, anchorBottom) {
+    if (!anchorBottom) return padding;
+    const slack = mountHeight - padding * 2 - rows * cellHeight;
+    return padding + Math.max(0, slack);
+  }
+  function terminalScrollbarGeometry(state2, trackHeight) {
+    const total = Math.max(0, state2.total);
+    const len = Math.max(0, Math.min(state2.len, total));
+    const maxOffset = Math.max(0, total - len);
+    if (trackHeight <= 0 || len <= 0 || maxOffset === 0) return null;
+    const thumbHeight = Math.min(
+      trackHeight,
+      Math.max(MIN_SCROLLBAR_THUMB_HEIGHT, trackHeight * len / total)
+    );
+    const travel = Math.max(0, trackHeight - thumbHeight);
+    const offset = Math.max(0, Math.min(state2.offset, maxOffset));
+    return {
+      thumbHeight,
+      thumbTop: travel * (offset / maxOffset),
+      maxOffset
+    };
+  }
+  function terminalScrollbarOffsetAtPointer(state2, trackHeight, pointerY, pointerOffset) {
+    const geometry = terminalScrollbarGeometry(state2, trackHeight);
+    if (geometry === null) return 0;
+    const travel = Math.max(0, trackHeight - geometry.thumbHeight);
+    if (travel === 0) return 0;
+    const thumbTop = Math.max(0, Math.min(pointerY - pointerOffset, travel));
+    return Math.round(thumbTop / travel * geometry.maxOffset);
+  }
+  function terminalGridCellAt(options) {
+    const { bounds, clientX, clientY, cols, rows, metrics, padding, originY } = options;
+    const gridX = clientX - bounds.left - padding;
+    const gridY = clientY - bounds.top - originY;
+    if (gridX < 0 || gridY < 0 || gridX >= cols * metrics.width || gridY >= rows * metrics.height) {
+      return null;
+    }
+    return {
+      x: Math.floor(gridX / metrics.width),
+      y: Math.floor(gridY / metrics.height)
+    };
+  }
+  function terminalRowText(row, trimRight) {
+    const text = row.cells.map((cell) => cell.text || " ").join("");
+    return trimRight ? text.trimEnd() : text;
+  }
+  function terminalColumnOffset(row, column) {
+    let offset = 0;
+    for (let cellIndex = 0; cellIndex < column; cellIndex += 1) {
+      offset += row.cells[cellIndex]?.text.length || 1;
+    }
+    return offset;
+  }
+  function isSameTerminalLink(left, right) {
+    return right?.text === left.text && right.range.start.x === left.range.start.x && right.range.start.y === left.range.start.y && right.range.end.x === left.range.end.x && right.range.end.y === left.range.end.y;
+  }
+  function terminalColumnAtOffset(row, offset) {
+    for (let column = 0; column < row.cells.length; column += 1) {
+      const nextOffset = terminalColumnOffset(row, column + 1);
+      if (offset < nextOffset) return column;
+    }
+    return Math.max(0, row.cells.length - 1);
+  }
+  function terminalLinkAtPositionWithRange(rows, rowIndex, column) {
+    const wrappedLine = collectWrappedTerminalLinkLine(rowIndex + 1, (index) => {
+      const row2 = rows[index];
+      if (!row2) return null;
+      return {
+        isWrapped: row2.isWrapContinuation,
+        translateToString: (trimRight = false) => terminalRowText(row2, trimRight)
+      };
+    });
+    if (!wrappedLine) return null;
+    const firstSegment = wrappedLine.segments[0];
+    if (firstSegment && rows[firstSegment.bufferLineNumber - 1]?.isWrapContinuation) {
+      return null;
+    }
+    const segment = wrappedLine.segments.find((value) => value.bufferLineNumber === rowIndex + 1);
+    const row = rows[rowIndex];
+    if (!segment || !row) return null;
+    const lastSegment = wrappedLine.segments.at(-1);
+    const lastRow = lastSegment ? rows[lastSegment.bufferLineNumber - 1] : void 0;
+    const continuesBelowViewport = lastRow !== void 0 && lastRow.wrapsToNext;
+    const offset = segment.startIndex + terminalColumnOffset(row, column);
+    for (const match of extractTerminalLinks(wrappedLine.text)) {
+      if (offset >= match.start && offset < match.end) {
+        if (match.end === wrappedLine.text.length && continuesBelowViewport) return null;
+        const startSegment = wrappedLine.segments.find(
+          (value) => match.start >= value.startIndex && match.start < value.endIndex
+        );
+        const endSegment = wrappedLine.segments.find(
+          (value) => match.end - 1 >= value.startIndex && match.end - 1 < value.endIndex
+        );
+        const startRow = startSegment ? rows[startSegment.bufferLineNumber - 1] : void 0;
+        const endRow = endSegment ? rows[endSegment.bufferLineNumber - 1] : void 0;
+        if (!startSegment || !endSegment || !startRow || !endRow) return null;
+        return {
+          text: match.text,
+          range: {
+            start: {
+              x: terminalColumnAtOffset(startRow, match.start - startSegment.startIndex),
+              y: startSegment.bufferLineNumber - 1
+            },
+            end: {
+              x: terminalColumnAtOffset(endRow, match.end - 1 - endSegment.startIndex),
+              y: endSegment.bufferLineNumber - 1
+            }
+          }
+        };
+      }
+    }
+    return null;
+  }
+  function isTerminalCopyShortcut(event, platform = navigator.platform) {
+    const key = event.key.toLowerCase();
+    if (key === "insert" && !isMacPlatform(platform)) {
+      return event.ctrlKey && !event.shiftKey && !event.metaKey;
+    }
+    if (key !== "c") return false;
+    return isMacPlatform(platform) ? event.metaKey : event.ctrlKey;
+  }
+  function primeTerminalCopyInput(input, selection) {
+    input.value = selection;
+    if (selection.length === 0) return;
+    input.select();
+  }
+  function clearPrimedTerminalCopyInput(input, primedSelection) {
+    if (primedSelection.length === 0 || input.value !== primedSelection) return;
+    input.value = "";
+  }
+  function applyTerminalCopyEvent(selection, clipboardData) {
+    if (selection.length === 0 || !clipboardData) {
+      return { preventDefault: false, claimWriteFallback: false };
+    }
+    clipboardData.setData("text/plain", selection);
+    return { preventDefault: true, claimWriteFallback: true };
+  }
+  function isTerminalPasteShortcut(event, platform = navigator.platform) {
+    const key = event.key.toLowerCase();
+    if (key === "insert" && !isMacPlatform(platform)) {
+      return event.shiftKey && !event.ctrlKey && !event.metaKey;
+    }
+    if (key !== "v") return false;
+    return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
+  }
+  function isTerminalCompositionCommitInput(event) {
+    return event.inputType === "" || event.inputType === "insertCompositionText" || event.inputType === "insertFromComposition";
+  }
+  function isTerminalCompositionKey(event, composing) {
+    return event.isComposing || composing || event.key === "Process" || event.keyCode === 229;
+  }
+  function isTerminalAltGraphText(event) {
+    return event.getModifierState("AltGraph") && [...event.key].length === 1;
+  }
+  function shouldReportTerminalMouse(tracking, event) {
+    return tracking && !event.shiftKey && !event.ctrlKey && !event.metaKey;
+  }
+  function resolveTerminalMouseData(action, data, previousMotionData) {
+    const nextMotionData = action === "motion" ? data : "";
+    return {
+      send: data.length > 0 && (action !== "motion" || data !== previousMotionData),
+      nextMotionData
+    };
+  }
+  function resolveTerminalMouseTrackingState(previousTracking, tracking, motionData) {
+    return {
+      tracking,
+      motionData: previousTracking === tracking ? motionData : ""
+    };
+  }
+  function terminalWheelDeltaRows(event, cellHeight, viewportRows, remainder) {
+    const pixels = event.deltaMode === 1 ? event.deltaY * cellHeight : event.deltaMode === 2 ? event.deltaY * viewportRows * cellHeight : event.deltaY;
+    const total = remainder + pixels / cellHeight;
+    const rows = Math.trunc(total);
+    return { rows, remainder: total - rows };
+  }
+  function terminalWheelArrowData(rows, applicationCursorKeys) {
+    if (rows === 0) return "";
+    const sequence = rows < 0 ? applicationCursorKeys ? "\x1BOA" : "\x1B[A" : applicationCursorKeys ? "\x1BOB" : "\x1B[B";
+    return sequence.repeat(Math.abs(rows));
+  }
+  function ghosttyMouseButton(button) {
+    switch (button) {
+      case 0:
+        return 1;
+      case 1:
+        return 3;
+      case 2:
+        return 2;
+      case 3:
+        return 4;
+      case 4:
+        return 5;
+      default:
+        return null;
+    }
+  }
+  var TERMINAL_LINK_DRAG_THRESHOLD_PX = 4;
+  function advanceTerminalSelectionClickSequence(previous, event) {
+    const repeats = previous !== null && event.timeStamp - previous.time <= SELECTION_MULTI_CLICK_INTERVAL_MS && Math.hypot(event.clientX - previous.x, event.clientY - previous.y) <= TERMINAL_LINK_DRAG_THRESHOLD_PX;
+    return {
+      count: repeats ? previous.count >= 3 ? 1 : previous.count + 1 : 1,
+      time: event.timeStamp,
+      x: event.clientX,
+      y: event.clientY
+    };
+  }
+  var GhosttyTerminalSurface = class _GhosttyTerminalSurface {
+    canvas;
+    input;
+    scrollbar;
+    cols = 1;
+    rows = 1;
+    mount;
+    context;
+    core;
+    options;
+    visible;
+    hasSize = false;
+    metrics;
+    fontFamily;
+    requestedFontFamily;
+    fontSize;
+    fontEpoch = 0;
+    pendingFontEpoch = null;
+    resizeObserver;
+    scrollbarThumb;
+    snapshot = null;
+    frame = 0;
+    cursorTimer = null;
+    compositionInputToSuppress = null;
+    compositionSuppressionTimer = null;
+    cursorOn = true;
+    renderedCursorY = null;
+    forceFullRender = true;
+    scrollbarDirty = true;
+    scrollbarState = null;
+    scrollbarPointerId = null;
+    scrollbarPointerOffset = 0;
+    disposed = false;
+    resizeNotifyTimer = null;
+    originY = CONTENT_PADDING;
+    mountHeight = 0;
+    selectionEnd = null;
+    selectionAnchorScreen = null;
+    selectionEndScreen = null;
+    selectionMode = "cell";
+    // Word/line selection base in screen coordinates so streaming output cannot
+    // shift the origin of a drag selection.
+    selectionBase = null;
+    selectionScrollTimer = null;
+    selectionScrollDelta = 0;
+    selectionPointer = null;
+    mouseReportingPointerId = null;
+    mouseReportingButton = null;
+    linkActivationPointerId = null;
+    linkActivationLink = null;
+    linkActivationOrigin = null;
+    hoveredLink = null;
+    hoverPointer = null;
+    selectionClickSequence = null;
+    selectionMoved = false;
+    composing = false;
+    focused = false;
+    resizeNotified = false;
+    canvasConfigured = false;
+    theme;
+    suppressedKeyCodes = /* @__PURE__ */ new Set();
+    pasteShortcutToken = 0;
+    copyShortcutToken = 0;
+    clearSelectionAfterCopy = false;
+    primedCopySelection = "";
+    wheelRemainder = 0;
+    lastMouseMotionData = "";
+    mouseAnyEventTracking = false;
+    dprMedia = null;
+    // Read live on every blink decision, and watched so that dropping the
+    // preference restarts a blink cycle that has no timer left to notice it.
+    reducedMotionMedia = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    inputLeft = -1;
+    inputTop = -1;
+    constructor(mount, canvas, input, scrollbar, scrollbarThumb, context, core, metrics, fontFamily, options) {
+      this.mount = mount;
+      this.canvas = canvas;
+      this.input = input;
+      this.scrollbar = scrollbar;
+      this.scrollbarThumb = scrollbarThumb;
+      this.context = context;
+      this.core = core;
+      this.mouseAnyEventTracking = core.isMouseAnyEventTracking();
+      this.metrics = metrics;
+      this.options = options;
+      this.visible = options.visible ?? true;
+      this.theme = options.theme;
+      this.fontFamily = fontFamily;
+      this.requestedFontFamily = options.font?.family;
+      this.fontSize = terminalFontSize(options.font?.size);
+      this.resizeObserver = new ResizeObserver(() => this.fit());
+      this.installEvents();
+      this.watchDevicePixelRatio();
+      this.reducedMotionMedia?.addEventListener("change", this.onReducedMotionChange);
+      document.fonts.addEventListener("loadingdone", this.onFontsLoaded);
+      this.resizeObserver.observe(mount);
+    }
+    static async create(mount, options) {
+      const canvas = document.createElement("canvas");
+      canvas.className = "block size-full cursor-text";
+      canvas.setAttribute("aria-hidden", "true");
+      const input = document.createElement("textarea");
+      input.className = "t3-ghostty-input";
+      input.setAttribute("aria-label", "Terminal input");
+      input.autocapitalize = "off";
+      input.autocomplete = "off";
+      input.spellcheck = false;
+      input.style.cssText = "position:absolute;left:4px;top:4px;width:1px;height:1px;opacity:0;padding:0;border:0;resize:none;pointer-events:none;";
+      const scrollbar = document.createElement("div");
+      scrollbar.className = "group absolute top-1 right-px bottom-1 z-1 w-[var(--app-scrollbar-width)] cursor-default touch-none";
+      scrollbar.setAttribute("role", "scrollbar");
+      scrollbar.setAttribute("aria-label", "Terminal scrollback");
+      scrollbar.setAttribute("aria-orientation", "vertical");
+      scrollbar.tabIndex = 0;
+      scrollbar.hidden = true;
+      const scrollbarThumb = document.createElement("div");
+      scrollbarThumb.className = "absolute inset-x-px top-0 rounded-[3px] bg-[var(--app-scrollbar-thumb)] transition-[background-color] duration-[120ms] ease-[ease-out] group-hover:bg-[var(--app-scrollbar-thumb-hover)] group-focus-visible:bg-[var(--app-scrollbar-thumb-hover)]";
+      scrollbar.append(scrollbarThumb);
+      mount.replaceChildren(canvas, input, scrollbar);
+      const context = canvas.getContext("2d", { alpha: false });
+      if (!context) throw new Error("Canvas 2D is unavailable");
+      context.fillStyle = `rgb(${options.theme.background.r}, ${options.theme.background.g}, ${options.theme.background.b})`;
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      const fontSize = terminalFontSize(options.font?.size);
+      try {
+        await ensureTerminalSymbolsFont(options.symbolsFontUrl);
+      } catch {
+      }
+      const fontFamily = await loadTerminalFontFamily(options.font?.family, fontSize);
+      const metrics = measureGhosttyCell(context, fontSize, fontFamily);
+      const grid = terminalGridSize(mount.clientWidth, mount.clientHeight, metrics, CONTENT_PADDING);
+      const core = await GhosttyTerminalCore.create(
+        options.runtime,
+        grid.cols,
+        grid.rows,
+        metrics.width,
+        metrics.height,
+        options.theme,
+        options.onData
+      );
+      const surface = new _GhosttyTerminalSurface(
+        mount,
+        canvas,
+        input,
+        scrollbar,
+        scrollbarThumb,
+        context,
+        core,
+        metrics,
+        fontFamily,
+        options
+      );
+      surface.fit();
+      return surface;
+    }
+    /** Pause canvas work without interrupting output parsing or terminal replies. */
+    setVisible(visible) {
+      if (this.disposed || this.visible === visible) return;
+      this.visible = visible;
+      this.cursorOn = true;
+      this.forceFullRender = true;
+      this.scrollbarDirty = true;
+      if (!visible) {
+        this.cancelRender();
+        this.setSelectionAutoscroll(0);
+        return;
+      }
+      this.fit();
+    }
+    write(data) {
+      if (this.disposed) return;
+      this.core.write(data);
+      this.synchronizeMouseTrackingState();
+      this.cursorOn = true;
+      this.scrollbarDirty = true;
+      this.requestRender();
+    }
+    resetAndWrite(data) {
+      if (this.disposed) return;
+      this.lastMouseMotionData = "";
+      this.core.resetAndWrite(data);
+      this.synchronizeMouseTrackingState();
+      this.cursorOn = true;
+      this.forceFullRender = true;
+      this.scrollbarDirty = true;
+      this.requestRender();
+    }
+    setTheme(theme) {
+      if (this.disposed) return;
+      this.theme = theme;
+      this.core.setTheme(theme);
+      this.forceFullRender = true;
+      this.requestRender();
+    }
+    async setFont(font) {
+      if (this.disposed) return;
+      const fontSize = terminalFontSize(font.size);
+      const epoch = ++this.fontEpoch;
+      this.pendingFontEpoch = epoch;
+      const fontFamily = await loadTerminalFontFamily(font.family, fontSize);
+      if (this.disposed || epoch !== this.fontEpoch) return;
+      this.pendingFontEpoch = null;
+      this.fontFamily = fontFamily;
+      this.requestedFontFamily = font.family;
+      this.fontSize = fontSize;
+      this.applyFontMetrics();
+    }
+    applyFontMetrics() {
+      this.metrics = measureGhosttyCell(this.context, this.fontSize, this.fontFamily);
+      this.core.resize(this.cols, this.rows, this.metrics.width, this.metrics.height);
+      this.inputLeft = -1;
+      this.inputTop = -1;
+      this.forceFullRender = true;
+      this.scrollbarDirty = true;
+      this.fit();
+      this.requestRender();
+    }
+    onReducedMotionChange = () => {
+      if (this.disposed) return;
+      this.cursorOn = true;
+      this.requestRender();
+    };
+    onFontsLoaded = () => {
+      if (this.disposed) return;
+      if (this.pendingFontEpoch !== null) return;
+      const fontFamily = terminalFontFamily(this.requestedFontFamily);
+      if (fontFamily !== this.fontFamily) {
+        this.fontFamily = fontFamily;
+        this.applyFontMetrics();
+        return;
+      }
+      const metrics = measureGhosttyCell(this.context, this.fontSize, this.fontFamily);
+      if (metrics.width === this.metrics.width && metrics.height === this.metrics.height && metrics.baseline === this.metrics.baseline) {
+        return;
+      }
+      this.applyFontMetrics();
+    };
+    fit() {
+      if (this.disposed || !this.visible) return false;
+      const width = this.mount.clientWidth;
+      const height = this.mount.clientHeight;
+      if (width <= 0 || height <= 0) {
+        this.hasSize = false;
+        this.forceFullRender = true;
+        this.cancelRender();
+        return false;
+      }
+      this.hasSize = true;
+      const ratio = window.devicePixelRatio || 1;
+      const pixelWidth = Math.max(1, Math.round(width * ratio));
+      const pixelHeight = Math.max(1, Math.round(height * ratio));
+      let shouldRender = false;
+      if (this.canvas.width !== pixelWidth || this.canvas.height !== pixelHeight || !this.canvasConfigured) {
+        this.canvas.width = pixelWidth;
+        this.canvas.height = pixelHeight;
+        this.context.setTransform(ratio, 0, 0, ratio, 0, 0);
+        this.canvasConfigured = true;
+        this.forceFullRender = true;
+        this.scrollbarDirty = true;
+        shouldRender = true;
+      }
+      const grid = terminalGridSize(width, height, this.metrics, CONTENT_PADDING);
+      this.mountHeight = height;
+      if (grid.cols !== this.cols || grid.rows !== this.rows || !this.resizeNotified) {
+        this.cols = grid.cols;
+        this.rows = grid.rows;
+        this.core.resize(grid.cols, grid.rows, this.metrics.width, this.metrics.height);
+        this.notifyResize();
+        this.forceFullRender = true;
+        this.scrollbarDirty = true;
+        shouldRender = true;
+      }
+      if (shouldRender || this.forceFullRender) this.renderFrame();
+      return true;
+    }
+    /**
+     * The local grid reflows immediately, but the PTY only hears about settled
+     * dimensions: notifying on every drag step makes the shell reprint its
+     * prompt mid-drag, which reads as jitter.
+     */
+    notifyResize() {
+      this.resizeNotified = true;
+      if (this.resizeNotifyTimer !== null) window.clearTimeout(this.resizeNotifyTimer);
+      this.resizeNotifyTimer = window.setTimeout(() => {
+        this.resizeNotifyTimer = null;
+        if (!this.disposed) this.options.onResize(this.cols, this.rows);
+      }, 150);
+    }
+    focus() {
+      if (this.disposed || !this.visible) return;
+      this.input.focus({ preventScroll: true });
+    }
+    /**
+     * Pastes clipboard text read by the host (context menu) with the same
+     * bracketed-paste encoding as a native paste event. The read joins the same
+     * race the paste shortcut uses — the token is claimed before it starts — so
+     * a shortcut or native paste arriving during the read supersedes this one
+     * instead of both reaching the shell.
+     */
+    async pasteFromClipboard(readText, isCurrent = () => true) {
+      const token = ++this.pasteShortcutToken;
+      const text = await readText();
+      if (this.disposed || this.pasteShortcutToken !== token || !isCurrent()) return;
+      this.pasteShortcutToken += 1;
+      if (text.length === 0) return;
+      const encoded = this.core.encodePaste(text);
+      if (encoded.length > 0) this.options.onData(encoded);
+    }
+    hasSelection() {
+      return this.core.selectionText().length > 0;
+    }
+    getSelection() {
+      return this.core.selectionText();
+    }
+    getSelectionPosition() {
+      if (!this.selectionAnchorScreen || !this.selectionEndScreen || !this.hasSelection())
+        return null;
+      const before = this.selectionAnchorScreen.y < this.selectionEndScreen.y || this.selectionAnchorScreen.y === this.selectionEndScreen.y && this.selectionAnchorScreen.x <= this.selectionEndScreen.x;
+      return before ? { start: this.selectionAnchorScreen, end: this.selectionEndScreen } : { start: this.selectionEndScreen, end: this.selectionAnchorScreen };
+    }
+    getSelectionEndClientRect() {
+      const position = this.getSelectionPosition();
+      if (!position) return null;
+      const viewportEnd = this.core.screenPointToViewport(position.end.x, position.end.y);
+      if (!viewportEnd) return null;
+      const bounds = this.canvas.getBoundingClientRect();
+      return {
+        right: bounds.left + CONTENT_PADDING + (viewportEnd.x + 1) * this.metrics.width,
+        bottom: bounds.top + this.originY + (viewportEnd.y + 1) * this.metrics.height
+      };
+    }
+    clearSelection() {
+      this.clearPrimedCopy();
+      this.core.clearSelection();
+      this.selectionEnd = null;
+      this.selectionAnchorScreen = null;
+      this.selectionEndScreen = null;
+      this.selectionMode = "cell";
+      this.selectionBase = null;
+      this.setSelectionAutoscroll(0);
+      this.options.onSelectionChange();
+      this.forceFullRender = true;
+      this.requestRender();
+    }
+    scrollToBottom() {
+      this.core.scrollToBottom();
+      this.forceFullRender = true;
+      this.scrollbarDirty = true;
+      this.requestRender();
+    }
+    isAtBottom() {
+      return this.core.isViewportActive();
+    }
+    dispose() {
+      if (this.disposed) return;
+      this.disposed = true;
+      this.resizeObserver.disconnect();
+      document.fonts.removeEventListener("loadingdone", this.onFontsLoaded);
+      this.dprMedia?.removeEventListener("change", this.onDevicePixelRatioChange);
+      this.dprMedia = null;
+      this.reducedMotionMedia?.removeEventListener("change", this.onReducedMotionChange);
+      if (this.selectionScrollTimer !== null) window.clearInterval(this.selectionScrollTimer);
+      if (this.resizeNotifyTimer !== null) {
+        window.clearTimeout(this.resizeNotifyTimer);
+        this.resizeNotifyTimer = null;
+        this.options.onResize(this.cols, this.rows);
+      }
+      this.cancelRender();
+      if (this.compositionSuppressionTimer !== null) {
+        window.clearTimeout(this.compositionSuppressionTimer);
+      }
+      this.removeEvents();
+      this.core.dispose();
+      if (this.canvas.parentElement === this.mount || this.input.parentElement === this.mount || this.scrollbar.parentElement === this.mount) {
+        this.canvas.remove();
+        this.input.remove();
+        this.scrollbar.remove();
+      }
+    }
+    onKeyDown = (event) => {
+      if (isTerminalAltGraphText(event) || !this.options.beforeKey(event)) {
+        this.suppressedKeyCodes.add(event.code);
+        return;
+      }
+      if (isTerminalCopyShortcut(event) && this.hasSelection()) {
+        const selection = this.getSelection();
+        this.primeCopy(selection);
+        if (event.shiftKey || event.key.toLowerCase() === "insert") {
+          event.preventDefault();
+          document.execCommand("copy");
+        } else {
+          this.clearSelectionAfterCopy = !event.shiftKey && !isMacPlatform(navigator.platform);
+          const clipboard = navigator.clipboard;
+          if (typeof clipboard?.writeText === "function") {
+            const token = ++this.copyShortcutToken;
+            void Promise.resolve().then(() => {
+              if (this.disposed || this.copyShortcutToken !== token) return;
+              void clipboard.writeText(selection).then(
+                () => {
+                  if (this.disposed || this.copyShortcutToken !== token) return;
+                  if (this.clearSelectionAfterCopy) {
+                    this.clearSelectionAfterCopy = false;
+                    this.clearSelection();
+                  }
+                },
+                () => {
+                  if (this.copyShortcutToken === token) {
+                    this.clearSelectionAfterCopy = false;
+                  }
+                }
+              );
+            });
+          }
+        }
+        this.suppressedKeyCodes.add(event.code);
+        return;
+      }
+      if (isTerminalPasteShortcut(event)) {
+        this.suppressedKeyCodes.add(event.code);
+        const clipboard = navigator.clipboard;
+        if (typeof clipboard?.readText === "function") {
+          const token = ++this.pasteShortcutToken;
+          void clipboard.readText().then(
+            (text) => {
+              if (this.disposed || this.pasteShortcutToken !== token) return;
+              this.pasteShortcutToken += 1;
+              if (text.length > 0) this.options.onData(this.core.encodePaste(text));
+            },
+            () => {
+            }
+          );
+        }
+        return;
+      }
+      if (isTerminalCompositionKey(event, this.composing)) {
+        return;
+      }
+      this.clearPrimedCopy();
+      const data = this.core.encodeKey(event);
+      if (data.length === 0) return;
+      this.suppressedKeyCodes.delete(event.code);
+      event.preventDefault();
+      event.stopPropagation();
+      this.options.onData(data);
+    };
+    onKeyUp = (event) => {
+      if (this.suppressedKeyCodes.delete(event.code)) return;
+      if (isTerminalCompositionKey(event, this.composing)) {
+        return;
+      }
+      const data = this.core.encodeKey(event, "release");
+      if (data.length === 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.options.onData(data);
+    };
+    onFocus = () => {
+      this.focused = true;
+      this.cursorOn = true;
+      this.requestRender();
+    };
+    onBlur = () => {
+      this.focused = false;
+      this.refreshHoveredLink();
+      this.cursorOn = true;
+      this.requestRender();
+    };
+    onDevicePixelRatioChange = () => {
+      this.watchDevicePixelRatio();
+      this.fit();
+    };
+    watchDevicePixelRatio() {
+      this.dprMedia?.removeEventListener("change", this.onDevicePixelRatioChange);
+      this.dprMedia = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+      this.dprMedia.addEventListener("change", this.onDevicePixelRatioChange);
+    }
+    primeCopy(selection) {
+      this.primedCopySelection = selection;
+      primeTerminalCopyInput(this.input, selection);
+    }
+    clearPrimedCopy() {
+      clearPrimedTerminalCopyInput(this.input, this.primedCopySelection);
+      this.primedCopySelection = "";
+    }
+    onCopyEvent = (event) => {
+      const selection = this.hasSelection() ? this.getSelection() : this.input.value;
+      this.primeCopy(selection);
+      const result = applyTerminalCopyEvent(selection, event.clipboardData);
+      if (result.preventDefault) event.preventDefault();
+      if (result.claimWriteFallback) {
+        this.copyShortcutToken += 1;
+        if (this.clearSelectionAfterCopy) {
+          this.clearSelectionAfterCopy = false;
+          this.clearSelection();
+        }
+      }
+    };
+    onPaste = (event) => {
+      event.preventDefault();
+      const data = event.clipboardData?.getData("text/plain") ?? "";
+      if (data.length === 0) return;
+      this.pasteShortcutToken += 1;
+      this.options.onData(this.core.encodePaste(data));
+    };
+    onCompositionStart = () => {
+      this.clearPrimedCopy();
+      this.clearCompositionInputSuppression();
+      this.composing = true;
+    };
+    onCompositionEnd = (event) => {
+      this.composing = false;
+      const data = this.input.value || event.data;
+      if (data.length > 0) this.options.onData(data);
+      this.input.value = "";
+      this.compositionInputToSuppress = data;
+      this.compositionSuppressionTimer = window.setTimeout(() => {
+        this.compositionInputToSuppress = null;
+        this.compositionSuppressionTimer = null;
+      }, 100);
+    };
+    onInput = (event) => {
+      const inputEvent = event;
+      if (this.composing || inputEvent.isComposing) return;
+      const data = this.input.value || inputEvent.data || "";
+      if (data === this.compositionInputToSuppress && isTerminalCompositionCommitInput(inputEvent)) {
+        this.clearCompositionInputSuppression();
+        this.input.value = "";
+        return;
+      }
+      this.clearCompositionInputSuppression();
+      if (data.length > 0) this.options.onData(data);
+      this.input.value = "";
+    };
+    clearCompositionInputSuppression() {
+      if (this.compositionSuppressionTimer !== null) {
+        window.clearTimeout(this.compositionSuppressionTimer);
+        this.compositionSuppressionTimer = null;
+      }
+      this.compositionInputToSuppress = null;
+    }
+    onPointerDown = (event) => {
+      this.focus();
+      if (shouldReportTerminalMouse(this.core.isMouseTracking(), event)) {
+        const button = ghosttyMouseButton(event.button);
+        if (button === null) return;
+        event.preventDefault();
+        event.stopPropagation();
+        this.clearHoveredLink("default");
+        this.mouseReportingPointerId = event.pointerId;
+        this.mouseReportingButton = button;
+        this.sendMouse("press", button, event);
+        this.canvas.setPointerCapture(event.pointerId);
+        return;
+      }
+      if (event.button !== 0) return;
+      const clickCount = this.recordSelectionClick(event);
+      const link = this.linkAt(event.clientX, event.clientY);
+      if (link && !event.shiftKey && clickCount === 1) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.linkActivationPointerId = event.pointerId;
+        this.linkActivationLink = link;
+        this.linkActivationOrigin = {
+          x: event.clientX,
+          y: event.clientY,
+          clickCount
+        };
+        this.canvas.setPointerCapture(event.pointerId);
+        return;
+      }
+      this.clearHoveredLink();
+      this.beginSelection(event, clickCount);
+      this.canvas.setPointerCapture(event.pointerId);
+    };
+    recordSelectionClick(event) {
+      this.selectionClickSequence = advanceTerminalSelectionClickSequence(
+        this.selectionClickSequence,
+        event
+      );
+      return this.selectionClickSequence.count;
+    }
+    beginSelection(event, clickCount) {
+      const cell = this.cellAt(event.clientX, event.clientY);
+      this.selectionMoved = false;
+      this.selectionMode = clickCount >= 3 ? "line" : clickCount === 2 ? "word" : "cell";
+      const range = this.selectionMode === "line" ? this.core.selectLine(cell.x, cell.y) : this.selectionMode === "word" ? this.core.selectWord(cell.x, cell.y) : null;
+      if (range) {
+        this.selectionBase = range.screen;
+        this.selectionEnd = range.viewport.end;
+        this.selectionAnchorScreen = range.screen.start;
+        this.selectionEndScreen = range.screen.end;
+        this.options.onSelectionChange();
+      } else {
+        this.selectionMode = "cell";
+        this.selectionBase = null;
+        this.selectionEnd = cell;
+        const screen = this.core.viewportPointToScreen(cell.x, cell.y);
+        this.selectionAnchorScreen = screen;
+        this.selectionEndScreen = screen;
+        if (screen) {
+          this.core.setSelection({ ...screen, tag: 2 }, { ...screen, tag: 2 });
+        } else {
+          this.core.setSelection(cell, cell);
+        }
+      }
+      this.forceFullRender = true;
+      this.requestRender();
+    }
+    onPointerMove = (event) => {
+      if (this.linkActivationPointerId === event.pointerId) {
+        const origin = this.linkActivationOrigin;
+        if (origin === null || Math.hypot(event.clientX - origin.x, event.clientY - origin.y) <= TERMINAL_LINK_DRAG_THRESHOLD_PX) {
+          return;
+        }
+        this.linkActivationPointerId = null;
+        this.linkActivationLink = null;
+        this.linkActivationOrigin = null;
+        this.clearHoveredLink();
+        this.beginSelection(
+          {
+            clientX: origin.x,
+            clientY: origin.y
+          },
+          origin.clickCount
+        );
+      }
+      const anyEventTracking = this.synchronizeMouseTrackingState();
+      if (this.mouseReportingPointerId === event.pointerId || shouldReportTerminalMouse(anyEventTracking, event)) {
+        event.preventDefault();
+        this.hoverPointer = { x: event.clientX, y: event.clientY };
+        this.setHoveredLink(null);
+        this.canvas.style.cursor = "default";
+        this.sendMouse("motion", this.buttonFromButtons(event.buttons), event);
+        return;
+      }
+      this.lastMouseMotionData = "";
+      if (!this.selectionAnchorScreen || !this.canvas.hasPointerCapture(event.pointerId)) {
+        this.updateHoverCursor(event);
+        return;
+      }
+      this.clearHoveredLink();
+      this.selectionPointer = { x: event.clientX, y: event.clientY };
+      const bounds = this.canvas.getBoundingClientRect();
+      this.setSelectionAutoscroll(
+        event.clientY < bounds.top ? -1 : event.clientY > bounds.bottom ? 1 : 0
+      );
+      const cell = this.cellAt(event.clientX, event.clientY);
+      if (cell.x === this.selectionEnd?.x && cell.y === this.selectionEnd.y) return;
+      this.extendSelectionTo(event.clientX, event.clientY);
+    };
+    extendSelectionTo(clientX, clientY) {
+      const anchorScreen = this.selectionAnchorScreen;
+      if (anchorScreen === null) return;
+      const cell = this.cellAt(clientX, clientY);
+      this.selectionMoved = true;
+      this.selectionEnd = cell;
+      const range = this.selectionMode === "line" ? this.core.selectLine(cell.x, cell.y) : this.selectionMode === "word" ? this.core.selectWord(cell.x, cell.y) : null;
+      const cellScreen = this.core.viewportPointToScreen(cell.x, cell.y);
+      if (cellScreen === null) return;
+      const base = this.selectionBase;
+      const beforeBase = base !== null && (cellScreen.y < base.start.y || cellScreen.y === base.start.y && cellScreen.x < base.start.x);
+      const anchor = base === null ? anchorScreen : beforeBase ? base.end : base.start;
+      const end = range === null ? cellScreen : beforeBase ? range.screen.start : range.screen.end;
+      this.selectionAnchorScreen = anchor;
+      this.selectionEndScreen = end;
+      this.core.setSelection({ ...anchor, tag: 2 }, { ...end, tag: 2 });
+      this.options.onSelectionChange();
+      this.forceFullRender = true;
+      this.requestRender();
+    }
+    setSelectionAutoscroll(delta) {
+      this.selectionScrollDelta = delta;
+      if (delta === 0) {
+        if (this.selectionScrollTimer !== null) {
+          window.clearInterval(this.selectionScrollTimer);
+          this.selectionScrollTimer = null;
+        }
+        return;
+      }
+      if (this.selectionScrollTimer !== null) return;
+      this.selectionScrollTimer = window.setInterval(() => {
+        if (this.disposed || this.selectionScrollDelta === 0) return;
+        this.scrollViewport(this.selectionScrollDelta);
+        const pointer = this.selectionPointer;
+        if (pointer) this.extendSelectionTo(pointer.x, pointer.y);
+      }, 80);
+    }
+    updateHoverCursor(event) {
+      this.hoverPointer = { x: event.clientX, y: event.clientY };
+      this.refreshHoveredLink();
+    }
+    onPointerLeave = () => {
+      this.lastMouseMotionData = "";
+      this.clearHoveredLink();
+    };
+    clearHoveredLink(cursor = "") {
+      this.hoverPointer = null;
+      this.setHoveredLink(null);
+      this.canvas.style.cursor = cursor;
+    }
+    refreshHoveredLink() {
+      const pointer = this.hoverPointer;
+      const link = pointer ? this.linkAt(pointer.x, pointer.y) : null;
+      this.setHoveredLink(link);
+    }
+    setHoveredLink(link) {
+      const previous = this.hoveredLink;
+      const unchanged = previous?.text === link?.text && previous?.range.start.x === link?.range.start.x && previous?.range.start.y === link?.range.start.y && previous?.range.end.x === link?.range.end.x && previous?.range.end.y === link?.range.end.y;
+      this.canvas.style.cursor = link ? "pointer" : "";
+      if (unchanged) return;
+      this.hoveredLink = link;
+      this.forceFullRender = true;
+      this.requestRender();
+    }
+    onPointerUp = (event) => {
+      this.setSelectionAutoscroll(0);
+      if (this.linkActivationPointerId === event.pointerId) {
+        event.preventDefault();
+        event.stopPropagation();
+        const link = this.linkActivationLink;
+        this.linkActivationPointerId = null;
+        this.linkActivationLink = null;
+        this.linkActivationOrigin = null;
+        if (this.canvas.hasPointerCapture(event.pointerId)) {
+          this.canvas.releasePointerCapture(event.pointerId);
+        }
+        if (event.type !== "pointercancel") {
+          if (link && isSameTerminalLink(link, this.linkAt(event.clientX, event.clientY))) {
+            this.options.onLinkActivate(link.text, event);
+          }
+        }
+        return;
+      }
+      if (this.mouseReportingPointerId === event.pointerId) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.sendMouse("release", this.mouseReportingButton, event);
+        this.mouseReportingPointerId = null;
+        this.mouseReportingButton = null;
+        if (this.canvas.hasPointerCapture(event.pointerId)) {
+          this.canvas.releasePointerCapture(event.pointerId);
+        }
+        if (event.type === "pointercancel") {
+          this.clearHoveredLink();
+        } else {
+          this.hoverPointer = { x: event.clientX, y: event.clientY };
+          this.refreshHoveredLink();
+        }
+        return;
+      }
+      if (this.canvas.hasPointerCapture(event.pointerId)) {
+        this.canvas.releasePointerCapture(event.pointerId);
+      }
+      if (event.button !== 0) return;
+      if (!this.selectionMoved && this.selectionMode === "cell") {
+        this.clearSelection();
+      }
+      this.options.onSelectionChange();
+    };
+    onWheel = (event) => {
+      if (event.deltaY === 0) return;
+      event.preventDefault();
+      const delta = terminalWheelDeltaRows(
+        event,
+        this.metrics.height,
+        this.rows,
+        this.wheelRemainder
+      );
+      this.wheelRemainder = delta.remainder;
+      if (delta.rows === 0) return;
+      const magnitude = Math.abs(delta.rows);
+      if (shouldReportTerminalMouse(this.core.isMouseTracking(), event)) {
+        const button = delta.rows < 0 ? 4 : 5;
+        for (let index = 0; index < magnitude; index += 1) {
+          this.sendMouse("press", button, event);
+        }
+        return;
+      }
+      if (this.core.isAlternateScreen()) {
+        this.options.onData(terminalWheelArrowData(delta.rows, this.core.isApplicationCursorKeys()));
+        return;
+      }
+      this.scrollViewport(delta.rows);
+    };
+    onMouseDown = (event) => {
+      if (event.button === 0) event.preventDefault();
+      this.focus();
+    };
+    onContextMenu = (event) => {
+      if (shouldReportTerminalMouse(this.core.isMouseTracking(), event)) {
+        event.preventDefault();
+        return;
+      }
+      this.options.onContextMenu?.(event);
+    };
+    onScrollbarPointerDown = (event) => {
+      if (event.button !== 0) return;
+      const state2 = this.readScrollbarState();
+      if (state2 === null) return;
+      const bounds = this.scrollbar.getBoundingClientRect();
+      const geometry = terminalScrollbarGeometry(state2, bounds.height);
+      if (geometry === null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.scrollbarPointerId = event.pointerId;
+      this.scrollbarPointerOffset = event.target === this.scrollbarThumb ? event.clientY - bounds.top - geometry.thumbTop : geometry.thumbHeight / 2;
+      this.scrollbar.setPointerCapture(event.pointerId);
+      this.scrollbarToPointer(event.clientY, bounds);
+    };
+    onScrollbarPointerMove = (event) => {
+      if (event.pointerId !== this.scrollbarPointerId || this.scrollbarState === null) return;
+      event.preventDefault();
+      this.scrollbarToPointer(event.clientY, this.scrollbar.getBoundingClientRect());
+    };
+    onScrollbarPointerUp = (event) => {
+      if (event.pointerId !== this.scrollbarPointerId) return;
+      event.preventDefault();
+      this.scrollbarPointerId = null;
+      if (this.scrollbar.hasPointerCapture(event.pointerId)) {
+        this.scrollbar.releasePointerCapture(event.pointerId);
+      }
+    };
+    onScrollbarKeyDown = (event) => {
+      const state2 = this.readScrollbarState();
+      if (state2 === null) return;
+      let delta = 0;
+      switch (event.key) {
+        case "ArrowUp":
+          delta = -1;
+          break;
+        case "ArrowDown":
+          delta = 1;
+          break;
+        case "PageUp":
+          delta = -Math.max(1, state2.len);
+          break;
+        case "PageDown":
+          delta = Math.max(1, state2.len);
+          break;
+        case "Home":
+          delta = -state2.offset;
+          break;
+        case "End":
+          delta = state2.total - state2.len - state2.offset;
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      this.scrollViewport(delta);
+    };
+    installEvents() {
+      this.input.addEventListener("keydown", this.onKeyDown);
+      this.input.addEventListener("keyup", this.onKeyUp);
+      this.input.addEventListener("focus", this.onFocus);
+      this.input.addEventListener("blur", this.onBlur);
+      this.input.addEventListener("input", this.onInput);
+      this.input.addEventListener("paste", this.onPaste);
+      this.input.addEventListener("copy", this.onCopyEvent);
+      this.input.addEventListener("compositionstart", this.onCompositionStart);
+      this.input.addEventListener("compositionend", this.onCompositionEnd);
+      this.canvas.addEventListener("pointerdown", this.onPointerDown);
+      this.canvas.addEventListener("pointermove", this.onPointerMove);
+      this.canvas.addEventListener("pointerleave", this.onPointerLeave);
+      this.canvas.addEventListener("pointerup", this.onPointerUp);
+      this.canvas.addEventListener("pointercancel", this.onPointerUp);
+      this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
+      this.canvas.addEventListener("mousedown", this.onMouseDown);
+      this.canvas.addEventListener("contextmenu", this.onContextMenu);
+      this.scrollbar.addEventListener("pointerdown", this.onScrollbarPointerDown);
+      this.scrollbar.addEventListener("pointermove", this.onScrollbarPointerMove);
+      this.scrollbar.addEventListener("pointerup", this.onScrollbarPointerUp);
+      this.scrollbar.addEventListener("pointercancel", this.onScrollbarPointerUp);
+      this.scrollbar.addEventListener("keydown", this.onScrollbarKeyDown);
+    }
+    removeEvents() {
+      this.input.removeEventListener("keydown", this.onKeyDown);
+      this.input.removeEventListener("keyup", this.onKeyUp);
+      this.input.removeEventListener("focus", this.onFocus);
+      this.input.removeEventListener("blur", this.onBlur);
+      this.input.removeEventListener("input", this.onInput);
+      this.input.removeEventListener("paste", this.onPaste);
+      this.input.removeEventListener("copy", this.onCopyEvent);
+      this.input.removeEventListener("compositionstart", this.onCompositionStart);
+      this.input.removeEventListener("compositionend", this.onCompositionEnd);
+      this.canvas.removeEventListener("pointerdown", this.onPointerDown);
+      this.canvas.removeEventListener("pointermove", this.onPointerMove);
+      this.canvas.removeEventListener("pointerleave", this.onPointerLeave);
+      this.canvas.removeEventListener("pointerup", this.onPointerUp);
+      this.canvas.removeEventListener("pointercancel", this.onPointerUp);
+      this.canvas.removeEventListener("wheel", this.onWheel);
+      this.canvas.removeEventListener("mousedown", this.onMouseDown);
+      this.canvas.removeEventListener("contextmenu", this.onContextMenu);
+      this.scrollbar.removeEventListener("pointerdown", this.onScrollbarPointerDown);
+      this.scrollbar.removeEventListener("pointermove", this.onScrollbarPointerMove);
+      this.scrollbar.removeEventListener("pointerup", this.onScrollbarPointerUp);
+      this.scrollbar.removeEventListener("pointercancel", this.onScrollbarPointerUp);
+      this.scrollbar.removeEventListener("keydown", this.onScrollbarKeyDown);
+    }
+    scrollViewport(deltaRows) {
+      let delta = Math.trunc(deltaRows);
+      const state2 = this.readScrollbarState();
+      if (state2 !== null) {
+        const maxOffset = Math.max(0, state2.total - state2.len);
+        const offset = Math.max(0, Math.min(state2.offset + delta, maxOffset));
+        delta = offset - state2.offset;
+        this.scrollbarState = { ...state2, offset };
+      }
+      if (delta === 0) return;
+      this.core.scroll(delta);
+      this.forceFullRender = true;
+      this.scrollbarDirty = true;
+      this.requestRender();
+    }
+    scrollbarToPointer(clientY, bounds) {
+      const state2 = this.scrollbarState;
+      if (state2 === null) return;
+      const offset = terminalScrollbarOffsetAtPointer(
+        state2,
+        bounds.height,
+        clientY - bounds.top,
+        this.scrollbarPointerOffset
+      );
+      this.scrollViewport(offset - state2.offset);
+    }
+    updateScrollbar() {
+      const state2 = this.readScrollbarState();
+      const geometry = state2 === null ? null : terminalScrollbarGeometry(
+        state2,
+        Math.max(0, this.mount.clientHeight - CONTENT_PADDING * 2)
+      );
+      this.scrollbar.hidden = geometry === null;
+      if (state2 === null || geometry === null) return;
+      this.scrollbar.setAttribute("aria-valuemin", "0");
+      this.scrollbar.setAttribute("aria-valuemax", String(geometry.maxOffset));
+      this.scrollbar.setAttribute(
+        "aria-valuenow",
+        String(Math.max(0, Math.min(state2.offset, geometry.maxOffset)))
+      );
+      this.scrollbarThumb.style.height = `${geometry.thumbHeight}px`;
+      this.scrollbarThumb.style.transform = `translateY(${geometry.thumbTop}px)`;
+    }
+    readScrollbarState() {
+      const state2 = this.core.scrollbarState();
+      this.scrollbarState = state2;
+      return state2;
+    }
+    requestRender() {
+      if (this.disposed || !this.visible || !this.hasSize || this.frame !== 0) return;
+      this.frame = window.requestAnimationFrame(() => {
+        this.frame = 0;
+        this.renderFrame();
+      });
+    }
+    cancelRender() {
+      if (this.frame !== 0) {
+        window.cancelAnimationFrame(this.frame);
+        this.frame = 0;
+      }
+      if (this.cursorTimer !== null) {
+        window.clearTimeout(this.cursorTimer);
+        this.cursorTimer = null;
+      }
+    }
+    renderFrame() {
+      if (this.disposed || !this.visible) return;
+      if (this.frame !== 0) {
+        window.cancelAnimationFrame(this.frame);
+        this.frame = 0;
+      }
+      if (this.mount.clientWidth === 0 || this.mount.clientHeight === 0) {
+        this.hasSize = false;
+        this.forceFullRender = true;
+        this.cancelRender();
+        return;
+      }
+      this.snapshot = this.core.snapshot();
+      if (!this.blinkEnabled()) this.cursorOn = true;
+      const scrollState = this.readScrollbarState();
+      const anchorBottom = scrollState !== null && scrollState.total > scrollState.len;
+      const nextOriginY = terminalContentOriginY(
+        this.mountHeight,
+        CONTENT_PADDING,
+        this.rows,
+        this.metrics.height,
+        anchorBottom
+      );
+      if (nextOriginY !== this.originY) {
+        this.originY = nextOriginY;
+        this.forceFullRender = true;
+      }
+      this.refreshHoveredLink();
+      renderGhosttySnapshot({
+        context: this.context,
+        snapshot: this.snapshot,
+        metrics: this.metrics,
+        fontSize: this.fontSize,
+        fontFamily: this.fontFamily,
+        padding: CONTENT_PADDING,
+        originY: this.originY,
+        forceFull: this.forceFullRender,
+        cursorOn: this.cursorOn,
+        previousCursorY: this.renderedCursorY,
+        focused: this.focused,
+        hoveredLinkRange: this.hoveredLink?.range ?? null,
+        ...this.theme.selectionBackground !== void 0 ? { selectionBackground: this.theme.selectionBackground } : {}
+      });
+      this.positionInput();
+      this.renderedCursorY = this.cursorOn && this.snapshot.cursorVisible && this.snapshot.cursorY >= 0 ? this.snapshot.cursorY : null;
+      if (this.scrollbarDirty) {
+        this.scrollbarDirty = false;
+        this.updateScrollbar();
+      }
+      this.forceFullRender = false;
+      this.scheduleCursorBlink();
+    }
+    scheduleCursorBlink() {
+      if (this.cursorTimer !== null) window.clearTimeout(this.cursorTimer);
+      this.cursorTimer = null;
+      if (!this.blinkEnabled()) return;
+      this.cursorTimer = window.setTimeout(() => {
+        this.cursorTimer = null;
+        this.cursorOn = !this.cursorOn;
+        this.requestRender();
+      }, CURSOR_BLINK_INTERVAL_MS);
+    }
+    blinkEnabled() {
+      const snapshot = this.snapshot;
+      if (!snapshot || !this.visible || !this.hasSize) return false;
+      return shouldBlinkTerminalCursor({
+        focused: this.focused,
+        cursorBlinking: snapshot.cursorBlinking,
+        cursorVisible: snapshot.cursorVisible,
+        reducedMotion: this.reducedMotionMedia?.matches ?? false
+      });
+    }
+    positionInput() {
+      const snapshot = this.snapshot;
+      if (!snapshot || !snapshot.cursorVisible || snapshot.cursorX < 0 || snapshot.cursorY < 0) {
+        return;
+      }
+      const left = CONTENT_PADDING + snapshot.cursorX * this.metrics.width;
+      const top = this.originY + snapshot.cursorY * this.metrics.height;
+      if (left === this.inputLeft && top === this.inputTop) return;
+      this.inputLeft = left;
+      this.inputTop = top;
+      this.input.style.left = `${left}px`;
+      this.input.style.top = `${top}px`;
+      this.input.style.height = `${this.metrics.height}px`;
+    }
+    cellAt(clientX, clientY) {
+      const bounds = this.canvas.getBoundingClientRect();
+      return {
+        x: Math.max(
+          0,
+          Math.min(
+            this.cols - 1,
+            Math.floor((clientX - bounds.left - CONTENT_PADDING) / this.metrics.width)
+          )
+        ),
+        y: Math.max(
+          0,
+          Math.min(
+            this.rows - 1,
+            Math.floor((clientY - bounds.top - this.originY) / this.metrics.height)
+          )
+        )
+      };
+    }
+    linkAt(clientX, clientY) {
+      if (!this.snapshot) return null;
+      const cell = terminalGridCellAt({
+        bounds: this.canvas.getBoundingClientRect(),
+        clientX,
+        clientY,
+        cols: this.cols,
+        rows: this.rows,
+        metrics: this.metrics,
+        padding: CONTENT_PADDING,
+        originY: this.originY
+      });
+      if (!cell) return null;
+      const explicitHyperlink = this.core.hyperlinkAt(cell.x, cell.y);
+      if (explicitHyperlink) {
+        const start = { ...cell };
+        const end = { ...cell };
+        while (true) {
+          const previous = start.x > 0 ? { x: start.x - 1, y: start.y } : start.y > 0 && this.snapshot.rowData[start.y]?.isWrapContinuation ? { x: this.cols - 1, y: start.y - 1 } : null;
+          if (!previous || this.core.hyperlinkAt(previous.x, previous.y) !== explicitHyperlink) break;
+          start.x = previous.x;
+          start.y = previous.y;
+        }
+        while (true) {
+          const next = end.x + 1 < this.cols ? { x: end.x + 1, y: end.y } : end.y + 1 < this.rows && this.snapshot.rowData[end.y]?.wrapsToNext ? { x: 0, y: end.y + 1 } : null;
+          if (!next || this.core.hyperlinkAt(next.x, next.y) !== explicitHyperlink) break;
+          end.x = next.x;
+          end.y = next.y;
+        }
+        return {
+          text: explicitHyperlink,
+          range: { start, end }
+        };
+      }
+      return terminalLinkAtPositionWithRange(this.snapshot.rowData, cell.y, cell.x);
+    }
+    sendMouse(action, button, event) {
+      const bounds = this.canvas.getBoundingClientRect();
+      const data = this.core.encodeMouse({
+        action,
+        button,
+        mods: (event.shiftKey ? 1 : 0) | (event.ctrlKey ? 1 << 1 : 0) | (event.altKey ? 1 << 2 : 0) | (event.metaKey ? 1 << 3 : 0),
+        x: Math.max(0, event.clientX - bounds.left),
+        y: Math.max(0, event.clientY - bounds.top),
+        screenWidth: bounds.width,
+        screenHeight: bounds.height,
+        cellWidth: this.metrics.width,
+        cellHeight: this.metrics.height,
+        paddingLeft: CONTENT_PADDING,
+        paddingRight: CONTENT_PADDING,
+        paddingTop: this.originY,
+        paddingBottom: Math.max(0, bounds.height - this.originY - this.rows * this.metrics.height),
+        anyButtonPressed: event.buttons !== 0
+      });
+      const resolution = resolveTerminalMouseData(action, data, this.lastMouseMotionData);
+      this.lastMouseMotionData = resolution.nextMotionData;
+      if (resolution.send) this.options.onData(data);
+    }
+    synchronizeMouseTrackingState() {
+      const tracking = this.core.isMouseAnyEventTracking();
+      const state2 = resolveTerminalMouseTrackingState(
+        this.mouseAnyEventTracking,
+        tracking,
+        this.lastMouseMotionData
+      );
+      this.mouseAnyEventTracking = state2.tracking;
+      this.lastMouseMotionData = state2.motionData;
+      return tracking;
+    }
+    buttonFromButtons(buttons) {
+      if ((buttons & 1) !== 0) return 1;
+      if ((buttons & 4) !== 0) return 3;
+      if ((buttons & 2) !== 0) return 2;
+      if ((buttons & 8) !== 0) return 4;
+      if ((buttons & 16) !== 0) return 5;
+      return null;
+    }
+  };
+
+  // ghostty/surfaceKeys.ts
+  var TERMINAL_WORD_BACKWARD = "\x1Bb";
+  var TERMINAL_WORD_FORWARD = "\x1Bf";
+  var TERMINAL_LINE_START = "";
+  var TERMINAL_LINE_END = "";
+  var TERMINAL_DELETE_TO_LINE_START = "";
+  function normalizeEventKey(key) {
+    const normalized = key.toLowerCase();
+    if (normalized === "esc") return "escape";
+    return normalized;
+  }
+  function isTerminalClearShortcut(event, platform = typeof navigator === "undefined" ? "" : navigator.platform) {
+    if (event.type !== void 0 && event.type !== "keydown") {
+      return false;
+    }
+    const key = event.key.toLowerCase();
+    if (key === "l" && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+      return true;
+    }
+    return isMacPlatform(platform) && key === "k" && event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
+  }
+  function terminalDeleteShortcutData(event, platform = typeof navigator === "undefined" ? "" : navigator.platform) {
+    if (event.type !== void 0 && event.type !== "keydown") {
+      return null;
+    }
+    if (!isMacPlatform(platform)) {
+      return null;
+    }
+    const key = normalizeEventKey(event.key);
+    if (key !== "backspace") {
+      return null;
+    }
+    return event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey ? TERMINAL_DELETE_TO_LINE_START : null;
+  }
+  function terminalNavigationShortcutData(event, platform = typeof navigator === "undefined" ? "" : navigator.platform) {
+    if (event.type !== void 0 && event.type !== "keydown") {
+      return null;
+    }
+    if (event.shiftKey) return null;
+    const key = normalizeEventKey(event.key);
+    if (key !== "arrowleft" && key !== "arrowright") {
+      return null;
+    }
+    const moveWord = key === "arrowleft" ? TERMINAL_WORD_BACKWARD : TERMINAL_WORD_FORWARD;
+    const moveLine = key === "arrowleft" ? TERMINAL_LINE_START : TERMINAL_LINE_END;
+    if (isMacPlatform(platform)) {
+      if (event.altKey && !event.metaKey && !event.ctrlKey) {
+        return moveWord;
+      }
+      if (event.metaKey && !event.altKey && !event.ctrlKey) {
+        return moveLine;
+      }
+      return null;
+    }
+    if (event.ctrlKey && !event.metaKey && !event.altKey) {
+      return moveWord;
+    }
+    if (event.altKey && !event.metaKey && !event.ctrlKey) {
+      return moveWord;
+    }
+    return null;
+  }
+
+  // terminalTheme.ts
+  function parseTerminalColor(value, fallback) {
+    if (typeof document === "undefined") return fallback;
+    const canvas = document.createElement("canvas");
+    canvas.width = 1;
+    canvas.height = 1;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return fallback;
+    context.clearRect(0, 0, 1, 1);
+    context.fillStyle = value;
+    context.fillRect(0, 0, 1, 1);
+    const [red, green, blue, alpha] = context.getImageData(0, 0, 1, 1).data;
+    if (alpha === 0) return fallback;
+    return {
+      r: red ?? fallback.r,
+      g: green ?? fallback.g,
+      b: blue ?? fallback.b
+    };
+  }
+  function normalizeComputedColor(value, fallback) {
+    const normalizedValue = value?.trim().toLowerCase();
+    if (!normalizedValue || normalizedValue === "transparent" || normalizedValue === "rgba(0, 0, 0, 0)" || normalizedValue === "rgba(0 0 0 / 0)") {
+      return fallback;
+    }
+    return value ?? fallback;
+  }
+  function readThemeColor(styles, variable, fallback) {
+    return normalizeComputedColor(styles.getPropertyValue(variable), fallback);
+  }
+  function terminalThemeFromApp(mountElement) {
+    if (typeof document === "undefined") {
+      return {
+        background: { r: 255, g: 255, b: 255 },
+        foreground: { r: 28, g: 33, b: 41 },
+        cursor: { r: 38, g: 56, b: 78 }
+      };
+    }
+    const themeStyles = getComputedStyle(mountElement ?? document.body);
+    const colorScheme = themeStyles.colorScheme;
+    const isDark = colorScheme === "dark" ? true : colorScheme === "light" ? false : document.documentElement.classList.contains("dark");
+    const fallbackBackground = isDark ? "rgb(14, 18, 24)" : "rgb(255, 255, 255)";
+    const fallbackForeground = isDark ? "rgb(237, 241, 247)" : "rgb(28, 33, 41)";
+    const bodyStyles = getComputedStyle(document.body);
+    const rootThemeStyles = getComputedStyle(document.documentElement);
+    const background = normalizeComputedColor(
+      themeStyles.backgroundColor,
+      normalizeComputedColor(bodyStyles.backgroundColor, fallbackBackground)
+    );
+    const foreground = normalizeComputedColor(
+      themeStyles.color,
+      normalizeComputedColor(bodyStyles.color, fallbackForeground)
+    );
+    const terminalBackground = readThemeColor(
+      themeStyles,
+      "--terminal-background",
+      readThemeColor(rootThemeStyles, "--terminal-background", background)
+    );
+    const terminalForeground = readThemeColor(
+      themeStyles,
+      "--terminal-foreground",
+      readThemeColor(rootThemeStyles, "--terminal-foreground", foreground)
+    );
+    const terminalCursor = readThemeColor(
+      themeStyles,
+      "--terminal-cursor",
+      isDark ? "rgb(180, 203, 255)" : "rgb(38, 56, 78)"
+    );
+    const terminalSelection = readThemeColor(
+      themeStyles,
+      "--terminal-selection-background",
+      isDark ? "rgba(180, 203, 255, 0.25)" : "rgba(37, 63, 99, 0.2)"
+    );
+    return {
+      background: parseTerminalColor(
+        terminalBackground,
+        isDark ? { r: 14, g: 18, b: 24 } : { r: 255, g: 255, b: 255 }
+      ),
+      foreground: parseTerminalColor(
+        terminalForeground,
+        isDark ? { r: 237, g: 241, b: 247 } : { r: 28, g: 33, b: 41 }
+      ),
+      cursor: parseTerminalColor(
+        terminalCursor,
+        isDark ? { r: 180, g: 203, b: 255 } : { r: 38, g: 56, b: 78 }
+      ),
+      selectionBackground: terminalSelection
+    };
+  }
+
   // ../../shared/src/terminalLabels.ts
   function getTerminalLabel(terminalId) {
     const numericSuffix = /^term(?:inal)?-(\d+)$/i.exec(terminalId)?.[1];
@@ -5394,6 +7614,197 @@ var __t3Client = (() => {
     return `term-${nextIndex}`;
   }
 
+  // inputQueue.ts
+  var TERMINAL_INPUT_SERIALIZED_BUDGET = 48 * 1024;
+  var TERMINAL_INPUT_PENDING_BUDGET = 256 * 1024;
+  var TERMINAL_INPUT_WRITE_TIMEOUT_MS = 3e4;
+  var textEncoder = new TextEncoder();
+  function serializedWriteBytes(terminalId, data) {
+    return textEncoder.encode(JSON.stringify({ terminalId, data })).byteLength;
+  }
+  function serializedStringBytes(data) {
+    return textEncoder.encode(JSON.stringify(data)).byteLength;
+  }
+  function serializedHead(data, maxEscapedBytes) {
+    if (maxEscapedBytes <= 0 || data.length === 0) return "";
+    let used = 0;
+    let units = 0;
+    for (const char of data) {
+      const cost = textEncoder.encode(JSON.stringify(char)).byteLength - 2;
+      if (used + cost > maxEscapedBytes) break;
+      used += cost;
+      units += char.length;
+    }
+    return data.slice(0, units);
+  }
+  var PRE_WRITE_FAILURES = [
+    "Terminal authority is unavailable.",
+    "Terminal session is unavailable in the requested workspace.",
+    "Terminal session cannot be inspected.",
+    "Terminal control is scoped to the requested workspace.",
+    "Terminal control takes the thread from the view context.",
+    "Terminal control requires a thread scope.",
+    "Terminal control method is unavailable.",
+    "Invalid terminal control request.",
+    "Capability denied",
+    "Capability unavailable",
+    "View is inactive",
+    "Too many pending view calls"
+  ];
+  function isKnownNonWriteError(error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return PRE_WRITE_FAILURES.some((known) => message.includes(known));
+  }
+  var TerminalInputQueue = class {
+    #write;
+    #onChange;
+    #serializedBudget;
+    #pendingBudget;
+    #writeTimeoutMs;
+    #overhead;
+    #pending = [];
+    #pendingSerialized = 0;
+    #ready = true;
+    #draining = false;
+    #stopped = null;
+    #disposed = false;
+    #sendTimer;
+    constructor(options) {
+      this.#write = options.write;
+      this.#onChange = options.onChange;
+      this.#serializedBudget = options.serializedBudget ?? TERMINAL_INPUT_SERIALIZED_BUDGET;
+      this.#pendingBudget = options.pendingBudget ?? TERMINAL_INPUT_PENDING_BUDGET;
+      this.#writeTimeoutMs = options.writeTimeoutMs ?? TERMINAL_INPUT_WRITE_TIMEOUT_MS;
+      this.#overhead = serializedWriteBytes(options.terminalId, "");
+    }
+    get state() {
+      return {
+        stopped: this.#stopped !== null,
+        message: this.#stopped?.message ?? null,
+        queuedCount: this.#pending.length,
+        queuedBytes: this.#pendingSerialized
+      };
+    }
+    enqueue(data) {
+      if (this.#disposed || this.#stopped !== null) return "dropped-stopped";
+      if (data.length === 0) return "accepted";
+      const serialized = serializedStringBytes(data);
+      if (this.#pendingSerialized + serialized > this.#pendingBudget) {
+        return "dropped-full";
+      }
+      this.#pending.push({ data, serialized });
+      this.#pendingSerialized += serialized;
+      this.#onChange?.();
+      void this.#drain();
+      return "accepted";
+    }
+    /** Gate draining while the session is starting; pending input accumulates. */
+    setReady(ready) {
+      if (this.#ready === ready) return;
+      this.#ready = ready;
+      if (ready) void this.#drain();
+    }
+    /** Explicit user resume after a stopped write; only post-resume input flows. */
+    resume() {
+      if (this.#stopped === null) return;
+      this.#stopped = null;
+      this.#onChange?.();
+      void this.#drain();
+    }
+    /**
+     * New process epoch (restart/open/attach), close, or stream close: pending
+     * input is stale for the new incarnation and the stop reason no longer
+     * applies, so both clear. In-flight writes still evaluate normally.
+     */
+    reset() {
+      this.#pending = [];
+      this.#pendingSerialized = 0;
+      if (this.#stopped !== null) this.#stopped = null;
+      this.#onChange?.();
+    }
+    dispose() {
+      this.#disposed = true;
+      this.#pending = [];
+      this.#pendingSerialized = 0;
+      clearTimeout(this.#sendTimer);
+    }
+    /**
+     * Longest pending prefix whose serialized invocation fits the budget.
+     * Consumed items leave the queue before the write is sent — on an unknown
+     * outcome they are discarded, not requeued.
+     */
+    #takeBatch() {
+      const escapedBudget = this.#serializedBudget - this.#overhead;
+      const parts = [];
+      let used = 0;
+      let first = true;
+      while (this.#pending.length > 0) {
+        const item = this.#pending[0];
+        const escaped = item.serialized - 2;
+        if (used + escaped <= escapedBudget) {
+          parts.push(item.data);
+          used += escaped;
+          this.#pendingSerialized -= item.serialized;
+          this.#pending.shift();
+          first = false;
+          continue;
+        }
+        if (!first) break;
+        const head = serializedHead(item.data, escapedBudget);
+        if (head.length === 0) {
+          this.#pendingSerialized -= item.serialized;
+          this.#pending.shift();
+          continue;
+        }
+        const rest = item.data.slice(head.length);
+        this.#pending[0] = { data: rest, serialized: serializedStringBytes(rest) };
+        this.#pendingSerialized += this.#pending[0].serialized - item.serialized;
+        parts.push(head);
+        break;
+      }
+      return parts.join("");
+    }
+    async #send(data) {
+      const timeout = new Promise((_resolve, reject) => {
+        this.#sendTimer = setTimeout(
+          () => reject(new Error("Terminal write timed out")),
+          this.#writeTimeoutMs
+        );
+      });
+      try {
+        await Promise.race([this.#write(data), timeout]);
+      } finally {
+        clearTimeout(this.#sendTimer);
+        this.#sendTimer = void 0;
+      }
+    }
+    async #drain() {
+      if (!this.#ready || this.#stopped !== null || this.#draining || this.#disposed) return;
+      this.#draining = true;
+      try {
+        while (this.#ready && this.#stopped === null && !this.#disposed && this.#pending.length > 0) {
+          const batch = this.#takeBatch();
+          if (batch.length === 0) continue;
+          try {
+            await this.#send(batch);
+          } catch (error) {
+            this.#pending = [];
+            this.#pendingSerialized = 0;
+            const message = error instanceof Error ? error.message : "Terminal write failed";
+            this.#stopped = isKnownNonWriteError(error) ? { message: `Input stopped \u2014 ${message}`, outcome: "known" } : {
+              message: `Input stopped \u2014 the terminal may have received partial input (${message}). Resume to continue typing.`,
+              outcome: "unknown"
+            };
+            break;
+          }
+        }
+      } finally {
+        this.#draining = false;
+        this.#onChange?.();
+      }
+    }
+  };
+
   // viewModel.ts
   var TERMINAL_BUFFER_MAX_BYTES = 512 * 1024;
   var OVERFLOW_RESUBSCRIBE_WINDOW_MS = 1e4;
@@ -5409,11 +7820,11 @@ var __t3Client = (() => {
     };
   };
   var isResumableOutputClose = (reason, overflowAttempts) => reason === "identity-changed" || reason === "overflow" && overflowAttempts <= OVERFLOW_RESUBSCRIBE_MAX;
-  var textEncoder = new TextEncoder();
-  var utf8Bytes = (value) => textEncoder.encode(value).byteLength;
+  var textEncoder2 = new TextEncoder();
+  var utf8Bytes = (value) => textEncoder2.encode(value).byteLength;
   function tailByBytes(value, maxBytes) {
     if (maxBytes <= 0) return "";
-    const encoded = textEncoder.encode(value);
+    const encoded = textEncoder2.encode(value);
     if (encoded.byteLength <= maxBytes) return value;
     let start = encoded.byteLength - maxBytes;
     while (start < encoded.length && (encoded[start] & 192) === 128) start += 1;
@@ -5572,22 +7983,6 @@ var __t3Client = (() => {
       return null;
     }
   }
-  var MAX_QUEUED_INPUT_BYTES = 64 * 1024;
-  var MAX_QUEUED_INPUT_WRITES = 128;
-  var MAX_WRITE_DATA_LENGTH = 65536;
-  var newTab = () => ({
-    meta: null,
-    starting: false,
-    queue: [],
-    queueBytes: 0,
-    exiting: false,
-    exitBanner: null,
-    confirm: null,
-    error: null,
-    resizeInFlight: null,
-    resizePending: null,
-    resizeSent: null
-  });
   var clampDimension = (value, max) => Number.isSafeInteger(value) && value >= 1 && value <= max ? value : null;
   var TerminalPanel = class {
     #control;
@@ -5607,7 +8002,7 @@ var __t3Client = (() => {
       this.#onChange = options.onChange;
       this.#ids = normalizeTerminalIds(options.restored?.terminalIds ?? []);
       this.#active = resolveActiveTerminalId(this.#ids, options.restored?.activeTerminalId ?? null);
-      for (const id2 of this.#ids) this.#tabs.set(id2, newTab());
+      for (const id2 of this.#ids) this.#tab(id2);
     }
     get snapshot() {
       return {
@@ -5626,7 +8021,9 @@ var __t3Client = (() => {
             exitBanner: tab.exitBanner,
             confirmAction: tab.confirm,
             error: tab.error,
-            queuedInputCount: tab.queue.length
+            queuedInputCount: tab.input.state.queuedCount,
+            inputStopped: tab.input.state.stopped,
+            inputMessage: tab.input.state.message
           };
         }),
         stream: this.#stream,
@@ -5643,13 +8040,29 @@ var __t3Client = (() => {
     #tab(terminalId) {
       let tab = this.#tabs.get(terminalId);
       if (!tab) {
-        tab = newTab();
+        tab = {
+          meta: null,
+          starting: false,
+          input: new TerminalInputQueue({
+            terminalId,
+            write: (data) => this.#control.write({ terminalId, data }),
+            onChange: () => this.#emit()
+          }),
+          exiting: false,
+          exitBanner: null,
+          confirm: null,
+          error: null,
+          resizeInFlight: null,
+          resizePending: null,
+          resizeSent: null
+        };
         this.#tabs.set(terminalId, tab);
         if (!this.#ids.includes(terminalId)) this.#ids = [...this.#ids, terminalId];
       }
       return tab;
     }
     #removeTab(terminalId) {
+      this.#tabs.get(terminalId)?.input.dispose();
       this.#tabs.delete(terminalId);
       this.#ids = this.#ids.filter((id2) => id2 !== terminalId);
       this.#active = resolveActiveTerminalId(this.#ids, this.#active);
@@ -5714,15 +8127,6 @@ var __t3Client = (() => {
       this.#panelError = message;
       this.#emit();
     }
-    /**
-     * A failed panel-level op outside the session stream — e.g. a dispatched
-     * keybinding command whose `t3.ui/panels` call the host rejected. The next
-     * stream transition overwrites it; it must not masquerade as stream state.
-     */
-    notePanelError(message) {
-      this.#panelError = message;
-      this.#emit();
-    }
     /** Open a fresh terminal; the client picks the id (#15). */
     async openTerminal() {
       const launch = this.#launch;
@@ -5739,6 +8143,8 @@ var __t3Client = (() => {
       const terminalId = nextTerminalId(this.allocatableTerminalIds);
       const tab = this.#tab(terminalId);
       tab.starting = true;
+      tab.input.reset();
+      tab.input.setReady(false);
       tab.error = null;
       this.#ids = [...this.#ids.filter((id2) => id2 !== terminalId), terminalId];
       this.#active = terminalId;
@@ -5753,12 +8159,13 @@ var __t3Client = (() => {
           ...launch.env !== void 0 ? { env: launch.env } : {}
         });
         tab.starting = false;
+        tab.input.setReady(true);
         this.#observeMeta(meta);
         await this.#drain(terminalId);
       } catch (error) {
         tab.starting = false;
-        tab.queue = [];
-        tab.queueBytes = 0;
+        tab.input.reset();
+        tab.input.setReady(true);
         tab.error = error instanceof Error ? error.message : "Terminal open failed";
         this.#emit();
       }
@@ -5771,6 +8178,7 @@ var __t3Client = (() => {
       if (!tab || !launch || tab.starting) return;
       if (tab.meta !== null && tab.meta.status !== "exited" && tab.meta.status !== "error") return;
       tab.starting = true;
+      tab.input.setReady(false);
       tab.exiting = false;
       tab.exitBanner = null;
       tab.error = null;
@@ -5786,57 +8194,46 @@ var __t3Client = (() => {
           ...launch.env !== void 0 ? { env: launch.env } : {}
         });
         tab.starting = false;
+        tab.input.setReady(true);
         this.#observeMeta(meta);
         await this.#drain(terminalId);
       } catch (error) {
         tab.starting = false;
+        tab.input.setReady(true);
         tab.error = error instanceof Error ? error.message : "Terminal attach failed";
         this.#emit();
       }
     }
-    /** Flush queued input and the pending fit-resize after a start resolves. */
+    /** Flush the pending fit-resize after a start resolves. */
     async #drain(terminalId) {
       const tab = this.#tabs.get(terminalId);
       if (!tab) return;
-      const queued = tab.queue;
-      tab.queue = [];
-      tab.queueBytes = 0;
-      for (const data of queued) {
-        try {
-          await this.#control.write({ terminalId, data });
-        } catch (error) {
-          tab.error = error instanceof Error ? error.message : "Terminal write failed";
-          break;
-        }
-      }
       const pending = tab.resizePending;
       tab.resizePending = null;
       if (pending) await this.#sendResize(terminalId, pending);
       this.#emit();
     }
-    /** Type into a terminal; input sent while the session starts is queued. */
+    /**
+     * Type into a terminal. Batches by serialized invocation bytes and stops on
+     * an unknown write outcome — the queue owns ordering, bounds, and the
+     * input-stopped halt (B6); the panel only gates draining on `starting`.
+     */
     sendInput(terminalId, data) {
       const tab = this.#tabs.get(terminalId);
       if (!tab || data.length === 0 || this.#disposed) return;
-      if (data.length > MAX_WRITE_DATA_LENGTH) {
-        tab.error = "Input exceeds the 64 KiB write bound.";
+      const result = tab.input.enqueue(data);
+      if (result === "dropped-full") {
+        tab.error = "Input dropped: the pending-input queue is full.";
         this.#emit();
-        return;
       }
-      if (tab.starting) {
-        if (tab.queue.length >= MAX_QUEUED_INPUT_WRITES || tab.queueBytes + data.length > MAX_QUEUED_INPUT_BYTES) {
-          tab.error = "Input dropped: the pending-input queue is full.";
-        } else {
-          tab.queue.push(data);
-          tab.queueBytes += data.length;
-        }
-        this.#emit();
-        return;
-      }
-      this.#control.write({ terminalId, data }).catch((error) => {
-        tab.error = error instanceof Error ? error.message : "Terminal write failed";
-        this.#emit();
-      });
+    }
+    /** Explicit user resume after input-stopped. */
+    resumeInput(terminalId) {
+      this.#tabs.get(terminalId)?.input.resume();
+    }
+    /** Output stream signalled a new process epoch or lifecycle end — pending input is stale. */
+    resetInput(terminalId) {
+      this.#tabs.get(terminalId)?.input.reset();
     }
     /** Latest-wins resize: a new fit while one is in flight replaces the pending one. */
     resize(terminalId, cols, rows) {
@@ -5907,6 +8304,8 @@ var __t3Client = (() => {
         } else {
           if (!launch) throw new Error("Terminal requires a workspace scope.");
           tab.starting = true;
+          tab.input.reset();
+          tab.input.setReady(false);
           this.#emit();
           const meta = await this.#control.restart({
             terminalId,
@@ -5917,6 +8316,7 @@ var __t3Client = (() => {
             ...launch.env !== void 0 ? { env: launch.env } : {}
           });
           tab.starting = false;
+          tab.input.setReady(true);
           tab.exiting = false;
           tab.exitBanner = null;
           this.#observeMeta(meta);
@@ -5925,6 +8325,7 @@ var __t3Client = (() => {
         }
       } catch (error) {
         tab.starting = false;
+        tab.input.setReady(true);
         tab.error = error instanceof Error ? error.message : "Terminal action failed";
       }
       this.#emit();
@@ -5936,207 +8337,232 @@ var __t3Client = (() => {
     }
     dispose() {
       this.#disposed = true;
+      for (const tab of this.#tabs.values()) tab.input.dispose();
     }
   };
-  var TERMINAL_SURFACE_ID = "t3.terminal/view";
-  var TERMINAL_FOCUS_WHEN = `extension.${TERMINAL_SURFACE_ID}.focus`;
-  var TERMINAL_VIEW_COMMANDS = [
-    {
-      id: "toggle",
-      title: "Toggle terminal",
-      description: "Close this terminal panel.",
-      scope: "global",
-      defaultKey: "mod+j"
-    },
-    {
-      id: "new",
-      title: "New terminal",
-      scope: "surface",
-      defaultKey: "mod+n",
-      when: TERMINAL_FOCUS_WHEN
-    },
-    {
-      id: "close",
-      title: "Close terminal",
-      scope: "surface",
-      defaultKey: "mod+w",
-      when: TERMINAL_FOCUS_WHEN
-    }
-  ];
-  var TERMINAL_GLOBAL_COMMANDS = [
-    {
-      id: "toggle",
-      title: "Toggle terminal",
-      description: "Open the terminal panel, or close it when a terminal view answers.",
-      scope: "global",
-      defaultKey: "mod+j",
-      activation: { surfaceId: TERMINAL_SURFACE_ID, placement: "bottom-dock" }
-    }
-  ];
-  function dispatchTerminalCommand(commandId, actions) {
-    switch (commandId) {
-      case "toggle":
-        actions.toggleSurface();
-        return true;
-      case "new":
-        actions.newTerminal();
-        return true;
-      case "close":
-        actions.closeTerminal();
-        return true;
-      default:
-        return false;
-    }
-  }
-  async function registerPanelCommands(options) {
-    const api = bindApi(uiKeybindingsApi, options.client, options.context);
-    const response = await api.invoke(
-      "registerCommands",
-      { commands: TERMINAL_VIEW_COMMANDS },
-      options.signal
-    );
-    const release = () => {
-      void api.invoke(
-        "unregisterCommands",
-        { commandSetToken: response.commandSetToken },
-        AbortSignal.timeout(5e3)
-      ).catch(() => {
-      });
+
+  // vtAttachment.ts
+  var MAX_OUTPUT_CHUNK_DATA_LENGTH = 8192;
+  var MAX_OUTPUT_CHUNKS = 64;
+  var TerminalVtAttachment = class {
+    terminalId;
+    #onChange;
+    #sink = null;
+    /** Live output held while the surface is loading; replayed on attach. */
+    #buffered = [];
+    /** The last snapshot/reset contents that seeded parser state, if any. */
+    #base = null;
+    #pending = null;
+    #state = {
+      status: "connecting",
+      statusText: "Connecting\u2026",
+      degraded: false,
+      exitCode: null,
+      ended: false
     };
-    if (options.signal.aborted) {
-      release();
-      return null;
+    #sequence = 0;
+    #epoch = null;
+    constructor(terminalId, onChange) {
+      this.terminalId = terminalId;
+      this.#onChange = onChange;
     }
-    const registered = new Set(
-      response.results.filter((result) => result.status === "registered").map((result) => result.commandId)
-    );
-    try {
-      options.bindCommands(response.commandSetToken, ({ commandId }) => {
-        if (registered.has(commandId)) options.onCommand(commandId);
+    get state() {
+      return this.#state;
+    }
+    /**
+     * Surface mounted (or remounted after a theme/font swap): replay the base
+     * snapshot plus every live byte seen since. `resetAndWrite` rebuilds parser
+     * state, so a late surface sees the same screen as a live one.
+     */
+    attach(sink) {
+      this.#sink = sink;
+      if (this.#base !== null) sink.resetAndWrite(this.#base);
+      for (const chunk of this.#buffered) sink.write(chunk);
+      this.#buffered = [];
+    }
+    detach() {
+      this.#sink = null;
+    }
+    /**
+     * A (re)subscription starts its frame sequence at 1; reset the cursor and
+     * clear `ended` — a resumable close must not wedge the next incarnation.
+     * The degraded flag survives: a truncated base stays truncated until a
+     * full snapshot or reset re-bases the parser.
+     */
+    beginStream() {
+      this.#sequence = 0;
+      this.#pending = null;
+      this.#emit({
+        ...this.#state,
+        status: "connecting",
+        statusText: "Connecting\u2026",
+        ended: false
       });
-    } catch (error) {
-      release();
-      throw error;
     }
-    return { commandSetToken: response.commandSetToken, results: response.results, release };
-  }
-  var TERMINAL_THEME_VARS = {
-    canvas: "--t3-terminal-canvas",
-    text: "--t3-terminal-text",
-    textMuted: "--t3-terminal-muted",
-    border: "--t3-terminal-border",
-    input: "--t3-terminal-input",
-    accentSurface: "--t3-terminal-accent-surface",
-    terminalBackground: "--t3-terminal-background",
-    terminalForeground: "--t3-terminal-foreground",
-    terminalSelection: "--t3-terminal-selection"
+    /** The stream itself failed (network/authority), not the terminal. */
+    applyTransportError(message) {
+      this.#pending = null;
+      this.#emit({
+        status: "error",
+        statusText: message,
+        degraded: this.#state.degraded,
+        exitCode: null,
+        ended: true
+      });
+    }
+    #emit(state2) {
+      this.#state = state2;
+      this.#onChange?.();
+    }
+    #fail(message) {
+      this.#pending = null;
+      this.#emit({
+        status: "error",
+        statusText: message,
+        degraded: this.#state.degraded,
+        exitCode: null,
+        ended: true
+      });
+    }
+    #deliver(data) {
+      if (this.#sink) this.#sink.write(data);
+      else this.#buffered.push(data);
+    }
+    /**
+     * Apply one public `t3.terminal/output-events` frame. Mirrors the native
+     * attach reducer — snapshot resets parser state, chunked output reassembles
+     * before it reaches the parser, lifecycle frames end or re-base the stream.
+     */
+    applyFrame(frame, value) {
+      if (this.#state.ended && value.kind !== "closed") return;
+      if (!Number.isSafeInteger(frame.sequence) || frame.sequence !== this.#sequence + 1) {
+        this.#fail("Output transport sequence is discontinuous.");
+        return;
+      }
+      this.#sequence = frame.sequence;
+      if (value.kind === "snapshot") {
+        if (!Number.isSafeInteger(value.boundarySequence) || value.boundarySequence < 0) {
+          this.#fail("Output snapshot boundary is invalid.");
+          return;
+        }
+        this.#pending = null;
+        this.#epoch = value.streamEpoch;
+        this.#base = value.contents;
+        this.#buffered = [];
+        this.#sink?.resetAndWrite(value.contents);
+        const ended = value.status === "exited" || value.status === "error";
+        this.#emit({
+          status: ended ? "exited" : "live",
+          statusText: ended ? `Terminal is ${value.status}.` : value.truncated ? "Watching live output \u2014 earlier history was truncated, so terminal state may be incomplete." : "Watching live output.",
+          degraded: value.truncated && !ended,
+          exitCode: null,
+          ended
+        });
+        return;
+      }
+      if (this.#epoch === null || value.streamEpoch !== this.#epoch) {
+        this.#fail("Output incarnation changed.");
+        return;
+      }
+      if (value.kind === "closed") {
+        this.#pending = null;
+        this.#emit({
+          status: "closed",
+          statusText: `Output unavailable: ${value.reason}.`,
+          degraded: this.#state.degraded,
+          exitCode: null,
+          ended: true
+        });
+        return;
+      }
+      if (!Number.isSafeInteger(value.sequence)) {
+        this.#fail("Output native sequence is invalid.");
+        return;
+      }
+      if (value.kind === "reset") {
+        this.#pending = null;
+        this.#base = "";
+        this.#buffered = [];
+        this.#sink?.resetAndWrite("");
+        this.#emit({
+          status: "live",
+          statusText: "Terminal history cleared. Watching live output.",
+          degraded: false,
+          exitCode: null,
+          ended: false
+        });
+        return;
+      }
+      if (value.kind === "exit") {
+        if (this.#pending !== null) {
+          this.#fail("Terminal exited with incomplete output.");
+          return;
+        }
+        this.#emit({
+          status: "exited",
+          statusText: `Terminal exited (code ${value.exitCode ?? "unknown"}).`,
+          degraded: this.#state.degraded,
+          exitCode: value.exitCode,
+          ended: true
+        });
+        return;
+      }
+      if (!Number.isSafeInteger(value.chunkCount) || value.chunkCount < 1 || value.chunkCount > MAX_OUTPUT_CHUNKS || !Number.isSafeInteger(value.chunkIndex) || value.chunkIndex < 0 || value.chunkIndex >= value.chunkCount || typeof value.data !== "string" || value.data.length > MAX_OUTPUT_CHUNK_DATA_LENGTH) {
+        this.#fail("Output chunk exceeds the public contract.");
+        return;
+      }
+      const group = this.#pending !== null && this.#pending.sequence === value.sequence && this.#pending.count === value.chunkCount ? this.#pending : value.chunkIndex === 0 ? { sequence: value.sequence, count: value.chunkCount, parts: [] } : null;
+      if (group === null || group.parts.length !== value.chunkIndex) {
+        this.#fail("Output chunk group is discontinuous.");
+        return;
+      }
+      group.parts.push(value.data);
+      this.#pending = group.parts.length < group.count ? group : null;
+      if (this.#pending === null) this.#deliver(group.parts.join(""));
+    }
   };
-  function themeVarOverrides(tokens, cssVars) {
-    const overrides = {};
-    for (const [role, property] of Object.entries(TERMINAL_THEME_VARS)) {
-      const value = tokens[role];
-      if (value === void 0) continue;
-      const contractVar = cssVars[role];
-      overrides[property] = contractVar ? `var(${contractVar}, ${value})` : value;
+  async function pumpTerminalOutput(options) {
+    const { attachment, signal } = options;
+    const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    const now = options.now ?? Date.now;
+    let streak = EMPTY_OVERFLOW_STREAK;
+    while (!signal.aborted) {
+      attachment.beginStream();
+      let resurrect = false;
+      let overflowClose = false;
+      try {
+        for await (const frame of options.subscribe(signal)) {
+          if (signal.aborted) return;
+          streak = noteOutputFrameForStreak(frame.value, streak, now());
+          attachment.applyFrame(frame, frame.value);
+          if (frame.value.kind === "closed") {
+            overflowClose = frame.value.reason === "overflow";
+            resurrect = isResumableOutputClose(
+              frame.value.reason,
+              streak.attempts
+            );
+            break;
+          }
+        }
+      } catch (error) {
+        if (!signal.aborted) {
+          attachment.applyTransportError(
+            error instanceof Error ? error.message : "Terminal output unavailable"
+          );
+        }
+        return;
+      }
+      if (signal.aborted || !resurrect) return;
+      if (overflowClose && streak.attempts > 1) await sleep(300 * streak.attempts);
     }
-    return overrides;
-  }
-  function terminalAppearanceVars(appearance) {
-    const vars = {
-      "--t3-terminal-background": appearance.theme.background,
-      "--t3-terminal-foreground": appearance.theme.foreground,
-      "--t3-terminal-color-scheme": appearance.appearance
-    };
-    if (appearance.theme.selectionBackground !== void 0)
-      vars["--t3-terminal-selection"] = appearance.theme.selectionBackground;
-    if (appearance.font.family !== void 0)
-      vars["--t3-terminal-font-family"] = appearance.font.family;
-    if (appearance.font.size !== void 0)
-      vars["--t3-terminal-font-size"] = `${appearance.font.size}px`;
-    if (appearance.font.lineHeight !== void 0)
-      vars["--t3-terminal-line-height"] = String(appearance.font.lineHeight);
-    if (appearance.font.ligatures !== void 0)
-      vars["--t3-terminal-ligatures"] = appearance.font.ligatures ? "normal" : "none";
-    return vars;
-  }
-  function asTerminalAppearance(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-    const candidate = value;
-    const theme = candidate.theme;
-    if (!theme || typeof theme !== "object" || Array.isArray(theme)) return null;
-    const colors = theme;
-    if (typeof colors.background !== "string" || typeof colors.foreground !== "string" || typeof colors.cursor !== "string" || colors.selectionBackground !== void 0 && typeof colors.selectionBackground !== "string")
-      return null;
-    const font = candidate.font;
-    if (!font || typeof font !== "object" || Array.isArray(font)) return null;
-    const fontFields = font;
-    if (fontFields.family !== void 0 && typeof fontFields.family !== "string" || fontFields.size !== void 0 && (typeof fontFields.size !== "number" || !Number.isFinite(fontFields.size)) || fontFields.lineHeight !== void 0 && (typeof fontFields.lineHeight !== "number" || !Number.isFinite(fontFields.lineHeight)) || fontFields.ligatures !== void 0 && typeof fontFields.ligatures !== "boolean")
-      return null;
-    if (candidate.appearance !== "light" && candidate.appearance !== "dark") return null;
-    return value;
-  }
-  function watchThemeVars(options) {
-    const api = bindApi(uiThemeApi, options.client, options.context);
-    const streams = bindStreamApi(uiThemeApi, options.client, options.context);
-    if (!options.signal.aborted) options.apply(null);
-    let generation = 0;
-    const invalidate = () => {
-      generation += 1;
-      if (!options.signal.aborted) options.apply(null);
-    };
-    const refresh = () => {
-      const at = ++generation;
-      void api.invoke("getTokens", {}, options.signal).then(
-        (value) => {
-          if (!options.signal.aborted && at === generation)
-            options.apply(themeVarOverrides(value.tokens, value.cssVars));
-        },
-        // A superseded rejection carries no fresh information — only the
-        // newest read's failure may invalidate the published map.
-        () => {
-          if (at === generation) invalidate();
-        }
-      );
-    };
-    refresh();
-    return (async () => {
-      try {
-        for await (const frame of streams.subscribe("subscribeState", {}, options.signal)) {
-          if (options.signal.aborted) return;
-          if (frame.type === "closed") break;
-          refresh();
-        }
-        invalidate();
-      } catch {
-        invalidate();
-      }
-    })();
-  }
-  function watchTerminalAppearanceVars(options) {
-    const streams = bindStreamApi(uiThemeApi, options.client, options.context);
-    if (!options.signal.aborted) options.apply(null);
-    return (async () => {
-      try {
-        for await (const frame of streams.subscribe(
-          "subscribeTerminalAppearance",
-          {},
-          options.signal
-        )) {
-          if (options.signal.aborted) return;
-          if (frame.type === "closed") break;
-          const appearance = asTerminalAppearance(frame.value);
-          options.apply(appearance === null ? null : terminalAppearanceVars(appearance));
-        }
-        if (!options.signal.aborted) options.apply(null);
-      } catch {
-        if (!options.signal.aborted) options.apply(null);
-      }
-    })();
   }
 
   // extension.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
   var manifestId = "t3.terminal";
+  var GHOSTTY_VT_ASSET = "assets/ghostty-vt.wasm";
+  var GHOSTTY_WRITE_PTY_ASSET = "assets/ghostty-write-pty.wasm";
+  var SYMBOLS_FONT_ASSET = "assets/SymbolsNerdFontMono-Regular.woff2";
   function restoreState(value) {
     if (value === null) return true;
     if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -6154,6 +8580,53 @@ var __t3Client = (() => {
       restart: (input) => api.invoke("restart", input, session.signal),
       close: (input) => api.invoke("close", input, session.signal)
     };
+  }
+  function useGhosttyAssets(host, session) {
+    const [state2, setState] = (0, import_react.useState)({ kind: "loading" });
+    (0, import_react.useEffect)(() => {
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      let symbolsFontUrl = null;
+      void (async () => {
+        try {
+          if (!host.readAsset) throw new Error("This host cannot load package assets.");
+          const readAsset = host.readAsset.bind(host);
+          const [vt, writePty, font] = await Promise.all([
+            readAsset(GHOSTTY_VT_ASSET, signal),
+            readAsset(GHOSTTY_WRITE_PTY_ASSET, signal),
+            readAsset(SYMBOLS_FONT_ASSET, signal)
+          ]);
+          if (signal.aborted) return;
+          if (vt.mediaType !== "application/wasm" || writePty.mediaType !== "application/wasm") {
+            throw new Error("Terminal WASM assets failed package verification.");
+          }
+          if (font.mediaType !== "font/woff2") {
+            throw new Error("Terminal symbols font failed package verification.");
+          }
+          const runtime = await loadGhosttyRuntime({
+            vt: vt.bytes.slice(),
+            writePty: writePty.bytes.slice()
+          });
+          if (signal.aborted) return;
+          symbolsFontUrl = URL.createObjectURL(
+            new Blob([font.bytes], { type: "font/woff2" })
+          );
+          setState({ kind: "ready", runtime, symbolsFontUrl });
+        } catch (error) {
+          if (!signal.aborted) {
+            setState({
+              kind: "unavailable",
+              message: error instanceof Error ? error.message : "Terminal renderer unavailable"
+            });
+          }
+        }
+      })();
+      return () => {
+        controller.abort();
+        if (symbolsFontUrl !== null) URL.revokeObjectURL(symbolsFontUrl);
+      };
+    }, [host, session]);
+    return state2;
   }
   function useSessionsStream(host, session, panel, visible) {
     (0, import_react.useEffect)(() => {
@@ -6196,6 +8669,178 @@ var __t3Client = (() => {
       })();
       return () => controller.abort();
     }, [host, session, panel, visible]);
+  }
+  function writeSystemMessage(surface, message) {
+    surface.write(`\r
+[terminal] ${message}\r
+`);
+  }
+  function handleBeforeKey(event, panel, terminalId) {
+    const navigationData = terminalNavigationShortcutData(event);
+    if (navigationData !== null) {
+      event.preventDefault();
+      event.stopPropagation();
+      panel.sendInput(terminalId, navigationData);
+      return false;
+    }
+    const deleteData = terminalDeleteShortcutData(event);
+    if (deleteData !== null) {
+      event.preventDefault();
+      event.stopPropagation();
+      panel.sendInput(terminalId, deleteData);
+      return false;
+    }
+    if (!isTerminalClearShortcut(event)) return true;
+    event.preventDefault();
+    event.stopPropagation();
+    panel.sendInput(terminalId, "\f");
+    return false;
+  }
+  function TerminalPane(props) {
+    const { host, session, panel, terminalId, active, visible, assets } = props;
+    const [, bump] = (0, import_react.useReducer)((value) => value + 1, 0);
+    const [attachment] = (0, import_react.useState)(
+      () => new TerminalVtAttachment(terminalId, () => {
+        bump();
+      })
+    );
+    const mountRef = (0, import_react.useRef)(null);
+    const surfaceRef = (0, import_react.useRef)(null);
+    const shownRef = (0, import_react.useRef)(active && visible);
+    (0, import_react.useEffect)(() => {
+      if (!visible) return;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      void pumpTerminalOutput({
+        subscribe: (subscribeSignal) => {
+          const source = bindStreamApi(terminalOutputEventsApi, host, session.context).subscribe(
+            "subscribe",
+            { terminalId },
+            subscribeSignal
+          );
+          return (async function* () {
+            for await (const frame of source) {
+              const value = frame.value;
+              if (value.kind === "closed" && value.reason !== "overflow") {
+                panel.resetInput(terminalId);
+              }
+              yield { streamId: frame.streamId, sequence: frame.sequence, value };
+            }
+          })();
+        },
+        attachment,
+        signal
+      });
+      return () => controller.abort();
+    }, [host, session, panel, terminalId, attachment, visible]);
+    (0, import_react.useEffect)(() => {
+      const mount = mountRef.current;
+      if (mount === null || assets.kind !== "ready") return;
+      let cancelled = false;
+      let surface = null;
+      const themeObserver = new MutationObserver(() => {
+        surface?.setTheme(terminalThemeFromApp(mount));
+      });
+      void (async () => {
+        const options = {
+          runtime: assets.runtime,
+          symbolsFontUrl: assets.symbolsFontUrl,
+          theme: terminalThemeFromApp(mount),
+          get visible() {
+            return shownRef.current;
+          },
+          onData: (data) => panel.sendInput(terminalId, data),
+          onResize: (cols, rows) => panel.resize(terminalId, cols, rows),
+          onSelectionChange: () => {
+          },
+          beforeKey: (event) => handleBeforeKey(event, panel, terminalId),
+          onLinkActivate: () => {
+            if (surface) {
+              writeSystemMessage(surface, "Opening links is unavailable in this extension host.");
+            }
+          }
+        };
+        try {
+          surface = await GhosttyTerminalSurface.create(mount, options);
+        } catch {
+          return;
+        }
+        if (cancelled) {
+          surface.dispose();
+          surface = null;
+          return;
+        }
+        surface.setVisible(shownRef.current);
+        surface.setTheme(terminalThemeFromApp(mount));
+        surfaceRef.current = surface;
+        attachment.attach(surface);
+        themeObserver.observe(document.documentElement, {
+          attributes: true,
+          attributeFilter: ["class", "style"]
+        });
+      })();
+      return () => {
+        cancelled = true;
+        themeObserver.disconnect();
+        attachment.detach();
+        surface?.dispose();
+        surfaceRef.current = null;
+      };
+    }, [assets, attachment, panel, terminalId]);
+    (0, import_react.useEffect)(() => {
+      shownRef.current = active && visible;
+      surfaceRef.current?.setVisible(active && visible);
+      if (active && visible) surfaceRef.current?.focus();
+    }, [active, visible]);
+    const state2 = attachment.state;
+    const muted = "var(--muted-foreground, #667085)";
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+      "div",
+      {
+        style: {
+          display: active ? "flex" : "none",
+          flexDirection: "column",
+          flex: 1,
+          minHeight: 0
+        },
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "output",
+            {
+              "aria-label": "Output status",
+              style: { padding: "6px 10px", color: muted, fontSize: 11, flexShrink: 0 },
+              children: [
+                terminalId,
+                ": ",
+                state2.statusText
+              ]
+            }
+          ),
+          state2.degraded && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "output",
+            {
+              "aria-label": "Attach degraded",
+              style: { padding: "4px 10px", color: muted, fontSize: 11, flexShrink: 0 },
+              children: "Attached with truncated history \u2014 modes and screen state before the retained tail are unknown, so interactive parity is not claimed until the next full snapshot (B4)."
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "div",
+            {
+              ref: mountRef,
+              "aria-label": "Terminal output",
+              style: {
+                position: "relative",
+                flex: 1,
+                minHeight: 0,
+                overflow: "hidden",
+                background: "var(--terminal-background, transparent)"
+              }
+            }
+          )
+        ]
+      }
+    );
   }
   function useTerminalOutput(host, session, terminalId, visible) {
     const [state2, setState] = (0, import_react.useState)(null);
@@ -6291,86 +8936,9 @@ var __t3Client = (() => {
       return () => observer.disconnect();
     }, [panel, terminalId, ref]);
   }
-  function useThemeVars(host, session, visible) {
-    const [vars, setVars] = (0, import_react.useState)(null);
-    (0, import_react.useEffect)(() => {
-      if (!visible) return;
-      const controller = new AbortController();
-      void watchThemeVars({
-        client: host,
-        context: session.context,
-        signal: AbortSignal.any([controller.signal, session.signal]),
-        apply: setVars
-      });
-      return () => controller.abort();
-    }, [host, session, visible]);
-    return vars;
-  }
-  function useTerminalAppearanceVars(host, session, visible) {
-    const [vars, setVars] = (0, import_react.useState)(null);
-    (0, import_react.useEffect)(() => {
-      if (!visible) return;
-      const controller = new AbortController();
-      void watchTerminalAppearanceVars({
-        client: host,
-        context: session.context,
-        signal: AbortSignal.any([controller.signal, session.signal]),
-        apply: setVars
-      });
-      return () => controller.abort();
-    }, [host, session, visible]);
-    return vars;
-  }
-  function closeOwnSurface(host, session) {
-    const threadId = session.context.resource.threadId;
-    if (threadId === void 0) return Promise.resolve();
-    return bindApi(uiPanelsApi, host, session.context).invoke("closeSurface", { surfaceId: TERMINAL_SURFACE_ID, threadId }, session.signal).then(
-      () => void 0,
-      () => {
-        throw new Error("The host could not close this panel.");
-      }
-    );
-  }
-  function usePanelCommands(host, session, panel, visible) {
-    (0, import_react.useEffect)(() => {
-      if (!visible) return;
-      const controller = new AbortController();
-      const signal = AbortSignal.any([controller.signal, session.signal]);
-      let release = null;
-      const actions = {
-        newTerminal: () => void panel.openTerminal(),
-        closeTerminal: () => {
-          const activeId = panel.snapshot.activeTerminalId;
-          if (activeId !== null) panel.requestAction(activeId, "close");
-        },
-        toggleSurface: () => void closeOwnSurface(host, session).catch(
-          (error) => panel.notePanelError(error instanceof Error ? error.message : "Panel action failed")
-        )
-      };
-      void registerPanelCommands({
-        client: host,
-        context: session.context,
-        signal,
-        bindCommands: (token, handler) => session.bindCommands(token, handler),
-        onCommand: (commandId) => void dispatchTerminalCommand(commandId, actions)
-      }).then(
-        (registration) => {
-          if (registration === null) return;
-          if (signal.aborted) registration.release();
-          else release = registration.release;
-        },
-        () => {
-        }
-      );
-      return () => {
-        controller.abort();
-        release?.();
-      };
-    }, [host, session, panel, visible]);
-  }
   var control = {
     padding: "4px 8px",
-    border: "1px solid var(--t3-terminal-border, var(--border, #dfe3e8))",
+    border: "1px solid var(--border, #dfe3e8)",
     borderRadius: 5,
     background: "transparent",
     color: "inherit",
@@ -6414,21 +8982,24 @@ var __t3Client = (() => {
     (0, import_react.useEffect)(() => session.onVisibility(setVisible), [session]);
     (0, import_react.useEffect)(() => () => panel.dispose(), [panel]);
     useSessionsStream(host, session, panel, visible);
-    usePanelCommands(host, session, panel, visible);
-    const themeVars = useThemeVars(host, session, visible);
-    const appearanceVars = useTerminalAppearanceVars(host, session, visible);
+    const assets = useGhosttyAssets(host, session);
     const snapshot = panel.snapshot;
     const activeId = snapshot.activeTerminalId;
     const activeTab = snapshot.tabs.find((tab) => tab.terminalId === activeId) ?? null;
-    const output = useTerminalOutput(host, session, activeId, visible);
-    useFitResize(panel, activeId, outputRef);
+    const textFallback = assets.kind === "unavailable";
+    const output = useTerminalOutput(
+      host,
+      session,
+      textFallback ? activeId : null,
+      visible && textFallback
+    );
+    useFitResize(panel, textFallback ? activeId : null, outputRef);
     const send = () => {
       if (activeId === null || input.length === 0) return;
       panel.sendInput(activeId, input + "\r");
       setInput("");
     };
-    const muted = "var(--t3-terminal-muted, var(--muted-foreground, #667085))";
-    const border = "1px solid var(--t3-terminal-border, var(--border, #dfe3e8))";
+    const muted = "var(--muted-foreground, #667085)";
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "section",
       {
@@ -6438,11 +9009,10 @@ var __t3Client = (() => {
           display: "flex",
           flexDirection: "column",
           minHeight: 0,
-          color: "var(--t3-terminal-text, var(--foreground, #20252d))",
-          background: "var(--t3-terminal-canvas, var(--background, #fff))",
+          color: "var(--foreground, #20252d)",
+          background: "var(--background, #fff)",
           fontFamily: "var(--font-sans, system-ui, sans-serif)",
-          fontSize: 13,
-          ...themeVars
+          fontSize: 13
         },
         children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
@@ -6452,7 +9022,7 @@ var __t3Client = (() => {
                 display: "flex",
                 gap: 6,
                 padding: 8,
-                borderBottom: border,
+                borderBottom: "1px solid var(--border, #dfe3e8)",
                 flexShrink: 0,
                 alignItems: "center"
               },
@@ -6505,7 +9075,7 @@ var __t3Client = (() => {
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
                       color: "inherit",
-                      background: tab.terminalId === activeId ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))" : "transparent"
+                      background: tab.terminalId === activeId ? "var(--accent, #e8eef7)" : "transparent"
                     },
                     children: tab.label
                   }
@@ -6591,7 +9161,68 @@ var __t3Client = (() => {
               children: snapshot.panelError
             }
           ),
-          activeId !== null && activeTab !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          activeTab?.inputStopped && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "div",
+            {
+              role: "alert",
+              style: {
+                display: "flex",
+                gap: 8,
+                alignItems: "center",
+                padding: "6px 10px",
+                fontSize: 11,
+                color: muted,
+                borderTop: "1px solid var(--border, #dfe3e8)",
+                flexShrink: 0
+              },
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flex: 1, minWidth: 0 }, children: activeTab.inputMessage }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "button",
+                  {
+                    type: "button",
+                    onClick: () => activeId !== null && panel.resumeInput(activeId),
+                    style: control,
+                    children: "Resume input"
+                  }
+                )
+              ]
+            }
+          ),
+          assets.kind === "loading" && activeId !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "output",
+            {
+              "aria-label": "Renderer status",
+              style: { padding: "6px 10px", color: muted, fontSize: 11 },
+              children: "Loading terminal renderer\u2026"
+            }
+          ),
+          assets.kind === "unavailable" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "output",
+            {
+              "aria-label": "Renderer status",
+              style: { padding: "6px 10px", color: muted, fontSize: 11 },
+              children: [
+                "VT renderer unavailable (",
+                assets.message,
+                ") \u2014 showing a plain-text view."
+              ]
+            }
+          ),
+          !textFallback && snapshot.tabs.map((tab) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            TerminalPane,
+            {
+              host,
+              session,
+              panel,
+              terminalId: tab.terminalId,
+              active: tab.terminalId === activeId,
+              visible,
+              assets
+            },
+            tab.terminalId
+          )),
+          textFallback && activeId !== null && activeTab !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
             "div",
             {
               style: {
@@ -6599,7 +9230,7 @@ var __t3Client = (() => {
                 flexDirection: "column",
                 flex: 1,
                 minHeight: 0,
-                borderTop: border
+                borderTop: "1px solid var(--border, #dfe3e8)"
               },
               children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
@@ -6615,13 +9246,11 @@ var __t3Client = (() => {
                     ]
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("style", { children: "[data-t3-terminal-output]::selection{background:var(--t3-terminal-selection,Highlight)}" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                   "pre",
                   {
                     ref: outputRef,
                     "aria-label": "Terminal output",
-                    "data-t3-terminal-output": true,
                     style: {
                       flex: 1,
                       minHeight: 0,
@@ -6630,14 +9259,10 @@ var __t3Client = (() => {
                       overflow: "auto",
                       whiteSpace: "pre-wrap",
                       overflowWrap: "anywhere",
-                      color: "var(--t3-terminal-foreground, var(--terminal-foreground, inherit))",
-                      background: "var(--t3-terminal-background, var(--terminal-background, transparent))",
-                      fontFamily: "var(--t3-terminal-font-family, var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace))",
-                      fontSize: "var(--t3-terminal-font-size, 12px)",
-                      lineHeight: "var(--t3-terminal-line-height, normal)",
-                      fontVariantLigatures: "var(--t3-terminal-ligatures, normal)",
-                      colorScheme: "var(--t3-terminal-color-scheme, normal)",
-                      ...appearanceVars
+                      color: "var(--terminal-foreground, inherit)",
+                      background: "var(--terminal-background, transparent)",
+                      fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace)",
+                      fontSize: 12
                     },
                     children: output?.contents ?? ""
                   }
@@ -6649,7 +9274,7 @@ var __t3Client = (() => {
                       display: "flex",
                       gap: 6,
                       padding: 8,
-                      borderTop: border,
+                      borderTop: "1px solid var(--border, #dfe3e8)",
                       flexShrink: 0
                     },
                     children: [
@@ -6663,13 +9288,7 @@ var __t3Client = (() => {
                           onKeyDown: (event) => {
                             if (event.key === "Enter") send();
                           },
-                          style: {
-                            ...control,
-                            flex: 1,
-                            minWidth: 0,
-                            cursor: "text",
-                            background: "var(--t3-terminal-input, var(--input, transparent))"
-                          }
+                          style: { ...control, flex: 1, minWidth: 0, cursor: "text" }
                         }
                       ),
                       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", onClick: send, style: control, children: "Send" })
@@ -6678,35 +9297,27 @@ var __t3Client = (() => {
                 )
               ]
             }
-          ),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            "output",
-            {
-              "aria-label": "Slice notice",
-              style: { padding: "6px 10px", color: muted, fontSize: 11, flexShrink: 0 },
-              children: "Interactive text terminal over the public control contract; theme and panel keybindings follow the host's t3.ui/* providers. VT rendering (Ghostty) and link activation are deferred slices, so there are no transient toasts to route through t3.ui/notifications."
-            }
           )
         ]
       }
     );
   }
-  var authored = defineExtension({
+  var extension_default = defineExtension({
     id: manifestId,
-    version: "0.2.0",
+    version: "0.3.0",
     requires: [
       requireApi(terminalSessionsApi),
       requireApi(terminalOutputApi),
       requireApi(terminalOutputEventsApi),
-      requireApi(terminalControlApi),
-      // Mandatory requirements — the broker only authorizes invocations for
-      // declared APIs, so the t3.ui/* contracts must be declared even though
-      // the panel degrades per-call. A host without these providers resolves
-      // the package missing-api rather than mounting it; the degraded paths
-      // cover denied or failing calls and dead streams on a capable host.
-      requireApi(uiThemeApi),
-      requireApi(uiKeybindingsApi),
-      requireApi(uiPanelsApi)
+      requireApi(terminalControlApi)
+    ],
+    assets: [
+      { path: GHOSTTY_VT_ASSET, mediaType: "application/wasm" },
+      { path: GHOSTTY_WRITE_PTY_ASSET, mediaType: "application/wasm" },
+      { path: SYMBOLS_FONT_ASSET, mediaType: "font/woff2" },
+      { path: "assets/SymbolsNerdFontMono-LICENSE.txt", mediaType: "application/octet-stream" },
+      { path: "assets/libghostty-vt-LICENSE.txt", mediaType: "application/octet-stream" },
+      { path: "assets/libghostty-vt-VERSION.txt", mediaType: "application/octet-stream" }
     ],
     surfaces: [
       {
@@ -6724,16 +9335,6 @@ var __t3Client = (() => {
       }
     ]
   });
-  var clientFactory = authored.client;
-  var extension_default = {
-    ...authored,
-    ...clientFactory === void 0 ? {} : {
-      client(host) {
-        host.registerGlobalCommands?.(TERMINAL_GLOBAL_COMMANDS);
-        return clientFactory(host);
-      }
-    }
-  };
 
   // extension.ts
   var extension_default2 = extension_default;

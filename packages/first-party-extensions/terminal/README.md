@@ -8,43 +8,56 @@ Interactive terminal plugin driven entirely by public contracts:
   `nextTerminalId`), attach (`restartIfNotRunning`), write, resize, clear,
   restart, close; all gated behind the distinct `t3.terminal/operate` grant
 - `t3.terminal/output-events` `subscribe` — snapshot → chunked output →
-  reset/exit/closed lifecycle frames, reassembled in `viewModel.ts` under the
-  native 512 KiB retained-buffer cap
-- `t3.ui/theme@^1.0.0` (`t3.ui/theme.read` grant) — `getTokens` resolves the
-  host's effective theme (stored preference, session overlay, or painted
-  preview, folded by the provider) and `subscribeState` re-reads it on every
-  transition; `subscribeTerminalAppearance` carries the real terminal colors
-  and font. Both republish as `--t3-terminal-*` custom properties ahead of
-  the legacy `var()` fallbacks; a denied read or a dead stream clears the
-  overrides so nothing contract-derived outlives its feed
-- `t3.ui/keybindings@^1.0.0` — per-view `toggle`/`new`/`close` commands
-  (default keys mirror the native `mod+j`/`mod+n`/`mod+w` chords; the host's
-  user/native precedence decides who claims them), plus a staged
-  installation-scoped `toggle` with a bottom-dock `activation` fallback for
-  cold open (`t3.ui/keybindings.global` + `t3.ui/panels` grants). All actions
-  are bound per view through `ViewSession.bindCommands` and stay panel-local
-- `t3.ui/panels@^1.0.0` — the dispatched `toggle` closes the hosting surface
-  via `closeSurface`; failures surface on the panel status row
+  reset/exit/closed lifecycle frames
 
-All seven APIs are mandatory requirements — invocation authority only exists
-for declared contracts, so a host without the `t3.ui/*` providers resolves
-this package `missing-api` rather than mounting a half-contracted panel. The
-degraded paths above cover denied grants, failing calls, and dead streams on
-a capable host.
+## Rendering: real Ghostty VT (format 4)
 
-`t3.ui/notifications` is deliberately not adopted: the native terminal only
-toasts on link-preview failure, and this panel has no link-activation path —
-its inline status rows match native usage. Split chords
-(`terminal.split`/`splitVertical`) and the Ghostty-level editing intercepts
-(clear, word-nav, delete) stay deferred with VT rendering.
+The panel renders through the vendored libghostty-vt WASM closure in
+`ghostty/` — the same handwritten adapter the native terminal drawer uses —
+packaged as digest-verified extension assets:
 
-Package-side behavior: tabs reconcile with the strict-subset lag rule, input
-queues while a session is starting, fit→resize is latest-wins per session,
-destructive actions confirm inline, and a failed close falls back to an
-`exit\n` write. Output streams resubscribe on `identity-changed` so restarts
-show the new epoch. There is intentionally no VT (ghostty) rendering —
-output stays a bounded text view.
+- `assets/ghostty-vt.wasm` — terminal core, parser, render state
+- `assets/ghostty-write-pty.wasm` — PTY-write callback trampoline
+- `assets/SymbolsNerdFontMono-Regular.woff2` — symbol fallback font
 
-- `pnpm run build` / `check` — pack and validate `.t3-extension/`
-- `pnpm test` — view-model unit tests (no real PTY)
+The host delivers verified bytes via `host.readAsset`; `ghostty/runtime.ts`
+instantiates one shared runtime and each surface allocates its own terminal
+handle. A host without asset support still works: the panel falls back to a
+bounded `<pre>` text view.
+
+## Attach semantics (honest degradation)
+
+`vtAttachment.ts` mirrors the native attach reducer: snapshot frames reset
+the parser and re-base it, chunked output reassembles before reaching the
+parser, and `identity-changed`/bounded `overflow` closes resubscribe. A
+**truncated** attach tail loses parser state that lived before the retained
+8 KiB — the tab shows "earlier history was truncated" and does not claim
+interactive parity until a full snapshot or reset re-bases the parser.
+
+## Input: serialized-byte transport (B6)
+
+`inputQueue.ts` batches input against the serialized `write` invocation —
+`{terminalId, data}` as UTF-8 JSON — with a 48 KiB per-write budget and a
+256 KiB pending cap, splitting surrogate-safe. On a write whose outcome is
+unknown (transport failure, timeout, post-send server error) the queue
+halts: the failed batch and everything behind it are discarded and never
+resent — there is no op-id fence to prove which bytes landed. The tab shows
+an "input stopped" banner and only an explicit resume (or restart) reopens
+input.
+
+## Known limitations
+
+- **Focus arbitration (B7):** the plugin does not emit `data-terminal-owner`
+  and cannot claim focus-owner parity — without host-side arbitration, the
+  native terminal close/split/new keybindings may still target the native
+  terminal while the plugin has focus.
+- **Dock sizing (B8):** dock geometry is host-owned; the plugin only sizes
+  its own terminal content.
+- **Remote pixels/frames:** out of scope; rendering is local WASM only.
+
+## Development
+
+- `pnpm run build` / `check` — pack and validate `.t3-extension/` (format 4)
+- `pnpm test` — view-model, VT conformance (real WASM), input-transport,
+  attach/recovery, and PTY-fixture suites
 - `pnpm run audit` — Gate-4 private-import audit
