@@ -1,4 +1,5 @@
 export default function (__t3Host) {
+"use strict";
 var __t3Client = (() => {
   var __create = Object.create;
   var __defProp = Object.defineProperty;
@@ -35,14 +36,18 @@ var __t3Client = (() => {
   ));
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
+  // host-react:react
   var require_react = __commonJS({
     "host-react:react"(exports, module) {
+      "use strict";
       module.exports = __t3Host.React;
     }
   });
 
+  // host-react:react/jsx-runtime
   var require_jsx_runtime = __commonJS({
     "host-react:react/jsx-runtime"(exports) {
+      "use strict";
       var R = __t3Host.React;
       exports.Fragment = R.Fragment;
       var mark = (n) => {
@@ -64,11 +69,13 @@ var __t3Client = (() => {
     }
   });
 
+  // generated-client.ts
   var generated_client_exports = {};
   __export(generated_client_exports, {
     default: () => generated_client_default
   });
 
+  // pkg:node_modules/@t3tools/extension-sdk/dist/contracts.js
   var API_VERSION = 1;
   var MAX_PAYLOAD_BYTES = 64 * 1024;
   function assertId(value) {
@@ -139,6 +146,7 @@ var __t3Client = (() => {
     return manifest;
   }
 
+  // pkg:node_modules/@t3tools/extension-sdk/dist/capabilities.js
   function defineApi(definition) {
     return { definition: validateApiDefinition(definition) };
   }
@@ -216,6 +224,7 @@ var __t3Client = (() => {
     return api;
   }
 
+  // pkg:node_modules/@t3tools/extension-sdk/dist/textEdits.js
   var WORKSPACE_READ_TEXT_EDITS = "t3.workspace/text-edits";
   var WORKSPACE_READ_TEXT_GRANT = "t3.workspace/read-text";
   var WORKSPACE_WRITE_TEXT = "t3.workspace/write-text";
@@ -315,6 +324,7 @@ var __t3Client = (() => {
     ]
   });
 
+  // pkg:node_modules/@t3tools/extension-sdk/dist/catalogue.js
   var WORKSPACE_FILES = "t3.workspace/files";
   var WORKSPACE_LIST_ENTRIES = "t3.workspace/list-entries";
   var FILE_PRESENTATION = "t3.file/presentation";
@@ -673,6 +683,7 @@ var __t3Client = (() => {
   var TERMINAL_OUTPUT_API = terminalOutputApi.definition;
   var TERMINAL_OUTPUT_EVENTS_API = terminalOutputEventsApi.definition;
 
+  // pkg:node_modules/@t3tools/extension-sdk/dist/environment.js
   var ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
   function validateEntry(value) {
     if (typeof value !== "string" || value.length > 240 || !/\.(mjs|js)$/.test(value) || value.split("/").some((part) => !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(part) || part === "." || part === ".."))
@@ -805,6 +816,7 @@ var __t3Client = (() => {
     return { ...pkg, manifest };
   }
 
+  // pkg:node_modules/@t3tools/extension-sdk/dist/authoring.js
   function defineExtension(source) {
     const surfaces = source.surfaces ?? [];
     const provides = source.provides ?? [];
@@ -851,8 +863,9 @@ var __t3Client = (() => {
     return { id: api.definition.id, versionRange };
   }
 
-  var import_react = __toESM(require_react(), 1);
-  var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
+  // pkg:extension.tsx
+  var import_react = __toESM(require_react());
+  var import_jsx_runtime = __toESM(require_jsx_runtime());
   var manifestId = "example.editable-files";
   function EditorView(props) {
     const { host, session } = props;
@@ -1010,8 +1023,10 @@ var __t3Client = (() => {
     ]
   });
 
+  // pkg:extension.ts
   var extension_default2 = extension_default;
 
+  // generated-client.ts
   var generated_client_default = extension_default2.client;
   return __toCommonJS(generated_client_exports);
 })();

@@ -1,4 +1,5 @@
 export default function (__t3Host) {
+"use strict";
 var __t3Client = (() => {
   var __create = Object.create;
   var __defProp = Object.defineProperty;
@@ -35,14 +36,18 @@ var __t3Client = (() => {
   ));
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
+  // host-react:react
   var require_react = __commonJS({
     "host-react:react"(exports, module) {
+      "use strict";
       module.exports = __t3Host.React;
     }
   });
 
+  // host-react:react/jsx-runtime
   var require_jsx_runtime = __commonJS({
     "host-react:react/jsx-runtime"(exports) {
+      "use strict";
       var R = __t3Host.React;
       exports.Fragment = R.Fragment;
       var mark = (n) => {
@@ -64,11 +69,13 @@ var __t3Client = (() => {
     }
   });
 
+  // generated-client.ts
   var generated_client_exports = {};
   __export(generated_client_exports, {
     default: () => generated_client_default
   });
 
+  // npm:@t3tools/extension-sdk/dist/contracts.js
   var API_VERSION = 1;
   var MAX_PAYLOAD_BYTES = 64 * 1024;
   function assertId(value) {
@@ -140,6 +147,8 @@ var __t3Client = (() => {
       if (!Array.isArray(surface.capabilities))
         throw new Error("Invalid capabilities");
       surface.capabilities.forEach(assertId);
+      if (surface.claimsTerminalFocus !== void 0 && typeof surface.claimsTerminalFocus !== "boolean")
+        throw new Error("Invalid terminal focus claim");
     }
     for (const descriptors of [manifest.composerContexts ?? [], manifest.messageDecorations ?? []]) {
       if (!Array.isArray(descriptors) || descriptors.length > 16)
@@ -156,6 +165,7 @@ var __t3Client = (() => {
     return manifest;
   }
 
+  // npm:@t3tools/extension-sdk/dist/capabilities.js
   function defineApi(definition) {
     return { definition: validateApiDefinition(definition) };
   }
@@ -248,6 +258,7 @@ var __t3Client = (() => {
     return api;
   }
 
+  // npm:@t3tools/extension-sdk/dist/orchestration.js
   var ORCHESTRATION_STATUS = "t3.orchestration/status";
   var ORCHESTRATION_CONTROL = "t3.orchestration/control";
   var ORCHESTRATION_READ = "t3.orchestration/read";
@@ -473,6 +484,7 @@ var __t3Client = (() => {
   }
   var ORCHESTRATION_CONTROL_API = orchestrationControlApi.definition;
 
+  // npm:@t3tools/extension-sdk/dist/textEdits.js
   var WORKSPACE_READ_TEXT_EDITS = "t3.workspace/text-edits";
   var WORKSPACE_READ_TEXT_GRANT = "t3.workspace/read-text";
   var WORKSPACE_WRITE_TEXT = "t3.workspace/write-text";
@@ -665,6 +677,7 @@ var __t3Client = (() => {
     ]
   });
 
+  // npm:@t3tools/extension-sdk/dist/workspaceResources.js
   var WORKSPACE_RESOURCES = "t3.workspace/resources";
   var WORKSPACE_RESOURCE_CHUNK_UNITS = 8192;
   var WORKSPACE_RESOURCE_MAX_CHUNKS = 2048;
@@ -904,6 +917,7 @@ var __t3Client = (() => {
   });
   var WORKSPACE_RESOURCES_API = workspaceResourcesApi.definition;
 
+  // npm:@t3tools/extension-sdk/dist/catalogue.js
   var BROWSER_LOCAL_SERVERS = "t3.browser/local-servers";
   var BROWSER_READ_LOCAL_SERVERS = "t3.browser/read-local-servers";
   var browserLocalServersApi = defineStreamApi({
@@ -947,6 +961,55 @@ var __t3Client = (() => {
               properties: { kind: { const: "closed" }, reason: { const: "source-unavailable" } }
             }
           ]
+        }
+      }
+    ]
+  });
+  var PROVIDERS_STATUS = "t3.providers/status";
+  var PROVIDERS_READ = "t3.providers/read";
+  var PROVIDER_STATUS_DISPLAY_NAME_MAX_LENGTH = 200;
+  var PROVIDER_STATUS_ENTRY_SCHEMA = {
+    type: "object",
+    additionalProperties: false,
+    required: ["instanceId", "driver", "enabled", "installed", "status", "availability", "checkedAt"],
+    properties: {
+      instanceId: { type: "string", minLength: 1, maxLength: 160 },
+      driver: { type: "string", minLength: 1, maxLength: 64 },
+      displayName: {
+        type: "string",
+        minLength: 1,
+        maxLength: PROVIDER_STATUS_DISPLAY_NAME_MAX_LENGTH
+      },
+      enabled: { type: "boolean" },
+      installed: { type: "boolean" },
+      status: { enum: ["ready", "warning", "error", "disabled"] },
+      availability: { enum: ["available", "unavailable"] },
+      checkedAt: { type: "string", minLength: 1, maxLength: 40 },
+      supportsConversationRollback: { type: "boolean" },
+      supportsTextGeneration: { type: "boolean" },
+      requiresNewThreadForModelChange: { type: "boolean" },
+      showInteractionModeToggle: { type: "boolean" },
+      reportsContextWindow: { type: "boolean" }
+    }
+  };
+  var providersStatusApi = defineStreamApi({
+    id: PROVIDERS_STATUS,
+    version: "1.0.0",
+    methods: [],
+    streams: [
+      {
+        name: "subscribe",
+        requiredGrants: [PROVIDERS_READ],
+        inputSchema: { type: "object", additionalProperties: false, properties: {} },
+        eventSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["kind", "scope", "providers"],
+          properties: {
+            kind: { const: "snapshot" },
+            scope: { const: "environment" },
+            providers: { type: "array", maxItems: 64, items: PROVIDER_STATUS_ENTRY_SCHEMA }
+          }
         }
       }
     ]
@@ -4289,6 +4352,7 @@ var __t3Client = (() => {
   var TERMINAL_OUTPUT_EVENTS_API = terminalOutputEventsApi.definition;
   var TERMINAL_CONTROL_API = terminalControlApi.definition;
 
+  // npm:@t3tools/extension-sdk/dist/environment.js
   var ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
   var ENVIRONMENT_ASSET_MEDIA_TYPES = [
     "application/wasm",
@@ -4426,6 +4490,7 @@ var __t3Client = (() => {
     return { ...pkg, manifest };
   }
 
+  // npm:@t3tools/extension-sdk/dist/authoring.js
   var statePreview = (state2) => {
     const encoded = JSON.stringify(state2);
     return encoded.length > 200 ? encoded.slice(0, 200) + "\u2026" : encoded;
@@ -4477,13 +4542,14 @@ var __t3Client = (() => {
       id: source.id,
       version: source.version,
       apiVersion: 1,
-      surfaces: surfaces.map(({ name, title, scope, placements, clients, capabilities, stateVersion }) => ({
+      surfaces: surfaces.map(({ name, title, scope, placements, clients, capabilities, claimsTerminalFocus, stateVersion }) => ({
         id: source.id + "/" + name,
         title,
         scope,
         placements: placements ?? ["side-panel"],
         clients: clients ?? ["web", "desktop"],
         capabilities: capabilities ?? [],
+        ...claimsTerminalFocus === true ? { claimsTerminalFocus: true } : {},
         stateVersion: stateVersion ?? 1
       }))
     };
@@ -4522,6 +4588,7 @@ var __t3Client = (() => {
     return { id: api.definition.id, versionRange };
   }
 
+  // npm:@t3tools/shared/src/projectScripts.ts
   function projectScriptRuntimeEnv(input) {
     const env = {
       T3CODE_PROJECT_ROOT: input.project.cwd
@@ -4535,8 +4602,10 @@ var __t3Client = (() => {
     return env;
   }
 
-  var import_react = __toESM(require_react(), 1);
+  // pkg:extension.tsx
+  var import_react = __toESM(require_react());
 
+  // npm:@t3tools/shared/src/terminalLabels.ts
   function getTerminalLabel(terminalId) {
     const numericSuffix = /^term(?:inal)?-(\d+)$/i.exec(terminalId)?.[1];
     if (numericSuffix) {
@@ -4560,6 +4629,7 @@ var __t3Client = (() => {
     return `term-${nextIndex}`;
   }
 
+  // pkg:viewModel.ts
   var TERMINAL_BUFFER_MAX_BYTES = 512 * 1024;
   var OVERFLOW_RESUBSCRIBE_WINDOW_MS = 1e4;
   var OVERFLOW_RESUBSCRIBE_MAX = 3;
@@ -5095,7 +5165,8 @@ var __t3Client = (() => {
     }
   };
 
-  var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
+  // pkg:extension.tsx
+  var import_jsx_runtime = __toESM(require_jsx_runtime());
   var manifestId = "t3.terminal";
   function restoreState(value) {
     if (value === null) return true;
@@ -5583,8 +5654,10 @@ var __t3Client = (() => {
     ]
   });
 
+  // pkg:extension.ts
   var extension_default2 = extension_default;
 
+  // generated-client.ts
   var generated_client_default = extension_default2.client;
   return __toCommonJS(generated_client_exports);
 })();
