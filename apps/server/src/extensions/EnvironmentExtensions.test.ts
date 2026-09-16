@@ -217,7 +217,7 @@ function fixture() {
     Layer.mock(CheckpointDiffQuery)({}),
     Layer.mock(OrchestrationCommandReceiptRepository)({}),
     Layer.mock(OrchestrationEngineService)({}),
-    Layer.mock(ProjectionSnapshotQuery)({}),
+    Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({}),
     Layer.mock(ProviderService)({}),
     ExtensionCatalogueChanges.layer,
     Layer.mock(PortDiscovery)({}),
