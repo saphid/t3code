@@ -47,6 +47,22 @@ export interface ThreadPreviewState {
   serverEpoch: string | null;
   /** Latest ordered server revision applied from a list response or event. */
   serverRevision: number;
+  /**
+   * Completed authoritative preview.list applications. Only a list result
+   * proves a tab's absence — events can only add or remove what they mention,
+   * and a refresh's replayed previous value (AsyncResult waiting) is not a
+   * completed response. Callers that need "this tab is gone" must compare
+   * against a baseline captured before their own refresh; a stale cached
+   * list must not count as fresh authority.
+   */
+  listSeq: number;
+  /**
+   * Completed `preview.list` requests that ended in Failure. Bumped
+   * independently of `listSeq` so waiters can tell "request completed but
+   * failed" (retryable — not evidence a tab is absent) from "request still
+   * pending". A re-emitted result that is still `waiting` does not count.
+   */
+  listFailures: number;
 }
 
 const EMPTY_THREAD_PREVIEW_STATE: ThreadPreviewState = Object.freeze({
@@ -59,6 +75,8 @@ const EMPTY_THREAD_PREVIEW_STATE: ThreadPreviewState = Object.freeze({
   recentlySeenUrls: [] as string[],
   serverEpoch: null,
   serverRevision: 0,
+  listSeq: 0,
+  listFailures: 0,
 });
 
 const emptyPreviewStateAtom = Atom.make<ThreadPreviewState>(EMPTY_THREAD_PREVIEW_STATE).pipe(
@@ -351,8 +369,21 @@ export function reconcilePreviewServerSessions(
       recentlySeenUrls,
       serverEpoch: result.serverEpoch,
       serverRevision: result.revision,
+      listSeq: current.listSeq + 1,
     };
   });
+}
+
+/**
+ * Record that a `preview.list` request completed with Failure. This is not
+ * evidence any session is absent — it only tells waiters their arbitrating
+ * request finished, so they may retry or bound the wait themselves.
+ */
+export function recordPreviewListFailure(ref: ScopedThreadRef): void {
+  updateThreadPreviewState(ref, (current) => ({
+    ...current,
+    listFailures: current.listFailures + 1,
+  }));
 }
 
 function isPreviewStateEqual(

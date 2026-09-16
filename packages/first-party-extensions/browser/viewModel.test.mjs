@@ -6,7 +6,7 @@ import {
   canGoForward,
   currentUrl,
   describeStatus,
-  ENGINE_UNAVAILABLE_NOTICE,
+  NO_SESSION_NOTICE,
   goBack,
   goForward,
   initialNavigationState,
@@ -160,17 +160,15 @@ NodeTest.describe("describeStatus", () => {
     NodeAssert.match(text, /ftp:\/\/bad/);
   });
 
-  NodeTest.it("names the recorded target honestly — recorded, never 'loaded'", () => {
+  NodeTest.it("names the requested target honestly — requested, never 'loaded'", () => {
     const state = submitAddress(initialNavigationState, "example.com");
     const text = describeStatus(state);
-    NodeAssert.match(text, /Recorded target https:\/\/example\.com\//);
-    NodeAssert.match(text, /not rendered|awaiting|engine/i);
+    NodeAssert.match(text, /Requested https:\/\/example\.com\//);
     NodeAssert.doesNotMatch(text, /loaded/i);
   });
 
-  NodeTest.it("the engine-gap notice names the missing contract", () => {
-    NodeAssert.match(ENGINE_UNAVAILABLE_NOTICE, /t3\.browser\/sessions/);
-    NodeAssert.match(ENGINE_UNAVAILABLE_NOTICE, /not reachable/i);
+  NodeTest.it("the no-session notice names the contract that opens one", () => {
+    NodeAssert.match(NO_SESSION_NOTICE, /t3\.browser\/sessions/);
   });
 });
 

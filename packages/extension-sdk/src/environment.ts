@@ -11,7 +11,7 @@ import {
   type ApiDiscovery,
   type ApiStreamEvent,
 } from "./capabilities.js";
-import { assertProvidedApiOwner } from "./catalogue.js";
+import { assertProvidedApiOwner, type BrowserSurfaceHost } from "./catalogue.js";
 import type * as React from "react";
 import {
   assertId,
@@ -124,6 +124,12 @@ export interface ClientHost {
   ): Promise<{ readonly bytes: Uint8Array; readonly mediaType: string; readonly sha256: string }>;
   /** Host resolves installed grants and authenticated scope; supplied context is not authority. */
   invokeTool(toolId: string, input: Json, context: ViewContext, signal: AbortSignal): Promise<Json>;
+  /**
+   * `t3.browser/surface` host capability (catalogue contract, not a brokered
+   * API). Absent on hosts that predate it — treat absence as the named
+   * "host-unavailable" state.
+   */
+  readonly browserSurface?: BrowserSurfaceHost;
 }
 export type ClientFactory = (host: ClientHost) => Extension<SurfaceRenderer>;
 

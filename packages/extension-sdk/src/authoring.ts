@@ -18,6 +18,14 @@ import {
   type TypedApi,
   type ApiMethodTypes,
 } from "./capabilities.js";
+import {
+  BROWSER_SURFACE,
+  type BrowserSurfaceAcquireResult,
+  type BrowserSurfaceDenial,
+  type BrowserSurfaceLease,
+  type BrowserSurfaceRect,
+  type BrowserSurfaceSessionRef,
+} from "./catalogue.js";
 
 export type RestoreFieldType = "boolean" | "number" | "string";
 export interface RestoreStateSchema {
@@ -270,5 +278,284 @@ export function useApiRead<T extends ApiMethodTypes, K extends keyof T & string>
     return () => controller.abort();
   }, [key, host, session]);
   return state?.key === key ? state.result : { status: "loading" };
+}
+/* oxlint-enable react/hooks */
+
+export interface BrowserSurfaceSlotOptions {
+  /** Session identity from `t3.browser/sessions`; null presents nothing. */
+  readonly session: BrowserSurfaceSessionRef | null;
+  /** Combined visibility — the slot hides when the view or the surface is hidden. */
+  readonly visible: boolean;
+  readonly cornerRadius?: number;
+  readonly zIndex?: number;
+}
+
+export interface BrowserSurfaceSlot {
+  /** Attach to the element whose viewport-relative bounds carry the surface. */
+  readonly ref: (element: HTMLElement | null) => void;
+  /** The held lease; `lease.state` carries named unsupported and end states. */
+  readonly lease: BrowserSurfaceLease | null;
+  /** Named acquire failure — grant, scope, epoch or host. Render it as-is. */
+  readonly denial: BrowserSurfaceDenial | null;
+}
+
+const OVERFLOW_CLIP_PATTERN = /(auto|scroll|hidden|clip)/;
+const OCCLUSION_POLL_MS = 400;
+/**
+ * `host-unavailable` is the only transient denial — the host says "retry
+ * once synchronization completes". A mounted slot must recover without a
+ * remount, so acquisition retries on a bounded backoff; exhausting it leaves
+ * the named denial rendered, which is terminal until the caller remounts or
+ * changes the session identity. Every other denial is stable and never
+ * retried.
+ */
+const ACQUIRE_RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000];
+
+/**
+ * The composited webview is a fixed-position sibling, not a DOM descendant —
+ * ancestor `overflow` does not clip it. Intersect the slot's rect with every
+ * overflow-clipping ancestor's box and the viewport so `present` only ever
+ * covers pixels the slot could actually show. Returns null when fully clipped.
+ */
+function clippedSlotRect(element: HTMLElement): BrowserSurfaceRect | null {
+  const bounds = element.getBoundingClientRect();
+  let x1 = bounds.x;
+  let y1 = bounds.y;
+  let x2 = bounds.x + bounds.width;
+  let y2 = bounds.y + bounds.height;
+  let node = element.parentElement;
+  while (node && node !== element.ownerDocument.documentElement) {
+    const style = getComputedStyle(node);
+    if (
+      OVERFLOW_CLIP_PATTERN.test(style.overflowX) ||
+      OVERFLOW_CLIP_PATTERN.test(style.overflowY)
+    ) {
+      // Overflow clips at the padding box, but getBoundingClientRect returns
+      // the border box — clientLeft/clientTop inset past the border and
+      // clientWidth/clientHeight exclude it (and any scrollbar). Scale by
+      // rect/offset so a CSS-transformed ancestor still clips proportionally.
+      const clip = node.getBoundingClientRect();
+      const scaleX = node.offsetWidth > 0 ? clip.width / node.offsetWidth : 1;
+      const scaleY = node.offsetHeight > 0 ? clip.height / node.offsetHeight : 1;
+      const cx = clip.x + node.clientLeft * scaleX;
+      const cy = clip.y + node.clientTop * scaleY;
+      x1 = Math.max(x1, cx);
+      y1 = Math.max(y1, cy);
+      x2 = Math.min(x2, cx + node.clientWidth * scaleX);
+      y2 = Math.min(y2, cy + node.clientHeight * scaleY);
+    }
+    node = node.parentElement;
+  }
+  const viewport = element.ownerDocument.defaultView;
+  x1 = Math.max(x1, 0);
+  y1 = Math.max(y1, 0);
+  x2 = Math.min(x2, viewport?.innerWidth ?? x2);
+  y2 = Math.min(y2, viewport?.innerHeight ?? y2);
+  if (x2 <= x1 || y2 <= y1) return null;
+  return {
+    x: Math.round(x1),
+    y: Math.round(y1),
+    width: Math.round(x2 - x1),
+    height: Math.round(y2 - y1),
+  };
+}
+
+/**
+ * Probe the center of the visible region: the only elements allowed to paint
+ * above the slot are the slot's own descendants and presented native surfaces
+ * (`data-preview-viewport`), which z-order correctly among themselves.
+ * Anything else — a modal, overlay, or covering panel — means hide.
+ */
+function slotOccluded(element: HTMLElement, clip: BrowserSurfaceRect): boolean {
+  const stack = element.ownerDocument.elementsFromPoint(
+    clip.x + clip.width / 2,
+    clip.y + clip.height / 2,
+  );
+  const index = stack.indexOf(element);
+  const covering = index === -1 ? stack : stack.slice(0, index);
+  return covering.some(
+    (node) =>
+      !element.contains(node) &&
+      !(typeof node.closest === "function" && node.closest("[data-preview-viewport]") !== null),
+  );
+}
+
+/**
+ * The SDK mirror of the native BrowserSurfaceSlot: owns the acquire/present/
+ * release cycle for a plugin-rendered slot element. Geometry is observed with
+ * ResizeObserver + window resize + capture-phase scroll, clipped to the slot's
+ * visible region, and forwarded through the lease's frame-coalesced
+ * `present`. There is no automatic re-acquire — a `superseded` end is
+ * terminal for the lease; the caller must remount the slot element or change
+ * the session identity (clear it and open a fresh session) to acquire again.
+ * The one exception is a `host-unavailable` acquire denial, which is
+ * explicitly transient ("retry when synchronization completes"): the hook
+ * retries it on a bounded backoff, and a lease that ends `session-unverified`
+ * may likewise be re-acquired by remount or identity change once the host
+ * recovers.
+ */
+/* oxlint-disable react/hooks -- hooks come from the injected host React identity. */
+export function useBrowserSurfaceSlot(
+  host: ClientHost,
+  session: ViewSession,
+  options: BrowserSurfaceSlotOptions,
+): BrowserSurfaceSlot {
+  const { useCallback, useLayoutEffect, useRef, useState } = host.React;
+  const [element, setElement] = useState<HTMLElement | null>(null);
+  const [result, setResult] = useState<BrowserSurfaceAcquireResult | null>(null);
+  // Lease transitions are host-originated; the bump re-reads lease.state.
+  const [, setLeaseVersion] = useState(0);
+  const targetKey = options.session ? `${options.session.serverEpoch}${options.session.tabId}` : "";
+  const presentationRef = useRef({
+    visible: options.visible,
+    cornerRadius: options.cornerRadius ?? 0,
+    zIndex: options.zIndex ?? 30,
+  });
+  const updateRef = useRef<(() => void) | null>(null);
+
+  const ref = useCallback((node: HTMLElement | null) => setElement(node), []);
+
+  useLayoutEffect(() => {
+    presentationRef.current = {
+      visible: options.visible,
+      cornerRadius: options.cornerRadius ?? 0,
+      zIndex: options.zIndex ?? 30,
+    };
+    updateRef.current?.();
+  }, [options.visible, options.cornerRadius, options.zIndex]);
+
+  useLayoutEffect(() => {
+    setResult(null);
+    if (!element || !options.session) return;
+    const surface = host.browserSurface;
+    const major = Number.parseInt(surface?.version.split(".")[0] ?? "", 10);
+    if (!surface || surface.id !== BROWSER_SURFACE || major !== 1) {
+      setResult({
+        ok: false,
+        denial: {
+          reason: "host-unavailable",
+          detail: `This host does not implement ${BROWSER_SURFACE}@1.x.`,
+        },
+      });
+      return;
+    }
+    const surfaceSession = options.session;
+    let detach: () => void = () => {};
+    let retry: ReturnType<typeof setTimeout> | null = null;
+    let attempts = 0;
+    let disposed = false;
+
+    const attach = (held: BrowserSurfaceLease) => {
+      let poll: ReturnType<typeof setInterval> | null = null;
+      const unsubscribe = held.onDidChangeState((next) => {
+        setLeaseVersion((value) => value + 1);
+        if (next.kind === "ended" && poll !== null) {
+          clearInterval(poll);
+          poll = null;
+        }
+      });
+      // Nothing composites on an unsupported host — the lease still reports
+      // its named state, but no geometry or occlusion work is worth running.
+      if (!surface.presentation.supported) {
+        detach = () => {
+          unsubscribe();
+          held.release();
+        };
+        return;
+      }
+      // A suppressed slot keeps its last footprint and skips every DOM read —
+      // one present flips the native surface off and the occlusion poll stops
+      // until the slot is visible again; nothing remains to probe.
+      let hidden = !presentationRef.current.visible;
+      let lastRect: BrowserSurfaceRect = { x: 0, y: 0, width: 1, height: 1 };
+      const update = () => {
+        if (held.state.kind === "ended") return;
+        const prefs = presentationRef.current;
+        if (!prefs.visible) {
+          if (poll !== null) {
+            clearInterval(poll);
+            poll = null;
+          }
+          if (!hidden) {
+            hidden = true;
+            held.present(lastRect, false, prefs.cornerRadius, prefs.zIndex);
+          }
+          return;
+        }
+        hidden = false;
+        // Sibling overlays (modals, panels) do not trigger geometry events —
+        // poll the occlusion probe so a covered surface still hides.
+        if (poll === null) poll = setInterval(update, OCCLUSION_POLL_MS);
+        // The webview is not clipped by the slot's overflow ancestors —
+        // present the visible intersection and hide when nothing of it is on
+        // screen.
+        const clip = clippedSlotRect(element);
+        const occluded = clip !== null && slotOccluded(element, clip);
+        const rect =
+          clip ??
+          (() => {
+            const bounds = element.getBoundingClientRect();
+            return {
+              x: Math.round(bounds.x),
+              y: Math.round(bounds.y),
+              width: Math.max(1, Math.round(bounds.width)),
+              height: Math.max(1, Math.round(bounds.height)),
+            };
+          })();
+        lastRect = rect;
+        held.present(rect, clip !== null && !occluded, prefs.cornerRadius, prefs.zIndex);
+      };
+      updateRef.current = update;
+      update();
+      const observer = new ResizeObserver(update);
+      observer.observe(element);
+      window.addEventListener("resize", update);
+      window.addEventListener("scroll", update, true);
+      detach = () => {
+        if (poll !== null) clearInterval(poll);
+        observer.disconnect();
+        window.removeEventListener("resize", update);
+        window.removeEventListener("scroll", update, true);
+        if (updateRef.current === update) updateRef.current = null;
+        unsubscribe();
+        held.release();
+      };
+    };
+
+    const tryAcquire = () => {
+      if (disposed) return;
+      const acquired = surface.acquire({
+        context: session.context,
+        session: surfaceSession,
+        signal: session.signal,
+      });
+      if (!acquired.ok) {
+        setResult(acquired);
+        if (
+          acquired.denial.reason === "host-unavailable" &&
+          attempts < ACQUIRE_RETRY_DELAYS_MS.length
+        ) {
+          retry = setTimeout(tryAcquire, ACQUIRE_RETRY_DELAYS_MS[attempts]);
+          attempts += 1;
+        }
+        return;
+      }
+      setResult(acquired);
+      attach(acquired.lease);
+    };
+    tryAcquire();
+    return () => {
+      disposed = true;
+      if (retry !== null) clearTimeout(retry);
+      detach();
+    };
+    // The lease is re-acquired only when the element or session identity changes.
+  }, [element, targetKey, host, session]);
+
+  return {
+    ref,
+    lease: result?.ok ? result.lease : null,
+    denial: result && !result.ok ? result.denial : null,
+  };
 }
 /* oxlint-enable react/hooks */

@@ -4,11 +4,10 @@
  * chrome row renders (inventory rows #4/#5/#7/#24 in
  * docs/internals/extensions/browser-binding-disposition.md).
  *
- * No browser engine is reachable through public SDK contracts yet, so an
- * accepted target is recorded — never presented as a loaded page. The
- * history stack keeps real browser traversal semantics (submitting drops
- * forward entries) so the model is ready to drive `t3.browser/sessions`
- * when the parent's shared prerequisites land.
+ * Accepted targets are dispatched to a `t3.browser/sessions` session by the
+ * view; receipts are dispatch records, never load confirmations — engine and
+ * navigation state come only from the sessions stream. The history stack
+ * keeps real browser traversal semantics (submitting drops forward entries).
  */
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 
@@ -117,9 +116,12 @@ export function recentTargets(state: NavigationState): readonly string[] {
   return state.history.toReversed();
 }
 
-/** Why the webview area shows no page — the deferred contract, named. */
-export const ENGINE_UNAVAILABLE_NOTICE =
-  "No page is rendered: the native browser engine is not reachable through public SDK contracts yet (t3.browser/sessions and the engine attachment are still pending — binding table rows #2/#5).";
+/**
+ * Body copy when no browser session is held — the contract exists now, so the
+ * notice names how a session starts rather than a missing engine.
+ */
+export const NO_SESSION_NOTICE =
+  "No browser session is open in this panel yet. Enter an address to open one through t3.browser/sessions.";
 
 /** Status line for the current navigation state. */
 export function describeStatus(state: NavigationState): string {
@@ -129,7 +131,7 @@ export function describeStatus(state: NavigationState): string {
     case "rejected":
       return `Rejected “${state.status.input}” — ${state.status.message}`;
     case "target":
-      return `Recorded target ${state.status.url} (request ${state.epoch}) — awaiting the public browser engine`;
+      return `Requested ${state.status.url} (request ${state.epoch})`;
   }
 }
 
