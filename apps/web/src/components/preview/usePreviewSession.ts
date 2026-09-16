@@ -43,7 +43,11 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
     let eventsVersion = 0;
 
     const reconcileSessions = (result: Atom.Type<typeof sessionsAtom>) => {
-      if (!AsyncResult.isSuccess(result)) return;
+      // A refresh re-emits the previous Success with `waiting` while the
+      // request is in flight — replayed data is not fresh authority for a
+      // tab's absence, so only completed responses reconcile (and advance
+      // the store's listSeq arbitration counter).
+      if (result.waiting || !AsyncResult.isSuccess(result)) return;
       reconcilePreviewServerSessions(threadRef, result.value);
     };
 

@@ -46,6 +46,7 @@ import {
   type ThreadPreviewState,
 } from "~/previewStateStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { environmentShell } from "~/state/shell";
 import { environmentThreadShells } from "~/state/threads";
 
 export interface BrowserSurfaceBinding {
@@ -74,13 +75,22 @@ export interface BrowserSurfaceBridgeDeps {
     }) => void,
   ) => () => void;
   /**
-   * Authoritative thread → project from the orchestration shell; null when the
-   * thread is unknown to this environment. The caller-supplied projectId in
-   * the view context is not authority — a granted project paired with a
-   * foreign thread must not claim that thread's surface.
+   * Thread → project from the orchestration shell. Only a `live` shell is
+   * authority — `cached`/`synchronizing`/`empty` snapshots are last-known or
+   * partially applied data and must not authorize a claim, so they report
+   * `authoritative: false`. The caller-supplied projectId in the view context
+   * is never authority either: a granted project paired with a foreign thread
+   * must not claim that thread's surface.
    */
-  readonly resolveThreadProject: (threadRef: ScopedThreadRef) => string | null;
-  /** Fires when the thread's shell record changes (project move, deletion). */
+  readonly resolveThreadScope: (threadRef: ScopedThreadRef) => {
+    readonly projectId: string | null;
+    readonly authoritative: boolean;
+  };
+  /**
+   * Fires when the environment's shell state changes — status transitions and
+   * every applied snapshot — so a thread record's project and the authority
+   * to trust it are both re-read on each change.
+   */
   readonly subscribeThread: (threadRef: ScopedThreadRef, listener: () => void) => () => void;
   /** Forces a fresh preview.list round-trip for the thread. */
   readonly refreshSessions: (threadRef: ScopedThreadRef) => void;
@@ -119,10 +129,18 @@ export function createBrowserSurfaceBridge(
     ownerOf: (runtimeTabId) =>
       useBrowserSurfaceStore.getState().byTabId[runtimeTabId]?.owner ?? null,
     subscribeStore: (listener) => useBrowserSurfaceStore.subscribe(listener),
-    resolveThreadProject: (threadRef) =>
-      appAtomRegistry.get(environmentThreadShells.threadShellAtom(threadRef))?.projectId ?? null,
+    resolveThreadScope: (threadRef) => {
+      const shell = appAtomRegistry.get(environmentShell.stateValueAtom(threadRef.environmentId));
+      if (shell.status !== "live") return { projectId: null, authoritative: false };
+      return {
+        projectId:
+          appAtomRegistry.get(environmentThreadShells.threadShellAtom(threadRef))?.projectId ??
+          null,
+        authoritative: true,
+      };
+    },
     subscribeThread: (threadRef, listener) =>
-      appAtomRegistry.subscribe(environmentThreadShells.threadShellAtom(threadRef), listener),
+      appAtomRegistry.subscribe(environmentShell.stateValueAtom(threadRef.environmentId), listener),
     refreshSessions: refreshPreviewSessionList,
     ...overrides,
   };
@@ -172,11 +190,18 @@ export function createBrowserSurfaceBridge(
         // The context's projectId is caller-supplied — resolve the thread's
         // real project from the orchestration shell before mounting sync or
         // claiming the store, matching the brokered sessions scope resolver.
-        const threadProjectId = deps.resolveThreadProject(threadRef);
+        // Only a live shell answers; cached or synchronizing snapshots can
+        // still describe a previous ownership.
+        const threadScope = deps.resolveThreadScope(threadRef);
+        if (!threadScope.authoritative)
+          return deny(
+            "host-unavailable",
+            `${BROWSER_SURFACE} cannot verify the thread's project until this environment's data is live; retry once synchronization completes.`,
+          );
         if (
-          threadProjectId === null ||
-          threadProjectId !== resource.projectId ||
-          !binding.grants.projectIds.includes(threadProjectId)
+          threadScope.projectId === null ||
+          threadScope.projectId !== resource.projectId ||
+          !binding.grants.projectIds.includes(threadScope.projectId)
         )
           return deny(
             "scope-invalid",
@@ -285,7 +310,12 @@ export function createBrowserSurfaceBridge(
         });
         unsubscribeThread = deps.subscribeThread(threadRef, () => {
           if (state.kind === "ended") return;
-          if (deps.resolveThreadProject(threadRef) !== resource.projectId) end("scope-invalidated");
+          const scope = deps.resolveThreadScope(threadRef);
+          // Only a live shell can move the claim — losing synchronization is
+          // not evidence the thread moved; the next live application
+          // re-validates and ends the lease on contradiction.
+          if (scope.authoritative && scope.projectId !== resource.projectId)
+            end("scope-invalidated");
         });
         // A tab absent despite an applied list may be stale cached state —
         // force one authoritative round-trip to arbitrate before the lease

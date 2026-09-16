@@ -45,6 +45,18 @@ function domStubs() {
     window: globalThis.window,
     document: globalThis.document,
     getComputedStyle: globalThis.getComputedStyle,
+    setInterval: globalThis.setInterval,
+    clearInterval: globalThis.clearInterval,
+  };
+  const polls = [];
+  let intervalId = 0;
+  globalThis.setInterval = (fn) => {
+    polls.push(fn);
+    return ++intervalId;
+  };
+  globalThis.clearInterval = (id) => {
+    polls.splice(0, polls.length);
+    return id;
   };
   const observed = [];
   globalThis.ResizeObserver = class {
@@ -79,6 +91,7 @@ function domStubs() {
   return {
     observed,
     listeners,
+    polls,
     document: stub,
     restore() {
       for (const [key, value] of Object.entries(previous)) {
@@ -89,26 +102,42 @@ function domStubs() {
   };
 }
 
-// Minimal element mock: geometry + parent chain + ownerDocument.
-function fakeElement(rectValue, { parent = null, document, computedStyle } = {}) {
+// Minimal element mock: geometry + parent chain + ownerDocument. Border-box
+// geometry defaults to the borderless case (padding box == rect); clip tests
+// override client*/offset* to model border and scrollbar.
+function fakeElement(
+  rectValue,
+  { parent = null, document, computedStyle, border = 0, scrollbar = 0 } = {},
+) {
   const element = {
     rect: rectValue,
     parentElement: parent,
     ownerDocument: document,
     computedStyle,
+    clientLeft: border,
+    clientTop: border,
+    offsetWidth: rectValue.width,
+    offsetHeight: rectValue.height,
+    clientWidth: rectValue.width - border * 2 - scrollbar,
+    clientHeight: rectValue.height - border * 2 - scrollbar,
+    rectReads: 0,
     contains: (node) => node.parentElement === element,
     getBoundingClientRect() {
+      element.rectReads += 1;
       return element.rect;
     },
   };
   return element;
 }
 
-function fakeLeaseHost() {
+function fakeLeaseHost({ supported = true } = {}) {
+  const presentation = supported
+    ? { supported: true }
+    : { supported: false, reason: "desktop-required" };
   const calls = { acquire: [], presents: [], released: 0, listeners: new Set() };
   const lease = {
     session: sessionRef,
-    state: { kind: "active", presentation: { supported: true } },
+    state: { kind: "active", presentation },
     onDidChangeState(listener) {
       calls.listeners.add(listener);
       return () => calls.listeners.delete(listener);
@@ -128,7 +157,7 @@ function fakeLeaseHost() {
     browserSurface: {
       id: BROWSER_SURFACE,
       version: BROWSER_SURFACE_VERSION,
-      presentation: { supported: true },
+      presentation,
       acquire(request) {
         calls.acquire.push(request);
         return { ok: true, lease };
@@ -323,6 +352,121 @@ NodeTest.test(
       } finally {
         await TestRenderer.act(async () => renderer.unmount());
       }
+    } finally {
+      dom.restore();
+    }
+  },
+);
+
+NodeTest.test(
+  "useBrowserSurfaceSlot clips to the ancestor padding box, not its border box",
+  async () => {
+    const dom = domStubs();
+    try {
+      const session = makeSession();
+      const { host, calls } = fakeLeaseHost();
+      // 10px border + 8px scrollbar: overflow clips at (110,110) 172x172, not
+      // the border box — the webview must never cover the border or scrollbar.
+      const container = fakeElement(
+        { x: 100, y: 100, width: 200, height: 200 },
+        {
+          document: dom.document,
+          computedStyle: { overflowX: "auto", overflowY: "auto" },
+          border: 10,
+          scrollbar: 8,
+        },
+      );
+      const slotElement = fakeElement(
+        { x: 100, y: 100, width: 200, height: 200 },
+        { parent: container, document: dom.document },
+      );
+      function View() {
+        const value = useBrowserSurfaceSlot(host, session, {
+          session: sessionRef,
+          visible: true,
+        });
+        return React.createElement("div", { ref: value.ref });
+      }
+      const renderer = render(View, slotElement);
+      try {
+        NodeAssert.deepEqual(calls.presents.at(-1).rect, {
+          x: 110,
+          y: 110,
+          width: 172,
+          height: 172,
+        });
+      } finally {
+        await TestRenderer.act(async () => renderer.unmount());
+      }
+    } finally {
+      dom.restore();
+    }
+  },
+);
+
+NodeTest.test(
+  "useBrowserSurfaceSlot runs no geometry or occlusion work while hidden or uncomposited",
+  async () => {
+    const dom = domStubs();
+    try {
+      const session = makeSession();
+
+      // Hidden slot: the lease is held but no DOM reads, presents or poll.
+      const hidden = fakeLeaseHost();
+      const slotElement = fakeElement(rect, { document: dom.document });
+      let visible = false;
+      function HiddenView() {
+        const value = useBrowserSurfaceSlot(hidden.host, session, {
+          session: sessionRef,
+          visible,
+        });
+        return React.createElement("div", { ref: value.ref });
+      }
+      const hiddenRenderer = render(HiddenView, slotElement);
+      try {
+        NodeAssert.equal(hidden.calls.presents.length, 0);
+        NodeAssert.equal(slotElement.rectReads, 0);
+        NodeAssert.equal(dom.polls.length, 0);
+        // Flipping visible resumes presentation and the occlusion poll…
+        visible = true;
+        await TestRenderer.act(async () => hiddenRenderer.update(React.createElement(HiddenView)));
+        NodeAssert.equal(hidden.calls.presents.at(-1).visible, true);
+        NodeAssert.equal(dom.polls.length, 1);
+        // …and hiding again sends exactly one transition, then stops the poll.
+        const presentsBefore = hidden.calls.presents.length;
+        visible = false;
+        await TestRenderer.act(async () => hiddenRenderer.update(React.createElement(HiddenView)));
+        NodeAssert.equal(hidden.calls.presents.length, presentsBefore + 1);
+        NodeAssert.equal(hidden.calls.presents.at(-1).visible, false);
+        NodeAssert.equal(dom.polls.length, 0);
+      } finally {
+        await TestRenderer.act(async () => hiddenRenderer.unmount());
+      }
+      NodeAssert.equal(hidden.calls.released, 1);
+
+      // Uncomposited host: lease still acquires, but no observer or poll.
+      const unsupported = fakeLeaseHost({ supported: false });
+      const pollsBefore = dom.polls.length;
+      const observedBefore = dom.observed.length;
+      function UnsupportedView() {
+        const value = useBrowserSurfaceSlot(unsupported.host, session, {
+          session: sessionRef,
+          visible: true,
+        });
+        return React.createElement("div", { ref: value.ref });
+      }
+      const unsupportedElement = fakeElement(rect, { document: dom.document });
+      const unsupportedRenderer = render(UnsupportedView, unsupportedElement);
+      try {
+        NodeAssert.equal(unsupported.calls.acquire.length, 1);
+        NodeAssert.equal(unsupported.calls.presents.length, 0);
+        NodeAssert.equal(unsupportedElement.rectReads, 0);
+        NodeAssert.equal(dom.polls.length, pollsBefore);
+        NodeAssert.equal(dom.observed.length, observedBefore);
+      } finally {
+        await TestRenderer.act(async () => unsupportedRenderer.unmount());
+      }
+      NodeAssert.equal(unsupported.calls.released, 1);
     } finally {
       dom.restore();
     }

@@ -4769,8 +4769,10 @@ export const BROWSER_SURFACE_REQUIRED_GRANTS = [BROWSER_SESSIONS, BROWSER_SURFAC
  * Integer CSS-pixel bounds, viewport-relative. The composited surface is not
  * a DOM descendant of the slot — ancestor overflow does not clip it — so the
  * caller must present only the region the slot can actually show.
- * `useBrowserSurfaceSlot` already clips to overflow ancestors, the viewport,
- * and occlusion.
+ * `useBrowserSurfaceSlot` intersects the slot with its overflow-clipping
+ * ancestors' padding boxes and the viewport, and hides the surface while the
+ * slot's visible center is covered by an unrelated element — a center-point
+ * heuristic, not arbitrary-region clipping.
  */
 export interface BrowserSurfaceRect {
   readonly x: number;

@@ -42,6 +42,7 @@ function harness({ composites = true }: { composites?: boolean } = {}) {
     listSeq: 1,
   };
   let threadProjects: Record<string, string | null> = { "thread-a": "project-a" };
+  let shellLive = true;
   const threadListeners = new Set<() => void>();
   const sessionRefreshes: string[] = [];
   const sessionListeners = new Set<() => void>();
@@ -101,7 +102,10 @@ function harness({ composites = true }: { composites?: boolean } = {}) {
       storeListeners.add(listener);
       return () => storeListeners.delete(listener);
     },
-    resolveThreadProject: (threadRef) => threadProjects[threadRef.threadId] ?? null,
+    resolveThreadScope: (threadRef) => ({
+      projectId: threadProjects[threadRef.threadId] ?? null,
+      authoritative: shellLive,
+    }),
     subscribeThread: (_threadRef, listener) => {
       threadListeners.add(listener);
       return () => threadListeners.delete(listener);
@@ -142,6 +146,9 @@ function harness({ composites = true }: { composites?: boolean } = {}) {
     },
     setThreadProject: (threadId: string, projectId: string | null) => {
       threadProjects = { ...threadProjects, [threadId]: projectId };
+    },
+    setShellLive: (live: boolean) => {
+      shellLive = live;
     },
     sessionRefreshes,
     getPreviewState: () => previewState,
@@ -217,6 +224,40 @@ describe("browserSurfaceBridge", () => {
     h.fireThreads();
     expect(acquired.lease.state).toEqual({ kind: "ended", reason: "scope-invalidated" });
     expect(h.nativeLeases[0]?.released).toBe(true);
+  });
+
+  it("denies acquire while the shell is not authoritative", () => {
+    const h = harness();
+    h.setShellLive(false);
+    const denied = h.host().acquire({ context, session: sessionRef });
+    expect(denied.ok).toBe(false);
+    if (!denied.ok) expect(denied.denial.reason).toBe("host-unavailable");
+    expect(h.syncMounts).toEqual([]);
+    expect(h.nativeLeases).toEqual([]);
+  });
+
+  it("holds the lease through a sync loss and re-validates when live", () => {
+    const h = harness();
+    const acquired = h.host().acquire({ context, session: sessionRef });
+    if (!acquired.ok) throw new Error("expected lease");
+    // Losing shell authority mid-lease is not evidence the thread moved.
+    h.setShellLive(false);
+    h.fireThreads();
+    expect(acquired.lease.state).toEqual({
+      kind: "active",
+      presentation: { supported: true },
+    });
+    // Returning live with the same project keeps the claim…
+    h.setShellLive(true);
+    h.fireThreads();
+    expect(acquired.lease.state).toEqual({
+      kind: "active",
+      presentation: { supported: true },
+    });
+    // …and returning live with the thread moved ends it.
+    h.setThreadProject("thread-a", "project-b");
+    h.fireThreads();
+    expect(acquired.lease.state).toEqual({ kind: "ended", reason: "scope-invalidated" });
   });
 
   it("denies malformed session identity and stale epochs by name", () => {

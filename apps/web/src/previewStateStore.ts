@@ -48,10 +48,12 @@ export interface ThreadPreviewState {
   /** Latest ordered server revision applied from a list response or event. */
   serverRevision: number;
   /**
-   * Authoritative preview.list applications. Only a list result proves a tab's
-   * absence — events can only add or remove what they mention. Callers that
-   * need "this tab is gone" must compare against a baseline captured before
-   * their own refresh; a stale cached list must not count as fresh authority.
+   * Completed authoritative preview.list applications. Only a list result
+   * proves a tab's absence — events can only add or remove what they mention,
+   * and a refresh's replayed previous value (AsyncResult waiting) is not a
+   * completed response. Callers that need "this tab is gone" must compare
+   * against a baseline captured before their own refresh; a stale cached
+   * list must not count as fresh authority.
    */
   listSeq: number;
 }
