@@ -168,13 +168,23 @@ export function defineExtension(source: ExtensionSource): AuthoredExtension {
     version: source.version,
     apiVersion: 1 as const,
     surfaces: surfaces.map(
-      ({ name, title, scope, placements, clients, capabilities, stateVersion }) => ({
+      ({
+        name,
+        title,
+        scope,
+        placements,
+        clients,
+        capabilities,
+        claimsTerminalFocus,
+        stateVersion,
+      }) => ({
         id: source.id + "/" + name,
         title,
         scope,
         placements: placements ?? ["side-panel" as const],
         clients: clients ?? ["web", "desktop"],
         capabilities: capabilities ?? [],
+        ...(claimsTerminalFocus === true ? { claimsTerminalFocus: true } : {}),
         stateVersion: stateVersion ?? 1,
       }),
     ),

@@ -349,3 +349,70 @@ it("an environment version shadows the entire global package, including removed 
     });
   }
 });
+
+it("marks a declared terminal-focus surface's frame as extension-owned", async () => {
+  const makeExtension = (claimsTerminalFocus: boolean): Extension<SurfaceRenderer> => ({
+    manifest: {
+      id: "community.focus",
+      version: "1.0.0",
+      apiVersion: 1,
+      surfaces: [
+        {
+          id: "community.focus/view",
+          title: "Focus",
+          scope: "project",
+          clients: ["web"],
+          placements: ["side-panel"],
+          capabilities: [],
+          ...(claimsTerminalFocus ? { claimsTerminalFocus: true } : {}),
+          stateVersion: 1,
+        },
+      ],
+    },
+    surfaces: [
+      {
+        id: "community.focus/view",
+        validateRestore: (state) => state === null,
+        createView: () => ({ renderer: () => <input aria-label="Focus target" /> }),
+      },
+    ],
+  });
+  const record: ViewRecord = {
+    version: 1,
+    surfaceId: "community.focus/view",
+    placement: "side-panel",
+    stateVersion: 1,
+    restoreState: null,
+    fallback: "Focus view unavailable",
+    context: {
+      client: "web",
+      resource: {
+        namespace: "community.focus",
+        id: "view",
+        environmentId: "env",
+        projectId: "project",
+      },
+    },
+  };
+  let root!: ReactTestRenderer;
+  let stop = () => {};
+  try {
+    await act(async () => {
+      stop = registerWorkspaceExtension(makeExtension(true));
+      root = create(<WorkspaceExtensionSurface record={record} visible />);
+    });
+    const tagged = root.root.findAllByProps({ "data-terminal-owner": "extension" });
+    expect(tagged).toHaveLength(1);
+    expect(tagged[0]!.findByProps({ "aria-label": "Focus target" })).toBeTruthy();
+    await act(async () => {
+      stop();
+      stop = registerWorkspaceExtension(makeExtension(false));
+    });
+    expect(root.root.findAllByProps({ "data-terminal-owner": "extension" })).toHaveLength(0);
+  } finally {
+    await act(async () => {
+      root?.unmount();
+      stop();
+    });
+  }
+});

@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { getTerminalFocusOwner, isTerminalFocused } from "./terminalFocus";
+import {
+  getTerminalFocusOwner,
+  isExtensionClaimedTerminalCommand,
+  isTerminalFocused,
+} from "./terminalFocus";
 
 class MockHTMLElement {
   isConnected = false;
@@ -78,4 +82,55 @@ describe("isTerminalFocused", () => {
     expect(getTerminalFocusOwner()).toBe("right-panel");
     expect(isTerminalFocused()).toBe(true);
   });
+
+  it("returns the extension owner for focus inside a declared terminal surface", () => {
+    const pluginInput = new MockHTMLElement();
+    pluginInput.isConnected = true;
+    pluginInput.terminalOwner = "extension";
+    pluginInput.dataset.terminalOwner = "extension";
+
+    globalThis.HTMLElement = MockHTMLElement as unknown as typeof HTMLElement;
+    globalThis.document = { activeElement: pluginInput } as unknown as Document;
+
+    expect(getTerminalFocusOwner()).toBe("extension");
+    expect(isTerminalFocused()).toBe(true);
+  });
+
+  it("rejects owner values the host did not write", () => {
+    const forged = new MockHTMLElement();
+    forged.isConnected = true;
+    forged.terminalOwner = "plugin-terminal";
+    forged.dataset.terminalOwner = "plugin-terminal";
+
+    globalThis.HTMLElement = MockHTMLElement as unknown as typeof HTMLElement;
+    globalThis.document = { activeElement: forged } as unknown as Document;
+
+    expect(getTerminalFocusOwner()).toBeNull();
+    expect(isTerminalFocused()).toBe(false);
+  });
+});
+
+describe("isExtensionClaimedTerminalCommand", () => {
+  it.each(["terminal.split", "terminal.splitVertical", "terminal.new", "terminal.close"])(
+    "claims %s while an extension surface owns focus",
+    (command) => {
+      expect(isExtensionClaimedTerminalCommand(command, "extension")).toBe(true);
+    },
+  );
+
+  it.each(["terminal.split", "terminal.splitVertical", "terminal.new", "terminal.close"])(
+    "leaves %s to the native dispatcher for native owners",
+    (command) => {
+      expect(isExtensionClaimedTerminalCommand(command, "drawer")).toBe(false);
+      expect(isExtensionClaimedTerminalCommand(command, "right-panel")).toBe(false);
+      expect(isExtensionClaimedTerminalCommand(command, null)).toBe(false);
+    },
+  );
+
+  it.each(["terminal.toggle", "rightPanel.close", "thread.pin", "diff.toggle"])(
+    "does not claim %s, which is not focused-terminal scoped",
+    (command) => {
+      expect(isExtensionClaimedTerminalCommand(command, "extension")).toBe(false);
+    },
+  );
 });
