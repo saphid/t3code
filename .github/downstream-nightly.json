@@ -191,85 +191,11 @@
       "name": "Nightly 1675 integration compatibility"
     },
     {
-      "type": "commit",
-      "repository": "saphid/t3code",
-      "sha": "6a43b55eb7f3d11ac9fd1871cf3f0d9893345248",
-      "name": "GPT Live voice with fast commands and existing-thread updates"
-    },
-    {
-      "type": "commit",
-      "repository": "saphid/t3code",
-      "sha": "9564754a07a8516834c0ab9d9e23bc1d6cf3037f",
-      "name": "Voice settings with secure key management and persistent fast commands"
-    },
-    {
-      "type": "commit",
-      "repository": "saphid/t3code",
-      "sha": "5c5fce249f1a60d715c29d240ad8814ecb8a0a9f",
-      "name": "Voice panel transcript as ordered speaker-labeled chat"
-    },
-    {
-      "type": "commit",
-      "repository": "saphid/t3code",
-      "sha": "bc26a56da4cb75aa3c045546f0d1668121e051f0"
-    },
-    {
-      "type": "commit",
-      "repository": "saphid/t3code",
-      "sha": "fc102a83ff214ba39598e1731ecda5330f931f61",
-      "name": "Voice control discovery and activation of the attached UI"
-    },
-    {
-      "type": "commit",
-      "repository": "saphid/t3code",
-      "sha": "cef0d3bd1bbac0763b1dfc06997f6d5316a28503"
-    },
-    {
-      "type": "commit",
-      "repository": "saphid/t3code",
-      "sha": "bb60bcd4a6785956b84af2c394775c09598e050f",
-      "name": "Durable recoverable voice session history"
-    },
-    {
-      "type": "commit",
-      "repository": "saphid/t3code",
-      "sha": "ef8234842da84789262d06e6a6c2f7ae011399a2"
-    },
-    {
-      "type": "commit",
-      "repository": "saphid/t3code",
-      "sha": "893f1540240ea7f3f0314ed61f5768109a26419b"
-    },
-    {
-      "type": "commit",
-      "repository": "saphid/t3code",
-      "sha": "f57f4ee7b82327cbf9431e5ec8c4132c0e72c718"
-    },
-    {
-      "type": "commit",
-      "repository": "saphid/t3code",
-      "sha": "d9bc70920acc261f6c67f0c1d927c5bcb6785669"
-    },
-    {
-      "type": "commit",
-      "repository": "saphid/t3code",
-      "sha": "36baf582ddc636bb70a9b7be450b24ed1f5d51ca"
-    },
-    {
-      "type": "commit",
-      "repository": "saphid/t3code",
-      "sha": "aadf55466bb9233e5069e837128fc134bb3db3f5"
-    },
-    {
-      "type": "commit",
-      "repository": "saphid/t3code",
-      "sha": "245c345cd8b8d67e2d6ccc34dc5ebe270c2d11b9",
-      "name": "Minimized draggable voice overlay with silence auto-collapse and activation modes"
-    },
-    {
-      "type": "commit",
-      "repository": "saphid/t3code",
-      "sha": "6e8d9fcb87ebb37ff8bfdb61e77ea039d1d00a08"
+      "type": "pull_request",
+      "repository": "pingdotgg/t3code",
+      "number": 12034,
+      "headSha": "d6b05aa96fb53bedcf2ebaee049f026f5ddb646f",
+      "name": "GPT Live voice agent (upstream PR)"
     },
     {
       "type": "commit",
