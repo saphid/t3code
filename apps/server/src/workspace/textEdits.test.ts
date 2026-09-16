@@ -270,6 +270,48 @@ it.effect("oversized files are explicitly unavailable, never truncated", () =>
   }).pipe(Effect.provide(services)),
 );
 
+it.effect(
+  "an explicit maxBytes widens the bound for resource saves while the default stays 24000",
+  () =>
+    Effect.gen(function* () {
+      const root = yield* fixture();
+      const file = NodePath.join(root, "large.txt");
+      const base = "a".repeat(EDITABLE_TEXT_MAX_BYTES + 5000);
+      yield* writeFileUtf8(file, base);
+      const next = "b".repeat(EDITABLE_TEXT_MAX_BYTES + 4000);
+      // Without the override the editable bound rejects both reading the
+      // current file and the new contents.
+      const denied = yield* replaceEditableFile({
+        cwd: root,
+        relativePath: "large.txt",
+        expectedRevision: sha256Hex(base),
+        contents: next,
+      });
+      expect(denied).toEqual({ outcome: "error", reason: "oversized" });
+      // With the resource bound the same serialized compare-and-replace lands.
+      const saved = yield* replaceEditableFile({
+        cwd: root,
+        relativePath: "large.txt",
+        expectedRevision: sha256Hex(base),
+        contents: next,
+        maxBytes: EDITABLE_TEXT_MAX_BYTES + 10000,
+      });
+      expect(saved).toEqual({ outcome: "saved", revision: sha256Hex(next) });
+      yield* Effect.flatMap(readFileUtf8(file), (value) =>
+        Effect.sync(() => expect(value).toBe(next)),
+      );
+      // A save past the widened bound is still rejected.
+      const pastBound = yield* replaceEditableFile({
+        cwd: root,
+        relativePath: "large.txt",
+        expectedRevision: sha256Hex(next),
+        contents: "c".repeat(EDITABLE_TEXT_MAX_BYTES + 10001),
+        maxBytes: EDITABLE_TEXT_MAX_BYTES + 10000,
+      });
+      expect(pastBound).toEqual({ outcome: "error", reason: "oversized" });
+    }).pipe(Effect.provide(services)),
+);
+
 it.effect("symlinks, escapes, and outside-workspace paths are rejected", () =>
   Effect.gen(function* () {
     const root = yield* fixture();

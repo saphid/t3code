@@ -272,6 +272,7 @@ function fixture() {
             truncated: false,
           };
         }),
+      readFileBytes: () => Effect.die("unused"),
       writeFile: () => Effect.die("unused"),
     }),
     WorkspacePaths.layer,

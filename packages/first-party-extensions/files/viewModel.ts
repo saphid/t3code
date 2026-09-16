@@ -1,4 +1,8 @@
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import type {
+  WorkspaceResourceReadEvent,
+  WorkspaceResourceReason,
+} from "@t3tools/extension-sdk/catalogue";
 
 /**
  * Pure view-model for the Files tree panel. Owns F1 row #6's panel-local
@@ -485,14 +489,14 @@ export type EditorOpen =
   | { readonly editable: true; readonly contents: string; readonly revision: string }
   | { readonly editable: false; readonly reason: SnapshotReason; readonly message: string };
 
-const EDITABLE_TEXT_MAX_BYTES = 24000;
+const WORKSPACE_RESOURCE_MAX_BYTES = 8 * 1024 * 1024;
 
 const REASON_MESSAGES: Readonly<Record<SnapshotReason, string>> = {
   "not-found": "File does not exist in this workspace",
   "not-regular-file": "Not a regular file — only regular files can be edited",
   binary: "Binary file — editing is not supported",
   "invalid-utf8": "File is not valid UTF-8 — editing is not supported",
-  oversized: `File exceeds the ${EDITABLE_TEXT_MAX_BYTES.toLocaleString("en-US")}-byte editable bound — read only (full-size editing is not public yet)`,
+  oversized: `File exceeds the ${WORKSPACE_RESOURCE_MAX_BYTES.toLocaleString("en-US")}-byte workspace resource bound — read only`,
   "outside-workspace": "Path is outside the workspace",
   "unsafe-path": "Path is not a safe workspace-relative path",
   "changed-during-read": "File changed while it was being read — try again",
@@ -561,6 +565,334 @@ export function describeSaveState(state: {
     case "error":
       return `Save failed${state.message ? `: ${state.message}` : ""} — your changes are kept`;
   }
+}
+
+/* ------------------------------------------------------------------------
+ * Resource reads (F1 C06, #1/#19): fold + verify a `t3.workspace/resources`
+ * `read` stream into contents the panel may render or an editor may open.
+ * Single-source form of the diff panel's stream reassembly: a `manifest`
+ * snapshot, strictly-ordered `chunk` data frames, a terminal `complete`
+ * sha256 — or a sole `unavailable` frame naming the file-level failure.
+ * Nothing reaches the caller before the terminal checksum verifies.
+ * --------------------------------------------------------------------- */
+
+export interface StreamFrameLike<T> {
+  readonly value: T;
+}
+
+/** Terminal failure kinds a resource stream delivery can end in. */
+export type StreamFailure =
+  | { readonly kind: "protocol"; readonly detail: string }
+  | { readonly kind: "incomplete"; readonly detail: string }
+  | { readonly kind: "mismatch"; readonly detail: string }
+  | { readonly kind: "cancelled" };
+
+const SHA256_ROUND_CONSTANTS = Uint32Array.from([
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+]);
+
+/**
+ * Portable SHA-256 for contexts where `crypto.subtle` is missing — plain-http
+ * LAN origins are not secure contexts, and remote-ready is a product
+ * requirement, so digest verification must not depend on it.
+ */
+export function sha256HexPortable(bytes: Uint8Array): string {
+  const state = Uint32Array.from([
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+  ]);
+  const block = new Uint32Array(64);
+  const paddedLength = Math.ceil((bytes.length + 9) / 64) * 64;
+  const padded = new Uint8Array(paddedLength);
+  padded.set(bytes);
+  padded[bytes.length] = 0x80;
+  const view = new DataView(padded.buffer);
+  view.setUint32(paddedLength - 8, Math.floor((bytes.length * 8) / 0x1_0000_0000));
+  view.setUint32(paddedLength - 4, (bytes.length * 8) >>> 0);
+  for (let offset = 0; offset < paddedLength; offset += 64) {
+    for (let index = 0; index < 16; index += 1) block[index] = view.getUint32(offset + index * 4);
+    for (let index = 16; index < 64; index += 1) {
+      const a = block[index - 15]!;
+      const b = block[index - 2]!;
+      block[index] =
+        (block[index - 16]! +
+          (((a >>> 7) | (a << 25)) ^ ((a >>> 18) | (a << 14)) ^ (a >>> 3)) +
+          block[index - 7]! +
+          (((b >>> 17) | (b << 15)) ^ ((b >>> 19) | (b << 13)) ^ (b >>> 10))) >>>
+        0;
+    }
+    let [a, b, c, d, e, f, g, h] = state as unknown as [
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+    ];
+    for (let index = 0; index < 64; index += 1) {
+      const sum1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+      const choose = (e & f) ^ (~e & g);
+      const temp1 = (h + sum1 + choose + SHA256_ROUND_CONSTANTS[index]! + block[index]!) >>> 0;
+      const sum0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+      const majority = (a & b) ^ (a & c) ^ (b & c);
+      const temp2 = (sum0 + majority) >>> 0;
+      h = g;
+      g = f;
+      f = e;
+      e = (d + temp1) >>> 0;
+      d = c;
+      c = b;
+      b = a;
+      a = (temp1 + temp2) >>> 0;
+    }
+    state[0] = (state[0]! + a) >>> 0;
+    state[1] = (state[1]! + b) >>> 0;
+    state[2] = (state[2]! + c) >>> 0;
+    state[3] = (state[3]! + d) >>> 0;
+    state[4] = (state[4]! + e) >>> 0;
+    state[5] = (state[5]! + f) >>> 0;
+    state[6] = (state[6]! + g) >>> 0;
+    state[7] = (state[7]! + h) >>> 0;
+  }
+  return [...state].map((word) => word.toString(16).padStart(8, "0")).join("");
+}
+
+export async function sha256Hex(text: string): Promise<string> {
+  const bytes = textEncoder.encode(text);
+  const subtle = globalThis.crypto?.subtle;
+  if (subtle !== undefined) {
+    const digest = await subtle.digest("SHA-256", bytes);
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+  return sha256HexPortable(bytes);
+}
+
+export interface ResourceReadAssembly {
+  readonly manifest: Extract<WorkspaceResourceReadEvent, { kind: "manifest" }> | null;
+  readonly chunks: readonly string[];
+  /** Terminal `complete` sha256, or null until it arrives. */
+  readonly complete: string | null;
+  /** Terminal file-level failure reason — legal only before the manifest. */
+  readonly unavailable: WorkspaceResourceReason | null;
+}
+
+export function createResourceReadAssembly(): ResourceReadAssembly {
+  return { manifest: null, chunks: [], complete: null, unavailable: null };
+}
+
+type ResourceFoldResult =
+  | { readonly ok: true; readonly assembly: ResourceReadAssembly }
+  | { readonly ok: false; readonly detail: string };
+
+/**
+ * Fold one `read` event. Frames must arrive manifest → ordered chunks →
+ * complete, or be a sole `unavailable` first frame; out-of-order, duplicated
+ * or post-terminal frames are protocol failures — accepting them would hide
+ * transport breakage.
+ */
+export function applyResourceReadEvent(
+  assembly: ResourceReadAssembly,
+  event: WorkspaceResourceReadEvent,
+): ResourceFoldResult {
+  if (assembly.complete !== null || assembly.unavailable !== null)
+    return { ok: false, detail: "stream continued after a terminal frame" };
+  if (event.kind === "unavailable") {
+    if (assembly.manifest !== null)
+      return { ok: false, detail: "unavailable frame arrived after the manifest" };
+    return { ok: true, assembly: { ...assembly, unavailable: event.reason } };
+  }
+  if (event.kind === "manifest") {
+    if (assembly.manifest !== null) return { ok: false, detail: "duplicate manifest frame" };
+    return { ok: true, assembly: { ...assembly, manifest: event } };
+  }
+  if (assembly.manifest === null)
+    return { ok: false, detail: `${event.kind} frame arrived before the manifest` };
+  if (event.kind === "chunk") {
+    if (event.chunkIndex >= assembly.manifest.chunkCount)
+      return {
+        ok: false,
+        detail: `chunkIndex ${event.chunkIndex} exceeds declared chunkCount ${assembly.manifest.chunkCount}`,
+      };
+    if (event.chunkIndex !== assembly.chunks.length)
+      return {
+        ok: false,
+        detail: `out-of-order chunk ${event.chunkIndex} (expected ${assembly.chunks.length})`,
+      };
+    return { ok: true, assembly: { ...assembly, chunks: [...assembly.chunks, event.data] } };
+  }
+  return { ok: true, assembly: { ...assembly, complete: event.sha256 } };
+}
+
+export interface VerifiedResourceRead {
+  readonly contents: string;
+  readonly byteLength: number;
+  readonly truncated: boolean;
+  /**
+   * File revision — the terminal digest over complete bytes. Null when the
+   * delivery is a truncated prefix: the hash then covers the prefix only and
+   * is not a saveable base revision.
+   */
+  readonly revision: string | null;
+}
+
+export type ResourceReadVerification =
+  | { readonly kind: "verified"; readonly read: VerifiedResourceRead }
+  | { readonly kind: "unavailable"; readonly reason: WorkspaceResourceReason }
+  | StreamFailure;
+
+/**
+ * Terminal verification: declared chunk count, reassembled UTF-8 byte length
+ * against the manifest's `deliveredByteLength`, then the terminal sha256 — in
+ * that order, before a single byte reaches the caller. A non-truncated
+ * manifest must also account for the full on-disk byte length.
+ */
+export async function verifyResourceReadAssembly(
+  assembly: ResourceReadAssembly,
+): Promise<ResourceReadVerification> {
+  if (assembly.unavailable !== null) return { kind: "unavailable", reason: assembly.unavailable };
+  if (assembly.manifest === null)
+    return { kind: "incomplete", detail: "stream ended before the manifest" };
+  if (assembly.complete === null)
+    return { kind: "incomplete", detail: "stream ended before the complete frame" };
+  const manifest = assembly.manifest;
+  if (assembly.chunks.length !== manifest.chunkCount)
+    return {
+      kind: "incomplete",
+      detail: `received ${assembly.chunks.length} of ${manifest.chunkCount} declared chunks`,
+    };
+  const body = assembly.chunks.join("");
+  if (textEncoder.encode(body).byteLength !== manifest.deliveredByteLength)
+    return { kind: "mismatch", detail: "reassembled byte length does not match the manifest" };
+  if ((await sha256Hex(body)) !== assembly.complete)
+    return { kind: "mismatch", detail: "reassembled bytes do not match the terminal checksum" };
+  if (!manifest.truncated && manifest.deliveredByteLength !== manifest.byteLength)
+    return {
+      kind: "mismatch",
+      detail: "manifest claims a complete read but declared fewer delivered bytes",
+    };
+  return {
+    kind: "verified",
+    read: {
+      contents: body,
+      byteLength: manifest.byteLength,
+      truncated: manifest.truncated,
+      revision: manifest.truncated ? null : assembly.complete,
+    },
+  };
+}
+
+/**
+ * Consume a `read` iterable into a verified resource read. The abort signal
+ * is checked before every frame and leaving the loop abandons the iterator —
+ * the contract's cancellation mechanism. Nothing is produced before the
+ * terminal checksum verifies.
+ */
+export async function collectResourceRead(
+  stream: AsyncIterable<StreamFrameLike<WorkspaceResourceReadEvent>>,
+  signal: AbortSignal,
+): Promise<ResourceReadVerification> {
+  let assembly = createResourceReadAssembly();
+  try {
+    for await (const frame of stream) {
+      if (signal.aborted) return { kind: "cancelled" };
+      const next = applyResourceReadEvent(assembly, frame.value);
+      if (!next.ok) return { kind: "protocol", detail: next.detail };
+      assembly = next.assembly;
+    }
+  } catch (error) {
+    if (signal.aborted) return { kind: "cancelled" };
+    return {
+      kind: "protocol",
+      detail: error instanceof Error ? error.message : "Resource read stream failed",
+    };
+  }
+  if (signal.aborted) return { kind: "cancelled" };
+  try {
+    return await verifyResourceReadAssembly(assembly);
+  } catch (error) {
+    return {
+      kind: "mismatch",
+      detail: error instanceof Error ? error.message : "Resource read verification failed",
+    };
+  }
+}
+
+/** Resource reasons that exist verbatim in the snapshot vocabulary. */
+const SNAPSHOT_RESOURCE_REASONS: ReadonlySet<string> = new Set([
+  "not-found",
+  "not-regular-file",
+  "binary",
+  "invalid-utf8",
+  "oversized",
+  "outside-workspace",
+  "unsafe-path",
+  "changed-during-read",
+  "io-error",
+]);
+
+function resourceSnapshotReason(reason: WorkspaceResourceReason): SnapshotReason {
+  return SNAPSHOT_RESOURCE_REASONS.has(reason) ? (reason as SnapshotReason) : "io-error";
+}
+
+/**
+ * A finished resource read → the same `EditorOpen` a text-edits snapshot
+ * produces. Only a complete verified transfer is editable — a truncated
+ * prefix is read-only `oversized` at the resource bound, and the upload-only
+ * reasons a nonconforming host could emit degrade to `io-error`, never to an
+ * editable buffer.
+ */
+export function describeResourceRead(
+  read: Exclude<ResourceReadVerification, { readonly kind: "cancelled" }>,
+): EditorOpen {
+  if (read.kind === "verified") {
+    if (read.read.revision !== null)
+      return { editable: true, contents: read.read.contents, revision: read.read.revision };
+    return { editable: false, reason: "oversized", message: REASON_MESSAGES.oversized };
+  }
+  if (read.kind === "unavailable") {
+    const reason = resourceSnapshotReason(read.reason);
+    return { editable: false, reason, message: REASON_MESSAGES[reason] };
+  }
+  return {
+    editable: false,
+    reason: "io-error",
+    message: `File could not be read (${read.detail.slice(0, 200)})`,
+  };
+}
+
+/**
+ * A finished resource read → the read-only preview pane shape. Verified
+ * deliveries keep the honest `describeRead` truncation status; unavailability
+ * and stream failures are named states, never a blank preview.
+ */
+export function describeResourcePreview(
+  read: Exclude<ResourceReadVerification, { readonly kind: "cancelled" }>,
+): { contents: string; status: string; truncated: boolean } {
+  if (read.kind === "verified") {
+    const described = describeRead(read.read);
+    return {
+      contents: read.read.contents,
+      status: described.status,
+      truncated: described.truncated,
+    };
+  }
+  if (read.kind === "unavailable") {
+    const reason = resourceSnapshotReason(read.reason);
+    return { contents: "", status: REASON_MESSAGES[reason], truncated: false };
+  }
+  return {
+    contents: "",
+    status: `File could not be read (${read.detail.slice(0, 200)})`,
+    truncated: false,
+  };
 }
 
 /** Kind selector values for the `t3.workspace/search` contract call. */

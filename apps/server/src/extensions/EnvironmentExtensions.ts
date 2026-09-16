@@ -46,6 +46,7 @@ import { makeTerminalControlApiProvider } from "./terminalControlApi.ts";
 import { makeTerminalOutputApiProvider } from "./terminalOutputApi.ts";
 import { makeTerminalOutputEventsApiProvider } from "./terminalOutputEventsApi.ts";
 import { makeTextEditsApiProvider } from "./textEditsApi.ts";
+import { makeWorkspaceResourcesApiProvider } from "./workspaceResourcesApi.ts";
 import { makeResourcesLeaseApiProvider } from "./resourcesLeaseApi.ts";
 import { makeVcsApiProviders } from "./vcsApi.ts";
 import { makeVcsDiffApiProvider } from "./vcsDiffApi.ts";
@@ -89,6 +90,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   const terminalOutputEventsApi = yield* makeTerminalOutputEventsApiProvider();
   const terminalControlApi = yield* makeTerminalControlApiProvider();
   const textEditsApi = yield* makeTextEditsApiProvider();
+  const workspaceResourcesApi = yield* makeWorkspaceResourcesApiProvider();
   const vcsApis = yield* makeVcsApiProviders();
   const vcsDiffApi = yield* makeVcsDiffApiProvider();
   const composerApis = yield* makeComposerApiProviders();
@@ -162,6 +164,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
             workspaceSearchApi,
             workspaceChangesApi,
             textEditsApi,
+            workspaceResourcesApi,
             terminalApi,
             terminalOutputApi,
             terminalOutputEventsApi,

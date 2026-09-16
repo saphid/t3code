@@ -3,7 +3,7 @@ import {
   resourcesLeaseApi,
   textEditsApi,
   workspaceChangesApi,
-  workspaceFilesApi,
+  workspaceResourcesApi,
   workspaceSearchApi,
   workspaceTreeApi,
   type WorkspaceTreeEvent,
@@ -34,15 +34,15 @@ import {
 import { useFileEditor } from "./editorSession.js";
 import { useMutationRefresh, useWorkspaceChanges } from "./mutationRefresh.js";
 import {
+  collectResourceRead,
   contentMatchSegments,
   describeContentSearch,
   describeFileOpen,
   describeMediaLease,
   describePresentation,
-  describeRead,
+  describeResourcePreview,
   describeSaveState,
   describeSearch,
-  describeSnapshot,
   editorSavePending,
   fileOpenFailed,
   isMarkdownPath,
@@ -62,7 +62,6 @@ import {
   toggleExpanded,
   visibleRows,
   type ContentSearchResults,
-  type EditorOpen,
   type FileOpenState,
   type MediaLeaseState,
   type PreviewKind,
@@ -1139,39 +1138,43 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   );
 
   useEffect(() => {
-    // The bounded preview read remains the fallback for files the text-edits
-    // contract reports as not-editable (oversized/binary/non-UTF-8) — shown
-    // read-only with the named reason, never silently editable.
+    // The resource read remains the fallback for files the open path reports
+    // as not-editable (past the 8 MiB bound, binary, non-UTF-8) — shown
+    // read-only at the native 1 MiB preview bound, verified before render.
     if (!selected || !visible || selectedKind !== "text") return;
     if (editorSurface === null || editorSurface.open.editable) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
-    void bindApi(workspaceFilesApi, host, session.context)
-      .invoke("readText", { relativePath: selected }, signal)
-      .then(
-        (value) => {
-          if (!signal.aborted) {
-            const described = describeRead(value);
-            setRead({
-              relativePath: selected,
-              revision,
-              contents: value.contents,
-              status: described.status,
-              truncated: described.truncated,
-            });
-          }
-        },
-        (error) => {
-          if (!signal.aborted)
-            setRead({
-              relativePath: selected,
-              revision,
-              contents: "",
-              status: error instanceof Error ? error.message : "File unavailable",
-              truncated: false,
-            });
-        },
-      );
+    void (async () => {
+      try {
+        const read = await collectResourceRead(
+          bindStreamApi(workspaceResourcesApi, host, session.context).subscribe(
+            "read",
+            { relativePath: selected, maxBytes: 1024 * 1024 },
+            signal,
+          ),
+          signal,
+        );
+        if (read.kind === "cancelled" || signal.aborted) return;
+        const preview = describeResourcePreview(read);
+        setRead({
+          relativePath: selected,
+          revision,
+          contents: preview.contents,
+          status: preview.status,
+          truncated: preview.truncated,
+        });
+      } catch (error) {
+        if (!signal.aborted)
+          setRead({
+            relativePath: selected,
+            revision,
+            contents: "",
+            status: error instanceof Error ? error.message : "File unavailable",
+            truncated: false,
+          });
+      }
+    })();
     return () => controller.abort();
   }, [host, selected, selectedKind, session, revision, visible, editorSurface]);
 
@@ -1745,10 +1748,10 @@ export default defineExtension({
   serverEntry: "server.ts",
   requires: [
     requireApi(workspaceTreeApi),
-    requireApi(workspaceFilesApi),
     requireApi(workspaceSearchApi),
     requireApi(workspaceChangesApi),
     requireApi(textEditsApi),
+    requireApi(workspaceResourcesApi),
     requireApi(resourcesLeaseApi),
   ],
   surfaces: [

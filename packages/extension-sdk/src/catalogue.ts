@@ -11,6 +11,9 @@ import type { JsonObject } from "./environment.js";
 import type { ViewContext } from "./contracts.js";
 import type { WorkspaceReadTextInput, WorkspaceReadTextResult } from "./workspace.js";
 import { textEditsApi, textEditsApiV1 } from "./textEdits.js";
+import { workspaceResourcesApi, WORKSPACE_RESOURCES } from "./workspaceResources.js";
+
+export * from "./workspaceResources.js";
 
 export {
   EDITABLE_TEXT_MAX_BYTES,
@@ -2385,9 +2388,8 @@ export const VCS_REPOSITORY_API_V1 = vcsRepositoryApiV1.definition;
  * every caller in the chain, before and after minting.
  *
  * Grant map: `workspace-file` and `project-favicon` ride
- * `t3.workspace/resources` — the deferred P05-B contract's read grant,
- * declared here ahead of the contract (a grant id and an API id are distinct
- * registries, so the shared string cannot collide). `browser-surface` rides
+ * `t3.workspace/resources` — the resource-transfer contract's read grant
+ * (a grant id and an API id are distinct registries sharing the string). `browser-surface` rides
  * `t3.browser/sessions` — the deferred P08-B contract's id, declared the same
  * way: only the browser sessions contract holder may vend presentation
  * leases onto a live engine session. `attachment` stays in the union but
@@ -2399,11 +2401,9 @@ export const VCS_REPOSITORY_API_V1 = vcsRepositoryApiV1.definition;
  * URL/presentation-class claim, not ws-stream.
  * --------------------------------------------------------------------- */
 export const RESOURCES_LEASE = "t3.resources/lease";
-/**
- * The deferred P05-B `t3.workspace/resources` contract's read grant,
- * declared ahead of that contract so presentation leases can be minted today.
- */
-export const WORKSPACE_RESOURCES = "t3.workspace/resources";
+// WORKSPACE_RESOURCES (the `t3.workspace/resources` grant/API id) is declared
+// by the transfer contract in ./workspaceResources.js and re-exported above —
+// the `workspace-file`/`project-favicon` lease kinds mint under its grant.
 /**
  * The `t3.browser/sessions` contract's id, shared as that contract's read
  * grant and as the `browser-surface` mint grant — the sessions contract
@@ -5231,6 +5231,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   vcsDiffApiV1.definition,
   resourcesLeaseApi.definition,
   resourcesLeaseApiV1.definition,
+  workspaceResourcesApi.definition,
   prsReadApi.definition,
   composerContextApi.definition,
   messagesEnrichmentApi.definition,

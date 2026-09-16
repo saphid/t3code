@@ -183,6 +183,7 @@ export function decodeEditableUtf8(bytes: Uint8Array): string | undefined {
 const readConsistent = Effect.fn("TextEdits.readConsistent")(function* (
   realPath: string,
   io: TextEditsFileSystem,
+  maxBytes: number,
 ) {
   return yield* Effect.acquireUseRelease(
     Effect.tryPromise({
@@ -196,7 +197,7 @@ const readConsistent = Effect.fn("TextEdits.readConsistent")(function* (
           catch: () => TextEditsError.of("io-error"),
         });
         if (!stat.isFile()) return yield* TextEditsError.of("not-regular-file");
-        if (stat.size > EDITABLE_TEXT_MAX_BYTES) return yield* TextEditsError.of("oversized");
+        if (stat.size > maxBytes) return yield* TextEditsError.of("oversized");
         const buffer = Buffer.alloc(stat.size);
         let offset = 0;
         while (offset < stat.size) {
@@ -241,7 +242,7 @@ export const readEditableFile = Effect.fn("TextEdits.readEditableFile")(function
     Effect.gen(function* () {
       const target = yield* resolveSafeTarget(input, io);
       if (target.realTargetPath === undefined) return yield* TextEditsError.of("not-found");
-      const bytes = yield* readConsistent(target.realTargetPath, io);
+      const bytes = yield* readConsistent(target.realTargetPath, io, EDITABLE_TEXT_MAX_BYTES);
       if (bytes.includes(0)) return yield* TextEditsError.of("binary");
       const contents = decodeEditableUtf8(bytes);
       if (contents === undefined) return yield* TextEditsError.of("invalid-utf8");
@@ -321,11 +322,18 @@ export const replaceEditableFile = Effect.fn("TextEdits.replaceEditableFile")(fu
     readonly relativePath: string;
     readonly expectedRevision: string;
     readonly contents: string;
+    /**
+     * Byte bound for the current-bytes consistency read and the new contents.
+     * The editable checkpoint passes nothing and gets EDITABLE_TEXT_MAX_BYTES;
+     * `t3.workspace/resources` save commits pass the transfer contract's bound.
+     */
+    readonly maxBytes?: number;
     readonly shouldAbort?: () => boolean;
     readonly beforeCommit?: () => Promise<void>;
   },
   io: TextEditsFileSystem = nodeTextEditsFileSystem,
 ) {
+  const maxBytes = input.maxBytes ?? EDITABLE_TEXT_MAX_BYTES;
   const whole = Effect.gen(function* () {
     const preliminary = yield* resolveSafeTarget(
       { cwd: input.cwd, relativePath: input.relativePath },
@@ -348,13 +356,12 @@ export const replaceEditableFile = Effect.fn("TextEdits.replaceEditableFile")(fu
           )
             return yield* TextEditsError.of("changed-during-read");
           if (target.realTargetPath === undefined) return yield* TextEditsError.of("not-found");
-          const current = yield* readConsistent(target.realTargetPath, io);
+          const current = yield* readConsistent(target.realTargetPath, io, maxBytes);
           if (sha256Hex(current) !== input.expectedRevision)
             return { outcome: "conflict" as const };
           if (input.shouldAbort?.()) return yield* TextEditsError.of("aborted");
           const encoded = Buffer.from(input.contents, "utf8");
-          if (encoded.length > EDITABLE_TEXT_MAX_BYTES)
-            return yield* TextEditsError.of("oversized");
+          if (encoded.length > maxBytes) return yield* TextEditsError.of("oversized");
           if (encoded.includes(0)) return yield* TextEditsError.of("binary");
           const temporaryPath = `${target.realTargetPath}.t3-edit-${NodeCrypto.randomBytes(8).toString("hex")}`;
           if (input.shouldAbort?.()) return yield* TextEditsError.of("aborted");

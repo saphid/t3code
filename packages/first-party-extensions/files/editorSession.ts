@@ -6,17 +6,34 @@
  * revision, conflicts halt autosave until the user resolves them, and the
  * session flushes pending edits when the file changes or the view unmounts —
  * the native panel's unmount-dispose semantics.
+ *
+ * Past the checkpoint's 24,000-byte bound (F1 C06, #19) the same semantics
+ * ride `t3.workspace/resources`: opens fall through to the chunked,
+ * sha256-verified `read` stream and saves become a `save.begin`/`save.chunk`/
+ * `save.commit` upload carrying the same expected-revision compare-and-swap.
  */
 
-import { textEditsApi } from "@t3tools/extension-sdk/catalogue";
-import { bindApi } from "@t3tools/extension-sdk/capabilities";
+import {
+  EDITABLE_TEXT_MAX_BYTES,
+  splitWorkspaceResourceChunks,
+  textEditsApi,
+  workspaceResourcesApi,
+  WORKSPACE_RESOURCE_MAX_BYTES,
+  type WorkspaceResourceReason,
+} from "@t3tools/extension-sdk/catalogue";
+import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useEffect, useRef, useState } from "react";
 
 import { FILE_SAVE_DEBOUNCE_MS, FileEditCoordinator } from "./saveCoordinator.ts";
-import type { EditorSaveState } from "./saveCoordinator.ts";
-import { describeSnapshot } from "./viewModel.ts";
+import type { EditorSaveState, PersistOutcome } from "./saveCoordinator.ts";
+import {
+  collectResourceRead,
+  describeResourceRead,
+  describeSnapshot,
+  sha256Hex,
+} from "./viewModel.ts";
 import type { EditorOpen, PreviewKind } from "./viewModel.ts";
 
 export interface EditorSurface {
@@ -24,6 +41,111 @@ export interface EditorSurface {
   readonly open: EditorOpen;
   readonly contents: string;
   readonly saveState: EditorSaveState;
+}
+
+const textEncoder = new TextEncoder();
+
+/** Every resource save failure reason → one honest user-facing message. */
+const RESOURCE_SAVE_MESSAGES: Readonly<Record<WorkspaceResourceReason, string>> = {
+  "not-found": "the file no longer exists",
+  "not-regular-file": "the target is not a regular file",
+  binary: "binary contents cannot be saved as text",
+  "invalid-utf8": "the contents are not valid UTF-8",
+  oversized: `the contents exceed the ${WORKSPACE_RESOURCE_MAX_BYTES.toLocaleString("en-US")}-byte workspace resource bound`,
+  "outside-workspace": "the path resolves outside the workspace",
+  "unsafe-path": "the path is not a safe workspace-relative path",
+  "changed-during-read": "the file changed while it was being read",
+  aborted: "the save was aborted",
+  "io-error": "the file could not be written",
+  "unknown-upload": "the upload session expired",
+  "upload-limit": "the host's upload session limit is reached",
+  "upload-incomplete": "the upload ended before all declared chunks arrived",
+  "digest-mismatch": "the uploaded contents failed host-side verification",
+};
+
+const resourceSaveError = (reason: WorkspaceResourceReason): PersistOutcome => ({
+  kind: "error",
+  message: `Save failed — ${RESOURCE_SAVE_MESSAGES[reason]}`,
+});
+
+/**
+ * The >24,000-byte write path: declare the complete contents' byte length and
+ * sha256 up front, upload ≤8192-unit chunks in strict order, then commit —
+ * the host verifies the digest and runs the same serialized compare-and-swap
+ * as the unary save. A failure mid-upload abandons the session with a
+ * best-effort abort; the host also reclaims abandoned sessions itself.
+ */
+async function persistResourceSave(options: {
+  readonly host: ClientHost;
+  readonly session: ViewSession;
+  readonly path: string;
+  readonly contents: string;
+  readonly expectedRevision: string;
+}): Promise<PersistOutcome> {
+  const api = bindApi(workspaceResourcesApi, options.host, options.session.context);
+  const signal = options.session.signal;
+  const chunks = splitWorkspaceResourceChunks(options.contents);
+  const begin = await api.invoke(
+    "save.begin",
+    {
+      relativePath: options.path,
+      expectedRevision: options.expectedRevision,
+      byteLength: textEncoder.encode(options.contents).byteLength,
+      chunkCount: chunks.length,
+      sha256: await sha256Hex(options.contents),
+    },
+    signal,
+  );
+  if (begin.kind !== "session") return resourceSaveError(begin.reason);
+  const uploadId = begin.uploadId;
+  const abort = () => void api.invoke("save.abort", { uploadId }, signal).catch(() => undefined);
+  try {
+    for (const [chunkIndex, data] of chunks.entries()) {
+      const accepted = await api.invoke("save.chunk", { uploadId, chunkIndex, data }, signal);
+      if (accepted.kind !== "accepted") {
+        abort();
+        return resourceSaveError(accepted.reason);
+      }
+    }
+    const commit = await api.invoke("save.commit", { uploadId }, signal);
+    if (commit.kind === "saved") return { kind: "saved", revision: commit.revision };
+    if (commit.kind === "conflict") return { kind: "conflict" };
+    return resourceSaveError(commit.reason);
+  } catch (error) {
+    abort();
+    throw error;
+  }
+}
+
+/**
+ * One open-path read: the 24,000-byte snapshot first, then — only for the
+ * `oversized` checkpoint gap — the resource stream's complete verified
+ * transfer. Other not-editable reasons stay named as-is; a cancelled stream
+ * returns null so callers leave state untouched.
+ */
+async function openRead(
+  host: ClientHost,
+  session: ViewSession,
+  path: string,
+  signal: AbortSignal,
+): Promise<EditorOpen | null> {
+  const snapshot = await bindApi(textEditsApi, host, session.context).invoke(
+    "readSnapshot",
+    { relativePath: path },
+    signal,
+  );
+  const open = describeSnapshot(snapshot);
+  if (open.editable || open.reason !== "oversized") return open;
+  const read = await collectResourceRead(
+    bindStreamApi(workspaceResourcesApi, host, session.context).subscribe(
+      "read",
+      { relativePath: path },
+      signal,
+    ),
+    signal,
+  );
+  if (read.kind === "cancelled") return null;
+  return describeResourceRead(read);
 }
 
 export function useFileEditor(
@@ -37,6 +159,13 @@ export function useFileEditor(
   const [surface, setSurface] = useState<EditorSurface | null>(null);
   const activeRef = useRef<{ path: string; coordinator: FileEditCoordinator } | null>(null);
   const lastRefreshRef = useRef(-1);
+  /**
+   * UTF-8 size of the coordinator's confirmed base. The unary save re-reads
+   * the on-disk file under the 24,000-byte bound, so a large file opened via
+   * the resource stream must keep saving through it even when the new
+   * contents shrink below the bound.
+   */
+  const baseBytesRef = useRef(0);
   const editing = selected !== null && selectedKind === "text" && visible;
 
   useEffect(() => {
@@ -69,15 +198,38 @@ export function useFileEditor(
     lastRefreshRef.current = refreshRevision;
     if (pathChanged) {
       current?.coordinator.dispose();
+      baseBytesRef.current = 0;
       const coordinator = new FileEditCoordinator({
         debounceMs: FILE_SAVE_DEBOUNCE_MS,
         persist: async (contents, expectedRevision) => {
           try {
-            return await bindApi(textEditsApi, host, session.context).invoke(
-              "save",
-              { relativePath: path, expectedRevision, contents },
-              session.signal,
-            );
+            // Route on both endpoints of the swap, not just the new contents:
+            // the unary save also re-reads the on-disk base under the
+            // 24,000-byte bound, so shrinking a large file below it must still
+            // take the resource path. The revision format is identical across
+            // both contracts either way.
+            const nextBytes = textEncoder.encode(contents).byteLength;
+            if (
+              nextBytes <= EDITABLE_TEXT_MAX_BYTES &&
+              baseBytesRef.current <= EDITABLE_TEXT_MAX_BYTES
+            ) {
+              const saved = await bindApi(textEditsApi, host, session.context).invoke(
+                "save",
+                { relativePath: path, expectedRevision, contents },
+                session.signal,
+              );
+              if (saved.kind === "saved") baseBytesRef.current = nextBytes;
+              return saved;
+            }
+            const outcome = await persistResourceSave({
+              host,
+              session,
+              path,
+              contents,
+              expectedRevision,
+            });
+            if (outcome.kind === "saved") baseBytesRef.current = nextBytes;
+            return outcome;
           } catch (error) {
             return {
               kind: "error",
@@ -97,13 +249,8 @@ export function useFileEditor(
 
     void (async () => {
       try {
-        const snapshot = await bindApi(textEditsApi, host, session.context).invoke(
-          "readSnapshot",
-          { relativePath: path },
-          signal,
-        );
-        if (signal.aborted) return;
-        const open = describeSnapshot(snapshot);
+        const open = await openRead(host, session, path, signal);
+        if (open === null || signal.aborted) return;
         if (!open.editable) {
           setSurface({ path, open, contents: "", saveState: coordinator.state() });
           return;
@@ -120,6 +267,7 @@ export function useFileEditor(
             saveState: coordinator.state(),
           }));
         } else {
+          baseBytesRef.current = textEncoder.encode(open.contents).byteLength;
           coordinator.seed(open.revision, open.contents);
           setSurface({
             path,
@@ -171,12 +319,11 @@ export function useFileEditor(
     const coordinator = active.coordinator;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
-    void bindApi(textEditsApi, host, session.context)
-      .invoke("readSnapshot", { relativePath: active.path }, signal)
-      .then((snapshot) => {
-        if (signal.aborted) return;
-        const open = describeSnapshot(snapshot);
+    void openRead(host, session, active.path, signal)
+      .then((open) => {
+        if (open === null || signal.aborted) return;
         if (open.editable) {
+          baseBytesRef.current = textEncoder.encode(open.contents).byteLength;
           coordinator.adoptRemote(open.contents, open.revision);
           setSurface({
             path: active.path,
@@ -192,6 +339,7 @@ export function useFileEditor(
           );
         }
       })
+      .catch(() => undefined)
       .finally(() => controller.abort());
   };
 
@@ -202,19 +350,21 @@ export function useFileEditor(
     const coordinator = active.coordinator;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
-    void bindApi(textEditsApi, host, session.context)
-      .invoke("readSnapshot", { relativePath: active.path }, signal)
-      .then((snapshot) => {
-        if (signal.aborted) return;
-        const open = describeSnapshot(snapshot);
-        if (open.editable) coordinator.forcePersist(open.revision);
-        else
+    void openRead(host, session, active.path, signal)
+      .then((open) => {
+        if (open === null || signal.aborted) return;
+        if (open.editable) {
+          // The remote snapshot becomes the base the buffer writes over.
+          baseBytesRef.current = textEncoder.encode(open.contents).byteLength;
+          coordinator.forcePersist(open.revision);
+        } else
           setSurface((previous) =>
             previous && previous.path === active.path
               ? { ...previous, open, saveState: coordinator.state() }
               : previous,
           );
       })
+      .catch(() => undefined)
       .finally(() => controller.abort());
   };
 

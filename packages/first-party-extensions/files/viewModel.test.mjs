@@ -1,12 +1,18 @@
 import * as NodeAssert from "node:assert/strict";
+import * as NodeCrypto from "node:crypto";
 import * as NodeTest from "node:test";
 import {
+  applyResourceReadEvent,
+  collectResourceRead,
   compareTreeEntries,
   contentMatchSegments,
+  createResourceReadAssembly,
   describeContentSearch,
   describeFileOpen,
   describeMediaLease,
   describePresentation,
+  describeResourcePreview,
+  describeResourceRead,
   describeRead,
   describeSaveState,
   describeSearch,
@@ -32,6 +38,7 @@ import {
   presentationPath,
   previewKind,
   selectMediaLease,
+  sha256HexPortable,
   shouldHandleMutation,
   sortTreeEntries,
   toggleExpanded,
@@ -399,12 +406,12 @@ NodeTest.describe("describeSnapshot", () => {
   });
 
   NodeTest.it(
-    "names the 24000-byte bound for oversized files — read-only, never silent truncation",
+    "names the 8 MiB workspace resource bound for oversized files — read-only, never silent truncation",
     () => {
       const open = describeSnapshot({ kind: "not-editable", reason: "oversized" });
       NodeAssert.equal(open.editable, false);
       NodeAssert.equal(open.reason, "oversized");
-      NodeAssert.match(open.message, /24,000-byte editable bound/);
+      NodeAssert.match(open.message, /8,388,608-byte workspace resource bound/);
       NodeAssert.match(open.message, /read only/);
     },
   );
@@ -599,5 +606,211 @@ NodeTest.describe("shouldHandleMutation", () => {
       shouldHandleMutation({ enabled: true, mutationSeq: 0, handledSeq: null }),
       false,
     );
+  });
+});
+
+NodeTest.describe("resource read fold", () => {
+  const sha256 = (text) => NodeCrypto.createHash("sha256").update(text, "utf8").digest("hex");
+  const utf8Length = (text) => Buffer.byteLength(text, "utf8");
+  const manifest = (contents, overrides = {}) => ({
+    kind: "manifest",
+    relativePath: "doc",
+    byteLength: utf8Length(contents),
+    deliveredByteLength: utf8Length(contents),
+    chunkCount: 1,
+    truncated: false,
+    ...overrides,
+  });
+  const stream = async function* (events) {
+    for (const value of events) yield { value };
+  };
+  const signal = () => new AbortController().signal;
+
+  NodeTest.it(
+    "verifies a complete manifest/chunks/complete transfer into an editable read",
+    async () => {
+      const body = "x".repeat(30000);
+      const chunks = [body.slice(0, 8192), body.slice(8192, 16384), body.slice(16384)];
+      const events = [
+        manifest(body, { chunkCount: 3 }),
+        ...chunks.map((data, chunkIndex) => ({ kind: "chunk", chunkIndex, data })),
+        { kind: "complete", sha256: sha256(body) },
+      ];
+      const read = await collectResourceRead(stream(events), signal());
+      NodeAssert.equal(read.kind, "verified");
+      NodeAssert.equal(read.read.contents, body);
+      NodeAssert.equal(read.read.truncated, false);
+      NodeAssert.equal(read.read.revision, sha256(body));
+      // The verified read opens the editor with the terminal digest as revision.
+      NodeAssert.deepEqual(describeResourceRead(read), {
+        editable: true,
+        contents: body,
+        revision: sha256(body),
+      });
+    },
+  );
+
+  NodeTest.it("marks a truncated delivery verified but never editable", async () => {
+    const body = "y".repeat(100);
+    const events = [
+      manifest(body.slice(0, 40), { byteLength: 100, truncated: true }),
+      { kind: "chunk", chunkIndex: 0, data: body.slice(0, 40) },
+      { kind: "complete", sha256: sha256(body.slice(0, 40)) },
+    ];
+    const read = await collectResourceRead(stream(events), signal());
+    NodeAssert.equal(read.kind, "verified");
+    NodeAssert.equal(read.read.revision, null);
+    const open = describeResourceRead(read);
+    NodeAssert.equal(open.editable, false);
+    NodeAssert.equal(open.reason, "oversized");
+    // The preview still renders the verified prefix with honest status.
+    const preview = describeResourcePreview(read);
+    NodeAssert.equal(preview.contents, body.slice(0, 40));
+    NodeAssert.equal(preview.truncated, true);
+    NodeAssert.match(preview.status, /showing first 40 of 100 bytes/);
+  });
+
+  NodeTest.it("surfaces a sole unavailable frame as the named reason", async () => {
+    const read = await collectResourceRead(
+      stream([{ kind: "unavailable", relativePath: "bin", reason: "binary" }]),
+      signal(),
+    );
+    NodeAssert.deepEqual(read, { kind: "unavailable", reason: "binary" });
+    NodeAssert.equal(describeResourceRead(read).reason, "binary");
+    NodeAssert.match(describeResourcePreview(read).status, /Binary file/);
+    // Upload-only reasons a nonconforming host emits degrade to io-error.
+    const odd = await collectResourceRead(
+      stream([{ kind: "unavailable", relativePath: "x", reason: "unknown-upload" }]),
+      signal(),
+    );
+    NodeAssert.equal(describeResourceRead(odd).reason, "io-error");
+  });
+
+  NodeTest.it("rejects out-of-order, undeclared and post-terminal frames", () => {
+    const cases = [
+      // chunk before the manifest
+      [{ kind: "chunk", chunkIndex: 0, data: "ab" }],
+      // out-of-order chunk
+      [manifest("abcd", { chunkCount: 2 }), { kind: "chunk", chunkIndex: 1, data: "cd" }],
+      // undeclared chunk index
+      [manifest("ab"), { kind: "chunk", chunkIndex: 1, data: "ab" }],
+      // duplicate manifest
+      [manifest("ab"), manifest("ab")],
+      // anything after complete
+      [
+        manifest("ab"),
+        { kind: "chunk", chunkIndex: 0, data: "ab" },
+        { kind: "complete", sha256: sha256("ab") },
+        { kind: "chunk", chunkIndex: 0, data: "ab" },
+      ],
+      // unavailable after the manifest
+      [manifest("ab"), { kind: "unavailable", relativePath: "doc", reason: "not-found" }],
+    ];
+    for (const events of cases) {
+      let assembly = createResourceReadAssembly();
+      let failed = false;
+      for (const event of events) {
+        const next = applyResourceReadEvent(assembly, event);
+        if (!next.ok) {
+          failed = true;
+          break;
+        }
+        assembly = next.assembly;
+      }
+      NodeAssert.equal(failed, true, JSON.stringify(events));
+    }
+  });
+
+  NodeTest.it(
+    "fails mismatched digests, lengths and incomplete streams before render",
+    async () => {
+      const body = "z".repeat(100);
+      const good = [
+        manifest(body),
+        { kind: "chunk", chunkIndex: 0, data: body },
+        { kind: "complete", sha256: sha256(body) },
+      ];
+      const cases = [
+        // wrong terminal digest
+        [...good.slice(0, 2), { kind: "complete", sha256: "0".repeat(64) }],
+        // delivered bytes disagree with the manifest
+        [manifest(body, { deliveredByteLength: 99 }), ...good.slice(1)],
+        // declared chunk never arrives
+        good.slice(0, 2),
+        // stream ends before the complete frame
+        good.slice(0, 1),
+        // manifest claims complete but declares fewer delivered bytes
+        [
+          manifest(body, { deliveredByteLength: 99, byteLength: 100 }),
+          { kind: "chunk", chunkIndex: 0, data: body.slice(0, 99) },
+          { kind: "complete", sha256: sha256(body.slice(0, 99)) },
+        ],
+      ];
+      const expected = ["mismatch", "mismatch", "incomplete", "incomplete", "mismatch"];
+      for (const [index, events] of cases.entries()) {
+        const read = await collectResourceRead(stream(events), signal());
+        NodeAssert.equal(read.kind, expected[index], `case ${index}: ${JSON.stringify(read)}`);
+        const open = describeResourceRead(read);
+        NodeAssert.equal(open.editable, false);
+        NodeAssert.equal(open.reason, "io-error");
+      }
+    },
+  );
+
+  NodeTest.it("cancels mid-stream without producing content", async () => {
+    const controller = new AbortController();
+    const body = "x".repeat(20000);
+    const read = await collectResourceRead(
+      (async function* () {
+        yield { value: manifest(body, { chunkCount: 3 }) };
+        controller.abort();
+        yield { value: { kind: "chunk", chunkIndex: 0, data: body.slice(0, 8192) } };
+        yield { value: { kind: "chunk", chunkIndex: 1, data: body.slice(8192, 16384) } };
+        yield { value: { kind: "chunk", chunkIndex: 2, data: body.slice(16384) } };
+        yield { value: { kind: "complete", sha256: sha256(body) } };
+      })(),
+      controller.signal,
+    );
+    NodeAssert.equal(read.kind, "cancelled");
+  });
+
+  NodeTest.it("matches node:crypto digests on the portable sha256 path", () => {
+    const vectors = [
+      "",
+      "abc",
+      "x".repeat(64),
+      "x".repeat(65),
+      "αβγ 😀 multi-byte\n",
+      "y".repeat(30000),
+    ];
+    for (const text of vectors) {
+      NodeAssert.equal(
+        sha256HexPortable(new TextEncoder().encode(text)),
+        sha256(text),
+        JSON.stringify(text.slice(0, 20)),
+      );
+    }
+  });
+
+  NodeTest.it("surfaces a throwing verifier as mismatch, never a rejection", async () => {
+    const subtle = globalThis.crypto?.subtle;
+    if (!subtle) return; // non-secure-context runtimes already take the portable path
+    const original = subtle.digest.bind(subtle);
+    subtle.digest = () => Promise.reject(new Error("no subtle on this origin"));
+    try {
+      const body = "z".repeat(9000);
+      const read = await collectResourceRead(
+        stream([
+          manifest(body, { chunkCount: 2 }),
+          { kind: "chunk", chunkIndex: 0, data: body.slice(0, 8192) },
+          { kind: "chunk", chunkIndex: 1, data: body.slice(8192) },
+          { kind: "complete", sha256: sha256(body) },
+        ]),
+        signal(),
+      );
+      NodeAssert.equal(read.kind, "mismatch");
+    } finally {
+      subtle.digest = original;
+    }
   });
 });
