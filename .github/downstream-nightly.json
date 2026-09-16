@@ -275,6 +275,12 @@
       "type": "commit",
       "repository": "saphid/t3code",
       "sha": "7df42c288975c79c4f80a4af9ab9d1a408fd51ce"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "b78aac269bb560007487515faf9d4c805c781766",
+      "name": "Retain Claude usage without iteration model names and rebuild old totals"
     }
   ]
 }
