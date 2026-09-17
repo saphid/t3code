@@ -1,0 +1,48 @@
+{
+  "upstreamRepository": "pingdotgg/t3code",
+  "upstreamTag": "d4472983a44d161c43c747032c01638eaf274b2a",
+  "upstreamBranch": "t3code/codex-turn-mapping",
+  "releaseChannel": "nightly-v2",
+  "upstreamUrl": "https://github.com/pingdotgg/t3code/commit/d4472983a44d161c43c747032c01638eaf274b2a",
+  "releaseRepository": "saphid/t3code",
+  "fingerprint": "abbfb52f51a287766992d39bfb4be484ebf1692feb2c3b8ed7fea672f6d8c7c4",
+  "version": "0.0.42-nightly-v2.20260917.1789685687380418",
+  "tag": "v0.0.42-nightly-v2.20260917.1789685687380418",
+  "patches": [
+    {
+      "label": "saphid/t3code@51e3d32f127b",
+      "name": "Durable fork updater and signing identity",
+      "commits": ["51e3d32f127b37392f54e46d9097bf2608aa7999"]
+    },
+    {
+      "label": "saphid/t3code@d01d551698cf",
+      "name": "Orchestrator v2 fork release selector",
+      "commits": ["d01d551698cfef51c3116a2a38aeb94da1b74b28"]
+    },
+    {
+      "label": "saphid/t3code@d4c8c2cca934",
+      "name": "Nightly DMG artwork and build compatibility",
+      "commits": ["d4c8c2cca9344ce51c74668da7e335f5853f930e"]
+    },
+    {
+      "label": "saphid/t3code@830ac2f9d4c0",
+      "name": "Deterministic cold highlighter test on hosted runners",
+      "commits": ["830ac2f9d4c0c1c5e22e08a124ab6c2afb37138b"]
+    },
+    {
+      "label": "saphid/t3code@f4727aaa3134",
+      "name": "OV2 server downloads and persistent desktop update stream",
+      "commits": ["f4727aaa313470e5cfb29716dee7b897fba8f375"]
+    },
+    {
+      "label": "saphid/t3code@b87f00f35058",
+      "name": "Packaged branding in the early Linux startup test fixture",
+      "commits": ["b87f00f350583c3f2d2b1dbbe60e441087f67feb"]
+    },
+    {
+      "label": "saphid/t3code@a6631e4787c1",
+      "name": "Checkpoint inspector tests independent of hidden feed rows",
+      "commits": ["a6631e4787c18df6be27c2a47e39fc053456a8a0"]
+    }
+  ]
+}
