@@ -111,6 +111,43 @@ function fixture(
 }
 
 describe("CLIProxyAPI built-in management API", () => {
+  it.effect("shows workspace spend limits when Business accounts have no rolling quota", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        upstream: (request) => ({
+          status: 200,
+          body: request.url?.endsWith("rate-limit-reset-credits")
+            ? { credits: [] }
+            : {
+                plan_type: "business",
+                rate_limit: null,
+                spend_control: {
+                  individual_limit: {
+                    limit: "250000",
+                    used: "91988.3966627121",
+                    remaining_percent: 63,
+                    reset_at: 1790812800,
+                  },
+                },
+              },
+        }),
+      });
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      expect(result.map((account) => account.usageLimits.windows)).toEqual(
+        accounts.map(() => [
+          {
+            id: "individual_limit",
+            kind: "other",
+            label: "Workspace spend limit",
+            usedPercent: 37,
+            resetsAt: "2026-10-01T00:00:00.000Z",
+          },
+        ]),
+      );
+    }),
+  );
+
   it.effect(
     "reads both accounts and their earliest unexpired credits without plugin endpoints",
     () =>

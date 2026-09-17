@@ -1,4 +1,6 @@
 import * as CodexErrors from "effect-codex-app-server/errors";
+import * as CodexSchema from "effect-codex-app-server/schema";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -11,8 +13,46 @@ import {
 } from "./codexUsageLimits.ts";
 
 const checkedAt = "2026-07-18T10:00:00.000Z";
+const decodeRateLimits = Schema.decodeUnknownSync(CodexSchema.V2GetAccountRateLimitsResponse);
+const individualLimit = {
+  limit: "250000",
+  used: "91988.3966627121",
+  remainingPercent: 63,
+  resetsAt: 1790812800,
+};
+const workspaceWindow = {
+  id: "individual_limit",
+  kind: "other",
+  label: "Workspace spend limit",
+  usedPercent: 37,
+  resetsAt: "2026-10-01T00:00:00.000Z",
+};
 
 describe("codexRateLimitsToLimits", () => {
+  it("shows a decoded Business workspace spend limit without rate-limit windows", () => {
+    const response = decodeRateLimits({
+      rateLimits: {
+        limitId: "codex",
+        planType: "business",
+        primary: null,
+        secondary: null,
+        individualLimit,
+      },
+      rateLimitsByLimitId: null,
+    });
+    expect(codexRateLimitsToLimits({ checkedAt, snapshot: response.rateLimits }).windows).toEqual([
+      workspaceWindow,
+    ]);
+  });
+
+  it("keeps rate-limit windows alongside the separate workspace spend limit", () => {
+    const snapshot = { primary: { usedPercent: 12 }, individualLimit };
+    const windows = codexRateLimitsToLimits({ checkedAt, snapshot }).windows;
+    expect(windows).toHaveLength(2);
+    expect(windows[0]).toMatchObject({ id: "primary", usedPercent: 12 });
+    expect(windows[1]).toEqual(workspaceWindow);
+  });
+
   it("maps primary and secondary onto the session and weekly windows", () => {
     expect(
       codexRateLimitsToLimits({
@@ -113,6 +153,10 @@ describe("codexRateLimitsToLimits", () => {
 });
 
 describe("codexRateLimitsToUpdate", () => {
+  it("updates workspace spend limits during a turn", () => {
+    const snapshot = { limitId: "codex", individualLimit };
+    expect(codexRateLimitsToUpdate(snapshot)).toEqual({ windows: [workspaceWindow] });
+  });
   it("carries only the windows the notification names", () => {
     expect(
       codexRateLimitsToUpdate({
@@ -208,6 +252,15 @@ describe("codexUsageLimitMessage", () => {
   const at = "2026-01-01T00:00:00.000Z";
   const atSeconds = Date.parse(at) / 1000;
 
+  it("names a reached workspace spend limit", () => {
+    expect(
+      codexUsageLimitMessage(
+        { individualLimit: { remainingPercent: 0, resetsAt: atSeconds + 3600 } },
+        at,
+      ),
+    ).toContain("The workspace spend limit resets in 1h.");
+  });
+
   it("names the exhausted window and the workspace's missing credits", () => {
     expect(
       codexUsageLimitMessage(
@@ -266,6 +319,17 @@ describe("codexUsageLimitMessage", () => {
 });
 
 describe("mergeCodexRateLimits", () => {
+  it("preserves omitted workspace limits and accepts updated or cleared ones", () => {
+    const previous = { limitId: "codex", individualLimit };
+    expect(mergeCodexRateLimits(previous, { primary: null })).toMatchObject({ individualLimit });
+    const nextLimit = { ...individualLimit, remainingPercent: 20 };
+    expect(mergeCodexRateLimits(previous, { individualLimit: nextLimit })).toMatchObject({
+      individualLimit: nextLimit,
+    });
+    expect(mergeCodexRateLimits(previous, { individualLimit: null })).toMatchObject({
+      individualLimit: null,
+    });
+  });
   it("keeps windows an update does not carry", () => {
     const merged = mergeCodexRateLimits(
       {

@@ -31,6 +31,10 @@ export interface CodexRateLimitSnapshot {
   readonly rateLimitReachedType?: string | null;
   readonly primary?: CodexRateLimitWindow | null;
   readonly secondary?: CodexRateLimitWindow | null;
+  readonly individualLimit?: {
+    readonly remainingPercent: number;
+    readonly resetsAt?: number | null;
+  } | null;
 }
 
 /** Structural view of the read response's `rateLimitResetCredits`. */
@@ -91,6 +95,18 @@ function codexRateLimitsToWindows(
       label: labelForKind(kind),
       usedPercent: clampPercent(window.usedPercent),
       windowDurationMins,
+      ...(resetsAt ? { resetsAt } : {}),
+    });
+  }
+  // Usage-based workspaces can report only a spend cap, with no rolling windows.
+  const individualLimit = snapshot.individualLimit;
+  if (individualLimit && Number.isFinite(individualLimit.remainingPercent)) {
+    const resetsAt = isoFromEpochSeconds(individualLimit.resetsAt);
+    windows.push({
+      id: "individual_limit",
+      kind: "other",
+      label: "Workspace spend limit",
+      usedPercent: clampPercent(100 - individualLimit.remainingPercent),
       ...(resetsAt ? { resetsAt } : {}),
     });
   }
@@ -182,6 +198,7 @@ export function mergeCodexRateLimits(
       : {}),
     ...(update.primary !== undefined ? { primary: update.primary } : {}),
     ...(update.secondary !== undefined ? { secondary: update.secondary } : {}),
+    ...(update.individualLimit !== undefined ? { individualLimit: update.individualLimit } : {}),
   };
 }
 
@@ -228,7 +245,8 @@ export function codexUsageLimitMessage(
     const resetMs = Date.parse(window.resetsAt);
     if (!Number.isFinite(resetMs) || resetMs <= atMs || resetMs <= latestResetMs) continue;
     latestResetMs = resetMs;
-    reset = ` The ${window.kind} limit resets in ${formatCodexUsageLimitWait(resetMs - atMs)}.`;
+    const label = window.kind === "other" ? window.label.toLowerCase() : `${window.kind} limit`;
+    reset = ` The ${label} resets in ${formatCodexUsageLimitWait(resetMs - atMs)}.`;
   }
   return `Codex usage limit reached.${reset}${codexUsageLimitNextStep(snapshot?.rateLimitReachedType)}`;
 }

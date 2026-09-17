@@ -39,6 +39,20 @@ const CodexWindow = Schema.Struct({
 });
 const CodexUsage = Schema.Struct({
   plan_type: Schema.optional(Schema.String),
+  spend_control: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        individual_limit: Schema.optional(
+          Schema.NullOr(
+            Schema.Struct({
+              remaining_percent: Schema.Number,
+              reset_at: Schema.optional(Schema.NullOr(Schema.Number)),
+            }),
+          ),
+        ),
+      }),
+    ),
+  ),
   rate_limit: Schema.NullOr(
     Schema.Struct({
       primary_window: Schema.optional(Schema.NullOr(CodexWindow)),
@@ -262,6 +276,12 @@ export const makeCliproxyApi = Effect.gen(function* () {
               planType: usage.plan_type ?? null,
               primary: toWindow(usage.rate_limit?.primary_window),
               secondary: toWindow(usage.rate_limit?.secondary_window),
+              individualLimit: usage.spend_control?.individual_limit
+                ? {
+                    remainingPercent: usage.spend_control.individual_limit.remaining_percent,
+                    resetsAt: usage.spend_control.individual_limit.reset_at ?? null,
+                  }
+                : null,
             },
           }),
           ...(available
