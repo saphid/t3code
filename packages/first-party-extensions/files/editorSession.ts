@@ -157,15 +157,18 @@ export function useFileEditor(
   visible: boolean,
 ) {
   const [surface, setSurface] = useState<EditorSurface | null>(null);
-  const activeRef = useRef<{ path: string; coordinator: FileEditCoordinator } | null>(null);
-  const lastRefreshRef = useRef(-1);
   /**
-   * UTF-8 size of the coordinator's confirmed base. The unary save re-reads
-   * the on-disk file under the 24,000-byte bound, so a large file opened via
-   * the resource stream must keep saving through it even when the new
-   * contents shrink below the bound.
+   * `baseBytes` is the UTF-8 size of that file's confirmed base and lives on
+   * the record, not in shared hook state: a delayed save landing after a path
+   * switch (dispose flushes pending edits into an in-flight persist) must
+   * never corrupt the next file's baseline.
    */
-  const baseBytesRef = useRef(0);
+  const activeRef = useRef<{
+    path: string;
+    coordinator: FileEditCoordinator;
+    baseBytes: number;
+  } | null>(null);
+  const lastRefreshRef = useRef(-1);
   const editing = selected !== null && selectedKind === "text" && visible;
 
   useEffect(() => {
@@ -198,8 +201,12 @@ export function useFileEditor(
     lastRefreshRef.current = refreshRevision;
     if (pathChanged) {
       current?.coordinator.dispose();
-      baseBytesRef.current = 0;
-      const coordinator = new FileEditCoordinator({
+      const record = { path, baseBytes: 0 } as {
+        path: string;
+        coordinator: FileEditCoordinator;
+        baseBytes: number;
+      };
+      record.coordinator = new FileEditCoordinator({
         debounceMs: FILE_SAVE_DEBOUNCE_MS,
         persist: async (contents, expectedRevision) => {
           try {
@@ -211,14 +218,14 @@ export function useFileEditor(
             const nextBytes = textEncoder.encode(contents).byteLength;
             if (
               nextBytes <= EDITABLE_TEXT_MAX_BYTES &&
-              baseBytesRef.current <= EDITABLE_TEXT_MAX_BYTES
+              record.baseBytes <= EDITABLE_TEXT_MAX_BYTES
             ) {
               const saved = await bindApi(textEditsApi, host, session.context).invoke(
                 "save",
                 { relativePath: path, expectedRevision, contents },
                 session.signal,
               );
-              if (saved.kind === "saved") baseBytesRef.current = nextBytes;
+              if (saved.kind === "saved") record.baseBytes = nextBytes;
               return saved;
             }
             const outcome = await persistResourceSave({
@@ -228,7 +235,7 @@ export function useFileEditor(
               contents,
               expectedRevision,
             });
-            if (outcome.kind === "saved") baseBytesRef.current = nextBytes;
+            if (outcome.kind === "saved") record.baseBytes = nextBytes;
             return outcome;
           } catch (error) {
             return {
@@ -242,7 +249,7 @@ export function useFileEditor(
             previous && previous.path === path ? { ...previous, saveState } : previous,
           ),
       });
-      current = { path, coordinator };
+      current = record;
       activeRef.current = current;
     }
     const coordinator = current!.coordinator;
@@ -267,7 +274,7 @@ export function useFileEditor(
             saveState: coordinator.state(),
           }));
         } else {
-          baseBytesRef.current = textEncoder.encode(open.contents).byteLength;
+          current!.baseBytes = textEncoder.encode(open.contents).byteLength;
           coordinator.seed(open.revision, open.contents);
           setSurface({
             path,
@@ -323,7 +330,7 @@ export function useFileEditor(
       .then((open) => {
         if (open === null || signal.aborted) return;
         if (open.editable) {
-          baseBytesRef.current = textEncoder.encode(open.contents).byteLength;
+          active.baseBytes = textEncoder.encode(open.contents).byteLength;
           coordinator.adoptRemote(open.contents, open.revision);
           setSurface({
             path: active.path,
@@ -355,7 +362,7 @@ export function useFileEditor(
         if (open === null || signal.aborted) return;
         if (open.editable) {
           // The remote snapshot becomes the base the buffer writes over.
-          baseBytesRef.current = textEncoder.encode(open.contents).byteLength;
+          active.baseBytes = textEncoder.encode(open.contents).byteLength;
           coordinator.forcePersist(open.revision);
         } else
           setSurface((previous) =>

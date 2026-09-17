@@ -1,4 +1,5 @@
 import * as NodeAssert from "node:assert/strict";
+import * as NodeCrypto from "node:crypto";
 import * as NodeTest from "node:test";
 import React from "react";
 import TestRenderer from "react-test-renderer";
@@ -104,6 +105,152 @@ NodeTest.describe("useFileEditor", () => {
       NodeAssert.equal(saves.length, 1);
       NodeAssert.equal(saves[0].aborted, false);
       NodeAssert.equal(editor.surface.saveState.kind, "saved");
+    } finally {
+      if (root) await act(async () => root.unmount());
+    }
+  });
+
+  // Review repro: a delayed resource save for file A lands after the user
+  // switched to file B (dispose flushes A's pending edit into an in-flight
+  // persist). The confirmed-base byte size that routes saves between the
+  // unary and chunked contracts is per-file state — A's landing must not
+  // corrupt B's baseline, or B's shrink-below-24KiB save would wrongly take
+  // the unary path and fail oversized against B's large on-disk base.
+  NodeTest.it("keeps base-size save routing per file across a delayed save", async () => {
+    const sha256 = (text) => NodeCrypto.createHash("sha256").update(text, "utf8").digest("hex");
+    const utf8 = (text) => Buffer.byteLength(text, "utf8");
+    const disk = { "a.txt": "a".repeat(30000), "b.txt": "b".repeat(40000) };
+    const uploads = new Map();
+    const chunkBuffers = new Map();
+    const unarySaves = [];
+    let releaseA = null;
+    const host = {
+      invokeApi(request, _signal) {
+        const { method, input } = request;
+        if (method === "readSnapshot")
+          return Promise.resolve({
+            kind: "not-editable",
+            relativePath: input.relativePath,
+            reason: "oversized",
+          });
+        if (method === "save") {
+          unarySaves.push(input.relativePath);
+          // The real contract re-reads the on-disk base under the 24,000-byte
+          // bound — these files can never take the unary path.
+          if (utf8(disk[input.relativePath]) > 24000)
+            return Promise.reject(new Error("the base exceeds the editable bound"));
+          disk[input.relativePath] = input.contents;
+          return Promise.resolve({
+            kind: "saved",
+            relativePath: input.relativePath,
+            revision: sha256(input.contents),
+          });
+        }
+        if (method === "save.begin") {
+          const uploadId = `up-${input.relativePath}`;
+          uploads.set(uploadId, input.relativePath);
+          chunkBuffers.set(uploadId, []);
+          return Promise.resolve({ kind: "session", uploadId });
+        }
+        if (method === "save.chunk") {
+          chunkBuffers.get(input.uploadId)[input.chunkIndex] = input.data;
+          return Promise.resolve({ kind: "accepted", received: input.chunkIndex + 1 });
+        }
+        if (method === "save.commit") {
+          const path = uploads.get(input.uploadId);
+          const finish = () => {
+            const contents = chunkBuffers.get(input.uploadId).join("");
+            disk[path] = contents;
+            return { kind: "saved", relativePath: path, revision: sha256(contents) };
+          };
+          // A's commit is held so the save stays in flight across the switch.
+          if (path === "a.txt")
+            return new Promise((resolve) => {
+              releaseA = () => resolve(finish());
+            });
+          return Promise.resolve(finish());
+        }
+        if (method === "save.abort") return Promise.resolve({});
+        return Promise.reject(new Error(`unexpected ${method}`));
+      },
+      subscribeApi(request, _signal) {
+        const path = request.input.relativePath;
+        const body = disk[path];
+        const chunks = [];
+        for (let start = 0; start < body.length; start += 8192)
+          chunks.push(body.slice(start, start + 8192));
+        return (async function* () {
+          yield {
+            value: {
+              kind: "manifest",
+              relativePath: path,
+              byteLength: utf8(body),
+              deliveredByteLength: utf8(body),
+              chunkCount: chunks.length,
+              truncated: false,
+            },
+          };
+          for (const [chunkIndex, data] of chunks.entries())
+            yield { value: { kind: "chunk", chunkIndex, data } };
+          yield { value: { kind: "complete", sha256: sha256(body) } };
+        })();
+      },
+    };
+    let editor;
+    function Probe(props) {
+      const current = useFileEditor(host, session, props.selected, "text", 0, true);
+      React.useEffect(() => {
+        editor = current;
+      });
+      return null;
+    }
+    let root;
+    try {
+      await act(async () => {
+        root = create(e(Probe, { selected: "a.txt" }));
+      });
+      await act(async () => {
+        await sleep(50);
+      });
+      // A opened through the resource stream — editable, 30,000-byte base.
+      NodeAssert.notEqual(editor.surface, null, JSON.stringify(editor.surface));
+      NodeAssert.equal(editor.surface.path, "a.txt");
+      NodeAssert.equal(editor.surface.open.editable, true);
+      NodeAssert.equal(editor.surface.contents, disk["a.txt"]);
+
+      await act(async () => {
+        editor.change("small-a");
+      });
+      // Switching paths disposes A's coordinator, which flushes the pending
+      // edit — its persist parks at the held commit while B opens.
+      await act(async () => {
+        root.update(e(Probe, { selected: "b.txt" }));
+      });
+      await act(async () => {
+        await sleep(30);
+      });
+      NodeAssert.equal(editor.surface.path, "b.txt");
+      NodeAssert.equal(editor.surface.contents, disk["b.txt"]);
+      NodeAssert.ok(releaseA, "a.txt's save is still in flight");
+
+      // A's delayed save lands — over a shared baseline this would overwrite
+      // B's 40,000-byte base size with "small-a"'s 7.
+      await act(async () => {
+        releaseA();
+        await sleep(10);
+      });
+      NodeAssert.equal(disk["a.txt"], "small-a");
+
+      // B shrinks below the bound: the base is still 40,000 bytes, so this
+      // must take the chunked path — the unary save would fail oversized.
+      await act(async () => {
+        editor.change("small-b");
+        editor.retry();
+        await sleep(10);
+      });
+      NodeAssert.deepEqual(unarySaves, []);
+      NodeAssert.equal(editor.surface.saveState.kind, "saved");
+      NodeAssert.equal(disk["b.txt"], "small-b");
     } finally {
       if (root) await act(async () => root.unmount());
     }
