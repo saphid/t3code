@@ -492,6 +492,28 @@ jobs:
             '--test-requirement==identifier "com.t3tools.t3code.fork-466f726b"' \
             "$app_path"
 
+      - name: Build OV2 server executable
+        if: needs.prepare.outputs.release_channel == 'nightly-v2' && matrix.arch == 'arm64'
+        env:
+          VP_NODE_VERSION: "26.8.2"
+        run: node apps/server/scripts/cli.ts build-exe --verbose
+
+      - name: Package and smoke-test OV2 server archive
+        if: needs.prepare.outputs.release_channel == 'nightly-v2' && matrix.arch == 'arm64'
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          monitor_dir="$RUNNER_TEMP/cli-resource-monitor/darwin-arm64"
+          mkdir -p "$monitor_dir"
+          cp native/resource-monitor/target/aarch64-apple-darwin/release/t3-resource-monitor "$monitor_dir/"
+          node scripts/build-cli-archive.ts \
+            --platform mac --arch arm64 --version "$RELEASE_VERSION" \
+            --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
+            --output-dir release-cli
+          node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "$RELEASE_VERSION"
+
       - name: Collect release assets
         shell: bash
         run: |
@@ -504,7 +526,8 @@ jobs:
             "release/*.AppImage" \
             "release/*.exe" \
             "release/*.blockmap" \
-            "release/*.yml"; do
+            "release/*.yml" \
+            "release-cli/*.tar.gz"; do
             for file in $pattern; do
               cp "$file" release-publish/
             done
@@ -574,6 +597,25 @@ jobs:
             exit 1
           fi
 
+      - name: Verify OV2 release assets and write checksums
+        if: needs.prepare.outputs.release_channel == 'nightly-v2'
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd release-assets
+          test -s nightly-v2-mac.yml
+          for arch in arm64 x64; do
+            for extension in dmg zip; do
+              test -s "T3-Code-${RELEASE_VERSION}-${arch}.${extension}"
+            done
+          done
+          archive="t3-${RELEASE_VERSION}-darwin-arm64.tar.gz"
+          test -s "$archive"
+          sha256sum "$archive" > SHA256SUMS
+          sha256sum --check SHA256SUMS
+
       - name: Write release notes
         env:
           SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
@@ -600,7 +642,9 @@ jobs:
             "Selected patches:",
             ...patches,
             "",
-            "This release contains desktop artifacts only. It does not publish the npm CLI package.",
+            metadata.releaseChannel === "nightly-v2"
+              ? "Includes macOS desktop installers and the Apple Silicon server archive used by Update server. It does not publish the npm CLI package."
+              : "This release contains desktop artifacts only. It does not publish the npm CLI package.",
           ].join("\n");
           writeFileSync("release-notes.md", `${notes}\n`);
           NODE

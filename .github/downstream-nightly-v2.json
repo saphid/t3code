@@ -8,26 +8,32 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "d14371814b5e571476baf054623f33870f80134d",
+      "sha": "51e3d32f127b37392f54e46d9097bf2608aa7999",
       "name": "Durable fork updater and signing identity"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "f37d7d7033ade8b5b27b869cf8b7c20fe3c280f2",
+      "sha": "d01d551698cfef51c3116a2a38aeb94da1b74b28",
       "name": "Orchestrator v2 fork release selector"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "d3f9d4a3dcb12d76bd794ac1cf1185171135973c",
+      "sha": "d4c8c2cca9344ce51c74668da7e335f5853f930e",
       "name": "Nightly DMG artwork and build compatibility"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "042454cfa9df935835913c4c5ae8383530b918c2",
+      "sha": "830ac2f9d4c0c1c5e22e08a124ab6c2afb37138b",
       "name": "Deterministic cold highlighter test on hosted runners"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "f4727aaa313470e5cfb29716dee7b897fba8f375",
+      "name": "OV2 server downloads and persistent desktop update stream"
     }
   ]
 }

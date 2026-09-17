@@ -18,7 +18,7 @@ If a selected commit is already part of the upstream Nightly, the assembler skip
 
 Normal scheduled and dispatch-triggered runs are idempotent. To repair artifacts without changing the upstream tag or patch stack, run the workflow manually with `force_rebuild` enabled. The workflow rebuilds every gate and replaces the matching release assets.
 
-Fork Nightly currently publishes macOS arm64 and macOS x64 artifacts only. The Linux, Windows, and WSL platform-specific steps remain available for later restoration, but they are not on the current release path. A release is complete when its merged macOS updater manifest is present.
+Fork Nightly currently publishes macOS arm64 and macOS x64 desktop artifacts. The Linux, Windows, and WSL platform-specific steps remain available for later restoration, but they are not on the current release path. Ordinary Fork Nightly is complete when its merged macOS updater manifest is present. OV2 additionally requires both architectures' DMG and ZIP installers, the Apple Silicon server archive, and `SHA256SUMS`.
 
 ## Point the app at the fork
 
@@ -26,7 +26,7 @@ In Settings → About, select the Custom update track, set Release source to `sa
 
 ## Fork setup
 
-The workflow uses GitHub-hosted runners and the repository `GITHUB_TOKEN`. It publishes desktop assets only. It does not publish the `t3` CLI package to npm, deploy the web app, or update AUR.
+The workflow uses GitHub-hosted runners and the repository `GITHUB_TOKEN`. It publishes desktop assets and, for OV2, an Apple Silicon CLI archive. It does not publish the `t3` CLI package to npm, deploy the web app, or update AUR.
 
 When Apple signing settings are absent, macOS artifacts receive a valid ad hoc signature with a stable designated requirement based on the fork bundle identifier. That lets Squirrel.Mac validate one credential-free fork build against the next. Windows artifacts remain unsigned. For normal Developer ID-signed macOS and signed Windows auto-updates, configure the same signing secret and variable names used by the upstream release workflow. A custom build signed by a different identity cannot replace an installed upstream-signed app through the normal updater. Install the first fork build manually, then keep the fork bundle identifier and signing identity stable.
 
@@ -63,7 +63,22 @@ In Settings → About, choose Custom, enter `saphid/t3code`, then select
 **Fork Nightly** or **Fork Nightly Orchestrator v2** under **Fork release**.
 The selected channel is persisted with the repository. The updater filters by the
 channel's prerelease identifier and rejects an offered version from the other
-stream. Remote servers and phone apps are separate installations.
+stream.
+
+Each OV2 release also includes `t3-<version>-darwin-arm64.tar.gz` and `SHA256SUMS`.
+The build smoke-tests the archive against a disposable home before publication.
+After the desktop update, the existing **Update server** action in the version
+notice or **Settings → Connections** installs the matching version on connected
+Apple Silicon background services. Runtime downloads and `t3 update` discovery
+use `saphid/t3code` for `nightly-v2` versions. Other channels retain their upstream
+CLI source. Other server platforms and mobile apps need separate updates.
+
+For an older upstream CLI that does not know the fork source, bootstrap once with
+`T3CODE_RELEASE_BASE_URL=https://github.com/saphid/t3code/releases/download t3 update <exact-OV2-version>`.
+Use the full version from the release, without its leading `v`. Keep launchers
+pointing to `~/.local/bin/t3`, rather than a version-specific runtime directory,
+so reopening the app cannot reinstall an obsolete service. The first fork desktop
+build still requires manual installation when switching signing identities.
 
 For a manual compatibility build while the latest upstream release conflicts with
 selected patches, the normal workflow's `upstream_tag` input accepts an exact

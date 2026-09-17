@@ -224,12 +224,22 @@ export function releaseMarker(upstreamTag, fingerprint) {
 }
 
 export function isCompleteMatchingRelease(release, upstreamTag, fingerprint, channel = "nightly") {
-  if (typeof release?.body !== "string") return false;
+  if (release?.draft || typeof release?.body !== "string") return false;
   if (!release.body.includes(releaseMarker(upstreamTag, fingerprint))) return false;
   const assetNames = new Set((release.assets ?? []).map((asset) => asset?.name));
-  return REQUIRED_UPDATE_MANIFESTS.every((name) =>
-    assetNames.has(name.replace("nightly", channel)),
-  );
+  if (channel === "nightly-v2") {
+    const version = /^v(\d+\.\d+\.\d+-nightly-v2\.\d{8}\.\d+)$/.exec(release.tag_name)?.[1];
+    if (version === undefined) return false;
+    return [
+      "nightly-v2-mac.yml",
+      "SHA256SUMS",
+      `t3-${version}-darwin-arm64.tar.gz`,
+      ...["arm64", "x64"].flatMap((arch) =>
+        ["dmg", "zip"].map((extension) => `T3-Code-${version}-${arch}.${extension}`),
+      ),
+    ].every((name) => assetNames.has(name));
+  }
+  return REQUIRED_UPDATE_MANIFESTS.every((name) => assetNames.has(name));
 }
 
 async function githubRequest(path, token) {
