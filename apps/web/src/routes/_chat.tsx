@@ -23,6 +23,7 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { primaryServerKeybindingsAtom } from "~/state/server";
+import { VoicePanel } from "~/voice/ui/VoicePanel";
 
 function ChatRouteGlobalShortcuts() {
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
@@ -186,6 +187,9 @@ function ChatRouteLayout() {
   return (
     <>
       <ChatRouteGlobalShortcuts />
+      {/* T4 voice entry point: one-line integration; the panel self-gates on
+          voice capability + operate scope and renders nothing otherwise. */}
+      <VoicePanel />
       {threadTarget ? <ThreadRouteView target={threadTarget} /> : <Outlet />}
     </>
   );
