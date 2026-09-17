@@ -54,14 +54,14 @@ export function cliArchiveFileName(version: string, platformKey: CliArchivePlatf
   return `t3-${version}-${platformKey}.${platformKey.startsWith("win32") ? "zip" : "tar.gz"}`;
 }
 
-const CLI_RELEASE_DEFAULT_BASE_URL = `https://github.com/${CLI_RELEASE_REPOSITORY}/releases/download`;
+function cliReleaseRepository(channel: CliReleaseChannel): string {
+  return channel === "nightly-v2" ? "saphid/t3code" : CLI_RELEASE_REPOSITORY;
+}
 
 /** Directory that `releases/download/<tag>/<asset>` lives under. */
-export function cliReleaseDownloadBaseUrl(
-  version: string,
-  baseUrl: string | undefined = CLI_RELEASE_DEFAULT_BASE_URL,
-): string {
-  return `${(baseUrl?.trim() || CLI_RELEASE_DEFAULT_BASE_URL).replace(/\/+$/, "")}/v${version}`;
+export function cliReleaseDownloadBaseUrl(version: string, baseUrl?: string): string {
+  const defaultBaseUrl = `https://github.com/${cliReleaseRepository(cliReleaseChannelOf(version))}/releases/download`;
+  return `${(baseUrl?.trim() || defaultBaseUrl).replace(/\/+$/, "")}/v${version}`;
 }
 
 /**
@@ -79,17 +79,20 @@ export function parseChecksums(text: string): ReadonlyMap<string, string> {
   return checksums;
 }
 
-export type CliReleaseChannel = "stable" | "nightly" | "preview";
+export type CliReleaseChannel = "stable" | "nightly" | "preview" | "nightly-v2";
 export const CLI_RELEASE_CHANNELS: ReadonlyArray<CliReleaseChannel> = [
   "stable",
   "nightly",
   "preview",
+  "nightly-v2",
 ];
 
 /** The release train a version was published on, derived from its prerelease tag. */
 export function cliReleaseChannelOf(version: string): CliReleaseChannel {
-  const channel = /^[^-+]+-(nightly|preview)\.\d{8}\.\d+$/.exec(version)?.[1];
-  return channel === "nightly" || channel === "preview" ? channel : "stable";
+  const channel = /^[^-+]+-(nightly|preview|nightly-v2)\.\d{8}\.\d+$/.exec(version)?.[1];
+  return channel === "nightly" || channel === "preview" || channel === "nightly-v2"
+    ? channel
+    : "stable";
 }
 
 /**
@@ -97,8 +100,11 @@ export function cliReleaseChannelOf(version: string): CliReleaseChannel {
  * until a channel match turns up; a busy nightly train can push the newest
  * preview or stable release past any single page.
  */
-export function cliReleaseIndexPageUrl(page: number): string {
-  return `https://api.github.com/repos/${CLI_RELEASE_REPOSITORY}/releases?per_page=100&page=${page}`;
+export function cliReleaseIndexPageUrl(
+  page: number,
+  channel: CliReleaseChannel = "stable",
+): string {
+  return `https://api.github.com/repos/${cliReleaseRepository(channel)}/releases?per_page=100&page=${page}`;
 }
 
 /**
