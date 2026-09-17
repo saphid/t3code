@@ -1,0 +1,85 @@
+{
+  "upstreamRepository": "pingdotgg/t3code",
+  "upstreamTag": "a62d7ad8650216ce019b61e078f4d220695724e9",
+  "upstreamBranch": "t3code/codex-turn-mapping",
+  "upstreamUrl": "https://github.com/pingdotgg/t3code/commit/a62d7ad8650216ce019b61e078f4d220695724e9",
+  "releaseRepository": "saphid/t3code",
+  "releaseChannel": "nightly-v2",
+  "version": "0.0.41-nightly-v2.20260917.1",
+  "tag": "v0.0.41-nightly-v2.20260917.1",
+  "fingerprint": "628b7ab82ea7dad50e394abff0db5843c934a8374e094eb192e60001fc4e5b66",
+  "localBuild": true,
+  "sourceBranch": "agent/ov2-nightly-local-20260917",
+  "patches": [
+    {
+      "label": "saphid/t3code@7b0c1eac18d6",
+      "name": "fix(release): ad hoc sign credential-free macOS builds",
+      "commits": ["7b0c1eac18d6ec0a4e88a643bf6f98db78655411"]
+    },
+    {
+      "label": "saphid/t3code@f2efadd86f0b",
+      "name": "Durable custom update sources",
+      "commits": ["f2efadd86f0b86d4269505778727bbe6f6dcc2f4"]
+    },
+    {
+      "label": "saphid/t3code@7476e27333f8",
+      "name": "feat(settings): show included fork changes",
+      "commits": ["7476e27333f8f58d7488202a1a86424c7ec56ef5"]
+    },
+    {
+      "label": "saphid/t3code@193a4ddb0965",
+      "name": "feat(desktop): add thread deep links",
+      "commits": ["193a4ddb0965ad8db158927814b4eaab3a8714a0"]
+    },
+    {
+      "label": "saphid/t3code@58f1fcfe4d3f",
+      "name": "feat(web): open file links externally",
+      "commits": ["58f1fcfe4d3ff816ced440953eac46938339d836"]
+    },
+    {
+      "label": "saphid/t3code@63b2dae13eb7",
+      "name": "fix(build): identify Windows native probes exactly",
+      "commits": ["63b2dae13eb754eb550381c31611e8708253fb49"]
+    },
+    {
+      "label": "saphid/t3code@cbf53917a879",
+      "name": "fix(updates): align custom source with current nightly",
+      "commits": ["cbf53917a879a668be2e1db2aa792a16654df350"]
+    },
+    {
+      "label": "saphid/t3code@a9e4aa9a8946",
+      "name": "fix(release): use accessible build metadata tooltips",
+      "commits": ["a9e4aa9a894638584432243c6b32432e6f8dfb98"]
+    },
+    {
+      "label": "saphid/t3code@89d3acdea391",
+      "name": "fix(replay): pass arch before desktop build identity",
+      "commits": ["89d3acdea391794b62a738433e1d0aa299c8e912"]
+    },
+    {
+      "label": "saphid/t3code@3873c4fa37df",
+      "name": "test(desktop): skip unavailable libsecret helper",
+      "commits": ["3873c4fa37df25b7b22f77db6af862e761fe6cc9"]
+    },
+    {
+      "label": "saphid/t3code@23658f694731",
+      "name": "Separate Fork Nightly release streams",
+      "commits": ["23658f69473148528fa49f1d0c5c8c21b0c7889c"]
+    },
+    {
+      "label": "saphid/t3code@b78048df66c9",
+      "name": "Nightly DMG artwork and build compatibility",
+      "commits": ["b78048df66c96ed259e1760528e9270aed1cfd29"]
+    },
+    {
+      "label": "saphid/t3code@3c65e73264c1",
+      "name": "Deterministic cold highlighter test on hosted runners",
+      "commits": ["3c65e73264c1938cc53695a7a0a9977559ff8ed5"]
+    },
+    {
+      "label": "saphid/t3code@787542b6c61c",
+      "name": "Desktop compatibility fixes only: IPC sender checks and packaged branding",
+      "commits": ["787542b6c61c54b06372179fc5877265346dfa54"]
+    }
+  ]
+}
