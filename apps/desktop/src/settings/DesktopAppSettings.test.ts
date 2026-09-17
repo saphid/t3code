@@ -254,23 +254,26 @@ describe("DesktopSettings", () => {
     ),
   );
 
-  it.effect("persists a v2 fork channel across reload and switches back independently", () =>
-    withSettings(
-      Effect.gen(function* () {
-        const settings = yield* DesktopAppSettings.DesktopAppSettings;
-        yield* settings.setUpdateRepository("saphid/t3code", "nightly-v2");
-        const reloaded = yield* settings.load;
-        assert.equal(reloaded.updateRepository, "saphid/t3code");
-        assert.equal(reloaded.updateChannel, "nightly-v2");
-        yield* settings.setUpdateRepository("saphid/t3code", "nightly");
-        assert.equal((yield* settings.load).updateChannel, "nightly");
-        yield* settings.setUpdateRepository("saphid/t3code", "nightly-v2");
-        yield* settings.setUpdateChannel("latest");
-        assert.isNull((yield* settings.load).updateRepository);
-        assert.equal((yield* settings.get).updateChannel, "latest");
-      }),
-    ),
-  );
+  for (const appVersion of ["0.0.17", "0.0.41-nightly-v2.20260917.1"]) {
+    it.effect(`persists the custom fork channel across reload on ${appVersion}`, () =>
+      withSettings(
+        Effect.gen(function* () {
+          const settings = yield* DesktopAppSettings.DesktopAppSettings;
+          yield* settings.setUpdateRepository("saphid/t3code", "nightly-v2");
+          const reloaded = yield* settings.load;
+          assert.equal(reloaded.updateRepository, "saphid/t3code");
+          assert.equal(reloaded.updateChannel, "nightly-v2");
+          yield* settings.setUpdateRepository("saphid/t3code", "nightly");
+          assert.equal((yield* settings.load).updateChannel, "nightly");
+          yield* settings.setUpdateRepository("saphid/t3code", "nightly-v2");
+          yield* settings.setUpdateChannel("latest");
+          assert.isNull((yield* settings.load).updateRepository);
+          assert.equal((yield* settings.get).updateChannel, "latest");
+        }),
+        { appVersion },
+      ),
+    );
+  }
 
   it.effect("migrates a persisted custom source to the Nightly release channel", () =>
     withSettings(
