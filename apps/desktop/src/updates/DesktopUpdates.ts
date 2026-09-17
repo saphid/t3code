@@ -199,7 +199,7 @@ export class DesktopUpdateUnexpectedActionError extends Schema.TaggedError<Deskt
   }
 }
 
-export class DesktopUpdateRenamedMacAppError extends Schema.TaggedErrorClass<DesktopUpdateRenamedMacAppError>()(
+export class DesktopUpdateRenamedMacAppError extends Schema.TaggedError<DesktopUpdateRenamedMacAppError>()(
   "DesktopUpdateRenamedMacAppError",
   {
     expectedBundleName: Schema.String,
