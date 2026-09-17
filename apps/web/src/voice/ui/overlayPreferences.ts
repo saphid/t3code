@@ -82,6 +82,39 @@ export function readVoiceOverlayPreferences(): VoiceOverlayPreferences {
   }
 }
 
+/** Memoized snapshot over the raw stored bytes. useSyncExternalStore requires
+    getSnapshot to return a stable value while the store is unchanged; parsing
+    localStorage on every call would return a fresh object each time and loop
+    React's re-render check. */
+let overlaySnapshotCache: {
+  readonly raw: string | null;
+  readonly value: VoiceOverlayPreferences;
+} | null = null;
+
+function snapshotVoiceOverlayPreferences(): VoiceOverlayPreferences {
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(KEY);
+  } catch {
+    raw = null;
+  }
+  if (overlaySnapshotCache !== null && overlaySnapshotCache.raw === raw) {
+    return overlaySnapshotCache.value;
+  }
+  let value: VoiceOverlayPreferences;
+  if (raw === null) {
+    value = DEFAULT_VOICE_OVERLAY_PREFERENCES;
+  } else {
+    try {
+      value = sanitizeVoiceOverlayPreferences(JSON.parse(raw));
+    } catch {
+      value = DEFAULT_VOICE_OVERLAY_PREFERENCES;
+    }
+  }
+  overlaySnapshotCache = { raw, value };
+  return value;
+}
+
 /** Merges a partial update into the stored record. Storage failures are
     swallowed: the overlay still works, it just forgets its placement and
     mode across reloads. */
@@ -110,7 +143,7 @@ export function useVoiceOverlayPreferences(): readonly [
 ] {
   const prefs = useSyncExternalStore(
     subscribe,
-    readVoiceOverlayPreferences,
+    snapshotVoiceOverlayPreferences,
     () => DEFAULT_VOICE_OVERLAY_PREFERENCES,
   );
   const update = useCallback(
