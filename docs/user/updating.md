@@ -104,5 +104,15 @@ The app remembers your choice after restart and follows only that stream. To swi
 back, choose the other fork release and check for updates. Selecting **Stable** or
 **Nightly** in the main update track selector clears the custom source.
 
-These are desktop releases. Changing the desktop release does not update remote
-servers, React Native mobile, or the native SwiftUI iPhone app.
+Install the first fork build manually if your current app was signed by a different
+publisher. Later fork builds use the same update identity and can install through
+the app's update button. Keep the installed application name unchanged.
+
+After updating the desktop app, use **Update server** in the version notice or
+**Settings → Connections** to update a connected Apple Silicon background server
+to the same OV2 version. Keep the app open while it installs and reconnects.
+OV2 fork releases include that server archive. Other server platforms are not
+published by this fork stream.
+
+Changing the desktop release does not update mobile apps. Install their updates
+separately.
