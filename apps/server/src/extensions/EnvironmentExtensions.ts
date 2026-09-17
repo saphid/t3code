@@ -177,13 +177,10 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
           auditApi: (event) => {
             Effect.runSync(Effect.logInfo("Extension API invocation", { ...event }));
           },
-          validateApiScope: (context) =>
-            Effect.runPromise(
-              resolve(context).pipe(
-                Effect.as(true),
-                Effect.catch(() => Effect.succeed(false)),
-              ),
-            ),
+          // The resolver's tagged ExtensionOperationError must reach the
+          // caller — a stale workspace revision is not an authority denial.
+          // The broker only sees boolean false as a generic scope change.
+          validateApiScope: (context) => Effect.runPromise(resolve(context).pipe(Effect.as(true))),
           services: [
             {
               capability: WORKSPACE_READ_TEXT,

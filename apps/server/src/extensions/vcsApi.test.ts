@@ -11,6 +11,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
 import { it, expect, describe } from "@effect/vitest";
 import * as Data from "effect/Data";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -810,19 +811,84 @@ it.layer(NodeServices.layer)("t3.vcs adapters", (it) => {
       yield* withVcsServices(workspace, ({ git, registry, provisioning, review, worktreesDir }) =>
         Effect.gen(function* () {
           yield* initRepo(git, root);
+          const fakeJjDriver = {
+            capabilities: {
+              kind: "jj",
+              supportsWorktrees: false,
+              supportsBookmarks: true,
+              supportsAtomicSnapshot: false,
+              supportsPushDefaultRemote: false,
+              ignoreClassifier: "git-compatible-fallback",
+            },
+            listRemotes: (_cwd: string): ReturnType<VcsDriverHandle["driver"]["listRemotes"]> =>
+              Effect.succeed({
+                remotes: [
+                  {
+                    name: "origin",
+                    url: "https://user:password@example.com/repo.git",
+                    pushUrl: Option.some("git@example.com:org/repo.git"),
+                    isPrimary: true,
+                  },
+                  {
+                    name: "broken-bracket",
+                    url: "https://user:password@[unclosed",
+                    pushUrl: Option.none(),
+                    isPrimary: false,
+                  },
+                  {
+                    name: "encoded-userinfo",
+                    url: "https://user%40x:password@[unclosed",
+                    pushUrl: Option.none(),
+                    isPrimary: false,
+                  },
+                  {
+                    name: "empty-host",
+                    url: "https://user:password@",
+                    pushUrl: Option.none(),
+                    isPrimary: false,
+                  },
+                  {
+                    name: "single-slash",
+                    url: "https:/user:password@[broken",
+                    pushUrl: Option.none(),
+                    isPrimary: false,
+                  },
+                  {
+                    name: "backslash-sep",
+                    url: "https:\\\\user:password@[broken",
+                    pushUrl: Option.none(),
+                    isPrimary: false,
+                  },
+                  {
+                    name: "mixed-sep",
+                    url: "https:\\/user:password@[broken",
+                    pushUrl: Option.some("https:/user:password@[also-broken"),
+                    isPrimary: false,
+                  },
+                  {
+                    name: "control-in-prefix",
+                    url: "https:/\u0001/user:password@[broken",
+                    pushUrl: Option.none(),
+                    isPrimary: false,
+                  },
+                  {
+                    name: "zero-separator",
+                    url: "https:user:password@[broken",
+                    pushUrl: Option.some("https:\tuser:password@[pushed"),
+                    isPrimary: false,
+                  },
+                ],
+                freshness: {
+                  source: "live-local",
+                  observedAt: DateTime.makeUnsafe("2026-09-13T00:00:00.000Z"),
+                  expiresAt: Option.none(),
+                },
+              }),
+          } satisfies Pick<VcsDriverHandle["driver"], "capabilities" | "listRemotes">;
           const fakeJj: VcsDriverHandle = {
             kind: "jj",
             repository: { kind: "jj" } as VcsDriverHandle["repository"],
-            driver: {
-              capabilities: {
-                kind: "jj",
-                supportsWorktrees: false,
-                supportsBookmarks: true,
-                supportsAtomicSnapshot: false,
-                supportsPushDefaultRemote: false,
-                ignoreClassifier: "git-compatible-fallback",
-              },
-            } as VcsDriverHandle["driver"],
+            driver: fakeJjDriver as VcsDriverHandle["driver"],
           };
           const fakeRegistry = {
             get: registry.get,
@@ -855,6 +921,85 @@ it.layer(NodeServices.layer)("t3.vcs adapters", (it) => {
           expect(capabilities.operations["repository.fetch"]).toBe(false);
           expect(capabilities.operations["repository.listRemotes"]).toBe(true);
 
+          // The capability claim is backed by the driver method — invoke it
+          // through the adapter and check the projection (including URL
+          // userinfo redaction at the boundary).
+          const remotes = (yield* invoke(repository, "listRemotes", {}, context)) as {
+            isRepo: boolean;
+            remotes: readonly {
+              name: string;
+              url: string;
+              pushUrl: string | null;
+              isPrimary: boolean;
+            }[];
+          };
+          expect(remotes).toEqual({
+            isRepo: true,
+            remotes: [
+              {
+                name: "origin",
+                url: "https://example.com/repo.git",
+                pushUrl: "git@example.com:org/repo.git",
+                isPrimary: true,
+              },
+              // Malformed URLs must not pass userinfo through verbatim — the
+              // `scheme://userinfo@` prefix is stripped at the boundary.
+              {
+                name: "broken-bracket",
+                url: "https://[unclosed",
+                pushUrl: null,
+                isPrimary: false,
+              },
+              {
+                name: "encoded-userinfo",
+                url: "https://[unclosed",
+                pushUrl: null,
+                isPrimary: false,
+              },
+              {
+                name: "empty-host",
+                url: "https://",
+                pushUrl: null,
+                isPrimary: false,
+              },
+              // Alternate separator spellings a special-scheme URL would
+              // normalize lose their userinfo prefix just the same.
+              {
+                name: "single-slash",
+                url: "https:/[broken",
+                pushUrl: null,
+                isPrimary: false,
+              },
+              {
+                name: "backslash-sep",
+                url: "https:\\\\[broken",
+                pushUrl: null,
+                isPrimary: false,
+              },
+              {
+                name: "mixed-sep",
+                url: "https:\\/[broken",
+                pushUrl: "https:/[also-broken",
+                isPrimary: false,
+              },
+              // Control characters are non-printable: stripped before the
+              // userinfo match, and absent separators do not save a
+              // credential-bearing scheme prefix.
+              {
+                name: "control-in-prefix",
+                url: "https://[broken",
+                pushUrl: null,
+                isPrimary: false,
+              },
+              {
+                name: "zero-separator",
+                url: "https:[broken",
+                pushUrl: "https:[pushed",
+                isPrimary: false,
+              },
+            ],
+          });
+
           const stagedError = yield* invokeError(changes, "stage", { paths: ["a.txt"] }, context);
           expect(stagedError.detail).toContain("VcsUnsupportedOperationError");
           const listedError = yield* invokeError(changes, "list", {}, context);
@@ -884,6 +1029,7 @@ it.layer(NodeServices.layer)("t3.vcs adapters", (it) => {
           );
           const changes = providerOf(providers, "t3.vcs/changes");
           const refs = providerOf(providers, "t3.vcs/refs");
+          const repository = providerOf(providers, "t3.vcs/repository");
           const context = makeContext(root);
 
           const excess = yield* invokeError(
@@ -920,6 +1066,12 @@ it.layer(NodeServices.layer)("t3.vcs adapters", (it) => {
             context,
           );
           expect(longMessage.detail).toContain("Invalid");
+          // DEL and C1 controls are not whitespace; the first-char bound must
+          // still reject them.
+          for (const remoteName of ["\x7forigin", "\u0085rigin"]) {
+            const control = yield* invokeError(repository, "fetch", { remoteName }, context);
+            expect(control.detail).toContain("Invalid");
+          }
         }),
       );
     }),
