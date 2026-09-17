@@ -128,6 +128,13 @@ export type ProvidersStatusEvent = {
   readonly scope: "environment";
   readonly providers: readonly ProviderStatusEntry[];
 };
+/**
+ * The projection's display-label cap. Host provider names (`displayName`)
+ * are unbounded non-empty strings, so the producer truncates to this length
+ * rather than let a valid long name invalidate the whole frame; identity
+ * stays on `instanceId`/`driver`, never the label.
+ */
+export const PROVIDER_STATUS_DISPLAY_NAME_MAX_LENGTH = 200;
 const PROVIDER_STATUS_ENTRY_SCHEMA: JsonObject = {
   type: "object",
   additionalProperties: false,
@@ -135,7 +142,11 @@ const PROVIDER_STATUS_ENTRY_SCHEMA: JsonObject = {
   properties: {
     instanceId: { type: "string", minLength: 1, maxLength: 160 },
     driver: { type: "string", minLength: 1, maxLength: 64 },
-    displayName: { type: "string", minLength: 1, maxLength: 200 },
+    displayName: {
+      type: "string",
+      minLength: 1,
+      maxLength: PROVIDER_STATUS_DISPLAY_NAME_MAX_LENGTH,
+    },
     enabled: { type: "boolean" },
     installed: { type: "boolean" },
     status: { enum: ["ready", "warning", "error", "disabled"] },

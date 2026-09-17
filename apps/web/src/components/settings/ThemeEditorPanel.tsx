@@ -15,8 +15,10 @@ import {
 } from "react";
 import {
   applyThemeColorPreview,
+  restoreThemeAfterPreview,
   THEME_COLOR_ROLES,
   THEME_FILE_VERSION,
+  THEME_PREVIEW_OWNER_EDITOR,
   createVividThemeColors,
   getCustomThemes,
   getStandardThemeColors,
@@ -477,7 +479,7 @@ export function ThemeEditorPanel({
   useEffect(() => {
     if (!open) return;
     return () => {
-      restoreTheme();
+      restoreThemeAfterPreview(THEME_PREVIEW_OWNER_EDITOR, restoreTheme);
     };
   }, [open, restoreTheme]);
 

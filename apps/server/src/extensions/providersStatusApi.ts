@@ -4,6 +4,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import {
+  PROVIDER_STATUS_DISPLAY_NAME_MAX_LENGTH,
   providersStatusApi,
   type ProvidersStatusEvent,
   type ProviderStatusEntry,
@@ -39,7 +40,11 @@ export function projectProviderStatuses(
   const entries = providers.slice(0, MAX_PROVIDERS).map((provider): ProviderStatusEntry => ({
     instanceId: provider.instanceId,
     driver: provider.driver,
-    ...(provider.displayName === undefined ? {} : { displayName: provider.displayName }),
+    // Host display names are unbounded; the projected label is capped so a
+    // valid long name cannot invalidate the whole frame.
+    ...(provider.displayName === undefined
+      ? {}
+      : { displayName: provider.displayName.slice(0, PROVIDER_STATUS_DISPLAY_NAME_MAX_LENGTH) }),
     enabled: provider.enabled,
     installed: provider.installed,
     status: provider.status,
@@ -69,7 +74,7 @@ const sameProjection = (left: ProvidersStatusEvent, right: ProvidersStatusEvent)
 
 export function createProvidersStatusApiProvider(
   dependencies: Parameters<typeof makeExtensionScopeResolver>[0] & {
-    readonly providers: Pick<ProviderRegistryShape, "getProviders" | "streamChanges">;
+    readonly providers: Pick<ProviderRegistryShape, "getProviders" | "subscribeChanges">;
   },
 ): HostApiProvider {
   const resolve = makeExtensionScopeResolver(dependencies);
@@ -103,20 +108,29 @@ export function createProvidersStatusApiProvider(
         signal.throwIfAborted();
         // Initial snapshot then registry changes, deduplicated on the
         // projection so provider fields the contract drops (usage meters,
-        // diagnostics) do not produce resends.
+        // diagnostics) do not produce resends. The change subscription is
+        // acquired before the snapshot read: the registry publishes on a
+        // PubSub whose stream subscribes lazily, so reading first would let
+        // an update published mid-read fall into the gap. Anything published
+        // between the subscribe and the snapshot replays from the
+        // subscription and dedupes against the snapshot it is already in.
+        // The queue must suspend, not slide: the pre-acquired subscription
+        // can replay in the same burst as the snapshot, and a sliding
+        // buffer would drop the snapshot.
         const source = Stream.callback<ProvidersStatusEvent>(
           (queue) =>
             Effect.gen(function* () {
+              const live = yield* dependencies.providers.subscribeChanges;
               const initial = yield* dependencies.providers.getProviders;
               yield* Stream.runForEach(
-                Stream.concat(Stream.make(initial), dependencies.providers.streamChanges).pipe(
+                Stream.concat(Stream.make(initial), Stream.fromSubscription(live)).pipe(
                   Stream.map(projectProviderStatuses),
                   Stream.changesWith(sameProjection),
                 ),
                 (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
               );
             }),
-          { bufferSize: 1, strategy: "sliding" },
+          { bufferSize: 1, strategy: "suspend" },
         );
         const iterator = Stream.toAsyncIterable(source)[Symbol.asyncIterator]();
         const cancel = () => {

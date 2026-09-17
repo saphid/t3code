@@ -1623,18 +1623,41 @@ export const THEME_PREVIEW_ID = "__preview";
 export const THEME_PREVIEW_OWNER_EDITOR = "t3.theme-editor";
 
 /**
+ * The writer that painted the live `__preview`, or null when no preview is
+ * active — including a preview that predates ownership tagging, which any
+ * writer may claim.
+ */
+export function getThemePreviewOwner(): string | null {
+  if (typeof document === "undefined") return null;
+  const root = document.documentElement;
+  if (root?.dataset?.themeId !== THEME_PREVIEW_ID) return null;
+  return root.dataset.themePreviewOwner ?? null;
+}
+
+/**
  * Paint a draft palette onto the live app without installing it, so the editor
- * can be judged against the real interface instead of a miniature. Callers
- * restore the stored theme (refreshTheme) when the draft goes away.
+ * can be judged against the real interface instead of a miniature. The preview
+ * is single-writer: while another owner's tag is set the call is refused and
+ * returns false without repainting or retagging. Callers restore the stored
+ * theme (refreshTheme) when the draft goes away.
  */
 export function applyThemeColorPreview(
   colors: ThemeColors,
   appearance: ThemeAppearance,
   owner: string = THEME_PREVIEW_OWNER_EDITOR,
-): void {
-  if (typeof document === "undefined") return;
+): boolean {
+  if (typeof document === "undefined") return false;
   const root = document.documentElement;
-  if (!root?.style) return;
+  if (!root?.style) return false;
+
+  const activeOwner = root.dataset.themePreviewOwner;
+  if (
+    root.dataset.themeId === THEME_PREVIEW_ID &&
+    activeOwner !== undefined &&
+    activeOwner !== owner
+  ) {
+    return false;
+  }
 
   // Drafts become user-controlled themes when saved, so their preview keeps
   // the fixed stage artwork hidden even when it was seeded from a built-in.
@@ -1646,6 +1669,17 @@ export function applyThemeColorPreview(
     // A half-typed hex keeps the last good value instead of blanking the role.
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
+  return true;
+}
+
+/**
+ * Run `restore` only when `owner` painted the live preview or no tagged
+ * preview is active. A foreign writer's cleanup must not erase another
+ * owner's draft — the owning writer restores when it closes.
+ */
+export function restoreThemeAfterPreview(owner: string, restore: () => void): void {
+  const activeOwner = getThemePreviewOwner();
+  if (activeOwner === null || activeOwner === owner) restore();
 }
 
 export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppearance): void {

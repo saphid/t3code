@@ -1,3 +1,4 @@
+import * as ProcessRunner from "../processRunner.ts";
 import { expect, it } from "@effect/vitest";
 import {
   ProjectId,
@@ -5,12 +6,21 @@ import {
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import type { HostApiInvocationMetadata } from "@t3tools/extension-runtime";
+import type { HostApiInvocationMetadata, HostApiRootAuthority } from "@t3tools/extension-runtime";
+import { createExtensionRuntime } from "@t3tools/extension-runtime";
+import {
+  PROVIDER_STATUS_DISPLAY_NAME_MAX_LENGTH,
+  type ProvidersStatusEvent,
+} from "@t3tools/extension-sdk/catalogue";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Queue from "effect/Queue";
-import * as Stream from "effect/Stream";
+import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { createProvidersStatusApiProvider, projectProviderStatuses } from "./providersStatusApi.ts";
 
 const provider = (overrides: Partial<ServerProvider> = {}): ServerProvider => ({
@@ -41,11 +51,20 @@ const provider = (overrides: Partial<ServerProvider> = {}): ServerProvider => ({
   ...overrides,
 });
 
-function fixture(updates: Queue.Queue<ReadonlyArray<ServerProvider>>, initial: ServerProvider[]) {
+function fixture(
+  updates: PubSub.PubSub<ReadonlyArray<ServerProvider>>,
+  subscribed: Deferred.Deferred<void>,
+  initial: ServerProvider[],
+  snapshotGate?: Deferred.Deferred<void>,
+) {
   let cwd = "/workspace";
   let allowed = true;
   let reads = 0;
   let detached = false;
+  let releaseNotice: (() => void) | undefined;
+  const released = new Promise<void>((resolve) => {
+    releaseNotice = resolve;
+  });
   const projectId = ProjectId.make("project-a");
   const api = createProvidersStatusApiProvider({
     environmentId: "env-a",
@@ -55,16 +74,22 @@ function fixture(updates: Queue.Queue<ReadonlyArray<ServerProvider>>, initial: S
     },
     threads: { getById: () => Effect.succeedNone },
     providers: {
-      getProviders: Effect.sync(() => {
+      getProviders: Effect.gen(function* () {
         reads++;
+        if (snapshotGate) yield* Deferred.await(snapshotGate);
         return initial;
       }),
-      streamChanges: Stream.fromQueue(updates).pipe(
-        Stream.ensuring(
+      subscribeChanges: Effect.acquireRelease(
+        Effect.gen(function* () {
+          const subscription = yield* PubSub.subscribe(updates);
+          yield* Deferred.succeed(subscribed, undefined);
+          return subscription;
+        }),
+        () =>
           Effect.sync(() => {
             detached = true;
+            releaseNotice?.();
           }),
-        ),
       ),
     },
   });
@@ -103,7 +128,9 @@ function fixture(updates: Queue.Queue<ReadonlyArray<ServerProvider>>, initial: S
     controller,
     stream: () =>
       api.subscribe!("subscribe", {}, context, controller.signal, metadata)[Symbol.asyncIterator](),
-    emit: (providers: ReadonlyArray<ServerProvider>) => Queue.offer(updates, providers),
+    emit: (providers: ReadonlyArray<ServerProvider>) => PubSub.publish(updates, providers),
+    subscriptionReady: Deferred.await(subscribed),
+    released,
     reads: () => reads,
     detached: () => detached,
     revoke: () => {
@@ -117,8 +144,9 @@ function fixture(updates: Queue.Queue<ReadonlyArray<ServerProvider>>, initial: S
 
 const makeFixture = (initial: ServerProvider[] = [provider()]) =>
   Effect.gen(function* () {
-    const updates = yield* Queue.unbounded<ReadonlyArray<ServerProvider>>();
-    return fixture(updates, initial);
+    const updates = yield* PubSub.unbounded<ReadonlyArray<ServerProvider>>();
+    const subscribed = yield* Deferred.make<void>();
+    return fixture(updates, subscribed, initial);
   });
 
 it("projects identity, lifecycle and capability flags without credential-bearing fields", () => {
@@ -150,6 +178,15 @@ it("projects identity, lifecycle and capability flags without credential-bearing
   expect(projectProviderStatuses([]).providers).toEqual([]);
 });
 
+it("caps the projected display label so a valid long provider name stays in schema", () => {
+  const longName = `Custom ${"Codex ".repeat(60)}Instance`; // 300+ chars, valid per TrimmedNonEmptyString
+  const event = projectProviderStatuses([provider({ displayName: longName })]);
+  expect(event.providers[0]?.displayName).toBe(
+    longName.slice(0, PROVIDER_STATUS_DISPLAY_NAME_MAX_LENGTH),
+  );
+  expect(event.providers[0]?.displayName).toHaveLength(PROVIDER_STATUS_DISPLAY_NAME_MAX_LENGTH);
+});
+
 it.effect("streams the initial snapshot then registry updates, and detaches on return", () =>
   Effect.gen(function* () {
     const f = yield* makeFixture();
@@ -162,7 +199,32 @@ it.effect("streams the initial snapshot then registry updates, and detaches on r
       projectProviderStatuses([provider({ status: "error" })]),
     );
     yield* Effect.promise(() => stream.return!());
-    yield* Effect.yieldNow;
+    yield* Effect.promise(() => f.released);
+    expect(f.detached()).toBe(true);
+  }),
+);
+
+it.effect("delivers a registry update published while the snapshot read is in flight", () =>
+  Effect.gen(function* () {
+    const updates = yield* PubSub.unbounded<ReadonlyArray<ServerProvider>>();
+    const subscribed = yield* Deferred.make<void>();
+    const snapshotGate = yield* Deferred.make<void>();
+    // The snapshot read hangs on the gate; the provider must already be
+    // subscribed before it resolves, or this publish falls into the gap.
+    const f = fixture(updates, subscribed, [provider()], snapshotGate);
+    const stream = f.stream();
+    const first = stream.next();
+    yield* f.subscriptionReady;
+    yield* f.emit([provider({ status: "error" })]);
+    yield* Deferred.succeed(snapshotGate, undefined);
+    expect((yield* Effect.promise(() => first)).value?.value).toEqual(
+      projectProviderStatuses([provider()]),
+    );
+    expect((yield* Effect.promise(() => stream.next())).value?.value).toEqual(
+      projectProviderStatuses([provider({ status: "error" })]),
+    );
+    yield* Effect.promise(() => stream.return!());
+    yield* Effect.promise(() => f.released);
     expect(f.detached()).toBe(true);
   }),
 );
@@ -192,7 +254,7 @@ for (const action of ["revoke", "move"] as const) {
       f[action]();
       yield* f.emit([provider({ status: "error" })]);
       yield* Effect.promise(() => expect(stream.next()).rejects.toThrow());
-      yield* Effect.yieldNow;
+      yield* Effect.promise(() => f.released);
       expect(f.detached()).toBe(true);
     }),
   );
@@ -206,7 +268,7 @@ it.effect("aborts while waiting for a registry update and detaches", () =>
     const pending = stream.next();
     f.controller.abort();
     yield* Effect.promise(() => expect(pending).rejects.toThrow());
-    yield* Effect.yieldNow;
+    yield* Effect.promise(() => f.released);
     expect(f.detached()).toBe(true);
   }),
 );
@@ -249,10 +311,92 @@ it.effect("revoked authority and pre-aborted streams never read the registry", (
     const f = yield* makeFixture();
     f.revoke();
     yield* Effect.promise(() => expect(f.stream().next()).rejects.toThrow("revoked"));
-    const updates = yield* Queue.unbounded<ReadonlyArray<ServerProvider>>();
-    const aborted = fixture(updates, [provider()]);
+    const updates = yield* PubSub.unbounded<ReadonlyArray<ServerProvider>>();
+    const subscribed = yield* Deferred.make<void>();
+    const aborted = fixture(updates, subscribed, [provider()]);
     aborted.controller.abort();
     yield* Effect.promise(() => expect(aborted.stream().next()).rejects.toThrow());
     expect(f.reads() + aborted.reads()).toBe(0);
   }),
+);
+
+it.effect(
+  "installed packed consumer receives a long display name through broker event validation",
+  () =>
+    Effect.gen(function* () {
+      const longName = `Custom ${"Codex ".repeat(60)}Instance`;
+      const f = yield* makeFixture([provider({ displayName: longName })]);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const runner = yield* ProcessRunner.ProcessRunner;
+      const built = yield* runner.run({
+        command: "node",
+        args: [
+          path.resolve("../../packages/extension-sdk/bin/t3-extension.mjs"),
+          "build",
+          path.resolve("../../packages/extension-sdk/examples/providers-status"),
+        ],
+      });
+      expect(built.code, built.stderr).toBe(0);
+      const temp = yield* fs.makeTempDirectoryScoped({ prefix: "providers-status-" });
+      const rootDir = yield* fs.realPath(temp);
+      const runtime = yield* Effect.promise(() =>
+        createExtensionRuntime({
+          rootDir,
+          environmentId: "env-a",
+          services: [],
+          apiProviders: [f.api],
+          authorize: (installation, grant, context) =>
+            installation.grants.capabilities.includes(grant) &&
+            installation.grants.projectIds.includes(context.resource.projectId ?? ""),
+        }),
+      );
+      try {
+        const installed = yield* Effect.promise(() =>
+          runtime.install(
+            path.resolve("../../packages/extension-sdk/examples/providers-status/.t3-extension"),
+            {
+              capabilities: ["t3.providers/read"],
+              projectIds: ["project-a"],
+            },
+          ),
+        );
+        const root: HostApiRootAuthority = {
+          principal: f.metadata.principal!,
+          allowWrite: false,
+          revalidate: () => {},
+        };
+        const stream = runtime
+          .subscribeApi(
+            installed.id,
+            installed.contentHash,
+            {
+              id: "example.providers-status/read",
+              versionRange: "^1.0.0",
+              name: "subscribe",
+              input: {},
+              context: f.context,
+            },
+            f.controller.signal,
+            root,
+          )
+          [Symbol.asyncIterator]();
+        // Broker event validation rejects a frame whose displayName exceeds
+        // the schema bound; the projected label arrives capped instead.
+        const frame = yield* Effect.promise(() => stream.next());
+        const event = frame.value?.value as ProvidersStatusEvent | undefined;
+        expect(event?.kind).toBe("snapshot");
+        expect(event?.providers[0]?.displayName).toBe(
+          longName.slice(0, PROVIDER_STATUS_DISPLAY_NAME_MAX_LENGTH),
+        );
+        yield* Effect.promise(() => stream.return!());
+        yield* Effect.promise(() => f.released);
+        expect(f.detached()).toBe(true);
+      } finally {
+        yield* Effect.promise(() => runtime.dispose());
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+    ),
 );

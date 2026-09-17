@@ -14,6 +14,8 @@ import type {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
+import type * as PubSub from "effect/PubSub";
+import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
 import type { ProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 
@@ -79,8 +81,26 @@ export interface ProviderRegistryShape {
   /**
    * Stream of provider snapshot updates — one emission per aggregated
    * change. The array contains the full current state.
+   *
+   * NOTE: `Stream.fromPubSub` defers `PubSub.subscribe` until the stream
+   * starts running, so a consumer that reads `getProviders` before running
+   * the stream can miss a publish that lands in between. Snapshot-then-
+   * changes feeds must use `subscribeChanges` instead — see its doc.
    */
   readonly streamChanges: Stream.Stream<ReadonlyArray<ServerProvider>>;
+
+  /**
+   * Acquire a subscription to the change channel synchronously in the
+   * caller's fiber, scoped to the provided `Scope` (released on scope
+   * close). Because the subscription is registered before this `yield*`
+   * returns, a `getProviders` read taken afterwards cannot miss an update
+   * published in between — it replays from the subscription.
+   */
+  readonly subscribeChanges: Effect.Effect<
+    PubSub.Subscription<ReadonlyArray<ServerProvider>>,
+    never,
+    Scope.Scope
+  >;
 }
 
 export class ProviderRegistry extends Context.Service<ProviderRegistry, ProviderRegistryShape>()(
