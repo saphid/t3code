@@ -230,7 +230,16 @@ jobs:
         run: vp run typecheck
 
       - name: Test
-        run: vp run test
+        env:
+          RELEASE_CHANNEL: ${{ needs.prepare.outputs.release_channel }}
+        run: |
+          if [[ "$RELEASE_CHANNEL" == "nightly-v2" ]]; then
+            # Upstream uses larger Blacksmith runners. Bound both workspace
+            # tasks and Vitest workers on this GitHub-hosted runner.
+            vp run --parallel --concurrency-limit 2 --filter '!@t3tools/monorepo' test --maxWorkers 2
+          else
+            vp run test
+          fi
 
   build:
     name: Build ${{ matrix.label }}
