@@ -27,6 +27,8 @@ const {
 
 vi.mock("electron", () => ({
   app: {
+    isPackaged: true,
+    getName: () => "T3 Code (Alpha)",
     setDesktopName: setDesktopNameMock,
     getVersion: () => "0.0.37",
     isPackaged: true,
