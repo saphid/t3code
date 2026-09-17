@@ -40,6 +40,12 @@
       "repository": "saphid/t3code",
       "sha": "b87f00f350583c3f2d2b1dbbe60e441087f67feb",
       "name": "Packaged branding in the early Linux startup test fixture"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "3ace1c423cda904869ac80af4246b37a332a438c",
+      "name": "Deterministic replay gate arrival on hosted runners"
     }
   ]
 }
