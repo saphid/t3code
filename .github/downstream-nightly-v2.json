@@ -34,6 +34,12 @@
       "repository": "saphid/t3code",
       "sha": "f4727aaa313470e5cfb29716dee7b897fba8f375",
       "name": "OV2 server downloads and persistent desktop update stream"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "b87f00f350583c3f2d2b1dbbe60e441087f67feb",
+      "name": "Packaged branding in the early Linux startup test fixture"
     }
   ]
 }
