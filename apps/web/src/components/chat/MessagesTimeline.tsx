@@ -151,6 +151,8 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
+  readTimelinePosition,
+  rememberTimelinePosition,
   timelineContentOverflowsViewport,
 } from "./timelineScrollAnchoring";
 import { MessageCopyButton } from "./MessageCopyButton";
@@ -439,6 +441,7 @@ interface MessagesTimelineProps {
   onContentOverflowChange?: (overflows: boolean) => void;
   onToolOutputCollapsedAtEnd?: () => void;
   onManualNavigation: () => void;
+  cancelPositionRestoreRef?: React.RefObject<(() => void) | null>;
   hideEmptyPlaceholder?: boolean;
   topFadeEnabled?: boolean;
   historyControls?: MessagesTimelineHistoryControls;
@@ -499,37 +502,65 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   liveFollowEnabled,
   onToolOutputCollapsedAtEnd,
   onManualNavigation,
+  cancelPositionRestoreRef,
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
   historyControls,
   loadEarlier = null,
 }: MessagesTimelineProps) {
-  const [expandedRunIds, setExpandedRunIds] = useState<ReadonlySet<RunId>>(new Set());
-  const [expandedAttemptIds, setExpandedAttemptIds] = useState<ReadonlySet<RunAttemptId>>(
-    new Set(),
-  );
-  const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
+  const rememberedPosition = useMemo(
+    () => readTimelinePosition(listIdentityKey),
+    [listIdentityKey],
+  );
+  const [expandedRunIds, setExpandedRunIds] = useState<ReadonlySet<RunId>>(
+    () => rememberedPosition?.disclosures?.runs ?? new Set(),
+  );
+  const [expandedAttemptIds, setExpandedAttemptIds] = useState<ReadonlySet<RunAttemptId>>(
+    () => rememberedPosition?.disclosures?.attempts ?? new Set(),
+  );
+  const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(
+    () => rememberedPosition?.disclosures?.workGroups ?? new Set(),
+  );
+  const [positionedThreadKey, setPositionedThreadKey] = useState<string | null>(() =>
+    rememberedPosition?.atEnd === false ? null : listIdentityKey,
+  );
+  const restoringThreadPosition = positionedThreadKey !== listIdentityKey;
   const previousLatestRunRef = useRef(latestRun);
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const [settlingListIdentity, setSettlingListIdentity] = useState<string | null>(listIdentityKey);
   const [expansionThreadKey, setExpansionThreadKey] = useState(listIdentityKey);
+  // Bounds how long a position restore waits for rows that contain the saved
+  // anchor; switched threads can paint another thread's rows for a frame.
+  const restoreDeadlineRef = useRef<number | null>(null);
+  let paintedExpandedRunIds = expandedRunIds;
+  let paintedExpandedAttemptIds = expandedAttemptIds;
+  let paintedExpandedWorkGroupIds = expandedWorkGroupIds;
   if (expansionThreadKey !== listIdentityKey) {
     setExpansionThreadKey(listIdentityKey);
     setSettlingListIdentity(listIdentityKey);
-    setExpandedRunIds(new Set());
-    setExpandedAttemptIds(new Set());
-    setExpandedWorkGroupIds(new Set());
+    setPositionedThreadKey(null);
+    restoreDeadlineRef.current = null;
+    paintedExpandedRunIds = rememberedPosition?.disclosures?.runs ?? new Set();
+    paintedExpandedAttemptIds = rememberedPosition?.disclosures?.attempts ?? new Set();
+    paintedExpandedWorkGroupIds = rememberedPosition?.disclosures?.workGroups ?? new Set();
+    setExpandedRunIds(paintedExpandedRunIds);
+    setExpandedAttemptIds(paintedExpandedAttemptIds);
+    setExpandedWorkGroupIds(paintedExpandedWorkGroupIds);
   }
   const citationThreadRef = useMemo(() => parseScopedThreadKey(routeThreadKey), [routeThreadKey]);
   const openPullRequest = useOpenPrLink(citationThreadRef ?? undefined);
   const expandCitedRun = useCallback((runId: RunId) => {
     setExpandedRunIds((current) => (current.has(runId) ? current : new Set([...current, runId])));
   }, []);
-  // Scroll/disclosure state outlives virtualized rows, but never the current thread.
+  // Nested tool state shares the bounded thread-position cache.
   const workGroupViewState = useMemo<WorkGroupViewState>(
-    () => ({ scrollPositions: new Map(), expandedEntries: new Set() }),
-    [listIdentityKey],
+    () =>
+      rememberedPosition?.disclosures?.workGroupState ?? {
+        scrollPositions: new Map(),
+        expandedEntries: new Set(),
+      },
+    [listIdentityKey, rememberedPosition],
   );
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
@@ -717,6 +748,145 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // must not change with them or every timeline row re-renders per event.
   const runs = useStableHandoffRuns(runsProp);
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
+  const restoreRowIndex =
+    restoringThreadPosition && rememberedPosition?.atEnd === false
+      ? rows.findIndex((row) => row.id === rememberedPosition.rowId)
+      : -1;
+  const restoringAlwaysRender = useMemo(
+    () =>
+      restoringThreadPosition && restoreRowIndex >= 0 ? { indices: [restoreRowIndex] } : undefined,
+    [restoreRowIndex, restoringThreadPosition],
+  );
+  useLayoutEffect(() => {
+    if (!restoringThreadPosition || rows.length === 0) return;
+    const list = listRef.current;
+    if (!list) return;
+    if (citationRequest !== null) {
+      setPositionedThreadKey(listIdentityKey);
+      return;
+    }
+    let cancelled = false;
+    let settleFrame: number | null = null;
+    const viewport: HTMLElement | null = list.getScrollableNode();
+    const cancelRestoration = () => {
+      if (cancelled) return;
+      cancelled = true;
+      if (settleFrame !== null) cancelAnimationFrame(settleFrame);
+      // Supersede any pending estimated-index scroll before the browser applies the gesture.
+      if (viewport) void list.scrollToOffset({ offset: viewport.scrollTop, animated: false });
+      restoreDeadlineRef.current = null;
+      setPositionedThreadKey(listIdentityKey);
+    };
+    const cancelForNavigation = () => {
+      cancelRestoration();
+      onManualNavigation();
+    };
+    const onScrollKey = (event: globalThis.KeyboardEvent) => {
+      if (
+        ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key) &&
+        !(
+          event.target instanceof Element &&
+          event.target.closest("input, textarea, [contenteditable=true]")
+        )
+      )
+        cancelForNavigation();
+    };
+    viewport?.addEventListener("wheel", cancelForNavigation, { passive: true });
+    viewport?.addEventListener("touchmove", cancelForNavigation, { passive: true });
+    viewport?.addEventListener("pointerdown", cancelForNavigation, { passive: true });
+    viewport?.ownerDocument.addEventListener("keydown", onScrollKey);
+    const position = rememberedPosition;
+    const index = position ? rows.findIndex((row) => row.id === position.rowId) : -1;
+    if (position?.atEnd === false) onManualNavigation();
+    if (position?.atEnd === false && index < 0) {
+      // The displayed rows may briefly be a paint-only projection of another
+      // thread. Restoring against those would clamp the offset and mark the
+      // restoration done before the real rows arrive, so wait for rows that
+      // contain the saved anchor (bounded) before falling back.
+      if (restoreDeadlineRef.current === null) {
+        restoreDeadlineRef.current = Date.now() + 2_000;
+      }
+      if (Date.now() < restoreDeadlineRef.current) {
+        return;
+      }
+      restoreDeadlineRef.current = null;
+    }
+    if (cancelPositionRestoreRef) cancelPositionRestoreRef.current = cancelRestoration;
+    const scrolling =
+      position?.atEnd === false
+        ? index >= 0
+          ? list.scrollToIndex({
+              index,
+              animated: false,
+              viewPosition: 0,
+              viewOffset: -position.offsetWithinRow,
+            })
+          : list.scrollToOffset({ offset: position.scrollOffset, animated: false })
+        : list.scrollToEnd({ animated: false });
+    void Promise.resolve(scrolling).then(() => {
+      if (cancelled) return;
+      if (position?.atEnd !== false || index < 0) {
+        restoreDeadlineRef.current = null;
+        setPositionedThreadKey(listIdentityKey);
+        return;
+      }
+      // Index scrolling starts from estimates. Keep the saved row mounted
+      // until its measured position and the DOM agree for two layout frames.
+      let stableFrames = 0;
+      const reconcile = () => {
+        if (cancelled) return;
+        const state = list.getState();
+        const rowIndex = state.indexByKey(position.rowId);
+        const row = rowIndex === undefined ? undefined : state.elementAtIndex(rowIndex);
+        const element = list.getScrollableNode();
+        if (!row || !element) return;
+        const offset = Math.max(
+          0,
+          Math.min(
+            element.scrollTop +
+              row.getBoundingClientRect().top -
+              element.getBoundingClientRect().top +
+              position.offsetWithinRow,
+            element.scrollHeight - element.clientHeight,
+          ),
+        );
+        if (Math.abs(element.scrollTop - offset) > 1) {
+          stableFrames = 0;
+          void list.scrollToOffset({ offset, animated: false }).then(() => {
+            if (!cancelled) settleFrame = requestAnimationFrame(reconcile);
+          });
+          return;
+        }
+        if (++stableFrames >= 2) {
+          restoreDeadlineRef.current = null;
+          setPositionedThreadKey(listIdentityKey);
+        } else {
+          settleFrame = requestAnimationFrame(reconcile);
+        }
+      };
+      settleFrame = requestAnimationFrame(reconcile);
+    });
+    return () => {
+      cancelled = true;
+      if (cancelPositionRestoreRef?.current === cancelRestoration) {
+        cancelPositionRestoreRef.current = null;
+      }
+      if (settleFrame !== null) cancelAnimationFrame(settleFrame);
+      viewport?.removeEventListener("wheel", cancelForNavigation);
+      viewport?.removeEventListener("touchmove", cancelForNavigation);
+      viewport?.removeEventListener("pointerdown", cancelForNavigation);
+      viewport?.ownerDocument.removeEventListener("keydown", onScrollKey);
+    };
+  }, [
+    cancelPositionRestoreRef,
+    citationRequest,
+    listIdentityKey,
+    listRef,
+    onManualNavigation,
+    rememberedPosition,
+    restoringThreadPosition,
+    rows,
+  ]);
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
@@ -737,6 +907,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     onManualNavigation,
   });
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
+  const alwaysRender = citationAlwaysRender ?? restoringAlwaysRender;
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
   const [minimapCurrentIndex, setMinimapCurrentIndex] = useState<number | null>(null);
   const handleAnchorReady = useCallback(
@@ -817,7 +988,29 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
+    if (restoringThreadPosition || state?.data !== rows) return;
     const isAtEnd = resolveTimelineIsAtEnd(state);
+    const position = state?.data?.length ? resolveWorkGroupScrollAnchor(state) : undefined;
+    if (position && state && isAtEnd !== undefined) {
+      const index = state.indexByKey(position.rowId);
+      const row = index === undefined ? undefined : state.elementAtIndex(index);
+      const element = listRef.current?.getScrollableNode();
+      if (row && element) {
+        rememberTimelinePosition(listIdentityKey, {
+          ...position,
+          // DOM geometry includes the header and the virtualizer's layout adjustment.
+          offsetWithinRow: element.getBoundingClientRect().top - row.getBoundingClientRect().top,
+          scrollOffset: element.scrollTop,
+          atEnd: isAtEnd,
+          disclosures: {
+            runs: paintedExpandedRunIds,
+            attempts: paintedExpandedAttemptIds,
+            workGroups: paintedExpandedWorkGroupIds,
+            workGroupState: workGroupViewState,
+          },
+        });
+      }
+    }
     if (isAtEnd !== undefined && !citationPositioning) {
       onIsAtEndChange(isAtEnd);
     }
@@ -861,11 +1054,18 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     );
   }, [
     citationPositioning,
+    listIdentityKey,
     listRef,
     minimapItems,
     minimapStripMap,
     onIsAtEndChange,
+    paintedExpandedAttemptIds,
+    paintedExpandedRunIds,
+    paintedExpandedWorkGroupIds,
     reportContentOverflow,
+    restoringThreadPosition,
+    rows,
+    workGroupViewState,
   ]);
 
   useEffect(() => {
@@ -1072,15 +1272,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             getItemType={getItemType}
             renderItem={renderItem}
             estimatedItemSize={90}
-            initialScrollAtEnd={citationRequest === null}
+            initialScrollAtEnd={citationRequest === null && rememberedPosition?.atEnd !== false}
             // Legend needs a data refresh to mount new pins without a scroll event.
             {...(readyCitationRequest ? { dataVersion: readyCitationRequest.key } : {})}
-            {...(citationAlwaysRender ? { alwaysRender: citationAlwaysRender } : {})}
+            {...(alwaysRender ? { alwaysRender } : {})}
             onLoad={onCitationListLoad}
             {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
             contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
             maintainScrollAtEnd={
               citationPositioning ||
+              (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
               anchoredEndSpace ||
               !liveFollowEnabled ||
               disclosureToggleSettling
@@ -1090,7 +1291,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   : TIMELINE_MAINTAIN_SCROLL_AT_END
             }
             maintainVisibleContentPosition={
-              citationPositioning ? false : maintainVisibleContentPosition
+              citationPositioning ||
+              (restoringThreadPosition && rememberedPosition?.atEnd === false)
+                ? false
+                : maintainVisibleContentPosition
             }
             maintainScrollAtEndThreshold={1}
             onScroll={handleScroll}
