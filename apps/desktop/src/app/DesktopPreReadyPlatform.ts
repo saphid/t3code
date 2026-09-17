@@ -73,7 +73,9 @@ export const make = Effect.gen(function* () {
           renderUrlHandlerDesktopEntry({
             displayName: resolveDesktopAppBranding({
               isDevelopment: linux.isDevelopment,
+              isPackaged: Electron.app.isPackaged,
               appVersion: Electron.app.getVersion(),
+              appName: Electron.app.getName(),
             }).displayName,
             execTarget: process.env.APPIMAGE?.trim() || process.execPath,
             scheme: ElectronProtocol.getDesktopScheme(linux.isDevelopment),

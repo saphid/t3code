@@ -40,6 +40,28 @@ describe("cliRelease", () => {
     );
   });
 
+  it("keeps OV2 runtime downloads and discovery on the fork", () => {
+    const version = "0.0.42-nightly-v2.20260917.1789606749898581";
+    expect(cliReleaseChannelOf(version)).toBe("nightly-v2");
+    expect(cliReleaseDownloadBaseUrl(version)).toBe(
+      `https://github.com/saphid/t3code/releases/download/v${version}`,
+    );
+    expect(cliReleaseDownloadBaseUrl(version, " https://mirror.example/t3/ ")).toBe(
+      `https://mirror.example/t3/v${version}`,
+    );
+    expect(cliReleaseIndexPageUrl(1, "nightly-v2")).toBe(
+      "https://api.github.com/repos/saphid/t3code/releases?per_page=100&page=1",
+    );
+    const releases = [
+      { tag_name: "v0.0.43-nightly.20260918.1" },
+      { tag_name: `v${version}` },
+      { tag_name: "v0.0.42" },
+    ];
+    expect(newestCliReleaseVersion(releases, "nightly-v2")).toBe(version);
+    expect(newestCliReleaseVersion(releases, "stable")).toBe("0.0.42");
+    expect(newestCliReleaseVersion(releases, "nightly")).toBe("0.0.43-nightly.20260918.1");
+  });
+
   it("parses sha256sum output including binary-mode markers", () => {
     const checksums = parseChecksums(
       [
