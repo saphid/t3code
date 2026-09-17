@@ -40,12 +40,6 @@
       "repository": "saphid/t3code",
       "sha": "b87f00f350583c3f2d2b1dbbe60e441087f67feb",
       "name": "Packaged branding in the early Linux startup test fixture"
-    },
-    {
-      "type": "commit",
-      "repository": "saphid/t3code",
-      "sha": "a6631e4787c18df6be27c2a47e39fc053456a8a0",
-      "name": "Checkpoint inspector tests independent of hidden feed rows"
     }
   ]
 }
