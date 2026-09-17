@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
+import * as Option from "effect/Option";
 import {
   AuthAccessWriteScope,
   type EnvironmentId,
   type VoiceSettings as VoiceSettingsValue,
 } from "@t3tools/contracts";
-import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { environmentSession, readPreparedConnection } from "../../state/session";
+import { useEnvironmentSessionState, usePreparedConnection } from "../../state/session";
 import { requestVoiceSettings } from "../../voice/ui/brokerPort";
 import {
   useVoiceOverlayPreferences,
@@ -24,9 +24,13 @@ function VoiceEnvironmentSettings({ environmentId }: { environmentId: Environmen
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
-  const prepared = readPreparedConnection(environmentId);
-  const session = appAtomRegistry.get(environmentSession.sessionStateValueAtom(environmentId));
-  const canManage = session?.scopes?.includes(AuthAccessWriteScope) === true;
+  // Reactive reads: a non-reactive registry get never re-renders when the
+  // prepared connection or the session scopes arrive after mount, which left
+  // the section permanently showing the administrator gate.
+  const preparedOption = usePreparedConnection(environmentId);
+  const sessionState = useEnvironmentSessionState(environmentId);
+  const canManage = sessionState.data?.scopes?.includes(AuthAccessWriteScope) === true;
+  const prepared = Option.getOrNull(preparedOption);
   useEffect(() => {
     let active = true;
     if (prepared && canManage) {
