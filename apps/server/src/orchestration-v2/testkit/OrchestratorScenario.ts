@@ -489,22 +489,18 @@ export function runOrchestratorV2Scenario(
 
       const releaseReplayGate = (
         label: string,
-        attemptsRemaining = SCENARIO_WAIT_ATTEMPTS,
       ): Effect.Effect<void, OrchestratorV2ScenarioStepError> =>
         Effect.gen(function* () {
-          if (options.replayGate?.hasReached(label) ?? false) {
-            options.replayGate?.release(label);
-            return;
-          }
-          if (attemptsRemaining <= 0) {
-            options.replayGate?.release(label);
+          const gate = options.replayGate;
+          const reached = gate?.whenReached(label);
+          if (gate === undefined || reached === undefined) {
             return yield* new OrchestratorV2ScenarioStepError({
               scenario: scenario.name,
-              step: `release_replay_gate:${label}:reached=false`,
+              step: `release_replay_gate:${label}:unknown_gate`,
             });
           }
-          yield* yieldToRuntime;
-          return yield* releaseReplayGate(label, attemptsRemaining - 1);
+          yield* Effect.promise(() => reached);
+          gate.release(label);
         });
 
       for (const step of scenarioSteps(scenario)) {
