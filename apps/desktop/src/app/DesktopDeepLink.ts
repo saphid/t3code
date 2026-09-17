@@ -158,6 +158,19 @@ export const make = Effect.gen(function* () {
     }
   };
 
+  const asWebContents = (
+    sender: DesktopIpc.DesktopIpcInvokeEvent["sender"] | undefined,
+  ): DesktopIpc.DesktopIpcSenderWebContents | undefined =>
+    sender !== undefined &&
+    "isDestroyed" in sender &&
+    typeof sender.isDestroyed === "function" &&
+    "send" in sender &&
+    typeof sender.send === "function" &&
+    "once" in sender &&
+    typeof sender.once === "function"
+      ? (sender as DesktopIpc.DesktopIpcSenderWebContents)
+      : undefined;
+
   const latestLiveSubscriber = (): DesktopIpc.DesktopIpcSenderWebContents | null => {
     for (let index = subscribers.length - 1; index >= 0; index -= 1) {
       const subscriber = subscribers[index];
@@ -249,7 +262,7 @@ export const make = Effect.gen(function* () {
       yield* ipc
         .handle({
           channel: DEEP_LINK_SUBSCRIBE_CHANNEL,
-          handler: (_raw, event) => subscribe(event?.sender),
+          handler: (_raw, event) => subscribe(asWebContents(event?.sender)),
         })
         .pipe(
           // Deep links must never block startup.
@@ -266,7 +279,7 @@ export const make = Effect.gen(function* () {
       yield* ipc
         .handle({
           channel: DEEP_LINK_UNSUBSCRIBE_CHANNEL,
-          handler: (_raw, event) => unsubscribe(event?.sender),
+          handler: (_raw, event) => unsubscribe(asWebContents(event?.sender)),
         })
         .pipe(
           Effect.catch((error) =>
