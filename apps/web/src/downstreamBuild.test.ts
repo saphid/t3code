@@ -45,7 +45,7 @@ describe("downstream build metadata", () => {
   it("accepts older records without friendly patch names", () => {
     const withoutNames = {
       ...buildMetadata,
-      patches: buildMetadata.patches.map(({ name: _, ...patch }) => patch),
+      patches: buildMetadata.patches.map(({ label, commits }) => ({ label, commits })),
     };
 
     expect(parseDownstreamBuildMetadata(JSON.stringify(withoutNames))?.patches[0]?.name).toBeNull();

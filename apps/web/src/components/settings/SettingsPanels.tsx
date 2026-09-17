@@ -5,7 +5,6 @@ import {
   ArchiveX,
   ChevronRightIcon,
   ExternalLinkIcon,
-  LoaderIcon,
   SettingsIcon,
 } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";

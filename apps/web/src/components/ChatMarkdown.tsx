@@ -2667,6 +2667,7 @@ function useChatMarkdownState({
       fileLinkParentSuffixByPath,
       openFileInPanel,
       openInPreferredEditor,
+      openMarkdownFileInExternalBrowser,
       openMarkdownFileInPreview,
       openMarkdownMedia,
       preferredEditorMenuLabel,
