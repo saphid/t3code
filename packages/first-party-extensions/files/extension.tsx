@@ -12,7 +12,7 @@ import { defineExtension, requireApi } from "@t3tools/extension-sdk/authoring";
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
-import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from "react";
 
 import {
   COMPOSER_MENTION_DRAG_TYPE,
@@ -660,13 +660,15 @@ function FileBreadcrumbBar(props: {
   // Host-absolute paths are outside the workspace — labels only, no menus.
   const hostPath = isAbsolutePath(selected);
   // The open menu is keyed to the path it opened under — a selection change
-  // closes it by derivation, no reset effect needed. `left`/`top` anchor it
-  // below the crumb, measured in wrapper-box coordinates at click time.
+  // closes it by derivation, no reset effect needed. The anchor is the
+  // crumb's viewport rect at click time; the menu re-clamps itself against
+  // the viewport on every content change and the bar dismisses it on resize.
   const [openMenu, setOpenMenu] = useState<{
     crumb: string;
     forPath: string;
     left: number;
     top: number;
+    bottom: number;
   } | null>(null);
   const openCrumb = openMenu !== null && openMenu.forPath === selected ? openMenu : null;
   const [menuDir, setMenuDir] = useState("");
@@ -679,6 +681,24 @@ function FileBreadcrumbBar(props: {
     // `selected` is the intentional trigger — the body reads DOM state only.
     // oxlint-disable-next-line react/exhaustive-effect-dependencies
   }, [selected]);
+  // Any reflow that resizes the bar — window resize, panel resize, sidebar
+  // reflow — invalidates the click-time anchor, so an open menu dismisses.
+  // ResizeObserver fires once on observation start; skip that initial call.
+  const menuOpen = openCrumb !== null;
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!menuOpen || wrap === null) return;
+    let initial = true;
+    const observer = new ResizeObserver(() => {
+      if (initial) {
+        initial = false;
+        return;
+      }
+      setOpenMenu(null);
+    });
+    observer.observe(wrap);
+    return () => observer.disconnect();
+  }, [menuOpen]);
   const muted = "var(--muted-foreground, #667085)";
   return (
     // The menu must live outside the scrolling nav — anything inside an
@@ -731,18 +751,14 @@ function FileBreadcrumbBar(props: {
                       setOpenMenu(null);
                       return;
                     }
-                    const wrap = wrapRef.current;
                     const anchor = event.currentTarget.getBoundingClientRect();
-                    const box = wrap?.getBoundingClientRect();
                     setMenuDir(crumb.path);
                     setOpenMenu({
                       crumb: crumb.path,
                       forPath: selected,
-                      left:
-                        wrap !== null && box !== undefined
-                          ? Math.max(0, Math.min(anchor.left - box.left, box.width - 190))
-                          : 0,
-                      top: wrap !== null && box !== undefined ? anchor.bottom - box.top : 0,
+                      left: anchor.left,
+                      top: anchor.top,
+                      bottom: anchor.bottom,
                     });
                   }}
                   style={{
@@ -779,8 +795,7 @@ function FileBreadcrumbBar(props: {
         <CrumbMenu
           rootPath={openCrumb.crumb}
           menuDir={menuDir}
-          left={openCrumb.left}
-          top={openCrumb.top}
+          anchor={{ left: openCrumb.left, top: openCrumb.top, bottom: openCrumb.bottom }}
           entries={entries}
           selected={selected}
           truncated={truncated}
@@ -800,8 +815,7 @@ function FileBreadcrumbBar(props: {
 function CrumbMenu(props: {
   readonly rootPath: string;
   readonly menuDir: string;
-  readonly left: number;
-  readonly top: number;
+  readonly anchor: { readonly left: number; readonly top: number; readonly bottom: number };
   readonly entries: readonly TreeEntry[];
   readonly selected: string;
   readonly truncated: boolean;
@@ -809,20 +823,30 @@ function CrumbMenu(props: {
   readonly onSelect: (path: string) => void;
   readonly onClose: () => void;
 }) {
-  const {
-    rootPath,
-    menuDir,
-    left,
-    top,
-    entries,
-    selected,
-    truncated,
-    onNavigate,
-    onSelect,
-    onClose,
-  } = props;
+  const { rootPath, menuDir, anchor, entries, selected, truncated, onNavigate, onSelect, onClose } =
+    props;
   const children = fileBreadcrumbChildren(entries, menuDir);
   const parent = fileBreadcrumbParent(menuDir);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  // Fixed-positioned at the anchor, then clamped into the viewport on both
+  // axes against the menu's measured size: left shifts left when the right
+  // edge would overflow, and the menu flips above the crumb (or shrinks via
+  // maxHeight) when there isn't room below. Runs after every render so
+  // drill-in content changes re-clamp against the new measured size.
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (el === null) return;
+    const rect = el.getBoundingClientRect();
+    const vw = document.documentElement.clientWidth;
+    const vh = document.documentElement.clientHeight;
+    const left = Math.max(4, Math.min(anchor.left, vw - rect.width - 4));
+    let top = anchor.bottom + 2;
+    if (top + rect.height > vh - 4) top = Math.max(4, anchor.top - rect.height - 2);
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+    el.style.maxWidth = `${Math.max(180, Math.min(320, vw - left - 4))}px`;
+    el.style.maxHeight = `${Math.max(80, Math.min(260, vh - top - 4))}px`;
+  });
   const muted = "var(--muted-foreground, #667085)";
   const itemStyle = {
     display: "block",
@@ -857,11 +881,12 @@ function CrumbMenu(props: {
       />
       <div
         role="menu"
+        ref={menuRef}
         aria-label={`Contents of ${menuDir === "" ? WORKSPACE_ROOT_LABEL : menuDir}`}
         style={{
-          position: "absolute",
-          top,
-          left,
+          position: "fixed",
+          top: anchor.bottom + 2,
+          left: anchor.left,
           zIndex: 10,
           minWidth: 180,
           maxWidth: 320,
