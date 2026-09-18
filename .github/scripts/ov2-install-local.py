@@ -47,6 +47,7 @@ exec /usr/bin/open -a {q(str(app))} --env {q('T3CODE_HOME=' + str(desktop_home))
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('build', type=Path)
+    parser.add_argument('--shortcut-backup', type=Path, help='Original Applications shortcut saved before staging a graphical handoff.')
     parser.add_argument('--install', action='store_true', help='Back up, install, and restart the live service. Run from macOS Terminal after all turns end.')
     args = parser.parse_args()
     output = args.build.resolve()
@@ -103,7 +104,7 @@ def main():
     backup.mkdir(parents=True, mode=0o700)
     print(f'Backing up to {backup}', flush=True)
     shutil.copy2(plist, backup / 'service.plist')
-    shutil.copytree(shortcut, backup / shortcut.name, symlinks=True)
+    shutil.copytree(args.shortcut_backup or shortcut, backup / shortcut.name, symlinks=True)
     (backup / 'cli-link.txt').write_text(os.readlink(cli_link))
     runtime_files = {}
     for path in (server_home / 'runtime').glob('*.json'):
