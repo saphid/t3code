@@ -8,44 +8,140 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "51e3d32f127b37392f54e46d9097bf2608aa7999",
-      "name": "Durable fork updater and signing identity"
+      "sha": "58ad56a662bc35686cab917a33c7f04c6b16d247",
+      "name": "fix(nightly): refresh custom updates patch"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "d01d551698cfef51c3116a2a38aeb94da1b74b28",
-      "name": "Orchestrator v2 fork release selector"
+      "sha": "03c0e81aade35bb4d2d0faa9979ce269b580b874",
+      "name": "feat(desktop): support fork nightly streams on orchestrator v2"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "d4c8c2cca9344ce51c74668da7e335f5853f930e",
-      "name": "Nightly DMG artwork and build compatibility"
+      "sha": "92b4ff4f9b2997c72b0863da6af27b6241e0bd44",
+      "name": "fix(nightly): reuse nightly artwork for v2 installers"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "830ac2f9d4c0c1c5e22e08a124ab6c2afb37138b",
-      "name": "Deterministic cold highlighter test on hosted runners"
+      "sha": "1baa52f90a0e6fb33cee66955406e029370af647",
+      "name": "test(mobile): make cold highlighting independent of runner speed"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "f4727aaa313470e5cfb29716dee7b897fba8f375",
-      "name": "OV2 server downloads and persistent desktop update stream"
+      "sha": "5564f3a64282f2095e928b338bea3335e0e201b6",
+      "name": "fix(updates): keep OV2 desktop and server releases on the fork"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "b87f00f350583c3f2d2b1dbbe60e441087f67feb",
-      "name": "Packaged branding in the early Linux startup test fixture"
+      "sha": "0d3a80563e44aa321ddc17a9de811dc3286f08a1",
+      "name": "test(desktop): provide packaged branding in early startup fixture"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "3ace1c423cda904869ac80af4246b37a332a438c",
-      "name": "Deterministic replay gate arrival on hosted runners"
+      "sha": "b53e8dd2714d0bc08c4d3de290936d8a1ebb04dd",
+      "name": "test(server): await replay gate arrival without polling"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "7e25b2613941fff67ac5e34c4c9bec0f02090414",
+      "name": "feat(settings): show included fork changes"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "aa73cae6ca0a1065ec2e8adee4a065250dac8c29",
+      "name": "fix(release): use accessible build metadata tooltips"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "53f000becc400e5073a7d73d9ba37a35c05eb3a7",
+      "name": "feat(desktop): add thread deep links"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "8f67727eac9876ad195844ff244153cccaf3e418",
+      "name": "feat(web): open file links externally"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "b7485402f3db602ce9a18f96b5a4c9904fe811fb",
+      "name": "fix(build): identify Windows native probes exactly"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "1dddd827e6a0cd80f322f04d0509c6635726caca",
+      "name": "test(desktop): skip unavailable libsecret helper"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "1adef623c214ec9ffe7780e5b664771a9aaa0718",
+      "name": "fix(desktop): adapt nightly links and branding to OV2"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "f7ad21dad2a7aa9d8e80320663a722615bc3a832",
+      "name": "fix(ov2): reconcile nightly callbacks and type inference"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "19c67465bda4bac3762599a1a62e2c406601c25d",
+      "name": "feat(voice): port GPT Live voice to Orchestrator V2"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "e7bc50f535d07bed9ec3b1720004ac5ba0bacff3",
+      "name": "fix(web): voice settings and overlay preferences work on first render"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "655caf571b0efb5d71edb159885e9b5dde042195",
+      "name": "fix(server): resume orphaned provider starts after recovery"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "93e61149f8ac17bbb2275feed3ab077388742c45",
+      "name": "fix(opencode): recover from slow CLI health probes"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "64fb9a328d4e1be6b426e2d1137c1bf5268294c3",
+      "name": "fix(server): preserve racy timestamps in review indexes"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "d235584a17a2993c42b7dbf5c988b96e344ef796",
+      "name": "test(server): await settled ACP prompts before interruption"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "7f5d8aeae210deff0e8e78f8fefd7aecbafd57af",
+      "name": "style(web): format merged settings imports"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "9f7f43183b539ea7799cf1a5c77bc42017c36214",
+      "name": "feat(scripts): report Nightly patches present in OV2 builds"
     }
   ]
 }
