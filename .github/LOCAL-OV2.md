@@ -56,7 +56,7 @@ test. It does not run the whole repository suite or automatically drive the UI.
 
 ## Install on Alex's current Mac
 
-The generated `install.command` is specific to the existing V2 setup on this Mac.
+The generated `install.command` is the recovery/manual route for the existing V2 setup on this Mac. Normal use is the graphical handoff prepared under `~/.t3-v2-desktop/setup/ov2-fork-handoff-20260918`, followed by in-app updates.
 Its default preview is read-only:
 
 ```sh
