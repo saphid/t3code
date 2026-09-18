@@ -23,8 +23,11 @@ export function buildProjectIconImagePrompt(input: ProjectIconPromptInput): stri
     `Icon concept: ${input.prompt.trim()}`,
     ...(vibe ? [`Visual style: ${vibe}.`] : []),
     "",
-    "Each variant sits centered inside its own equal third of the canvas and fills that third edge to edge vertically. Flat vector icon style with bold, simple shapes, high contrast, and one clear focal subject per icon. Solid background color fills each third. No text, no letters, no numbers, and no dividing borders between the thirds. Square canvas.",
+    "Layout: square canvas. The three variants sit side by side in one row, with clear empty space between and around them. Each variant is one self-contained square app icon: a solid saturated background color covering the icon square edge to edge, with one bold symbol centered on it. The icon square has a hard edge — nothing is drawn outside it: no glow, no shadows, no scenery spilling past it. The space between icons stays empty.",
     "",
-    "Every third must contain one complete icon: never leave a third empty or as a plain color panel, and never merge several symbols into one icon. Each variant shows exactly one focal symbol on its own background, and the three variants must be clearly different compositions of the concept.",
+    "These icons render at 16 pixels, so boldness wins: one clear focal symbol per icon, wide and blocky, filling at least 60% of the icon square; never a tall or narrow subject; thick simple shapes; strong contrast between symbol and background; background colors must be mid-bright and saturated, never black, near-black, dark gray, or washed out; no thin lines, no small details, no fine gradients; nothing important near the corners; no text, letters, or numbers anywhere.",
+    "Keep each icon to a single flat filled silhouette, or at most two large shapes. Never a busy scene: no multiple small objects, no patterns, no outlines or line art, no overlapping elements.",
+    "",
+    "The three variants must be clearly different compositions of the same concept — vary the symbol and/or the background color while keeping the style. Never leave a slot empty, never merge several symbols into one icon, and never draw one icon spanning multiple slots.",
   ].join("\n");
 }

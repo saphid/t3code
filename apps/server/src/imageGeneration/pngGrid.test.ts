@@ -238,6 +238,47 @@ describe("pngGrid", () => {
     expect(pixelAt(tiles[1]!, 16, 16)).toEqual([10, 200, 10, 255]);
   });
 
+  it("tightens a sparse floating icon to its dense region", () => {
+    // One small solid mark plus a faint glow trail spanning the canvas: the
+    // bounding box covers everything, but the mass lives in the mark.
+    const canvas = 60;
+    const rgba = new Uint8Array(canvas * canvas * 4);
+    for (let y = 20; y < 44; y++) {
+      for (let x = 20; x < 44; x++) {
+        const target = (y * canvas + x) * 4;
+        rgba[target] = 200;
+        rgba[target + 1] = 10;
+        rgba[target + 2] = 10;
+        rgba[target + 3] = 255;
+      }
+    }
+    for (let x = 0; x < canvas; x++) {
+      const target = (2 * canvas + x) * 4;
+      rgba[target] = 200;
+      rgba[target + 1] = 10;
+      rgba[target + 2] = 10;
+      rgba[target + 3] = 120;
+    }
+    const tiles = sliceHorizontalGrid(encodePng(canvas, canvas, rgba), 3);
+    expect(tiles).toHaveLength(1);
+    const decoded = decodePng(tiles[0]!);
+    expect(decoded.width).toBe(decoded.height);
+    // The dense 24x24 mark survives; the glow trail does not.
+    expect(decoded.width).toBeLessThanOrEqual(30);
+    expect(
+      pixelAt(tiles[0]!, Math.floor(decoded.width / 2), Math.floor(decoded.height / 2)),
+    ).toEqual([200, 10, 10, 255]);
+  });
+
+  it("keeps a full-bleed icon's background instead of cropping to its symbol", () => {
+    const tiles = sliceHorizontalGrid(solidTile(48, 48, [10, 120, 200]).png, 3);
+    expect(tiles).toHaveLength(1);
+    const decoded = decodePng(tiles[0]!);
+    expect([decoded.width, decoded.height]).toEqual([48, 48]);
+    expect(pixelAt(tiles[0]!, 0, 0)).toEqual([10, 120, 200, 255]);
+    expect(pixelAt(tiles[0]!, 47, 47)).toEqual([10, 120, 200, 255]);
+  });
+
   it("cuts a stacked layout without usable gaps along the more distinct axis", () => {
     // Three edge-to-edge full-width icon cards stacked on an opaque canvas:
     // no background bands exist, and cutting vertically would slice every

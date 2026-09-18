@@ -235,6 +235,52 @@ export function encodePng(width: number, height: number, rgba: Uint8Array): Uint
 }
 
 /**
+ * Detect a canvas that is one full-bleed icon: an opaque background with
+ * either no other content at all or content that stays clear of the edges.
+ * Cutting such a canvas would slice background into fake variants.
+ */
+function isSingleFullBleedCanvas(rgba: Uint8Array, width: number, height: number): boolean {
+  const background = sampleBackgroundColor(rgba, width, height);
+  if (background[3]! <= ALPHA_BACKGROUND) {
+    return false;
+  }
+  const isBackground = (offset: number) => {
+    const drift =
+      Math.abs(rgba[offset]! - background[0]!) +
+      Math.abs(rgba[offset + 1]! - background[1]!) +
+      Math.abs(rgba[offset + 2]! - background[2]!);
+    return drift <= TOLERANCE * 3 && rgba[offset + 3]! > ALPHA_BACKGROUND;
+  };
+  let minX = width,
+    maxX = -1,
+    minY = height,
+    maxY = -1;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!isBackground((y * width + x) * 4)) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) {
+    return true;
+  }
+  const inset = 2;
+  if (!(minX >= inset && minY >= inset && maxX < width - inset && maxY < height - inset)) {
+    return false;
+  }
+  // A single icon is roughly square; a tall or wide bbox means several
+  // variants stacked on a shared background, which still needs cutting.
+  const contentWidth = maxX - minX + 1;
+  const contentHeight = maxY - minY + 1;
+  const ratio = Math.max(contentWidth, contentHeight) / Math.min(contentWidth, contentHeight);
+  return ratio <= 1.6;
+}
+
+/**
  * Cut an image holding `columns` variants into per-variant tiles. Image
  * models don't always honor the requested layout, so the cut follows the
  * picture: when the canvas shows uniform background bands between the
@@ -244,13 +290,29 @@ export function encodePng(width: number, height: number, rgba: Uint8Array): Uint
  * often draws a single icon instead of a grid — the whole canvas is treated
  * as one icon: cropped to its content and padded to a square.
  */
-export function sliceHorizontalGrid(png: Uint8Array, columns: number): Uint8Array[] {
+export function sliceHorizontalGrid(
+  png: Uint8Array,
+  columns: number,
+  options: { allowReframe?: boolean; allowBoundaryTiles?: boolean } = {},
+): Uint8Array[] {
+  const { allowReframe = true, allowBoundaryTiles = false } = options;
   if (!Number.isInteger(columns) || columns < 1) {
     throw new PngError("Grid column count must be a positive integer.");
   }
   const { width, height, rgba } = decodePng(png);
   if (width < columns && height < columns) {
     throw new PngError("Generated image is too small for the expected icon grid.");
+  }
+  if (allowReframe) {
+    const recut = reframeAndRecut(rgba, width, height, columns);
+    if (recut) {
+      return recut;
+    }
+  }
+  // One full-bleed icon on an opaque background — either a uniform canvas or
+  // a centered symbol with margins — must not be cut into background strips.
+  if (isSingleFullBleedCanvas(rgba, width, height)) {
+    return [encodePng(width, height, rgba)];
   }
   const gaps = findSeparatorGaps(rgba, width, height, columns);
   if (gaps.axis !== null) {
@@ -261,6 +323,7 @@ export function sliceHorizontalGrid(png: Uint8Array, columns: number): Uint8Arra
       rgba,
       width,
       height,
+      allowBoundaryTiles,
     );
   }
   // No usable background bands: the layout is unknown, so try both axes.
@@ -303,7 +366,7 @@ export function sliceHorizontalGrid(png: Uint8Array, columns: number): Uint8Arra
   } else {
     chosen = horizontal;
   }
-  return finishCut(chosen, rgba, width, height);
+  return finishCut(chosen, rgba, width, height, allowBoundaryTiles);
 }
 
 /** Shared post-cut pipeline: drop blanks, drop fragments, crop, dedupe. */
@@ -312,13 +375,15 @@ function finishCut(
   rgba: Uint8Array,
   width: number,
   height: number,
+  allowBoundaryTiles = false,
 ): Uint8Array[] {
   const good = tiles.map(analyzeTile).filter((tile) => tile.contentShare >= TILE_MIN_CONTENT);
   // Content straddling a cut boundary means the model drew fewer, larger
-  // icons than asked; the tiles would be fragments of one icon.
-  const fragmented = good.some(
-    (tile) => tile.touchesCutBoundary && tile.contentShare < FULL_BLEED_SHARE,
-  );
+  // icons than asked; the tiles would be fragments of one icon. Inside a
+  // reframed strip, though, boundary tiles are the stacked variants.
+  const fragmented =
+    !allowBoundaryTiles &&
+    good.some((tile) => tile.touchesCutBoundary && tile.contentShare < FULL_BLEED_SHARE);
   if (good.length >= 2 && !fragmented) {
     const cropped = good.map((tile) => cropToContentSquare(tile));
     // The model sometimes draws the same variant twice; identical choices
@@ -335,6 +400,58 @@ function finishCut(
   }
   const single = singleIconTile(rgba, width, height);
   return [encodePng(single.width, single.height, single.rgba)];
+}
+
+/**
+ * The model sometimes stacks the variants in one narrow column or row of an
+ * otherwise transparent canvas: gap detection fails on the full canvas and
+ * the content bbox is a tall strip. Crop to the strip and cut again inside
+ * it, where the real separators become visible.
+ */
+function reframeAndRecut(
+  rgba: Uint8Array,
+  width: number,
+  height: number,
+  columns: number,
+): Uint8Array[] | null {
+  const background = sampleBackgroundColor(rgba, width, height);
+  if (background[3]! > ALPHA_BACKGROUND) {
+    return null;
+  }
+  const bbox = contentBBoxOf(rgba, width, height);
+  if (bbox.maxX < 0) {
+    return null;
+  }
+  const contentWidth = bbox.maxX - bbox.minX + 1;
+  const contentHeight = bbox.maxY - bbox.minY + 1;
+  const ratio = Math.max(contentWidth, contentHeight) / Math.min(contentWidth, contentHeight);
+  if (ratio <= 1.6) {
+    return null;
+  }
+  // Only a strip that runs edge to edge across the canvas is a misplaced
+  // stack; an inset row of icons is just the normal layout.
+  const touchesLongAxis =
+    contentWidth >= contentHeight
+      ? bbox.minX === 0 && bbox.maxX === width - 1
+      : bbox.minY === 0 && bbox.maxY === height - 1;
+  if (!touchesLongAxis) {
+    return null;
+  }
+  const side = Math.max(contentWidth, contentHeight);
+  const framed = new Uint8Array(side * side * 4);
+  const offsetX = Math.floor((side - contentWidth) / 2);
+  const offsetY = Math.floor((side - contentHeight) / 2);
+  for (let y = 0; y < contentHeight; y++) {
+    const sourceRow = ((bbox.minY + y) * width + bbox.minX) * 4;
+    framed.set(
+      rgba.subarray(sourceRow, sourceRow + contentWidth * 4),
+      ((offsetY + y) * side + offsetX) * 4,
+    );
+  }
+  return sliceHorizontalGrid(encodePng(side, side, framed), columns, {
+    allowReframe: false,
+    allowBoundaryTiles: true,
+  });
 }
 
 const TILE_MIN_CONTENT = 0.01;
@@ -423,6 +540,62 @@ function contentBBoxOf(
   return { minX, maxX, minY, maxY, share: content / (width * height) };
 }
 
+/**
+ * Smallest per-axis window holding the bulk (90%) of the tile's visible
+ * content. Sparse artwork — thin strokes or soft glow spread across the
+ * canvas — yields a bounding box far larger than the mark itself; this
+ * window finds the dense region worth keeping.
+ */
+function contentMassWindowOf(
+  rgba: Uint8Array,
+  width: number,
+  height: number,
+): { minX: number; maxX: number; minY: number; maxY: number; width: number; height: number } {
+  const isContent = contentScanner(rgba, width, height);
+  const columns = new Array<number>(width).fill(0);
+  const rows = new Array<number>(height).fill(0);
+  let total = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (isContent((y * width + x) * 4)) {
+        columns[x]!++;
+        rows[y]!++;
+        total++;
+      }
+    }
+  }
+  if (total === 0) {
+    return { minX: 0, maxX: width - 1, minY: 0, maxY: height - 1, width, height };
+  }
+  const target = Math.ceil(total * 0.9);
+  const window = (counts: number[], size: number): { min: number; max: number } => {
+    let sum = 0;
+    let min = 0;
+    let best = { min: 0, max: size - 1, width: size };
+    for (let max = 0; max < size; max++) {
+      sum += counts[max]!;
+      while (sum - counts[min]! >= target) {
+        sum -= counts[min]!;
+        min++;
+      }
+      if (sum >= target && max - min + 1 < best.width) {
+        best = { min, max, width: max - min + 1 };
+      }
+    }
+    return { min: best.min, max: best.max };
+  };
+  const x = window(columns, width);
+  const y = window(rows, height);
+  return {
+    minX: x.min,
+    maxX: x.max,
+    minY: y.min,
+    maxY: y.max,
+    width: x.max - x.min + 1,
+    height: y.max - y.min + 1,
+  };
+}
+
 function analyzeTile(tile: TileBuffer): TileAnalysis {
   const { minX, maxX, minY, maxY, share } = contentBBoxOf(tile.rgba, tile.width, tile.height);
   return {
@@ -456,7 +629,9 @@ function singleIconTile(rgba: Uint8Array, width: number, height: number): TileBu
 /**
  * Crop a tile to its visible content and center the result on a transparent
  * square, so avatar slots render the icon at full size instead of floating
- * in a strip of background.
+ * in a strip of background. When the content bounding box is mostly empty
+ * (sparse strokes or glow spanning the canvas), the crop tightens to the
+ * window holding the bulk of the visible mass instead.
  */
 function cropToContentSquare(
   tile: TileBuffer & {
@@ -473,14 +648,28 @@ function cropToContentSquare(
     // Nothing distinguishable from the background: keep the tile unchanged.
     return { width: tile.width, height: tile.height, rgba: tile.rgba };
   }
-  const contentWidth = bbox.maxX - bbox.minX + 1;
-  const contentHeight = bbox.maxY - bbox.minY + 1;
+  let { minX, maxX, minY, maxY } = bbox;
+  const background = sampleBackgroundColor(tile.rgba, tile.width, tile.height);
+  const backgroundOpaque = background[3]! > ALPHA_BACKGROUND;
+  const dense = contentMassWindowOf(tile.rgba, tile.width, tile.height);
+  const bboxSide = Math.max(maxX - minX + 1, maxY - minY + 1);
+  const denseSide = Math.max(dense.width, dense.height);
+  // Only floating artwork on a transparent canvas gets the density crop; a
+  // full-bleed icon on an opaque background must keep its background.
+  if (!backgroundOpaque && bbox.maxX - bbox.minX + 1 > 0 && denseSide * 2 <= bboxSide) {
+    minX = dense.minX;
+    maxX = dense.maxX;
+    minY = dense.minY;
+    maxY = dense.maxY;
+  }
+  const contentWidth = maxX - minX + 1;
+  const contentHeight = maxY - minY + 1;
   const side = Math.max(contentWidth, contentHeight);
   const cropped = new Uint8Array(side * side * 4);
   const offsetX = Math.floor((side - contentWidth) / 2);
   const offsetY = Math.floor((side - contentHeight) / 2);
   for (let y = 0; y < contentHeight; y++) {
-    const sourceRow = ((bbox.minY + y) * tile.width + bbox.minX) * 4;
+    const sourceRow = ((minY + y) * tile.width + minX) * 4;
     cropped.set(
       tile.rgba.subarray(sourceRow, sourceRow + contentWidth * 4),
       ((offsetY + y) * side + offsetX) * 4,
@@ -587,7 +776,7 @@ function sampleBackgroundColor(rgba: Uint8Array, width: number, height: number) 
   ];
   const sum = [0, 0, 0, 0];
   for (const corner of corners) {
-    const offset = (corner[0]! * width + corner[1]!) * 4;
+    const offset = (corner[1]! * width + corner[0]!) * 4;
     sum[0] = sum[0]! + rgba[offset]!;
     sum[1] = sum[1]! + rgba[offset + 1]!;
     sum[2] = sum[2]! + rgba[offset + 2]!;

@@ -43,7 +43,7 @@ describe("buildProjectIconImagePrompt", () => {
     expect(prompt).toContain("three distinct app icon variants");
     expect(prompt).toContain("A rocket ship");
     expect(prompt).toContain("Visual style: neon.");
-    expect(prompt).toContain("No text");
+    expect(prompt).toContain("no text, letters, or numbers");
   });
 
   it("omits the style line when no vibe is set", () => {
