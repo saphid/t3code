@@ -1,0 +1,133 @@
+{
+  "upstreamRepository": "pingdotgg/t3code",
+  "upstreamTag": "6bf8c7e9970b29cbf3b370d0dc91114003f92a8d",
+  "upstreamBranch": "t3code/codex-turn-mapping",
+  "releaseChannel": "nightly-v2",
+  "upstreamUrl": "https://github.com/pingdotgg/t3code/commit/6bf8c7e9970b29cbf3b370d0dc91114003f92a8d",
+  "releaseRepository": "saphid/t3code",
+  "fingerprint": "c367b25f89dc6a84ebc0787cb9fac153a983fb870b8cc42163a29f3f5e10d0f1",
+  "version": "0.0.42-nightly-v2.20260918.1789701374653468",
+  "tag": "v0.0.42-nightly-v2.20260918.1789701374653468",
+  "patches": [
+    {
+      "label": "saphid/t3code@58ad56a662bc",
+      "name": "fix(nightly): refresh custom updates patch",
+      "commits": ["58ad56a662bc35686cab917a33c7f04c6b16d247"]
+    },
+    {
+      "label": "saphid/t3code@03c0e81aade3",
+      "name": "feat(desktop): support fork nightly streams on orchestrator v2",
+      "commits": ["03c0e81aade35bb4d2d0faa9979ce269b580b874"]
+    },
+    {
+      "label": "saphid/t3code@92b4ff4f9b29",
+      "name": "fix(nightly): reuse nightly artwork for v2 installers",
+      "commits": ["92b4ff4f9b2997c72b0863da6af27b6241e0bd44"]
+    },
+    {
+      "label": "saphid/t3code@1baa52f90a0e",
+      "name": "test(mobile): make cold highlighting independent of runner speed",
+      "commits": ["1baa52f90a0e6fb33cee66955406e029370af647"]
+    },
+    {
+      "label": "saphid/t3code@5564f3a64282",
+      "name": "fix(updates): keep OV2 desktop and server releases on the fork",
+      "commits": ["5564f3a64282f2095e928b338bea3335e0e201b6"]
+    },
+    {
+      "label": "saphid/t3code@0d3a80563e44",
+      "name": "test(desktop): provide packaged branding in early startup fixture",
+      "commits": ["0d3a80563e44aa321ddc17a9de811dc3286f08a1"]
+    },
+    {
+      "label": "saphid/t3code@b53e8dd2714d",
+      "name": "test(server): await replay gate arrival without polling",
+      "commits": ["b53e8dd2714d0bc08c4d3de290936d8a1ebb04dd"]
+    },
+    {
+      "label": "saphid/t3code@7e25b2613941",
+      "name": "feat(settings): show included fork changes",
+      "commits": ["7e25b2613941fff67ac5e34c4c9bec0f02090414"]
+    },
+    {
+      "label": "saphid/t3code@aa73cae6ca0a",
+      "name": "fix(release): use accessible build metadata tooltips",
+      "commits": ["aa73cae6ca0a1065ec2e8adee4a065250dac8c29"]
+    },
+    {
+      "label": "saphid/t3code@53f000becc40",
+      "name": "feat(desktop): add thread deep links",
+      "commits": ["53f000becc400e5073a7d73d9ba37a35c05eb3a7"]
+    },
+    {
+      "label": "saphid/t3code@8f67727eac98",
+      "name": "feat(web): open file links externally",
+      "commits": ["8f67727eac9876ad195844ff244153cccaf3e418"]
+    },
+    {
+      "label": "saphid/t3code@b7485402f3db",
+      "name": "fix(build): identify Windows native probes exactly",
+      "commits": ["b7485402f3db602ce9a18f96b5a4c9904fe811fb"]
+    },
+    {
+      "label": "saphid/t3code@1dddd827e6a0",
+      "name": "test(desktop): skip unavailable libsecret helper",
+      "commits": ["1dddd827e6a0cd80f322f04d0509c6635726caca"]
+    },
+    {
+      "label": "saphid/t3code@1adef623c214",
+      "name": "fix(desktop): adapt nightly links and branding to OV2",
+      "commits": ["1adef623c214ec9ffe7780e5b664771a9aaa0718"]
+    },
+    {
+      "label": "saphid/t3code@f7ad21dad2a7",
+      "name": "fix(ov2): reconcile nightly callbacks and type inference",
+      "commits": ["f7ad21dad2a7aa9d8e80320663a722615bc3a832"]
+    },
+    {
+      "label": "saphid/t3code@19c67465bda4",
+      "name": "feat(voice): port GPT Live voice to Orchestrator V2",
+      "commits": ["19c67465bda4bac3762599a1a62e2c406601c25d"]
+    },
+    {
+      "label": "saphid/t3code@e7bc50f535d0",
+      "name": "fix(web): voice settings and overlay preferences work on first render",
+      "commits": ["e7bc50f535d07bed9ec3b1720004ac5ba0bacff3"]
+    },
+    {
+      "label": "saphid/t3code@655caf571b0e",
+      "name": "fix(server): resume orphaned provider starts after recovery",
+      "commits": ["655caf571b0efb5d71edb159885e9b5dde042195"]
+    },
+    {
+      "label": "saphid/t3code@93e61149f8ac",
+      "name": "fix(opencode): recover from slow CLI health probes",
+      "commits": ["93e61149f8ac17bbb2275feed3ab077388742c45"]
+    },
+    {
+      "label": "saphid/t3code@64fb9a328d4e",
+      "name": "fix(server): preserve racy timestamps in review indexes",
+      "commits": ["64fb9a328d4e1be6b426e2d1137c1bf5268294c3"]
+    },
+    {
+      "label": "saphid/t3code@d235584a17a2",
+      "name": "test(server): await settled ACP prompts before interruption",
+      "commits": ["d235584a17a2993c42b7dbf5c988b96e344ef796"]
+    },
+    {
+      "label": "saphid/t3code@7f5d8aeae210",
+      "name": "style(web): format merged settings imports",
+      "commits": ["7f5d8aeae210deff0e8e78f8fefd7aecbafd57af"]
+    },
+    {
+      "label": "saphid/t3code@e4d9310aad75",
+      "name": "feat(scripts): report Nightly patches present in OV2 builds",
+      "commits": ["e4d9310aad75a94e7e742985521c7e5393375575"]
+    },
+    {
+      "label": "saphid/t3code@bff0fe603922",
+      "name": "test(web): keep React completion outside simulated application timers",
+      "commits": ["bff0fe603922c76e6f82a602c91550bbff71f5a9"]
+    }
+  ]
+}
