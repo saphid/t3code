@@ -438,7 +438,9 @@ function ProjectDetail({
                 ? `${projectIcon.monogram ?? projectIcon.name} · ${projectIcon.color}`
                 : projectIcon?.kind === "emoji"
                   ? projectIcon.emoji
-                  : (faviconPath ?? "Automatic")
+                  : faviconPath != null
+                    ? "Custom image"
+                    : "Automatic"
             }
             resetAction={
               group.memberProjects.some(
@@ -531,9 +533,15 @@ function ProjectDetail({
           <ProjectIconPickerDialog
             current={projectIcon}
             projectName={representative.title}
+            environmentId={representative.environmentId}
+            workspaceRoot={representative.workspaceRoot}
+            providers={
+              environmentById.get(representative.environmentId)?.serverConfig?.providers ?? []
+            }
             open
             onOpenChange={setIconPickerOpen}
             onSelect={(icon) => void setProjectIcon({ faviconPath: null, projectIcon: icon })}
+            onSelectFile={(path) => void setProjectIcon({ faviconPath: path, projectIcon: null })}
           />
         </Suspense>
       ) : null}

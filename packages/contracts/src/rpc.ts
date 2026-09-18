@@ -98,6 +98,7 @@ import {
   OrchestrationGetTurnDiffInput,
   OrchestrationRpcSchemas,
   OrchestrationGetWorkflowScriptError,
+  ProjectIconGenerationError,
 } from "./orchestration.ts";
 import {
   ProviderUploadFeedbackError,
@@ -1291,6 +1292,15 @@ const WsOrchestrationSubscribeThreadRpc = Rpc.make(ORCHESTRATION_WS_METHODS.subs
   stream: true,
 });
 
+const WsOrchestrationGenerateProjectIconsRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.generateProjectIcons,
+  {
+    payload: OrchestrationRpcSchemas.generateProjectIcons.input,
+    success: OrchestrationRpcSchemas.generateProjectIcons.output,
+    error: Schema.Union([ProjectIconGenerationError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsSubscribeTerminalEventsRpc = Rpc.make(WS_METHODS.subscribeTerminalEvents, {
   payload: Schema.Struct({}),
   success: TerminalEvent,
@@ -1498,4 +1508,5 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
+  WsOrchestrationGenerateProjectIconsRpc,
 );

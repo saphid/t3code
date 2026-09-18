@@ -110,6 +110,7 @@ import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDi
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import { ProviderAuthService } from "./provider/Services/ProviderAuthService.ts";
 import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
+import { ImageGeneration } from "./imageGeneration/ImageGeneration.ts";
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -562,6 +563,7 @@ const makeWsRpcLayer = (
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const providerAuth = yield* ProviderAuthService;
       const providerInstances = yield* ProviderInstanceRegistry;
+      const imageGeneration = yield* ImageGeneration;
       const providerInstallation = yield* makeProviderInstallation();
       const serverUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
@@ -1788,6 +1790,12 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "orchestration" },
           ),
+        [ORCHESTRATION_WS_METHODS.generateProjectIcons]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.generateProjectIcons,
+            imageGeneration.generateProjectIcons(input),
+            { "rpc.aggregate": "orchestration" },
+          ),
         [ORCHESTRATION_WS_METHODS.subscribeShell]: (input) =>
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeShell,
@@ -2929,6 +2937,23 @@ const makeWsRpcLayer = (
                 });
               }
               if (input.resource._tag === "project-favicon") {
+                // An absolute hint is only honored inside this server's own
+                // generated-icon output, so pre-save previews of freshly
+                // generated tiles work without letting clients probe the disk.
+                const generatedHint =
+                  input.resource.path !== undefined &&
+                  path.isAbsolute(input.resource.path) &&
+                  path
+                    .normalize(input.resource.path)
+                    .startsWith(path.normalize(config.generatedIconsDir) + path.sep)
+                    ? input.resource.path
+                    : undefined;
+                if (generatedHint) {
+                  return yield* issueAssetUrl({
+                    resource: input.resource,
+                    projectFaviconPath: generatedHint,
+                  });
+                }
                 const project = yield* projectionSnapshotQuery
                   .getActiveProjectByWorkspaceRoot(input.resource.cwd)
                   .pipe(
