@@ -40,6 +40,8 @@ export interface ServerDerivedPaths {
   readonly providerStatusCacheDir: string;
   readonly worktreesDir: string;
   readonly attachmentsDir: string;
+  /** AI-generated project icon tiles, one directory per generation. */
+  readonly generatedIconsDir: string;
   /** Screenshots the agent asks the collaborative browser to keep for the user. */
   readonly browserArtifactsDir: string;
   readonly logsDir: string;
@@ -132,6 +134,7 @@ export const deriveServerPaths = Effect.fn(function* (
     providerStatusCacheDir,
     worktreesDir: join(baseDir, "worktrees"),
     attachmentsDir,
+    generatedIconsDir: join(stateDir, "generated-icons"),
     browserArtifactsDir: join(stateDir, "browser-artifacts"),
     logsDir,
     serverLogPath: join(logsDir, "server.log"),
@@ -157,6 +160,7 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
       fs.makeDirectory(derivedPaths.providerLogsDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.terminalLogsDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.attachmentsDir, { recursive: true }),
+      fs.makeDirectory(derivedPaths.generatedIconsDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.worktreesDir, { recursive: true }),
       fs.makeDirectory(path.dirname(derivedPaths.keybindingsConfigPath), { recursive: true }),
       fs.makeDirectory(path.dirname(derivedPaths.settingsPath), { recursive: true }),

@@ -41,6 +41,7 @@ export const ORCHESTRATION_WS_METHODS = {
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
+  generateProjectIcons: "orchestration.generateProjectIcons",
 } as const;
 
 export const ProviderApprovalPolicy = Schema.Literals([
@@ -480,6 +481,23 @@ export const ProjectIconOverride = Schema.Union([
   }),
 ]);
 export type ProjectIconOverride = typeof ProjectIconOverride.Type;
+
+/** What the user wants on the icon, plus the optional vibe picked for it. */
+export const ProjectIconGenerationInput = Schema.Struct({
+  prompt: TrimmedNonEmptyString.check(Schema.isMaxLength(4_000)),
+  vibe: Schema.optional(Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(200)))),
+});
+export type ProjectIconGenerationInput = typeof ProjectIconGenerationInput.Type;
+
+/**
+ * Absolute paths on the server host to the generated icon files, ordered left
+ * to right as they appeared in the generated grid. Clients save one as the
+ * project's `faviconPath`.
+ */
+export const ProjectIconGenerationResult = Schema.Struct({
+  iconPaths: Schema.Array(Schema.String),
+});
+export type ProjectIconGenerationResult = typeof ProjectIconGenerationResult.Type;
 
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
@@ -2244,7 +2262,20 @@ export const OrchestrationRpcSchemas = {
     input: OrchestrationSubscribeShellInput,
     output: OrchestrationShellStreamItem,
   },
+  generateProjectIcons: {
+    input: ProjectIconGenerationInput,
+    output: ProjectIconGenerationResult,
+  },
 } as const;
+
+export class ProjectIconGenerationError extends Schema.TaggedError<ProjectIconGenerationError>()(
+  "ProjectIconGenerationError",
+  {
+    reason: Schema.Literals(["unsupported", "failed", "timeout", "invalid-output"]),
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
 
 export class OrchestrationGetSnapshotError extends Schema.TaggedError<OrchestrationGetSnapshotError>()(
   "OrchestrationGetSnapshotError",

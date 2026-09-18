@@ -32,8 +32,9 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { makeCodexTextGeneration } from "../../textGeneration/CodexTextGeneration.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import { ServerConfig } from "../../config.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
+import { ServerConfig } from "../../config.ts";
+import { makeCodexImageGeneration } from "../../imageGeneration/CodexImageGeneration.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
@@ -246,6 +247,12 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         processEnv,
         snapshot.getSnapshot.pipe(Effect.map((value) => value.models)),
       );
+      const serverConfig = yield* ServerConfig;
+      const imageGeneration = yield* makeCodexImageGeneration(
+        effectiveConfig,
+        processEnv,
+        serverConfig.generatedIconsDir,
+      );
       const snapshotForCwd = (cwd: string) =>
         !effectiveConfig.enabled
           ? snapshot.getSnapshot
@@ -349,6 +356,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         consumeResetCredit,
         adapter,
         textGeneration,
+        imageGeneration,
       } satisfies ProviderInstance;
     }),
 };
