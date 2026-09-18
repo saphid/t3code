@@ -140,7 +140,7 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "0daaaae5d4eff5eddfd0e54cc34d36a94bb79041",
+      "sha": "e4d9310aad75a94e7e742985521c7e5393375575",
       "name": "feat(scripts): report Nightly patches present in OV2 builds"
     }
   ]
