@@ -55,6 +55,7 @@ export interface ThreadDetailsPanelProps {
   onStartFromOriginChange: (startFromOrigin: boolean) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest: () => void;
+  onOpenThreadInPanel?: (threadId: ThreadId) => void;
   onOpenChanges?: () => void;
   versionMismatch: VersionMismatchIssue | null;
   onDismissVersionMismatch: () => void;
@@ -220,7 +221,13 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
         ) : null}
 
         {!props.draftId ? (
-          <ThreadRelationshipsPanel environmentId={props.environmentId} threadId={props.threadId} />
+          <ThreadRelationshipsPanel
+            environmentId={props.environmentId}
+            threadId={props.threadId}
+            {...(props.onOpenThreadInPanel
+              ? { onOpenThreadInPanel: props.onOpenThreadInPanel }
+              : {})}
+          />
         ) : null}
       </ScrollArea>
     </div>

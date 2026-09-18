@@ -30,6 +30,7 @@ const RIGHT_PANEL_KINDS = [
   "pull-request",
   "pull-requests",
   "agents",
+  "thread",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -86,7 +87,19 @@ export type RightPanelSurface =
     }
   /** The thread's linked pull requests, one singleton tab beside any number of `pull-request` tabs. */
   | { id: "pull-requests"; kind: "pull-requests" }
-  | { id: "agents"; kind: "agents" };
+  | { id: "agents"; kind: "agents" }
+  | {
+      /**
+       * A read-only transcript of another thread (usually a subagent) opened
+       * beside the active one. The target lives in the id so several threads
+       * can remain open as peer tabs.
+       */
+      id: `thread:${string}`;
+      kind: "thread";
+      environmentId: EnvironmentId;
+      threadId: ThreadId;
+      title?: string;
+    };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
@@ -136,7 +149,7 @@ interface RightPanelStoreState {
   ) => boolean;
   open: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "thread">,
   ) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
@@ -155,6 +168,10 @@ interface RightPanelStoreState {
     },
   ) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
+  openThreadSurface: (
+    ref: ScopedThreadRef,
+    target: { environmentId: EnvironmentId; threadId: ThreadId; title?: string },
+  ) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
     surfaceId: string,
@@ -175,7 +192,7 @@ interface RightPanelStoreState {
   toggleVisibility: (ref: ScopedThreadRef) => void;
   toggle: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "thread">,
   ) => void;
   setThreadPanelOpen: (
     ref: ScopedThreadRef,
@@ -198,7 +215,7 @@ const DEFAULT_THREAD_PANEL_VISIBILITY: ThreadPanelVisibility = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request">,
+  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request" | "thread">,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
@@ -282,6 +299,22 @@ export function pullRequestSurface(target: {
     repository: target.repository,
     number: target.number,
     ...(typeof target.url === "string" ? { url: target.url } : {}),
+  };
+}
+
+export type ThreadSurface = Extract<RightPanelSurface, { kind: "thread" }>;
+
+export function threadSurface(target: {
+  environmentId: EnvironmentId;
+  threadId: ThreadId;
+  title?: string;
+}): ThreadSurface {
+  return {
+    id: `thread:${target.environmentId}:${target.threadId}`,
+    kind: "thread",
+    environmentId: target.environmentId,
+    threadId: target.threadId,
+    ...(typeof target.title === "string" ? { title: target.title } : {}),
   };
 }
 
@@ -710,6 +743,21 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           userAction(state, scopedThreadKey(ref), (current) =>
             upsertSurface(current, terminalSurface(terminalId)),
           ),
+        ),
+      openThreadSurface: (ref, target) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const surface = threadSurface(target);
+            const next = upsertSurface(current, surface);
+            return surface.title === undefined
+              ? next
+              : {
+                  ...next,
+                  surfaces: next.surfaces.map((entry) =>
+                    entry.id === surface.id ? surface : entry,
+                  ),
+                };
+          }),
         ),
       splitTerminal: (ref, surfaceId, terminalId, direction = "horizontal") =>
         set((state) =>

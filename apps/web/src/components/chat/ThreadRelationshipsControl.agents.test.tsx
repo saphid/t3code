@@ -32,6 +32,7 @@ vi.mock("../ui/tooltip", () => ({
 }));
 
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
+import { THREAD_DETAILS_PANEL_LINK_SPLIT_PRIMARY_CLASS } from "./threadDetailsPanelStyles";
 
 let renderer: ReactTestRenderer;
 
@@ -296,4 +297,82 @@ it("shows readable models and only differing workspace details in agent tooltips
     await act(async () => renderer.update(cloneElement(panel)));
     expect(text()).toContain(expected);
   }
+});
+
+const subagentProjection = {
+  thread: {
+    id: "parent",
+    projectId: "main",
+    worktreePath: null,
+    lineage: {},
+    activeProviderThreadId: null,
+  },
+  runs: [],
+  providerThreads: [],
+  providerSessions: [],
+  contextTransfers: [],
+  subagents: [
+    {
+      id: "agent",
+      childThreadId: "child-1",
+      driver: "codex",
+      providerInstanceId: "codex",
+      title: "Checker",
+      prompt: "Check",
+      model: "gpt-5.4",
+      status: "running",
+      progress: null,
+      result: null,
+      startedAt: DateTime.makeUnsafe("2026-09-16T12:00:00Z"),
+      completedAt: null,
+      updatedAt: DateTime.makeUnsafe("2026-09-16T12:00:00Z"),
+    },
+  ],
+};
+
+it("offers open-in-panel alongside navigation on subagent rows and keeps other rows single-button", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  state.projection = subagentProjection;
+  const onOpenThreadInPanel = vi.fn();
+  const panel = (
+    <ThreadRelationshipsPanel
+      environmentId={EnvironmentId.make("test")}
+      threadId={ThreadId.make("parent")}
+      onOpenThreadInPanel={onOpenThreadInPanel}
+    />
+  );
+  await act(async () => {
+    renderer = create(panel);
+  });
+  const openInPanelButtons = () =>
+    renderer.root
+      .findAllByType("button")
+      .filter((button) => button.props["aria-label"] === "Open in side panel");
+  expect(openInPanelButtons()).toHaveLength(1);
+  await act(async () => openInPanelButtons()[0]!.props.onClick());
+  expect(onOpenThreadInPanel).toHaveBeenCalledWith(ThreadId.make("child-1"));
+
+  // The row keeps its navigate action beside the panel action.
+  const navigateButton = renderer.root
+    .findAllByType("button")
+    .find((button) =>
+      String(button.props.className ?? "").includes(THREAD_DETAILS_PANEL_LINK_SPLIT_PRIMARY_CLASS),
+    );
+  expect(navigateButton).toBeDefined();
+  await act(async () => navigateButton!.props.onClick());
+  expect(state.navigate).toHaveBeenCalled();
+});
+
+it("renders subagent rows as single buttons when open-in-panel is unavailable", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  state.projection = subagentProjection;
+  await act(async () => {
+    renderer = create(
+      <ThreadRelationshipsPanel
+        environmentId={EnvironmentId.make("test")}
+        threadId={ThreadId.make("parent")}
+      />,
+    );
+  });
+  expect(renderer.root.findAllByProps({ "aria-label": "Open in side panel" })).toHaveLength(0);
 });

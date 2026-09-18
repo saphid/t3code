@@ -28,6 +28,7 @@ import {
   GitForkIcon,
   LoaderCircleIcon,
   MoreHorizontalIcon,
+  PanelRightIcon,
   PlusIcon,
   UnplugIcon,
 } from "lucide-react";
@@ -178,6 +179,11 @@ function statusDotClass(status: string | null): string {
   return "bg-muted-foreground/45";
 }
 
+// Only live work pulses: a settled dot is a steady color, never an animation.
+function statusDotIsRunning(status: string | null): boolean {
+  return status === "running" || status === "in_progress";
+}
+
 function relationshipThreadTitle(input: {
   readonly title: string;
   readonly isSubagent: boolean;
@@ -189,6 +195,7 @@ function relationshipThreadTitle(input: {
 export function ThreadRelationshipsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  readonly onOpenThreadInPanel?: (threadId: ThreadId) => void;
 }) {
   const ref = scopeThreadRef(props.environmentId, props.threadId);
   const projection = useThreadProjection(ref)?.projection ?? null;
@@ -435,6 +442,7 @@ export function ThreadRelationshipsPanel(props: {
                       className={cn(
                         "absolute -bottom-1 -right-1 size-2 rounded-full border-2 border-card",
                         statusDotClass(edge.status),
+                        statusDotIsRunning(edge.status) && "animate-status-pulse",
                       )}
                       aria-hidden="true"
                     />
@@ -456,6 +464,8 @@ export function ThreadRelationshipsPanel(props: {
                   )}
                 </>
               );
+              const openInPanel =
+                isSubagent && !isParent && props.onOpenThreadInPanel !== undefined;
               return (
                 <li key={threadId} className="group flex h-9 items-center rounded-lg">
                   {isMergeTarget ? (
@@ -510,6 +520,45 @@ export function ThreadRelationshipsPanel(props: {
                               ? `Merge this conversation back into ${parentTitle}`
                               : "Merge this conversation back into its source"}
                         </TooltipPopup>
+                      </Tooltip>
+                    </div>
+                  ) : openInPanel ? (
+                    <div className={THREAD_DETAILS_PANEL_LINK_SPLIT_GROUP_CLASS}>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className={THREAD_DETAILS_PANEL_LINK_SPLIT_PRIMARY_CLASS}
+                              disabled={node?.missing === true}
+                              onClick={() => openThread(threadId)}
+                            />
+                          }
+                        >
+                          {relationshipContent}
+                        </TooltipTrigger>
+                        <TooltipPopup side="left">{relationshipTooltip}</TooltipPopup>
+                      </Tooltip>
+                      <span
+                        aria-hidden="true"
+                        className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS}
+                      />
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className={THREAD_DETAILS_PANEL_LINK_SPLIT_SECONDARY_CLASS}
+                              aria-label="Open in side panel"
+                              onClick={() => props.onOpenThreadInPanel?.(threadId)}
+                            >
+                              <PanelRightIcon className="size-3" />
+                            </Button>
+                          }
+                        />
+                        <TooltipPopup side="left">Open in side panel</TooltipPopup>
                       </Tooltip>
                     </div>
                   ) : (
