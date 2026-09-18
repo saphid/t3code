@@ -102,6 +102,9 @@ OV2_BACKUP="$HOME/.local/share/t3-ov2-backups/REPLACE_WITH_PRINTED_TIMESTAMP"
 launchctl bootout --wait "gui/$(id -u)/com.t3tools.t3code.service"
 cp "$OV2_BACKUP/service.plist" "$HOME/Library/LaunchAgents/com.t3tools.t3code.service.plist"
 cp "$OV2_BACKUP/service-state.json" "$HOME/.t3/runtime/service-state.json"
+if test -f "$OV2_BACKUP/connection-catalog.json"; then
+  cp "$OV2_BACKUP/connection-catalog.json" "$HOME/.t3-v2-desktop/userdata/connection-catalog.json"
+fi
 ln -sfn "$(cat "$OV2_BACKUP/cli-link.txt")" "$HOME/.local/bin/t3"
 ditto "$OV2_BACKUP/T3 Code (V2 Preview).app" "/Applications/T3 Code (V2 Preview).app"
 launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.t3tools.t3code.service.plist"
@@ -138,3 +141,9 @@ build releases or run terminal commands.
 The earlier Alpha preview was intentionally packaged without an updater. It
 needs a one-time migration into the Fork app identity. Once migrated, keep the
 release source `saphid/t3code` and Fork Nightly Orchestrator v2 selected.
+
+The graphical Alpha migration also converts the saved connection catalog into
+the Fork app encryption identity. It verifies the source file has not changed,
+keeps the original encrypted file in the installation backup, and replaces it
+only after the old desktop is quit. Rollback must restore that catalog together
+with the Alpha shortcut. Credentials are never written as plaintext.

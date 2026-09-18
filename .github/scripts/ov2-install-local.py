@@ -47,6 +47,7 @@ exec /usr/bin/open -a {q(str(app))} --env {q('T3CODE_HOME=' + str(desktop_home))
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('build', type=Path)
+    parser.add_argument('--connection-migration', type=Path, help='Prepared encrypted Alpha-to-Fork connection catalog.')
     parser.add_argument('--shortcut-backup', type=Path, help='Original Applications shortcut saved before staging a graphical handoff.')
     parser.add_argument('--install', action='store_true', help='Back up, install, and restart the live service. Run from macOS Terminal after all turns end.')
     args = parser.parse_args()
@@ -84,6 +85,10 @@ def main():
         raise RuntimeError('Expected V2 shortcut and CLI symlink are missing. No changes made.')
     with urllib.request.urlopen('http://127.0.0.1:3773/.well-known/t3/environment', timeout=5) as response:
         previous = json.load(response)
+    migration = json.loads(args.connection_migration.read_text()) if args.connection_migration else None
+    catalog = desktop_home / 'userdata/connection-catalog.json'
+    if migration and hashlib.sha256(catalog.read_bytes()).hexdigest() != migration['sourceSha256']:
+        raise RuntimeError('Saved connections changed since preparation. Refresh the connection migration before installing. Nothing changed.')
     count = active_runs(database)
     print(f"Build: {info['version']}\nUpstream: {info['upstream']}\nActive turns: {count}\nDesktop: {app}\nServer: {runtime}\nShortcut: {shortcut}", flush=True)
     if not args.install:
@@ -104,6 +109,8 @@ def main():
     backup.mkdir(parents=True, mode=0o700)
     print(f'Backing up to {backup}', flush=True)
     shutil.copy2(plist, backup / 'service.plist')
+    if migration:
+        shutil.copy2(catalog, backup / 'connection-catalog.json')
     shutil.copytree(args.shortcut_backup or shortcut, backup / shortcut.name, symlinks=True)
     (backup / 'cli-link.txt').write_text(os.readlink(cli_link))
     runtime_files = {}
@@ -133,6 +140,11 @@ def main():
     replacement = cli_link.with_name('t3.ov2-new')
     replacement.symlink_to(runtime / 't3')
     replacement.replace(cli_link)
+    if migration:
+        pending = catalog.with_name('connection-catalog.ov2-new.json')
+        pending.write_text(json.dumps(migration['catalog']) + '\n')
+        pending.chmod(0o600)
+        pending.replace(catalog)
     launcher.write_text(launcher_text(app, desktop_home, plist))
     launcher.chmod(0o755)
     run(['codesign', '--force', '--sign', '-', shortcut])

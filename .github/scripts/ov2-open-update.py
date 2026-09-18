@@ -35,7 +35,7 @@ def main():
     config = json.loads((setup / 'handoff.json').read_text())
     output = Path(config['build'])
     if args.check:
-        return run([sys.executable, output / 'install.py', output]).returncode
+        return run([sys.executable, output / 'install.py', output, '--connection-migration', setup / 'connection-migration.json']).returncode
     with (setup / 'handoff.lock').open('w') as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -45,7 +45,8 @@ def main():
             notify('Preparing Fork OV2. T3 will open when the update is finished. This may take a few minutes.')
             offset = log.tell()
             result = subprocess.run([sys.executable, output / 'install.py', output, '--install',
-                '--shortcut-backup', config['originalShortcut']], text=True, stdout=log, stderr=subprocess.STDOUT)
+                '--shortcut-backup', config['originalShortcut'],
+                '--connection-migration', str(setup / 'connection-migration.json')], text=True, stdout=log, stderr=subprocess.STDOUT)
             if result.returncode:
                 log.flush()
                 with (setup / 'handoff.log').open() as current_log:
