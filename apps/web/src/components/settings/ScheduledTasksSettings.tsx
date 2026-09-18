@@ -10,7 +10,6 @@ import {
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   EnvironmentId,
-  ModelSelection,
   ProjectId,
   ScheduledTask,
   ScheduledTaskId,
@@ -45,8 +44,11 @@ import { WorktreeBaseBranchPicker } from "../WorktreeBaseBranchPicker";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
+  EMPTY_DRAFT,
   matchesScheduledTaskScope,
   scheduledTaskDefaultModel,
+  scheduleFromDraft,
+  splitModelKey,
   taskToDraft,
   type DraftState,
   type WorkspaceMode,
@@ -98,27 +100,6 @@ const WORKSPACE_MODE_LABELS: Record<WorkspaceMode, string> = {
   existing_worktree: "Use a specific checkout",
 };
 
-const EMPTY_DRAFT: DraftState = {
-  editingId: null,
-  title: "",
-  prompt: "",
-  enabled: true,
-  scheduleMode: "fixed",
-  intervalMinutes: "15",
-  timeOfDay: "09:00",
-  weekdays: new Set([1, 2, 3, 4, 5]),
-  projectId: "",
-  threadId: "",
-  workspaceMode: "worktree",
-  baseRef: "main",
-  startFromOrigin: true,
-  existingWorktreePath: "",
-  modelKey: "",
-  runtimeMode: "full-access",
-  interactionMode: "default",
-  baseModelSelection: null,
-};
-
 /** Labelled field: a caption sitting above its control. */
 function Field({
   label,
@@ -142,28 +123,6 @@ function Field({
       {children}
     </div>
   );
-}
-
-function splitModelKey(value: string): ModelSelection | null {
-  const index = value.indexOf(":");
-  if (index <= 0 || index === value.length - 1) return null;
-  return {
-    instanceId: ProviderInstanceId.make(value.slice(0, index)),
-    model: value.slice(index + 1),
-  };
-}
-
-function scheduleFromDraft(draft: DraftState): ScheduledTaskSchedule {
-  if (draft.scheduleMode === "interval") {
-    const everyMs = Math.round(Number(draft.intervalMinutes) * 60_000);
-    return { type: "interval", everyMs };
-  }
-  const selectedEveryDay = draft.weekdays.size === 0 || draft.weekdays.size === 7;
-  return {
-    type: "fixed_time",
-    timeOfDay: draft.timeOfDay || "09:00",
-    ...(selectedEveryDay ? {} : { weekdays: [...draft.weekdays].toSorted() }),
-  };
 }
 
 export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
@@ -518,13 +477,13 @@ function ScheduledTaskEditorDialog({
       ),
     [providers, settings],
   );
-  const [draft, setDraft] = useState<DraftState>(() =>
-    task ? taskToDraft(task) : { ...EMPTY_DRAFT, projectId: projects[0]?.id ?? "" },
-  );
   // The draft as the editor opened it. Dirty detection compares the draft
   // against this snapshot — not the live task — so edits another client
   // commits while the dialog is open are never reverted by a save.
-  const [baselineDraft] = useState(draft);
+  const [baselineDraft] = useState<DraftState>(() =>
+    task ? taskToDraft(task) : { ...EMPTY_DRAFT, projectId: projects[0]?.id ?? "" },
+  );
+  const [draft, setDraft] = useState<DraftState>(baselineDraft);
   const [saving, setSaving] = useState(false);
   const submissionPending = useRef(false);
   const editingTaskMissing =
@@ -609,6 +568,7 @@ function ScheduledTaskEditorDialog({
       // editingTaskMissing already guarantees the task is in the live list.
       const editingTask = tasksQuery.data.tasks.find((entry) => entry.id === draft.editingId);
       if (editingTask === undefined) {
+        submissionPending.current = false;
         setSaving(false);
         return;
       }
