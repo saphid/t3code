@@ -22,8 +22,15 @@ const candidateApps = [
 ];
 
 function readAppMetadata(app) {
-  const require = NodeModule.createRequire(import.meta.url);
-  const { extractFile } = require("@electron/asar");
+  let extractFile;
+  try {
+    const require = NodeModule.createRequire(import.meta.url);
+    ({ extractFile } = require("@electron/asar"));
+  } catch {
+    throw new Error(
+      "@electron/asar is not installed here. Run this script from a T3 Code checkout with dependencies installed (vp i), or run: pnpm add -w @electron/asar",
+    );
+  }
   const raw = extractFile(NodePath.join(app, "Contents/Resources/app.asar"), "package.json");
   return JSON.parse(raw.toString());
 }
