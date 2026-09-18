@@ -2360,7 +2360,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       prefix: `t3code-review-index-${process.pid}-`,
     });
     const indexExists = yield* fileSystem.exists(indexPath);
-    if (indexExists) yield* fileSystem.copyFile(indexPath, tempIndexPath);
+    if (indexExists) {
+      const { mtime } = yield* fileSystem.stat(indexPath);
+      yield* fileSystem.copyFile(indexPath, tempIndexPath);
+      // A fresh copy timestamp makes Git trust stale stat data for same-size edits.
+      // Round below the source timestamp so Git retains its racy-index check.
+      const indexTime = Option.isSome(mtime)
+        ? Math.max(1, Math.floor((mtime.value.getTime() - 1) / 1000))
+        : 1;
+      yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
+    }
     const env = { GIT_INDEX_FILE: tempIndexPath } satisfies NodeJS.ProcessEnv;
     const tempIndexConfig = [
       "-c",
