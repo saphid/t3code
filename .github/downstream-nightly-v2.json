@@ -142,6 +142,12 @@
       "repository": "saphid/t3code",
       "sha": "e4d9310aad75a94e7e742985521c7e5393375575",
       "name": "feat(scripts): report Nightly patches present in OV2 builds"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "bff0fe603922c76e6f82a602c91550bbff71f5a9",
+      "name": "test(web): keep React completion outside simulated application timers"
     }
   ]
 }
