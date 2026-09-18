@@ -30,6 +30,11 @@ def backup_database(source, destination):
             src.backup(dst)
 
 
+def fork_update_settings(settings):
+    return {**settings, 'updateRepository': 'saphid/t3code',
+            'updateChannel': 'nightly-v2', 'updateChannelConfiguredByUser': True}
+
+
 def launcher_text(app, desktop_home, plist):
     q = shlex.quote
     return f'''#!/bin/sh
@@ -87,6 +92,9 @@ def main():
         previous = json.load(response)
     migration = json.loads(args.connection_migration.read_text()) if args.connection_migration else None
     catalog = desktop_home / 'userdata/connection-catalog.json'
+    desktop_settings = desktop_home / 'userdata/desktop-settings.json'
+    settings = json.loads(desktop_settings.read_text()) if desktop_settings.exists() else {}
+    updated_settings = fork_update_settings(settings)
     if migration and hashlib.sha256(catalog.read_bytes()).hexdigest() != migration['sourceSha256']:
         raise RuntimeError('Saved connections changed since preparation. Refresh the connection migration before installing. Nothing changed.')
     count = active_runs(database)
@@ -111,6 +119,8 @@ def main():
     shutil.copy2(plist, backup / 'service.plist')
     if migration:
         shutil.copy2(catalog, backup / 'connection-catalog.json')
+    if desktop_settings.exists():
+        shutil.copy2(desktop_settings, backup / 'desktop-settings.json')
     shutil.copytree(args.shortcut_backup or shortcut, backup / shortcut.name, symlinks=True)
     (backup / 'cli-link.txt').write_text(os.readlink(cli_link))
     runtime_files = {}
@@ -145,6 +155,10 @@ def main():
         pending.write_text(json.dumps(migration['catalog']) + '\n')
         pending.chmod(0o600)
         pending.replace(catalog)
+    pending_settings = desktop_settings.with_name('desktop-settings.ov2-new.json')
+    pending_settings.write_text(json.dumps(updated_settings) + '\n')
+    pending_settings.chmod(0o600)
+    pending_settings.replace(desktop_settings)
     launcher.write_text(launcher_text(app, desktop_home, plist))
     launcher.chmod(0o755)
     run(['codesign', '--force', '--sign', '-', shortcut])

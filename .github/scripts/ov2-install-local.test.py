@@ -10,6 +10,17 @@ spec.loader.exec_module(installer)
 
 
 class InstallerTests(unittest.TestCase):
+    def test_migration_selects_fork_ov2_and_preserves_desktop_preferences(self):
+        previous = {'mainWindowBounds': {'x': 20, 'y': 30, 'width': 1000, 'height': 800},
+                    'localEnvironmentEnabled': False, 'updateChannel': 'nightly'}
+        updated = installer.fork_update_settings(previous)
+        self.assertEqual(updated['updateRepository'], 'saphid/t3code')
+        self.assertEqual(updated['updateChannel'], 'nightly-v2')
+        self.assertTrue(updated['updateChannelConfiguredByUser'])
+        self.assertFalse(updated['localEnvironmentEnabled'])
+        self.assertEqual(updated['mainWindowBounds'], previous['mainWindowBounds'])
+        self.assertEqual(previous['updateChannel'], 'nightly')
+
     def test_backup_captures_wal_and_active_turn_preflight(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / 'source.sqlite'

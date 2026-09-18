@@ -64,7 +64,7 @@ Once the hosted release is verified and the graphical handoff is activated:
 3. Wait for the update notification and the Fork app to open. The launcher backs
    up your data, installs the matching desktop and server, and keeps your saved
    connections. No Terminal commands are needed.
-4. In Settings, confirm the source is `saphid/t3code` and the fork release is
+4. The installer selects `saphid/t3code` and
    **Fork Nightly Orchestrator v2**. Future releases appear in the app's update
    controls. Use **Update server** when the connected server has an update.
 5. For voice, open Settings > Integrations, save your OpenAI API key, and allow
@@ -124,6 +124,9 @@ cp "$OV2_BACKUP/service.plist" "$HOME/Library/LaunchAgents/com.t3tools.t3code.se
 cp "$OV2_BACKUP/service-state.json" "$HOME/.t3/runtime/service-state.json"
 if test -f "$OV2_BACKUP/connection-catalog.json"; then
   cp "$OV2_BACKUP/connection-catalog.json" "$HOME/.t3-v2-desktop/userdata/connection-catalog.json"
+fi
+if test -f "$OV2_BACKUP/desktop-settings.json"; then
+  cp "$OV2_BACKUP/desktop-settings.json" "$HOME/.t3-v2-desktop/userdata/desktop-settings.json"
 fi
 ln -sfn "$(cat "$OV2_BACKUP/cli-link.txt")" "$HOME/.local/bin/t3"
 ditto "$OV2_BACKUP/T3 Code (V2 Preview).app" "/Applications/T3 Code (V2 Preview).app"
