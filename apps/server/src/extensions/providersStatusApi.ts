@@ -74,7 +74,7 @@ const sameProjection = (left: ProvidersStatusEvent, right: ProvidersStatusEvent)
 
 export function createProvidersStatusApiProvider(
   dependencies: Parameters<typeof makeExtensionScopeResolver>[0] & {
-    readonly providers: Pick<ProviderRegistryShape, "getProviders" | "subscribeChanges">;
+    readonly providers: Pick<ProviderRegistryShape, "getProvidersSnapshot" | "subscribeChanges">;
   },
 ): HostApiProvider {
   const resolve = makeExtensionScopeResolver(dependencies);
@@ -113,7 +113,9 @@ export function createProvidersStatusApiProvider(
         // PubSub whose stream subscribes lazily, so reading first would let
         // an update published mid-read fall into the gap. Anything published
         // between the subscribe and the snapshot replays from the
-        // subscription and dedupes against the snapshot it is already in.
+        // subscription — but a queued publication can also predate the
+        // snapshot it is already folded into, so each carries the registry
+        // revision and is fenced at-or-below the latest delivered revision.
         // The queue must suspend, not slide: the pre-acquired subscription
         // can replay in the same burst as the snapshot, and a sliding
         // buffer would drop the snapshot.
@@ -121,12 +123,20 @@ export function createProvidersStatusApiProvider(
           (queue) =>
             Effect.gen(function* () {
               const live = yield* dependencies.providers.subscribeChanges;
-              const initial = yield* dependencies.providers.getProviders;
+              const initial = yield* dependencies.providers.getProvidersSnapshot;
               yield* Stream.runForEach(
-                Stream.concat(Stream.make(initial), Stream.fromSubscription(live)).pipe(
-                  Stream.map(projectProviderStatuses),
-                  Stream.changesWith(sameProjection),
-                ),
+                Stream.concat(
+                  Stream.make(initial.providers),
+                  Stream.fromSubscription(live).pipe(
+                    Stream.mapAccum(
+                      () => initial.revision,
+                      (fence, change) => {
+                        if (change.revision <= fence) return [fence, []] as const;
+                        return [change.revision, [change.providers]] as const;
+                      },
+                    ),
+                  ),
+                ).pipe(Stream.map(projectProviderStatuses), Stream.changesWith(sameProjection)),
                 (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
               );
             }),

@@ -42,7 +42,11 @@ import * as Semaphore from "effect/Semaphore";
 
 import { ServerConfig } from "../../config.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
-import { ProviderRegistry, type ProviderRegistryShape } from "../Services/ProviderRegistry.ts";
+import {
+  ProviderRegistry,
+  type ProviderRegistryShape,
+  type ProviderRegistrySnapshot,
+} from "../Services/ProviderRegistry.ts";
 import {
   hydrateCachedProvider,
   isCachedProviderCorrelated,
@@ -285,7 +289,7 @@ export const ProviderRegistryLive = Layer.effect(
     // Aggregator PubSub — consumers (WS gateway, etc.) subscribe here for
     // coalesced updates across every instance.
     const changesPubSub = yield* Effect.acquireRelease(
-      PubSub.unbounded<ReadonlyArray<ServerProvider>>(),
+      PubSub.unbounded<ProviderRegistrySnapshot>(),
       PubSub.shutdown,
     );
 
@@ -356,7 +360,24 @@ export const ProviderRegistryLive = Layer.effect(
         ),
       ),
     );
-    const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(cachedProviders);
+    const providersRef = yield* Ref.make<ProviderRegistrySnapshot>({
+      revision: 0,
+      providers: cachedProviders,
+    });
+    // The revision and the provider list swap in the same atomic `Ref`
+    // update, so a snapshot's revision is always at least as new as every
+    // publication it already contains — the fence snapshot-then-changes
+    // consumers replay queued publications against.
+    const stampProviders = (
+      previous: ProviderRegistrySnapshot,
+      providers: ReadonlyArray<ServerProvider>,
+    ): ProviderRegistrySnapshot =>
+      haveProvidersChanged(previous.providers, providers)
+        ? { revision: previous.revision + 1, providers }
+        : previous;
+    const getCurrentProviders: Effect.Effect<ReadonlyArray<ServerProvider>> = Ref.get(
+      providersRef,
+    ).pipe(Effect.map((snapshot) => snapshot.providers));
     const workspaceRefreshesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstance, ReadonlySet<string>>
     >(new Map());
@@ -431,11 +452,13 @@ export const ProviderRegistryLive = Layer.effect(
           concurrency: "unbounded",
         },
       );
-      const [previousProviders, providers, providersToPersist] = yield* Ref.modify(
+      const [previousProviders, providers, providersToPersist, stamped] = yield* Ref.modify(
         providersRef,
-        (previousProviders) => {
+        (previous) => {
           const mergedProviders = new Map(
-            previousProviders.map((provider) => [snapshotInstanceKey(provider), provider] as const),
+            previous.providers.map(
+              (provider) => [snapshotInstanceKey(provider), provider] as const,
+            ),
           );
           const updatedKeys = new Set<ProviderInstanceId>();
 
@@ -454,7 +477,8 @@ export const ProviderRegistryLive = Layer.effect(
           const providersToPersist = providers.filter((provider) =>
             updatedKeys.has(snapshotInstanceKey(provider)),
           );
-          return [[previousProviders, providers, providersToPersist] as const, providers];
+          const stamped = stampProviders(previous, providers);
+          return [[previous.providers, providers, providersToPersist, stamped] as const, stamped];
         },
       );
 
@@ -466,7 +490,7 @@ export const ProviderRegistryLive = Layer.effect(
           });
         }
         if (options?.publish !== false) {
-          yield* PubSub.publish(changesPubSub, providers);
+          yield* PubSub.publish(changesPubSub, stamped);
         }
       }
 
@@ -506,7 +530,7 @@ export const ProviderRegistryLive = Layer.effect(
           return next;
         });
 
-        const existingProviders = yield* Ref.get(providersRef);
+        const existingProviders = yield* getCurrentProviders;
         const matchingProvider = existingProviders.find(
           (candidate) => candidate.instanceId === input.instanceId,
         );
@@ -538,7 +562,7 @@ export const ProviderRegistryLive = Layer.effect(
       return yield* Effect.forEach(sources, (source) => refreshOneSource(source), {
         concurrency: "unbounded",
         discard: true,
-      }).pipe(Effect.andThen(Ref.get(providersRef)));
+      }).pipe(Effect.andThen(getCurrentProviders));
     });
 
     const refresh = Effect.fn("refresh")(function* (provider?: ProviderDriverKind) {
@@ -552,7 +576,7 @@ export const ProviderRegistryLive = Layer.effect(
         (candidate) => candidate.instanceId === defaultInstanceId,
       );
       if (!providerSource) {
-        return yield* Ref.get(providersRef);
+        return yield* getCurrentProviders;
       }
       return yield* refreshOneSource(providerSource);
     });
@@ -563,7 +587,7 @@ export const ProviderRegistryLive = Layer.effect(
       const sources = yield* getLiveSources;
       const providerSource = sources.find((candidate) => candidate.instanceId === instanceId);
       if (!providerSource) {
-        return yield* Ref.get(providersRef);
+        return yield* getCurrentProviders;
       }
       return yield* refreshOneSource(providerSource);
     });
@@ -646,19 +670,20 @@ export const ProviderRegistryLive = Layer.effect(
             .filter((instanceId) => previousSubs.has(instanceId)),
         );
         if (rebuiltInstanceIds.size > 0) {
-          const [previousProviders, providers] = yield* Ref.modify(
+          const [previousProviders, providers, stamped] = yield* Ref.modify(
             providersRef,
-            (previousProviders) => {
-              const providers = previousProviders.map((provider) => {
+            (previous) => {
+              const providers = previous.providers.map((provider) => {
                 if (!rebuiltInstanceIds.has(provider.instanceId)) return provider;
                 const { workspaceSnapshots: _workspaceSnapshots, ...machineSnapshot } = provider;
                 return machineSnapshot;
               });
-              return [[previousProviders, providers] as const, providers];
+              const stamped = stampProviders(previous, providers);
+              return [[previous.providers, providers, stamped] as const, stamped];
             },
           );
           if (haveProvidersChanged(previousProviders, providers)) {
-            yield* PubSub.publish(changesPubSub, providers);
+            yield* PubSub.publish(changesPubSub, stamped);
           }
         }
 
@@ -703,19 +728,20 @@ export const ProviderRegistryLive = Layer.effect(
 
         // Drop aggregator state for instances that have disappeared —
         // otherwise the UI would keep rendering ghosts.
-        const [previousProviders, providers] = yield* Ref.modify(
+        const [previousProviders, providers, stamped] = yield* Ref.modify(
           providersRef,
-          (previousProviders) => {
+          (previous) => {
             const providers = orderProviderSnapshots(
-              previousProviders.filter((provider) =>
+              previous.providers.filter((provider) =>
                 knownInstanceIds.has(snapshotInstanceKey(provider)),
               ),
             );
-            return [[previousProviders, providers] as const, providers];
+            const stamped = stampProviders(previous, providers);
+            return [[previous.providers, providers, stamped] as const, stamped];
           },
         );
         if (haveProvidersChanged(previousProviders, providers)) {
-          yield* PubSub.publish(changesPubSub, providers);
+          yield* PubSub.publish(changesPubSub, stamped);
         }
         yield* Ref.update(maintenanceActionStatesRef, (previous) => {
           const next = new Map(previous);
@@ -800,14 +826,14 @@ export const ProviderRegistryLive = Layer.effect(
       yield* Effect.logError("provider registry refresh failed; preserving cached providers", {
         cause: Cause.pretty(cause),
       });
-      return yield* Ref.get(providersRef);
+      return yield* getCurrentProviders;
     });
 
     const refreshWorkspaceSnapshot = Effect.fn("refreshWorkspaceSnapshot")(function* (input: {
       readonly instanceId: ProviderInstanceId;
       readonly cwd: string;
     }) {
-      const providers = yield* Ref.get(providersRef);
+      const providers = yield* getCurrentProviders;
       const provider = providers.find((candidate) => candidate.instanceId === input.instanceId);
       if (
         !provider ||
@@ -825,29 +851,30 @@ export const ProviderRegistryLive = Layer.effect(
         next.set(instance, new Set(current).add(input.cwd));
         return [true, next] as const;
       });
-      if (!claimed) return yield* Ref.get(providersRef);
+      if (!claimed) return yield* getCurrentProviders;
       return yield* instance.snapshotForCwd(input.cwd).pipe(
         Effect.flatMap((scopedSnapshot) =>
           scopedSnapshot.status === "error"
-            ? Ref.get(providersRef)
+            ? getCurrentProviders
             : instanceRegistry.getInstance(input.instanceId).pipe(
                 Effect.flatMap((currentInstance) => {
-                  if (currentInstance !== instance) return Ref.get(providersRef);
-                  return Ref.modify(providersRef, (currentProviders) => {
-                    const nextProviders = currentProviders.map((candidate) =>
+                  if (currentInstance !== instance) return getCurrentProviders;
+                  return Ref.modify(providersRef, (previous) => {
+                    const nextProviders = previous.providers.map((candidate) =>
                       candidate.instanceId === input.instanceId &&
                       !candidate.workspaceSnapshots?.some((s) => s.cwd === input.cwd)
                         ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, scopedSnapshot)
                         : candidate,
                     );
-                    return [[currentProviders, nextProviders] as const, nextProviders];
+                    const stamped = stampProviders(previous, nextProviders);
+                    return [[previous.providers, stamped] as const, stamped];
                   }).pipe(
-                    Effect.tap(([previousProviders, nextProviders]) =>
-                      haveProvidersChanged(previousProviders, nextProviders)
-                        ? PubSub.publish(changesPubSub, nextProviders)
+                    Effect.tap(([previousProviders, stamped]) =>
+                      haveProvidersChanged(previousProviders, stamped.providers)
+                        ? PubSub.publish(changesPubSub, stamped)
                         : Effect.void,
                     ),
-                    Effect.map(([, nextProviders]) => nextProviders),
+                    Effect.map(([, stamped]) => stamped.providers),
                   );
                 }),
               ),
@@ -866,7 +893,8 @@ export const ProviderRegistryLive = Layer.effect(
     });
 
     return {
-      getProviders: Ref.get(providersRef),
+      getProviders: getCurrentProviders,
+      getProvidersSnapshot: Ref.get(providersRef),
       refresh: (provider?: ProviderDriverKind) =>
         refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshInstance: (instanceId: ProviderInstanceId) =>
@@ -876,7 +904,7 @@ export const ProviderRegistryLive = Layer.effect(
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
       get streamChanges() {
-        return Stream.fromPubSub(changesPubSub);
+        return Stream.fromPubSub(changesPubSub).pipe(Stream.map((change) => change.providers));
       },
       subscribeChanges: PubSub.subscribe(changesPubSub),
     } satisfies ProviderRegistryShape;

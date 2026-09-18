@@ -20,7 +20,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import type { ProviderRegistrySnapshot } from "../provider/Services/ProviderRegistry.ts";
 import { createProvidersStatusApiProvider, projectProviderStatuses } from "./providersStatusApi.ts";
 
 const provider = (overrides: Partial<ServerProvider> = {}): ServerProvider => ({
@@ -52,9 +54,9 @@ const provider = (overrides: Partial<ServerProvider> = {}): ServerProvider => ({
 });
 
 function fixture(
-  updates: PubSub.PubSub<ReadonlyArray<ServerProvider>>,
+  updates: PubSub.PubSub<ProviderRegistrySnapshot>,
   subscribed: Deferred.Deferred<void>,
-  initial: ServerProvider[],
+  state: Ref.Ref<ProviderRegistrySnapshot>,
   snapshotGate?: Deferred.Deferred<void>,
 ) {
   let cwd = "/workspace";
@@ -74,10 +76,10 @@ function fixture(
     },
     threads: { getById: () => Effect.succeedNone },
     providers: {
-      getProviders: Effect.gen(function* () {
+      getProvidersSnapshot: Effect.gen(function* () {
         reads++;
         if (snapshotGate) yield* Deferred.await(snapshotGate);
-        return initial;
+        return yield* Ref.get(state);
       }),
       subscribeChanges: Effect.acquireRelease(
         Effect.gen(function* () {
@@ -128,7 +130,16 @@ function fixture(
     controller,
     stream: () =>
       api.subscribe!("subscribe", {}, context, controller.signal, metadata)[Symbol.asyncIterator](),
-    emit: (providers: ReadonlyArray<ServerProvider>) => PubSub.publish(updates, providers),
+    emit: (providers: ReadonlyArray<ServerProvider>) =>
+      Effect.gen(function* () {
+        // Stamp the publication with the registry revision, atomically with
+        // the state swap — mirrors ProviderRegistryLive's Ref+PubSub pair.
+        const stamped = yield* Ref.modify(state, (previous) => {
+          const next = { revision: previous.revision + 1, providers };
+          return [next, next];
+        });
+        yield* PubSub.publish(updates, stamped);
+      }),
     subscriptionReady: Deferred.await(subscribed),
     released,
     reads: () => reads,
@@ -144,9 +155,13 @@ function fixture(
 
 const makeFixture = (initial: ServerProvider[] = [provider()]) =>
   Effect.gen(function* () {
-    const updates = yield* PubSub.unbounded<ReadonlyArray<ServerProvider>>();
+    const updates = yield* PubSub.unbounded<ProviderRegistrySnapshot>();
     const subscribed = yield* Deferred.make<void>();
-    return fixture(updates, subscribed, initial);
+    const state = yield* Ref.make<ProviderRegistrySnapshot>({
+      revision: 0,
+      providers: initial,
+    });
+    return fixture(updates, subscribed, state);
   });
 
 it("projects identity, lifecycle and capability flags without credential-bearing fields", () => {
@@ -204,22 +219,34 @@ it.effect("streams the initial snapshot then registry updates, and detaches on r
   }),
 );
 
-it.effect("delivers a registry update published while the snapshot read is in flight", () =>
+it.effect("fences queued publications that predate the snapshot", () =>
   Effect.gen(function* () {
-    const updates = yield* PubSub.unbounded<ReadonlyArray<ServerProvider>>();
+    const updates = yield* PubSub.unbounded<ProviderRegistrySnapshot>();
     const subscribed = yield* Deferred.make<void>();
     const snapshotGate = yield* Deferred.make<void>();
+    const state = yield* Ref.make<ProviderRegistrySnapshot>({
+      revision: 0,
+      providers: [provider()],
+    });
     // The snapshot read hangs on the gate; the provider must already be
-    // subscribed before it resolves, or this publish falls into the gap.
-    const f = fixture(updates, subscribed, [provider()], snapshotGate);
+    // subscribed before it resolves, or these publishes fall into the gap.
+    const f = fixture(updates, subscribed, state, snapshotGate);
     const stream = f.stream();
     const first = stream.next();
     yield* f.subscriptionReady;
+    // Two publishes land while the snapshot read is gated, so the read
+    // returns the newest state (warning, revision 2). Replaying the queued
+    // error (rev 1) and warning (rev 2) would deliver warning -> error ->
+    // warning — stale status after newer status. The revision fence drops
+    // everything at-or-below the snapshot's revision.
     yield* f.emit([provider({ status: "error" })]);
+    yield* f.emit([provider({ status: "warning" })]);
     yield* Deferred.succeed(snapshotGate, undefined);
     expect((yield* Effect.promise(() => first)).value?.value).toEqual(
-      projectProviderStatuses([provider()]),
+      projectProviderStatuses([provider({ status: "warning" })]),
     );
+    // The live feed still flows after the fenced burst.
+    yield* f.emit([provider({ status: "error" })]);
     expect((yield* Effect.promise(() => stream.next())).value?.value).toEqual(
       projectProviderStatuses([provider({ status: "error" })]),
     );
@@ -311,9 +338,13 @@ it.effect("revoked authority and pre-aborted streams never read the registry", (
     const f = yield* makeFixture();
     f.revoke();
     yield* Effect.promise(() => expect(f.stream().next()).rejects.toThrow("revoked"));
-    const updates = yield* PubSub.unbounded<ReadonlyArray<ServerProvider>>();
+    const updates = yield* PubSub.unbounded<ProviderRegistrySnapshot>();
     const subscribed = yield* Deferred.make<void>();
-    const aborted = fixture(updates, subscribed, [provider()]);
+    const abortedState = yield* Ref.make<ProviderRegistrySnapshot>({
+      revision: 0,
+      providers: [provider()],
+    });
+    const aborted = fixture(updates, subscribed, abortedState);
     aborted.controller.abort();
     yield* Effect.promise(() => expect(aborted.stream().next()).rejects.toThrow());
     expect(f.reads() + aborted.reads()).toBe(0);

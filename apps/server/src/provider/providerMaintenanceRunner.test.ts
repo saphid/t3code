@@ -21,7 +21,11 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
-import { ProviderRegistry, type ProviderRegistryShape } from "./Services/ProviderRegistry.ts";
+import {
+  ProviderRegistry,
+  type ProviderRegistryShape,
+  type ProviderRegistrySnapshot,
+} from "./Services/ProviderRegistry.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
 import {
   makeProviderMaintenanceCapabilities,
@@ -192,6 +196,9 @@ function makeRegistry(
 
     const registry: ProviderRegistryShape = {
       getProviders: Ref.get(providersRef),
+      getProvidersSnapshot: Ref.get(providersRef).pipe(
+        Effect.map((providers) => ({ revision: 0, providers })),
+      ),
       refresh: () => Ref.get(providersRef),
       refreshInstance: () => Ref.get(providersRef),
       refreshWorkspaceSnapshot: () => Ref.get(providersRef),
@@ -199,9 +206,8 @@ function makeRegistry(
         Effect.succeed(lifecycleFor(provider)),
       setProviderMaintenanceActionState,
       streamChanges: Stream.empty,
-      subscribeChanges: Effect.flatMap(
-        PubSub.unbounded<ReadonlyArray<ServerProvider>>(),
-        (pubsub) => PubSub.subscribe(pubsub),
+      subscribeChanges: Effect.flatMap(PubSub.unbounded<ProviderRegistrySnapshot>(), (pubsub) =>
+        PubSub.subscribe(pubsub),
       ),
     };
 

@@ -21,6 +21,18 @@ import type { ProviderMaintenanceCapabilities } from "../providerMaintenance.ts"
 
 export type ProviderMaintenanceActionKind = "update";
 
+/**
+ * A provider list stamped with the registry's monotonic revision. The
+ * revision is bumped inside the same atomic `Ref` swap that installs the
+ * provider list, so it is shared by snapshots and change publications:
+ * a publication carrying `revision <= snapshot.revision` predates that
+ * snapshot and must not replay over it.
+ */
+export interface ProviderRegistrySnapshot {
+  readonly revision: number;
+  readonly providers: ReadonlyArray<ServerProvider>;
+}
+
 export interface ProviderRegistryShape {
   /**
    * Read the latest provider snapshots for every configured instance.
@@ -28,6 +40,15 @@ export interface ProviderRegistryShape {
    * instances of the same driver) and disambiguate via `instanceId`.
    */
   readonly getProviders: Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+  /**
+   * Read the latest provider snapshots together with the registry's
+   * current revision. Paired with `subscribeChanges` this is the fence
+   * for snapshot-then-changes feeds: queued publications with
+   * `revision <= snapshot.revision` are already folded into the snapshot
+   * and replaying them would deliver stale state after newer state.
+   */
+  readonly getProvidersSnapshot: Effect.Effect<ProviderRegistrySnapshot>;
 
   /**
    * Refresh all providers, or the default instance of the specified
@@ -85,7 +106,8 @@ export interface ProviderRegistryShape {
    * NOTE: `Stream.fromPubSub` defers `PubSub.subscribe` until the stream
    * starts running, so a consumer that reads `getProviders` before running
    * the stream can miss a publish that lands in between. Snapshot-then-
-   * changes feeds must use `subscribeChanges` instead — see its doc.
+   * changes feeds must use `subscribeChanges` + `getProvidersSnapshot`
+   * instead — see their docs.
    */
   readonly streamChanges: Stream.Stream<ReadonlyArray<ServerProvider>>;
 
@@ -93,11 +115,13 @@ export interface ProviderRegistryShape {
    * Acquire a subscription to the change channel synchronously in the
    * caller's fiber, scoped to the provided `Scope` (released on scope
    * close). Because the subscription is registered before this `yield*`
-   * returns, a `getProviders` read taken afterwards cannot miss an update
-   * published in between — it replays from the subscription.
+   * returns, a `getProvidersSnapshot` read taken afterwards cannot miss
+   * an update published in between — it replays from the subscription.
+   * Publications carry the registry revision stamped at publish time;
+   * fence replayed entries at-or-below the snapshot's revision.
    */
   readonly subscribeChanges: Effect.Effect<
-    PubSub.Subscription<ReadonlyArray<ServerProvider>>,
+    PubSub.Subscription<ProviderRegistrySnapshot>,
     never,
     Scope.Scope
   >;
