@@ -122,7 +122,10 @@ async function advance(milliseconds: number) {
 }
 
 beforeEach(() => {
-  vi.useFakeTimers();
+  // React act uses setImmediate to finish; keep that scheduler on the real clock.
+  vi.useFakeTimers({
+    toFake: ["Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval"],
+  });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   page = Object.assign(new EventTarget(), { visibilityState: "visible" as const });
   browserWindow = new EventTarget();
