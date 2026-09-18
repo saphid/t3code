@@ -9,6 +9,7 @@ import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
@@ -454,44 +455,40 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
           Effect.mapError(
             (cause) => new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
           ),
-          Effect.timeoutOrElse({
-            duration: OPENCODE_VERSION_PROBE_TIMEOUT,
-            orElse: () =>
-              Effect.fail(
-                new OpenCodeProbeError({
-                  detail: `OpenCode CLI version probe timed out after ${OPENCODE_VERSION_PROBE_TIMEOUT}.`,
-                }),
-              ),
-          }),
+          Effect.timeoutOption(OPENCODE_VERSION_PROBE_TIMEOUT),
         ),
     );
     if (versionExit._tag === "Failure") {
       return fallback(Cause.squash(versionExit.cause));
     }
-    version = parseGenericCliVersion(versionExit.value.stdout) ?? null;
+    // A cold CLI can miss this short deadline while its server is healthy.
+    // The server handshake below independently verifies the minimum version.
+    if (Option.isSome(versionExit.value)) {
+      version = parseGenericCliVersion(versionExit.value.value.stdout) ?? null;
 
-    if (!version) {
-      return fallback(
-        new Error(
-          `Unable to determine OpenCode version from \`opencode --version\` output. T3 Code requires OpenCode v${MINIMUM_OPENCODE_VERSION} or newer.`,
-        ),
-        null,
-      );
-    }
-    if (compareSemverVersions(version, MINIMUM_OPENCODE_VERSION) < 0) {
-      return buildServerProvider({
-        presentation: OPENCODE_PRESENTATION,
-        enabled: openCodeSettings.enabled,
-        checkedAt,
-        models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
-        probe: {
-          installed: true,
-          version,
-          status: "error",
-          auth: { status: "unknown" },
-          message: `OpenCode v${version} is too old. Upgrade to v${MINIMUM_OPENCODE_VERSION} or newer.`,
-        },
-      });
+      if (!version) {
+        return fallback(
+          new Error(
+            `Unable to determine OpenCode version from \`opencode --version\` output. T3 Code requires OpenCode v${MINIMUM_OPENCODE_VERSION} or newer.`,
+          ),
+          null,
+        );
+      }
+      if (compareSemverVersions(version, MINIMUM_OPENCODE_VERSION) < 0) {
+        return buildServerProvider({
+          presentation: OPENCODE_PRESENTATION,
+          enabled: openCodeSettings.enabled,
+          checkedAt,
+          models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
+          probe: {
+            installed: true,
+            version,
+            status: "error",
+            auth: { status: "unknown" },
+            message: `OpenCode v${version} is too old. Upgrade to v${MINIMUM_OPENCODE_VERSION} or newer.`,
+          },
+        });
+      }
     }
   }
 
