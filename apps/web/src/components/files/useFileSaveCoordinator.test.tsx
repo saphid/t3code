@@ -50,7 +50,10 @@ function changeHandler(): (contents: string) => void {
 
 beforeEach(() => {
   renderer = null;
-  vi.useFakeTimers();
+  // React act uses setImmediate to finish; keep that scheduler on the real clock.
+  vi.useFakeTimers({
+    toFake: ["Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval"],
+  });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   writeFile.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   confirmFile.mockReset();
