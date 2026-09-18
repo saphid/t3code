@@ -212,12 +212,21 @@ export const layer: Layer.Layer<
       if (run === undefined) {
         return yield* new ProviderTurnStartError({ runId, cause: `Run ${runId} was not found.` });
       }
-      if (run.status !== "starting") {
-        // The effect is idempotent once the run has advanced or terminalized.
+      const activeAttempt = projection.attempts.find(
+        (candidate) => candidate.id === run.activeAttemptId,
+      );
+      const canResumeProviderStart =
+        run.status === "running" &&
+        activeAttempt?.status === "running" &&
+        activeAttempt.providerTurnId === null &&
+        !projection.providerTurns.some((turn) => turn.runAttemptId === activeAttempt.id);
+      if (run.status !== "starting" && !canResumeProviderStart) {
+        // The effect is idempotent once the provider turn exists or the run terminalizes.
         return;
       }
+      const expectedRunStatus = run.status;
       const rootNode = projection.nodes.find((candidate) => candidate.id === run.rootNodeId);
-      const attempt = projection.attempts.find((candidate) => candidate.id === run.activeAttemptId);
+      const attempt = activeAttempt;
       const providerThread = projection.providerThreads.find(
         (candidate) => candidate.id === run.providerThreadId,
       );
@@ -652,7 +661,7 @@ export const layer: Layer.Layer<
         });
         return replacement;
       });
-      if (!(yield* isCurrentAttemptInStatus("starting"))) {
+      if (!(yield* isCurrentAttemptInStatus(expectedRunStatus))) {
         return;
       }
       const now = yield* DateTime.now;
@@ -713,7 +722,7 @@ export const layer: Layer.Layer<
       const runningRun: OrchestrationV2Run = {
         ...run,
         status: "running",
-        startedAt: now,
+        startedAt: run.startedAt ?? now,
       };
       const runningAttempt: OrchestrationV2RunAttempt = {
         ...attempt,
@@ -721,12 +730,12 @@ export const layer: Layer.Layer<
           ? {}
           : { nativeThreadId: runningProviderThread.nativeThreadRef.nativeId }),
         status: "running",
-        startedAt: now,
+        startedAt: attempt.startedAt ?? now,
       };
       const runningRootNode: OrchestrationV2ExecutionNode = {
         ...rootNode,
         status: "running",
-        startedAt: now,
+        startedAt: rootNode.startedAt ?? now,
       };
       const events: Array<OrchestrationV2DomainEvent> = [
         {
@@ -811,7 +820,7 @@ export const layer: Layer.Layer<
         threadId: projection.thread.id,
         runId: run.id,
         activeAttemptId: attempt.id,
-        expectedStatus: "starting",
+        expectedStatus: expectedRunStatus,
         events,
       });
       if (!runningWrite.committed) {
