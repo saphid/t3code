@@ -167,7 +167,7 @@ needs a one-time migration into the Fork app identity. Once migrated, keep the
 release source `saphid/t3code` and Fork Nightly Orchestrator v2 selected.
 
 The graphical Alpha migration also converts the saved connection catalog into
-the Fork app encryption identity. It verifies the source file has not changed,
-keeps the original encrypted file in the installation backup, and replaces it
-only after the old desktop is quit. Rollback must restore that catalog together
-with the Alpha shortcut. Credentials are never written as plaintext.
+the Fork app encryption identity. It verifies the source file has not changed
+and writes the converted catalog to the Fork app's separate catalog filename
+after the old desktop is quit. The Alpha catalog remains intact and is also
+backed up. Credentials are never written as plaintext.

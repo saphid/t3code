@@ -35,6 +35,11 @@ def fork_update_settings(settings):
             'updateChannel': 'nightly-v2', 'updateChannelConfiguredByUser': True}
 
 
+def fork_connection_catalog(desktop_home):
+    scope = ''.join(f'{ord(character):04x}' for character in 'T3 Code (Fork Nightly)')
+    return desktop_home / 'userdata' / f'connection-catalog.{scope}.json'
+
+
 def launcher_text(app, desktop_home, plist):
     q = shlex.quote
     return f'''#!/bin/sh
@@ -92,6 +97,7 @@ def main():
         previous = json.load(response)
     migration = json.loads(args.connection_migration.read_text()) if args.connection_migration else None
     catalog = desktop_home / 'userdata/connection-catalog.json'
+    fork_catalog = fork_connection_catalog(desktop_home)
     desktop_settings = desktop_home / 'userdata/desktop-settings.json'
     settings = json.loads(desktop_settings.read_text()) if desktop_settings.exists() else {}
     updated_settings = fork_update_settings(settings)
@@ -119,6 +125,8 @@ def main():
     shutil.copy2(plist, backup / 'service.plist')
     if migration:
         shutil.copy2(catalog, backup / 'connection-catalog.json')
+        if fork_catalog.exists():
+            shutil.copy2(fork_catalog, backup / 'fork-connection-catalog.json')
     if desktop_settings.exists():
         shutil.copy2(desktop_settings, backup / 'desktop-settings.json')
     shutil.copytree(args.shortcut_backup or shortcut, backup / shortcut.name, symlinks=True)
@@ -151,10 +159,10 @@ def main():
     replacement.symlink_to(runtime / 't3')
     replacement.replace(cli_link)
     if migration:
-        pending = catalog.with_name('connection-catalog.ov2-new.json')
+        pending = fork_catalog.with_suffix('.pending.json')
         pending.write_text(json.dumps(migration['catalog']) + '\n')
         pending.chmod(0o600)
-        pending.replace(catalog)
+        pending.replace(fork_catalog)
     pending_settings = desktop_settings.with_name('desktop-settings.ov2-new.json')
     pending_settings.write_text(json.dumps(updated_settings) + '\n')
     pending_settings.chmod(0o600)

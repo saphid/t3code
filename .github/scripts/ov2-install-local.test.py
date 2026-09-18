@@ -10,6 +10,10 @@ spec.loader.exec_module(installer)
 
 
 class InstallerTests(unittest.TestCase):
+    def test_catalog_migration_uses_the_packaged_fork_catalog_path(self):
+        self.assertEqual(installer.fork_connection_catalog(Path('/test-home')),
+            Path('/test-home/userdata/connection-catalog.0054003300200043006f00640065002000280046006f0072006b0020004e0069006700680074006c00790029.json'))
+
     def test_migration_selects_fork_ov2_and_preserves_desktop_preferences(self):
         previous = {'mainWindowBounds': {'x': 20, 'y': 30, 'width': 1000, 'height': 800},
                     'localEnvironmentEnabled': False, 'updateChannel': 'nightly'}
