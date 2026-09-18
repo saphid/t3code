@@ -119,3 +119,22 @@ selected patch commits available on GitHub and this manifest merged into
 `saphid/t3code` main. Run `downstream-nightly-v2.yml` and wait for its full CI and
 published assets. Until that happens, rebuild locally with this tool. Updating
 the upstream project itself is separate, with one focused PR per suitable fix.
+
+## Automatic builds and in-app updates
+
+The OV2 workflow checks the upstream branch every five minutes through GitHub's
+scheduler. GitHub may delay scheduled runs. An already published source and patch
+fingerprint is skipped. Merging a selected-patch manifest change into fork `main`
+starts the workflow immediately. PRs are selected by adding their pinned commit
+series to the manifest; unrelated PRs are not included automatically.
+
+The workflow runs the complete quality gate, builds both Mac architectures and the
+Apple Silicon server archive, and publishes their updater manifests only after
+success. The Fork OV2 desktop checks its feed at startup and every four minutes,
+then offers the normal download and restart controls. Connected-server updates
+use the matching archive through the existing Update server flow. Users do not
+build releases or run terminal commands.
+
+The earlier Alpha preview was intentionally packaged without an updater. It
+needs a one-time migration into the Fork app identity. Once migrated, keep the
+release source `saphid/t3code` and Fork Nightly Orchestrator v2 selected.

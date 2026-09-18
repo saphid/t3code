@@ -1,8 +1,19 @@
 name: Fork Nightly Orchestrator v2
 
 on:
+  # GitHub schedules can be delayed. The resolver skips an already published stack.
   schedule:
-    - cron: "17 * * * *"
+    - cron: "*/5 * * * *"
+  push:
+    branches: [main]
+    paths:
+      - ".github/downstream-nightly-v2.json"
+      - ".github/scripts/downstream-nightly.mjs"
+      - ".github/scripts/downstream-nightly.test.mjs"
+      - ".github/workflows/downstream-nightly.yml"
+      - ".github/workflows/downstream-nightly-v2.yml"
+  repository_dispatch:
+    types: [upstream-ov2-updated]
   workflow_dispatch:
     inputs:
       force_rebuild:
