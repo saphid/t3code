@@ -149,6 +149,213 @@ it("does not commit running state when inherited background routing cannot be re
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
+effectIt.effect("retries a start effect that advanced the run before provider startup failed", () =>
+  Effect.gen(function* () {
+    const now = DateTime.makeUnsafe("2026-09-17T06:40:00Z");
+    const threadId = ThreadId.make("thread-provider-start-retry");
+    const runId = RunId.make("run-provider-start-retry");
+    const attemptId = RunAttemptId.make("attempt-provider-start-retry");
+    const rootNodeId = NodeId.make("node-provider-start-retry");
+    const providerThreadId = ProviderThreadId.make("provider-thread-provider-start-retry");
+    const providerSessionId = ProviderSessionId.make("provider-session-provider-start-retry");
+    const providerInstanceId = ProviderInstanceId.make("codex-provider-start-retry");
+    const messageId = MessageId.make("message-provider-start-retry");
+    const checkpointScopeId = CheckpointScopeId.make("scope-provider-start-retry");
+    const driver = ProviderDriverKind.make("codex");
+    const providerThread: OrchestrationV2ThreadProjection["providerThreads"][number] = {
+      id: providerThreadId,
+      driver,
+      providerInstanceId,
+      providerSessionId,
+      appThreadId: threadId,
+      ownerNodeId: null,
+      nativeThreadRef: { driver, nativeId: "native-provider-start-retry", strength: "strong" },
+      nativeConversationHeadRef: null,
+      status: "idle",
+      firstRunOrdinal: 1,
+      lastRunOrdinal: 1,
+      handoffIds: [],
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    let projection = {
+      thread: {
+        id: threadId,
+        projectId: ProjectId.make("project-provider-start-retry"),
+        activeProviderThreadId: providerThreadId,
+        branch: null,
+        worktreePath: null,
+      },
+      runs: [
+        {
+          id: runId,
+          threadId,
+          ordinal: 1,
+          providerInstanceId,
+          modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+          providerThreadId,
+          userMessageId: messageId,
+          rootNodeId,
+          activeAttemptId: attemptId,
+          status: "starting",
+          requestedAt: now,
+          startedAt: null,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      ],
+      attempts: [
+        {
+          id: attemptId,
+          runId,
+          rootNodeId,
+          attemptOrdinal: 1,
+          providerInstanceId,
+          providerThreadId,
+          providerTurnId: null,
+          reason: "initial",
+          status: "pending",
+          startedAt: null,
+          completedAt: null,
+        },
+      ],
+      nodes: [
+        {
+          id: rootNodeId,
+          threadId,
+          runId,
+          parentNodeId: null,
+          rootNodeId,
+          kind: "root_turn",
+          status: "pending",
+          countsForRun: true,
+          providerThreadId,
+          providerTurnId: null,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId,
+          startedAt: null,
+          completedAt: null,
+        },
+      ],
+      providerThreads: [providerThread],
+      providerSessions: [],
+      providerTurns: [],
+      messages: [
+        {
+          id: messageId,
+          threadId,
+          runId,
+          nodeId: rootNodeId,
+          role: "user",
+          text: "Continue",
+          attachments: [],
+          streaming: false,
+          createdBy: "user",
+          creationSource: "web",
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      checkpointScopes: [
+        {
+          id: checkpointScopeId,
+          threadId,
+          runId,
+          nodeId: rootNodeId,
+          parentScopeId: null,
+          providerThreadId,
+          kind: "root_run",
+          ordinalWithinParent: 0,
+          advancesAppRunCount: true,
+          cwd: "/tmp/provider-start-retry",
+          createdAt: now,
+        },
+      ],
+      contextHandoffs: [],
+      contextTransfers: [],
+      turnItems: [],
+      visibleTurnItems: [],
+      runtimeRequests: [],
+      subagents: [],
+      plans: [],
+      checkpoints: [],
+      updatedAt: now,
+    } as unknown as OrchestrationV2ThreadProjection;
+    const session = {
+      instanceId: providerInstanceId,
+      driver,
+      providerSessionId,
+      providerSession: {
+        id: providerSessionId,
+        driver,
+        providerInstanceId,
+        status: "ready",
+        cwd: "/tmp/provider-start-retry",
+        model: "gpt-5.4",
+        capabilities: {},
+        createdAt: now,
+        updatedAt: now,
+        lastError: null,
+      },
+      resumeThread: () => Effect.succeed(providerThread),
+    } as never;
+    let startAttempt = 0;
+    const startRootRun = vi.fn(() => {
+      startAttempt += 1;
+      return startAttempt === 1
+        ? Effect.fail("simulated provider startup failure" as never)
+        : Effect.void;
+    });
+    const layer = ProviderTurnStart.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
+          Layer.mock(EventSink.EventSinkV2)({
+            writeIfRunCurrent: ({ events, activeAttemptId, expectedStatus }) =>
+              Effect.sync(() => {
+                const current = projection.runs.find((candidate) => candidate.id === runId);
+                const committed =
+                  current?.activeAttemptId === activeAttemptId && current.status === expectedStatus;
+                if (committed) {
+                  for (const event of events) {
+                    projection = ProjectionStore.applyToProjection(projection, event);
+                  }
+                }
+                return { committed, storedEvents: [] };
+              }),
+          }),
+          IdAllocator.layer,
+          FileSystem.layerNoop({}),
+          Layer.mock(GitWorkflow.GitWorkflowService)({}),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getThreadProjection: () => Effect.succeed(projection),
+          }),
+          Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+            open: () => Effect.succeed(session),
+          }),
+          Layer.mock(ProviderAuthService)({ tryHandlePromptCommand: () => Effect.succeed(false) }),
+          Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
+          Layer.mock(RuntimePolicy.RuntimePolicyV2)({ resolve: () => Effect.succeed({} as never) }),
+        ),
+      ),
+    );
+    const start = Effect.gen(function* () {
+      yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2).start({ threadId, runId });
+    }).pipe(Effect.provide(layer));
+
+    yield* start.pipe(Effect.flip);
+    expect(projection.runs[0]?.status).toBe("running");
+    expect(projection.providerTurns).toEqual([]);
+
+    yield* start;
+    expect(startRootRun).toHaveBeenCalledTimes(2);
+  }),
+);
+
 function makeLocalCommandHarness(input: {
   readonly text: string;
   readonly previousNativeSession?: boolean;
