@@ -10,6 +10,7 @@ import * as NodeURL from "node:url";
 
 import { GhosttyTerminalCore } from "./ghostty/core.ts";
 import { loadGhosttyRuntime } from "./ghostty/runtime.ts";
+import { TerminalVtAttachment } from "./vtAttachment.ts";
 
 const assetsDir = NodeURL.fileURLToPath(new URL("./assets/", import.meta.url));
 
@@ -259,4 +260,52 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       core.dispose();
     },
   );
+
+  NodeTest.it("a remount replay does not re-send terminal query replies (P2)", async () => {
+    // The first mount answers a DSR once. On remount the attachment
+    // replays base + retained tail into a fresh parser — the replayed
+    // query must not emit a second reply the process never re-asked for.
+    const attachment = new TerminalVtAttachment("term-1");
+    const first = await makeCore();
+    attachment.attach(first.core);
+    const snap = {
+      kind: "snapshot",
+      terminalId: "term-1",
+      streamEpoch: "epoch-1",
+      status: "running",
+      contents: "",
+      retainedByteLength: 0,
+      truncated: false,
+      boundarySequence: 7,
+    };
+    attachment.applyFrame({ streamId: "s", sequence: 1 }, snap);
+    const dsr = {
+      kind: "output",
+      terminalId: "term-1",
+      streamEpoch: "epoch-1",
+      sequence: 8,
+      chunkIndex: 0,
+      chunkCount: 1,
+      data: "\x1b[6n",
+    };
+    attachment.applyFrame({ streamId: "s", sequence: 2 }, dsr);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    NodeAssert.equal(first.writes.length, 1);
+    NodeAssert.match(first.writes[0], /\[\d+;\d+R/);
+    attachment.detach();
+    first.core.dispose();
+
+    // Remount: replay lands the same DSR bytes in a fresh parser — the
+    // replay bracket suppresses the duplicate answer.
+    const second = await makeCore();
+    attachment.attach(second.core);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    NodeAssert.equal(second.writes.length, 0);
+
+    // A genuinely new query after remount is still answered.
+    attachment.applyFrame({ streamId: "s", sequence: 3 }, { ...dsr, sequence: 9 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    NodeAssert.equal(second.writes.length, 1);
+    second.core.dispose();
+  });
 });

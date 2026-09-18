@@ -339,6 +339,37 @@ export class GhosttyTerminalCore {
     this.write("\x1b[2J\x1b[3J");
   }
 
+  private replayDepth = 0;
+
+  /**
+   * Bracket a replay of output the process already emitted once. Replaying
+   * bytes that contain terminal queries (DA, DSR, DECRQSS) re-answers them
+   * through the PTY trampoline — the process is not re-asking, and a
+   * duplicate reply confuses the shell — so the writer stays detached for
+   * the whole bracket. Brackets nest by depth (attach() wraps a replay that
+   * itself calls resetAndWrite).
+   */
+  beginReplay(): void {
+    this.ensureActive();
+    this.replayDepth += 1;
+    if (this.replayDepth === 1 && this.ptyWriterId !== 0) {
+      this.runtime.detachPtyWriter(this.terminal, this.ptyWriterId);
+      this.ptyWriterId = 0;
+    }
+  }
+
+  endReplay(): void {
+    this.replayDepth = Math.max(0, this.replayDepth - 1);
+    if (
+      this.replayDepth === 0 &&
+      this.ptyWriter !== null &&
+      this.ptyWriterId === 0 &&
+      !this.disposed
+    ) {
+      this.ptyWriterId = this.runtime.attachPtyWriter(this.terminal, this.ptyWriter);
+    }
+  }
+
   resetAndWrite(data: string): void {
     this.ensureActive();
     this.runtime.call("ghostty_terminal_reset", this.terminal);
@@ -347,17 +378,11 @@ export class GhosttyTerminalCore {
     this.applyDefaultCursorBlink();
     this.rows = [];
     if (data.length === 0) return;
-    const writer = this.ptyWriter;
-    if (this.ptyWriterId !== 0) {
-      this.runtime.detachPtyWriter(this.terminal, this.ptyWriterId);
-      this.ptyWriterId = 0;
-    }
+    this.beginReplay();
     try {
       this.write(data);
     } finally {
-      if (writer !== null && !this.disposed) {
-        this.ptyWriterId = this.runtime.attachPtyWriter(this.terminal, writer);
-      }
+      this.endReplay();
     }
   }
 

@@ -5014,23 +5014,40 @@ var __t3Client = (() => {
       this.ensureActive();
       this.write("\x1B[2J\x1B[3J");
     }
+    replayDepth = 0;
+    /**
+     * Bracket a replay of output the process already emitted once. Replaying
+     * bytes that contain terminal queries (DA, DSR, DECRQSS) re-answers them
+     * through the PTY trampoline — the process is not re-asking, and a
+     * duplicate reply confuses the shell — so the writer stays detached for
+     * the whole bracket. Brackets nest by depth (attach() wraps a replay that
+     * itself calls resetAndWrite).
+     */
+    beginReplay() {
+      this.ensureActive();
+      this.replayDepth += 1;
+      if (this.replayDepth === 1 && this.ptyWriterId !== 0) {
+        this.runtime.detachPtyWriter(this.terminal, this.ptyWriterId);
+        this.ptyWriterId = 0;
+      }
+    }
+    endReplay() {
+      this.replayDepth = Math.max(0, this.replayDepth - 1);
+      if (this.replayDepth === 0 && this.ptyWriter !== null && this.ptyWriterId === 0 && !this.disposed) {
+        this.ptyWriterId = this.runtime.attachPtyWriter(this.terminal, this.ptyWriter);
+      }
+    }
     resetAndWrite(data) {
       this.ensureActive();
       this.runtime.call("ghostty_terminal_reset", this.terminal);
       this.applyDefaultCursorBlink();
       this.rows = [];
       if (data.length === 0) return;
-      const writer = this.ptyWriter;
-      if (this.ptyWriterId !== 0) {
-        this.runtime.detachPtyWriter(this.terminal, this.ptyWriterId);
-        this.ptyWriterId = 0;
-      }
+      this.beginReplay();
       try {
         this.write(data);
       } finally {
-        if (writer !== null && !this.disposed) {
-          this.ptyWriterId = this.runtime.attachPtyWriter(this.terminal, writer);
-        }
+        this.endReplay();
       }
     }
     resize(cols, rows, cellWidth, cellHeight) {
@@ -6487,6 +6504,21 @@ var __t3Client = (() => {
       this.forceFullRender = true;
       this.scrollbarDirty = true;
       this.requestRender();
+    }
+    /**
+     * Bracket a whole remount replay (base + retained tail). Terminal queries
+     * inside replayed bytes were already answered by the previous parser, so
+     * the PTY writer stays detached for the bracket — the process is not
+     * re-asking and a duplicate reply confuses the shell.
+     */
+    beginReplay() {
+      if (this.disposed) return;
+      this.core.beginReplay();
+    }
+    endReplay() {
+      if (this.disposed) return;
+      this.core.endReplay();
+      this.synchronizeMouseTrackingState();
     }
     /**
      * Host history clear: the server dropped retained output only — the
@@ -8464,6 +8496,14 @@ var __t3Client = (() => {
      * process incarnation) re-proves mode state.
      */
     #clearedEpoch = null;
+    /**
+     * Renderer start failure message, or null when the surface is healthy.
+     * Sticky across frames: output/snapshot frames keep feeding the bounded
+     * replay buffer for a later remount, but they must not re-flag the pane
+     * "live" while no renderer ever started. Only a successful `attach` (a
+     * renderer that actually mounted) clears it.
+     */
+    #sinkFailure = null;
     #pending = null;
     #state = {
       status: "connecting",
@@ -8499,13 +8539,23 @@ var __t3Client = (() => {
      */
     attach(sink) {
       this.#sink = sink;
-      if (this.#base !== null) sink.resetAndWrite(this.#base);
-      for (const chunk of this.#buffered) sink.write(chunk);
-      if (!this.#replayFaithful && !this.#state.degraded && !this.#state.ended) {
+      const wasSinkFailure = this.#sinkFailure !== null;
+      this.#sinkFailure = null;
+      sink.beginReplay?.();
+      try {
+        if (this.#base !== null) sink.resetAndWrite(this.#base);
+        for (const chunk of this.#buffered) sink.write(chunk);
+      } finally {
+        sink.endReplay?.();
+      }
+      if (this.#state.ended) return;
+      const unfaithful = !this.#replayFaithful;
+      if (wasSinkFailure || unfaithful && !this.#state.degraded) {
         this.#emit({
           ...this.#state,
-          degraded: true,
-          statusText: "Replayed without full history \u2014 modes and screen state before the retained tail are unknown, so interactive parity is not claimed (B4)."
+          status: "live",
+          statusText: unfaithful ? "Replayed without full history \u2014 modes and screen state before the retained tail are unknown, so interactive parity is not claimed (B4)." : "Watching live output.",
+          degraded: unfaithful || this.#state.degraded
         });
       }
     }
@@ -8544,9 +8594,13 @@ var __t3Client = (() => {
     /**
      * The surface failed to mount (asset decode, DOM). The stream keeps
      * running into the bounded pre-sink buffer so a later remount can still
-     * attach; the failure is visible instead of a silently dead pane.
+     * attach; the failure is visible instead of a silently dead pane. The
+     * failure is sticky — later snapshot/output frames must not claim the
+     * pane is live while the renderer never started.
      */
     applySinkFailure(message) {
+      this.#sinkFailure = message;
+      if (this.#state.ended) return;
       this.#emit({
         status: "error",
         statusText: message,
@@ -8558,6 +8612,14 @@ var __t3Client = (() => {
     #emit(state2) {
       this.#state = state2;
       this.#onChange?.();
+    }
+    /**
+     * Status a non-lifecycle frame may claim. While a renderer start failure
+     * is unresolved the pane stays visibly errored — a snapshot arriving
+     * after the failure is not proof the renderer exists.
+     */
+    #runningStatus() {
+      return this.#sinkFailure === null ? { status: "live", statusText: "Watching live output." } : { status: "error", statusText: this.#sinkFailure };
     }
     #fail(message) {
       this.#pending = null;
@@ -8583,7 +8645,7 @@ var __t3Client = (() => {
         this.#emit({
           ...this.#state,
           degraded: true,
-          statusText: "Output outran the renderer before it attached \u2014 early bytes were dropped, so interactive parity is not claimed."
+          statusText: this.#sinkFailure ?? "Output outran the renderer before it attached \u2014 early bytes were dropped, so interactive parity is not claimed."
         });
       }
     }
@@ -8614,9 +8676,10 @@ var __t3Client = (() => {
         const unfaithful = !this.#replayFaithful;
         this.#sink?.resetAndWrite(value.contents);
         const ended = value.status === "exited" || value.status === "error";
+        const running = this.#runningStatus();
         this.#emit({
-          status: ended ? "exited" : "live",
-          statusText: ended ? `Terminal is ${value.status}.` : value.truncated ? "Watching live output \u2014 earlier history was truncated, so terminal state may be incomplete." : unfaithful ? "Watching live output \u2014 history was cleared, so terminal modes may be incomplete." : "Watching live output.",
+          status: ended ? "exited" : running.status,
+          statusText: ended ? `Terminal is ${value.status}.` : this.#sinkFailure !== null ? this.#sinkFailure : value.truncated ? "Watching live output \u2014 earlier history was truncated, so terminal state may be incomplete." : unfaithful ? "Watching live output \u2014 history was cleared, so terminal modes may be incomplete." : "Watching live output.",
           degraded: unfaithful && !ended,
           exitCode: null,
           ended
@@ -8661,9 +8724,10 @@ var __t3Client = (() => {
         if (this.#sink) {
           this.#sink.clearScreen();
         }
+        const running = this.#runningStatus();
         this.#emit({
-          status: "live",
-          statusText: this.#sink !== null ? "Terminal history cleared. Watching live output." : "Terminal history cleared before the renderer attached \u2014 earlier modes are unknown.",
+          status: running.status,
+          statusText: this.#sinkFailure !== null ? this.#sinkFailure : this.#sink !== null ? "Terminal history cleared. Watching live output." : "Terminal history cleared before the renderer attached \u2014 earlier modes are unknown.",
           degraded: this.#sink === null || this.#state.degraded,
           exitCode: null,
           ended: false

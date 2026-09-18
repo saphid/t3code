@@ -53,6 +53,15 @@ attaches, the mode-establishing bytes are gone from the replay base — the
 tab stays degraded until a full snapshot re-proves parser state. Clearing
 history is never treated as proof of recovered mode state.
 
+A **renderer start failure** is sticky: output and snapshot frames keep
+feeding the bounded replay buffer for a later remount, but they never
+re-flag the pane "live" while no renderer exists — only a successful
+`attach` clears the error. And because a remount replays bytes the process
+already emitted once, the replay runs inside a `beginReplay`/`endReplay`
+bracket that detaches the PTY writer: terminal queries (DA/DSR/DECRQSS)
+inside replayed output were answered by the previous parser incarnation
+and must not be answered again.
+
 Sequencing uses two fences: the broker's per-subscription frame sequence and
 the session's native `eventSequence` watermark, which must strictly increase
 across snapshot boundary, output groups, resets, and exits. An output chunk

@@ -394,6 +394,54 @@ NodeTest.describe("TerminalVtAttachment — failure paths", () => {
       ["resetAndWrite", "prompt$ "],
       ["write", "still-live"],
     ]);
+    // A successful mount clears the failure.
+    NodeAssert.equal(vt.state.status, "live");
+  });
+
+  NodeTest.it("a snapshot arriving after a renderer-start failure cannot hide it (P2)", () => {
+    const vt = new TerminalVtAttachment("term-1");
+    vt.beginStream();
+    // The real ordering: WASM/DOM mount fails first, then the stream's
+    // snapshot lands — the pane must stay errored, not silently "live"
+    // with no renderer behind it.
+    vt.applySinkFailure("Terminal renderer failed to start: no canvas");
+    vt.applyFrame(frame(1, snapshot()), snapshot());
+    NodeAssert.equal(vt.state.status, "error");
+    NodeAssert.match(vt.state.statusText, /renderer failed/);
+    // Same for a history-clear frame.
+    const reset = {
+      kind: "reset",
+      terminalId: "term-1",
+      streamEpoch: EPOCH,
+      sequence: 8,
+      reason: "history-cleared",
+    };
+    vt.applyFrame(frame(2, reset), reset);
+    NodeAssert.equal(vt.state.status, "error");
+    // A resubscribe snapshot still cannot mask it.
+    vt.beginStream();
+    vt.applyFrame(frame(1, snapshot()), snapshot());
+    NodeAssert.equal(vt.state.status, "error");
+    // Only a renderer that actually mounts restores live status.
+    vt.attach(sink());
+    NodeAssert.equal(vt.state.status, "live");
+  });
+
+  NodeTest.it("a sink failure does not resurrect an ended stream", () => {
+    const vt = new TerminalVtAttachment("term-1");
+    vt.beginStream();
+    vt.applyFrame(frame(1, snapshot()), snapshot());
+    const exit = {
+      kind: "exit",
+      terminalId: "term-1",
+      streamEpoch: EPOCH,
+      sequence: 8,
+      exitCode: 0,
+    };
+    vt.applyFrame(frame(2, exit), exit);
+    NodeAssert.equal(vt.state.status, "exited");
+    vt.applySinkFailure("Terminal renderer failed to start: no canvas");
+    NodeAssert.equal(vt.state.status, "exited");
   });
 });
 

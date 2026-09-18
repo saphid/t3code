@@ -25,6 +25,15 @@ export interface TerminalVtSink {
    * encoding: pasted newlines would run as interactive commands.
    */
   clearScreen(): void;
+  /**
+   * Optional bracket around a remount replay. Replayed bytes re-execute
+   * their terminal queries (DA, DSR, DECRQSS) inside the fresh parser — a
+   * sink that forwards query replies to the process must suppress them or
+   * every remount re-sends answers the shell is not re-asking for. The
+   * Ghostty sink detaches its PTY writer for the bracket.
+   */
+  beginReplay?(): void;
+  endReplay?(): void;
 }
 
 export type TerminalVtStatus = "connecting" | "live" | "exited" | "closed" | "error";
@@ -91,6 +100,14 @@ export class TerminalVtAttachment {
    * process incarnation) re-proves mode state.
    */
   #clearedEpoch: string | null = null;
+  /**
+   * Renderer start failure message, or null when the surface is healthy.
+   * Sticky across frames: output/snapshot frames keep feeding the bounded
+   * replay buffer for a later remount, but they must not re-flag the pane
+   * "live" while no renderer ever started. Only a successful `attach` (a
+   * renderer that actually mounted) clears it.
+   */
+  #sinkFailure: string | null = null;
   #pending: PendingChunkGroup | null = null;
   #state: TerminalVtAttachmentState = {
     status: "connecting",
@@ -129,14 +146,27 @@ export class TerminalVtAttachment {
    */
   attach(sink: TerminalVtSink) {
     this.#sink = sink;
-    if (this.#base !== null) sink.resetAndWrite(this.#base);
-    for (const chunk of this.#buffered) sink.write(chunk);
-    if (!this.#replayFaithful && !this.#state.degraded && !this.#state.ended) {
+    const wasSinkFailure = this.#sinkFailure !== null;
+    this.#sinkFailure = null;
+    // The replay re-parses output the process already emitted; query
+    // replies inside it must not reach the PTY a second time.
+    sink.beginReplay?.();
+    try {
+      if (this.#base !== null) sink.resetAndWrite(this.#base);
+      for (const chunk of this.#buffered) sink.write(chunk);
+    } finally {
+      sink.endReplay?.();
+    }
+    if (this.#state.ended) return;
+    const unfaithful = !this.#replayFaithful;
+    if (wasSinkFailure || (unfaithful && !this.#state.degraded)) {
       this.#emit({
         ...this.#state,
-        degraded: true,
-        statusText:
-          "Replayed without full history — modes and screen state before the retained tail are unknown, so interactive parity is not claimed (B4).",
+        status: "live",
+        statusText: unfaithful
+          ? "Replayed without full history — modes and screen state before the retained tail are unknown, so interactive parity is not claimed (B4)."
+          : "Watching live output.",
+        degraded: unfaithful || this.#state.degraded,
       });
     }
   }
@@ -181,9 +211,13 @@ export class TerminalVtAttachment {
   /**
    * The surface failed to mount (asset decode, DOM). The stream keeps
    * running into the bounded pre-sink buffer so a later remount can still
-   * attach; the failure is visible instead of a silently dead pane.
+   * attach; the failure is visible instead of a silently dead pane. The
+   * failure is sticky — later snapshot/output frames must not claim the
+   * pane is live while the renderer never started.
    */
   applySinkFailure(message: string) {
+    this.#sinkFailure = message;
+    if (this.#state.ended) return;
     this.#emit({
       status: "error",
       statusText: message,
@@ -196,6 +230,17 @@ export class TerminalVtAttachment {
   #emit(state: TerminalVtAttachmentState) {
     this.#state = state;
     this.#onChange?.();
+  }
+
+  /**
+   * Status a non-lifecycle frame may claim. While a renderer start failure
+   * is unresolved the pane stays visibly errored — a snapshot arriving
+   * after the failure is not proof the renderer exists.
+   */
+  #runningStatus(): { status: "live" | "error"; statusText: string } {
+    return this.#sinkFailure === null
+      ? { status: "live", statusText: "Watching live output." }
+      : { status: "error", statusText: this.#sinkFailure };
   }
 
   #fail(message: string) {
@@ -228,6 +273,7 @@ export class TerminalVtAttachment {
         ...this.#state,
         degraded: true,
         statusText:
+          this.#sinkFailure ??
           "Output outran the renderer before it attached — early bytes were dropped, so interactive parity is not claimed.",
       });
     }
@@ -267,15 +313,18 @@ export class TerminalVtAttachment {
       const unfaithful = !this.#replayFaithful;
       this.#sink?.resetAndWrite(value.contents);
       const ended = value.status === "exited" || value.status === "error";
+      const running = this.#runningStatus();
       this.#emit({
-        status: ended ? "exited" : "live",
+        status: ended ? "exited" : running.status,
         statusText: ended
           ? `Terminal is ${value.status}.`
-          : value.truncated
-            ? "Watching live output — earlier history was truncated, so terminal state may be incomplete."
-            : unfaithful
-              ? "Watching live output — history was cleared, so terminal modes may be incomplete."
-              : "Watching live output.",
+          : this.#sinkFailure !== null
+            ? this.#sinkFailure
+            : value.truncated
+              ? "Watching live output — earlier history was truncated, so terminal state may be incomplete."
+              : unfaithful
+                ? "Watching live output — history was cleared, so terminal modes may be incomplete."
+                : "Watching live output.",
         degraded: unfaithful && !ended,
         exitCode: null,
         ended,
@@ -330,12 +379,15 @@ export class TerminalVtAttachment {
       if (this.#sink) {
         this.#sink.clearScreen();
       }
+      const running = this.#runningStatus();
       this.#emit({
-        status: "live",
+        status: running.status,
         statusText:
-          this.#sink !== null
-            ? "Terminal history cleared. Watching live output."
-            : "Terminal history cleared before the renderer attached — earlier modes are unknown.",
+          this.#sinkFailure !== null
+            ? this.#sinkFailure
+            : this.#sink !== null
+              ? "Terminal history cleared. Watching live output."
+              : "Terminal history cleared before the renderer attached — earlier modes are unknown.",
         degraded: this.#sink === null || this.#state.degraded,
         exitCode: null,
         ended: false,

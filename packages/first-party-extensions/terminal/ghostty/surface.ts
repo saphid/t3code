@@ -783,6 +783,23 @@ export class GhosttyTerminalSurface {
   }
 
   /**
+   * Bracket a whole remount replay (base + retained tail). Terminal queries
+   * inside replayed bytes were already answered by the previous parser, so
+   * the PTY writer stays detached for the bracket — the process is not
+   * re-asking and a duplicate reply confuses the shell.
+   */
+  beginReplay(): void {
+    if (this.disposed) return;
+    this.core.beginReplay();
+  }
+
+  endReplay(): void {
+    if (this.disposed) return;
+    this.core.endReplay();
+    this.synchronizeMouseTrackingState();
+  }
+
+  /**
    * Host history clear: the server dropped retained output only — the
    * process and its negotiated modes keep running. ED2+ED3 erase the
    * viewport and scrollback without the RIS that resetAndWrite performs, so
