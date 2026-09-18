@@ -16,8 +16,8 @@ that list still need a deliberate OV2 port.
 Requirements: macOS Apple Silicon, Git, authenticated `gh`, Node 26, Vite+ `vp`,
 and Rust if no matching resource-monitor cache is supplied. Allow about 8 GB for
 build files, plus space for the installation's database backup. The installer uses
-Python 3.11 or newer. Current local pins live in this machine's repository; they
-must be pushed before another machine or GitHub can resolve them.
+Python 3.11 or newer. New local pins must be pushed before another machine or
+GitHub can resolve them. The current selected pins are available on GitHub.
 
 ## Build or check
 
@@ -56,8 +56,28 @@ test. It does not run the whole repository suite or automatically drive the UI.
 
 ## Install on Alex's current Mac
 
-The generated `install.command` is the recovery/manual route for the existing V2 setup on this Mac. Normal use is the graphical handoff prepared under `~/.t3-v2-desktop/setup/ov2-fork-handoff-20260918`, followed by in-app updates.
-Its default preview is read-only:
+Once the hosted release is verified and the graphical handoff is activated:
+
+1. Finish or stop active turns, then quit T3 with Command-Q.
+2. Open **Applications > T3 Code (V2 Preview)**. Use this shortcut for the first
+   launch, since an old Alpha Dock icon bypasses the migration.
+3. Wait for the update notification and the Fork app to open. The launcher backs
+   up your data, installs the matching desktop and server, and keeps your saved
+   connections. No Terminal commands are needed.
+4. In Settings, confirm the source is `saphid/t3code` and the fork release is
+   **Fork Nightly Orchestrator v2**. Future releases appear in the app's update
+   controls. Use **Update server** when the connected server has an update.
+5. For voice, open Settings > Integrations, save your OpenAI API key, and allow
+   microphone access when asked. A real microphone session still needs this check.
+
+The setup is retained under
+`~/.t3-v2-desktop/setup/ov2-fork-handoff-20260918`. If T3 is still open or turns
+are active, the launcher offers to reopen the current app so you can finish them.
+
+### Manual recovery route
+
+The generated `install.command` is retained for recovery and local development.
+The installer's default preview is read-only:
 
 ```sh
 python3 /path/to/build/install.py /path/to/build
@@ -117,11 +137,12 @@ work created since the backup. Retain the newer database separately first.
 
 ## Hosted updates
 
-A local build does not publish anything. The hourly workflow still needs the
-selected patch commits available on GitHub and this manifest merged into
-`saphid/t3code` main. Run `downstream-nightly-v2.yml` and wait for its full CI and
-published assets. Until that happens, rebuild locally with this tool. Updating
-the upstream project itself is separate, with one focused PR per suitable fix.
+A local build does not publish anything. Hosted automation is configured on
+`saphid/t3code` main. Add new selected patches as immutable pins in the OV2
+manifest, publish their source commits, and merge the manifest change to main.
+The workflow builds and publishes after its full checks pass. A replay conflict
+or failed check blocks publication and needs a patch repair. Contributing fixes
+to the upstream project is separate, with one focused PR per suitable fix.
 
 ## Automatic builds and in-app updates
 
