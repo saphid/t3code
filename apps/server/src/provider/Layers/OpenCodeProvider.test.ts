@@ -360,9 +360,47 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
     }),
   );
 
-  it.effect("times out a hanging local CLI version probe", () =>
+  it.effect("uses the verified server when the local CLI version probe times out", () =>
     Effect.gen(function* () {
       runtimeMock.state.runVersionPending = true;
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["enablers"],
+          all: [
+            {
+              id: "enablers",
+              name: "AI Enablers",
+              models: {
+                xlarge: { id: "xlarge", name: "GLM", variants: {} },
+              },
+            },
+          ],
+          default: {},
+        },
+        agents: [],
+        skills: [],
+      };
+      const probeFiber = yield* checkProvider(makeOpenCodeSettings()).pipe(Effect.forkChild);
+
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("4 seconds");
+      const snapshot = yield* Fiber.join(probeFiber);
+
+      NodeAssert.equal(snapshot.status, "ready");
+      NodeAssert.equal(snapshot.installed, true);
+      NodeAssert.equal(snapshot.version, "1.14.19");
+      NodeAssert.equal(snapshot.auth.status, "authenticated");
+      NodeAssert.deepEqual(
+        snapshot.models.map((model) => model.slug),
+        ["enablers/xlarge"],
+      );
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("reports the server failure when a timed-out CLI probe cannot recover", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.runVersionPending = true;
+      runtimeMock.state.inventoryError = new Error("gateway unavailable");
       const probeFiber = yield* checkProvider(makeOpenCodeSettings()).pipe(Effect.forkChild);
 
       yield* Effect.yieldNow;
@@ -370,10 +408,10 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       const snapshot = yield* Fiber.join(probeFiber);
 
       NodeAssert.equal(snapshot.status, "error");
-      NodeAssert.equal(snapshot.installed, true);
+      NodeAssert.equal(snapshot.auth.status, "unknown");
       NodeAssert.equal(
         snapshot.message,
-        "Failed to execute OpenCode CLI health check: OpenCode CLI version probe timed out after 4 seconds.",
+        "Failed to load OpenCode provider inventory: gateway unavailable",
       );
     }).pipe(Effect.provide(TestClock.layer())),
   );
