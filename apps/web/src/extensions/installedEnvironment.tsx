@@ -12,6 +12,7 @@ import {
   ExtensionApiInvokeInput,
   ExtensionApiSubscribeInput,
   ExtensionApiDiscoverInput,
+  extensionWorkspaceRevision,
   type EnvironmentId,
   type ExtensionInstallInput,
   type ExtensionManageInput,
@@ -27,6 +28,8 @@ import type { HttpClient } from "effect/unstable/http";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { readPreparedConnection, usePreparedConnection } from "../state/session";
+import { readProject } from "../state/entities";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { useEnvironments } from "../state/environments";
 import { registerWorkspaceExtension } from "./workspaceRegistry";
 import {
@@ -37,6 +40,23 @@ import {
 
 import { registerInstalledApiClient, setInstalledApiPolicy } from "./installedApiClients";
 import { createBrowserSurfaceBridge } from "./browserSurfaceBridge";
+import {
+  CLIENT_PROVIDER_CLIENT_TAG,
+  CLIENT_PROVIDER_DESCRIPTORS,
+  createClientProviders,
+} from "./clientProviders";
+import {
+  currentClientConnectionId,
+  emitClientProviderEvent,
+  startClientProviderConnection,
+} from "./clientProviderConnection";
+import {
+  attachRegistrationHandler,
+  bindCommands,
+  configureExtensionCommandEnvironment,
+  stagedGlobalCommandsFor,
+  unconfigureExtensionCommandEnvironment,
+} from "./extensionCommandRegistry";
 
 const decodeInvoke = Schema.decodeSync(ExtensionInvokeInput);
 const decodeApiInvoke = Schema.decodeSync(ExtensionApiInvokeInput);
@@ -79,7 +99,7 @@ function run<A, E>(
 /** A pull-driven iterator retains only the RPC's bounded delivery window. */
 async function* authenticatedApiFrames(
   environmentId: EnvironmentId,
-  payload: typeof ExtensionApiSubscribeInput.Type,
+  payload: ExtensionApiSubscribeInput,
   signal: AbortSignal,
 ) {
   const context = await Effect.runPromise(
@@ -173,6 +193,87 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
       return;
     }
     const connection = prepared.value;
+    const providers = createClientProviders({
+      environmentId,
+      client: CLIENT_PROVIDER_CLIENT_TAG,
+      emit: (correlationId, event) => emitClientProviderEvent(environmentId, correlationId, event),
+      installations: () => snapshots.get(environmentId)?.installations,
+    });
+    const flushStagedCommands = async (signal: AbortSignal) => {
+      const snapshot = snapshots.get(environmentId);
+      if (!snapshot) return;
+      for (const installation of snapshot.installations) {
+        if (signal.aborted) return;
+        for (const entry of stagedGlobalCommandsFor(environmentId, installation.id)) {
+          if (entry.status === "rejected" || signal.aborted) continue;
+          try {
+            const clientConnectionId = currentClientConnectionId(environmentId);
+            if (!clientConnectionId) throw new Error("Client provider connection is not live");
+            // The server scope resolver requires a granted project scope with a
+            // matching workspace revision — derive it from the first granted
+            // project exactly like the native surface-open path does.
+            const projectId = installation.grants.projectIds[0];
+            const project = projectId
+              ? readProject(scopeProjectRef(environmentId, projectId))
+              : undefined;
+            if (!projectId || !project)
+              throw new Error("No granted project scope for command registration");
+            const payload = decodeApiInvoke({
+              installationId: installation.id,
+              expectedContentHash: installation.contentHash,
+              request: {
+                id: "t3.ui/keybindings",
+                versionRange: "1.0.0",
+                method: "registerCommands",
+                input: { commands: entry.commands },
+                context: {
+                  client: CLIENT_PROVIDER_CLIENT_TAG,
+                  resource: {
+                    namespace: "t3.extensions",
+                    id: installation.id,
+                    environmentId,
+                    projectId,
+                  },
+                  workspaceRevision: extensionWorkspaceRevision(project.workspaceRoot, null),
+                },
+                clientConnectionId,
+              },
+            });
+            const result = await run(
+              environmentExtensionsHttp.invokeApi(connection, payload),
+              signal,
+            );
+            const output = result.result as {
+              commandSetToken?: string;
+              results?: readonly { commandId: string; status: string; reason?: string }[];
+            };
+            entry.status = "active";
+            entry.token = output.commandSetToken;
+            if (entry.handler && output.commandSetToken) {
+              attachRegistrationHandler(environmentId, output.commandSetToken, entry.handler);
+            }
+            entry.rejections = (output.results ?? [])
+              .filter((item) => item.status === "rejected")
+              .map((item) => ({ commandId: item.commandId, reason: item.reason ?? "rejected" }));
+          } catch (error) {
+            entry.status = "rejected";
+            entry.rejections = [
+              {
+                commandId: "*",
+                reason: error instanceof Error ? error.message : "Registration failed",
+              },
+            ];
+          }
+          for (const listener of entry.listeners) listener();
+        }
+      }
+    };
+    const providerConnection = startClientProviderConnection({
+      environmentId,
+      providers,
+      descriptors: CLIENT_PROVIDER_DESCRIPTORS,
+      flushGlobalCommands: flushStagedCommands,
+    });
     const controller = createInstalledExtensionController({
       environmentId,
       React,
@@ -225,19 +326,29 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
         return (await run(environmentExtensionsHttp.invoke(connection, payload), signal)).result;
       },
       invokeApi: async (installationId, expectedContentHash, request, signal) => {
+        // The session-validated `self` hint: stamps the socket-bound id the
+        // seam minted so client-provider-backed contracts reach this client.
+        const clientConnectionId = currentClientConnectionId(environmentId);
         const payload = decodeApiInvoke({
           installationId,
           expectedContentHash,
-          request,
+          request: clientConnectionId === undefined ? request : { ...request, clientConnectionId },
         });
         return (await run(environmentExtensionsHttp.invokeApi(connection, payload), signal)).result;
       },
-      subscribeApi: (installationId, expectedContentHash, request, signal) =>
-        authenticatedApiFrames(
+      subscribeApi: (installationId, expectedContentHash, request, signal) => {
+        const clientConnectionId = currentClientConnectionId(environmentId);
+        return authenticatedApiFrames(
           environmentId,
-          decodeApiSubscribe({ installationId, expectedContentHash, request }),
+          decodeApiSubscribe({
+            installationId,
+            expectedContentHash,
+            request:
+              clientConnectionId === undefined ? request : { ...request, clientConnectionId },
+          }),
           signal,
-        ),
+        );
+      },
       discoverApis: async (installationId, expectedContentHash, context, signal) => {
         const payload = decodeApiDiscover({
           installationId,
@@ -256,20 +367,42 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
       load: importInstalledClient,
       browserSurface: createBrowserSurfaceBridge(environmentId),
       register: (extension, client) => {
-        const unregister = registerWorkspaceExtension(extension, undefined, { environmentId });
+        const unregister = registerWorkspaceExtension(
+          extension,
+          {
+            authorize: () => false,
+            bindCommands: (call) => bindCommands({ environmentId, ...call }),
+          },
+          { environmentId },
+        );
         const stopClient = registerInstalledApiClient(environmentId, extension.manifest.id, client);
         return () => {
           stopClient();
           unregister();
         };
       },
-      changed: (snapshot) => changed(environmentId, snapshot),
+      changed: (snapshot) => {
+        changed(environmentId, snapshot);
+        providerConnection.notifyInstallationsChanged();
+      },
+    });
+    configureExtensionCommandEnvironment(environmentId, {
+      installationGeneration: (id) => controller.installationEpoch(id),
+      installationSurfaces: (id) =>
+        snapshots.get(environmentId)?.installations.find((item) => item.id === id)?.package.manifest
+          .surfaces ?? null,
+      installationGrants: (id) =>
+        snapshots.get(environmentId)?.installations.find((item) => item.id === id)?.grants
+          .projectIds ?? null,
+      client: CLIENT_PROVIDER_CLIENT_TAG,
     });
     const refreshQueue = createCatalogueRefreshQueue(() => controller.refresh());
     controllers.set(environmentId, controller);
     refreshQueues.set(environmentId, refreshQueue);
     void refreshQueue.request();
     return () => {
+      providerConnection.stop();
+      unconfigureExtensionCommandEnvironment(environmentId);
       refreshQueue.dispose();
       controller.dispose();
       if (controllers.get(environmentId) === controller) {

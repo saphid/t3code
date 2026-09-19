@@ -3,6 +3,9 @@ import { Atom } from "effect/unstable/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createEnvironmentRpcSubscriptionAtomFamily } from "./runtime.ts";
 import type {
+  ClientProvidersConnectInput,
+  ClientProvidersEmitInput,
+  ClientProvidersRespondInput,
   ExtensionClientInput,
   ExtensionAssetInput,
   ExtensionApiSubscribeInput,
@@ -16,7 +19,7 @@ import type {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import { runStream } from "../rpc/client.ts";
+import { request as rpcRequest, runStream } from "../rpc/client.ts";
 import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
@@ -114,6 +117,66 @@ export function environmentExtensionApiStream(
         environmentId,
         runStream(WS_METHODS.subscribeExtensionApi, payload, { streamBufferSize: 1 }),
       );
+    }),
+  );
+}
+
+/**
+ * The `t3.client/*` connect stream — one per connection lifetime. The server
+ * mints the socket-bound `connectionId` in the first `registered` frame;
+ * subsequent frames carry `invoke`/`cancel`/`subscriptionOpen`/`subscriptionClose`.
+ */
+export function environmentClientProvidersStream(
+  environmentId: EnvironmentId,
+  payload: ClientProvidersConnectInput,
+) {
+  return Stream.unwrap(
+    Effect.gen(function* () {
+      const registry = yield* EnvironmentRegistry;
+      return registry.runStream(
+        environmentId,
+        runStream(WS_METHODS.extensionsClientProvidersConnect, payload, {
+          streamBufferSize: 8,
+        }),
+      );
+    }),
+  );
+}
+
+/** Unary client-provider response for a server `invoke` frame, same session. */
+export function environmentClientProviderRespond(
+  environmentId: EnvironmentId,
+  payload: ClientProvidersRespondInput,
+) {
+  return Effect.gen(function* () {
+    const registry = yield* EnvironmentRegistry;
+    return yield* registry.run(
+      environmentId,
+      rpcRequest(WS_METHODS.extensionsClientProvidersRespond, payload),
+    );
+  });
+}
+
+/** Client→server event on a server-known correlation (subscription or notification id). */
+export function environmentClientProviderEmit(
+  environmentId: EnvironmentId,
+  payload: ClientProvidersEmitInput,
+) {
+  return Effect.gen(function* () {
+    const registry = yield* EnvironmentRegistry;
+    return yield* registry.run(
+      environmentId,
+      rpcRequest(WS_METHODS.extensionsClientProvidersEmit, payload),
+    );
+  });
+}
+
+/** Emits once per connection-state change; callers filter for the phase they need. */
+export function environmentConnectionStateChanges(environmentId: EnvironmentId) {
+  return Stream.unwrap(
+    Effect.gen(function* () {
+      const registry = yield* EnvironmentRegistry;
+      return registry.stateChanges(environmentId);
     }),
   );
 }

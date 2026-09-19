@@ -17,6 +17,7 @@ import {
   type ApiStreamFrame,
   type ApiStreamEvent,
   type ApiSelection,
+  type ApiUnavailableReason,
 } from "@t3tools/extension-sdk/capabilities";
 import { resolveCapabilities } from "./resolution.js";
 import type { Installation } from "./index.js";
@@ -35,6 +36,12 @@ export interface HostApiInvocationMetadata {
   }[];
   readonly principal?: HostApiPrincipal;
   readonly assertAuthority?: () => Promise<void>;
+  /**
+   * The session-validated `clientConnectionId` self-hint from the invocation
+   * envelope. Providers must verify it against the principal's session before
+   * treating it as a routing target.
+   */
+  readonly clientConnectionId?: string;
 }
 
 export type HostApiPrincipal = Readonly<{
@@ -55,6 +62,16 @@ export interface HostApiProvider {
   readonly providerId: string;
   readonly definition: ApiDefinition;
   readonly requiresRootAuthority?: boolean;
+  /**
+   * Dynamic availability for ambient (non-plugin) providers whose backing is
+   * external — e.g. a `t3.ui/*` adapter backed by a client-provider
+   * connection. Discovery reports the hook's status/reason; `undefined` means
+   * statically ready.
+   */
+  readonly availability?: () => Promise<{
+    readonly status: "ready" | "unavailable";
+    readonly reason?: ApiUnavailableReason;
+  }>;
   subscribe?(
     name: string,
     input: Json,
@@ -172,6 +189,7 @@ export function createApiBroker(options: {
         pluginId: record.id,
         definition,
         requiresRootAuthority: undefined,
+        availability: undefined,
         invoke: undefined,
         subscribe: undefined,
       })),
@@ -313,6 +331,13 @@ export function createApiBroker(options: {
         request.requestId.length > 160)
     )
       throw new Error("Invalid API request identity");
+    if (
+      request.clientConnectionId !== undefined &&
+      (typeof request.clientConnectionId !== "string" ||
+        !request.clientConnectionId ||
+        request.clientConnectionId.length > 160)
+    )
+      throw new Error("Invalid API client connection hint");
     const context = validateContext(request.context);
     if (!validRange(request.versionRange) || request.versionRange.length > 200)
       throw new Error("Invalid API version range");
@@ -456,6 +481,9 @@ export function createApiBroker(options: {
                     callerGenerations,
                     ...(authority.root ? { principal: authority.root.principal } : {}),
                     assertAuthority,
+                    ...(request.clientConnectionId
+                      ? { clientConnectionId: request.clientConnectionId }
+                      : {}),
                   }),
                 ),
           );
@@ -759,6 +787,9 @@ export function createApiBroker(options: {
                       callerGenerations: Object.freeze(authority.callers.map(captureCaller)),
                       ...(authority.root ? { principal: authority.root.principal } : {}),
                       assertAuthority,
+                      ...(request.clientConnectionId
+                        ? { clientConnectionId: request.clientConnectionId }
+                        : {}),
                     }),
                     request.cursor,
                   );
@@ -882,26 +913,31 @@ export function createApiBroker(options: {
       await scope(record, validateContext(context));
       if (signal.aborted) throw new Error("Discovery cancelled or stale");
       const resolved = resolution();
-      return providers().map((provider) => {
-        const state = resolved.apis.find((api) => api.id === provider.definition.id);
-        const available =
-          !provider.pluginId ||
-          resolved.plugins.find((item) => item.id === provider.pluginId)?.status === "available";
-        return {
-          id: provider.definition.id,
-          version: provider.definition.version,
-          providerId: provider.providerId,
-          ...(provider.pluginId ? { pluginId: provider.pluginId } : {}),
-          generation: providerGeneration(provider),
-          health: available
-            ? provider.pluginId
-              ? (options.health?.(provider.pluginId) ?? ("starting" as const))
-              : ("ready" as const)
-            : ("unavailable" as const),
-          selected: state?.providerId === provider.providerId,
-          ...(state?.reason ? { reason: state.reason } : {}),
-        };
-      });
+      return Promise.all(
+        providers().map(async (provider) => {
+          const state = resolved.apis.find((api) => api.id === provider.definition.id);
+          const pluginAvailable =
+            !provider.pluginId ||
+            resolved.plugins.find((item) => item.id === provider.pluginId)?.status === "available";
+          const ambient =
+            pluginAvailable && !provider.pluginId ? await provider.availability?.() : undefined;
+          const reason = state?.reason ?? ambient?.reason;
+          return {
+            id: provider.definition.id,
+            version: provider.definition.version,
+            providerId: provider.providerId,
+            ...(provider.pluginId ? { pluginId: provider.pluginId } : {}),
+            generation: providerGeneration(provider),
+            health: !pluginAvailable
+              ? ("unavailable" as const)
+              : provider.pluginId
+                ? (options.health?.(provider.pluginId) ?? ("starting" as const))
+                : (ambient?.status ?? ("ready" as const)),
+            selected: state?.providerId === provider.providerId,
+            ...(reason ? { reason } : {}),
+          };
+        }),
+      );
     },
   };
 }

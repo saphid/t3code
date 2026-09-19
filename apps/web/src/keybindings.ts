@@ -118,7 +118,7 @@ function matchesShortcutModifiers(
   );
 }
 
-function matchesShortcut(
+export function matchesShortcut(
   event: ShortcutEventLike,
   shortcut: KeybindingShortcut,
   platform = navigator.platform,
@@ -156,7 +156,7 @@ function evaluateWhenNode(node: KeybindingWhenNode, context: ShortcutMatchContex
   }
 }
 
-function matchesWhenClause(
+export function matchesWhenClause(
   whenAst: KeybindingWhenNode | undefined,
   context: ShortcutMatchContext,
 ): boolean {

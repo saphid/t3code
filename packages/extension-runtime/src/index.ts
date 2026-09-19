@@ -139,6 +139,7 @@ interface StreamPending {
   readonly controller: AbortController;
   readonly context: ViewContext;
   readonly authority: ApiAuthority;
+  readonly clientConnectionId?: string;
   readonly ready: Promise<void>;
   readyResolve(): void;
   readyReject(error: Error): void;
@@ -150,6 +151,7 @@ interface StreamPending {
 interface Pending {
   readonly authority?: ApiAuthority;
   readonly context: ViewContext;
+  readonly clientConnectionId?: string;
   readonly tool: ToolDescriptor;
   readonly controller: AbortController;
   resolve(value: Json): void;
@@ -657,9 +659,19 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
       worker.services++;
       try {
         const request = copyJson(message.request) as unknown as Omit<ApiInvocation, "context">;
+        const parentHint = pending?.clientConnectionId ?? streamParent?.clientConnectionId;
         const value = await broker.invoke(
           worker.installation,
-          { ...request, context: parentContext },
+          {
+            ...request,
+            context: parentContext,
+            // A nested call inherits the parent's client-connection hint unless
+            // the plugin explicitly names one — the hint is session-validated
+            // downstream, so inheritance cannot widen reach.
+            ...(request.clientConnectionId === undefined && parentHint !== undefined
+              ? { clientConnectionId: parentHint }
+              : {}),
+          },
           pending?.controller.signal ?? streamParent!.controller.signal,
           parentAuthority,
         );
@@ -921,6 +933,9 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
         owned.calls.set(callId, {
           authority: api?.authority ?? { callers: [record], calls: [], allowWrite: false },
           context,
+          ...(api?.request.clientConnectionId !== undefined
+            ? { clientConnectionId: api.request.clientConnectionId }
+            : {}),
           tool,
           controller: new AbortController(),
           resolve,
@@ -984,6 +999,9 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
       controller,
       context: request.context,
       authority,
+      ...(request.clientConnectionId !== undefined
+        ? { clientConnectionId: request.clientConnectionId }
+        : {}),
       ready,
       readyResolve,
       readyReject,

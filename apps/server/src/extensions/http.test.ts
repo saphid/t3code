@@ -17,6 +17,21 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { makeOperations } from "./http.ts";
 import { EnvironmentExtensions } from "./EnvironmentExtensions.ts";
+import type { ClientApiProviders } from "./ClientApiProviders.ts";
+
+const unusedClientApiProviders = {
+  connect: () => Effect.die("unused"),
+  respond: () => Effect.die("unused"),
+  emit: () => Effect.die("unused"),
+  invoke: () => Effect.die("unused"),
+  openSubscription: () => Effect.die("unused"),
+  registerCorrelation: () => Effect.die("unused"),
+  unregisterCorrelation: () => Effect.die("unused"),
+  listTargets: () => Effect.die("unused"),
+  resolveTarget: () => Effect.die("unused"),
+  hasProvider: () => Effect.die("unused"),
+  connectionForSession: () => Effect.die("unused"),
+} satisfies ClientApiProviders["Service"];
 
 const decodeInvocation = Schema.decodeUnknownEffect(ExtensionInvokeInput);
 const encodePayload = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -85,6 +100,7 @@ function fixture(
       }),
     contextForThread: () => Effect.die("unused"),
     tools: () => Effect.die("unused"),
+    clientApiProviders: unusedClientApiProviders,
   });
   const operations = makeOperations(service, (session, scope, writeScope) =>
     Effect.succeed({

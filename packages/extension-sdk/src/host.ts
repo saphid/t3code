@@ -18,6 +18,12 @@ import type {
   ViewRecord,
 } from "./contracts.js";
 
+/** A plugin command handler bound to a `t3.ui/keybindings` registration. */
+export type ViewCommandHandler = (call: {
+  readonly commandId: string;
+  readonly context: ViewContext;
+}) => void;
+
 export interface ViewSession {
   readonly context: ViewContext;
   readonly signal: AbortSignal;
@@ -29,6 +35,14 @@ export interface ViewSession {
   publish(sequence: number, state: Json): boolean;
   save(state: Json): boolean;
   invoke(capability: string, input: Json): Promise<Json>;
+  /**
+   * Binds this view-session's handler to a `t3.ui/keybindings` registration
+   * and returns the binding store's `bindingId`. The token must name a live
+   * registration whose context deep-equals this session's context; stale
+   * generations fail `binding-stale`, foreign/dead tokens `binding-unknown`.
+   * Idempotent per (view-session, token). The binding dies with the view.
+   */
+  bindCommands(commandSetToken: string, handler: ViewCommandHandler): string;
   onDispose(cleanup: () => void): void;
 }
 export interface ViewController<Renderer> {
@@ -65,6 +79,19 @@ export interface HostOptions {
   readonly timeoutMs?: number;
   readonly maxViews?: number;
   readonly maxPendingCalls?: number;
+  /**
+   * Backs `ViewSession.bindCommands`. The host owns the binding store and
+   * mints the returned `bindingId`; it validates token liveness, caller
+   * generation, and context equality. Absent on hosts without a seam.
+   */
+  readonly bindCommands?: (call: {
+    readonly extensionId: string;
+    readonly hostKey: string;
+    readonly viewId: string;
+    readonly context: ViewContext;
+    readonly commandSetToken: string;
+    readonly handler: ViewCommandHandler;
+  }) => { readonly bindingId: string; readonly unbind: () => void };
 }
 export interface ViewSnapshot {
   readonly id: string;
@@ -93,6 +120,7 @@ interface Entry<R> {
   sequence: number;
   pending: number;
 }
+let nextHostSerial = 0;
 const failure = (error: unknown) =>
   error instanceof Error ? error.message.slice(0, 500) : "Extension failed";
 const statePreview = (state: Json) => {
@@ -102,6 +130,7 @@ const statePreview = (state: Json) => {
 
 /** Trusted, in-process view host. No domain resource creation/destruction or layout ownership. */
 export function createExtensionHost<Renderer>(options: HostOptions) {
+  const hostKey = `host-${++nextHostSerial}`;
   const registrations = new Map<string, Registration<Renderer>>();
   const entries = new Map<string, Entry<Renderer>>();
   const listeners = new Set<(view: ViewSnapshot | null, id: string) => void>();
@@ -360,6 +389,20 @@ export function createExtensionHost<Renderer>(options: HostOptions) {
           entry.pending--;
         }
       },
+      bindCommands(commandSetToken, handler) {
+        if (!live() || entry.snapshot.status === "hidden") throw new Error("View is inactive");
+        if (!options.bindCommands) throw new Error("Command binding is unavailable");
+        const bound = options.bindCommands({
+          extensionId: registration.manifest.id,
+          hostKey,
+          viewId: entry.snapshot.id,
+          context: copyJson(context),
+          commandSetToken,
+          handler,
+        });
+        entry.cleanup.add(bound.unbind);
+        return bound.bindingId;
+      },
       onDispose(cleanup) {
         if (live()) entry.cleanup.add(cleanup);
         else {
@@ -467,6 +510,7 @@ export function createExtensionHost<Renderer>(options: HostOptions) {
     setStatus(entry, "error", failure(error));
   }
   return {
+    hostKey,
     register(extension: Extension<Renderer>) {
       if (disposed) throw new Error("Host disposed");
       const manifest = validateManifest(extension.manifest);
