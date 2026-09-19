@@ -681,9 +681,12 @@ function FileBreadcrumbBar(props: {
     // `selected` is the intentional trigger — the body reads DOM state only.
     // oxlint-disable-next-line react/exhaustive-effect-dependencies
   }, [selected]);
-  // Any reflow that resizes the bar — window resize, panel resize, sidebar
-  // reflow — invalidates the click-time anchor, so an open menu dismisses.
-  // ResizeObserver fires once on observation start; skip that initial call.
+  // An open menu anchors to click-time viewport coordinates, so anything
+  // that moves the bar invalidates it. ResizeObserver catches resizes of
+  // the bar itself (panel splitters); window "resize" catches resizes that
+  // only translate it — a vertical window drag moves the bar while its own
+  // size stays constant, which RO cannot see. ResizeObserver fires once on
+  // observation start; skip that initial call.
   const menuOpen = openCrumb !== null;
   useEffect(() => {
     const wrap = wrapRef.current;
@@ -697,7 +700,12 @@ function FileBreadcrumbBar(props: {
       setOpenMenu(null);
     });
     observer.observe(wrap);
-    return () => observer.disconnect();
+    const dismiss = () => setOpenMenu(null);
+    window.addEventListener("resize", dismiss);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", dismiss);
+    };
   }, [menuOpen]);
   const muted = "var(--muted-foreground, #667085)";
   return (
