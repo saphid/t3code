@@ -338,6 +338,62 @@ describe("buildThreadFeed", () => {
     expect(presented.some((entry) => entry.type === "run-fold")).toBe(false);
   });
 
+  it("presents usage-limit failures as neutral out-of-tokens rows", () => {
+    const item = {
+      ...base("item-usage-limit", "2026-06-20T00:00:02.000Z", 1),
+      type: "error" as const,
+      status: "failed" as const,
+      // An old server persisted "Provider error" titles; the class must drive the label.
+      title: "Provider error",
+      failure: {
+        class: "usage_limit" as const,
+        message: "You've hit your usage limit. Try again at 8:22 PM.",
+        code: "usageLimitExceeded",
+        retryable: null,
+      },
+    };
+    const genericItem = {
+      ...item,
+      id: TurnItemId.make("item-provider-error"),
+      title: "Provider error",
+      failure: { ...item.failure, class: "provider_error" as const },
+    };
+
+    const usageActivity = buildThreadFeed([projected(item, 0)]).find(
+      (entry) => entry.type === "activity-group",
+    )?.activities[0];
+    expect(usageActivity).toMatchObject({
+      summary: "Out of tokens",
+      detail: "You've hit your usage limit. Try again at 8:22 PM.",
+      status: "neutral",
+    });
+
+    const errorActivity = buildThreadFeed([projected(genericItem, 0)]).find(
+      (entry) => entry.type === "activity-group",
+    )?.activities[0];
+    expect(errorActivity).toMatchObject({
+      summary: "Provider error",
+      status: "failure",
+    });
+
+    // A usage-limit retry that recovered keeps its recovered presentation,
+    // like the web: not a permanent "Out of tokens" label.
+    const recoveredRetry = {
+      ...item,
+      id: TurnItemId.make("item-usage-limit-recovered"),
+      status: "completed" as const,
+      title: "Provider recovered",
+      retry: { attempt: 2, maxAttempts: 5, retryDelayMs: null },
+    };
+    const recoveredActivity = buildThreadFeed([projected(recoveredRetry, 0)]).find(
+      (entry) => entry.type === "activity-group",
+    )?.activities[0];
+    expect(recoveredActivity).toMatchObject({
+      summary: "Provider recovered",
+      status: "success",
+    });
+  });
+
   it("presents provider retries as visible work-log activity", () => {
     const retryBase = {
       ...base("item-provider-retry", "2026-06-20T00:00:02.000Z", 1),

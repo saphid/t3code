@@ -109,6 +109,39 @@ export function makeProviderFailure(input: {
   };
 }
 
+/**
+ * Whether a provider failure describes the account exhausting a quota window
+ * (tokens, credits, request rate) rather than a defect. Adapters with
+ * structured signals should still pass them through `code`; this heuristic
+ * covers providers that only send human-readable text. Conservative on
+ * purpose: a false positive relabels a real error as "out of tokens".
+ */
+export function isUsageLimitFailureSignal(input: {
+  readonly message: string;
+  readonly code: string | null;
+}): boolean {
+  if (input.code !== null) {
+    const normalized = input.code.toLowerCase().replace(/[\s-]+/gu, "_");
+    if (
+      !normalized.includes("disk_quota") &&
+      (normalized.includes("usage_limit") ||
+        normalized.includes("usagelimit") ||
+        normalized.includes("rate_limit") ||
+        normalized.includes("ratelimit") ||
+        normalized.includes("quota") ||
+        normalized.endsWith("_429") ||
+        normalized === "429")
+    ) {
+      return true;
+    }
+  }
+  return (
+    /usage limit|usage_limit|rate limit|too many requests|out of tokens|out of credits|credit balance is too low|insufficient credits|insufficient(?:(?!disk).){0,16}quota|exceeded(?:(?!disk).){0,24}quota|(?<!disk )quota (?:was |is )?exceeded/iu.test(
+      input.message,
+    ) === true
+  );
+}
+
 export function makeProviderFailureTurnItem(input: {
   readonly idAllocator: IdAllocatorV2Shape;
   readonly driver: ProviderDriverKind;
@@ -137,7 +170,7 @@ export function makeProviderFailureTurnItem(input: {
     parentItemId: null,
     ordinal: input.itemOrdinal,
     status: "failed",
-    title: "Provider error",
+    title: input.failure.class === "usage_limit" ? "Out of tokens" : "Provider error",
     startedAt: input.retryStartedAt ?? input.occurredAt,
     completedAt: input.occurredAt,
     updatedAt: input.occurredAt,
@@ -170,7 +203,7 @@ export function makeProviderRetryTurnItem(input: {
   if (input.status === "completed") {
     title = "Provider recovered";
   } else if (input.status === "failed") {
-    title = "Provider error";
+    title = input.failure.class === "usage_limit" ? "Out of tokens" : "Provider error";
   } else if (input.status === "interrupted" || input.status === "cancelled") {
     title = "Provider retry stopped";
   }

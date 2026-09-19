@@ -80,7 +80,7 @@ import {
   type OpenCodeRuntimeShape,
 } from "../../provider/opencodeRuntime.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
-import { makeProviderFailure } from "../ProviderFailure.ts";
+import { isUsageLimitFailureSignal, makeProviderFailure } from "../ProviderFailure.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
 import { providerMessageTextWithAttachmentPaths } from "../AttachmentPrompt.ts";
 import {
@@ -2765,7 +2765,12 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                       failure: makeProviderFailure({
                         message,
                         code: event.properties.error?.name ?? null,
-                        class: "provider_error",
+                        class: isUsageLimitFailureSignal({
+                          message,
+                          code: event.properties.error?.name ?? null,
+                        })
+                          ? "usage_limit"
+                          : "provider_error",
                       }),
                       threadDisposition:
                         event.properties.sessionID === undefined ? "broken" : "reusable",

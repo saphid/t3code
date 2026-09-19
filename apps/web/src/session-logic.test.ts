@@ -36,6 +36,7 @@ import {
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
   workEntryIndicatesToolSuccess,
+  workEntrySignalsSevereFailure,
 } from "./session-logic";
 import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "./test-fixtures";
 import type { ChatMessage } from "./types";
@@ -66,6 +67,107 @@ describe("V2 session presentation", () => {
         { status: "running", activeRunId: RunId.make("run-active") },
       ),
     ).toBe(false);
+  });
+
+  it("labels usage-limit failures as out of tokens instead of provider errors", () => {
+    const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
+    const usageLimitItem = {
+      id: TurnItemId.make("item-usage-limit"),
+      threadId: ThreadId.make("thread-usage-limit"),
+      runId: RunId.make("run-usage-limit"),
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "failed" as const,
+      title: "Out of tokens",
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      type: "error" as const,
+      failure: {
+        class: "usage_limit" as const,
+        message: "You've hit your usage limit. Try again at 8:22 PM.",
+        code: "usageLimitExceeded",
+        retryable: null,
+      },
+    } satisfies Extract<OrchestrationV2TurnItem, { readonly type: "error" }>;
+
+    expect(providerErrorPresentation(usageLimitItem)).toEqual({
+      label: "Out of tokens",
+      detail: "You've hit your usage limit. Try again at 8:22 PM.",
+    });
+    expect(
+      providerErrorPresentation({
+        ...usageLimitItem,
+        title: "Provider error",
+        retry: { attempt: 3, maxAttempts: 5, retryDelayMs: null },
+      }),
+    ).toMatchObject({ label: "Out of tokens after 3/5 retries" });
+    // Non-usage failures keep the provider-error label even with a title set.
+    expect(
+      providerErrorPresentation({
+        ...usageLimitItem,
+        title: "Provider error",
+        failure: { ...usageLimitItem.failure, class: "provider_error" as const },
+      }),
+    ).toMatchObject({ label: "Provider error" });
+  });
+
+  it("keeps usage-limit failures out of severe work-log styling", () => {
+    const makeErrorEntry = (
+      failure: Extract<OrchestrationV2TurnItem, { readonly type: "error" }>["failure"],
+    ) => ({
+      id: "entry-1",
+      createdAt: "2026-06-20T00:00:00.000Z",
+      runId: RunId.make("run-1"),
+      tone: "info" as const,
+      itemType: "error" as const,
+      toolLifecycleStatus: "failed" as const,
+      structuredPayload: {
+        id: TurnItemId.make("item-error"),
+        threadId: ThreadId.make("thread-1"),
+        runId: RunId.make("run-1"),
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "failed" as const,
+        title: "Out of tokens",
+        startedAt: DateTime.makeUnsafe("2026-06-20T00:00:00.000Z"),
+        completedAt: DateTime.makeUnsafe("2026-06-20T00:00:00.000Z"),
+        updatedAt: DateTime.makeUnsafe("2026-06-20T00:00:00.000Z"),
+        type: "error" as const,
+        failure,
+      } satisfies Extract<OrchestrationV2TurnItem, { readonly type: "error" }>,
+      label: "Out of tokens",
+      detail: failure.message,
+    });
+
+    expect(
+      workEntrySignalsSevereFailure(
+        makeErrorEntry({
+          class: "usage_limit",
+          message: "You've hit your usage limit.",
+          code: "usageLimitExceeded",
+          retryable: null,
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      workEntrySignalsSevereFailure(
+        makeErrorEntry({
+          class: "provider_error",
+          message: "The response stream disconnected.",
+          code: null,
+          retryable: null,
+        }),
+      ),
+    ).toBe(true);
   });
 
   it("labels provider retry progress, delay, recovery, and exhaustion", () => {

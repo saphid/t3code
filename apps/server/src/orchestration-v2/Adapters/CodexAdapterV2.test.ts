@@ -1540,6 +1540,77 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       };
     });
 
+  it.effect("classifies usage-limit terminal failures from codexErrorInfo", () =>
+    Effect.gen(function* () {
+      const prompt = "Run a command.";
+      const runScenario = (scenario: string, error: Record<string, unknown>) =>
+        Effect.gen(function* () {
+          const nativeThreadId = `thread-${scenario}`;
+          const nativeTurnId = `turn-${scenario}`;
+          const transcript = makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
+              {
+                type: "emit_inbound",
+                label: "turn/completed",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: {
+                      ...makeCodexReplayTurn({ id: nativeTurnId, status: "failed" }),
+                      error,
+                    },
+                  },
+                },
+              },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`${scenario}-attempt`),
+              text: prompt,
+            }),
+          );
+          yield* awaitUntil(() => harness.terminalEvents().length === 1, "failed terminal");
+          return harness.terminalEvents()[0]?.failure ?? null;
+        }).pipe(Effect.scoped, Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer)));
+
+      // The shape behind a real incident: the headline usage-limit info.
+      const headline = yield* runScenario("usage-limit-terminal-headline", {
+        message: "You've hit your usage limit. Try again at 8:22 PM.",
+        codexErrorInfo: "usageLimitExceeded",
+        additionalDetails: null,
+      });
+      assert.isNotNull(headline);
+      assert.equal(headline?.class, "usage_limit");
+      assert.equal(headline?.code, "usageLimitExceeded");
+
+      // Structured variants forward the upstream HTTP status they failed on.
+      const upstream429 = yield* runScenario("usage-limit-terminal-upstream-429", {
+        message: "The upstream request failed.",
+        codexErrorInfo: { responseTooManyFailedAttempts: { httpStatusCode: 429 } },
+        additionalDetails: null,
+      });
+      assert.isNotNull(upstream429);
+      assert.equal(upstream429?.class, "usage_limit");
+
+      // Non-quota failures keep the provider_error class.
+      const other = yield* runScenario("usage-limit-terminal-stream-disconnect", {
+        message: "The response stream disconnected.",
+        codexErrorInfo: null,
+        additionalDetails: null,
+      });
+      assert.isNotNull(other);
+      assert.equal(other?.class, "provider_error");
+    }),
+  );
+
   it.effect("waits for native start before interrupting an acknowledged queued turn", () =>
     Effect.gen(function* () {
       const nativeThreadId = "early-stop-thread";

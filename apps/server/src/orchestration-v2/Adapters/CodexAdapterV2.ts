@@ -92,7 +92,11 @@ import {
   type ProviderContinuationRequest,
   ProviderContinuationRequests,
 } from "../ProviderContinuationRequests.ts";
-import { makeProviderFailure, makeProviderRetryTurnItem } from "../ProviderFailure.ts";
+import {
+  isUsageLimitFailureSignal,
+  makeProviderFailure,
+  makeProviderRetryTurnItem,
+} from "../ProviderFailure.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
 import {
   isProviderNativeImageAttachment,
@@ -943,6 +947,23 @@ function codexErrorInfoCode(value: unknown): string | null {
     return null;
   }
   return Object.keys(value)[0] ?? null;
+}
+
+/**
+ * Structured codexErrorInfo variants forward the upstream HTTP status they
+ * failed on (e.g. `{ responseTooManyFailedAttempts: { httpStatusCode: 429 } }`).
+ * An upstream 429 is a quota signal even when the variant key itself is not.
+ */
+function codexErrorInfoHttpStatus(value: unknown): number | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+  const first = Object.values(value)[0];
+  if (typeof first !== "object" || first === null) {
+    return null;
+  }
+  const status = (first as { readonly httpStatusCode?: unknown }).httpStatusCode;
+  return typeof status === "number" ? status : null;
 }
 
 interface ActiveCodexTurnContext {
@@ -3634,16 +3655,20 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             };
             const code = codexErrorInfoCode(payload.error.codexErrorInfo);
             const additionalDetails = payload.error.additionalDetails?.trim();
+            const failureMessage =
+              additionalDetails === undefined || additionalDetails.length === 0
+                ? payload.error.message
+                : additionalDetails;
             const failure = makeProviderFailure({
-              message:
-                additionalDetails === undefined || additionalDetails.length === 0
-                  ? payload.error.message
-                  : additionalDetails,
+              message: failureMessage,
               code,
               class:
-                code?.startsWith("http") === true || code?.startsWith("responseStream") === true
-                  ? "transport_error"
-                  : "provider_error",
+                isUsageLimitFailureSignal({ message: failureMessage, code }) ||
+                codexErrorInfoHttpStatus(payload.error.codexErrorInfo) === 429
+                  ? "usage_limit"
+                  : code?.startsWith("http") === true || code?.startsWith("responseStream") === true
+                    ? "transport_error"
+                    : "provider_error",
               retryable: true,
             });
             const itemOrdinal =
@@ -4566,6 +4591,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             readonly context: ActiveCodexTurnContext;
             readonly status: OrchestrationV2ProviderTurn["status"];
             readonly failureMessage?: string;
+            readonly failureCode?: string | null;
+            readonly failureUsageLimited?: boolean;
             readonly providerRetry?: ActiveCodexProviderRetry;
           }): Effect.fn.Return<CodexRootTerminalEvent> {
             const terminalStatus = providerTurnStatusToTerminal(input.status);
@@ -4586,7 +4613,15 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                     ? input.providerRetry.failure
                     : makeProviderFailure({
                         message: input.failureMessage,
-                        class: "provider_error",
+                        code: input.failureCode ?? null,
+                        class:
+                          input.failureUsageLimited === true ||
+                          isUsageLimitFailureSignal({
+                            message: input.failureMessage ?? "",
+                            code: input.failureCode ?? null,
+                          })
+                            ? "usage_limit"
+                            : "provider_error",
                       }),
                 ...(input.providerRetry === undefined
                   ? {}
@@ -4616,6 +4651,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             readonly nativeTurnId: string;
             readonly status: OrchestrationV2ProviderTurn["status"];
             readonly failureMessage?: string;
+            readonly failureCode?: string | null;
+            readonly failureUsageLimited?: boolean;
             readonly providerRetry?: ActiveCodexProviderRetry;
           }) {
             const event = yield* makeRootTerminalEvent(input);
@@ -4664,6 +4701,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           readonly status: OrchestrationV2ProviderTurn["status"];
           readonly completedAt: DateTime.Utc;
           readonly failureMessage?: string;
+          readonly failureCode?: string | null;
+          readonly failureUsageLimited?: boolean;
         }) =>
           turnTerminalizationPermit.withPermits(1)(
             Effect.gen(function* () {
@@ -4914,9 +4953,18 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               nativeTurnId: payload.turn.id,
               status,
               completedAt: codexTimestamp(payload.turn.completedAt),
-              ...(payload.turn.error?.message === undefined
+              // Prefer additionalDetails like the willRetry path: quota signals
+              // sometimes live only there, with a generic headline message.
+              ...(payload.turn.error == null
                 ? {}
-                : { failureMessage: payload.turn.error.message }),
+                : {
+                    failureMessage:
+                      payload.turn.error.additionalDetails?.trim() || payload.turn.error.message,
+                  }),
+              failureCode: codexErrorInfoCode(payload.turn.error?.codexErrorInfo),
+              ...(codexErrorInfoHttpStatus(payload.turn.error?.codexErrorInfo) === 429
+                ? { failureUsageLimited: true }
+                : {}),
             });
           }),
         );

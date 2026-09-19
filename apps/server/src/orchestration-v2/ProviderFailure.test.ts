@@ -12,6 +12,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import {
+  isUsageLimitFailureSignal,
   makeProviderFailure,
   makeProviderFailureTurnItem,
   MAX_PROVIDER_FAILURE_CODE_LENGTH,
@@ -94,6 +95,99 @@ it("does not serialize arbitrary provider causes", () => {
     retryable: null,
   });
 });
+
+it("detects usage-limit failure signals from structured codes", () => {
+  assert.isTrue(
+    isUsageLimitFailureSignal({ message: "Something went wrong.", code: "usageLimitExceeded" }),
+  );
+  assert.isTrue(
+    isUsageLimitFailureSignal({ message: "Something went wrong.", code: "api_error_429" }),
+  );
+  assert.isTrue(
+    isUsageLimitFailureSignal({ message: "Something went wrong.", code: "rate_limited" }),
+  );
+  assert.isFalse(
+    isUsageLimitFailureSignal({
+      message: "Something went wrong.",
+      code: "responseStreamDisconnected",
+    }),
+  );
+  assert.isFalse(isUsageLimitFailureSignal({ message: "Something went wrong.", code: null }));
+});
+
+it("detects usage-limit failure signals from provider messages", () => {
+  assert.isTrue(
+    isUsageLimitFailureSignal({
+      message: "You've hit your usage limit. Try again at 8:22 PM.",
+      code: null,
+    }),
+  );
+  assert.isTrue(
+    isUsageLimitFailureSignal({ message: "Rate limit reached for model.", code: null }),
+  );
+  assert.isTrue(
+    isUsageLimitFailureSignal({ message: "Out of tokens for this window.", code: null }),
+  );
+  assert.isTrue(
+    isUsageLimitFailureSignal({ message: "You exceeded your current quota.", code: null }),
+  );
+  assert.isTrue(
+    isUsageLimitFailureSignal({
+      message: "Quota exceeded for metric: generate_requests_per_model",
+      code: null,
+    }),
+  );
+  assert.isTrue(
+    isUsageLimitFailureSignal({
+      message: "Your credit balance is too low to access the Anthropic API",
+      code: null,
+    }),
+  );
+  assert.isTrue(
+    isUsageLimitFailureSignal({ message: "Something failed.", code: "insufficient_quota" }),
+  );
+  assert.isFalse(
+    isUsageLimitFailureSignal({ message: "The response stream disconnected.", code: null }),
+  );
+  // Local disk exhaustion is not an account usage limit, in either word order.
+  assert.isFalse(
+    isUsageLimitFailureSignal({ message: "bash: write failed: disk quota exceeded", code: null }),
+  );
+  assert.isFalse(
+    isUsageLimitFailureSignal({ message: "exceeded the allowed disk quota", code: null }),
+  );
+  assert.isFalse(
+    isUsageLimitFailureSignal({ message: "Something failed.", code: "disk_quota_exceeded" }),
+  );
+  // Non-English provider text is not matched; unknown stays provider_error.
+  assert.isFalse(
+    isUsageLimitFailureSignal({ message: "Limite d'utilisation atteinte.", code: null }),
+  );
+});
+
+it.effect("labels usage-limit terminal failures as out of tokens", () =>
+  Effect.gen(function* () {
+    const idAllocator = yield* IdAllocatorV2;
+    const item = makeProviderFailureTurnItem({
+      idAllocator,
+      driver: ProviderDriverKind.make("codex"),
+      threadId: ThreadId.make("thread-usage-limit-title"),
+      runId: RunId.make("run-usage-limit-title"),
+      nodeId: NodeId.make("node-usage-limit-title"),
+      providerThreadId: ProviderThreadId.make("provider-thread-usage-limit-title"),
+      providerTurnId: ProviderTurnId.make("provider-turn-usage-limit-title"),
+      itemOrdinal: 1,
+      failure: makeProviderFailure({
+        message: "You've hit your usage limit.",
+        code: "usageLimitExceeded",
+        class: "usage_limit",
+      }),
+      occurredAt: DateTime.makeUnsafe("2026-09-19T12:00:00.000Z"),
+    });
+
+    assert.equal(item.title, "Out of tokens");
+  }).pipe(Effect.provide(idAllocatorLayer)),
+);
 
 it.effect("keys terminal failure items by provider turn across retries and fallback paths", () =>
   Effect.gen(function* () {

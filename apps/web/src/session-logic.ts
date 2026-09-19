@@ -152,8 +152,16 @@ export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
 
 /** Severe failures keep the red treatment ordinary tool failures lost: provider
  *  runtime errors mean the turn or a core side effect broke, not that a
- *  command exited nonzero. */
+ *  command exited nonzero. Usage-limit failures are an account state, not a
+ *  defect, so they keep the calm row treatment. */
 export function workEntrySignalsSevereFailure(entry: WorkLogEntry): boolean {
+  if (
+    entry.itemType === "error" &&
+    entry.structuredPayload?.type === "error" &&
+    entry.structuredPayload.failure.class === "usage_limit"
+  ) {
+    return false;
+  }
   return entry.itemType === "error";
 }
 
@@ -358,9 +366,12 @@ function projectedWorkEntryTone(item: OrchestrationV2TurnItem): WorkLogEntry["to
 export function providerErrorPresentation(
   item: Extract<OrchestrationV2TurnItem, { readonly type: "error" }>,
 ): { readonly label: string; readonly detail: string } {
+  // Usage-limit failures are an account state, not a defect: say so plainly
+  // instead of alarming with the generic provider-error label.
+  const usageLimited = item.failure.class === "usage_limit";
   if (item.retry === undefined) {
     return {
-      label: item.title?.trim() || "Provider error",
+      label: usageLimited ? "Out of tokens" : item.title?.trim() || "Provider error",
       detail: item.failure.message,
     };
   }
@@ -374,7 +385,7 @@ export function providerErrorPresentation(
       : item.status === "completed"
         ? `Provider recovered (${progress} retries)`
         : item.status === "failed"
-          ? `Provider error after ${progress} retries`
+          ? `${usageLimited ? "Out of tokens" : "Provider error"} after ${progress} retries`
           : `Provider retry stopped (${progress})`;
   const retryDelay =
     item.status === "running" && item.retry.retryDelayMs !== null && item.retry.retryDelayMs > 0

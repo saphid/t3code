@@ -100,7 +100,7 @@ import {
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
 import { type ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
-import { makeProviderFailure } from "../ProviderFailure.ts";
+import { isUsageLimitFailureSignal, makeProviderFailure } from "../ProviderFailure.ts";
 import { acpSelectionTransition } from "../ProviderSelectionTransition.ts";
 import {
   isProviderNativeImageAttachment,
@@ -1278,7 +1278,12 @@ export function acpPromptFailureFromCause(
       return makeProviderFailure({
         message: error.errorMessage,
         code: String(error.code),
-        class: "provider_error",
+        class: isUsageLimitFailureSignal({
+          message: error.errorMessage,
+          code: String(error.code),
+        })
+          ? "usage_limit"
+          : "provider_error",
       });
     }
     // These messages are authored by effect-acp, not the provider, so they are

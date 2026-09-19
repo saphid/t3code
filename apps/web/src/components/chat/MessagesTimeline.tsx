@@ -109,6 +109,7 @@ import {
   ChevronRightIcon,
   ChevronUpIcon,
   CircleAlertIcon,
+  CoinsIcon,
   DownloadIcon,
   EyeIcon,
   GitForkIcon,
@@ -2624,6 +2625,7 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
   switch (item.type) {
     case "error": {
       const presentation = providerErrorPresentation(item);
+      const usageLimited = item.failure.class === "usage_limit";
       return {
         ...presentation,
         tone:
@@ -2631,8 +2633,10 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
             ? "success"
             : item.status === "running"
               ? "warning"
-              : "danger",
-        icon: CircleAlertIcon,
+              : usageLimited
+                ? "warning"
+                : "danger",
+        icon: usageLimited ? CoinsIcon : CircleAlertIcon,
       };
     }
     case "run_interrupt_request":

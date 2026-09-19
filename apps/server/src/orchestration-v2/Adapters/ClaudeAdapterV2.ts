@@ -106,7 +106,11 @@ import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/T3Orchestrati
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
-import { makeProviderFailure, makeProviderRetryTurnItem } from "../ProviderFailure.ts";
+import {
+  isUsageLimitFailureSignal,
+  makeProviderFailure,
+  makeProviderRetryTurnItem,
+} from "../ProviderFailure.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
 import { providerMessageTextWithAttachmentPaths } from "../AttachmentPrompt.ts";
 import {
@@ -2134,7 +2138,7 @@ function isClaudeTaskNotificationOriginResult(message: SDKMessage): message is S
   return message.type === "result" && message.origin?.kind === "task-notification";
 }
 
-function providerFailureFromResult(
+export function providerFailureFromResult(
   message: SDKResultMessage,
   failureHint?: string,
 ): OrchestrationV2ProviderFailure | null {
@@ -2146,33 +2150,51 @@ function providerFailureFromResult(
     return makeProviderFailure({
       message: listedError ?? structuredError ?? message.errors.join("\n"),
       code: message.subtype,
-      class: "provider_error",
+      class: isUsageLimitFailureSignal({
+        message: listedError ?? structuredError ?? message.errors.join("\n"),
+        code: message.subtype,
+      })
+        ? "usage_limit"
+        : "provider_error",
     });
   }
   if (!message.is_error && structuredError === undefined) {
     return null;
   }
   const apiErrorStatus = message.api_error_status ?? null;
+  const failureMessage = listedError ?? structuredError ?? failureHint ?? message.result;
   return makeProviderFailure({
-    message: listedError ?? structuredError ?? failureHint ?? message.result,
+    message: failureMessage,
     code:
       apiErrorStatus === null
         ? (message.terminal_reason ?? "sdk_result_error")
         : `api_error_${apiErrorStatus}`,
-    class: "provider_error",
+    class: isUsageLimitFailureSignal({
+      message: failureMessage,
+      code:
+        apiErrorStatus === null ? (message.terminal_reason ?? null) : `api_error_${apiErrorStatus}`,
+    })
+      ? "usage_limit"
+      : "provider_error",
     retryable: apiErrorStatus === 429 || apiErrorStatus === 529 ? true : null,
   });
 }
 
 function providerFailureFromApiRetry(message: SDKAPIRetryMessage): OrchestrationV2ProviderFailure {
   const errorName = message.error.replaceAll("_", " ");
+  const code =
+    message.error_status === null ? message.error : `api_error_${Math.trunc(message.error_status)}`;
   return makeProviderFailure({
     message: `Claude API ${errorName}.`,
-    code:
-      message.error_status === null
-        ? message.error
-        : `api_error_${Math.trunc(message.error_status)}`,
-    class: message.error_status === null ? "transport_error" : "provider_error",
+    code,
+    class: isUsageLimitFailureSignal({
+      message: `Claude API ${errorName}.`,
+      code,
+    })
+      ? "usage_limit"
+      : message.error_status === null
+        ? "transport_error"
+        : "provider_error",
     retryable: true,
   });
 }

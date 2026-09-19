@@ -83,6 +83,7 @@ import {
   makeClaudeAgentSdkProtocolLogger,
   makeClaudeQueryOptions,
   permissionResultFromDecision,
+  providerFailureFromResult,
   type ClaudeAgentSdkQueryOptions,
   type ClaudeAgentSdkQueryOpenInput,
 } from "./ClaudeAdapterV2.ts";
@@ -6503,4 +6504,68 @@ describe("ClaudeAdapterV2 query message stream", () => {
       assert.isTrue(closed);
     }),
   );
+});
+
+describe("providerFailureFromResult usage-limit classification", () => {
+  const makeResultMessage = (input: {
+    readonly subtype?: string;
+    readonly isError?: boolean;
+    readonly errors?: ReadonlyArray<string>;
+    readonly apiErrorStatus?: number;
+    readonly terminalReason?: SDKResultMessage["terminal_reason"];
+    readonly result?: string;
+  }): SDKResultMessage =>
+    ({
+      type: "result",
+      subtype: input.subtype ?? "success",
+      is_error: input.isError ?? false,
+      errors: input.errors ?? [],
+      result: input.result ?? "",
+      ...(input.apiErrorStatus === undefined ? {} : { api_error_status: input.apiErrorStatus }),
+      ...(input.terminalReason === undefined ? {} : { terminal_reason: input.terminalReason }),
+    }) as unknown as SDKResultMessage;
+
+  it("classifies blocking_limit as a usage limit", () => {
+    const failure = providerFailureFromResult(
+      makeResultMessage({ isError: true, terminalReason: "blocking_limit" }),
+    );
+
+    assert.isNotNull(failure);
+    assert.equal(failure?.class, "usage_limit");
+  });
+
+  it("classifies api_error_status 429 as a usage limit and keeps retrying", () => {
+    const failure = providerFailureFromResult(
+      makeResultMessage({ isError: true, apiErrorStatus: 429 }),
+    );
+
+    assert.isNotNull(failure);
+    assert.equal(failure?.class, "usage_limit");
+    assert.equal(failure?.retryable, true);
+  });
+
+  it("keeps non-quota api errors as provider errors", () => {
+    const failure = providerFailureFromResult(
+      makeResultMessage({ isError: true, apiErrorStatus: 500 }),
+    );
+
+    assert.isNotNull(failure);
+    assert.equal(failure?.class, "provider_error");
+  });
+
+  it("classifies rate-limit messages on non-success subtypes", () => {
+    const failure = providerFailureFromResult(
+      makeResultMessage({
+        subtype: "error_during_execution",
+        errors: ["Rate limit reached for this account."],
+      }),
+    );
+
+    assert.isNotNull(failure);
+    assert.equal(failure?.class, "usage_limit");
+  });
+
+  it("returns null for successful results without errors", () => {
+    assert.isNull(providerFailureFromResult(makeResultMessage({ result: "All done." })));
+  });
 });

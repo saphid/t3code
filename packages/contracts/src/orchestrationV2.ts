@@ -925,6 +925,8 @@ export const OrchestrationV2ProviderFailureClass = Schema.Literals([
   "transport_error",
   "permission_error",
   "validation_error",
+  /** The provider account hit a quota window (tokens, credits, rate). Not a defect. */
+  "usage_limit",
   "unknown",
 ]);
 export type OrchestrationV2ProviderFailureClass = typeof OrchestrationV2ProviderFailureClass.Type;

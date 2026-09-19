@@ -361,6 +361,11 @@ function itemIsProminent(item: OrchestrationV2TurnItem): boolean {
 function itemStatus(item: OrchestrationV2TurnItem): ThreadFeedActivity["status"] {
   if (item.type === "notification") return item.outcome === "failed" ? "failure" : null;
   if (item.type === "error") {
+    // Usage-limit failures are an account state, not a defect: keep the row
+    // neutral instead of alarming red, but let recovered retries show success.
+    if (item.failure.class === "usage_limit") {
+      return item.status === "completed" ? "success" : "neutral";
+    }
     if (item.status === "failed") return "failure";
     return item.status === "completed" ? "success" : "neutral";
   }
@@ -457,6 +462,11 @@ function itemSummary(
   if (item.type === "notification") return item.summary;
   if (item.type === "system_notice") return item.message;
   if (item.type === "compaction") return contextCompactionLabel(item);
+  // Usage-limit failures are an account state, not a defect: label them from
+  // the failure class even when the persisted title still says "Provider error".
+  // Retry states keep their status-aware titles ("Provider retry", "Provider recovered").
+  if (item.type === "error" && item.failure.class === "usage_limit" && item.status === "failed")
+    return "Out of tokens";
   const title = item.title?.trim();
   if (item.type === "subagent") return formatSubagentDisplayTitle(title || "Subagent");
   if (title) return toolPresentation?.displayName ?? capitalizePhrase(title);
@@ -484,7 +494,9 @@ function itemSummary(
     case "run_interrupt_result":
       return "Run interrupted";
     case "error":
-      return "Provider error";
+      return item.failure.class === "usage_limit" && item.status === "failed"
+        ? "Out of tokens"
+        : "Provider error";
     case "handoff":
       return "Context handed off";
     case "fork":
@@ -669,7 +681,11 @@ function toFeedActivity(
     logo: toolPresentation?.logo ?? null,
     toolLike: itemIsToolLike(item),
     prominent: itemIsProminent(item),
-    status: workEntryDisplayIndicatesToolFailure(workEntry) ? "failure" : itemStatus(item),
+    status:
+      workEntryDisplayIndicatesToolFailure(workEntry) &&
+      !(item.type === "error" && item.failure.class === "usage_limit")
+        ? "failure"
+        : itemStatus(item),
     lifecycleStatus: itemLifecycleStatus(item),
     workEntry,
     projectedItem: row,

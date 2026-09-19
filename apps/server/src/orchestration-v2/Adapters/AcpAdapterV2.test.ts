@@ -133,7 +133,7 @@ describe("acpPromptFailureFromCause", () => {
 
     assert.equal(failure.message, "Devin usage limit reached.");
     assert.equal(failure.code, "-32603");
-    assert.equal(failure.class, "provider_error");
+    assert.equal(failure.class, "usage_limit");
   });
 
   it("surfaces T3-authored transport errors as transport errors", () => {
