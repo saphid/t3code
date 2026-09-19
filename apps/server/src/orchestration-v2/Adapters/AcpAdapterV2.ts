@@ -43,6 +43,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -1256,6 +1257,35 @@ function acpSubagentHasPendingBackgroundWork(subagent: ActiveAcpSubagent): boole
   return (
     acpSubagentStatusBlocksTurnSettlement(subagent.task.status) || !subagent.terminalStatusProjected
   );
+}
+
+const isAcpError = Schema.is(EffectAcpErrors.AcpError);
+
+/**
+ * Maps a failed ACP prompt RPC onto the failure persisted on the terminal turn
+ * item. ACP agents return protocol error text intended for the client (usage
+ * limits, rejected prompts), so surface it instead of the opaque default. Only
+ * known ACP error shapes get this treatment: the fallback stays generic for
+ * unknown errors because arbitrary provider Error messages can contain private
+ * command output.
+ */
+export function acpPromptFailureFromCause(
+  cause: Cause.Cause<unknown>,
+): OrchestrationV2ProviderFailure {
+  const error = Cause.squash(cause);
+  if (isAcpError(error)) {
+    if (error._tag === "AcpRequestError") {
+      return makeProviderFailure({
+        message: error.errorMessage,
+        code: String(error.code),
+        class: "provider_error",
+      });
+    }
+    // These messages are authored by effect-acp, not the provider, so they are
+    // safe to show verbatim and carry the useful transport detail.
+    return makeProviderFailure({ message: error.message, class: "transport_error" });
+  }
+  return makeProviderFailure({ cause: error, class: "provider_error" });
 }
 
 type AcpCarryoverSubagents = {
@@ -6679,10 +6709,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                     yield* finalizeTurn(
                       context,
                       context.interrupted ? "interrupted" : "failed",
-                      makeProviderFailure({
-                        cause: Cause.squash(cause),
-                        class: "provider_error",
-                      }),
+                      acpPromptFailureFromCause(cause),
                     ).pipe(
                       Effect.andThen(
                         Effect.logWarning("orchestration-v2.acp-prompt-failed", {

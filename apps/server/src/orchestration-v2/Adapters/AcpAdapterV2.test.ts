@@ -81,6 +81,7 @@ import {
   acpPostSettleWakeEvidence,
   acpPostSettleWakeShouldBuffer,
   acpProjectedCommandExitCode,
+  acpPromptFailureFromCause,
   acpTurnStartShouldPreserveContinuation,
   makeAcpAdapterV2,
   type AcpAdapterV2ExtensionContext,
@@ -116,6 +117,46 @@ describe("acpProjectedCommandExitCode", () => {
     assert.equal(acpProjectedCommandExitCode("completed", failedOutput), 1);
     assert.equal(acpProjectedCommandExitCode("failed", failedOutput), 1);
     assert.equal(acpProjectedCommandExitCode("completed", {}), undefined);
+  });
+});
+
+describe("acpPromptFailureFromCause", () => {
+  it("surfaces ACP protocol error text as a provider error", () => {
+    const failure = acpPromptFailureFromCause(
+      Cause.fail(
+        new EffectAcpErrors.AcpRequestError({
+          code: -32603,
+          errorMessage: "Devin usage limit reached.",
+        }),
+      ),
+    );
+
+    assert.equal(failure.message, "Devin usage limit reached.");
+    assert.equal(failure.code, "-32603");
+    assert.equal(failure.class, "provider_error");
+  });
+
+  it("surfaces T3-authored transport errors as transport errors", () => {
+    const failure = acpPromptFailureFromCause(
+      Cause.fail(
+        new EffectAcpErrors.AcpTransportError({
+          operation: "call-rpc",
+          method: "session/prompt",
+          cause: "connection closed",
+        }),
+      ),
+    );
+
+    assert.equal(failure.class, "transport_error");
+    assert.include(failure.message, "ACP transport operation call-rpc failed");
+  });
+
+  it("keeps unknown error shapes opaque", () => {
+    const failure = acpPromptFailureFromCause(Cause.fail(new Error("private command output")));
+
+    assert.equal(failure.message, "Provider turn failed.");
+    assert.equal(failure.code, null);
+    assert.equal(failure.class, "provider_error");
   });
 });
 
@@ -2206,6 +2247,81 @@ describe("AcpAdapterV2", () => {
       assert.equal(error._tag, "ProviderAdapterTurnStartError");
       assert.instanceOf(error.cause, ProviderAdapterProtocolError);
       assert.include(String(error.cause), "missing its ACP session id");
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect("surfaces the ACP protocol error message when a prompt fails", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocatorV2;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("acp-test-prompt-failure-message");
+      const threadId = ThreadId.make("thread-acp-prompt-failure-message");
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            environment: { T3_ACP_FAIL_PROMPT: "1" },
+          }),
+        },
+        fileSystem,
+        idAllocator,
+        serverConfig,
+      });
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-prompt-failure-message"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now,
+          messageText: "This prompt will fail.",
+        }),
+      );
+      const terminal = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.map((events) =>
+          events.find(
+            (event): event is Extract<typeof event, { type: "turn.terminal" }> =>
+              event.type === "turn.terminal",
+          ),
+        ),
+      );
+
+      assert.isDefined(terminal);
+      assert.equal(terminal?.status, "failed");
+      assert.equal(terminal?.failure?.message, "Mock prompt failure");
+      assert.equal(terminal?.failure?.code, "-32603");
+      assert.equal(terminal?.failure?.class, "provider_error");
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
