@@ -50,6 +50,7 @@ import {
   PullRequestProviderRegistry,
   fromProviders,
 } from "../pullRequest/PullRequestProviderRegistry.ts";
+import { SourceControlRepositoryService } from "../sourceControl/SourceControlRepositoryService.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 
@@ -293,6 +294,7 @@ function fixture() {
     Layer.mock(ServerSecretStore.ServerSecretStore)({}),
     Layer.mock(PreviewManager)({}),
     Layer.mock(PullRequestService)({}),
+    Layer.mock(SourceControlRepositoryService)({}),
     Layer.succeed(PullRequestProviderRegistry, fromProviders([])),
     Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
       getProjectShellById: () => Effect.succeed(Option.none()),

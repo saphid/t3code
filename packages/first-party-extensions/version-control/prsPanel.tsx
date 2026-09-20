@@ -7,11 +7,14 @@
  * sections load independently so one failing read cannot blank the
  * rest, and `streamDiff` frames verify before a single byte renders.
  *
- * Mutations are a later control contract — the panel renders the named
- * deferral, never fake controls.
+ * Writes ride `t3.prs/write`: the write probe decides which affordances
+ * exist — actions bar, comment composer, review submit, thread reply and
+ * resolve — and a grant the installation does not hold reads back as a
+ * named unavailability, never a dead button.
  */
 import {
   prsReadApi,
+  prsWriteApi,
   type PrsActivity,
   type PrsCapabilitiesResult,
   type PrsCheck,
@@ -25,6 +28,10 @@ import {
   type PrsReviewThread,
   type PrsStack,
   type PrsThreadComment,
+  type PrsWriteCapabilitiesResult,
+  type PrsWriteMergeMethod,
+  type PrsWriteUpdateMethod,
+  type PrsWriteVerdict,
 } from "@t3tools/extension-sdk/catalogue";
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
@@ -34,7 +41,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   PRS_INVOLVEMENTS,
   PRS_LIST_STATES,
-  PRS_MUTATIONS_DEFERRED,
   collectPrsDiffStream,
   displayPath,
   changeTypeLabel,
@@ -64,11 +70,16 @@ import {
   prsThreadMoreLabel,
   prsThreadStateLabel,
   prsUnavailableLabel,
+  prsWriteActionOffers,
+  prsWriteGate,
+  prsWriteUnavailableNote,
+  prsWriteVerdictOptions,
   renderableFromPatch,
   type DiffFileRow,
   type PrsDiffDelivery,
   type PrsInvolvement,
   type PrsListState,
+  type PrsWriteActionOffer,
 } from "./prsViewModel.js";
 
 const muted = "var(--muted-foreground, #667085)";
@@ -172,6 +183,46 @@ function usePrsCapabilities(
       );
     return () => controller.abort();
   }, [host, session, visible, tick]);
+  return result?.key === tick ? result : { capabilities: null, error: null };
+}
+
+/**
+ * One-shot `prsWrite.getCapabilities` — the write side's own probe. A
+ * denied grant fails the invoke, which the write gate names verbatim;
+ * nothing here assumes the installation holds `t3.prs/write`.
+ */
+function usePrsWriteCapabilities(
+  host: ClientHost,
+  session: ViewSession,
+  enabled: boolean,
+  tick: number,
+) {
+  const [result, setResult] = useState<{
+    key: number;
+    capabilities: PrsWriteCapabilitiesResult | null;
+    error: string | null;
+  } | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    void bindApi(prsWriteApi, host, session.context)
+      .invoke("getCapabilities", {}, signal)
+      .then(
+        (capabilities) => {
+          if (!signal.aborted) setResult({ key: tick, capabilities, error: null });
+        },
+        (error) => {
+          if (!signal.aborted)
+            setResult({
+              key: tick,
+              capabilities: null,
+              error: message(error, "Pull-request write capabilities unavailable"),
+            });
+        },
+      );
+    return () => controller.abort();
+  }, [host, session, enabled, tick]);
   return result?.key === tick ? result : { capabilities: null, error: null };
 }
 
@@ -833,6 +884,17 @@ function CommentRow({ comment }: { comment: PrsComment }) {
   );
 }
 
+interface PrsThreadWriteControls {
+  readonly canReply: boolean;
+  readonly canResolve: boolean;
+  readonly resolvePending: boolean;
+  readonly resolveError: string | null;
+  readonly replyPending: boolean;
+  readonly replyError: string | null;
+  readonly onReply: (threadId: string, body: string) => void;
+  readonly onResolve: (threadId: string, resolved: boolean) => void;
+}
+
 function ReviewThreadSection(props: {
   thread: PrsReviewThread;
   canPage: boolean;
@@ -842,8 +904,12 @@ function ReviewThreadSection(props: {
   unrecoverable: boolean;
   /** A paged continuation failed; the cursor is preserved so the button retries it. */
   pageError: string | null;
+  /** Write controls for this thread; null where `t3.prs/write` is not ready. */
+  write: PrsThreadWriteControls | null;
+  /** Remount key — a settled reply clears the box, a failed one keeps it. */
+  writeTick: number;
 }) {
-  const { thread, canPage, onLoadMore, paging, unrecoverable, pageError } = props;
+  const { thread, canPage, onLoadMore, paging, unrecoverable, pageError, write, writeTick } = props;
   return (
     <section
       aria-label={`Thread on ${prsThreadAnchor(thread)}`}
@@ -897,6 +963,35 @@ function ReviewThreadSection(props: {
         <p role="note" style={{ ...noteStyle, fontSize: 11 }}>
           Some comments could not be shown — the host cut this thread's tail without a cursor.
         </p>
+      )}
+      {write !== null && (
+        <div style={{ padding: "2px 10px" }}>
+          {write.canResolve && (
+            <button
+              type="button"
+              disabled={write.resolvePending}
+              onClick={() => write.onResolve(thread.id, !thread.isResolved)}
+              style={iconButton}
+            >
+              {write.resolvePending
+                ? "Working…"
+                : thread.isResolved
+                  ? "Unresolve thread"
+                  : "Resolve thread"}
+            </button>
+          )}
+          <PrsWriteErrorLine error={write.resolveError} />
+          {write.canReply && (
+            <PrsComposer
+              key={`${thread.id}:${writeTick}`}
+              label="Reply"
+              placeholder="Reply to this thread"
+              pending={write.replyPending}
+              error={write.replyError}
+              onSubmit={(body) => write.onReply(thread.id, body)}
+            />
+          )}
+        </div>
       )}
     </section>
   );
@@ -1094,6 +1189,156 @@ function PrsDiffSection(props: { diff: PrsDiffState; supported: boolean; onLoadM
   );
 }
 
+/* ---------------- writes ---------------- */
+
+/** One write in flight at a time — the native panel's own single-flight rule. */
+interface PrsWriteState {
+  readonly key: string;
+  readonly pending: boolean;
+  readonly error: string | null;
+}
+
+function PrsWriteErrorLine({ error }: { error: string | null }) {
+  if (error === null) return null;
+  return (
+    <p role="alert" style={{ ...noteStyle, fontSize: 11 }}>
+      {error}
+    </p>
+  );
+}
+
+function PrsActionButton(props: {
+  offer: PrsWriteActionOffer;
+  pending: boolean;
+  onRun: (offer: PrsWriteActionOffer, method?: string) => void;
+}) {
+  const { offer, pending, onRun } = props;
+  const choices: readonly string[] = offer.methods ?? offer.updateMethods ?? [];
+  const [method, setMethod] = useState<string>(choices[0] ?? "");
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() => onRun(offer, method === "" ? undefined : method)}
+        style={{
+          ...control,
+          color: offer.destructive ? "var(--destructive, #b42318)" : "inherit",
+        }}
+      >
+        {pending ? `${offer.label}…` : offer.label}
+      </button>
+      {choices.length > 1 && (
+        <select
+          aria-label={`${offer.label} method`}
+          value={method}
+          onChange={(event) => setMethod(event.target.value)}
+          style={{ ...control, padding: "2px 4px" }}
+        >
+          {choices.map((choice) => (
+            <option key={choice} value={choice}>
+              {choice}
+            </option>
+          ))}
+        </select>
+      )}
+    </span>
+  );
+}
+
+/**
+ * Textarea + submit shared by the comment composer, the review bar and
+ * thread replies. The draft is not cleared on click — a failed write
+ * keeps the author's words; success remounts the composer through the
+ * caller's `writeTick` key.
+ */
+function PrsComposer(props: {
+  label: string;
+  placeholder: string;
+  pending: boolean;
+  error: string | null;
+  onSubmit: (body: string) => void;
+}) {
+  const { label, placeholder, pending, error, onSubmit } = props;
+  const [body, setBody] = useState("");
+  return (
+    <div style={{ padding: "4px 10px" }}>
+      <textarea
+        aria-label={label}
+        value={body}
+        onChange={(event) => setBody(event.target.value)}
+        placeholder={placeholder}
+        rows={3}
+        style={{ ...inputStyle, width: "100%", resize: "vertical" }}
+      />
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+        <button
+          type="button"
+          disabled={pending || body.trim() === ""}
+          onClick={() => onSubmit(body)}
+          style={control}
+        >
+          {pending ? `${label}…` : label}
+        </button>
+      </div>
+      <PrsWriteErrorLine error={error} />
+    </div>
+  );
+}
+
+/**
+ * The review bar — verdict picker over the host's declared verdicts plus
+ * a body. The native rule carries over: an approval needs no words, and
+ * anything else does — this panel drafts no line comments to stand in.
+ */
+function PrsReviewComposer(props: {
+  verdicts: readonly { readonly value: PrsWriteVerdict; readonly label: string }[];
+  pending: boolean;
+  error: string | null;
+  onSubmit: (verdict: PrsWriteVerdict, body: string) => void;
+}) {
+  const { verdicts, pending, error, onSubmit } = props;
+  const [verdict, setVerdict] = useState<PrsWriteVerdict>(verdicts[0]?.value ?? "comment");
+  const [body, setBody] = useState("");
+  return (
+    <div style={{ padding: "4px 10px" }}>
+      <textarea
+        aria-label="Review body"
+        value={body}
+        onChange={(event) => setBody(event.target.value)}
+        placeholder={
+          verdict === "approve" ? "Review body (optional for an approval)" : "Review body"
+        }
+        rows={3}
+        style={{ ...inputStyle, width: "100%", resize: "vertical" }}
+      />
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+        <select
+          aria-label="Review verdict"
+          value={verdict}
+          onChange={(event) => setVerdict(event.target.value as PrsWriteVerdict)}
+          style={{ ...control, padding: "2px 4px" }}
+        >
+          {verdicts.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          disabled={pending || (verdict !== "approve" && body.trim() === "")}
+          onClick={() => onSubmit(verdict, body)}
+          style={control}
+        >
+          {pending ? "Submitting…" : "Submit review"}
+        </button>
+      </div>
+      <PrsWriteErrorLine error={error} />
+    </div>
+  );
+}
+
 /* ---------------- panel ---------------- */
 
 export function PullRequestsPanel(props: {
@@ -1147,6 +1392,17 @@ export function PullRequestsPanel(props: {
   const ready = gate.kind === "ready";
   const ops = ready ? gate.operations : null;
 
+  // The write probe runs only once reads are live — probing a host that
+  // cannot even read would answer a misleading unavailability.
+  const writeProbe = usePrsWriteCapabilities(host, session, visible && ready, tick);
+  const write = prsWriteGate(writeProbe.capabilities, writeProbe.error);
+  const writeOps = write.kind === "ready" ? write.operations : null;
+  // Bumped on every completed write — composer keys fold it in so a
+  // successful submit remounts its box empty while a failed one keeps
+  // the author's draft.
+  const [writeTick, setWriteTick] = useState(0);
+  const [writeState, setWriteState] = useState<PrsWriteState | null>(null);
+
   const refreshes = usePrsRefreshes(
     host,
     session,
@@ -1199,6 +1455,85 @@ export function PullRequestsPanel(props: {
         },
       )
       .finally(() => controller.abort());
+  };
+
+  /**
+   * Single-flight write runner — one invoke at a time so two clicks can
+   * never double-post. A settled write re-reads through `runInvalidate`;
+   * a failed one keeps its named error on the control that asked.
+   */
+  const runWrite = (key: string, invoke: (signal: AbortSignal) => Promise<unknown>) => {
+    if (writeState?.pending) return;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    setWriteState({ key, pending: true, error: null });
+    void invoke(signal).then(
+      () => {
+        if (signal.aborted) return;
+        setWriteState(null);
+        setWriteTick((value) => value + 1);
+        runInvalidate();
+      },
+      (error) => {
+        if (!signal.aborted)
+          setWriteState({
+            key,
+            pending: false,
+            error: message(error, "Pull-request write failed"),
+          });
+      },
+    );
+  };
+  const writeApi = () => bindApi(prsWriteApi, host, session.context);
+  const writeError = (key: string) =>
+    writeState !== null && !writeState.pending && writeState.key === key ? writeState.error : null;
+  const writePending = (key: string) =>
+    writeState !== null && writeState.pending && writeState.key === key;
+
+  const runPrAction = (offer: PrsWriteActionOffer, method?: string) => {
+    if (selected === null) return;
+    runWrite(`action:${offer.action}`, (signal) =>
+      writeApi().invoke(
+        "runAction",
+        {
+          ...selected,
+          action: offer.action,
+          ...(offer.action === "merge" && method !== undefined
+            ? { mergeMethod: method as PrsWriteMergeMethod }
+            : {}),
+          ...(offer.action === "update-branch" && method !== undefined
+            ? { updateMethod: method as PrsWriteUpdateMethod }
+            : {}),
+        },
+        signal,
+      ),
+    );
+  };
+
+  /**
+   * Per-thread write controls. `selected` is bound into each callback at
+   * render time — a selection change rebuilds every control, so a reply
+   * can never land on the PR the reader has since left.
+   */
+  const threadWrite = (thread: PrsReviewThread): PrsThreadWriteControls | null => {
+    if (selected === null || write.kind !== "ready") return null;
+    const ref = selected;
+    return {
+      canReply: write.operations["prs.replyToThread"],
+      canResolve: write.operations["prs.setThreadResolution"],
+      resolvePending: writePending(`resolve:${thread.id}`),
+      resolveError: writeError(`resolve:${thread.id}`),
+      replyPending: writePending(`reply:${thread.id}`),
+      replyError: writeError(`reply:${thread.id}`),
+      onReply: (threadId, body) =>
+        runWrite(`reply:${threadId}`, (signal) =>
+          writeApi().invoke("replyToThread", { ...ref, threadId, body }, signal),
+        ),
+      onResolve: (threadId, resolved) =>
+        runWrite(`resolve:${threadId}`, (signal) =>
+          writeApi().invoke("setThreadResolution", { ...ref, threadId, resolved }, signal),
+        ),
+    };
   };
 
   const selectedKey = selected === null ? null : prsRefKey(selected);
@@ -1583,6 +1918,44 @@ export function PullRequestsPanel(props: {
                   </div>
                 )}
 
+                {detail !== null && write.kind === "ready" && (
+                  <section
+                    aria-label="Pull request actions"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      flexWrap: "wrap",
+                      padding: "4px 10px",
+                      borderTop: "1px solid var(--border, #f0f2f5)",
+                    }}
+                  >
+                    {writeOps !== null && writeOps["prs.runAction"] !== true && (
+                      <p role="note" style={{ ...noteStyle, fontSize: 11, padding: 0 }}>
+                        This host takes no pull-request actions.
+                      </p>
+                    )}
+                    {writeOps?.["prs.runAction"] === true &&
+                      prsWriteActionOffers(detail, write).map((offer) => (
+                        <PrsActionButton
+                          key={offer.action}
+                          offer={offer}
+                          pending={writeState?.pending === true}
+                          onRun={runPrAction}
+                        />
+                      ))}
+                    <PrsWriteErrorLine
+                      error={
+                        writeState !== null &&
+                        !writeState.pending &&
+                        writeState.key.startsWith("action:")
+                          ? writeState.error
+                          : null
+                      }
+                    />
+                  </section>
+                )}
+
                 {sections.stackError !== null && (
                   <p role="alert" style={{ ...noteStyle, fontSize: 11 }}>
                     {sections.stackError}
@@ -1721,6 +2094,8 @@ export function PullRequestsPanel(props: {
                             }
                             pageError={paged?.error ?? null}
                             onLoadMore={loadThreadComments}
+                            write={threadWrite(merged)}
+                            writeTick={writeTick}
                           />
                         );
                       })}
@@ -1743,7 +2118,44 @@ export function PullRequestsPanel(props: {
                           Comment list truncated by the host.
                         </p>
                       )}
+                      {writeOps?.["prs.comment"] === true && (
+                        <PrsComposer
+                          key={`comment:${writeTick}`}
+                          label="Comment"
+                          placeholder="Leave a comment"
+                          pending={writePending("comment")}
+                          error={writeError("comment")}
+                          onSubmit={(body) =>
+                            runWrite("comment", (signal) =>
+                              writeApi().invoke("comment", { ...selected, body }, signal),
+                            )
+                          }
+                        />
+                      )}
                     </section>
+
+                    {write.kind === "ready" &&
+                      writeOps?.["prs.submitReview"] === true &&
+                      write.verdicts.length > 0 && (
+                        <section aria-label="Submit a review" style={{ paddingBottom: 4 }}>
+                          <h3 style={headingStyle}>Submit a review</h3>
+                          <PrsReviewComposer
+                            key={`review:${writeTick}`}
+                            verdicts={prsWriteVerdictOptions(write.verdicts)}
+                            pending={writePending("review")}
+                            error={writeError("review")}
+                            onSubmit={(verdict, body) =>
+                              runWrite("review", (signal) =>
+                                writeApi().invoke(
+                                  "submitReview",
+                                  { ...selected, verdict, body, comments: [] },
+                                  signal,
+                                ),
+                              )
+                            }
+                          />
+                        </section>
+                      )}
 
                     {activity.commits.length > 0 && (
                       <section aria-label="Commits" style={{ paddingBottom: 4 }}>
@@ -1788,9 +2200,11 @@ export function PullRequestsPanel(props: {
                   />
                 </section>
 
-                <p role="note" style={{ ...noteStyle, fontSize: 11, paddingBottom: 8 }}>
-                  {PRS_MUTATIONS_DEFERRED}
-                </p>
+                {prsWriteUnavailableNote(write) !== null && (
+                  <p role="note" style={{ ...noteStyle, fontSize: 11, paddingBottom: 8 }}>
+                    {prsWriteUnavailableNote(write)}
+                  </p>
+                )}
               </div>
             )}
           </>

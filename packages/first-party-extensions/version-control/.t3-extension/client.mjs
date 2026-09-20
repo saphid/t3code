@@ -657,6 +657,246 @@ var __t3Client = (() => {
     ]
   });
 
+  // ../../extension-sdk/dist/workspaceResources.js
+  var WORKSPACE_RESOURCES = "t3.workspace/resources";
+  var WORKSPACE_RESOURCE_CHUNK_UNITS = 8192;
+  var WORKSPACE_RESOURCE_MAX_CHUNKS = 2048;
+  var WORKSPACE_RESOURCE_MAX_BYTES = 8 * 1024 * 1024;
+  var WORKSPACE_RESOURCE_REASONS = [
+    "not-found",
+    "not-regular-file",
+    "binary",
+    "invalid-utf8",
+    "oversized",
+    "outside-workspace",
+    "unsafe-path",
+    "changed-during-read",
+    "aborted",
+    "io-error",
+    "unknown-upload",
+    "upload-limit",
+    "upload-incomplete",
+    "digest-mismatch"
+  ];
+  var resourcePath = { type: "string", minLength: 1, maxLength: 512 };
+  var resourceDigest = {
+    type: "string",
+    minLength: 64,
+    maxLength: 64,
+    pattern: "^[0-9a-f]{64}$"
+  };
+  var resourceReason = { enum: WORKSPACE_RESOURCE_REASONS };
+  var uploadId = { type: "string", minLength: 1, maxLength: 128 };
+  var resourceByteLength = {
+    type: "integer",
+    minimum: 0,
+    maximum: WORKSPACE_RESOURCE_MAX_BYTES
+  };
+  var resourceChunkCount = {
+    type: "integer",
+    minimum: 0,
+    maximum: WORKSPACE_RESOURCE_MAX_CHUNKS
+  };
+  var saveUnavailableOutput = {
+    type: "object",
+    additionalProperties: false,
+    required: ["kind", "reason"],
+    properties: {
+      kind: { const: "unavailable" },
+      relativePath: resourcePath,
+      reason: resourceReason
+    }
+  };
+  var workspaceResourcesApi = defineStreamApi({
+    id: WORKSPACE_RESOURCES,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "save.begin",
+        effect: "write",
+        requiredGrants: [WORKSPACE_WRITE_TEXT],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["relativePath", "expectedRevision", "byteLength", "chunkCount", "sha256"],
+          properties: {
+            relativePath: resourcePath,
+            expectedRevision: resourceDigest,
+            byteLength: resourceByteLength,
+            chunkCount: resourceChunkCount,
+            sha256: resourceDigest
+          }
+        },
+        outputSchema: {
+          type: "object",
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "uploadId"],
+              properties: { kind: { const: "session" }, uploadId }
+            },
+            saveUnavailableOutput
+          ]
+        }
+      },
+      {
+        name: "save.chunk",
+        effect: "write",
+        requiredGrants: [WORKSPACE_WRITE_TEXT],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["uploadId", "chunkIndex", "data"],
+          properties: {
+            uploadId,
+            chunkIndex: {
+              type: "integer",
+              minimum: 0,
+              maximum: WORKSPACE_RESOURCE_MAX_CHUNKS - 1
+            },
+            data: { type: "string", maxLength: WORKSPACE_RESOURCE_CHUNK_UNITS }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "received"],
+              properties: {
+                kind: { const: "accepted" },
+                received: resourceChunkCount
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "reason"],
+              properties: { kind: { const: "unavailable" }, reason: resourceReason }
+            }
+          ]
+        }
+      },
+      {
+        name: "save.commit",
+        effect: "write",
+        requiredGrants: [WORKSPACE_WRITE_TEXT],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["uploadId"],
+          properties: { uploadId }
+        },
+        outputSchema: {
+          type: "object",
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "relativePath", "revision"],
+              properties: {
+                kind: { const: "saved" },
+                relativePath: resourcePath,
+                revision: resourceDigest
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "relativePath"],
+              properties: { kind: { const: "conflict" }, relativePath: resourcePath }
+            },
+            saveUnavailableOutput
+          ]
+        }
+      },
+      {
+        name: "save.abort",
+        effect: "write",
+        requiredGrants: [WORKSPACE_WRITE_TEXT],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["uploadId"],
+          properties: { uploadId }
+        },
+        outputSchema: { type: "object", additionalProperties: false, properties: {} }
+      }
+    ],
+    streams: [
+      {
+        name: "read",
+        requiredGrants: [WORKSPACE_RESOURCES],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["relativePath"],
+          properties: {
+            relativePath: resourcePath,
+            maxBytes: { type: "integer", minimum: 1, maximum: WORKSPACE_RESOURCE_MAX_BYTES }
+          }
+        },
+        eventSchema: {
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: [
+                "kind",
+                "relativePath",
+                "byteLength",
+                "deliveredByteLength",
+                "chunkCount",
+                "truncated"
+              ],
+              properties: {
+                kind: { const: "manifest" },
+                relativePath: resourcePath,
+                byteLength: { type: "integer", minimum: 0 },
+                deliveredByteLength: resourceByteLength,
+                chunkCount: resourceChunkCount,
+                truncated: { type: "boolean" }
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "chunkIndex", "data"],
+              properties: {
+                kind: { const: "chunk" },
+                chunkIndex: {
+                  type: "integer",
+                  minimum: 0,
+                  maximum: WORKSPACE_RESOURCE_MAX_CHUNKS - 1
+                },
+                data: { type: "string", maxLength: WORKSPACE_RESOURCE_CHUNK_UNITS }
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "sha256"],
+              properties: { kind: { const: "complete" }, sha256: resourceDigest }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "relativePath", "reason"],
+              properties: {
+                kind: { const: "unavailable" },
+                relativePath: resourcePath,
+                reason: resourceReason
+              }
+            }
+          ]
+        }
+      }
+    ]
+  });
+  var WORKSPACE_RESOURCES_API = workspaceResourcesApi.definition;
+
   // ../../extension-sdk/dist/catalogue.js
   var BROWSER_LOCAL_SERVERS = "t3.browser/local-servers";
   var BROWSER_READ_LOCAL_SERVERS = "t3.browser/read-local-servers";
@@ -2272,7 +2512,6 @@ var __t3Client = (() => {
   var VCS_REPOSITORY_API = vcsRepositoryApi.definition;
   var VCS_REPOSITORY_API_V1 = vcsRepositoryApiV1.definition;
   var RESOURCES_LEASE = "t3.resources/lease";
-  var WORKSPACE_RESOURCES = "t3.workspace/resources";
   var BROWSER_SESSIONS = "t3.browser/sessions";
   var BROWSER_SURFACE_COMMANDS = ["attach", "present", "release"];
   var RESOURCE_LEASE_KIND_GRANTS = {
@@ -3407,6 +3646,1147 @@ var __t3Client = (() => {
     ]
   });
   var PRS_READ_API = prsReadApi.definition;
+  var VCS_ACTIONS = "t3.vcs/actions";
+  var vcsActionKindSchema = {
+    enum: ["commit", "push", "create_pr", "commit_push", "commit_push_pr"]
+  };
+  var vcsActionPhaseSchema = { enum: ["branch", "commit", "push", "pr"] };
+  var vcsActionMessageSourceSchema = { enum: ["caller", "generated", "not_applicable"] };
+  var vcsActionContentSourceSchema = {
+    enum: ["caller", "generated", "existing", "not_applicable"]
+  };
+  var vcsActionResultSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["action", "branch", "commit", "push", "pr", "toast"],
+    properties: {
+      action: vcsActionKindSchema,
+      branch: {
+        type: "object",
+        additionalProperties: false,
+        required: ["status"],
+        properties: {
+          status: { enum: ["created", "skipped_not_requested"] },
+          name: { type: "string", minLength: 1, maxLength: 4096 }
+        }
+      },
+      commit: {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "messageSource"],
+        properties: {
+          status: { enum: ["created", "skipped_no_changes", "skipped_not_requested"] },
+          commitSha: { type: "string", minLength: 1, maxLength: 128 },
+          subject: { type: "string", minLength: 1, maxLength: 4096 },
+          messageSource: vcsActionMessageSourceSchema
+        }
+      },
+      push: {
+        type: "object",
+        additionalProperties: false,
+        required: ["status"],
+        properties: {
+          status: { enum: ["pushed", "skipped_not_requested", "skipped_up_to_date"] },
+          branch: { type: "string", minLength: 1, maxLength: 4096 },
+          upstreamBranch: { type: "string", minLength: 1, maxLength: 4096 },
+          setUpstream: { type: "boolean" }
+        }
+      },
+      pr: {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "contentSource"],
+        properties: {
+          status: { enum: ["created", "opened_existing", "skipped_not_requested"] },
+          url: { type: "string", minLength: 1, maxLength: 4096 },
+          number: { type: "integer", minimum: 1 },
+          baseBranch: { type: "string", minLength: 1, maxLength: 4096 },
+          headBranch: { type: "string", minLength: 1, maxLength: 4096 },
+          title: { type: "string", minLength: 1, maxLength: 2048 },
+          contentSource: vcsActionContentSourceSchema
+        }
+      },
+      toast: {
+        type: "object",
+        additionalProperties: false,
+        required: ["title", "cta"],
+        properties: {
+          title: { type: "string", minLength: 1, maxLength: 512 },
+          description: { type: "string", minLength: 1, maxLength: 1024 },
+          cta: {
+            oneOf: [
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind"],
+                properties: { kind: { const: "none" } }
+              },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind", "label", "url"],
+                properties: {
+                  kind: { const: "open_pr" },
+                  label: { type: "string", minLength: 1, maxLength: 256 },
+                  url: { type: "string", maxLength: 4096 }
+                }
+              },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind", "label", "action"],
+                properties: {
+                  kind: { const: "run_action" },
+                  label: { type: "string", minLength: 1, maxLength: 256 },
+                  action: {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["kind"],
+                    properties: { kind: vcsActionKindSchema }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  };
+  var vcsActionEventBase = {
+    action: vcsActionKindSchema
+  };
+  var vcsActionProgressEventSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "phases"],
+        properties: {
+          kind: { const: "action_started" },
+          ...vcsActionEventBase,
+          phases: { type: "array", maxItems: 4, items: vcsActionPhaseSchema }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "phase", "label"],
+        properties: {
+          kind: { const: "phase_started" },
+          ...vcsActionEventBase,
+          phase: vcsActionPhaseSchema,
+          label: { type: "string", minLength: 1, maxLength: 1024 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "hookName"],
+        properties: {
+          kind: { const: "hook_started" },
+          ...vcsActionEventBase,
+          hookName: { type: "string", minLength: 1, maxLength: 512 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "hookName", "stream", "text"],
+        properties: {
+          kind: { const: "hook_output" },
+          ...vcsActionEventBase,
+          hookName: { type: ["string", "null"], minLength: 1, maxLength: 512 },
+          stream: { enum: ["stdout", "stderr"] },
+          // Native bounds hook lines at 500 chars; keep slack for future raises.
+          text: { type: "string", minLength: 1, maxLength: 4096 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "hookName", "exitCode", "durationMs"],
+        properties: {
+          kind: { const: "hook_finished" },
+          ...vcsActionEventBase,
+          hookName: { type: "string", minLength: 1, maxLength: 512 },
+          exitCode: { type: ["integer", "null"] },
+          durationMs: { type: ["integer", "null"], minimum: 0 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "result"],
+        properties: {
+          kind: { const: "action_finished" },
+          ...vcsActionEventBase,
+          result: vcsActionResultSchema
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "phase", "message"],
+        properties: {
+          kind: { const: "action_failed" },
+          ...vcsActionEventBase,
+          phase: { type: ["string", "null"], enum: ["branch", "commit", "push", "pr", null] },
+          message: { type: "string", minLength: 1, maxLength: 4096 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "reason"],
+        properties: {
+          kind: { const: "closed" },
+          reason: { enum: ["overflow"] }
+        }
+      }
+    ]
+  };
+  var vcsActionResolvedPullRequestSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["number", "title", "url", "baseBranch", "headBranch", "state"],
+    properties: {
+      number: { type: "integer", minimum: 1 },
+      title: { type: "string", minLength: 1, maxLength: 2048 },
+      url: { type: "string", maxLength: 4096 },
+      baseBranch: { type: "string", minLength: 1, maxLength: 4096 },
+      headBranch: { type: "string", minLength: 1, maxLength: 4096 },
+      state: { enum: ["open", "closed", "merged"] }
+    }
+  };
+  var vcsActionReferenceInputSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["reference"],
+    properties: {
+      reference: { type: "string", minLength: 1, maxLength: 2048 }
+    }
+  };
+  var vcsActionsOperationsSupportSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "actions.run",
+      "actions.resolvePullRequest",
+      "actions.preparePullRequestThread",
+      "actions.publishRepository",
+      "actions.actionProgress"
+    ],
+    properties: {
+      "actions.run": { type: "boolean" },
+      "actions.resolvePullRequest": { type: "boolean" },
+      "actions.preparePullRequestThread": { type: "boolean" },
+      "actions.publishRepository": { type: "boolean" },
+      "actions.actionProgress": { type: "boolean" }
+    }
+  };
+  var vcsActionsCapabilitiesResultSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["detected", "kind", "detail", "driver", "operations"],
+    properties: {
+      detected: { type: "boolean" },
+      kind: { type: ["string", "null"], enum: ["git", "jj", "unknown", null] },
+      detail: { type: ["string", "null"], maxLength: 512 },
+      driver: vcsDriverCapabilitiesSchema,
+      operations: vcsActionsOperationsSupportSchema
+    }
+  };
+  var vcsActionsApi = defineStreamApi({
+    id: VCS_ACTIONS,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [VCS_READ],
+        inputSchema: prsEmptyInputSchema,
+        outputSchema: vcsActionsCapabilitiesResultSchema
+      },
+      {
+        name: "run",
+        effect: "write",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["action"],
+          properties: {
+            action: vcsActionKindSchema,
+            commitMessage: { type: "string", maxLength: 1e4 },
+            featureBranch: { type: "boolean" },
+            paths: {
+              type: "array",
+              minItems: 1,
+              maxItems: 100,
+              items: { type: "string", minLength: 1, maxLength: 512 }
+            }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["actionId"],
+          properties: { actionId: { type: "string", minLength: 1, maxLength: 128 } }
+        }
+      },
+      {
+        name: "resolvePullRequest",
+        // Read-shaped but Operate-gated: it shells the provider CLI, matching
+        // the native RPC's Operate scope (design: `t3.vcs/mutate`).
+        effect: "read",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: vcsActionReferenceInputSchema,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["pullRequest"],
+          properties: { pullRequest: vcsActionResolvedPullRequestSchema }
+        }
+      },
+      {
+        name: "preparePullRequestThread",
+        effect: "write",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["reference", "mode"],
+          properties: {
+            reference: { type: "string", minLength: 1, maxLength: 2048 },
+            mode: { enum: ["local", "worktree"] }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["pullRequest", "branch", "worktreePath", "isOnPullRequestHead"],
+          properties: {
+            pullRequest: vcsActionResolvedPullRequestSchema,
+            branch: { type: "string", minLength: 1, maxLength: 4096 },
+            worktreePath: { type: ["string", "null"], minLength: 1, maxLength: 32768 },
+            isOnPullRequestHead: { type: "boolean" }
+          }
+        }
+      },
+      {
+        name: "publishRepository",
+        // Declared `t3.vcs/mutate`; the adapter additionally requires every
+        // caller in the chain to hold `t3.prs/write` (P-a conjunctive under
+        // G3 — a comment-only grant must never reach pushCurrentBranch).
+        effect: "write",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["provider", "repository", "visibility"],
+          properties: {
+            provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+            repository: { type: "string", minLength: 1, maxLength: 512 },
+            visibility: { enum: ["private", "public"] },
+            remoteName: { type: "string", minLength: 1, maxLength: 256 },
+            protocol: { enum: ["auto", "ssh", "https"] }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "remoteName", "remoteUrl", "branch", "status"],
+          properties: {
+            repository: {
+              type: "object",
+              additionalProperties: false,
+              required: ["provider", "nameWithOwner", "url", "sshUrl"],
+              properties: {
+                provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+                nameWithOwner: { type: "string", minLength: 1, maxLength: 512 },
+                url: { type: "string", minLength: 1, maxLength: 4096 },
+                sshUrl: { type: "string", minLength: 1, maxLength: 4096 }
+              }
+            },
+            remoteName: { type: "string", minLength: 1, maxLength: 256 },
+            remoteUrl: { type: "string", minLength: 1, maxLength: 4096 },
+            branch: { type: "string", minLength: 1, maxLength: 4096 },
+            upstreamBranch: { type: "string", minLength: 1, maxLength: 4096 },
+            status: { enum: ["pushed", "remote_added"] }
+          }
+        }
+      }
+    ],
+    streams: [
+      {
+        name: "actionProgress",
+        requiredGrants: [VCS_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["actionId"],
+          properties: { actionId: { type: "string", minLength: 1, maxLength: 128 } }
+        },
+        eventSchema: vcsActionProgressEventSchema
+      }
+    ]
+  });
+  var VCS_ACTIONS_API = vcsActionsApi.definition;
+  var PRS_WRITE = "t3.prs/write";
+  var prsWriteBodySchema = { type: "string", minLength: 1, maxLength: 65536 };
+  var prsWriteOperationsSupportSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "prs.runAction",
+      "prs.update",
+      "prs.comment",
+      "prs.updateComment",
+      "prs.submitReview",
+      "prs.replyToThread",
+      "prs.setThreadResolution",
+      "prs.setReaction",
+      "prs.requestReviewers",
+      "prs.setLabels"
+    ],
+    properties: {
+      "prs.runAction": { type: "boolean" },
+      "prs.update": { type: "boolean" },
+      "prs.comment": { type: "boolean" },
+      "prs.updateComment": { type: "boolean" },
+      "prs.submitReview": { type: "boolean" },
+      "prs.replyToThread": { type: "boolean" },
+      "prs.setThreadResolution": { type: "boolean" },
+      "prs.setReaction": { type: "boolean" },
+      "prs.requestReviewers": { type: "boolean" },
+      "prs.setLabels": { type: "boolean" }
+    }
+  };
+  var prsWriteActionKindSchema = {
+    enum: [
+      "merge",
+      "ready",
+      "draft",
+      "close",
+      "reopen",
+      "update-branch",
+      "enable-auto-merge",
+      "disable-auto-merge",
+      "revert",
+      "approve-workflows"
+    ]
+  };
+  var prsWriteMergeMethodSchema = { enum: ["merge", "squash", "rebase"] };
+  var prsWriteVerdictSchema = { enum: ["comment", "approve", "request-changes"] };
+  var prsWriteCapabilitiesResultSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "hosted",
+      "reason",
+      "detail",
+      "operations",
+      "actions",
+      "mergeMethods",
+      "updateMethods",
+      "verdicts"
+    ],
+    properties: {
+      hosted: { type: "boolean" },
+      reason: {
+        enum: ["cli-missing", "cli-unauthenticated", "provider-unsupported", null]
+      },
+      detail: { type: ["string", "null"], maxLength: 1024 },
+      operations: prsWriteOperationsSupportSchema,
+      actions: { type: "array", maxItems: 16, items: prsWriteActionKindSchema },
+      mergeMethods: { type: "array", maxItems: 8, items: prsWriteMergeMethodSchema },
+      updateMethods: {
+        type: "array",
+        maxItems: 4,
+        items: { enum: ["merge", "rebase"] }
+      },
+      verdicts: { type: "array", maxItems: 8, items: prsWriteVerdictSchema }
+    }
+  };
+  var prsWriteActionInputSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["repository", "number", "action"],
+    properties: {
+      host: prsHostField,
+      repository: prsRepositoryField,
+      number: { type: "integer", minimum: 1 },
+      action: prsWriteActionKindSchema,
+      mergeMethod: prsWriteMergeMethodSchema,
+      updateMethod: { enum: ["merge", "rebase"] },
+      stackNumber: { type: "integer", minimum: 1 },
+      expectedStackHeads: {
+        type: "array",
+        maxItems: 100,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["number", "headSha"],
+          properties: {
+            number: { type: "integer", minimum: 1 },
+            headSha: { type: "string", minLength: 1, maxLength: 128 }
+          }
+        }
+      }
+    }
+  };
+  var prsWriteReviewCommentDraftSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["path", "position", "body"],
+    properties: {
+      path: { type: "string", minLength: 1, maxLength: 1024 },
+      oldPath: { type: "string", minLength: 1, maxLength: 1024 },
+      position: {
+        oneOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "newLine"],
+            properties: {
+              kind: { const: "added" },
+              newLine: { type: "integer", minimum: 1 }
+            }
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "oldLine"],
+            properties: {
+              kind: { const: "deleted" },
+              oldLine: { type: "integer", minimum: 1 }
+            }
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "oldLine", "newLine", "side"],
+            properties: {
+              kind: { const: "context" },
+              oldLine: { type: "integer", minimum: 1 },
+              newLine: { type: "integer", minimum: 1 },
+              side: { enum: ["left", "right"] }
+            }
+          }
+        ]
+      },
+      body: prsWriteBodySchema
+    }
+  };
+  var prsWriteApi = defineApi({
+    id: PRS_WRITE,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: prsEmptyInputSchema,
+        outputSchema: prsWriteCapabilitiesResultSchema
+      },
+      {
+        name: "runAction",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: prsWriteActionInputSchema,
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "update",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            title: { type: "string", minLength: 1, maxLength: 1024 },
+            body: { type: "string", maxLength: 65536 }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "comment",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "body"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            body: prsWriteBodySchema
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "updateComment",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "commentId", "kind", "body"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            commentId: { type: "string", minLength: 1, maxLength: 512 },
+            kind: { enum: ["issue-comment", "review-comment"] },
+            body: prsWriteBodySchema
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "submitReview",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "verdict", "body", "comments"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            verdict: { enum: ["comment", "approve", "request-changes"] },
+            body: { type: "string", maxLength: 65536 },
+            comments: { type: "array", maxItems: 100, items: prsWriteReviewCommentDraftSchema }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "replyToThread",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "threadId", "body"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            threadId: { type: "string", minLength: 1, maxLength: 512 },
+            body: prsWriteBodySchema
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "setThreadResolution",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "threadId", "resolved"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            threadId: { type: "string", minLength: 1, maxLength: 512 },
+            resolved: { type: "boolean" }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "setReaction",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "content", "reacted"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            subjectId: { type: "string", minLength: 1, maxLength: 512 },
+            content: {
+              enum: [
+                "thumbs-up",
+                "thumbs-down",
+                "laugh",
+                "hooray",
+                "confused",
+                "heart",
+                "rocket",
+                "eyes"
+              ]
+            },
+            reacted: { type: "boolean" }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "requestReviewers",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "reviewers", "requested"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            reviewers: {
+              type: "array",
+              minItems: 1,
+              maxItems: 25,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["id", "kind"],
+                properties: {
+                  id: { type: "string", minLength: 1, maxLength: 512 },
+                  kind: { enum: ["user", "team"] }
+                }
+              }
+            },
+            requested: { type: "boolean" }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "setLabels",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "labels", "applied"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            labels: {
+              type: "array",
+              minItems: 1,
+              maxItems: 25,
+              items: { type: "string", minLength: 1, maxLength: 512 }
+            },
+            applied: { type: "boolean" }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      }
+    ]
+  });
+  var PRS_WRITE_API = prsWriteApi.definition;
+  var BROWSER_OPERATE = "t3.browser/operate";
+  var BROWSER_SESSION_COMMANDS = [
+    "back",
+    "forward",
+    "reload",
+    "hardReload",
+    "resize",
+    "zoom",
+    "setAppearance",
+    "setAudioMuted"
+  ];
+  var BROWSER_SESSION_URL_MAX_LENGTH = 2048;
+  var BROWSER_SESSION_TITLE_MAX_LENGTH = 512;
+  var BROWSER_SESSION_LIMIT = 64;
+  var browserSessionTabId = {
+    type: "string",
+    minLength: 1,
+    maxLength: 128
+  };
+  var browserSessionEpoch = {
+    type: "string",
+    minLength: 1,
+    maxLength: 128
+  };
+  var browserSessionRevision = { type: "integer", minimum: 0 };
+  var browserSessionUrl = {
+    type: "string",
+    minLength: 1,
+    maxLength: BROWSER_SESSION_URL_MAX_LENGTH
+  };
+  var browserSessionViewport = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["_tag"],
+        properties: { _tag: { const: "fill" } }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["_tag", "width", "height"],
+        properties: {
+          _tag: { const: "freeform" },
+          width: { type: "integer", minimum: 240, maximum: 3840 },
+          height: { type: "integer", minimum: 240, maximum: 3840 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["_tag", "width", "height", "presetId"],
+        properties: {
+          _tag: { const: "preset" },
+          width: { type: "integer", minimum: 240, maximum: 3840 },
+          height: { type: "integer", minimum: 240, maximum: 3840 },
+          presetId: { type: "string", minLength: 1, maxLength: 64 }
+        }
+      }
+    ]
+  };
+  var browserSessionObject = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "tabId",
+      "requestedUrl",
+      "navigation",
+      "canGoBack",
+      "canGoForward",
+      "viewport",
+      "engine",
+      "zoomFactor",
+      "appearance",
+      "audioMuted",
+      "audible"
+    ],
+    properties: {
+      tabId: browserSessionTabId,
+      requestedUrl: {
+        type: ["string", "null"],
+        minLength: 1,
+        maxLength: BROWSER_SESSION_URL_MAX_LENGTH
+      },
+      navigation: {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "url", "title"],
+        properties: {
+          kind: { enum: ["idle", "pending", "loading", "loaded", "failed"] },
+          url: {
+            type: ["string", "null"],
+            minLength: 1,
+            maxLength: BROWSER_SESSION_URL_MAX_LENGTH
+          },
+          title: { type: "string", maxLength: BROWSER_SESSION_TITLE_MAX_LENGTH },
+          failureCode: {
+            enum: [
+              "aborted",
+              "dns",
+              "offline",
+              "timeout",
+              "refused",
+              "reset",
+              "certificate",
+              "blocked",
+              "redirect",
+              "invalid-url",
+              "crash",
+              "unknown"
+            ]
+          }
+        }
+      },
+      canGoBack: { type: "boolean" },
+      canGoForward: { type: "boolean" },
+      viewport: browserSessionViewport,
+      profileId: { type: "string", minLength: 1, maxLength: 64 },
+      engine: {
+        type: "object",
+        additionalProperties: false,
+        required: ["state", "generation"],
+        properties: {
+          state: { enum: ["unavailable", "starting", "ready", "recovering", "crashed"] },
+          generation: { type: ["string", "null"], minLength: 1, maxLength: 128 },
+          reason: { type: "string", minLength: 1, maxLength: 256 }
+        }
+      },
+      zoomFactor: { type: ["number", "null"] },
+      appearance: { enum: ["system", "light", "dark", null] },
+      audioMuted: { type: ["boolean", "null"] },
+      audible: { type: ["boolean", "null"] }
+    }
+  };
+  var browserSessionReceipt = {
+    type: "object",
+    additionalProperties: false,
+    required: ["commandId", "outcome", "serverEpoch", "revision", "session"],
+    properties: {
+      commandId: { type: "string", minLength: 1, maxLength: 64 },
+      outcome: { enum: ["accepted", "rejected", "unknown"] },
+      serverEpoch: browserSessionEpoch,
+      revision: browserSessionRevision,
+      session: browserSessionObject
+    }
+  };
+  var browserSessionCommandGuard = {
+    tabId: browserSessionTabId,
+    serverEpoch: browserSessionEpoch,
+    expectedEngineGeneration: { type: ["string", "null"], minLength: 1, maxLength: 128 }
+  };
+  var browserSessionGuardRequired = ["tabId", "serverEpoch", "expectedEngineGeneration"];
+  var browserSessionCommandMethod = (name, extraProperties = {}, extraRequired = []) => ({
+    name,
+    effect: "write",
+    requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: [...browserSessionGuardRequired, ...extraRequired],
+      properties: { ...browserSessionCommandGuard, ...extraProperties }
+    },
+    outputSchema: browserSessionReceipt
+  });
+  var BROWSER_SESSION_ZOOM_LEVELS = [
+    0.25,
+    0.33,
+    0.5,
+    0.67,
+    0.75,
+    0.8,
+    0.9,
+    1,
+    1.1,
+    1.25,
+    1.5,
+    1.75,
+    2,
+    2.5,
+    3,
+    4,
+    5
+  ];
+  var browserSessionEmptyInput = {
+    type: "object",
+    additionalProperties: false,
+    properties: {}
+  };
+  var browserSessionsApi = defineStreamApi({
+    id: BROWSER_SESSIONS,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [BROWSER_SESSIONS],
+        inputSchema: browserSessionEmptyInput,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["metadata", "presentation", "commands"],
+          properties: {
+            metadata: {
+              type: "object",
+              additionalProperties: false,
+              required: ["supported"],
+              properties: { supported: { const: true } }
+            },
+            presentation: {
+              type: "object",
+              additionalProperties: false,
+              required: ["supported"],
+              properties: {
+                supported: { type: "boolean" },
+                reason: { enum: ["desktop-required"] }
+              }
+            },
+            commands: {
+              type: "array",
+              maxItems: BROWSER_SESSION_COMMANDS.length,
+              uniqueItems: true,
+              items: { enum: [...BROWSER_SESSION_COMMANDS] }
+            }
+          }
+        }
+      },
+      {
+        name: "list",
+        effect: "read",
+        requiredGrants: [BROWSER_SESSIONS],
+        inputSchema: browserSessionEmptyInput,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["serverEpoch", "revision", "sessions"],
+          properties: {
+            serverEpoch: browserSessionEpoch,
+            revision: browserSessionRevision,
+            sessions: {
+              type: "array",
+              maxItems: BROWSER_SESSION_LIMIT,
+              items: browserSessionObject
+            }
+          }
+        }
+      },
+      {
+        name: "open",
+        effect: "write",
+        requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            url: browserSessionUrl,
+            viewport: browserSessionViewport,
+            profileId: { type: "string", minLength: 1, maxLength: 64 }
+          }
+        },
+        outputSchema: browserSessionReceipt
+      },
+      {
+        name: "navigate",
+        effect: "write",
+        requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["tabId", "serverEpoch", "url", "expectedEngineGeneration"],
+          properties: { ...browserSessionCommandGuard, url: browserSessionUrl }
+        },
+        outputSchema: browserSessionReceipt
+      },
+      {
+        name: "close",
+        effect: "write",
+        requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["tabId", "serverEpoch"],
+          properties: { tabId: browserSessionTabId, serverEpoch: browserSessionEpoch }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["outcome", "serverEpoch", "revision"],
+          properties: {
+            outcome: { enum: ["closed", "already-closed"] },
+            serverEpoch: browserSessionEpoch,
+            revision: browserSessionRevision
+          }
+        }
+      },
+      browserSessionCommandMethod("back"),
+      browserSessionCommandMethod("forward"),
+      browserSessionCommandMethod("reload"),
+      browserSessionCommandMethod("hardReload"),
+      browserSessionCommandMethod("resize", { viewport: browserSessionViewport }, ["viewport"]),
+      browserSessionCommandMethod("zoom", { zoomFactor: { enum: [...BROWSER_SESSION_ZOOM_LEVELS] } }, ["zoomFactor"]),
+      browserSessionCommandMethod("setAppearance", { appearance: { enum: ["system", "light", "dark"] } }, ["appearance"]),
+      browserSessionCommandMethod("setAudioMuted", { muted: { type: "boolean" } }, ["muted"])
+    ],
+    streams: [
+      {
+        name: "events",
+        requiredGrants: [BROWSER_SESSIONS],
+        inputSchema: browserSessionEmptyInput,
+        eventSchema: {
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "snapshotId", "serverEpoch", "revision", "sessionCount"],
+              properties: {
+                kind: { const: "snapshot-start" },
+                snapshotId: { type: "string", minLength: 1, maxLength: 64 },
+                serverEpoch: browserSessionEpoch,
+                revision: browserSessionRevision,
+                sessionCount: { type: "integer", minimum: 0, maximum: BROWSER_SESSION_LIMIT }
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "snapshotId", "chunkIndex", "sessions"],
+              properties: {
+                kind: { const: "snapshot-chunk" },
+                snapshotId: { type: "string", minLength: 1, maxLength: 64 },
+                chunkIndex: { type: "integer", minimum: 0 },
+                sessions: {
+                  type: "array",
+                  maxItems: BROWSER_SESSION_LIMIT,
+                  items: browserSessionObject
+                }
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "snapshotId", "serverEpoch", "revision", "sessionCount"],
+              properties: {
+                kind: { const: "snapshot-complete" },
+                snapshotId: { type: "string", minLength: 1, maxLength: 64 },
+                serverEpoch: browserSessionEpoch,
+                revision: browserSessionRevision,
+                sessionCount: { type: "integer", minimum: 0, maximum: BROWSER_SESSION_LIMIT }
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "revision", "session"],
+              properties: {
+                kind: { const: "session-upsert" },
+                revision: browserSessionRevision,
+                session: browserSessionObject
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "revision", "tabId", "reason"],
+              properties: {
+                kind: { const: "session-removed" },
+                revision: browserSessionRevision,
+                tabId: browserSessionTabId,
+                reason: { enum: ["user-closed", "thread-deleted"] }
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "reason"],
+              properties: {
+                kind: { const: "closed" },
+                reason: {
+                  enum: [
+                    "epoch-changed",
+                    "host-disconnected",
+                    "scope-invalidated",
+                    "grant-revoked",
+                    "installation-changed",
+                    "overflow",
+                    "source-unavailable"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    ]
+  });
+  var BROWSER_SESSIONS_API = browserSessionsApi.definition;
   var COMPOSER_CONTEXT = "t3.composer/context";
   var COMPOSER_WRITE = "t3.composer/write";
   var MESSAGES_ENRICHMENT = "t3.messages/enrichment";
@@ -3598,6 +4978,7 @@ var __t3Client = (() => {
     orchestrationStatusApi.definition,
     orchestrationControlApi.definition,
     browserLocalServersApi.definition,
+    browserSessionsApi.definition,
     workspaceFilesApi.definition,
     workspaceTreeApi.definition,
     workspaceSearchApi.definition,
@@ -3617,9 +4998,12 @@ var __t3Client = (() => {
     vcsRepositoryApi.definition,
     vcsRepositoryApiV1.definition,
     vcsDiffApiV1.definition,
+    vcsActionsApi.definition,
     resourcesLeaseApi.definition,
     resourcesLeaseApiV1.definition,
+    workspaceResourcesApi.definition,
     prsReadApi.definition,
+    prsWriteApi.definition,
     composerContextApi.definition,
     messagesEnrichmentApi.definition
   ];
@@ -5311,7 +6695,113 @@ ${ref.number}`;
     if (row.binary || row.textless) return "";
     return `+${row.additions} \u2212${row.deletions}`;
   }
-  var PRS_MUTATIONS_DEFERRED = "Pull-request mutations are not part of this contract \u2014 merge and update actions, comments, reviews, thread resolution, reactions, reviewers, and labels are deferred to a later control contract.";
+  function prsWriteGate(capabilities, error) {
+    if (error !== null) return { kind: "error", detail: error };
+    if (capabilities === null) return { kind: "loading" };
+    if (capabilities.hosted && capabilities.reason === null) {
+      return {
+        kind: "ready",
+        operations: capabilities.operations,
+        actions: capabilities.actions,
+        mergeMethods: capabilities.mergeMethods,
+        updateMethods: capabilities.updateMethods,
+        verdicts: capabilities.verdicts
+      };
+    }
+    return {
+      kind: "unavailable",
+      reason: capabilities.reason ?? "provider-unsupported",
+      detail: capabilities.detail
+    };
+  }
+  function prsWriteActionLabel(action) {
+    switch (action) {
+      case "merge":
+        return "Merge";
+      case "ready":
+        return "Mark ready for review";
+      case "draft":
+        return "Convert to draft";
+      case "close":
+        return "Close";
+      case "reopen":
+        return "Reopen";
+      case "update-branch":
+        return "Update branch";
+      case "enable-auto-merge":
+        return "Enable auto-merge";
+      case "disable-auto-merge":
+        return "Disable auto-merge";
+      case "revert":
+        return "Revert";
+      case "approve-workflows":
+        return "Approve workflows";
+    }
+  }
+  function prsWriteActionOffers(detail, write) {
+    const declared = new Set(write.actions);
+    const offer = (action, extra) => declared.has(action) ? {
+      action,
+      label: prsWriteActionLabel(action),
+      destructive: action === "close" || action === "revert",
+      ...extra?.methods !== void 0 ? { methods: extra.methods } : {},
+      ...extra?.updateMethods !== void 0 ? { updateMethods: extra.updateMethods } : {}
+    } : null;
+    const offers = [];
+    if (detail.state === "open") {
+      if (!detail.isDraft) {
+        const merge = offer("merge", { methods: write.mergeMethods });
+        if (merge !== null) offers.push(merge);
+        const draft = offer("draft");
+        if (draft !== null) offers.push(draft);
+      } else {
+        const ready = offer("ready");
+        if (ready !== null) offers.push(ready);
+      }
+      if (detail.baseComparison === "behind" || detail.baseComparison === "diverged") {
+        const update = offer("update-branch", { updateMethods: write.updateMethods });
+        if (update !== null) offers.push(update);
+      }
+      if (detail.autoMergeEnabled === true) {
+        const disarm = offer("disable-auto-merge");
+        if (disarm !== null) offers.push(disarm);
+      } else if (detail.autoMergeEnabled === false) {
+        const arm = offer("enable-auto-merge");
+        if (arm !== null) offers.push(arm);
+      }
+      const close = offer("close");
+      if (close !== null) offers.push(close);
+      if ((detail.workflowApprovalsRequired ?? 0) > 0) {
+        const approve = offer("approve-workflows");
+        if (approve !== null) offers.push(approve);
+      }
+    } else if (detail.state === "closed") {
+      const reopen = offer("reopen");
+      if (reopen !== null) offers.push(reopen);
+    } else {
+      const revert = offer("revert");
+      if (revert !== null) offers.push(revert);
+    }
+    return offers;
+  }
+  function prsWriteVerdictOptions(verdicts) {
+    const order = ["comment", "approve", "request-changes"];
+    const labels = {
+      comment: "Comment",
+      approve: "Approve",
+      "request-changes": "Request changes"
+    };
+    return order.filter((verdict) => verdicts.includes(verdict)).map((verdict) => ({ value: verdict, label: labels[verdict] }));
+  }
+  function prsWriteUnavailableNote(gate) {
+    if (gate.kind === "loading") return "Reading write capabilities\u2026";
+    if (gate.kind === "error") return `Pull-request writes unavailable \u2014 ${gate.detail}`;
+    if (gate.kind === "unavailable") {
+      const base = gate.reason === "cli-missing" ? "Pull-request writes need a host CLI that is not installed" : gate.reason === "cli-unauthenticated" ? "Pull-request writes need an authenticated host CLI" : "This project's host cannot take pull-request writes";
+      return gate.detail !== null ? `${base} \u2014 ${gate.detail}` : base;
+    }
+    return null;
+  }
 
   // prsPanel.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
@@ -5385,6 +6875,29 @@ ${ref.number}`;
       );
       return () => controller.abort();
     }, [host, session, visible, tick]);
+    return result?.key === tick ? result : { capabilities: null, error: null };
+  }
+  function usePrsWriteCapabilities(host, session, enabled, tick) {
+    const [result, setResult] = (0, import_react.useState)(null);
+    (0, import_react.useEffect)(() => {
+      if (!enabled) return;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      void bindApi(prsWriteApi, host, session.context).invoke("getCapabilities", {}, signal).then(
+        (capabilities) => {
+          if (!signal.aborted) setResult({ key: tick, capabilities, error: null });
+        },
+        (error) => {
+          if (!signal.aborted)
+            setResult({
+              key: tick,
+              capabilities: null,
+              error: message(error, "Pull-request write capabilities unavailable")
+            });
+        }
+      );
+      return () => controller.abort();
+    }, [host, session, enabled, tick]);
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
   function usePrsRefreshes(host, session, enabled) {
@@ -5914,7 +7427,7 @@ ${ref.number}`;
     );
   }
   function ReviewThreadSection(props) {
-    const { thread, canPage, onLoadMore, paging, unrecoverable, pageError } = props;
+    const { thread, canPage, onLoadMore, paging, unrecoverable, pageError, write, writeTick } = props;
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "section",
       {
@@ -5953,7 +7466,31 @@ ${ref.number}`;
             pageError,
             " \u2014 retry with the button above."
           ] }),
-          unrecoverable && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11 }, children: "Some comments could not be shown \u2014 the host cut this thread's tail without a cursor." })
+          unrecoverable && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11 }, children: "Some comments could not be shown \u2014 the host cut this thread's tail without a cursor." }),
+          write !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { padding: "2px 10px" }, children: [
+            write.canResolve && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "button",
+              {
+                type: "button",
+                disabled: write.resolvePending,
+                onClick: () => write.onResolve(thread.id, !thread.isResolved),
+                style: iconButton,
+                children: write.resolvePending ? "Working\u2026" : thread.isResolved ? "Unresolve thread" : "Resolve thread"
+              }
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PrsWriteErrorLine, { error: write.resolveError }),
+            write.canReply && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              PrsComposer,
+              {
+                label: "Reply",
+                placeholder: "Reply to this thread",
+                pending: write.replyPending,
+                error: write.replyError,
+                onSubmit: (body) => write.onReply(thread.id, body)
+              },
+              `${thread.id}:${writeTick}`
+            )
+          ] })
         ]
       }
     );
@@ -6133,6 +7670,109 @@ ${ref.number}`;
       )
     ] });
   }
+  function PrsWriteErrorLine({ error }) {
+    if (error === null) return null;
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 11 }, children: error });
+  }
+  function PrsActionButton(props) {
+    const { offer, pending, onRun } = props;
+    const choices = offer.methods ?? offer.updateMethods ?? [];
+    const [method, setMethod] = (0, import_react.useState)(choices[0] ?? "");
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { display: "inline-flex", alignItems: "center", gap: 4 }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "button",
+        {
+          type: "button",
+          disabled: pending,
+          onClick: () => onRun(offer, method === "" ? void 0 : method),
+          style: {
+            ...control,
+            color: offer.destructive ? "var(--destructive, #b42318)" : "inherit"
+          },
+          children: pending ? `${offer.label}\u2026` : offer.label
+        }
+      ),
+      choices.length > 1 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "select",
+        {
+          "aria-label": `${offer.label} method`,
+          value: method,
+          onChange: (event) => setMethod(event.target.value),
+          style: { ...control, padding: "2px 4px" },
+          children: choices.map((choice) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: choice, children: choice }, choice))
+        }
+      )
+    ] });
+  }
+  function PrsComposer(props) {
+    const { label, placeholder, pending, error, onSubmit } = props;
+    const [body, setBody] = (0, import_react.useState)("");
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { padding: "4px 10px" }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "textarea",
+        {
+          "aria-label": label,
+          value: body,
+          onChange: (event) => setBody(event.target.value),
+          placeholder,
+          rows: 3,
+          style: { ...inputStyle, width: "100%", resize: "vertical" }
+        }
+      ),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { display: "flex", alignItems: "center", gap: 6, marginTop: 4 }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "button",
+        {
+          type: "button",
+          disabled: pending || body.trim() === "",
+          onClick: () => onSubmit(body),
+          style: control,
+          children: pending ? `${label}\u2026` : label
+        }
+      ) }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PrsWriteErrorLine, { error })
+    ] });
+  }
+  function PrsReviewComposer(props) {
+    const { verdicts, pending, error, onSubmit } = props;
+    const [verdict, setVerdict] = (0, import_react.useState)(verdicts[0]?.value ?? "comment");
+    const [body, setBody] = (0, import_react.useState)("");
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { padding: "4px 10px" }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "textarea",
+        {
+          "aria-label": "Review body",
+          value: body,
+          onChange: (event) => setBody(event.target.value),
+          placeholder: verdict === "approve" ? "Review body (optional for an approval)" : "Review body",
+          rows: 3,
+          style: { ...inputStyle, width: "100%", resize: "vertical" }
+        }
+      ),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 6, marginTop: 4 }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "select",
+          {
+            "aria-label": "Review verdict",
+            value: verdict,
+            onChange: (event) => setVerdict(event.target.value),
+            style: { ...control, padding: "2px 4px" },
+            children: verdicts.map((option) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: option.value, children: option.label }, option.value))
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "button",
+          {
+            type: "button",
+            disabled: pending || verdict !== "approve" && body.trim() === "",
+            onClick: () => onSubmit(verdict, body),
+            style: control,
+            children: pending ? "Submitting\u2026" : "Submit review"
+          }
+        )
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PrsWriteErrorLine, { error })
+    ] });
+  }
   function PullRequestsPanel(props) {
     const { host, session, visible, selected, onSelect } = props;
     const [tick, setTick] = (0, import_react.useState)(0);
@@ -6151,6 +7791,11 @@ ${ref.number}`;
     const gate = prsGate(capabilities, capsError);
     const ready = gate.kind === "ready";
     const ops = ready ? gate.operations : null;
+    const writeProbe = usePrsWriteCapabilities(host, session, visible && ready, tick);
+    const write = prsWriteGate(writeProbe.capabilities, writeProbe.error);
+    const writeOps = write.kind === "ready" ? write.operations : null;
+    const [writeTick, setWriteTick] = (0, import_react.useState)(0);
+    const [writeState, setWriteState] = (0, import_react.useState)(null);
     const refreshes = usePrsRefreshes(
       host,
       session,
@@ -6194,6 +7839,67 @@ ${ref.number}`;
           if (!signal.aborted) setRefreshError(message(error, "Pull-request refresh unavailable"));
         }
       ).finally(() => controller.abort());
+    };
+    const runWrite = (key, invoke) => {
+      if (writeState?.pending) return;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      setWriteState({ key, pending: true, error: null });
+      void invoke(signal).then(
+        () => {
+          if (signal.aborted) return;
+          setWriteState(null);
+          setWriteTick((value) => value + 1);
+          runInvalidate();
+        },
+        (error) => {
+          if (!signal.aborted)
+            setWriteState({
+              key,
+              pending: false,
+              error: message(error, "Pull-request write failed")
+            });
+        }
+      );
+    };
+    const writeApi = () => bindApi(prsWriteApi, host, session.context);
+    const writeError = (key) => writeState !== null && !writeState.pending && writeState.key === key ? writeState.error : null;
+    const writePending = (key) => writeState !== null && writeState.pending && writeState.key === key;
+    const runPrAction = (offer, method) => {
+      if (selected === null) return;
+      runWrite(
+        `action:${offer.action}`,
+        (signal) => writeApi().invoke(
+          "runAction",
+          {
+            ...selected,
+            action: offer.action,
+            ...offer.action === "merge" && method !== void 0 ? { mergeMethod: method } : {},
+            ...offer.action === "update-branch" && method !== void 0 ? { updateMethod: method } : {}
+          },
+          signal
+        )
+      );
+    };
+    const threadWrite = (thread) => {
+      if (selected === null || write.kind !== "ready") return null;
+      const ref = selected;
+      return {
+        canReply: write.operations["prs.replyToThread"],
+        canResolve: write.operations["prs.setThreadResolution"],
+        resolvePending: writePending(`resolve:${thread.id}`),
+        resolveError: writeError(`resolve:${thread.id}`),
+        replyPending: writePending(`reply:${thread.id}`),
+        replyError: writeError(`reply:${thread.id}`),
+        onReply: (threadId, body) => runWrite(
+          `reply:${threadId}`,
+          (signal) => writeApi().invoke("replyToThread", { ...ref, threadId, body }, signal)
+        ),
+        onResolve: (threadId, resolved) => runWrite(
+          `resolve:${threadId}`,
+          (signal) => writeApi().invoke("setThreadResolution", { ...ref, threadId, resolved }, signal)
+        )
+      };
     };
     const selectedKey = selected === null ? null : prsRefKey(selected);
     const pagedScope = selectedKey === null ? null : `${revision2}
@@ -6473,6 +8179,38 @@ ${thread.id}`;
                   ),
                   detail.bodyTruncated === true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11 }, children: "Description truncated by the contract bound \u2014 read the rest on the host." })
                 ] }),
+                detail !== null && write.kind === "ready" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                  "section",
+                  {
+                    "aria-label": "Pull request actions",
+                    style: {
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      flexWrap: "wrap",
+                      padding: "4px 10px",
+                      borderTop: "1px solid var(--border, #f0f2f5)"
+                    },
+                    children: [
+                      writeOps !== null && writeOps["prs.runAction"] !== true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11, padding: 0 }, children: "This host takes no pull-request actions." }),
+                      writeOps?.["prs.runAction"] === true && prsWriteActionOffers(detail, write).map((offer) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                        PrsActionButton,
+                        {
+                          offer,
+                          pending: writeState?.pending === true,
+                          onRun: runPrAction
+                        },
+                        offer.action
+                      )),
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                        PrsWriteErrorLine,
+                        {
+                          error: writeState !== null && !writeState.pending && writeState.key.startsWith("action:") ? writeState.error : null
+                        }
+                      )
+                    ]
+                  }
+                ),
                 sections.stackError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 11 }, children: sections.stackError }),
                 ops !== null && ops["prs.stack"] !== true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11 }, children: "Stack information is not supported by this host (prs.stack)." }),
                 sections.stack !== null && sections.stack.layers.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Stack", style: { paddingBottom: 4 }, children: [
@@ -6556,7 +8294,9 @@ ${thread.id}`;
 ${thread.id}`) === activity,
                           unrecoverable: paged !== void 0 ? paged.truncated && paged.nextCursor === null : thread.nextCommentsCursor === void 0 && thread.commentCount !== void 0 && thread.commentCount > thread.comments.length,
                           pageError: paged?.error ?? null,
-                          onLoadMore: loadThreadComments
+                          onLoadMore: loadThreadComments,
+                          write: threadWrite(merged),
+                          writeTick
                         },
                         thread.id
                       );
@@ -6569,7 +8309,41 @@ ${thread.id}`) === activity,
                     ] }),
                     activity.comments.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 11 }, children: "No comments." }),
                     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: activity.comments.map((comment) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CommentRow, { comment }, comment.id)) }),
-                    activity.commentsTruncated && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11 }, children: "Comment list truncated by the host." })
+                    activity.commentsTruncated && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11 }, children: "Comment list truncated by the host." }),
+                    writeOps?.["prs.comment"] === true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      PrsComposer,
+                      {
+                        label: "Comment",
+                        placeholder: "Leave a comment",
+                        pending: writePending("comment"),
+                        error: writeError("comment"),
+                        onSubmit: (body) => runWrite(
+                          "comment",
+                          (signal) => writeApi().invoke("comment", { ...selected, body }, signal)
+                        )
+                      },
+                      `comment:${writeTick}`
+                    )
+                  ] }),
+                  write.kind === "ready" && writeOps?.["prs.submitReview"] === true && write.verdicts.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Submit a review", style: { paddingBottom: 4 }, children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", { style: headingStyle, children: "Submit a review" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      PrsReviewComposer,
+                      {
+                        verdicts: prsWriteVerdictOptions(write.verdicts),
+                        pending: writePending("review"),
+                        error: writeError("review"),
+                        onSubmit: (verdict, body) => runWrite(
+                          "review",
+                          (signal) => writeApi().invoke(
+                            "submitReview",
+                            { ...selected, verdict, body, comments: [] },
+                            signal
+                          )
+                        )
+                      },
+                      `review:${writeTick}`
+                    )
                   ] }),
                   activity.commits.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Commits", style: { paddingBottom: 4 }, children: [
                     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("h3", { style: headingStyle, children: [
@@ -6611,7 +8385,7 @@ ${thread.id}`) === activity,
                     }
                   )
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11, paddingBottom: 8 }, children: PRS_MUTATIONS_DEFERRED })
+                prsWriteUnavailableNote(write) !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11, paddingBottom: 8 }, children: prsWriteUnavailableNote(write) })
               ] })
             ] })
           ] })
@@ -7773,7 +9547,7 @@ ${thread.id}`) === activity,
                 borderTop: "1px solid var(--border, #dfe3e8)",
                 flexShrink: 0
               },
-              children: "Version Control on t3.vcs + t3.prs/read: pull-request browse/detail/diff (read-only), status, staging lanes, stage/unstage/commit, branch create/switch, pull/push/fetch, init, worktrees, and remotes (t3.vcs/mutate). PR mutations, publish/clone, stash, and per-hunk diff expansion are deferred slices."
+              children: "Version Control on t3.vcs + t3.prs: pull-request browse/detail/diff plus host writes (actions, comments, reviews, thread reply/resolve \u2014 t3.prs/write), status, staging lanes, stage/unstage/commit, branch create/switch, pull/push/fetch, init, worktrees, and remotes (t3.vcs/mutate). Composite commit+push+PR actions, publish/clone, stash, and per-hunk diff expansion are deferred slices."
             }
           )
         ]
@@ -7785,6 +9559,7 @@ ${thread.id}`) === activity,
     version: "0.4.0",
     requires: [
       requireApi(prsReadApi),
+      requireApi(prsWriteApi),
       requireApi(vcsStatusApi),
       requireApi(vcsChangesApi),
       requireApi(vcsRefsApi),

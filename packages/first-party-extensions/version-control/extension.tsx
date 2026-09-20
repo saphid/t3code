@@ -1,5 +1,6 @@
 import {
   prsReadApi,
+  prsWriteApi,
   vcsChangesApi,
   vcsRefsApi,
   vcsRepositoryApi,
@@ -1404,10 +1405,11 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
           flexShrink: 0,
         }}
       >
-        Version Control on t3.vcs + t3.prs/read: pull-request browse/detail/diff (read-only),
-        status, staging lanes, stage/unstage/commit, branch create/switch, pull/push/fetch, init,
-        worktrees, and remotes (t3.vcs/mutate). PR mutations, publish/clone, stash, and per-hunk
-        diff expansion are deferred slices.
+        Version Control on t3.vcs + t3.prs: pull-request browse/detail/diff plus host writes
+        (actions, comments, reviews, thread reply/resolve — t3.prs/write), status, staging lanes,
+        stage/unstage/commit, branch create/switch, pull/push/fetch, init, worktrees, and remotes
+        (t3.vcs/mutate). Composite commit+push+PR actions, publish/clone, stash, and per-hunk diff
+        expansion are deferred slices.
       </output>
     </section>
   );
@@ -1418,6 +1420,7 @@ export default defineExtension({
   version: "0.4.0",
   requires: [
     requireApi(prsReadApi),
+    requireApi(prsWriteApi),
     requireApi(vcsStatusApi),
     requireApi(vcsChangesApi),
     requireApi(vcsRefsApi),
