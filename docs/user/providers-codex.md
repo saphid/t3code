@@ -117,6 +117,14 @@ both.
 If you add a third Codex provider with a completely different `CODEX_HOME path`, T3 Code treats it
 as a different workspace. It will not be offered for existing threads created under `~/.codex`.
 
+## The Thread Says The Provider Is Busy
+
+When a model is overloaded or at capacity, the turn stops with that error. T3
+Code asks the agent to continue for you after one minute, then five, then
+fifteen. Sending your own message first cancels the automatic retry. If the
+provider is still busy after the third try, send a message when you want to
+continue, or switch the thread to another account or model.
+
 ## If Both Accounts Look The Same
 
 If two Codex providers show the same account or the same unexpected model list:
