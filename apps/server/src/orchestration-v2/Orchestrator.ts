@@ -3771,6 +3771,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
 
+      if (command.providerBusyRetry !== undefined) {
+        const sourceRunId = command.providerBusyRetry.sourceRunId;
+        const source = projection.runs.find((run) => run.id === sourceRunId);
+        if (
+          !source ||
+          source.status !== "failed" ||
+          projection.thread.archivedAt !== null ||
+          projection.thread.deletedAt !== null ||
+          projection.thread.providerInstanceId !== source.providerInstanceId ||
+          projection.runs.some((run) => run.ordinal > source.ordinal)
+        ) {
+          // Same stale-delivery handling as restart continuations above.
+          yield* emit(
+            events,
+            command,
+          )({
+            type: "thread.metadata-updated",
+            threadId: command.threadId,
+            occurredAt: yield* DateTime.now,
+            payload: projection.thread,
+          });
+          return;
+        }
+      }
+
       if (projection.thread.settledOverride !== null) {
         const now = yield* DateTime.now;
         const thread: OrchestrationV2AppThread = {
@@ -4182,6 +4207,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(command.restartContinuationOfRunId === undefined
             ? {}
             : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
+          ...(command.providerBusyRetry === undefined
+            ? {}
+            : { providerBusyRetry: command.providerBusyRetry }),
         };
         const attempt: OrchestrationV2RunAttempt = {
           id: attemptId,
@@ -4518,6 +4546,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(command.restartContinuationOfRunId === undefined
             ? {}
             : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
+          ...(command.providerBusyRetry === undefined
+            ? {}
+            : { providerBusyRetry: command.providerBusyRetry }),
         };
         const attempt: OrchestrationV2RunAttempt = {
           id: attemptId,
@@ -5199,6 +5230,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.restartContinuationOfRunId === undefined
           ? {}
           : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
+        ...(command.providerBusyRetry === undefined
+          ? {}
+          : { providerBusyRetry: command.providerBusyRetry }),
       };
       const attempt: OrchestrationV2RunAttempt = {
         id: attemptId,

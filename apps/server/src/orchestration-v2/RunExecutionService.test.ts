@@ -3508,6 +3508,61 @@ it.effect.each(["completed", "interrupted", "failed", "cancelled"] as const)(
     }),
 );
 
+it.effect.each([
+  { priorAttempt: undefined, delayMs: 60_000 },
+  { priorAttempt: 2, delayMs: 900_000 },
+  { priorAttempt: 3, delayMs: undefined },
+] as const)(
+  "schedules a delayed retry for a provider_busy failure after prior attempt $priorAttempt",
+  ({ priorAttempt, delayMs }) =>
+    Effect.gen(function* () {
+      const scheduled: Array<
+        Parameters<EventSinkV2["Service"]["writeWithEffects"]>[0]["effects"][number]
+      > = [];
+      yield* runBackgroundItemScenario(
+        `busy-retry-${priorAttempt ?? 0}`,
+        (ids) => {
+          const terminal = rootTerminalEvent(ids, "failed");
+          return [
+            terminal.type === "turn.terminal" && terminal.status === "failed"
+              ? { ...terminal, failure: { ...terminal.failure, class: "provider_busy" as const } }
+              : terminal,
+          ];
+        },
+        {
+          onEffects: (effects) => {
+            scheduled.push(...effects.filter((e) => e.request.type === "provider-busy.retry"));
+          },
+          ...(priorAttempt === undefined
+            ? {}
+            : {
+                run: {
+                  providerBusyRetry: {
+                    sourceRunId: RunId.make("run:busy-source"),
+                    attempt: priorAttempt,
+                  },
+                },
+              }),
+        },
+      );
+      if (delayMs === undefined) {
+        assert.lengthOf(scheduled, 0);
+        return;
+      }
+      assert.lengthOf(scheduled, 1);
+      const effect = scheduled[0]!;
+      assert.equal(
+        effect.request.type === "provider-busy.retry" ? effect.request.attempt : null,
+        (priorAttempt ?? 0) + 1,
+      );
+      // The test clock starts at the epoch, so the absolute time is the delay.
+      assert.equal(
+        effect.availableAt === undefined ? null : DateTime.toEpochMillis(effect.availableAt),
+        delayMs,
+      );
+    }),
+);
+
 function runBackgroundItemScenario(
   key: string,
   makeEvents: (ids: BackgroundScenarioIds) => ReadonlyArray<ProviderAdapterV2Event>,
@@ -3520,6 +3575,7 @@ function runBackgroundItemScenario(
     readonly onEffects?: (
       effects: Parameters<EventSinkV2["Service"]["writeWithEffects"]>[0]["effects"],
     ) => void;
+    readonly run?: Partial<OrchestrationV2Run>;
   },
 ) {
   return Effect.gen(function* () {
@@ -3598,6 +3654,7 @@ function runBackgroundItemScenario(
           threadId: ids.threadId,
           ordinal: 1,
           providerInstanceId,
+          ...options?.run,
         } as OrchestrationV2Run,
         rootNode: { id: ids.rootNodeId } as OrchestrationV2ExecutionNode,
         checkpointScope: {

@@ -376,6 +376,16 @@ describe("buildThreadFeed", () => {
       status: "failure",
     });
 
+    const busyItem = {
+      ...item,
+      id: TurnItemId.make("item-provider-busy"),
+      failure: { ...item.failure, class: "provider_busy" as const },
+    };
+    const busyActivity = buildThreadFeed([projected(busyItem, 0)]).find(
+      (entry) => entry.type === "activity-group",
+    )?.activities[0];
+    expect(busyActivity).toMatchObject({ summary: "Provider busy", status: "neutral" });
+
     // A usage-limit retry that recovered keeps its recovered presentation,
     // like the web: not a permanent "Out of tokens" label.
     const recoveredRetry = {

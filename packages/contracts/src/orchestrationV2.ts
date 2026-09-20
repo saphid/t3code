@@ -441,6 +441,13 @@ export const OrchestrationV2DelegatedCompletionCohort = Schema.Struct({
 export type OrchestrationV2DelegatedCompletionCohort =
   typeof OrchestrationV2DelegatedCompletionCohort.Type;
 
+/** Marks a server-generated run that retries a run which failed as `provider_busy`. */
+export const OrchestrationV2ProviderBusyRetry = Schema.Struct({
+  sourceRunId: RunId,
+  attempt: PositiveInt,
+});
+export type OrchestrationV2ProviderBusyRetry = typeof OrchestrationV2ProviderBusyRetry.Type;
+
 export const OrchestrationV2Run = Schema.Struct({
   id: RunId,
   threadId: ThreadId,
@@ -462,6 +469,7 @@ export const OrchestrationV2Run = Schema.Struct({
   contextHandoffId: Schema.NullOr(ContextHandoffId),
   /** Links server-generated restart continuations to the interrupted run. */
   restartContinuationOfRunId: Schema.optional(RunId),
+  providerBusyRetry: Schema.optional(OrchestrationV2ProviderBusyRetry),
   sourcePlanRef: Schema.optional(
     Schema.Struct({
       threadId: ThreadId,
@@ -927,6 +935,8 @@ export const OrchestrationV2ProviderFailureClass = Schema.Literals([
   "validation_error",
   /** The provider account hit a quota window (tokens, credits, rate). Not a defect. */
   "usage_limit",
+  /** The provider or model was temporarily overloaded or at capacity. Not a defect; safe to retry. */
+  "provider_busy",
   "unknown",
 ]);
 export type OrchestrationV2ProviderFailureClass = typeof OrchestrationV2ProviderFailureClass.Type;
@@ -2381,6 +2391,7 @@ export const OrchestrationV2Command = Schema.Union([
     modelSelection: Schema.optional(ModelSelection),
     sourcePlanRef: Schema.optional(Schema.Struct({ threadId: ThreadId, planId: PlanId })),
     restartContinuationOfRunId: Schema.optional(RunId),
+    providerBusyRetry: Schema.optional(OrchestrationV2ProviderBusyRetry),
     /** Resolve untargeted delivery against the server's serialized thread state. */
     deliveryIntent: Schema.optional(Schema.Literals(["auto", "steer", "restart"])),
     delegatedCompletion: Schema.optional(

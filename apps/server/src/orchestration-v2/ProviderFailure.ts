@@ -17,6 +17,12 @@ import type { IdAllocatorV2Shape } from "./IdAllocator.ts";
 export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;
 export const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
 
+/**
+ * Delay before each automatic retry of a run that failed as `provider_busy`.
+ * The length is the retry budget; once it is spent the failure stays terminal.
+ */
+export const PROVIDER_BUSY_RETRY_DELAYS_MS = [60_000, 300_000, 900_000] as const;
+
 const DEFAULT_PROVIDER_FAILURE_MESSAGE = "Provider turn failed.";
 
 function stringField(value: unknown, key: "message" | "code"): string | undefined {
@@ -101,12 +107,38 @@ export function makeProviderFailure(input: {
   const code =
     rawCode === null ? null : boundedText(rawCode, MAX_PROVIDER_FAILURE_CODE_LENGTH) || null;
 
+  // Adapters report overload as an ordinary provider error. Reclassifying it
+  // here keeps every adapter consistent; only `provider_error` is upgraded so
+  // an adapter's more specific class always wins.
+  const busy =
+    input.class === "provider_error" && isProviderBusyFailureSignal({ message: rawMessage, code });
   return {
-    class: input.class ?? "unknown",
+    class: busy ? "provider_busy" : (input.class ?? "unknown"),
     message: message || DEFAULT_PROVIDER_FAILURE_MESSAGE,
     code,
-    retryable: input.retryable ?? null,
+    retryable: busy ? true : (input.retryable ?? null),
   };
+}
+
+/**
+ * Whether a provider failure describes the provider or model being temporarily
+ * overloaded or at capacity. Such runs are retried automatically, so this is
+ * conservative on purpose: a bare 503 is excluded because proxies also use it
+ * for permanent conditions such as revoked credentials.
+ */
+export function isProviderBusyFailureSignal(input: {
+  readonly message: string;
+  readonly code: string | null;
+}): boolean {
+  if (input.code !== null) {
+    const normalized = input.code.toLowerCase().replace(/[\s-]+/gu, "_");
+    if (normalized.includes("overloaded") || normalized.endsWith("_529") || normalized === "529") {
+      return true;
+    }
+  }
+  return /\b(?:model|server|service|provider|api)s? (?:is |are )?(?:currently |temporarily )?(?:at capacity|overloaded)\b|overloaded_error/iu.test(
+    input.message,
+  );
 }
 
 /**
@@ -142,6 +174,11 @@ export function isUsageLimitFailureSignal(input: {
   );
 }
 
+function terminalFailureTitle(failure: OrchestrationV2ProviderFailure): string {
+  if (failure.class === "usage_limit") return "Out of tokens";
+  return failure.class === "provider_busy" ? "Provider busy" : "Provider error";
+}
+
 export function makeProviderFailureTurnItem(input: {
   readonly idAllocator: IdAllocatorV2Shape;
   readonly driver: ProviderDriverKind;
@@ -170,7 +207,7 @@ export function makeProviderFailureTurnItem(input: {
     parentItemId: null,
     ordinal: input.itemOrdinal,
     status: "failed",
-    title: input.failure.class === "usage_limit" ? "Out of tokens" : "Provider error",
+    title: terminalFailureTitle(input.failure),
     startedAt: input.retryStartedAt ?? input.occurredAt,
     completedAt: input.occurredAt,
     updatedAt: input.occurredAt,
@@ -203,7 +240,7 @@ export function makeProviderRetryTurnItem(input: {
   if (input.status === "completed") {
     title = "Provider recovered";
   } else if (input.status === "failed") {
-    title = input.failure.class === "usage_limit" ? "Out of tokens" : "Provider error";
+    title = terminalFailureTitle(input.failure);
   } else if (input.status === "interrupted" || input.status === "cancelled") {
     title = "Provider retry stopped";
   }

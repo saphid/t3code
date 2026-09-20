@@ -2626,6 +2626,7 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
     case "error": {
       const presentation = providerErrorPresentation(item);
       const usageLimited = item.failure.class === "usage_limit";
+      const calm = usageLimited || item.failure.class === "provider_busy";
       return {
         ...presentation,
         tone:
@@ -2633,7 +2634,7 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
             ? "success"
             : item.status === "running"
               ? "warning"
-              : usageLimited
+              : calm
                 ? "warning"
                 : "danger",
         icon: usageLimited ? CoinsIcon : CircleAlertIcon,

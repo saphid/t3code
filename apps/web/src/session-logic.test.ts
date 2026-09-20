@@ -114,6 +114,14 @@ describe("V2 session presentation", () => {
         failure: { ...usageLimitItem.failure, class: "provider_error" as const },
       }),
     ).toMatchObject({ label: "Provider error" });
+    // Transient capacity failures get their own calm label, also from the class.
+    expect(
+      providerErrorPresentation({
+        ...usageLimitItem,
+        title: "Provider error",
+        failure: { ...usageLimitItem.failure, class: "provider_busy" as const },
+      }),
+    ).toMatchObject({ label: "Provider busy" });
   });
 
   it("keeps usage-limit failures out of severe work-log styling", () => {
@@ -155,6 +163,16 @@ describe("V2 session presentation", () => {
           message: "You've hit your usage limit.",
           code: "usageLimitExceeded",
           retryable: null,
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      workEntrySignalsSevereFailure(
+        makeErrorEntry({
+          class: "provider_busy",
+          message: "Selected model is at capacity.",
+          code: "serverOverloaded",
+          retryable: true,
         }),
       ),
     ).toBe(false);

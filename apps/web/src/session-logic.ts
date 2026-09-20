@@ -152,13 +152,15 @@ export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
 
 /** Severe failures keep the red treatment ordinary tool failures lost: provider
  *  runtime errors mean the turn or a core side effect broke, not that a
- *  command exited nonzero. Usage-limit failures are an account state, not a
- *  defect, so they keep the calm row treatment. */
+ *  command exited nonzero. Usage-limit and provider-busy failures are an
+ *  account or capacity state, not a defect, so they keep the calm row
+ *  treatment. */
 export function workEntrySignalsSevereFailure(entry: WorkLogEntry): boolean {
   if (
     entry.itemType === "error" &&
     entry.structuredPayload?.type === "error" &&
-    entry.structuredPayload.failure.class === "usage_limit"
+    (entry.structuredPayload.failure.class === "usage_limit" ||
+      entry.structuredPayload.failure.class === "provider_busy")
   ) {
     return false;
   }
@@ -368,10 +370,16 @@ export function providerErrorPresentation(
 ): { readonly label: string; readonly detail: string } {
   // Usage-limit failures are an account state, not a defect: say so plainly
   // instead of alarming with the generic provider-error label.
-  const usageLimited = item.failure.class === "usage_limit";
+  // Provider-busy failures are transient capacity and retried by the server.
+  const calmLabel =
+    item.failure.class === "usage_limit"
+      ? "Out of tokens"
+      : item.failure.class === "provider_busy"
+        ? "Provider busy"
+        : null;
   if (item.retry === undefined) {
     return {
-      label: usageLimited ? "Out of tokens" : item.title?.trim() || "Provider error",
+      label: calmLabel ?? (item.title?.trim() || "Provider error"),
       detail: item.failure.message,
     };
   }
@@ -385,7 +393,7 @@ export function providerErrorPresentation(
       : item.status === "completed"
         ? `Provider recovered (${progress} retries)`
         : item.status === "failed"
-          ? `${usageLimited ? "Out of tokens" : "Provider error"} after ${progress} retries`
+          ? `${calmLabel ?? "Provider error"} after ${progress} retries`
           : `Provider retry stopped (${progress})`;
   const retryDelay =
     item.status === "running" && item.retry.retryDelayMs !== null && item.retry.retryDelayMs > 0

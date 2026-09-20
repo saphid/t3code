@@ -358,12 +358,29 @@ function itemIsProminent(item: OrchestrationV2TurnItem): boolean {
   return item.type === "fork" || item.type === "thread_created" || item.type === "system_notice";
 }
 
+type ProviderFailureClass = Extract<
+  OrchestrationV2TurnItem,
+  { readonly type: "error" }
+>["failure"]["class"];
+
+/** Titles for failures that describe account or capacity state rather than a defect. */
+function calmFailureTitle(failureClass: ProviderFailureClass): string | null {
+  if (failureClass === "usage_limit") return "Out of tokens";
+  if (failureClass === "provider_busy") return "Provider busy";
+  return null;
+}
+
+function isCalmFailureClass(failureClass: ProviderFailureClass): boolean {
+  return calmFailureTitle(failureClass) !== null;
+}
+
 function itemStatus(item: OrchestrationV2TurnItem): ThreadFeedActivity["status"] {
   if (item.type === "notification") return item.outcome === "failed" ? "failure" : null;
   if (item.type === "error") {
-    // Usage-limit failures are an account state, not a defect: keep the row
-    // neutral instead of alarming red, but let recovered retries show success.
-    if (item.failure.class === "usage_limit") {
+    // Usage-limit and provider-busy failures are an account or capacity state,
+    // not a defect: keep the row neutral instead of alarming red, but let
+    // recovered retries show success.
+    if (isCalmFailureClass(item.failure.class)) {
       return item.status === "completed" ? "success" : "neutral";
     }
     if (item.status === "failed") return "failure";
@@ -465,8 +482,10 @@ function itemSummary(
   // Usage-limit failures are an account state, not a defect: label them from
   // the failure class even when the persisted title still says "Provider error".
   // Retry states keep their status-aware titles ("Provider retry", "Provider recovered").
-  if (item.type === "error" && item.failure.class === "usage_limit" && item.status === "failed")
-    return "Out of tokens";
+  if (item.type === "error" && item.status === "failed") {
+    const calmTitle = calmFailureTitle(item.failure.class);
+    if (calmTitle !== null) return calmTitle;
+  }
   const title = item.title?.trim();
   if (item.type === "subagent") return formatSubagentDisplayTitle(title || "Subagent");
   if (title) return toolPresentation?.displayName ?? capitalizePhrase(title);
@@ -494,9 +513,9 @@ function itemSummary(
     case "run_interrupt_result":
       return "Run interrupted";
     case "error":
-      return item.failure.class === "usage_limit" && item.status === "failed"
-        ? "Out of tokens"
-        : "Provider error";
+      return (
+        (item.status === "failed" ? calmFailureTitle(item.failure.class) : null) ?? "Provider error"
+      );
     case "handoff":
       return "Context handed off";
     case "fork":
@@ -683,7 +702,7 @@ function toFeedActivity(
     prominent: itemIsProminent(item),
     status:
       workEntryDisplayIndicatesToolFailure(workEntry) &&
-      !(item.type === "error" && item.failure.class === "usage_limit")
+      !(item.type === "error" && isCalmFailureClass(item.failure.class))
         ? "failure"
         : itemStatus(item),
     lifecycleStatus: itemLifecycleStatus(item),
