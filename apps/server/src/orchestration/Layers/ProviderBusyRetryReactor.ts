@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -56,20 +57,36 @@ export function isProviderBusyError(message: string): boolean {
 
 interface RetryState {
   readonly attempt: number;
-  /** `latestUserMessageAt` after our own retry message, to tell it from the user's. */
+  /**
+   * `latestUserMessageAt` once the attempt was spent. While it still matches
+   * the thread, no real user message has arrived and the budget keeps counting.
+   */
   readonly retryMessageAt: string | null;
+  /** The budget is spent; stays set until a real user message arrives. */
+  readonly exhausted: boolean;
 }
 
-/** Whether the thread is still sitting on the failed turn the retry was scheduled for. */
+/** The failed turn a retry was scheduled for. */
+interface FailureIdentity {
+  readonly turnId: TurnId | null;
+  readonly latestUserMessageAt: string | null;
+}
+
+/** Whether the thread is still sitting, unparked, on the busy failure the retry was scheduled for. */
 export function busyRetryStillWanted(
   thread: OrchestrationThreadShell | undefined,
-  expected: { readonly turnId: TurnId | null; readonly latestUserMessageAt: string | null },
+  expected: FailureIdentity,
 ): thread is OrchestrationThreadShell {
   return (
     thread !== undefined &&
     thread.archivedAt === null &&
+    // Settling or snoozing parks the thread; only the user un-parks it.
+    thread.settledOverride !== "settled" &&
+    (thread.snoozedUntil ?? null) === null &&
     thread.session?.status === "error" &&
-    (thread.latestTurn?.turnId ?? null) === expected.turnId &&
+    isProviderBusyError(thread.session.lastError ?? "") &&
+    thread.latestTurn?.state === "error" &&
+    thread.latestTurn.turnId === expected.turnId &&
     thread.latestUserMessageAt === expected.latestUserMessageAt
   );
 }
@@ -81,32 +98,32 @@ export function busyRetryStillWanted(
 export const makeProviderBusyRetryHandler = (deps: {
   readonly dispatch: OrchestrationEngineShape["dispatch"];
   readonly readThread: (threadId: ThreadId) => Effect.Effect<OrchestrationThreadShell | undefined>;
+  readonly makeId: Effect.Effect<string>;
   readonly scope: Scope.Scope;
 }) => {
   const retryStates = new Map<ThreadId, RetryState>();
-  const pending = new Map<ThreadId, Fiber.Fiber<void, unknown>>();
+  const pending = new Map<ThreadId, FailureIdentity & { fiber?: Fiber.Fiber<void, unknown> }>();
   const { readThread } = deps;
 
-  const deliverRetry = Effect.fn("deliverProviderBusyRetry")(function* (input: {
-    readonly threadId: ThreadId;
-    readonly attempt: number;
-    readonly turnId: TurnId | null;
-    readonly latestUserMessageAt: string | null;
-  }) {
+  const deliverRetry = Effect.fn("deliverProviderBusyRetry")(function* (
+    input: FailureIdentity & { readonly threadId: ThreadId; readonly attempt: number },
+  ) {
     const thread = yield* readThread(input.threadId);
-    if (!busyRetryStillWanted(thread, input)) {
-      retryStates.delete(input.threadId);
-      return;
-    }
+    if (!busyRetryStillWanted(thread, input)) return;
     const createdAt = DateTime.formatIso(yield* DateTime.now);
-    const key = `${input.threadId}:${input.turnId ?? "no-turn"}:${input.attempt}`;
-    retryStates.set(input.threadId, { attempt: input.attempt, retryMessageAt: createdAt });
+    const id = yield* deps.makeId;
+    // A failed delivery still spends the attempt, so a rejected dispatch cannot loop.
+    retryStates.set(input.threadId, {
+      attempt: input.attempt,
+      retryMessageAt: input.latestUserMessageAt,
+      exhausted: false,
+    });
     yield* deps.dispatch({
       type: "thread.turn.start",
-      commandId: CommandId.make(`provider-busy-retry:${key}`),
+      commandId: CommandId.make(`server:provider-busy-retry:${id}`),
       threadId: input.threadId,
       message: {
-        messageId: MessageId.make(`provider-busy-retry:${key}`),
+        messageId: MessageId.make(`provider-busy-retry:${id}`),
         role: "user",
         text: PROVIDER_BUSY_RETRY_TEXT,
         attachments: [],
@@ -116,6 +133,11 @@ export const makeProviderBusyRetryHandler = (deps: {
       interactionMode: thread.interactionMode,
       createdAt,
     });
+    retryStates.set(input.threadId, {
+      attempt: input.attempt,
+      retryMessageAt: createdAt,
+      exhausted: false,
+    });
   });
 
   const processSessionSet = Effect.fn("processProviderBusySessionSet")(function* (
@@ -123,30 +145,45 @@ export const makeProviderBusyRetryHandler = (deps: {
   ) {
     const { threadId, session } = event.payload;
     if (session.status !== "error" || !isProviderBusyError(session.lastError ?? "")) return;
-    // runtime.error and turn.completed both report the same failure.
-    if (pending.has(threadId)) return;
     const thread = yield* readThread(threadId);
-    if (thread === undefined || thread.archivedAt !== null) return;
+    // A busy-looking error after a turn that finished is not a stopped turn.
+    if (
+      thread === undefined ||
+      thread.latestTurn == null ||
+      thread.latestTurn.state === "completed"
+    )
+      return;
+    const failure: FailureIdentity = {
+      turnId: thread.latestTurn.turnId,
+      latestUserMessageAt: thread.latestUserMessageAt,
+    };
+    const scheduled = pending.get(threadId);
+    if (scheduled !== undefined) {
+      // runtime.error and turn.completed both report the same failure.
+      if (
+        scheduled.turnId === failure.turnId &&
+        scheduled.latestUserMessageAt === failure.latestUserMessageAt
+      )
+        return;
+      // A newer failure replaces the retry scheduled for the old one.
+      pending.delete(threadId);
+      if (scheduled.fiber !== undefined) yield* Fiber.interrupt(scheduled.fiber);
+    }
     const previous = retryStates.get(threadId);
-    // A user message since our last retry starts a fresh budget.
-    const attempt =
-      previous !== undefined && previous.retryMessageAt === thread.latestUserMessageAt
-        ? previous.attempt + 1
-        : 1;
+    // A real user message since our last retry starts a fresh budget.
+    const continuing =
+      previous !== undefined && previous.retryMessageAt === thread.latestUserMessageAt;
+    if (continuing && previous.exhausted) return;
+    const attempt = continuing ? previous.attempt + 1 : 1;
     const delay = PROVIDER_BUSY_RETRY_DELAYS[attempt - 1];
     if (delay === undefined) {
-      retryStates.delete(threadId);
+      retryStates.set(threadId, { ...previous!, exhausted: true });
       return;
     }
-    const fiber = yield* Effect.sleep(delay).pipe(
-      Effect.andThen(
-        deliverRetry({
-          threadId,
-          attempt,
-          turnId: thread.latestTurn?.turnId ?? null,
-          latestUserMessageAt: thread.latestUserMessageAt,
-        }),
-      ),
+    const entry: FailureIdentity & { fiber?: Fiber.Fiber<void, unknown> } = { ...failure };
+    pending.set(threadId, entry);
+    entry.fiber = yield* Effect.sleep(delay).pipe(
+      Effect.andThen(deliverRetry({ threadId, attempt, ...failure })),
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
           ? Effect.failCause(cause)
@@ -155,16 +192,20 @@ export const makeProviderBusyRetryHandler = (deps: {
               cause: Cause.pretty(cause),
             }),
       ),
-      Effect.ensuring(Effect.sync(() => pending.delete(threadId))),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (pending.get(threadId) === entry) pending.delete(threadId);
+        }),
+      ),
       Effect.forkIn(deps.scope),
     );
-    pending.set(threadId, fiber);
   });
 
   return processSessionSet;
 };
 
 const make = Effect.gen(function* () {
+  const crypto = yield* Crypto.Crypto;
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   let processSessionSet: ReturnType<typeof makeProviderBusyRetryHandler> | undefined;
@@ -187,6 +228,7 @@ const make = Effect.gen(function* () {
   const start: ProviderBusyRetryReactorShape["start"] = Effect.fn("start")(function* () {
     processSessionSet = makeProviderBusyRetryHandler({
       dispatch: orchestrationEngine.dispatch,
+      makeId: crypto.randomUUIDv4.pipe(Effect.orDie),
       readThread: (threadId) =>
         projectionSnapshotQuery.getThreadShellById(threadId).pipe(
           Effect.map(Option.getOrUndefined),
