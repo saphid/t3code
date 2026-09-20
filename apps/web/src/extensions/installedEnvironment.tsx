@@ -13,6 +13,8 @@ import {
   ExtensionApiSubscribeInput,
   ExtensionApiDiscoverInput,
   extensionWorkspaceRevision,
+  ThreadId,
+  ProjectId,
   type EnvironmentId,
   type ExtensionInstallInput,
   type ExtensionManageInput,
@@ -53,10 +55,17 @@ import {
 import {
   attachRegistrationHandler,
   bindCommands,
+  committedCommandRegistrations,
   configureExtensionCommandEnvironment,
+  installExtensionCommandKeybindings,
   stagedGlobalCommandsFor,
   unconfigureExtensionCommandEnvironment,
+  type ExtensionCommandDescriptor,
 } from "./extensionCommandRegistry";
+import type { Json } from "@t3tools/extension-sdk/contracts";
+import { primaryServerKeybindingsAtom } from "../state/server";
+import { readThreadShell } from "../state/entities";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 
 const decodeInvoke = Schema.decodeSync(ExtensionInvokeInput);
 const decodeApiInvoke = Schema.decodeSync(ExtensionApiInvokeInput);
@@ -202,13 +211,50 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
     const flushStagedCommands = async (signal: AbortSignal) => {
       const snapshot = snapshots.get(environmentId);
       if (!snapshot) return;
+      const invokeRegisterCommands = async (
+        installationId: string,
+        context: {
+          client: string;
+          resource: {
+            namespace: string;
+            id: string;
+            environmentId: string;
+            projectId?: string;
+            threadId?: string;
+          };
+          workspaceRevision?: string;
+        },
+        commands: readonly ExtensionCommandDescriptor[],
+      ) => {
+        const clientConnectionId = currentClientConnectionId(environmentId);
+        if (!clientConnectionId) throw new Error("Client provider connection is not live");
+        const installation = snapshot.installations.find((item) => item.id === installationId);
+        if (!installation) throw new Error("Installation is no longer available");
+        const payload = decodeApiInvoke({
+          installationId: installation.id,
+          expectedContentHash: installation.contentHash,
+          request: {
+            id: "t3.ui/keybindings",
+            versionRange: "1.0.0",
+            method: "registerCommands",
+            input: { commands: commands as unknown as Json },
+            context,
+            clientConnectionId,
+          },
+        });
+        const result = await run(environmentExtensionsHttp.invokeApi(connection, payload), signal);
+        return result.result as {
+          commandSetToken?: string;
+          results?: readonly { commandId: string; status: string; reason?: string }[];
+        };
+      };
       for (const installation of snapshot.installations) {
         if (signal.aborted) return;
         for (const entry of stagedGlobalCommandsFor(environmentId, installation.id)) {
-          if (entry.status === "rejected" || signal.aborted) continue;
+          // Entries already committed replay through the committed-list path
+          // below; only never-committed or rejected work flushes here.
+          if (entry.status !== "staged" || signal.aborted) continue;
           try {
-            const clientConnectionId = currentClientConnectionId(environmentId);
-            if (!clientConnectionId) throw new Error("Client provider connection is not live");
             // The server scope resolver requires a granted project scope with a
             // matching workspace revision — derive it from the first granted
             // project exactly like the native surface-open path does.
@@ -218,35 +264,20 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
               : undefined;
             if (!projectId || !project)
               throw new Error("No granted project scope for command registration");
-            const payload = decodeApiInvoke({
-              installationId: installation.id,
-              expectedContentHash: installation.contentHash,
-              request: {
-                id: "t3.ui/keybindings",
-                versionRange: "1.0.0",
-                method: "registerCommands",
-                input: { commands: entry.commands },
-                context: {
-                  client: CLIENT_PROVIDER_CLIENT_TAG,
-                  resource: {
-                    namespace: "t3.extensions",
-                    id: installation.id,
-                    environmentId,
-                    projectId,
-                  },
-                  workspaceRevision: extensionWorkspaceRevision(project.workspaceRoot, null),
+            const output = await invokeRegisterCommands(
+              installation.id,
+              {
+                client: CLIENT_PROVIDER_CLIENT_TAG,
+                resource: {
+                  namespace: "t3.extensions",
+                  id: installation.id,
+                  environmentId,
+                  projectId,
                 },
-                clientConnectionId,
+                workspaceRevision: extensionWorkspaceRevision(project.workspaceRoot, null),
               },
-            });
-            const result = await run(
-              environmentExtensionsHttp.invokeApi(connection, payload),
-              signal,
+              entry.commands,
             );
-            const output = result.result as {
-              commandSetToken?: string;
-              results?: readonly { commandId: string; status: string; reason?: string }[];
-            };
             entry.status = "active";
             entry.token = output.commandSetToken;
             if (entry.handler && output.commandSetToken) {
@@ -265,6 +296,42 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
             ];
           }
           for (const listener of entry.listeners) listener();
+        }
+      }
+      // Committed-registration replay: sets fenced by the connection loss are
+      // re-committed under the new connection epoch. Each re-invokes the real
+      // seam path — grants, content hash, and a refreshed workspace revision
+      // re-validate server-side — and the idempotent registration adopts the
+      // new epoch, re-enabling dispatch.
+      for (const committed of committedCommandRegistrations(environmentId)) {
+        if (signal.aborted) return;
+        try {
+          const { projectId, threadId } = committed.context.resource;
+          const project = projectId
+            ? readProject(scopeProjectRef(environmentId, ProjectId.make(projectId)))
+            : undefined;
+          if (projectId && !project) continue; // scope vanished — stay fenced
+          const shell = threadId
+            ? readThreadShell(scopeThreadRef(environmentId, ThreadId.make(threadId)))
+            : null;
+          await invokeRegisterCommands(
+            committed.installationId,
+            {
+              ...committed.context,
+              ...(project
+                ? {
+                    workspaceRevision: extensionWorkspaceRevision(
+                      project.workspaceRoot,
+                      shell?.worktreePath ?? null,
+                    ),
+                  }
+                : {}),
+            },
+            committed.commands,
+          );
+        } catch {
+          // A rejected replay leaves the registration fenced — dispatch stays
+          // disabled rather than resurrecting a stale command set.
         }
       }
     };
@@ -395,6 +462,7 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
         snapshots.get(environmentId)?.installations.find((item) => item.id === id)?.grants
           .projectIds ?? null,
       client: CLIENT_PROVIDER_CLIENT_TAG,
+      keybindings: () => appAtomRegistry.get(primaryServerKeybindingsAtom),
     });
     const refreshQueue = createCatalogueRefreshQueue(() => controller.refresh());
     controllers.set(environmentId, controller);
@@ -420,6 +488,14 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
 }
 export function InstalledExtensionsBootstrap() {
   const { environments } = useEnvironments();
+  // Extension commands dispatch at client lifetime, not view lifetime — the
+  // listener outlives any mounted ChatView so plugin keybindings work on
+  // every route. It runs after surface-level handlers (document bubble).
+  useEffect(
+    () =>
+      installExtensionCommandKeybindings(() => appAtomRegistry.get(primaryServerKeybindingsAtom)),
+    [],
+  );
   return (
     <>
       {environments.map((environment) => (

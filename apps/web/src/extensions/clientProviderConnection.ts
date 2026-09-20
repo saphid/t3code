@@ -17,6 +17,7 @@ import {
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { ClientProviderOpError, type ClientLocalProvider } from "./clientProviderTypes";
+import { noteClientProviderConnection } from "./extensionCommandRegistry";
 
 /**
  * The client side of the `t3.client/*` seam: owns the connect stream's
@@ -43,6 +44,8 @@ export interface ClientProviderConnection {
 }
 
 const connectionIds = new Map<string, string>();
+/** The loop instance that minted the current connection id — a stale teardown must not clear a replacement's identity. */
+const connectionOwners = new Map<string, object>();
 
 /** The socket-bound id the server minted for this environment's live seam, if any. */
 export function currentClientConnectionId(environmentId: string): string | undefined {
@@ -66,16 +69,70 @@ export function emitClientProviderEvent(
   ).catch(() => {});
 }
 
+/** Per-iteration seam state, shared with `stop` so teardown never waits on the iterator. */
+interface ConnectionIteration {
+  connectionId: string | undefined;
+  subscriptions: Map<string, () => void>;
+  pending: Map<string, AbortController>;
+  disposed: boolean;
+}
+
 export function startClientProviderConnection(
   deps: ClientProviderConnectionDeps,
 ): ClientProviderConnection {
   const lifecycle = new AbortController();
+  const owner = {};
+  const iteration: ConnectionIteration = {
+    connectionId: undefined,
+    subscriptions: new Map(),
+    pending: new Map(),
+    disposed: true,
+  };
+  /**
+   * Tears down whatever the current iteration owns. Runs from the loop's
+   * finally AND synchronously from `stop()` — the stream iterator may never
+   * yield again, so cleanup cannot wait for the next frame. The ownership
+   * guards keep a stale iteration from clearing a replacement's identity.
+   */
+  const teardownIteration = () => {
+    iteration.disposed = true;
+    if (
+      iteration.connectionId !== undefined &&
+      connectionIds.get(deps.environmentId) === iteration.connectionId
+    ) {
+      connectionIds.delete(deps.environmentId);
+    }
+    iteration.connectionId = undefined;
+    if (connectionOwners.get(deps.environmentId) === owner) {
+      connectionOwners.delete(deps.environmentId);
+      // The seam is down: registrations fence until the next connect replays them.
+      noteClientProviderConnection(deps.environmentId, false);
+    }
+    for (const close of [...iteration.subscriptions.values()]) {
+      try {
+        close();
+      } catch {
+        /* a throwing watcher must not break teardown */
+      }
+    }
+    for (const controller of [...iteration.pending.values()]) controller.abort();
+    iteration.subscriptions.clear();
+    iteration.pending.clear();
+  };
   const flush = () => {
     if (!connectionIds.has(deps.environmentId) || lifecycle.signal.aborted) return;
     void deps.flushGlobalCommands(lifecycle.signal).catch(() => {});
   };
-  void runConnectionLoop(deps, lifecycle.signal).catch(() => {});
-  return { stop: () => lifecycle.abort(), notifyInstallationsChanged: flush };
+  void runConnectionLoop(deps, lifecycle.signal, owner, iteration, teardownIteration).catch(
+    () => {},
+  );
+  return {
+    stop: () => {
+      lifecycle.abort();
+      teardownIteration();
+    },
+    notifyInstallationsChanged: flush,
+  };
 }
 
 /**
@@ -83,7 +140,13 @@ export function startClientProviderConnection(
  * drop ends the iteration — the socket's connectionId and open subscriptions
  * die with it, then the loop waits for the next connected phase and reopens.
  */
-async function runConnectionLoop(deps: ClientProviderConnectionDeps, signal: AbortSignal) {
+async function runConnectionLoop(
+  deps: ClientProviderConnectionDeps,
+  signal: AbortSignal,
+  owner: object,
+  iteration: ConnectionIteration,
+  teardownIteration: () => void,
+) {
   const context = await Effect.runPromise(
     AtomRegistry.getResult(appAtomRegistry, connectionAtomRuntime),
     { signal },
@@ -96,8 +159,10 @@ async function runConnectionLoop(deps: ClientProviderConnectionDeps, signal: Abo
     ).catch(() => {});
   };
   while (!signal.aborted) {
-    const subscriptions = new Map<string, () => void>();
-    const pending = new Map<string, AbortController>();
+    iteration.connectionId = undefined;
+    iteration.subscriptions = new Map();
+    iteration.pending = new Map();
+    iteration.disposed = false;
     try {
       const iterable = Stream.toAsyncIterableWith(
         environmentClientProvidersStream(deps.environmentId, {
@@ -105,18 +170,32 @@ async function runConnectionLoop(deps: ClientProviderConnectionDeps, signal: Abo
         }),
         context,
       );
-      for await (const frame of iterable) {
-        if (signal.aborted) return;
-        handleFrame(deps, frame, emitEvent, respond, subscriptions, pending, signal);
+      const iterator = iterable[Symbol.asyncIterator]();
+      // Some transports never unblock `next()` on their own — race the pull
+      // against the abort signal so `stop()` is observed immediately.
+      let resolveAborted: () => void = () => {};
+      const aborted = new Promise<"aborted">((resolve) => {
+        resolveAborted = () => resolve("aborted");
+      });
+      signal.addEventListener("abort", resolveAborted, { once: true });
+      try {
+        while (!signal.aborted) {
+          const next = await Promise.race([iterator.next(), aborted]);
+          if (next === "aborted" || next.done || signal.aborted) return;
+          try {
+            handleFrame(deps, next.value, emitEvent, respond, iteration, signal, owner);
+          } catch {
+            // A malformed frame or throwing provider hook must not kill the seam.
+          }
+        }
+      } finally {
+        signal.removeEventListener("abort", resolveAborted);
+        await iterator.return?.().catch(() => {});
       }
     } catch {
       // Transport or session failure — fall through to the reconnect wait.
     } finally {
-      connectionIds.delete(deps.environmentId);
-      for (const close of subscriptions.values()) close();
-      for (const controller of pending.values()) controller.abort();
-      subscriptions.clear();
-      pending.clear();
+      teardownIteration();
     }
     if (signal.aborted) return;
     // A non-transport failure (e.g. a rejected connect) would otherwise spin.
@@ -131,13 +210,19 @@ function handleFrame(
   frame: ClientProviderServerFrame,
   emitEvent: (correlationId: string, event: ClientProviderEmitEvent) => void,
   respond: (payload: ClientProvidersRespondInput) => void,
-  subscriptions: Map<string, () => void>,
-  pending: Map<string, AbortController>,
+  iteration: ConnectionIteration,
   signal: AbortSignal,
+  owner: object,
 ) {
+  const { subscriptions, pending } = iteration;
   switch (frame.type) {
     case "registered": {
       connectionIds.set(deps.environmentId, frame.connectionId);
+      connectionOwners.set(deps.environmentId, owner);
+      iteration.connectionId = frame.connectionId;
+      // A new connection epoch: prior registrations stay fenced until the
+      // flush replays them onto this socket.
+      noteClientProviderConnection(deps.environmentId, true);
       void deps.flushGlobalCommands(signal).catch(() => {});
       return;
     }
@@ -186,27 +271,44 @@ function handleFrame(
         emit({ type: "closed", value: null });
         return;
       }
-      Promise.resolve(
-        provider.openStream({
-          name: frame.name,
-          input: frame.input,
-          context: frame.context as ViewContext,
-          caller: frame.caller,
-          emit,
-        }),
-      ).then(
-        (close) => {
-          // A close racing the async open wins — never leak the subscription.
-          if (subscriptions.has(frame.subscriptionId)) {
-            // Remove the close-pending marker so the map does not retain it.
-            subscriptions.delete(frame.subscriptionId);
+      // The async wrapper confines synchronous throws and rejections to this
+      // subscription — a failing open never tears down the connection.
+      void (async () => {
+        let close: () => void;
+        try {
+          close = await provider.openStream!({
+            name: frame.name,
+            input: frame.input,
+            context: frame.context as ViewContext,
+            caller: frame.caller,
+            emit,
+          });
+        } catch {
+          emit({ type: "closed", value: null });
+          return;
+        }
+        // An open that resolves after teardown or a racing close must not
+        // install a live subscription into a dead iteration.
+        if (iteration.disposed || iteration.subscriptions !== subscriptions) {
+          try {
             close();
-            return;
+          } catch {
+            /* teardown-only path */
           }
-          subscriptions.set(frame.subscriptionId, close);
-        },
-        () => emit({ type: "closed", value: null }),
-      );
+          return;
+        }
+        if (subscriptions.has(frame.subscriptionId)) {
+          // Remove the close-pending marker so the map does not retain it.
+          subscriptions.delete(frame.subscriptionId);
+          try {
+            close();
+          } catch {
+            /* teardown-only path */
+          }
+          return;
+        }
+        subscriptions.set(frame.subscriptionId, close);
+      })();
       return;
     }
     case "subscriptionClose": {
@@ -216,8 +318,12 @@ function handleFrame(
         subscriptions.set(frame.subscriptionId, () => {});
         return;
       }
-      close();
       subscriptions.delete(frame.subscriptionId);
+      try {
+        close();
+      } catch {
+        /* a throwing watcher must not kill the seam */
+      }
       return;
     }
   }

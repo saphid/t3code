@@ -5558,6 +5558,15 @@ export default function ChatView(props: ChatViewProps) {
       // consume the event or act on a native terminal surface for them.
       if (isExtensionClaimedTerminalCommand(command, terminalFocusOwner)) return;
 
+      // A user rule bound to an extension command resolves here like any
+      // other command — the native cases below do not know ext.* names.
+      if (command.startsWith("ext.")) {
+        if (dispatchExtensionCommand(command).kind === "unavailable") return;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
       if (command === "thread.copyReference") {
         event.preventDefault();
         event.stopPropagation();

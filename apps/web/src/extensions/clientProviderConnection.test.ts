@@ -30,9 +30,9 @@ vi.mock("../rpc/atomRegistry", async () => {
 });
 
 vi.mock("../connection/runtime", async () => {
-  const { Atom, AsyncResult } = await import("effect/unstable/reactivity");
-  const Context = await import("effect/Context");
-  return { connectionAtomRuntime: Atom.make(AsyncResult.success(Context.empty())) };
+  const { Atom } = await import("effect/unstable/reactivity");
+  const Layer = await import("effect/Layer");
+  return { connectionAtomRuntime: Atom.runtime(Layer.empty) };
 });
 
 const ENV = "env-a";
@@ -356,4 +356,71 @@ describe("startClientProviderConnection", () => {
       { timeout: 2000 },
     );
   });
+});
+
+it("stop tears down an idle registered stream", async () => {
+  const queue = new Mailbox();
+  const connection = start({ stream: queue.stream });
+  queue.offer({
+    type: "registered",
+    connectionId: "review-conn",
+    accepted: [],
+    rejected: [],
+  } as ClientProviderServerFrame);
+  await vi.waitFor(() => expect(currentClientConnectionId(ENV)).toBe("review-conn"));
+  connection.stop();
+  try {
+    // Teardown is synchronous — no further frame is needed to drop the id.
+    await vi.waitFor(() => expect(currentClientConnectionId(ENV)).toBeUndefined(), {
+      timeout: 150,
+      interval: 10,
+    });
+  } finally {
+    queue.shutdown();
+  }
+});
+
+it("a synchronous subscription failure leaves the seam alive", async () => {
+  const queue = new Mailbox();
+  const invoke = vi.fn(() => null);
+  start({
+    stream: queue.stream,
+    providers: new Map([
+      [
+        "t3.client/theme",
+        {
+          invoke,
+          openStream() {
+            throw new ClientProviderOpError("client-target-denied", "stale installation");
+          },
+        },
+      ],
+    ]),
+  });
+  queue.offer({
+    type: "registered",
+    connectionId: "review-sub",
+    accepted: [],
+    rejected: [],
+  } as ClientProviderServerFrame);
+  await vi.waitFor(() => expect(currentClientConnectionId(ENV)).toBe("review-sub"));
+  queue.offer({
+    type: "subscriptionOpen",
+    subscriptionId: "sub-fail",
+    apiId: "t3.client/theme",
+    name: "watchState",
+    input: {},
+    caller,
+    context: frameContext,
+  } as ClientProviderServerFrame);
+  // The failed open must not take unrelated invokes down with it.
+  queue.offer(invokeFrame("after-failed-sub"));
+  try {
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledOnce(), {
+      timeout: 150,
+      interval: 10,
+    });
+  } finally {
+    queue.shutdown();
+  }
 });

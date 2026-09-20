@@ -295,6 +295,8 @@ interface NotificationOutcome {
 }
 interface LiveNotification {
   readonly ownerId: string;
+  /** The seam connection the toast lives on — outcomes stay connection-owned. */
+  readonly connectionId: string;
   readonly waiters: {
     resolve: (outcome: NotificationOutcome) => void;
     reject: (error: unknown) => void;
@@ -307,14 +309,24 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
   /** Settled outcomes retained for 60 s so late `awaitAction` calls resolve. */
   const outcomes = new Map<
     string,
-    { outcome: NotificationOutcome; expiresAt: number; ownerId: string }
+    {
+      outcome: NotificationOutcome;
+      expiresAt: number;
+      ownerId: string;
+      connectionId: string;
+    }
   >();
   /** Tokens minted for fully-rejected command sets — they name no client-side registration. */
   const voidTokens = new Set<string>();
 
   const nowMs = () => Effect.runSync(Clock.currentTimeMillis);
 
-  const recordOutcome = (notificationId: string, outcome: NotificationOutcome, ownerId: string) => {
+  const recordOutcome = (
+    notificationId: string,
+    outcome: NotificationOutcome,
+    ownerId: string,
+    connectionId: string,
+  ) => {
     const record = live.get(notificationId);
     if (record) {
       live.delete(notificationId);
@@ -324,14 +336,15 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
       outcome,
       expiresAt: nowMs() + OUTCOME_RETENTION_MS,
       ownerId,
+      connectionId,
     });
-    if (outcomes.size > OUTCOME_RETENTION_CAP) {
-      // Map order is insertion order; evict the oldest retained outcomes first.
-      for (const key of outcomes.keys()) {
-        if (outcomes.size <= OUTCOME_RETENTION_CAP) break;
-        outcomes.delete(key);
-      }
-    }
+    // The retention cap is per connection — a busy client never evicts a
+    // sibling connection's recent outcomes.
+    const owned = [...outcomes.keys()].filter(
+      (key) => outcomes.get(key)!.connectionId === connectionId,
+    );
+    for (const key of owned.slice(0, Math.max(0, owned.length - OUTCOME_RETENTION_CAP)))
+      outcomes.delete(key);
     Effect.runFork(deps.clientApiProviders.unregisterCorrelation(notificationId));
   };
 
@@ -510,7 +523,15 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
               invokeClient(deps, {
                 apiId: CLIENT_KEYBINDINGS,
                 method: "registerCommands",
-                input: { installationScoped: true, commands: accepted } as Json,
+                // Installation scope is derived from the host-owned install
+                // context, not from anything the caller asserts — the staged
+                // flush marks itself with the `t3.extensions` namespace.
+                input: {
+                  installationScoped:
+                    context.resource.namespace === "t3.extensions" &&
+                    context.resource.id === caller.installationId,
+                  commands: accepted,
+                } as Json,
                 context,
                 metadata,
                 signal,
@@ -576,6 +597,7 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
             const notificationId = `ntf-${NodeCrypto.randomUUID()}`;
             const record: LiveNotification = {
               ownerId: callerOf(metadata).installationId,
+              connectionId,
               waiters: [],
             };
             live.set(notificationId, record);
@@ -593,6 +615,7 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
                       notificationId,
                       outcome.actionId ? { actionId: outcome.actionId } : { dismissed: true },
                       record.ownerId,
+                      record.connectionId,
                     );
                   },
                   revoked: () =>
@@ -665,7 +688,12 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
             );
             // A dismiss through the API counts as the settled outcome.
             if ((result as { dismissed?: boolean }).dismissed) {
-              recordOutcome(notificationId, { dismissed: true }, record.ownerId);
+              recordOutcome(
+                notificationId,
+                { dismissed: true },
+                record.ownerId,
+                record.connectionId,
+              );
             }
             return result;
           })();
@@ -673,16 +701,38 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
         case "awaitAction": {
           const notificationId = (input as { notificationId: string }).notificationId;
           return (async () => {
+            // Outcomes are connection-owned: resolve the caller's own target
+            // so provider sessions and foreign connections cannot read a
+            // retained or live outcome they did not create.
+            if (
+              metadata.principal?.kind !== "host" &&
+              metadata.principal?.kind !== "environment-session"
+            )
+              throw providerError(
+                "client-target-denied",
+                "Provider sessions cannot await notification outcomes.",
+              );
+            const connectionId = await Effect.runPromise(resolveConnectionId(deps, metadata), {
+              signal,
+            });
             const retained = settleOutcome(notificationId);
             if (retained) {
-              if (retained.ownerId !== callerOf(metadata).installationId)
+              if (
+                retained.ownerId !== callerOf(metadata).installationId ||
+                retained.connectionId !== connectionId
+              )
                 throw providerError(
                   "notification-owner-mismatch",
-                  "Notifications can only be managed by their owning installation.",
+                  "Notifications can only be managed by their owning installation and connection.",
                 );
               return retained.outcome as unknown as Json;
             }
             const record = ownedNotification(notificationId, metadata);
+            if (record.connectionId !== connectionId)
+              throw providerError(
+                "notification-owner-mismatch",
+                "Notifications can only be managed by their owning connection.",
+              );
             return new Promise<Json>((resolve, reject) => {
               const waiter = {
                 resolve: (outcome: NotificationOutcome) => resolve(outcome as Json),

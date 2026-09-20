@@ -52,6 +52,23 @@ const connectInput = (
   providers: [...providers],
 });
 
+/**
+ * A schema-valid `getState`/`watchState` payload — the seam enforces the
+ * declared `t3.client/*` contracts in both directions, so test envelopes
+ * carry the adapter-stamped `target` and real provider outputs.
+ */
+const SELF_INPUT = { target: { kind: "self" } };
+const THEME_STATE = {
+  theme: "t3-dark",
+  resolvedTheme: "dark",
+  systemDark: true,
+  followSystem: false,
+  appearanceMode: "dark",
+  themeHalves: null,
+  effectiveTheme: { kind: "stored", theme: "t3-dark" },
+  sessionOverlay: null,
+};
+
 /** Pulls the next frame off a live connect stream (no TestClock involved). */
 const nextFrame = (iterator: AsyncIterator<ClientProviderServerFrame>) =>
   Effect.promise<ClientProviderServerFrame | undefined>(async () => {
@@ -99,7 +116,7 @@ it.effect("invoke routes a frame to the owning socket and resolves on respond", 
         connectionId: "conn-2",
         apiId: "t3.client/theme",
         method: "getState",
-        input: {},
+        input: SELF_INPUT,
         context,
         caller,
       })
@@ -119,10 +136,10 @@ it.effect("invoke routes a frame to the owning socket and resolves on respond", 
     yield* providers.respond("conn-2", {
       requestId: frame.requestId,
       ok: true,
-      value: { state: 1 },
+      value: THEME_STATE,
     });
     const result = yield* Fiber.join(pending);
-    expect(result).toEqual({ state: 1 });
+    expect(result).toEqual(THEME_STATE);
   }).pipe(Effect.provide(testLayer)),
 );
 
@@ -134,7 +151,7 @@ it.effect("invoke fails unavailable when the provider is not hosted", () =>
         connectionId: "conn-missing",
         apiId: "t3.client/theme",
         method: "getState",
-        input: {},
+        input: SELF_INPUT,
         context,
         caller,
       })
@@ -181,7 +198,7 @@ it.effect("disconnect fails pending invokes and revokes correlations", () =>
         connectionId: "conn-4",
         apiId: "t3.client/theme",
         method: "getState",
-        input: {},
+        input: SELF_INPUT,
         context,
         caller,
         timeoutMs: 30_000,
@@ -202,7 +219,7 @@ it.effect("subscriptions deliver emits on the owning socket and close cleanly", 
       connectionId: "conn-5",
       apiId: "t3.client/theme",
       name: "watchState",
-      input: {},
+      input: SELF_INPUT,
       context,
       caller,
     });
@@ -218,11 +235,11 @@ it.effect("subscriptions deliver emits on the owning socket and close cleanly", 
     });
     yield* providers.emit("conn-5", {
       correlationId: subscriptionId,
-      event: { type: "data", value: { n: 1 } },
+      event: { type: "data", value: THEME_STATE },
     });
     const first = yield* Effect.promise(() => subscription.events[Symbol.asyncIterator]().next());
     expect(first.done).toBe(false);
-    expect((first as { value: { value: unknown } }).value.value).toEqual({ n: 1 });
+    expect((first as { value: { value: unknown } }).value.value).toEqual(THEME_STATE);
     // subscriptionClose reaches the client; the sink completes.
     yield* subscription.close();
     const closeFrame = yield* nextFrame(frames);
@@ -243,7 +260,7 @@ it.effect(
           connectionId: "conn-9",
           apiId: "t3.client/theme",
           method: "getState",
-          input: {},
+          input: SELF_INPUT,
           context,
           caller,
           timeoutMs: 30_000,
@@ -266,7 +283,7 @@ it.effect(
           connectionId: "conn-9",
           apiId: "t3.client/theme",
           method: "getState",
-          input: {},
+          input: SELF_INPUT,
           context,
           caller,
         })
@@ -277,11 +294,11 @@ it.effect(
         yield* providers.respond("conn-9", {
           requestId: frame.requestId,
           ok: true,
-          value: { live: true },
+          value: THEME_STATE,
         });
       }
       const result = yield* Fiber.join(followUp);
-      expect(result).toEqual({ live: true });
+      expect(result).toEqual(THEME_STATE);
     }).pipe(Effect.provide(testLayer)),
 );
 
@@ -297,7 +314,7 @@ it.effect("a mid-flight abort cancels the pending invoke and a late respond is d
         connectionId: "conn-10",
         apiId: "t3.client/theme",
         method: "getState",
-        input: {},
+        input: SELF_INPUT,
         context,
         caller,
         timeoutMs: 30_000,
@@ -327,7 +344,7 @@ it.effect("a mid-flight abort cancels the pending invoke and a late respond is d
         connectionId: "conn-10",
         apiId: "t3.client/theme",
         method: "getState",
-        input: {},
+        input: SELF_INPUT,
         context,
         caller,
       })
@@ -394,5 +411,119 @@ it.effect("listTargets reports live connections for this environment only", () =
     expect(yield* providers.hasProvider(ENV, "t3.client/panels")).toBe(false);
     expect(yield* providers.connectionForSession("session-a", "conn-8")).toBe(true);
     expect(yield* providers.connectionForSession("session-b", "conn-8")).toBe(false);
+  }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("enforces the declared private schemas in both directions", () =>
+  Effect.gen(function* () {
+    const providers = yield* ClientApiProviders;
+    const stream = yield* providers.connect(socket("conn-11"), connectInput());
+    const frames = frameIterator(stream);
+    yield* nextFrame(frames); // registered
+
+    // An input missing the adapter-stamped `target` never reaches the socket.
+    const badInput = yield* providers
+      .invoke({
+        connectionId: "conn-11",
+        apiId: "t3.client/theme",
+        method: "getState",
+        input: {},
+        context,
+        caller,
+      })
+      .pipe(Effect.exit);
+    expect(badInput._tag).toBe("Failure");
+    expect(String((badInput as { cause: unknown }).cause)).toContain("provider-rejected");
+
+    // Undeclared ops and streams are refused before dispatch.
+    const badMethod = yield* providers
+      .invoke({
+        connectionId: "conn-11",
+        apiId: "t3.client/theme",
+        method: "notARealOp",
+        input: SELF_INPUT,
+        context,
+        caller,
+      })
+      .pipe(Effect.exit);
+    expect(badMethod._tag).toBe("Failure");
+    const badStream = yield* providers
+      .openSubscription({
+        connectionId: "conn-11",
+        apiId: "t3.client/theme",
+        name: "notARealStream",
+        input: SELF_INPUT,
+        context,
+        caller,
+      })
+      .pipe(Effect.exit);
+    expect(badStream._tag).toBe("Failure");
+
+    // A claimed success that violates the retained output schema fails the waiter.
+    const pending = yield* providers
+      .invoke({
+        connectionId: "conn-11",
+        apiId: "t3.client/theme",
+        method: "getState",
+        input: SELF_INPUT,
+        context,
+        caller,
+      })
+      .pipe(Effect.forkChild);
+    const invokeFrame = yield* nextFrame(frames);
+    expect(invokeFrame?.type).toBe("invoke");
+    if (invokeFrame?.type !== "invoke") return;
+    yield* providers.respond("conn-11", {
+      requestId: invokeFrame.requestId,
+      ok: true,
+      value: { state: 1 },
+    });
+    const exit = yield* Fiber.await(pending);
+    expect(exit._tag).toBe("Failure");
+    expect(String((exit as { cause: unknown }).cause)).toContain("provider-rejected");
+
+    // An out-of-schema event fails the subscription, not the connection.
+    const subscription = yield* providers.openSubscription({
+      connectionId: "conn-11",
+      apiId: "t3.client/theme",
+      name: "watchState",
+      input: SELF_INPUT,
+      context,
+      caller,
+    });
+    const openFrame = yield* nextFrame(frames);
+    expect(openFrame?.type).toBe("subscriptionOpen");
+    if (openFrame?.type !== "subscriptionOpen") return;
+    yield* providers.emit("conn-11", {
+      correlationId: openFrame.subscriptionId,
+      event: { type: "data", value: { n: 1 } },
+    });
+    const eventExit = yield* Effect.promise(() =>
+      subscription.events[Symbol.asyncIterator]().next(),
+    ).pipe(Effect.exit);
+    expect(eventExit._tag).toBe("Failure");
+    expect(String((eventExit as { cause: unknown }).cause)).toContain("provider-rejected");
+
+    // Unrelated requests are undisturbed.
+    const followUp = yield* providers
+      .invoke({
+        connectionId: "conn-11",
+        apiId: "t3.client/theme",
+        method: "getState",
+        input: SELF_INPUT,
+        context,
+        caller,
+      })
+      .pipe(Effect.forkChild);
+    const followUpFrame = yield* nextFrame(frames);
+    expect(followUpFrame?.type).toBe("invoke");
+    if (followUpFrame?.type === "invoke") {
+      yield* providers.respond("conn-11", {
+        requestId: followUpFrame.requestId,
+        ok: true,
+        value: THEME_STATE,
+      });
+    }
+    expect(yield* Fiber.join(followUp)).toEqual(THEME_STATE);
   }).pipe(Effect.provide(testLayer)),
 );

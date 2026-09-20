@@ -458,3 +458,83 @@ describe("notifications adapter", () => {
     ).rejects.toMatchObject({ code: "notification-expired" });
   });
 });
+
+describe("notification connection ownership", () => {
+  it("another connection cannot await a retained outcome", async () => {
+    const bridge = fakeBridge();
+    const { notifications } = makeProviders(bridge);
+    const owner = { ...metadata(), clientConnectionId: "conn-a" };
+    const { notificationId } = (await notifications.invoke(
+      "notify",
+      { severity: "info", title: "x" },
+      context,
+      signal,
+      owner,
+    )) as { notificationId: string };
+    bridge.correlations.get(notificationId)!.deliver({
+      type: "notificationOutcome",
+      outcome: { actionId: "yes" },
+    });
+    await expect(
+      notifications.invoke("awaitAction", { notificationId }, context, signal, {
+        ...metadata(),
+        clientConnectionId: "conn-b",
+      }),
+    ).rejects.toBeDefined();
+  });
+
+  it("a provider-session cannot await a retained outcome", async () => {
+    const bridge = fakeBridge();
+    const { notifications } = makeProviders(bridge);
+    const { notificationId } = (await notifications.invoke(
+      "notify",
+      { severity: "info", title: "x" },
+      context,
+      signal,
+      { ...metadata(), clientConnectionId: "conn-a" },
+    )) as { notificationId: string };
+    bridge.correlations.get(notificationId)!.deliver({
+      type: "notificationOutcome",
+      outcome: { actionId: "yes" },
+    });
+    await expect(
+      notifications.invoke(
+        "awaitAction",
+        { notificationId },
+        context,
+        signal,
+        metadata("ext.a", {
+          kind: "provider-session",
+          id: "provider",
+          environmentId: ENV,
+          scopes: [],
+        }),
+      ),
+    ).rejects.toBeDefined();
+  });
+});
+
+it("an ordinary view registration is not installation-scoped", async () => {
+  const bridge = fakeBridge();
+  const { keybindings } = makeProviders(bridge);
+  await keybindings.invoke(
+    "registerCommands",
+    {
+      commands: [
+        {
+          id: "open",
+          title: "Open",
+          scope: "global",
+          activation: { surfaceId: "ext.a/panel", placement: "side-panel" },
+        },
+      ],
+    },
+    {
+      ...context,
+      resource: { ...context.resource, namespace: "ext.a", id: "ext.a/panel" },
+    },
+    signal,
+    metadata(),
+  );
+  expect(bridge.invoked[0]?.input).not.toMatchObject({ installationScoped: true });
+});

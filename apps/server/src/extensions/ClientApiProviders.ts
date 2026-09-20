@@ -13,7 +13,8 @@ import {
   CLIENT_PROVIDER_SUPPORTED_RANGE,
 } from "@t3tools/extension-sdk/clientProviders";
 import type { ExtensionViewContext } from "@t3tools/contracts";
-import type { Json } from "@t3tools/extension-sdk/contracts";
+import { copyJson, type Json } from "@t3tools/extension-sdk/contracts";
+import { Ajv, type ValidateFunction } from "ajv";
 import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
 import type { HostApiPrincipal } from "@t3tools/extension-runtime";
 import * as Clock from "effect/Clock";
@@ -22,6 +23,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as DateTime from "effect/DateTime";
@@ -29,6 +31,52 @@ import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 
 const MAX_EVENTS_PER_SUBSCRIPTION = 8;
+
+/**
+ * The declared `t3.client/*` schemas are the seam's runtime contract, checked
+ * in both directions: dispatch validates the op input before a frame is
+ * queued, `respond` validates the client's output against the schema retained
+ * with the pending invoke, and subscription emits validate each event value
+ * against the stream's `eventSchema`. Every payload additionally passes the
+ * shared `copyJson` envelope bound before it can move.
+ */
+interface CompiledMethod {
+  readonly input: ValidateFunction;
+  readonly output: ValidateFunction;
+}
+interface CompiledStream {
+  readonly input: ValidateFunction;
+  readonly event: ValidateFunction;
+}
+const seamAjv = new Ajv({ strict: true, allErrors: false, addUsedSchema: false });
+const METHOD_SCHEMAS = new Map<string, Map<string, CompiledMethod>>();
+const STREAM_SCHEMAS = new Map<string, Map<string, CompiledStream>>();
+for (const definition of CLIENT_PROVIDER_APIS.values()) {
+  METHOD_SCHEMAS.set(
+    definition.id,
+    new Map(
+      (definition.methods ?? []).map((method) => [
+        method.name,
+        {
+          input: seamAjv.compile(method.inputSchema),
+          output: seamAjv.compile(method.outputSchema),
+        },
+      ]),
+    ),
+  );
+  STREAM_SCHEMAS.set(
+    definition.id,
+    new Map(
+      (definition.streams ?? []).map((stream) => [
+        stream.name,
+        {
+          input: seamAjv.compile(stream.inputSchema),
+          event: seamAjv.compile(stream.eventSchema),
+        },
+      ]),
+    ),
+  );
+}
 
 export interface ClientProvidersSocket {
   readonly connectionId: string;
@@ -48,6 +96,8 @@ interface Connection {
 interface PendingInvoke {
   readonly connectionId: string;
   readonly deferred: Deferred.Deferred<Json, ClientProvidersError>;
+  /** The declared output schema for this request — `respond` enforces it. */
+  readonly output: ValidateFunction;
 }
 
 /**
@@ -336,7 +386,29 @@ export const make = Effect.gen(function* () {
     );
     if (!pending) return;
     if (input.ok) {
-      yield* Deferred.succeed(pending.deferred, input.value);
+      // A claimed success still has to satisfy the declared output schema —
+      // a malformed result fails the waiter rather than landing upstream.
+      const bounded = yield* Effect.try({
+        try: () => copyJson(input.value),
+        catch: () =>
+          error("provider-rejected", "Client provider output exceeds the envelope bound."),
+      }).pipe(Effect.result);
+      if (!Result.isSuccess(bounded)) {
+        yield* Deferred.fail(pending.deferred, bounded.failure);
+        return;
+      }
+      const value = bounded.success;
+      if (!pending.output(value)) {
+        yield* Deferred.fail(
+          pending.deferred,
+          error(
+            "provider-rejected",
+            `Client provider output does not match schema: ${seamAjv.errorsText(pending.output.errors)}`,
+          ),
+        );
+        return;
+      }
+      yield* Deferred.succeed(pending.deferred, value);
     } else {
       yield* Deferred.fail(pending.deferred, error(input.error.code, input.error.message));
     }
@@ -359,6 +431,18 @@ export const make = Effect.gen(function* () {
   const invoke: (typeof ClientApiProviders)["Service"]["invoke"] = Effect.fn(
     "ClientApiProviders.invoke",
   )(function* (request) {
+    const method = METHOD_SCHEMAS.get(request.apiId)?.get(request.method);
+    if (!method)
+      return yield* unavailable(`Unknown client provider op: ${request.apiId}.${request.method}`);
+    const input = yield* Effect.try({
+      try: () => copyJson(request.input),
+      catch: () => error("provider-rejected", "Client provider input exceeds the envelope bound."),
+    });
+    if (!method.input(input))
+      return yield* error(
+        "provider-rejected",
+        `Client provider input does not match schema: ${seamAjv.errorsText(method.input.errors)}`,
+      );
     const timeoutMs = request.timeoutMs ?? 5_000;
     const requestId = yield* nextRequestId;
     const deferred = yield* Deferred.make<Json, ClientProvidersError>();
@@ -370,7 +454,11 @@ export const make = Effect.gen(function* () {
         if (!connection || !connection.providers.has(request.apiId))
           return [false, current] as const;
         const pending = new Map(current.pending);
-        pending.set(requestId, { connectionId: request.connectionId, deferred });
+        pending.set(requestId, {
+          connectionId: request.connectionId,
+          deferred,
+          output: method.output,
+        });
         return [connection, { ...current, pending }] as const;
       },
     );
@@ -409,7 +497,7 @@ export const make = Effect.gen(function* () {
         requestId,
         apiId: request.apiId,
         method: request.method,
-        input: request.input,
+        input,
         context: request.context,
         caller: request.caller,
         deadlineMs,
@@ -440,6 +528,18 @@ export const make = Effect.gen(function* () {
   const openSubscription: (typeof ClientApiProviders)["Service"]["openSubscription"] = Effect.fn(
     "ClientApiProviders.openSubscription",
   )(function* (request) {
+    const stream = STREAM_SCHEMAS.get(request.apiId)?.get(request.name);
+    if (!stream)
+      return yield* unavailable(`Unknown client provider stream: ${request.apiId}.${request.name}`);
+    const input = yield* Effect.try({
+      try: () => copyJson(request.input),
+      catch: () => error("provider-rejected", "Client provider input exceeds the envelope bound."),
+    });
+    if (!stream.input(input))
+      return yield* error(
+        "provider-rejected",
+        `Client provider stream input does not match schema: ${seamAjv.errorsText(stream.input.errors)}`,
+      );
     const subscriptionId = yield* nextRequestId;
     const sink: SubscriptionSink = {
       coalesce: request.coalesce === true,
@@ -460,8 +560,34 @@ export const make = Effect.gen(function* () {
           kind: "subscription",
           deliver: (event) => {
             if (event.type === "notificationOutcome") return;
-            sinkPush(sink, { type: event.type, value: event.value });
-            if (event.type === "closed") sinkClose(sink);
+            // `closed` terminates the stream; payload events must satisfy the
+            // declared event schema — an invalid event fails the subscription.
+            if (event.type === "closed") {
+              sinkPush(sink, { type: event.type, value: event.value });
+              sinkClose(sink);
+              return;
+            }
+            let value: Json;
+            try {
+              value = copyJson(event.value);
+            } catch {
+              sinkClose(
+                sink,
+                error("provider-rejected", "Client provider event exceeds the envelope bound."),
+              );
+              return;
+            }
+            if (!stream.event(value)) {
+              sinkClose(
+                sink,
+                error(
+                  "provider-rejected",
+                  `Client provider event does not match schema: ${seamAjv.errorsText(stream.event.errors)}`,
+                ),
+              );
+              return;
+            }
+            sinkPush(sink, { type: event.type, value });
           },
           revoked: () => sinkClose(sink, unavailable("The client provider connection closed.")),
         });
@@ -478,7 +604,7 @@ export const make = Effect.gen(function* () {
       subscriptionId,
       apiId: request.apiId,
       name: request.name,
-      input: request.input,
+      input,
       context: request.context,
       caller: request.caller,
     } satisfies ClientProviderServerFrame);

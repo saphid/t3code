@@ -1816,7 +1816,7 @@ function OpenCommandPaletteDialog(props: {
       icon: <PuzzleIcon className={ITEM_ICON_CLASS} />,
       disabled: !extensionCommand.enabled,
       run: async () => {
-        dispatchExtensionCommand(extensionCommand.command);
+        dispatchExtensionCommand(extensionCommand.command, extensionCommand.environmentId);
       },
     });
   }

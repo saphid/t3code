@@ -15,7 +15,7 @@ import {
   type ThemePreferenceMode,
 } from "../themePalette";
 import { themeStore } from "../hooks/useTheme";
-import { getClientSettings } from "../hooks/useSettings";
+import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
 import { toastManager, type ThreadToastData } from "../components/ui/toast";
 import { terminalThemeFromApp } from "../components/ThreadTerminalDrawer";
 import {
@@ -137,6 +137,10 @@ function themeStateSnapshot() {
       ...(owner ? { writer: owner } : {}),
     };
   } else {
+    // Nothing preview-painted: a stored repaint underneath (persist, refresh,
+    // cross-tab storage) retires the overlay record so it cannot keep
+    // steering token resolution or resurface on the next read.
+    if (sessionOverlay) sessionOverlay = null;
     effectiveTheme = {
       kind: "stored",
       theme:
@@ -165,7 +169,9 @@ function resolveThemeTokens(appearance?: ThemeAppearance): Json {
   }
   const snapshot = themeStore.getSnapshot();
   const mode = appearance ?? snapshot.resolvedTheme;
-  const overlay = sessionOverlay;
+  // The overlay steers resolution only while its paint is still up.
+  const overlay =
+    sessionOverlay && paintedPreviewOwner() === sessionOverlay.writer ? sessionOverlay : null;
   const baseTheme = overlay && appearance === undefined ? overlay.theme : snapshot.theme;
   const halves = overlay?.themeHalves ?? snapshot.themeHalves;
   const themeId = resolveThemeHalf(baseTheme, halves ?? null, mode);
@@ -288,6 +294,10 @@ export function createThemeClientProvider(deps: ClientProviderDeps): ClientLocal
               themeStore.setThemeHalves(halves as { light?: string; dark?: string });
             }
             if (sessionOverlay) setSessionOverlay(null);
+            // A stored write supersedes an installation-owned overlay — the
+            // paint and token resolution must both show the persisted theme.
+            // A foreign/editor preview is never clobbered by a persist.
+            if (!foreignPreview() && paintedPreviewOwner() !== null) themeStore.refreshTheme();
             return { applied: true, propagatedTo: "storage-origin" } as unknown as Json;
           }
           throw new ClientProviderOpError("provider-rejected", "Invalid mode");
@@ -846,7 +856,7 @@ export function createTerminalAppearanceClientProvider(
         last = encoded;
         call.emit({ type: "data", value: next });
       };
-      const unsub = themeStore.subscribe(push);
+      const unsubs = [themeStore.subscribe(push), subscribeClientSettings(push)];
       const observer =
         typeof MutationObserver !== "undefined" && typeof document !== "undefined"
           ? new MutationObserver(push)
@@ -857,7 +867,7 @@ export function createTerminalAppearanceClientProvider(
       });
       return () => {
         observer?.disconnect();
-        unsub();
+        for (const unsub of unsubs) unsub();
       };
     },
   };

@@ -865,3 +865,47 @@ describe("keybindings provider", () => {
     expect(registered.results[0]?.status).toBe("registered");
   });
 });
+
+describe("theme overlay restoration", () => {
+  it("persist clears the painted session overlay", () => {
+    const provider = createThemeClientProvider(makeDeps(THEME_CAPS));
+    provider.invoke(
+      invokeCall("applyPreference", {
+        writer: INSTALL,
+        preference: { mode: "session", theme: "ocean" },
+      }),
+    );
+    expect(document.documentElement.dataset.themeId).toBe(THEME_PREVIEW_ID);
+    expect(
+      provider.invoke(
+        invokeCall("applyPreference", {
+          writer: INSTALL,
+          preference: { mode: "persist", theme: "ocean" },
+        }),
+      ),
+    ).toMatchObject({ applied: true });
+    expect(document.documentElement.dataset.themeId).not.toBe(THEME_PREVIEW_ID);
+    expect(provider.invoke(invokeCall("getState", {}))).toMatchObject({
+      effectiveTheme: { kind: "stored" },
+      sessionOverlay: null,
+    });
+  });
+
+  it("a native refresh clears the overlay token resolution used", () => {
+    const provider = createThemeClientProvider(makeDeps(THEME_CAPS));
+    themeStore.setTheme("light");
+    themeStore.refreshTheme();
+    const before = provider.invoke(invokeCall("resolveTokens", {}));
+    provider.invoke(
+      invokeCall("applyPreference", {
+        writer: INSTALL,
+        preference: { mode: "session", theme: "ocean" },
+      }),
+    );
+    themeStore.refreshTheme();
+    expect(provider.invoke(invokeCall("getState", {}))).toMatchObject({
+      effectiveTheme: { kind: "stored" },
+    });
+    expect(provider.invoke(invokeCall("resolveTokens", {}))).toEqual(before);
+  });
+});

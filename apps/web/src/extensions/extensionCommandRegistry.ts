@@ -13,13 +13,22 @@ import {
   parseKeybindingShortcut,
   parseKeybindingWhenExpression,
 } from "@t3tools/shared/keybindings";
-import type { KeybindingShortcut, KeybindingWhenNode } from "@t3tools/contracts";
+import type {
+  KeybindingShortcut,
+  KeybindingWhenNode,
+  ResolvedKeybindingsConfig,
+} from "@t3tools/contracts";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import {
   matchesShortcut,
   matchesWhenClause,
+  resolveShortcutCommand,
+  shortcutConflictKey,
   type ShortcutEventLike,
   type ShortcutMatchContext,
 } from "../keybindings";
+import { isCommandPaletteOpen } from "../commandPaletteBus";
+import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import { installedSurfaceRecord, installedWorkspaceContext } from "./installedContext";
 import { randomUUID } from "../lib/utils";
 import {
@@ -73,7 +82,15 @@ interface CommandRegistration {
   readonly contextKey: string;
   readonly commandSetHash: string;
   readonly commands: readonly CompiledCommand[];
+  /** The raw descriptors, retained so a reconnect can replay the same set. */
+  readonly rawCommands: readonly ExtensionCommandDescriptor[];
   readonly installationScoped: boolean;
+  /**
+   * The client-provider connection epoch this registration was committed
+   * under. A reconnect bumps the epoch; the set stays fenced until the flush
+   * replays it (the idempotent path refreshes this field).
+   */
+  readonly connectionEpoch: number;
   readonly handler?: GlobalCommandHandler;
 }
 
@@ -112,6 +129,11 @@ export interface ExtensionCommandEnvironmentDeps {
   readonly installationGrants: (installationId: string) => readonly string[] | null;
   /** The client tag surfaces declare (`"web" | "desktop"`). */
   readonly client: string;
+  /**
+   * The resolved user/native keybinding config — `listConflicts` reports who
+   * actually claims a plugin's `defaultKey` through the real resolution order.
+   */
+  readonly keybindings?: () => ResolvedKeybindingsConfig;
 }
 
 /** A staged `ClientHost.registerGlobalCommands` entry awaiting its commit flush. */
@@ -128,6 +150,12 @@ const registrations = new Map<string, CommandRegistration>();
 const bindings = new Map<string, CommandBinding>();
 const staged = new Map<string, StagedGlobalCommands[]>();
 const environmentDeps = new Map<string, ExtensionCommandEnvironmentDeps>();
+/**
+ * Per-environment seam liveness: `epoch` bumps on every `registered` frame,
+ * `live` tracks whether a connection is currently established. Environments
+ * that never connected (tests, pre-seam callers) have no entry and are live.
+ */
+const connectionFences = new Map<string, { epoch: number; live: boolean }>();
 const paletteListeners = new Set<() => void>();
 let paletteRevision = 0;
 let activeThreadRef: ScopedThreadRef | null = null;
@@ -154,7 +182,27 @@ export function extensionCommandRevision(): number {
 
 export function setActiveExtensionThreadRef(ref: ScopedThreadRef | null): void {
   activeThreadRef = ref;
+  notifyPalette();
 }
+
+/**
+ * Client-provider seam lifecycle for command fencing. `connected` opens a new
+ * epoch: every prior registration stays disabled until the flush replays it
+ * through `registerCommands` (which mints the new epoch). `disconnected`
+ * fences everything immediately — no stale dispatch on a dead socket.
+ */
+export function noteClientProviderConnection(environmentId: string, connected: boolean): void {
+  const current = connectionFences.get(environmentId);
+  if (connected) {
+    connectionFences.set(environmentId, { epoch: (current?.epoch ?? 0) + 1, live: true });
+  } else {
+    connectionFences.set(environmentId, { epoch: current?.epoch ?? 0, live: false });
+  }
+  notifyPalette();
+}
+
+const connectionEpochFor = (environmentId: string) =>
+  connectionFences.get(environmentId)?.epoch ?? 0;
 
 export function configureExtensionCommandEnvironment(
   environmentId: string,
@@ -165,6 +213,7 @@ export function configureExtensionCommandEnvironment(
 
 export function unconfigureExtensionCommandEnvironment(environmentId: string): void {
   environmentDeps.delete(environmentId);
+  connectionFences.delete(environmentId);
   for (const [token, registration] of registrations)
     if (registration.environmentId === environmentId) {
       registrations.delete(token);
@@ -196,6 +245,17 @@ function canonicalJson(value: Json): string {
       "}"
     );
   return JSON.stringify(value);
+}
+
+/**
+ * Context identity for registration/bind matching. `workspaceRevision` is a
+ * freshness stamp recomputed on every invoke — a replayed registration or a
+ * re-bind after reconnect carries a new revision for the SAME context, so it
+ * must not participate in identity.
+ */
+function contextKeyFor(context: ViewContext): string {
+  const { workspaceRevision: _revision, ...identity } = context;
+  return canonicalJson(identity as unknown as Json);
 }
 
 const COMMAND_ID_PATTERN = /^[a-z][a-zA-Z0-9]*(?:\.[a-z][a-zA-Z0-9]*)*$/;
@@ -277,7 +337,7 @@ export function registerCommands(input: {
     accepted.push(command);
     results.push({ commandId: command.id, status: "registered" });
   }
-  const contextKey = canonicalJson(input.context as unknown as Json);
+  const contextKey = contextKeyFor(input.context);
   const commandSetHash = canonicalJson(input.commands as unknown as Json);
   for (const registration of registrations.values()) {
     if (
@@ -287,6 +347,20 @@ export function registerCommands(input: {
       registration.contextKey === contextKey &&
       registration.commandSetHash === commandSetHash
     ) {
+      // Reconnect replay: the same set re-committed on a new connection
+      // adopts the new epoch and becomes dispatchable again; the stored
+      // context refreshes so its workspaceRevision is the live one.
+      if (
+        registration.connectionEpoch !== connectionEpochFor(input.environmentId) ||
+        registration.context !== input.context
+      ) {
+        registrations.set(registration.token, {
+          ...registration,
+          context: input.context,
+          connectionEpoch: connectionEpochFor(input.environmentId),
+        });
+        notifyPalette();
+      }
       return { commandSetToken: registration.token, results };
     }
   }
@@ -301,11 +375,32 @@ export function registerCommands(input: {
     contextKey,
     commandSetHash,
     commands: accepted.map(compileCommand),
+    rawCommands: input.commands,
     installationScoped: input.installationScoped === true,
+    connectionEpoch: connectionEpochFor(input.environmentId),
     ...(input.handler ? { handler: input.handler } : {}),
   });
   notifyPalette();
   return { commandSetToken: token, results };
+}
+
+/**
+ * Committed registrations in commit order, for connection-loss replay. The
+ * flush re-invokes `registerCommands` for each through the real invokeApi
+ * path — grants and context re-validate server-side on every replay.
+ */
+export function committedCommandRegistrations(environmentId: string): readonly {
+  readonly installationId: string;
+  readonly context: ViewContext;
+  readonly commands: readonly ExtensionCommandDescriptor[];
+}[] {
+  return [...registrations.values()]
+    .filter((registration) => registration.environmentId === environmentId)
+    .map((registration) => ({
+      installationId: registration.installationId,
+      context: registration.context,
+      commands: registration.rawCommands,
+    }));
 }
 
 /**
@@ -383,7 +478,7 @@ export function bindCommands(call: {
     throw new ClientProviderOpError("binding-unknown", "Installation is no longer available");
   if (current !== registration.clientGeneration)
     throw new ClientProviderOpError("binding-stale", "Command set predates the installation");
-  if (registration.contextKey !== canonicalJson(call.context as unknown as Json))
+  if (registration.contextKey !== contextKeyFor(call.context))
     throw new ClientProviderOpError("binding-unknown", "Context does not match the registration");
   const existing = [...bindings.values()].find(
     (binding) =>
@@ -404,11 +499,12 @@ export function bindCommands(call: {
     handler: call.handler,
   };
   bindings.set(bindingId, binding);
+  notifyPalette();
   return { bindingId, unbind: () => unbind(bindingId) };
 }
 
 function unbind(bindingId: string): void {
-  bindings.delete(bindingId);
+  if (bindings.delete(bindingId)) notifyPalette();
 }
 
 // ---------------------------------------------------------------------------
@@ -480,9 +576,27 @@ interface DispatchCommandSite {
   readonly command: CompiledCommand;
 }
 
+/**
+ * A registration dispatches only while its installation generation is intact
+ * AND — when a client-provider connection has ever been seen — the live seam
+ * epoch it was committed under. Connection loss fences immediately; replay
+ * re-commits under the new epoch.
+ */
+function registrationIsLive(registration: CommandRegistration): boolean {
+  const deps = environmentDeps.get(registration.environmentId);
+  if (!deps) return false;
+  const generation = deps.installationGeneration(registration.installationId);
+  if (generation === null || generation !== registration.clientGeneration) return false;
+  const fence = connectionFences.get(registration.environmentId);
+  if (fence !== undefined && (!fence.live || fence.epoch !== registration.connectionEpoch))
+    return false;
+  return true;
+}
+
 function commandSites(commandName: string): DispatchCommandSite[] {
   const sites: DispatchCommandSite[] = [];
   for (const registration of registrations.values()) {
+    if (!registrationIsLive(registration)) continue;
     const commandId = extensionCommandForPlugin(commandName, registration.installationId);
     if (commandId === null) continue;
     const command = registration.commands.find((candidate) => candidate.id === commandId);
@@ -535,22 +649,36 @@ export type ExtensionCommandDispatch =
   | { readonly kind: "ambiguous" }
   | { readonly kind: "unavailable" };
 
+/**
+ * The dispatch-time context for an installation-level handler. With an active
+ * thread in the registration's environment, rebuild the real workspace
+ * context (fresh project + worktree revision) exactly like the panel
+ * activation path; otherwise the registration's own context stands — it
+ * carries the workspaceRevision the commit validated.
+ */
 function dispatchContextFor(registration: CommandRegistration): ViewContext {
   const thread = activeThreadRef;
-  const resource = thread
-    ? {
-        namespace: "t3.extensions",
-        id: registration.installationId,
-        environmentId: registration.environmentId,
-        projectId: projectIdForThread(thread) ?? "",
+  if (thread && thread.environmentId === registration.environmentId) {
+    const shell = readThreadShell(thread);
+    const project = shell?.projectId
+      ? readProject(scopeProjectRef(thread.environmentId, shell.projectId))
+      : undefined;
+    if (shell?.projectId && project) {
+      const base = installedWorkspaceContext({
+        environmentId: thread.environmentId,
+        projectId: shell.projectId,
         threadId: thread.threadId,
-      }
-    : registration.context.resource;
-  return { client: registration.context.client, resource };
-}
-
-function projectIdForThread(ref: ScopedThreadRef): string | null {
-  return readThreadShell(ref)?.projectId ?? null;
+        projectWorkspaceRoot: project.workspaceRoot,
+        threadWorktreePath: shell.worktreePath ?? null,
+        client: registration.context.client,
+      });
+      return {
+        ...base,
+        resource: { ...base.resource, namespace: "t3.extensions", id: registration.installationId },
+      };
+    }
+  }
+  return registration.context;
 }
 
 /**
@@ -626,11 +754,29 @@ function openActivationSurface(site: DispatchCommandSite): boolean {
 }
 
 /**
- * The single ordered dispatch rule: focused binding → exactly-one
- * thread-matching binding → installation handler → activation fallback.
+ * One arbitration for dispatch and palette: a side-effect-free resolution of
+ * what a command would do right now. Tiers — focused view binding →
+ * exactly-one thread-matching binding across ALL registration sets → the
+ * installation handler in the active environment → cold activation.
  */
-export function dispatchExtensionCommand(commandName: string): ExtensionCommandDispatch {
-  const sites = commandSites(commandName);
+type CommandArbitration =
+  | {
+      readonly kind: "binding";
+      readonly binding: CommandBinding;
+      readonly command: CompiledCommand;
+    }
+  | { readonly kind: "handler"; readonly site: DispatchCommandSite }
+  | { readonly kind: "activation"; readonly sites: readonly DispatchCommandSite[] }
+  | { readonly kind: "ambiguous" }
+  | { readonly kind: "unavailable" };
+
+function arbitrateExtensionCommand(
+  commandName: string,
+  environmentId?: string,
+): CommandArbitration {
+  const sites = commandSites(commandName).filter(
+    (site) => environmentId === undefined || site.registration.environmentId === environmentId,
+  );
   if (sites.length === 0) return { kind: "unavailable" };
   const focusedView = focusedExtensionViewKey();
   const focusedSurface = focusedExtensionSurfaceId();
@@ -638,53 +784,104 @@ export function dispatchExtensionCommand(commandName: string): ExtensionCommandD
   const when = whenContext(focusedSurface);
 
   // (1) A focused view-session binding always wins, for any scope.
+  const focused: { binding: CommandBinding; command: CompiledCommand }[] = [];
   for (const site of sites) {
     if (!matchesWhenClause(site.command.whenAst ?? undefined, when)) continue;
     for (const binding of bindings.values()) {
       if (binding.token !== site.registration.token) continue;
       if (bindingViewKey(binding) !== focusedView) continue;
-      if (site.command.scope === "thread") {
-        if (bindingThreadKey(binding) !== activeThreadKey) continue;
-      }
-      binding.handler({ commandId: site.command.id, context: binding.context });
-      return { kind: "dispatched" };
+      if (site.command.scope === "thread" && bindingThreadKey(binding) !== activeThreadKey)
+        continue;
+      focused.push({ binding, command: site.command });
     }
   }
+  if (focused.length === 1) return { kind: "binding", ...focused[0]! };
+  if (focused.length > 1) return { kind: "ambiguous" };
 
-  // (2) Global commands only: unfocused dispatch tiers.
+  // (2) Unfocused tiers apply to global commands only.
   const globalSites = sites.filter(
     (site) =>
       site.command.scope === "global" && matchesWhenClause(site.command.whenAst ?? undefined, when),
   );
+
+  // Exactly one thread-matching binding aggregated across every registration
+  // set — two sets each contributing a viewer is ambiguity, not first-wins.
+  const eligible: { binding: CommandBinding; command: CompiledCommand }[] = [];
   for (const site of globalSites) {
-    const eligible = [...bindings.values()].filter(
-      (binding) =>
-        binding.token === site.registration.token &&
-        (activeThreadKey === null || bindingThreadKey(binding) === activeThreadKey),
-    );
-    if (eligible.length === 1) {
-      eligible[0]!.handler({ commandId: site.command.id, context: eligible[0]!.context });
-      return { kind: "dispatched" };
+    for (const binding of bindings.values()) {
+      if (binding.token !== site.registration.token) continue;
+      if (activeThreadKey !== null && bindingThreadKey(binding) !== activeThreadKey) continue;
+      eligible.push({ binding, command: site.command });
     }
-    if (eligible.length > 1) return { kind: "ambiguous" };
   }
+  if (eligible.length === 1) return { kind: "binding", ...eligible[0]! };
+  if (eligible.length > 1) return { kind: "ambiguous" };
 
-  // (3) The installation-level handler from registerGlobalCommands.
-  for (const site of globalSites) {
-    if (!site.registration.handler) continue;
-    site.registration.handler({
-      commandId: site.command.id,
-      context: dispatchContextFor(site.registration),
-    });
-    return { kind: "dispatched" };
+  // (3)+(4) Installation-owned fallbacks run in the intended environment —
+  // a sibling environment's handler never answers for this one. With no
+  // active thread and no caller-chosen environment, multi-environment
+  // claims cannot be arbitrated honestly.
+  const activeEnvironmentId = environmentId ?? activeThreadRef?.environmentId;
+  const owned = globalSites.filter(
+    (site) => site.registration.handler !== undefined || site.command.activation !== undefined,
+  );
+  if (activeEnvironmentId === undefined) {
+    if (new Set(owned.map((site) => site.registration.environmentId)).size > 1)
+      return { kind: "ambiguous" };
   }
+  const environmentSites =
+    activeEnvironmentId !== undefined
+      ? owned.filter((site) => site.registration.environmentId === activeEnvironmentId)
+      : owned;
 
-  // (4) The activation record's host-owned openSurface fallback.
-  for (const site of globalSites) {
-    if (site.command.activation && openActivationSurface(site)) return { kind: "dispatched" };
-  }
+  const handlerSite = environmentSites.find((site) => site.registration.handler !== undefined);
+  if (handlerSite) return { kind: "handler", site: handlerSite };
+
+  // The activation fallback can only fire while its environment's thread is
+  // active — `openActivationSurface` enforces the same check at dispatch.
+  const activationSites =
+    activeThreadRef !== null
+      ? environmentSites.filter((site) => site.command.activation !== undefined)
+      : [];
+  if (activationSites.length > 0) return { kind: "activation", sites: activationSites };
 
   return { kind: "unavailable" };
+}
+
+/**
+ * The single ordered dispatch rule: focused binding → exactly-one
+ * thread-matching binding → installation handler → activation fallback.
+ * `environmentId` pins arbitration to one environment — the palette passes
+ * the row's environment so a cross-environment sibling never dispatches.
+ */
+export function dispatchExtensionCommand(
+  commandName: string,
+  environmentId?: string,
+): ExtensionCommandDispatch {
+  const arbitration = arbitrateExtensionCommand(commandName, environmentId);
+  switch (arbitration.kind) {
+    case "binding":
+      arbitration.binding.handler({
+        commandId: arbitration.command.id,
+        context: arbitration.binding.context,
+      });
+      return { kind: "dispatched" };
+    case "handler":
+      arbitration.site.registration.handler!({
+        commandId: arbitration.site.command.id,
+        context: dispatchContextFor(arbitration.site.registration),
+      });
+      return { kind: "dispatched" };
+    case "activation":
+      for (const site of arbitration.sites) {
+        if (openActivationSurface(site)) return { kind: "dispatched" };
+      }
+      return { kind: "unavailable" };
+    case "ambiguous":
+      return { kind: "ambiguous" };
+    default:
+      return { kind: "unavailable" };
+  }
 }
 
 /**
@@ -698,6 +895,7 @@ export function extensionCommandForKeydown(
   const focusedSurface = focusedExtensionSurfaceId();
   const when = whenContext(focusedSurface);
   for (const registration of registrations.values()) {
+    if (!registrationIsLive(registration)) continue;
     for (const command of registration.commands) {
       if (!command.defaultShortcut) continue;
       if (!matchesWhenClause(command.whenAst ?? undefined, when)) continue;
@@ -706,6 +904,40 @@ export function extensionCommandForKeydown(
     }
   }
   return null;
+}
+
+/**
+ * The client-lifetime keydown listener for extension commands — mounted once
+ * by the extensions bootstrap, not inside any view. It runs on the document
+ * bubble phase so mounted surfaces (ChatView's capture handler, terminals,
+ * editors) always get first claim; an unconsumed key resolves user/native
+ * rules first and plugin `defaultKey`s only on a true miss. Bare printable
+ * keys are reserved for typing so a plugin default can never preempt text
+ * input or type-to-focus.
+ */
+export function installExtensionCommandKeybindings(
+  keybindings: () => ResolvedKeybindingsConfig,
+): () => void {
+  if (typeof document === "undefined") return () => {};
+  const handler = (event: KeyboardEvent) => {
+    if (event.defaultPrevented || isCommandPaletteOpen()) return;
+    if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) return;
+    const command = resolveShortcutCommand(event, keybindings(), {
+      context: { terminalFocus: getTerminalFocusOwner() !== null },
+    });
+    const name =
+      command !== null
+        ? command.startsWith("ext.")
+          ? command
+          : null
+        : extensionCommandForKeydown(event);
+    if (name === null) return;
+    if (dispatchExtensionCommand(name).kind === "unavailable") return;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  document.addEventListener("keydown", handler);
+  return () => document.removeEventListener("keydown", handler);
 }
 
 // ---------------------------------------------------------------------------
@@ -719,46 +951,41 @@ export interface PaletteExtensionCommand {
   readonly enabled: boolean;
 }
 
+/**
+ * Enabled state runs the same arbitration dispatch runs — the palette never
+ * greys a command that would dispatch, nor lights one that would not.
+ * Duplicate registration sets (replays, sibling views) collapse to one row.
+ */
 export function listPaletteExtensionCommands(): readonly PaletteExtensionCommand[] {
   const items: PaletteExtensionCommand[] = [];
-  const focusedView = focusedExtensionViewKey();
-  const focusedSurface = focusedExtensionSurfaceId();
-  const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
-  const when = whenContext(focusedSurface);
+  const seen = new Set<string>();
   for (const registration of registrations.values()) {
+    if (!registrationIsLive(registration)) continue;
     for (const command of registration.commands) {
-      let enabled = matchesWhenClause(command.whenAst ?? undefined, when);
-      if (enabled && command.scope !== "global") {
-        enabled = [...bindings.values()].some(
-          (binding) =>
-            binding.token === registration.token &&
-            bindingViewKey(binding) === focusedView &&
-            (command.scope !== "thread" || bindingThreadKey(binding) === activeThreadKey),
-        );
-      } else if (enabled) {
-        const eligible = [...bindings.values()].filter(
-          (binding) =>
-            binding.token === registration.token &&
-            (activeThreadKey === null || bindingThreadKey(binding) === activeThreadKey),
-        );
-        enabled =
-          eligible.length <= 1 &&
-          (eligible.length === 1 ||
-            registration.handler !== undefined ||
-            command.activation !== undefined);
-      }
+      const name = extensionCommandName(registration.installationId, command.id);
+      const key = `${registration.environmentId}\n${name}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const arbitration = arbitrateExtensionCommand(name);
       items.push({
-        command: extensionCommandName(registration.installationId, command.id),
+        command: name,
         title: command.title,
         installationId: registration.installationId,
         environmentId: registration.environmentId,
-        enabled,
+        enabled: arbitration.kind !== "unavailable" && arbitration.kind !== "ambiguous",
       });
     }
   }
   return items;
 }
 
+/**
+ * Conflict reporting applies the real resolution order to each plugin
+ * `defaultKey`: the last matching rule in the resolved config wins — a user
+ * rule (or a native default when nothing overrides it) shadows the plugin
+ * default; absent any resolved rule, a second plugin default on the same
+ * normalized chord is plugin-vs-plugin. Reporting only — never dispatch.
+ */
 export function listExtensionCommandConflicts(environmentId: string): readonly {
   readonly command: string;
   readonly key: string;
@@ -771,17 +998,48 @@ export function listExtensionCommandConflicts(environmentId: string): readonly {
     winner: "user" | "native" | "plugin";
     loser: string;
   }[] = [];
+  const deps = environmentDeps.get(environmentId);
+  const resolved = deps?.keybindings?.() ?? DEFAULT_RESOLVED_KEYBINDINGS;
+  const when = whenContext(focusedExtensionSurfaceId());
+  // Native defaults claim a chord as "native" only when the winning rule IS
+  // the shipped default — a user rule rebound to a native command is "user".
+  const defaultRuleClaims = new Set(
+    DEFAULT_RESOLVED_KEYBINDINGS.map(
+      (rule) => `${rule.command}${shortcutConflictKey(rule.shortcut)}`,
+    ),
+  );
+  const winnerFor = (conflictKey: string) => {
+    for (let index = resolved.length - 1; index >= 0; index -= 1) {
+      const rule = resolved[index]!;
+      if (!matchesWhenClause(rule.whenAst, when)) continue;
+      if (shortcutConflictKey(rule.shortcut) === conflictKey) return rule;
+    }
+    return null;
+  };
   const seen = new Map<string, string>();
   for (const registration of registrations.values()) {
     if (registration.environmentId !== environmentId) continue;
+    if (!registrationIsLive(registration)) continue;
     for (const command of registration.commands) {
       if (!command.defaultKey || !command.defaultShortcut) continue;
+      const conflictKey = shortcutConflictKey(command.defaultShortcut);
       const full = extensionCommandName(registration.installationId, command.id);
-      const prior = seen.get(command.defaultKey);
+      const winner = winnerFor(conflictKey);
+      if (winner !== null && winner.command !== full) {
+        const isDefaultRule = defaultRuleClaims.has(`${winner.command}${conflictKey}`);
+        conflicts.push({
+          command: full,
+          key: command.defaultKey,
+          winner: isDefaultRule ? "native" : "user",
+          loser: winner.command,
+        });
+        continue;
+      }
+      const prior = seen.get(conflictKey);
       if (prior !== undefined) {
         conflicts.push({ command: full, key: command.defaultKey, winner: "plugin", loser: prior });
       } else {
-        seen.set(command.defaultKey, full);
+        seen.set(conflictKey, full);
       }
     }
   }

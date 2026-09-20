@@ -502,3 +502,118 @@ describe("staged global commands", () => {
     expect(stagedGlobalCommandsFor(ENV, INSTALL)).toHaveLength(0);
   });
 });
+
+describe("connection-aware arbitration regressions", () => {
+  it("arbitrates across distinct registration sets", () => {
+    configureExtensionCommandEnvironment(ENV, envDeps());
+    setActiveExtensionThreadRef(scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a")));
+    const first = register([command({ scope: "global", title: "First" })], {
+      capabilities: ["t3.ui/keybindings", "t3.ui/keybindings.global"],
+    });
+    const second = register([command({ scope: "global", title: "Second" })], {
+      capabilities: ["t3.ui/keybindings", "t3.ui/keybindings.global"],
+    });
+    const a = vi.fn();
+    const b = vi.fn();
+    for (const [registration, handler, hostKey] of [
+      [first, a, "host-a"],
+      [second, b, "host-b"],
+    ] as const) {
+      bindCommands({
+        environmentId: ENV,
+        extensionId: INSTALL,
+        hostKey,
+        viewId: "view-1",
+        context,
+        commandSetToken: registration.commandSetToken,
+        handler,
+      });
+    }
+    // Two sets each contributing one viewer is ambiguity, not first-wins.
+    expect(dispatchExtensionCommand("ext.ext.a.run")).toEqual({ kind: "ambiguous" });
+    expect(a).not.toHaveBeenCalled();
+    expect(b).not.toHaveBeenCalled();
+  });
+
+  it("installation handler context retains the workspace revision", () => {
+    configureExtensionCommandEnvironment(ENV, envDeps());
+    const handler = vi.fn();
+    registerCommands({
+      environmentId: ENV,
+      installationId: INSTALL,
+      installationGeneration: 1,
+      context: { ...context, workspaceRevision: "valid-revision" },
+      commands: [command({ scope: "global" })],
+      capabilities: ["t3.ui/keybindings", "t3.ui/keybindings.global"],
+      installationScoped: true,
+      handler,
+    });
+    expect(dispatchExtensionCommand("ext.ext.a.run")).toEqual({ kind: "dispatched" });
+    expect(handler.mock.calls[0]![0].context.workspaceRevision).toBe("valid-revision");
+  });
+
+  it("a stale installation generation cannot dispatch its handler", () => {
+    configureExtensionCommandEnvironment(ENV, envDeps());
+    const handler = vi.fn();
+    register([command({ scope: "global" })], {
+      capabilities: ["t3.ui/keybindings", "t3.ui/keybindings.global"],
+      installationScoped: true,
+      handler,
+    });
+    // The environment now reports a newer installation generation.
+    configureExtensionCommandEnvironment(ENV, envDeps(2));
+    expect(dispatchExtensionCommand("ext.ext.a.run")).toEqual({ kind: "unavailable" });
+    expect(handler).not.toHaveBeenCalled();
+  });
+});
+
+it("palette enabled state agrees with focused-view arbitration", () => {
+  configureExtensionCommandEnvironment(ENV, envDeps());
+  setActiveExtensionThreadRef(scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a")));
+  const registration = register([command({ scope: "global" })], {
+    capabilities: ["t3.ui/keybindings", "t3.ui/keybindings.global"],
+  });
+  for (const hostKey of ["host-a", "host-b"]) {
+    bindCommands({
+      environmentId: ENV,
+      extensionId: INSTALL,
+      hostKey,
+      viewId: "view-1",
+      context,
+      commandSetToken: registration.commandSetToken,
+      handler: vi.fn(),
+    });
+  }
+  restoreDom = installFakeDom("host-a:view-1", SURFACE);
+  expect(dispatchExtensionCommand("ext.ext.a.run")).toEqual({ kind: "dispatched" });
+  expect(
+    listPaletteExtensionCommands().find((item) => item.command === "ext.ext.a.run")?.enabled,
+  ).toBe(true);
+});
+
+it("the active environment's own installation handler wins", () => {
+  const handlers = [vi.fn(), vi.fn()];
+  for (const [index, env] of [ENV, "env-b"].entries()) {
+    configureExtensionCommandEnvironment(env, envDeps());
+    registerCommands({
+      environmentId: env,
+      installationId: INSTALL,
+      installationGeneration: 1,
+      context: { ...context, resource: { ...context.resource, environmentId: env } },
+      commands: [command({ scope: "global" })],
+      capabilities: ["t3.ui/keybindings", "t3.ui/keybindings.global"],
+      installationScoped: true,
+      handler: handlers[index]!,
+    });
+  }
+  setActiveExtensionThreadRef(
+    scopeThreadRef(EnvironmentId.make("env-b"), ThreadId.make("thread-a")),
+  );
+  try {
+    expect(dispatchExtensionCommand("ext.ext.a.run")).toEqual({ kind: "dispatched" });
+    expect(handlers[1]).toHaveBeenCalledOnce();
+    expect(handlers[0]).not.toHaveBeenCalled();
+  } finally {
+    unconfigureExtensionCommandEnvironment("env-b");
+  }
+});
