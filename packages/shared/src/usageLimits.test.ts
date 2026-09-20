@@ -1273,6 +1273,7 @@ describe("usageLimitSendBlock", () => {
   const limits = (windows: readonly ServerProviderUsageWindow[]) => ({
     checkedAt: "2026-09-03T11:00:00.000Z",
     windows: [...windows],
+    sendGating: true,
   });
 
   it("returns null without a provider, without limits, or on an unavailable snapshot", () => {
@@ -1292,6 +1293,17 @@ describe("usageLimitSendBlock", () => {
         now,
       ),
     ).toBeNull();
+  });
+
+  it("does not gate on a snapshot that predates sendGating", () => {
+    const spent = provider({
+      ...claude,
+      usageLimits: {
+        checkedAt: "2026-09-03T11:00:00.000Z",
+        windows: [{ ...window, usedPercent: 100 }],
+      },
+    });
+    expect(usageLimitSendBlock(spent, "claude-fable-5-1", now)).toBeNull();
   });
 
   it("blocks every model on an exhausted account window", () => {
