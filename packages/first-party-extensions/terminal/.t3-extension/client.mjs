@@ -8464,6 +8464,12 @@ var __t3Client = (() => {
   // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/vtAttachment.ts
   var MAX_OUTPUT_CHUNK_DATA_LENGTH = 8192;
   var MAX_OUTPUT_CHUNKS = 64;
+  function commonSuffix(a, b) {
+    const max = Math.min(a.length, b.length);
+    let i = 0;
+    while (i < max && a.charCodeAt(a.length - 1 - i) === b.charCodeAt(b.length - 1 - i)) i += 1;
+    return b.slice(b.length - i);
+  }
   var MAX_PRE_SINK_OUTPUT_LENGTH = 512 * 1024;
   var TerminalVtAttachment = class {
     terminalId;
@@ -8504,6 +8510,18 @@ var __t3Client = (() => {
      * renderer that actually mounted) clears it.
      */
     #sinkFailure = null;
+    /**
+     * Live output received but never parsed with the PTY reply writer
+     * attached — always a suffix of the replay stream (base + buffered).
+     * Bytes delivered to a live sink answered their terminal queries at
+     * write time; bytes buffered while detached produced no replies, so
+     * replaying them suppressed would silently drop queries the process is
+     * still waiting on. Replayed once with replies enabled, then cleared.
+     * Snapshot/history bytes themselves are treated as already-rendered
+     * history and stay suppressed (native parity) — only live output the
+     * attachment saw go undelivered earns a reply.
+     */
+    #unansweredTail = "";
     #pending = null;
     #state = {
       status: "connecting",
@@ -8538,19 +8556,40 @@ var __t3Client = (() => {
      * the pane degraded.
      */
     attach(sink) {
+      const previousFailure = this.#sinkFailure;
+      const replay = (this.#base ?? "") + this.#buffered.join("");
+      const tail = this.#unansweredTail;
+      const unanswered = tail.length === 0 || replay.endsWith(tail) ? tail : commonSuffix(replay, tail);
+      const answered = replay.slice(0, replay.length - unanswered.length);
       this.#sink = sink;
-      const wasSinkFailure = this.#sinkFailure !== null;
-      this.#sinkFailure = null;
-      sink.beginReplay?.();
       try {
-        if (this.#base !== null) sink.resetAndWrite(this.#base);
-        for (const chunk of this.#buffered) sink.write(chunk);
-      } finally {
-        sink.endReplay?.();
+        sink.beginReplay?.();
+        try {
+          if (this.#base !== null) sink.resetAndWrite(answered);
+          else if (answered.length > 0) sink.write(answered);
+        } finally {
+          sink.endReplay?.();
+        }
+        if (unanswered.length > 0) sink.write(unanswered);
+      } catch (error) {
+        this.#sink = null;
+        this.#sinkFailure = previousFailure ?? (error instanceof Error ? `Terminal renderer failed to start: ${error.message}` : "Terminal renderer failed to start.");
+        if (!this.#state.ended) {
+          this.#emit({
+            status: "error",
+            statusText: this.#sinkFailure,
+            degraded: this.#state.degraded,
+            exitCode: null,
+            ended: false
+          });
+        }
+        throw error;
       }
+      this.#sinkFailure = null;
+      this.#unansweredTail = "";
       if (this.#state.ended) return;
       const unfaithful = !this.#replayFaithful;
-      if (wasSinkFailure || unfaithful && !this.#state.degraded) {
+      if (previousFailure !== null || unfaithful && !this.#state.degraded) {
         this.#emit({
           ...this.#state,
           status: "live",
@@ -8632,7 +8671,11 @@ var __t3Client = (() => {
       });
     }
     #deliver(data) {
-      this.#sink?.write(data);
+      if (this.#sink !== null) {
+        this.#sink.write(data);
+      } else {
+        this.#unansweredTail += data;
+      }
       this.#buffered.push(data);
       this.#bufferedLength += data.length;
       if (this.#bufferedLength <= MAX_PRE_SINK_OUTPUT_LENGTH) return;
@@ -8640,6 +8683,10 @@ var __t3Client = (() => {
         this.#bufferedLength -= this.#buffered[0].length;
         this.#buffered.shift();
       }
+      this.#unansweredTail = commonSuffix(
+        (this.#base ?? "") + this.#buffered.join(""),
+        this.#unansweredTail
+      );
       this.#replayFaithful = false;
       if (this.#sink === null && !this.#state.degraded && !this.#state.ended) {
         this.#emit({
@@ -8672,6 +8719,7 @@ var __t3Client = (() => {
         this.#base = value.contents;
         this.#buffered = [];
         this.#bufferedLength = 0;
+        this.#unansweredTail = commonSuffix(value.contents, this.#unansweredTail);
         this.#replayFaithful = !value.truncated && value.streamEpoch !== this.#clearedEpoch;
         const unfaithful = !this.#replayFaithful;
         this.#sink?.resetAndWrite(value.contents);
@@ -8719,6 +8767,7 @@ var __t3Client = (() => {
         this.#base = "";
         this.#buffered = [];
         this.#bufferedLength = 0;
+        this.#unansweredTail = "";
         this.#replayFaithful = false;
         this.#clearedEpoch = this.#epoch;
         if (this.#sink) {
@@ -9047,7 +9096,14 @@ var __t3Client = (() => {
         surface.setVisible(shownRef.current);
         surface.setTheme(terminalThemeFromApp(mount));
         surfaceRef.current = surface;
-        attachment.attach(surface);
+        try {
+          attachment.attach(surface);
+        } catch {
+          surface.dispose();
+          surface = null;
+          surfaceRef.current = null;
+          return;
+        }
         themeObserver.observe(document.documentElement, {
           attributes: true,
           attributeFilter: ["class", "style"]

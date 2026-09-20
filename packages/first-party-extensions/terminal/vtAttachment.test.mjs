@@ -101,10 +101,12 @@ NodeTest.describe("TerminalVtAttachment — snapshot + attach", () => {
     vt.applyFrame(frame(3, output(11, "live-2")), output(11, "live-2"));
     const s = sink();
     vt.attach(s);
+    // The detached-window bytes were never parsed — they replay as one
+    // contiguous write WITH the reply writer attached (unanswered queries
+    // inside still get their response), not per-chunk suppressed writes.
     NodeAssert.deepEqual(s.calls, [
       ["resetAndWrite", "prompt$ "],
-      ["write", "live-1"],
-      ["write", "live-2"],
+      ["write", "live-1live-2"],
     ]);
   });
 
@@ -206,10 +208,9 @@ NodeTest.describe("TerminalVtAttachment — snapshot + attach", () => {
       const s2 = sink();
       vt.attach(s2);
       NodeAssert.equal(vt.state.degraded, true);
-      NodeAssert.deepEqual(s2.calls, [
-        ["resetAndWrite", ""],
-        ["write", "post-clear"],
-      ]);
+      // "post-clear" was delivered to the live sink (already parsed), so it
+      // replays inside the suppressed reset write — one contiguous stream.
+      NodeAssert.deepEqual(s2.calls, [["resetAndWrite", "post-clear"]]);
     },
   );
 
@@ -424,6 +425,56 @@ NodeTest.describe("TerminalVtAttachment — failure paths", () => {
     NodeAssert.equal(vt.state.status, "error");
     // Only a renderer that actually mounts restores live status.
     vt.attach(sink());
+    NodeAssert.equal(vt.state.status, "live");
+  });
+
+  NodeTest.it("the replay boundary answers only never-delivered bytes (P2)", () => {
+    const vt = new TerminalVtAttachment("term-1");
+    const s = sink();
+    vt.attach(s);
+    vt.beginStream();
+    vt.applyFrame(frame(1, snapshot()), snapshot());
+    // Delivered to the live sink — already parsed and answered.
+    vt.applyFrame(frame(2, output(10, "old-")), output(10, "old-"));
+    vt.detach();
+    // Buffered while detached — never parsed; queries inside still need
+    // their reply, so these replay outside the suppression bracket.
+    vt.applyFrame(frame(3, output(11, "new-1")), output(11, "new-1"));
+    vt.applyFrame(frame(4, output(12, "new-2")), output(12, "new-2"));
+    const s2 = sink();
+    vt.attach(s2);
+    NodeAssert.deepEqual(s2.calls, [
+      ["resetAndWrite", "prompt$ old-"],
+      ["write", "new-1new-2"],
+    ]);
+  });
+
+  NodeTest.it("a throwing attach keeps the renderer failure sticky (P3)", () => {
+    const vt = new TerminalVtAttachment("term-1");
+    vt.beginStream();
+    vt.applyFrame(frame(1, snapshot()), snapshot());
+    vt.applySinkFailure("Terminal renderer failed to start: no canvas");
+    // A mount whose replay throws must not clear the failure — the
+    // renderer never actually took.
+    const bad = {
+      resetAndWrite() {
+        throw new Error("wasm trap");
+      },
+      write() {},
+      clearScreen() {},
+    };
+    NodeAssert.throws(() => vt.attach(bad), /wasm trap/);
+    NodeAssert.equal(vt.state.status, "error");
+    // The rejected sink is detached: output buffers for a clean remount.
+    vt.applyFrame(frame(2, output(10, "buf")), output(10, "buf"));
+    // A later snapshot still cannot mask it.
+    vt.beginStream();
+    vt.applyFrame(frame(1, snapshot()), snapshot());
+    NodeAssert.equal(vt.state.status, "error");
+    NodeAssert.match(vt.state.statusText, /renderer failed/);
+    // And a mount that completes clears it.
+    const s = sink();
+    vt.attach(s);
     NodeAssert.equal(vt.state.status, "live");
   });
 

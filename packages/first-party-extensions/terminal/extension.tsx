@@ -337,7 +337,18 @@ function TerminalPane(props: {
       // toggled light/dark while the surface was loading.
       surface.setTheme(terminalThemeFromApp(mount));
       surfaceRef.current = surface;
-      attachment.attach(surface);
+      try {
+        attachment.attach(surface);
+      } catch {
+        // Replay failed mid-mount: attach() already flagged the pane
+        // errored and dropped the half-written sink — dispose the dead
+        // surface so a later remount starts clean instead of showing a
+        // renderer that was never attached.
+        surface.dispose();
+        surface = null;
+        surfaceRef.current = null;
+        return;
+      }
       themeObserver.observe(document.documentElement, {
         attributes: true,
         attributeFilter: ["class", "style"],

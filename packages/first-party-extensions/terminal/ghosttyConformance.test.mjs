@@ -308,4 +308,76 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
     NodeAssert.equal(second.writes.length, 1);
     second.core.dispose();
   });
+
+  NodeTest.it("queries buffered while detached get exactly one reply on mount (P2)", async () => {
+    // Live output arrived before any surface existed — the DSR was
+    // never answered; the first mount must emit its reply, not
+    // suppress it as if an earlier parser had answered.
+    const attachment = new TerminalVtAttachment("term-1");
+    const snap = {
+      kind: "snapshot",
+      terminalId: "term-1",
+      streamEpoch: "epoch-1",
+      status: "running",
+      contents: "",
+      retainedByteLength: 0,
+      truncated: false,
+      boundarySequence: 7,
+    };
+    attachment.applyFrame({ streamId: "s", sequence: 1 }, snap);
+    const dsr = (sequence) => ({
+      kind: "output",
+      terminalId: "term-1",
+      streamEpoch: "epoch-1",
+      sequence,
+      chunkIndex: 0,
+      chunkCount: 1,
+      data: "\x1b[6n",
+    });
+    attachment.applyFrame({ streamId: "s", sequence: 2 }, dsr(8));
+    const first = await makeCore();
+    attachment.attach(first.core);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    NodeAssert.equal(first.writes.length, 1);
+    NodeAssert.match(first.writes[0], /\[\d+;\d+R/);
+    attachment.detach();
+    first.core.dispose();
+
+    // A NEW query arrives while detached — the remount answers it once
+    // and does NOT re-answer the query the first mount already handled.
+    attachment.applyFrame({ streamId: "s", sequence: 3 }, dsr(9));
+    const second = await makeCore();
+    attachment.attach(second.core);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    NodeAssert.equal(second.writes.length, 1);
+    second.core.dispose();
+  });
+
+  NodeTest.it(
+    "a query inside snapshot history stays suppressed — documented drop (P2)",
+    async () => {
+      // Snapshot contents are retained history, not live output: a query
+      // embedded in them is treated as already-rendered history and never
+      // answered — the explicit drop semantics (native resetAndWrite
+      // parity). Only live output the attachment saw go undelivered earns
+      // a reply.
+      const attachment = new TerminalVtAttachment("term-1");
+      const snap = {
+        kind: "snapshot",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        status: "running",
+        contents: "\x1b[6n",
+        retainedByteLength: 4,
+        truncated: false,
+        boundarySequence: 7,
+      };
+      attachment.applyFrame({ streamId: "s", sequence: 1 }, snap);
+      const { core, writes } = await makeCore();
+      attachment.attach(core);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      NodeAssert.equal(writes.length, 0);
+      core.dispose();
+    },
+  );
 });

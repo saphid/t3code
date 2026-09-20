@@ -55,12 +55,18 @@ history is never treated as proof of recovered mode state.
 
 A **renderer start failure** is sticky: output and snapshot frames keep
 feeding the bounded replay buffer for a later remount, but they never
-re-flag the pane "live" while no renderer exists — only a successful
-`attach` clears the error. And because a remount replays bytes the process
-already emitted once, the replay runs inside a `beginReplay`/`endReplay`
-bracket that detaches the PTY writer: terminal queries (DA/DSR/DECRQSS)
-inside replayed output were answered by the previous parser incarnation
-and must not be answered again.
+re-flag the pane "live" while no renderer exists — only an `attach` whose
+replay completes clears the error (a throwing replay drops the
+half-written sink and keeps the failure).
+
+**Remount replay** splits at an unanswered boundary: bytes a live sink
+already parsed were answered once and replay with the PTY writer detached
+(`beginReplay`/`endReplay`), so DA/DSR/DECRQSS queries inside them are
+not re-sent. Live output buffered while detached was never parsed — it
+replays _with_ the writer attached so its queries get exactly one reply.
+Queries inside snapshot/history bytes are treated as already-rendered
+history and stay suppressed (the documented drop: only live output the
+attachment saw go undelivered earns a reply).
 
 Sequencing uses two fences: the broker's per-subscription frame sequence and
 the session's native `eventSequence` watermark, which must strictly increase
