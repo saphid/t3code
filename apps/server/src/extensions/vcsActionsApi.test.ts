@@ -892,6 +892,53 @@ it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
     }),
   );
 
+  it.effect("settles a pending progress read when the subscription is cancelled", () =>
+    Effect.gen(function* () {
+      const t = makeProvider({
+        runStackedAction: (input, options) =>
+          options!
+            .progressReporter!.publish({
+              actionId: input.actionId,
+              cwd: input.cwd,
+              action: input.action,
+              kind: "action_started",
+              phases: ["commit"],
+            })
+            .pipe(Effect.andThen(Effect.never)),
+      });
+      const started = (yield* invoke(t.provider, "run", { action: "commit" })) as {
+        actionId: string;
+      };
+      const controller = new AbortController();
+      const iterable = t.provider.subscribe!(
+        "actionProgress",
+        { actionId: started.actionId },
+        makeContext(),
+        controller.signal,
+        meta(t.provider),
+      );
+      const iterator = iterable[Symbol.asyncIterator]();
+      // The first read delivers action_started whenever the detached fiber
+      // publishes it; the second parks — the action never terminates.
+      const first = yield* Effect.promise(() => iterator.next());
+      expect((first.value as ApiStreamEvent).type).toBe("data");
+      const pending = iterator.next();
+      controller.abort();
+      const outcome = yield* Effect.race(
+        Effect.promise(() =>
+          pending.then(
+            () => "resolved" as const,
+            () => "rejected" as const,
+          ),
+        ),
+        Effect.sleep("1 second").pipe(Effect.as("hung" as const)),
+      );
+      // The parked read must settle on cancel — pre-fix it hung forever and
+      // only the broker abandoning the call masked it.
+      expect(outcome).toBe("rejected");
+    }),
+  );
+
   it.effect("rejects invalid input and unknown methods by name", () =>
     Effect.gen(function* () {
       const t = makeProvider();

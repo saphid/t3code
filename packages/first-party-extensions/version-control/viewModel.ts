@@ -13,6 +13,10 @@
  * stay host-side.
  */
 import type {
+  VcsActionKind,
+  VcsActionPhase,
+  VcsActionProgressEvent,
+  VcsActionResult,
   VcsCapabilitiesResult,
   VcsChangeEntry,
   VcsListRefsResult,
@@ -113,6 +117,7 @@ export type MutationOp =
   | "stage"
   | "unstage"
   | "commit"
+  | "stacked"
   | "ref-create"
   | "ref-switch"
   | "pull"
@@ -363,6 +368,228 @@ export function pushState(
     return { disabled: 'Add an "origin" remote before pushing', label: "Push" };
   if (remote.aheadCount === 0) return { disabled: "No local commits to push", label: "Push" };
   return { disabled: null, label: `Push ↑${remote.aheadCount}` };
+}
+
+/* ---------------- stacked actions (t3.vcs/actions) ---------------- */
+
+/**
+ * The composite-action surface — `t3.vcs/actions.run` runs the native
+ * stacked action (commit → push → create-PR phases) under a server-minted
+ * actionId; progress arrives on the `actionProgress` stream. The offer
+ * set mirrors the native menu/quick-action gating
+ * (GitActionsControl.logic.ts): commit needs a dirty tree or a feature
+ * branch to create, push needs a branch that is not behind with an
+ * upstream or primary remote, and the PR phase additionally needs no
+ * open PR and a delta over the default branch. Conflicted trees block
+ * every commit-including action for the same reason `planCommit` does —
+ * the composite's commit phase is `add -A` and would stage conflict
+ * markers.
+ */
+export interface StackedActionOffer {
+  readonly action: VcsActionKind;
+  readonly label: string;
+  /** Why the offer is disabled; null when it may run. */
+  readonly disabled: string | null;
+}
+
+export function stackedActionLabel(action: VcsActionKind): string {
+  switch (action) {
+    case "commit":
+      return "Commit";
+    case "push":
+      return "Push";
+    case "create_pr":
+      return "Push & create PR";
+    case "commit_push":
+      return "Commit & push";
+    case "commit_push_pr":
+      return "Commit, push & create PR";
+  }
+}
+
+const STACKED_ACTION_ORDER: readonly VcsActionKind[] = [
+  "commit",
+  "commit_push",
+  "commit_push_pr",
+  "push",
+  "create_pr",
+];
+
+export function stackedActionOffers(
+  local: VcsStatusLocal | null,
+  remote: VcsStatusRemote | null,
+  lanes: LaneGroups,
+  featureBranch: boolean,
+): readonly StackedActionOffer[] {
+  const offer = (action: VcsActionKind, disabled: string | null): StackedActionOffer => ({
+    action,
+    label: stackedActionLabel(action),
+    disabled,
+  });
+  if (local === null) {
+    return STACKED_ACTION_ORDER.map((action) => offer(action, "Repository status pending"));
+  }
+  const hasBranch = local.refName !== null;
+  const hasChanges = local.hasWorkingTreeChanges || featureBranch;
+  const hasOpenPr = remote?.pr?.state === "open";
+  const isBehind = (remote?.behindCount ?? 0) > 0;
+  const hasDefaultDelta =
+    (remote?.aheadOfDefaultCount ?? remote?.aheadCount ?? 0) > 0 || hasChanges;
+  const conflicts =
+    lanes.conflicted.length > 0 ? "Resolve merge conflicts before committing" : null;
+  const tooManyStaged =
+    lanes.staged.length > VCS_PATHS_MAX
+      ? `Over ${VCS_PATHS_MAX} staged paths — unstage some first`
+      : null;
+  const commitBlocked =
+    conflicts ??
+    tooManyStaged ??
+    (!hasChanges ? "No changes to commit" : null) ??
+    (!hasBranch && !featureBranch ? "Detached HEAD — checkout a ref first" : null);
+  const remotePending = remote === null ? "Upstream status pending" : null;
+  const remoteBehind =
+    remote !== null && isBehind
+      ? remote.aheadCount > 0
+        ? "Diverged from upstream — rebase or merge first"
+        : "Behind upstream — pull first"
+      : null;
+  const remoteMissing =
+    remote !== null && !remote.hasUpstream && !local.hasPrimaryRemote
+      ? 'Add an "origin" remote before pushing'
+      : null;
+  /**
+   * The standalone push block — dirty tree and nothing-ahead included.
+   * Composite offers don't inherit these two: their commit phase produces
+   * the commits, so they only need the push FEASIBLE checks.
+   */
+  const pushBlocked =
+    (!hasBranch ? "Detached HEAD — checkout a ref first" : null) ??
+    (local.hasWorkingTreeChanges ? "Commit local changes before pushing" : null) ??
+    remotePending ??
+    remoteBehind ??
+    remoteMissing ??
+    (remote !== null && remote.aheadCount === 0 ? "No local commits to push" : null);
+  const pushPhaseBlocked =
+    (!hasBranch ? "Detached HEAD — checkout a ref first" : null) ??
+    remotePending ??
+    remoteBehind ??
+    remoteMissing;
+  // An open PR is named before push feasibility — native's reason order.
+  const openPrBlocked = hasOpenPr ? "A pull request is already open for this branch" : null;
+  const prDeltaBlocked = !hasDefaultDelta ? "No commits over the default branch" : null;
+  return [
+    offer("commit", commitBlocked),
+    offer("commit_push", commitBlocked ?? pushPhaseBlocked),
+    offer("commit_push_pr", commitBlocked ?? openPrBlocked ?? pushPhaseBlocked ?? prDeltaBlocked),
+    offer("push", pushBlocked),
+    offer("create_pr", openPrBlocked ?? pushBlocked ?? prDeltaBlocked),
+  ];
+}
+
+/**
+ * The one action native's quick-action button would pick right now —
+ * `resolveQuickAction` reduced to the run_action kinds this contract
+ * carries (pull and publish are separate surfaces; open-PR lives in the
+ * pull-request view). Returns null when no stacked action is the honest
+ * suggestion.
+ */
+export function stackedActionSuggestion(
+  local: VcsStatusLocal | null,
+  remote: VcsStatusRemote | null,
+): VcsActionKind | null {
+  if (local === null || local.refName === null) return null;
+  const hasChanges = local.hasWorkingTreeChanges;
+  const hasOpenPr = remote?.pr?.state === "open";
+  const isAhead = (remote?.aheadCount ?? 0) > 0;
+  const hasDefaultDelta = (remote?.aheadOfDefaultCount ?? remote?.aheadCount ?? 0) > 0;
+  const isBehind = (remote?.behindCount ?? 0) > 0;
+  const isDiverged = isAhead && isBehind;
+  const pushable = remote?.hasUpstream === true || local.hasPrimaryRemote;
+
+  if (hasChanges) {
+    if (!pushable) return "commit";
+    return hasOpenPr || local.isDefaultRef ? "commit_push" : "commit_push_pr";
+  }
+  if (!pushable || isDiverged || isBehind) return null;
+  if (isAhead) return hasOpenPr || local.isDefaultRef ? "push" : "create_pr";
+  if (hasDefaultDelta && !local.isDefaultRef && !hasOpenPr) return "create_pr";
+  return null;
+}
+
+/** Live composite progress, folded from `actionProgress` events. */
+export interface StackedActionProgress {
+  readonly action: VcsActionKind | null;
+  readonly phases: readonly VcsActionPhase[];
+  /** Phases reported started — the last entry is the one in flight. */
+  readonly started: readonly { readonly phase: VcsActionPhase; readonly label: string }[];
+  readonly hook: { readonly name: string | null; readonly lastLine: string | null } | null;
+  readonly result: VcsActionResult | null;
+  readonly failure: { readonly phase: VcsActionPhase | null; readonly message: string } | null;
+  readonly closed: "overflow" | null;
+}
+
+export const IDLE_STACKED_PROGRESS: StackedActionProgress = {
+  action: null,
+  phases: [],
+  started: [],
+  hook: null,
+  result: null,
+  failure: null,
+  closed: null,
+};
+
+export function applyStackedEvent(
+  model: StackedActionProgress,
+  event: VcsActionProgressEvent,
+): StackedActionProgress {
+  switch (event.kind) {
+    case "action_started":
+      return { ...IDLE_STACKED_PROGRESS, action: event.action, phases: event.phases };
+    case "phase_started":
+      return {
+        ...model,
+        started: [...model.started, { phase: event.phase, label: event.label }],
+      };
+    case "hook_started":
+      return { ...model, hook: { name: event.hookName, lastLine: null } };
+    case "hook_output": {
+      const lastLine = event.text.trimEnd().split("\n").pop() ?? null;
+      return {
+        ...model,
+        hook: { name: event.hookName ?? model.hook?.name ?? null, lastLine },
+      };
+    }
+    case "hook_finished":
+      return model.hook === null ? model : { ...model, hook: null };
+    case "action_finished":
+      return { ...model, result: event.result };
+    case "action_failed":
+      return { ...model, failure: { phase: event.phase, message: event.message } };
+    case "closed":
+      return { ...model, closed: event.reason };
+  }
+}
+
+/** One-line rendering of in-flight composite progress for the panel. */
+export function describeStackedProgress(model: StackedActionProgress): string {
+  const current = model.started[model.started.length - 1] ?? null;
+  const tail = model.hook?.lastLine ?? current?.label ?? "Starting";
+  return `${model.action === null ? "Action" : stackedActionLabel(model.action)} — ${tail}`;
+}
+
+/**
+ * The settled line for the mutation status row. Success leads with the
+ * composite's own toast title; provenance markers (P1) name who wrote the
+ * text — `generated` means the host composed the message/body, `existing`
+ * an already-open PR's words.
+ */
+export function describeStackedResult(result: VcsActionResult): string {
+  const parts = [result.toast.title];
+  if (result.commit.messageSource === "generated") parts.push("generated commit message");
+  if (result.pr.status === "created" && result.pr.url !== undefined) parts.push(result.pr.url);
+  if (result.pr.status === "opened_existing" && result.pr.url !== undefined)
+    parts.push(`existing PR ${result.pr.url}`);
+  return parts.join(" — ");
 }
 
 /* ---------------- remotes + worktrees (P10-C rows 12, 13) ---------------- */

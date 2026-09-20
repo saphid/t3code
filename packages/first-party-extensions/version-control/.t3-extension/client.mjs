@@ -5422,6 +5422,127 @@ var __t3Client = (() => {
     if (remote.aheadCount === 0) return { disabled: "No local commits to push", label: "Push" };
     return { disabled: null, label: `Push \u2191${remote.aheadCount}` };
   }
+  function stackedActionLabel(action) {
+    switch (action) {
+      case "commit":
+        return "Commit";
+      case "push":
+        return "Push";
+      case "create_pr":
+        return "Push & create PR";
+      case "commit_push":
+        return "Commit & push";
+      case "commit_push_pr":
+        return "Commit, push & create PR";
+    }
+  }
+  var STACKED_ACTION_ORDER = [
+    "commit",
+    "commit_push",
+    "commit_push_pr",
+    "push",
+    "create_pr"
+  ];
+  function stackedActionOffers(local, remote, lanes, featureBranch) {
+    const offer = (action, disabled) => ({
+      action,
+      label: stackedActionLabel(action),
+      disabled
+    });
+    if (local === null) {
+      return STACKED_ACTION_ORDER.map((action) => offer(action, "Repository status pending"));
+    }
+    const hasBranch = local.refName !== null;
+    const hasChanges = local.hasWorkingTreeChanges || featureBranch;
+    const hasOpenPr = remote?.pr?.state === "open";
+    const isBehind = (remote?.behindCount ?? 0) > 0;
+    const hasDefaultDelta = (remote?.aheadOfDefaultCount ?? remote?.aheadCount ?? 0) > 0 || hasChanges;
+    const conflicts = lanes.conflicted.length > 0 ? "Resolve merge conflicts before committing" : null;
+    const tooManyStaged = lanes.staged.length > VCS_PATHS_MAX ? `Over ${VCS_PATHS_MAX} staged paths \u2014 unstage some first` : null;
+    const commitBlocked = conflicts ?? tooManyStaged ?? (!hasChanges ? "No changes to commit" : null) ?? (!hasBranch && !featureBranch ? "Detached HEAD \u2014 checkout a ref first" : null);
+    const remotePending = remote === null ? "Upstream status pending" : null;
+    const remoteBehind = remote !== null && isBehind ? remote.aheadCount > 0 ? "Diverged from upstream \u2014 rebase or merge first" : "Behind upstream \u2014 pull first" : null;
+    const remoteMissing = remote !== null && !remote.hasUpstream && !local.hasPrimaryRemote ? 'Add an "origin" remote before pushing' : null;
+    const pushBlocked = (!hasBranch ? "Detached HEAD \u2014 checkout a ref first" : null) ?? (local.hasWorkingTreeChanges ? "Commit local changes before pushing" : null) ?? remotePending ?? remoteBehind ?? remoteMissing ?? (remote !== null && remote.aheadCount === 0 ? "No local commits to push" : null);
+    const pushPhaseBlocked = (!hasBranch ? "Detached HEAD \u2014 checkout a ref first" : null) ?? remotePending ?? remoteBehind ?? remoteMissing;
+    const openPrBlocked = hasOpenPr ? "A pull request is already open for this branch" : null;
+    const prDeltaBlocked = !hasDefaultDelta ? "No commits over the default branch" : null;
+    return [
+      offer("commit", commitBlocked),
+      offer("commit_push", commitBlocked ?? pushPhaseBlocked),
+      offer("commit_push_pr", commitBlocked ?? openPrBlocked ?? pushPhaseBlocked ?? prDeltaBlocked),
+      offer("push", pushBlocked),
+      offer("create_pr", openPrBlocked ?? pushBlocked ?? prDeltaBlocked)
+    ];
+  }
+  function stackedActionSuggestion(local, remote) {
+    if (local === null || local.refName === null) return null;
+    const hasChanges = local.hasWorkingTreeChanges;
+    const hasOpenPr = remote?.pr?.state === "open";
+    const isAhead = (remote?.aheadCount ?? 0) > 0;
+    const hasDefaultDelta = (remote?.aheadOfDefaultCount ?? remote?.aheadCount ?? 0) > 0;
+    const isBehind = (remote?.behindCount ?? 0) > 0;
+    const isDiverged = isAhead && isBehind;
+    const pushable = remote?.hasUpstream === true || local.hasPrimaryRemote;
+    if (hasChanges) {
+      if (!pushable) return "commit";
+      return hasOpenPr || local.isDefaultRef ? "commit_push" : "commit_push_pr";
+    }
+    if (!pushable || isDiverged || isBehind) return null;
+    if (isAhead) return hasOpenPr || local.isDefaultRef ? "push" : "create_pr";
+    if (hasDefaultDelta && !local.isDefaultRef && !hasOpenPr) return "create_pr";
+    return null;
+  }
+  var IDLE_STACKED_PROGRESS = {
+    action: null,
+    phases: [],
+    started: [],
+    hook: null,
+    result: null,
+    failure: null,
+    closed: null
+  };
+  function applyStackedEvent(model, event) {
+    switch (event.kind) {
+      case "action_started":
+        return { ...IDLE_STACKED_PROGRESS, action: event.action, phases: event.phases };
+      case "phase_started":
+        return {
+          ...model,
+          started: [...model.started, { phase: event.phase, label: event.label }]
+        };
+      case "hook_started":
+        return { ...model, hook: { name: event.hookName, lastLine: null } };
+      case "hook_output": {
+        const lastLine = event.text.trimEnd().split("\n").pop() ?? null;
+        return {
+          ...model,
+          hook: { name: event.hookName ?? model.hook?.name ?? null, lastLine }
+        };
+      }
+      case "hook_finished":
+        return model.hook === null ? model : { ...model, hook: null };
+      case "action_finished":
+        return { ...model, result: event.result };
+      case "action_failed":
+        return { ...model, failure: { phase: event.phase, message: event.message } };
+      case "closed":
+        return { ...model, closed: event.reason };
+    }
+  }
+  function describeStackedProgress(model) {
+    const current = model.started[model.started.length - 1] ?? null;
+    const tail = model.hook?.lastLine ?? current?.label ?? "Starting";
+    return `${model.action === null ? "Action" : stackedActionLabel(model.action)} \u2014 ${tail}`;
+  }
+  function describeStackedResult(result) {
+    const parts = [result.toast.title];
+    if (result.commit.messageSource === "generated") parts.push("generated commit message");
+    if (result.pr.status === "created" && result.pr.url !== void 0) parts.push(result.pr.url);
+    if (result.pr.status === "opened_existing" && result.pr.url !== void 0)
+      parts.push(`existing PR ${result.pr.url}`);
+    return parts.join(" \u2014 ");
+  }
   function remoteRows(result) {
     return (result?.remotes ?? []).map((remote) => ({
       name: remote.name,
@@ -7794,7 +7915,7 @@ ${ref.number}`;
     const writeProbe = usePrsWriteCapabilities(host, session, visible && ready, tick);
     const write = prsWriteGate(writeProbe.capabilities, writeProbe.error);
     const writeOps = write.kind === "ready" ? write.operations : null;
-    const [writeTick, setWriteTick] = (0, import_react.useState)(0);
+    const [writeTicks, setWriteTicks] = (0, import_react.useState)({});
     const [writeState, setWriteState] = (0, import_react.useState)(null);
     const refreshes = usePrsRefreshes(
       host,
@@ -7849,7 +7970,7 @@ ${ref.number}`;
         () => {
           if (signal.aborted) return;
           setWriteState(null);
-          setWriteTick((value) => value + 1);
+          setWriteTicks((ticks) => ({ ...ticks, [key]: (ticks[key] ?? 0) + 1 }));
           runInvalidate();
         },
         (error) => {
@@ -8296,7 +8417,7 @@ ${thread.id}`) === activity,
                           pageError: paged?.error ?? null,
                           onLoadMore: loadThreadComments,
                           write: threadWrite(merged),
-                          writeTick
+                          writeTick: writeTicks[`reply:${merged.id}`] ?? 0
                         },
                         thread.id
                       );
@@ -8322,7 +8443,7 @@ ${thread.id}`) === activity,
                           (signal) => writeApi().invoke("comment", { ...selected, body }, signal)
                         )
                       },
-                      `comment:${writeTick}`
+                      `comment:${writeTicks["comment"] ?? 0}`
                     )
                   ] }),
                   write.kind === "ready" && writeOps?.["prs.submitReview"] === true && write.verdicts.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Submit a review", style: { paddingBottom: 4 }, children: [
@@ -8342,7 +8463,7 @@ ${thread.id}`) === activity,
                           )
                         )
                       },
-                      `review:${writeTick}`
+                      `review:${writeTicks["review"] ?? 0}`
                     )
                   ] }),
                   activity.commits.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Commits", style: { paddingBottom: 4 }, children: [
@@ -8489,6 +8610,29 @@ ${thread.id}`) === activity,
     }, [host, session, visible, tick]);
     return model?.key === tick ? model.status : CONNECTING_STATUS;
   }
+  function useVcsActionsCapabilities(host, session, visible, tick) {
+    const [result, setResult] = (0, import_react2.useState)(null);
+    (0, import_react2.useEffect)(() => {
+      if (!visible) return;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      void bindApi(vcsActionsApi, host, session.context).invoke("getCapabilities", {}, signal).then(
+        (capabilities) => {
+          if (!signal.aborted) setResult({ key: tick, capabilities, error: null });
+        },
+        (error) => {
+          if (!signal.aborted)
+            setResult({
+              key: tick,
+              capabilities: null,
+              error: error instanceof Error ? error.message : "Action capabilities unavailable"
+            });
+        }
+      );
+      return () => controller.abort();
+    }, [host, session, visible, tick]);
+    return result?.key === tick ? result : { capabilities: null, error: null };
+  }
   function useChangesList(host, session, visible, isRepo, revision2) {
     const [result, setResult] = (0, import_react2.useState)(null);
     (0, import_react2.useEffect)(() => {
@@ -8583,6 +8727,9 @@ ${thread.id}`) === activity,
     const [mutation, setMutation] = (0, import_react2.useState)(IDLE_MUTATION);
     const [mutationSerial, setMutationSerial] = (0, import_react2.useState)(0);
     const [commitMessage, setCommitMessage] = (0, import_react2.useState)("");
+    const [stackedChoice, setStackedChoice] = (0, import_react2.useState)(null);
+    const [featureBranch, setFeatureBranch] = (0, import_react2.useState)(false);
+    const [stacked, setStacked] = (0, import_react2.useState)(null);
     const [newRefName, setNewRefName] = (0, import_react2.useState)("");
     const [newWorktreeName, setNewWorktreeName] = (0, import_react2.useState)("");
     const [worktreeRemoveFailures, setWorktreeRemoveFailures] = (0, import_react2.useState)(
@@ -8620,6 +8767,12 @@ ${thread.id}`) === activity,
     );
     const repo = repositoryState(capabilities, capsError);
     const status = useStatusStream(host, session, repositoryVisible && repo.kind === "ready", tick);
+    const actionCaps = useVcsActionsCapabilities(
+      host,
+      session,
+      repositoryVisible && repo.kind === "ready",
+      tick
+    );
     const isRepo = status.local?.isRepo === true;
     const listRevision = status.localRevision === 0 ? "" : `${status.localRevision}:${mutationSerial}`;
     const changes = useChangesList(host, session, repositoryVisible, isRepo, listRevision);
@@ -8653,6 +8806,19 @@ ${thread.id}`) === activity,
     const canRemoveWorktree = ops?.["repository.removeWorktree"] === true;
     const busy = mutation.kind === "running";
     const commit = planCommit(lanes, commitMessage);
+    const canRunActions = actionCaps.capabilities?.operations["actions.run"] === true;
+    const stackedOffers = (0, import_react2.useMemo)(
+      () => stackedActionOffers(status.local, status.remote, lanes, featureBranch),
+      [status.local, status.remote, lanes, featureBranch]
+    );
+    const stackedDefault = stackedActionSuggestion(status.local, status.remote);
+    const chosenOffer = stackedOffers.find(
+      (offer) => offer.action === (stackedChoice ?? stackedDefault)
+    ) ?? stackedOffers.find((offer) => offer.disabled === null) ?? {
+      action: "commit",
+      label: stackedActionLabel("commit"),
+      disabled: "Repository status pending"
+    };
     const create = planRefCreate(newRefName, rows);
     const currentBranch = rows.find((row) => row.current && row.remote === null)?.name ?? null;
     const pull = pullState(status.local, status.remote);
@@ -8702,6 +8868,47 @@ ${thread.id}`) === activity,
           return `Committed ${result.commitSha.slice(0, 12)}${result.refName !== null ? ` on ${result.refName}` : ""}`;
         })
       );
+    };
+    const runStacked = (offer) => {
+      if (offer.disabled !== null) return;
+      const message2 = commitMessage.trim();
+      const stagedPaths = lanes.staged.map((entry) => entry.path);
+      const commits = offer.action === "commit" || offer.action === "commit_push" || offer.action === "commit_push_pr";
+      runMutation("stacked", offer.label, async (signal) => {
+        const api = bindApi(vcsActionsApi, host, session.context);
+        const { actionId } = await api.invoke(
+          "run",
+          {
+            action: offer.action,
+            ...message2 === "" ? {} : { commitMessage: message2 },
+            ...featureBranch ? { featureBranch: true } : {},
+            ...commits && stagedPaths.length > 0 ? { paths: stagedPaths } : {}
+          },
+          signal
+        );
+        let model = IDLE_STACKED_PROGRESS;
+        setStacked({ actionId, model });
+        const stream = bindStreamApi(vcsActionsApi, host, session.context).subscribe(
+          "actionProgress",
+          { actionId },
+          signal
+        );
+        for await (const frame of stream) {
+          model = applyStackedEvent(model, frame.value);
+          setStacked({ actionId, model });
+          if (model.result !== null) {
+            setCommitMessage("");
+            return describeStackedResult(model.result);
+          }
+          if (model.failure !== null)
+            throw new Error(
+              model.failure.phase === null ? model.failure.message : `Failed during ${model.failure.phase}: ${model.failure.message}`
+            );
+          if (model.closed === "overflow")
+            throw new Error("Action progress overflowed \u2014 result unknown");
+        }
+        throw new Error("Action progress ended before the action settled");
+      });
     };
     const runCreateRef = () => {
       const plan = planRefCreate(newRefName, rows);
@@ -9063,7 +9270,7 @@ ${thread.id}`) === activity,
                   )) })
                 ] }, lane);
               }),
-              canCommit && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { "aria-label": "Commit", style: { marginTop: 4, marginBottom: 8 }, children: [
+              (canCommit || canRunActions) && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { "aria-label": "Commit", style: { marginTop: 4, marginBottom: 8 }, children: [
                 /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                   "h3",
                   {
@@ -9116,7 +9323,7 @@ ${thread.id}`) === activity,
                     }
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 6 }, children: [
+                canCommit && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 6 }, children: [
                   /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                     "button",
                     {
@@ -9128,7 +9335,112 @@ ${thread.id}`) === activity,
                     }
                   ),
                   commit.disabled !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 11 }, children: commit.disabled })
-                ] })
+                ] }),
+                canRunActions && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                  "div",
+                  {
+                    style: {
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      marginTop: 4,
+                      flexWrap: "wrap"
+                    },
+                    children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                        "select",
+                        {
+                          "aria-label": "Stacked action",
+                          value: chosenOffer.action,
+                          disabled: busy,
+                          onChange: (event) => setStackedChoice(event.target.value),
+                          style: { ...control2, padding: "2px 4px" },
+                          children: stackedOffers.map((offer) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                            "option",
+                            {
+                              value: offer.action,
+                              disabled: offer.disabled !== null,
+                              children: offer.label
+                            },
+                            offer.action
+                          ))
+                        }
+                      ),
+                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                        "button",
+                        {
+                          type: "button",
+                          disabled: busy || chosenOffer.disabled !== null,
+                          onClick: () => runStacked(chosenOffer),
+                          style: control2,
+                          children: busy && mutation.kind === "running" && mutation.op === "stacked" ? `${chosenOffer.label}\u2026` : "Run"
+                        }
+                      ),
+                      status.local?.isDefaultRef === true && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                        "label",
+                        {
+                          style: {
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 4,
+                            fontSize: 11,
+                            color: muted2
+                          },
+                          children: [
+                            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                              "input",
+                              {
+                                type: "checkbox",
+                                checked: featureBranch,
+                                disabled: busy,
+                                onChange: (event) => setFeatureBranch(event.target.checked)
+                              }
+                            ),
+                            "New feature branch"
+                          ]
+                        }
+                      ),
+                      chosenOffer.disabled !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 11 }, children: chosenOffer.disabled })
+                    ]
+                  }
+                ),
+                stacked !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                  "div",
+                  {
+                    "aria-label": "Action progress",
+                    style: {
+                      margin: "4px 0",
+                      padding: "4px 6px",
+                      border: "1px solid var(--border, #dfe3e8)",
+                      borderRadius: 5,
+                      fontSize: 11
+                    },
+                    children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { children: describeStackedProgress(stacked.model) }),
+                      stacked.model.phases.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { color: muted2 }, children: stacked.model.phases.map((phase) => {
+                        const startedAt = stacked.model.started.findIndex(
+                          (entry) => entry.phase === phase
+                        );
+                        const mark = startedAt === -1 ? "\u25CB" : stacked.model.result !== null || stacked.model.failure !== null || startedAt < stacked.model.started.length - 1 ? "\u2713" : "\u2026";
+                        return `${mark} ${phase}`;
+                      }).join(" \xB7 ") }),
+                      stacked.model.failure !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                        "p",
+                        {
+                          role: "alert",
+                          style: { margin: "2px 0 0", color: "var(--destructive, #b42318)" },
+                          children: [
+                            "Failed",
+                            stacked.model.failure.phase === null ? "" : ` during ${stacked.model.failure.phase}`,
+                            ": ",
+                            stacked.model.failure.message
+                          ]
+                        }
+                      ),
+                      stacked.model.result !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: "2px 0 0", color: muted2 }, children: describeStackedResult(stacked.model.result) })
+                    ]
+                  }
+                )
               ] }),
               /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { "aria-label": "Refs", style: { marginTop: 4 }, children: [
                 /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
@@ -9560,6 +9872,7 @@ ${thread.id}`) === activity,
     requires: [
       requireApi(prsReadApi),
       requireApi(prsWriteApi),
+      requireApi(vcsActionsApi),
       requireApi(vcsStatusApi),
       requireApi(vcsChangesApi),
       requireApi(vcsRefsApi),

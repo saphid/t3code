@@ -837,7 +837,6 @@ export function createVcsActionsApiProvider(
 
       let finished = false;
       let aborted = signal.aborted;
-      let wake: (() => void) | null = null;
       let cleanup: (() => void) | null = null;
       let setup: Promise<void> | null = null;
       let setupFailure: unknown = null;
@@ -853,8 +852,11 @@ export function createVcsActionsApiProvider(
         removeAbortListener?.();
         removeAbortListener = null;
         record.subscribers.delete(subscriber);
-        wake?.();
-        wake = null;
+        // A next() parked on `subscriber.wake` must settle on cancel — the
+        // broker abandons the call, which would mask a read that never
+        // resolves.
+        subscriber.wake?.();
+        subscriber.wake = null;
       };
       const abort = () => {
         aborted = true;

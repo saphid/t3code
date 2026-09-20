@@ -1397,10 +1397,10 @@ export function PullRequestsPanel(props: {
   const writeProbe = usePrsWriteCapabilities(host, session, visible && ready, tick);
   const write = prsWriteGate(writeProbe.capabilities, writeProbe.error);
   const writeOps = write.kind === "ready" ? write.operations : null;
-  // Bumped on every completed write — composer keys fold it in so a
-  // successful submit remounts its box empty while a failed one keeps
-  // the author's draft.
-  const [writeTick, setWriteTick] = useState(0);
+  // Per-write-key ticks — a successful submit remounts only ITS composer
+  // empty; a draft on an unrelated control survives (a posted comment
+  // must not erase a half-written review).
+  const [writeTicks, setWriteTicks] = useState<Readonly<Record<string, number>>>({});
   const [writeState, setWriteState] = useState<PrsWriteState | null>(null);
 
   const refreshes = usePrsRefreshes(
@@ -1471,7 +1471,7 @@ export function PullRequestsPanel(props: {
       () => {
         if (signal.aborted) return;
         setWriteState(null);
-        setWriteTick((value) => value + 1);
+        setWriteTicks((ticks) => ({ ...ticks, [key]: (ticks[key] ?? 0) + 1 }));
         runInvalidate();
       },
       (error) => {
@@ -2095,7 +2095,7 @@ export function PullRequestsPanel(props: {
                             pageError={paged?.error ?? null}
                             onLoadMore={loadThreadComments}
                             write={threadWrite(merged)}
-                            writeTick={writeTick}
+                            writeTick={writeTicks[`reply:${merged.id}`] ?? 0}
                           />
                         );
                       })}
@@ -2120,7 +2120,7 @@ export function PullRequestsPanel(props: {
                       )}
                       {writeOps?.["prs.comment"] === true && (
                         <PrsComposer
-                          key={`comment:${writeTick}`}
+                          key={`comment:${writeTicks["comment"] ?? 0}`}
                           label="Comment"
                           placeholder="Leave a comment"
                           pending={writePending("comment")}
@@ -2140,7 +2140,7 @@ export function PullRequestsPanel(props: {
                         <section aria-label="Submit a review" style={{ paddingBottom: 4 }}>
                           <h3 style={headingStyle}>Submit a review</h3>
                           <PrsReviewComposer
-                            key={`review:${writeTick}`}
+                            key={`review:${writeTicks["review"] ?? 0}`}
                             verdicts={prsWriteVerdictOptions(write.verdicts)}
                             pending={writePending("review")}
                             error={writeError("review")}

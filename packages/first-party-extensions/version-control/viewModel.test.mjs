@@ -5,11 +5,15 @@ import {
   CONNECTING_STATUS,
   EMPTY_LANES,
   IDLE_MUTATION,
+  IDLE_STACKED_PROGRESS,
+  applyStackedEvent,
   applyStatusEvent,
   branchLabel,
   describeEntry,
   describeMutation,
   describeRef,
+  describeStackedProgress,
+  describeStackedResult,
   describeStatus,
   entryMutation,
   laneCount,
@@ -29,6 +33,9 @@ import {
   repositoryState,
   retainSelection,
   settleMutation,
+  stackedActionLabel,
+  stackedActionOffers,
+  stackedActionSuggestion,
   startMutation,
   syncLabel,
   canWorktreeRef,
@@ -716,5 +723,215 @@ NodeTest.describe("vcs view model — remotes and worktrees", () => {
       baseRefName: null,
       disabled: null,
     });
+  });
+});
+
+NodeTest.describe("vcs view model — stacked actions", () => {
+  const lanes = (overrides = {}) => ({
+    conflicted: [],
+    staged: [],
+    changes: [change("a.ts", { unstaged: true })],
+    untracked: [],
+    ...overrides,
+  });
+  const offerOf = (offers, action) => offers.find((o) => o.action === action);
+
+  NodeTest.it("labels every stacked action kind", () => {
+    NodeAssert.equal(stackedActionLabel("commit"), "Commit");
+    NodeAssert.equal(stackedActionLabel("commit_push"), "Commit & push");
+    NodeAssert.equal(stackedActionLabel("commit_push_pr"), "Commit, push & create PR");
+    NodeAssert.equal(stackedActionLabel("push"), "Push");
+    NodeAssert.equal(stackedActionLabel("create_pr"), "Push & create PR");
+  });
+
+  NodeTest.it("offers the full composite set for a dirty pushable branch", () => {
+    const offers = stackedActionOffers(
+      local({ hasWorkingTreeChanges: true }),
+      remote(),
+      lanes(),
+      false,
+    );
+    NodeAssert.deepEqual(
+      offers.map((o) => o.action),
+      ["commit", "commit_push", "commit_push_pr", "push", "create_pr"],
+    );
+    // commit phases can run; standalone push/create_pr can't (dirty tree, nothing ahead).
+    NodeAssert.equal(offerOf(offers, "commit").disabled, null);
+    NodeAssert.equal(offerOf(offers, "commit_push").disabled, null);
+    NodeAssert.equal(offerOf(offers, "commit_push_pr").disabled, null);
+    NodeAssert.match(offerOf(offers, "push").disabled ?? "", /Commit local changes/);
+    NodeAssert.match(offerOf(offers, "create_pr").disabled ?? "", /Commit local changes/);
+  });
+
+  NodeTest.it("blocks every commit-including action on conflicts", () => {
+    const conflicted = lanes({ conflicted: [change("x.ts", { conflicted: true })] });
+    const offers = stackedActionOffers(local(), remote(), conflicted, false);
+    for (const action of ["commit", "commit_push", "commit_push_pr"]) {
+      NodeAssert.match(offerOf(offers, action).disabled ?? "", /conflicts/);
+    }
+    // Standalone push keeps its own reason, not the conflict one.
+    NodeAssert.match(offerOf(offers, "push").disabled ?? "", /Commit local changes/);
+  });
+
+  NodeTest.it("blocks clean-tree commit offers but allows push when ahead", () => {
+    const offers = stackedActionOffers(
+      local({ hasWorkingTreeChanges: false }),
+      remote({ aheadCount: 2 }),
+      EMPTY_LANES,
+      false,
+    );
+    NodeAssert.match(offerOf(offers, "commit").disabled ?? "", /No changes/);
+    NodeAssert.match(offerOf(offers, "commit_push").disabled ?? "", /No changes/);
+    NodeAssert.equal(offerOf(offers, "push").disabled, null);
+    NodeAssert.equal(offerOf(offers, "create_pr").disabled, null);
+  });
+
+  NodeTest.it("blocks PR-including actions when a PR is already open", () => {
+    const openPr = remote({ aheadCount: 1, pr: { state: "open", number: 7 } });
+    const offers = stackedActionOffers(local(), openPr, lanes(), false);
+    NodeAssert.match(offerOf(offers, "commit_push_pr").disabled ?? "", /already open/);
+    NodeAssert.match(offerOf(offers, "create_pr").disabled ?? "", /already open/);
+    NodeAssert.equal(offerOf(offers, "commit_push").disabled, null);
+  });
+
+  NodeTest.it("lets a feature branch run with a clean tree and no branch delta", () => {
+    const offers = stackedActionOffers(
+      local({ hasWorkingTreeChanges: false, isDefaultRef: true }),
+      remote(),
+      EMPTY_LANES,
+      true,
+    );
+    NodeAssert.equal(offerOf(offers, "commit").disabled, null);
+    NodeAssert.equal(offerOf(offers, "commit_push_pr").disabled, null);
+  });
+
+  NodeTest.it("reports pending status when local is unknown", () => {
+    const offers = stackedActionOffers(null, null, EMPTY_LANES, false);
+    NodeAssert.ok(offers.every((o) => o.disabled === "Repository status pending"));
+  });
+
+  NodeTest.it("suggests the native quick action per status", () => {
+    // Dirty on a pushable non-default branch: the full composite.
+    NodeAssert.equal(stackedActionSuggestion(local(), remote()), "commit_push_pr");
+    // Dirty with an open PR or on the default ref: commit & push only.
+    NodeAssert.equal(
+      stackedActionSuggestion(local(), remote({ pr: { state: "open", number: 1 } })),
+      "commit_push",
+    );
+    NodeAssert.equal(
+      stackedActionSuggestion(local({ isDefaultRef: true }), remote()),
+      "commit_push",
+    );
+    // Dirty without a push path: commit only.
+    NodeAssert.equal(
+      stackedActionSuggestion(local({ hasPrimaryRemote: false }), remote({ hasUpstream: false })),
+      "commit",
+    );
+    // Clean + ahead + no open PR: create_pr; open PR: plain push.
+    NodeAssert.equal(
+      stackedActionSuggestion(local({ hasWorkingTreeChanges: false }), remote({ aheadCount: 1 })),
+      "create_pr",
+    );
+    NodeAssert.equal(
+      stackedActionSuggestion(
+        local({ hasWorkingTreeChanges: false }),
+        remote({ aheadCount: 1, pr: { state: "open", number: 2 } }),
+      ),
+      "push",
+    );
+    // Behind/diverged: nothing honest to suggest.
+    NodeAssert.equal(
+      stackedActionSuggestion(
+        local({ hasWorkingTreeChanges: false }),
+        remote({ aheadCount: 1, behindCount: 1 }),
+      ),
+      null,
+    );
+    NodeAssert.equal(
+      stackedActionSuggestion(local({ hasWorkingTreeChanges: false }), remote()),
+      null,
+    );
+  });
+
+  NodeTest.it("reduces actionProgress events into the live model", () => {
+    let model = IDLE_STACKED_PROGRESS;
+    model = applyStackedEvent(model, {
+      kind: "action_started",
+      action: "commit_push_pr",
+      phases: ["commit", "push", "pr"],
+    });
+    model = applyStackedEvent(model, {
+      kind: "phase_started",
+      action: "commit_push_pr",
+      phase: "commit",
+      label: "Committing changes",
+    });
+    NodeAssert.equal(
+      describeStackedProgress(model),
+      "Commit, push & create PR — Committing changes",
+    );
+    model = applyStackedEvent(model, {
+      kind: "hook_started",
+      action: "commit_push_pr",
+      hookName: "pre-commit",
+    });
+    model = applyStackedEvent(model, {
+      kind: "hook_output",
+      action: "commit_push_pr",
+      hookName: "pre-commit",
+      stream: "stdout",
+      text: "lint ok\ntest ok\n",
+    });
+    NodeAssert.equal(describeStackedProgress(model), "Commit, push & create PR — test ok");
+    model = applyStackedEvent(model, {
+      kind: "hook_finished",
+      action: "commit_push_pr",
+      hookName: "pre-commit",
+      exitCode: 0,
+      durationMs: 10,
+    });
+    NodeAssert.equal(model.hook, null);
+    model = applyStackedEvent(model, {
+      kind: "action_failed",
+      action: "commit_push_pr",
+      phase: "push",
+      message: "rejected: non-fast-forward",
+    });
+    NodeAssert.deepEqual(model.failure, {
+      phase: "push",
+      message: "rejected: non-fast-forward",
+    });
+  });
+
+  NodeTest.it("describes the settled result with provenance markers", () => {
+    const result = {
+      action: "commit_push_pr",
+      branch: { status: "skipped_not_requested" },
+      commit: { status: "created", commitSha: "abc", messageSource: "generated" },
+      push: { status: "pushed", branch: "feat" },
+      pr: {
+        status: "created",
+        url: "https://github.com/o/r/pull/9",
+        contentSource: "generated",
+      },
+      toast: { title: "Created PR", cta: { kind: "none" } },
+    };
+    NodeAssert.equal(
+      describeStackedResult(result),
+      "Created PR — generated commit message — https://github.com/o/r/pull/9",
+    );
+    const existing = {
+      ...result,
+      commit: { status: "created", commitSha: "abc", messageSource: "caller" },
+      pr: {
+        status: "opened_existing",
+        url: "https://github.com/o/r/pull/9",
+        contentSource: "existing",
+      },
+    };
+    NodeAssert.equal(
+      describeStackedResult(existing),
+      "Created PR — existing PR https://github.com/o/r/pull/9",
+    );
   });
 });

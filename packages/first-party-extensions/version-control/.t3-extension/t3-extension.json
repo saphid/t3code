@@ -34,6 +34,10 @@
       "versionRange": "^1.0.0"
     },
     {
+      "id": "t3.vcs/actions",
+      "versionRange": "^1.0.0"
+    },
+    {
       "id": "t3.vcs/status",
       "versionRange": "^1.0.0"
     },
