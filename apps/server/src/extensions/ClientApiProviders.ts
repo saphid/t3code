@@ -560,13 +560,8 @@ export const make = Effect.gen(function* () {
           kind: "subscription",
           deliver: (event) => {
             if (event.type === "notificationOutcome") return;
-            // `closed` terminates the stream; payload events must satisfy the
-            // declared event schema — an invalid event fails the subscription.
-            if (event.type === "closed") {
-              sinkPush(sink, { type: event.type, value: event.value });
-              sinkClose(sink);
-              return;
-            }
+            // Every emitted payload obeys the envelope bound — including the
+            // terminal `closed` frame — before any schema checks.
             let value: Json;
             try {
               value = copyJson(event.value);
@@ -575,6 +570,13 @@ export const make = Effect.gen(function* () {
                 sink,
                 error("provider-rejected", "Client provider event exceeds the envelope bound."),
               );
+              return;
+            }
+            // `closed` terminates the stream; payload events must satisfy the
+            // declared event schema — an invalid event fails the subscription.
+            if (event.type === "closed") {
+              sinkPush(sink, { type: event.type, value });
+              sinkClose(sink);
               return;
             }
             if (!stream.event(value)) {

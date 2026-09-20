@@ -538,3 +538,31 @@ it("an ordinary view registration is not installation-scoped", async () => {
   );
   expect(bridge.invoked[0]?.input).not.toMatchObject({ installationScoped: true });
 });
+
+it("notification retention cap is per connection", async () => {
+  const bridge = fakeBridge();
+  const { notifications } = makeProviders(bridge);
+  const settle = async (conn: string) => {
+    const meta = { ...metadata(), clientConnectionId: conn };
+    const result = (await notifications.invoke(
+      "notify",
+      { title: "x", severity: "info" },
+      context,
+      signal,
+      meta,
+    )) as { notificationId: string };
+    bridge.correlations.get(result.notificationId)!.deliver({
+      type: "notificationOutcome",
+      outcome: { actionId: "yes" },
+    });
+    return result.notificationId;
+  };
+  const id = await settle("conn-a");
+  for (let i = 0; i < 257; i++) await settle("conn-b");
+  await expect(
+    notifications.invoke("awaitAction", { notificationId: id }, context, signal, {
+      ...metadata(),
+      clientConnectionId: "conn-a",
+    }),
+  ).resolves.toEqual({ actionId: "yes" });
+});

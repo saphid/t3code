@@ -96,18 +96,20 @@ export function startClientProviderConnection(
    */
   const teardownIteration = () => {
     iteration.disposed = true;
-    if (
-      iteration.connectionId !== undefined &&
-      connectionIds.get(deps.environmentId) === iteration.connectionId
-    ) {
-      connectionIds.delete(deps.environmentId);
-    }
-    iteration.connectionId = undefined;
     if (connectionOwners.get(deps.environmentId) === owner) {
+      // Only the owner may clear the identity it minted — a replacement loop
+      // reusing the same socket-derived id keeps it across this teardown.
+      if (
+        iteration.connectionId !== undefined &&
+        connectionIds.get(deps.environmentId) === iteration.connectionId
+      ) {
+        connectionIds.delete(deps.environmentId);
+      }
       connectionOwners.delete(deps.environmentId);
       // The seam is down: registrations fence until the next connect replays them.
       noteClientProviderConnection(deps.environmentId, false);
     }
+    iteration.connectionId = undefined;
     for (const close of [...iteration.subscriptions.values()]) {
       try {
         close();
@@ -181,7 +183,10 @@ async function runConnectionLoop(
       try {
         while (!signal.aborted) {
           const next = await Promise.race([iterator.next(), aborted]);
-          if (next === "aborted" || next.done || signal.aborted) return;
+          if (next === "aborted" || signal.aborted) return;
+          // A clean EOF ends this iteration only — teardown runs, then the
+          // loop waits for the transport's next connected phase and reopens.
+          if (next.done) break;
           try {
             handleFrame(deps, next.value, emitEvent, respond, iteration, signal, owner);
           } catch {

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
+import { parseKeybindingShortcut } from "@t3tools/shared/keybindings";
 import {
   attachRegistrationHandler,
   bindCommands,
@@ -9,8 +10,10 @@ import {
   discardStagedGlobalCommands,
   dispatchExtensionCommand,
   extensionCommandForKeydown,
+  installExtensionCommandKeybindings,
   listExtensionCommandConflicts,
   listPaletteExtensionCommands,
+  noteClientProviderConnection,
   registerCommands,
   setActiveExtensionThreadRef,
   stageGlobalCommands,
@@ -270,6 +273,7 @@ describe("dispatchExtensionCommand", () => {
       handler,
     });
     expect(view.bindingId).toBeTruthy();
+    setActiveExtensionThreadRef(scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a")));
     expect(dispatchExtensionCommand(`ext.${INSTALL}.run`).kind).toBe("dispatched");
     expect(handler).toHaveBeenCalledWith({ commandId: "run", context });
   });
@@ -290,6 +294,7 @@ describe("dispatchExtensionCommand", () => {
         handler: vi.fn(),
       });
     }
+    setActiveExtensionThreadRef(scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a")));
     expect(dispatchExtensionCommand(`ext.${INSTALL}.run`).kind).toBe("ambiguous");
   });
 
@@ -616,4 +621,197 @@ it("the active environment's own installation handler wins", () => {
   } finally {
     unconfigureExtensionCommandEnvironment("env-b");
   }
+});
+
+describe("connection-aware arbitration regressions (r2)", () => {
+  it("no active thread must not dispatch an arbitrary thread binding", () => {
+    configureExtensionCommandEnvironment(ENV, envDeps());
+    const handler = vi.fn();
+    const r = register([command({ scope: "global" })], {
+      capabilities: ["t3.ui/keybindings", "t3.ui/keybindings.global"],
+    });
+    bindCommands({
+      environmentId: ENV,
+      extensionId: INSTALL,
+      hostKey: "h",
+      viewId: "v",
+      context,
+      commandSetToken: r.commandSetToken,
+      handler,
+    });
+    expect(dispatchExtensionCommand("ext.ext.a.run")).toEqual({ kind: "unavailable" });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("palette checks the environment pinned by its own row", () => {
+    configureExtensionCommandEnvironment(ENV, envDeps());
+    configureExtensionCommandEnvironment("env-b", envDeps());
+    try {
+      register([command({ scope: "global" })], {
+        capabilities: ["t3.ui/keybindings", "t3.ui/keybindings.global"],
+        installationScoped: true,
+        handler: vi.fn(),
+      });
+      registerCommands({
+        environmentId: "env-b",
+        installationId: INSTALL,
+        installationGeneration: 1,
+        context: { ...context, resource: { ...context.resource, environmentId: "env-b" } },
+        commands: [command({ scope: "global" })],
+        capabilities: ["t3.ui/keybindings", "t3.ui/keybindings.global"],
+      });
+      setActiveExtensionThreadRef(
+        scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a")),
+      );
+      expect(dispatchExtensionCommand("ext.ext.a.run", "env-b")).toEqual({ kind: "unavailable" });
+      expect(listPaletteExtensionCommands().find((x) => x.environmentId === "env-b")?.enabled).toBe(
+        false,
+      );
+    } finally {
+      unconfigureExtensionCommandEnvironment("env-b");
+    }
+  });
+
+  it("activation with an ineligible thread stays disabled in palette", () => {
+    configureExtensionCommandEnvironment(ENV, envDeps());
+    register(
+      [command({ scope: "global", activation: { surfaceId: SURFACE, placement: "side-panel" } })],
+      {
+        capabilities: ["t3.ui/keybindings", "t3.ui/keybindings.global", "t3.ui/panels"],
+        installationScoped: true,
+      },
+    );
+    setActiveExtensionThreadRef(
+      scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("missing-thread")),
+    );
+    expect(dispatchExtensionCommand("ext.ext.a.run")).toEqual({ kind: "unavailable" });
+    expect(listPaletteExtensionCommands()[0]?.enabled).toBe(false);
+  });
+
+  it("replay does not keep a command that revalidation rejected", () => {
+    configureExtensionCommandEnvironment(ENV, envDeps());
+    noteClientProviderConnection(ENV, true);
+    const handler = vi.fn();
+    const commands = [
+      command({ scope: "global", activation: { surfaceId: SURFACE, placement: "side-panel" } }),
+    ];
+    register(commands, {
+      capabilities: ["t3.ui/keybindings", "t3.ui/keybindings.global", "t3.ui/panels"],
+      installationScoped: true,
+      handler,
+    });
+    noteClientProviderConnection(ENV, false);
+    noteClientProviderConnection(ENV, true);
+    const replay = register(commands, {
+      capabilities: ["t3.ui/keybindings", "t3.ui/keybindings.global"],
+      installationScoped: true,
+    });
+    expect(replay.results[0]?.status).toBe("rejected");
+    expect(dispatchExtensionCommand("ext.ext.a.run")).toEqual({ kind: "unavailable" });
+  });
+
+  it("replayed view dispatch uses the refreshed workspace revision", () => {
+    configureExtensionCommandEnvironment(ENV, envDeps());
+    noteClientProviderConnection(ENV, true);
+    const commands = [command({ scope: "global" })];
+    const caps = ["t3.ui/keybindings", "t3.ui/keybindings.global"];
+    const oldContext = { ...context, workspaceRevision: "old" };
+    const newContext = { ...context, workspaceRevision: "new" };
+    const r = registerCommands({
+      environmentId: ENV,
+      installationId: INSTALL,
+      installationGeneration: 1,
+      context: oldContext,
+      commands,
+      capabilities: caps,
+    });
+    const handler = vi.fn();
+    bindCommands({
+      environmentId: ENV,
+      extensionId: INSTALL,
+      hostKey: "h",
+      viewId: "v",
+      context: oldContext,
+      commandSetToken: r.commandSetToken,
+      handler,
+    });
+    noteClientProviderConnection(ENV, false);
+    noteClientProviderConnection(ENV, true);
+    registerCommands({
+      environmentId: ENV,
+      installationId: INSTALL,
+      installationGeneration: 1,
+      context: newContext,
+      commands,
+      capabilities: caps,
+    });
+    bindCommands({
+      environmentId: ENV,
+      extensionId: INSTALL,
+      hostKey: "h",
+      viewId: "v",
+      context: newContext,
+      commandSetToken: r.commandSetToken,
+      handler,
+    });
+    setActiveExtensionThreadRef(scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a")));
+    expect(dispatchExtensionCommand("ext.ext.a.run")).toEqual({ kind: "dispatched" });
+    expect(handler.mock.calls[0]![0].context.workspaceRevision).toBe("new");
+  });
+
+  it("conflicts identify the losing plugin consistently with default dispatch", () => {
+    configureExtensionCommandEnvironment(ENV, { ...envDeps(), keybindings: () => [] });
+    register([
+      command({ id: "one", defaultKey: "ctrl+alt+r" }),
+      command({ id: "two", defaultKey: "ctrl+alt+r" }),
+    ]);
+    expect(extensionCommandForKeydown(keydownEvent("r", { ctrl: true, alt: true }))).toBe(
+      "ext.ext.a.one",
+    );
+    expect(listExtensionCommandConflicts(ENV)[0]?.loser).toBe("ext.ext.a.two");
+  });
+
+  it("client lifetime listener dispatches a user ext shortcut and honors native precedence", () => {
+    configureExtensionCommandEnvironment(ENV, envDeps());
+    const invoke = vi.fn();
+    register([command({ scope: "global", defaultKey: "ctrl+alt+r" })], {
+      capabilities: ["t3.ui/keybindings", "t3.ui/keybindings.global"],
+      installationScoped: true,
+      handler: invoke,
+    });
+    const oldDocument = globalThis.document;
+    const oldHTMLElement = globalThis.HTMLElement;
+    globalThis.HTMLElement = class {} as never;
+    const listeners = new Map<string, (event: unknown) => void>();
+    Object.assign(globalThis, {
+      document: {
+        activeElement: null,
+        querySelector: () => null,
+        addEventListener: (n: string, h: (event: unknown) => void) => listeners.set(n, h),
+        removeEventListener: (n: string) => listeners.delete(n),
+      },
+    });
+    let rules = [{ command: "ext.ext.a.run", shortcut: parseKeybindingShortcut("ctrl+alt+x") }];
+    const close = installExtensionCommandKeybindings(() => rules as never);
+    const event = (key: string) => ({
+      ...keydownEvent(key, { ctrl: true, alt: true }),
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+    });
+    try {
+      listeners.get("keydown")!(event("x"));
+      expect(invoke).toHaveBeenCalledOnce();
+      rules = [{ command: "thread.new", shortcut: parseKeybindingShortcut("ctrl+alt+r") }];
+      listeners.get("keydown")!(event("r"));
+      expect(invoke).toHaveBeenCalledOnce();
+      rules = [];
+      listeners.get("keydown")!(event("r"));
+      expect(invoke).toHaveBeenCalledTimes(2);
+    } finally {
+      close();
+      globalThis.HTMLElement = oldHTMLElement;
+      if (oldDocument === undefined) delete (globalThis as { document?: unknown }).document;
+      else globalThis.document = oldDocument;
+    }
+  });
 });

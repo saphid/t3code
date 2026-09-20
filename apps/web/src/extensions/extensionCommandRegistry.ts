@@ -171,8 +171,20 @@ function notifyPalette() {
 
 export function subscribeExtensionCommands(listener: () => void): () => void {
   paletteListeners.add(listener);
+  // Focus moves change tier-1/2 eligibility without touching the registry —
+  // invalidate on the next microtask (after activeElement settles) so a
+  // palette opened mid-focus-shift still arbitrates the live focus state.
+  const onFocusChange = () => queueMicrotask(notifyPalette);
+  if (typeof document !== "undefined") {
+    document.addEventListener("focusin", onFocusChange);
+    document.addEventListener("focusout", onFocusChange);
+  }
   return () => {
     paletteListeners.delete(listener);
+    if (typeof document !== "undefined") {
+      document.removeEventListener("focusin", onFocusChange);
+      document.removeEventListener("focusout", onFocusChange);
+    }
   };
 }
 
@@ -349,14 +361,21 @@ export function registerCommands(input: {
     ) {
       // Reconnect replay: the same set re-committed on a new connection
       // adopts the new epoch and becomes dispatchable again; the stored
-      // context refreshes so its workspaceRevision is the live one.
+      // context refreshes so its workspaceRevision is the live one. The
+      // freshly validated `accepted` set replaces the compiled commands —
+      // a replay under reduced capabilities drops what revalidation rejects.
+      const commands = accepted.map(compileCommand);
       if (
         registration.connectionEpoch !== connectionEpochFor(input.environmentId) ||
-        registration.context !== input.context
+        registration.context !== input.context ||
+        registration.commands.length !== commands.length ||
+        registration.installationScoped !== (input.installationScoped === true)
       ) {
         registrations.set(registration.token, {
           ...registration,
           context: input.context,
+          commands,
+          installationScoped: input.installationScoped === true,
           connectionEpoch: connectionEpochFor(input.environmentId),
         });
         notifyPalette();
@@ -486,7 +505,19 @@ export function bindCommands(call: {
       binding.hostKey === call.hostKey &&
       binding.viewId === call.viewId,
   );
-  if (existing) return { bindingId: existing.bindingId, unbind: () => unbind(existing.bindingId) };
+  if (existing) {
+    // A rebind after reconnect carries the refreshed context — the stored
+    // binding follows it so dispatch hands the handler the live revision.
+    if (existing.context !== call.context || existing.handler !== call.handler) {
+      bindings.set(existing.bindingId, {
+        ...existing,
+        context: call.context,
+        handler: call.handler,
+      });
+      notifyPalette();
+    }
+    return { bindingId: existing.bindingId, unbind: () => unbind(existing.bindingId) };
+  }
   const bindingId = `binding-${++bindingSerial}-${randomUUID()}`;
   const binding: CommandBinding = {
     bindingId,
@@ -682,10 +713,12 @@ function dispatchContextFor(registration: CommandRegistration): ViewContext {
 }
 
 /**
- * Resolves one extension surface open for the activation fallback, applying
- * the same eligibility filter the native extension menu applies.
+ * The side-effect-free half of activation resolution — the active thread must
+ * exist, its project must be granted, and the named surface must support this
+ * client and placement. Palette availability and dispatch share this so an
+ * ineligible activation greys out instead of no-ops on selection.
  */
-function openActivationSurface(site: DispatchCommandSite): boolean {
+function activationEligible(site: DispatchCommandSite): boolean {
   const { registration, command } = site;
   const activation = command.activation;
   const deps = environmentDeps.get(registration.environmentId);
@@ -708,6 +741,26 @@ function openActivationSurface(site: DispatchCommandSite): boolean {
     !surface.placements.includes(activation.placement)
   )
     return false;
+  return readProject(scopeProjectRef(thread.environmentId, projectId)) !== null;
+}
+
+/**
+ * Resolves one extension surface open for the activation fallback, applying
+ * the same eligibility filter the native extension menu applies.
+ */
+function openActivationSurface(site: DispatchCommandSite): boolean {
+  const { registration, command } = site;
+  const activation = command.activation;
+  const deps = environmentDeps.get(registration.environmentId);
+  const thread = activeThreadRef;
+  if (!activation || !deps || !thread || !activationEligible(site)) return false;
+  const shell = readThreadShell(thread);
+  const projectId = shell?.projectId;
+  if (!projectId) return false;
+  const surface = deps
+    .installationSurfaces(registration.installationId)
+    ?.find((candidate) => candidate.id === activation.surfaceId);
+  if (!surface) return false;
   const project = readProject(scopeProjectRef(thread.environmentId, projectId));
   if (!project) return false;
   const context = installedWorkspaceContext({
@@ -806,12 +859,16 @@ function arbitrateExtensionCommand(
 
   // Exactly one thread-matching binding aggregated across every registration
   // set — two sets each contributing a viewer is ambiguity, not first-wins.
+  // With no active thread this tier is empty: an arbitrary thread-bound view
+  // must never answer — arbitration proceeds to the installation tier.
   const eligible: { binding: CommandBinding; command: CompiledCommand }[] = [];
-  for (const site of globalSites) {
-    for (const binding of bindings.values()) {
-      if (binding.token !== site.registration.token) continue;
-      if (activeThreadKey !== null && bindingThreadKey(binding) !== activeThreadKey) continue;
-      eligible.push({ binding, command: site.command });
+  if (activeThreadKey !== null) {
+    for (const site of globalSites) {
+      for (const binding of bindings.values()) {
+        if (binding.token !== site.registration.token) continue;
+        if (bindingThreadKey(binding) !== activeThreadKey) continue;
+        eligible.push({ binding, command: site.command });
+      }
     }
   }
   if (eligible.length === 1) return { kind: "binding", ...eligible[0]! };
@@ -837,12 +894,12 @@ function arbitrateExtensionCommand(
   const handlerSite = environmentSites.find((site) => site.registration.handler !== undefined);
   if (handlerSite) return { kind: "handler", site: handlerSite };
 
-  // The activation fallback can only fire while its environment's thread is
-  // active — `openActivationSurface` enforces the same check at dispatch.
-  const activationSites =
-    activeThreadRef !== null
-      ? environmentSites.filter((site) => site.command.activation !== undefined)
-      : [];
+  // The activation fallback only lights when the shared eligibility check
+  // passes — an ineligible thread/grant/surface greys the palette row instead
+  // of no-oping on selection.
+  const activationSites = environmentSites.filter(
+    (site) => site.command.activation !== undefined && activationEligible(site),
+  );
   if (activationSites.length > 0) return { kind: "activation", sites: activationSites };
 
   return { kind: "unavailable" };
@@ -966,7 +1023,7 @@ export function listPaletteExtensionCommands(): readonly PaletteExtensionCommand
       const key = `${registration.environmentId}\n${name}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      const arbitration = arbitrateExtensionCommand(name);
+      const arbitration = arbitrateExtensionCommand(name, registration.environmentId);
       items.push({
         command: name,
         title: command.title,
@@ -1028,16 +1085,18 @@ export function listExtensionCommandConflicts(environmentId: string): readonly {
       if (winner !== null && winner.command !== full) {
         const isDefaultRule = defaultRuleClaims.has(`${winner.command}${conflictKey}`);
         conflicts.push({
-          command: full,
+          command: winner.command,
           key: command.defaultKey,
           winner: isDefaultRule ? "native" : "user",
-          loser: winner.command,
+          loser: full,
         });
         continue;
       }
       const prior = seen.get(conflictKey);
       if (prior !== undefined) {
-        conflicts.push({ command: full, key: command.defaultKey, winner: "plugin", loser: prior });
+        // Dispatch resolves first-registered — the earlier plugin wins the
+        // chord, so the later declaration is the displaced one.
+        conflicts.push({ command: prior, key: command.defaultKey, winner: "plugin", loser: full });
       } else {
         seen.set(conflictKey, full);
       }

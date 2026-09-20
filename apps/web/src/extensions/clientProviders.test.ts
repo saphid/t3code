@@ -5,6 +5,11 @@ import type { ClientProviderCaller, ClientProviderEmitEvent } from "@t3tools/con
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import { applyThemeColorPreview, getThemeColorVariable, THEME_PREVIEW_ID } from "../themePalette";
 import { themeStore } from "../hooks/useTheme";
+import {
+  __setClientSettingsForTests,
+  getClientSettings,
+  persistClientSettingsPatch,
+} from "../hooks/useSettings";
 import { toastManager } from "../components/ui/toast";
 import { useComposerDraftStore } from "../composerDraftStore";
 import {
@@ -907,5 +912,65 @@ describe("theme overlay restoration", () => {
       effectiveTheme: { kind: "stored" },
     });
     expect(provider.invoke(invokeCall("resolveTokens", {}))).toEqual(before);
+  });
+});
+
+describe("terminal appearance settings stream", () => {
+  it("a font-only settings update emits appearance and unsubscribe cleans up", async () => {
+    const baseline = getClientSettings();
+    __setClientSettingsForTests(baseline);
+    const provider = createTerminalAppearanceClientProvider(makeDeps(["t3.ui/theme.read"]));
+    const events: ClientProviderEmitEvent[] = [];
+    const close = await provider.openStream!({
+      name: "watchAppearance",
+      input: null,
+      context: context(),
+      caller: caller(),
+      emit: (event) => events.push(event),
+    });
+    try {
+      await persistClientSettingsPatch(
+        { fontSizeTerminal: baseline.fontSizeTerminal + 1 },
+        async () => {},
+      );
+      expect(events).toHaveLength(2);
+      expect(events[1]).toMatchObject({
+        type: "data",
+        value: { font: { size: baseline.fontSizeTerminal + 1 } },
+      });
+      close();
+      await persistClientSettingsPatch(
+        { fontSizeTerminal: baseline.fontSizeTerminal + 2 },
+        async () => {},
+      );
+      expect(events).toHaveLength(2);
+    } finally {
+      close();
+      __setClientSettingsForTests(baseline);
+    }
+  });
+});
+
+it("persisted preferences preserve the native editor paint", () => {
+  const provider = createThemeClientProvider(makeDeps(THEME_CAPS));
+  provider.invoke(
+    invokeCall("applyPreference", {
+      writer: INSTALL,
+      preference: { mode: "session", theme: "ocean" },
+    }),
+  );
+  applyThemeColorPreview({} as never, "light", "editor");
+  expect(
+    provider.invoke(
+      invokeCall("applyPreference", {
+        writer: INSTALL,
+        preference: { mode: "persist", theme: "ocean" },
+      }),
+    ),
+  ).toMatchObject({ applied: true });
+  expect(document.documentElement.dataset.themePreviewOwner).toBe("editor");
+  expect(provider.invoke(invokeCall("getState", {}))).toMatchObject({
+    effectiveTheme: { kind: "external-preview" },
+    sessionOverlay: null,
   });
 });

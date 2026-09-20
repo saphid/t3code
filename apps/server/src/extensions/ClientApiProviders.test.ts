@@ -527,3 +527,31 @@ it.effect("enforces the declared private schemas in both directions", () =>
     expect(yield* Fiber.join(followUp)).toEqual(THEME_STATE);
   }).pipe(Effect.provide(testLayer)),
 );
+
+it.effect("closed stream frames still obey the copyJson envelope bound", () =>
+  Effect.gen(function* () {
+    const providers = yield* ClientApiProviders;
+    const stream = yield* providers.connect(socket("r2-closed"), connectInput());
+    const frames = frameIterator(stream);
+    yield* nextFrame(frames); // registered
+    const sub = yield* providers.openSubscription({
+      connectionId: "r2-closed",
+      apiId: "t3.client/theme",
+      name: "watchState",
+      input: SELF_INPUT,
+      context,
+      caller,
+    });
+    const frame = yield* nextFrame(frames);
+    if (frame?.type !== "subscriptionOpen") throw new Error("missing subscription");
+    yield* providers.emit("r2-closed", {
+      correlationId: frame.subscriptionId,
+      event: { type: "closed", value: "x".repeat(70 * 1024) },
+    });
+    const result = yield* Effect.promise(() => sub.events[Symbol.asyncIterator]().next()).pipe(
+      Effect.exit,
+    );
+    yield* sub.close();
+    expect(result._tag).toBe("Failure");
+  }).pipe(Effect.provide(testLayer)),
+);

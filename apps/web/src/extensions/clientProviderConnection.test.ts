@@ -424,3 +424,51 @@ it("a synchronous subscription failure leaves the seam alive", async () => {
     queue.shutdown();
   }
 });
+
+describe("connection replacement and clean EOF", () => {
+  it("a stale stop cannot delete a replacement connection with the same socket id", async () => {
+    const first = new Mailbox();
+    const second = new Mailbox();
+    const a = start({ stream: first.stream });
+    first.offer({
+      type: "registered",
+      connectionId: "same-socket",
+      accepted: [],
+      rejected: [],
+    } as ClientProviderServerFrame);
+    await vi.waitFor(() => expect(currentClientConnectionId(ENV)).toBe("same-socket"));
+    const flush = vi.fn(() => Promise.resolve());
+    start({ stream: second.stream, flush });
+    second.offer({
+      type: "registered",
+      connectionId: "same-socket",
+      accepted: [],
+      rejected: [],
+    } as ClientProviderServerFrame);
+    await vi.waitFor(() => expect(flush).toHaveBeenCalledOnce());
+    a.stop();
+    try {
+      expect(currentClientConnectionId(ENV)).toBe("same-socket");
+    } finally {
+      first.shutdown();
+      second.shutdown();
+    }
+  });
+
+  it("normal stream completion reconnects on a live transport", async () => {
+    const first = new Mailbox();
+    start({ stream: first.stream });
+    first.offer({
+      type: "registered",
+      connectionId: "old-socket",
+      accepted: [],
+      rejected: [],
+    } as ClientProviderServerFrame);
+    await vi.waitFor(() => expect(currentClientConnectionId(ENV)).toBe("old-socket"));
+    mocks.stateChanges.mockReturnValue(Stream.make({ phase: "connected" }));
+    first.shutdown();
+    await vi.waitFor(() => expect(mocks.providersStream.mock.calls.length).toBeGreaterThan(1), {
+      timeout: 1500,
+    });
+  });
+});
