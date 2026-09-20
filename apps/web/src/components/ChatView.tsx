@@ -255,11 +255,8 @@ import { useThreadActions } from "../hooks/useThreadActions";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { confirmTerminalClose, isTerminalCloseConfirmPending } from "../lib/terminalCloseConfirm";
 import { isPreviewFocused } from "../lib/previewFocus";
-import { getTerminalFocusOwner } from "../lib/terminalFocus";
-import {
-  preventRepeatedTerminalCloseShortcut,
-  preventTerminalCloseShortcut,
-} from "../lib/terminalCloseShortcut";
+import { getTerminalFocusOwner, isExtensionClaimedTerminalCommand } from "../lib/terminalFocus";
+import { suppressNativeTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
 import {
   derivePhysicalProjectKey,
@@ -5488,22 +5485,31 @@ export default function ChatView(props: ChatViewProps) {
 
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
-      if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
-        event.stopPropagation();
-        return;
-      }
-      // While a close confirmation is open, terminal focus has moved to the
-      // dialog, so a deliberate second close shortcut would otherwise fall
-      // through to the native window/tab close accelerator.
-      if (isTerminalCloseConfirmPending() && preventTerminalCloseShortcut(event, keybindings)) {
+      // Ownership is read before the native close guards: an extension-owned
+      // terminal keeps every close event — first press and held repeat — for
+      // its own keymap, so suppression must not consume them.
+      const terminalFocusOwner = getTerminalFocusOwner();
+      if (
+        suppressNativeTerminalCloseShortcut(
+          event,
+          keybindings,
+          terminalFocusOwner,
+          isTerminalCloseConfirmPending(),
+        )
+      ) {
         event.stopPropagation();
         return;
       }
       if (!activeThreadId || isCommandPaletteOpen()) {
         return;
       }
-      const terminalFocusOwner = getTerminalFocusOwner();
-      if (event.defaultPrevented && terminalFocusOwner === null) {
+      // Native terminal surfaces consume keys the host still dispatches
+      // (split/new/close), so they continue past defaultPrevented; an
+      // extension-owned terminal surface's consumed keys belong to it.
+      if (
+        event.defaultPrevented &&
+        (terminalFocusOwner === null || terminalFocusOwner === "extension")
+      ) {
         return;
       }
       const shortcutContext = {
@@ -5530,6 +5536,10 @@ export default function ChatView(props: ChatViewProps) {
         context: shortcutContext,
       });
       if (!command) return;
+
+      // The focused extension surface owns these commands; the host must not
+      // consume the event or act on a native terminal surface for them.
+      if (isExtensionClaimedTerminalCommand(command, terminalFocusOwner)) return;
 
       if (command === "thread.copyReference") {
         event.preventDefault();

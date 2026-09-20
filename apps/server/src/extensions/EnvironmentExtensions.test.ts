@@ -2,6 +2,7 @@ import { CheckpointDiffQuery } from "../checkpointing/CheckpointDiffQuery.ts";
 import { OrchestrationCommandReceiptRepository } from "../persistence/Services/OrchestrationCommandReceipts.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProviderService } from "../provider/Services/ProviderService.ts";
+import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
 import { PortDiscovery } from "../preview/PortScanner.ts";
 import * as ExtensionCatalogueChanges from "./catalogueChanges.ts";
 import { expect, it } from "@effect/vitest";
@@ -219,6 +220,7 @@ function fixture() {
     Layer.mock(OrchestrationEngineService)({}),
     Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({}),
     Layer.mock(ProviderService)({}),
+    makeProviderRegistryLayer(),
     ExtensionCatalogueChanges.layer,
     Layer.mock(PortDiscovery)({}),
     Layer.succeed(TerminalManager, {

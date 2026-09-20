@@ -59,6 +59,12 @@ export function createNativeSurfaceBridge<Bindings>(
       visibility.current = visible;
     }, [props.record, props.onRecordChange, visible]);
     const bindingValue = useMemo(() => ({ value: bindings }), [bindings]);
+    // A surface that declared terminal focus gets the host-owned arbitration tag
+    // on its frame; capture-phase keybinding dispatch then leaves the surface's
+    // keys alone instead of acting on a native terminal.
+    const claimsTerminalFocus = extension.manifest.surfaces.some(
+      (surface) => surface.id === props.record.surfaceId && surface.claimsTerminalFocus === true,
+    );
     const [mounted, setMounted] = useState<MountedView | null>(null);
     const activeHost = useRef<ExtensionHost<SurfaceRenderer> | null>(null);
     const activeView = useRef<MountedView | null>(null);
@@ -112,22 +118,32 @@ export function createNativeSurfaceBridge<Bindings>(
       if (visible) void view.host.show(view.viewId);
       else view.host.hide(view.viewId);
     }, [recordKey, visible]);
+    const rendered =
+      mounted?.recordKey === recordKey ? (
+        <ExtensionSurface
+          host={mounted.host}
+          viewId={mounted.viewId}
+          retainHiddenPresentation={props.retainHiddenPresentation ?? false}
+          className={
+            props.record.placement === "bottom-dock"
+              ? "contents"
+              : "flex h-full min-h-0 min-w-0 flex-col"
+          }
+        />
+      ) : failure?.recordKey === recordKey ? (
+        <div role="status">{failure.text}</div>
+      ) : null;
     return (
       <BindingsContext value={bindingValue}>
-        {mounted?.recordKey === recordKey ? (
-          <ExtensionSurface
-            host={mounted.host}
-            viewId={mounted.viewId}
-            retainHiddenPresentation={props.retainHiddenPresentation ?? false}
-            className={
-              props.record.placement === "bottom-dock"
-                ? "contents"
-                : "flex h-full min-h-0 min-w-0 flex-col"
-            }
-          />
-        ) : failure?.recordKey === recordKey ? (
-          <div role="status">{failure.text}</div>
-        ) : null}
+        {claimsTerminalFocus ? (
+          // display: contents keeps the existing layout wrapper the only box;
+          // the tag just marks this subtree as extension-owned terminal focus.
+          <div data-terminal-owner="extension" className="contents">
+            {rendered}
+          </div>
+        ) : (
+          rendered
+        )}
       </BindingsContext>
     );
   }

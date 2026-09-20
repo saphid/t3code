@@ -27,6 +27,13 @@ export interface SurfaceDescriptor {
   readonly clients: readonly string[];
   readonly scope: "environment" | "project" | "thread";
   readonly capabilities: readonly string[];
+  /**
+   * Declares that the surface captures terminal input. The host then marks the
+   * surface's frame as extension-owned terminal focus so its capture-phase
+   * keybinding dispatch stops routing focused-terminal commands (split, new,
+   * close) at native terminal surfaces while this view is focused.
+   */
+  readonly claimsTerminalFocus?: boolean;
   readonly stateVersion: number;
 }
 export interface ExtensionManifest {
@@ -173,6 +180,11 @@ export function validateManifest(value: ExtensionManifest): ExtensionManifest {
       throw new Error("Invalid clients");
     if (!Array.isArray(surface.capabilities)) throw new Error("Invalid capabilities");
     surface.capabilities.forEach(assertId);
+    if (
+      surface.claimsTerminalFocus !== undefined &&
+      typeof surface.claimsTerminalFocus !== "boolean"
+    )
+      throw new Error("Invalid terminal focus claim");
   }
   for (const descriptors of [manifest.composerContexts ?? [], manifest.messageDecorations ?? []]) {
     if (!Array.isArray(descriptors) || descriptors.length > 16)

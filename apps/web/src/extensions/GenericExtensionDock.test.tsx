@@ -383,6 +383,82 @@ describe("generic extension dock composition", () => {
   );
 });
 
+it("drags the dock frame taller and persists the height per thread", async () => {
+  const counter = registerCounter();
+  const store = useRightPanelStore.getState();
+  store.openExtension(a, record);
+  const previousWindow = globalThis.window;
+  Object.defineProperty(globalThis, "window", {
+    value: { innerHeight: 1200 },
+    configurable: true,
+    writable: true,
+  });
+  let root: ReactTestRenderer | undefined;
+  try {
+    await act(async () => {
+      root = create(<GenericExtensionDock threadRef={a} />);
+    });
+    const frame = () => root!.root.findByProps({ "aria-label": "Extension dock" });
+    expect(frame().props.style.height).toBe("256px");
+    const handle = root!.root
+      .findAllByType("div")
+      .find((node) => typeof node.props.onPointerDown === "function")!;
+    const target = {
+      setPointerCapture: () => {},
+      hasPointerCapture: () => true,
+      releasePointerCapture: () => {},
+    };
+    await act(async () => {
+      handle.props.onPointerDown({
+        button: 0,
+        pointerId: 1,
+        clientY: 700,
+        currentTarget: target,
+        preventDefault: () => {},
+      });
+      handle.props.onPointerMove({
+        pointerId: 1,
+        clientY: 400,
+        currentTarget: target,
+        preventDefault: () => {},
+      });
+    });
+    expect(frame().props.style.height).toBe("556px");
+    await act(async () => {
+      handle.props.onPointerUp({ pointerId: 1, currentTarget: target });
+    });
+    expect(dock().height).toBe(556);
+    expect(frame().props.style.height).toBe("556px");
+    await act(async () => {
+      handle.props.onPointerDown({
+        button: 0,
+        pointerId: 2,
+        clientY: 100,
+        currentTarget: target,
+        preventDefault: () => {},
+      });
+      handle.props.onPointerMove({
+        pointerId: 2,
+        clientY: 5000,
+        currentTarget: target,
+        preventDefault: () => {},
+      });
+      handle.props.onPointerUp({ pointerId: 2, currentTarget: target });
+    });
+    expect(dock().height).toBe(160);
+  } finally {
+    if (previousWindow === undefined) {
+      delete (globalThis as { window?: Window }).window;
+    } else {
+      globalThis.window = previousWindow;
+    }
+    await act(async () => {
+      root?.unmount();
+      counter.unregister();
+    });
+  }
+});
+
 it("does not activate a cold successor when the visible viewer is closed while hidden", async () => {
   const counter = registerCounter(),
     store = useRightPanelStore.getState();
