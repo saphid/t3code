@@ -7826,6 +7826,29 @@ export default function ChatView(props: ChatViewProps) {
       });
     }
 
+    // Single-model sends gate on the composer's providerAvailable flag, which
+    // legitimately passes for drafts that turn out to be client-side commands
+    // like `/feedback`; re-read the quota here so a queued send cannot ride
+    // that exemption past a spent window.
+    if (multipleModelSelections === null) {
+      const provider = providerInstanceEntries.find(
+        (entry) => entry.instanceId === ctxSelectedModelSelection.instanceId,
+      );
+      const usageBlock =
+        provider === undefined
+          ? null
+          : usageLimitSendBlock(provider.snapshot, ctxSelectedModel, Date.now());
+      if (provider !== undefined && usageBlock !== null) {
+        setThreadError(
+          threadIdForSend,
+          formatUsageLimitSendBlock(provider.displayName, usageBlock, Date.now(), {
+            providerLocked: lockedProvider !== null,
+          }),
+        );
+        return;
+      }
+    }
+
     sendInFlightRef.current = true;
     const sendGeneration = ++composerSendGenerationRef.current;
     const attachmentCapabilitiesBeforeUpload = readLiveAttachmentCapabilities();
