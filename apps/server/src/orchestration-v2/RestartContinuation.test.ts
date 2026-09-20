@@ -357,6 +357,8 @@ it.effect("retries a provider-busy failure once and yields to newer work or a sp
     for (const blocked of [
       { ...projection, runs: [{ ...projection.runs[0]!, status: "completed" as const }] },
       { ...projection, thread: { ...projection.thread, archivedAt: {} as never } },
+      { ...projection, thread: { ...projection.thread, settledOverride: "settled" as never } },
+      { ...projection, thread: { ...projection.thread, snoozedUntil: {} as never } },
       {
         ...projection,
         thread: { ...projection.thread, providerInstanceId: ProviderInstanceId.make("other") },

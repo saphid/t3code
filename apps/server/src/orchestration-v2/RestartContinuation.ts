@@ -119,6 +119,9 @@ export const retryProviderBusyRun = Effect.fn("RestartContinuation.retryProvider
     const threads = yield* ThreadManagementService;
     const projection = yield* threads.getThreadProjection(input.threadId);
     if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) return;
+    // Settling or snoozing parks the thread; a message would un-park it, and only the user does that.
+    if (projection.thread.settledOverride === "settled" || projection.thread.snoozedUntil != null)
+      return;
     const messageId = MessageId.make(`message:provider-busy-retry:${input.sourceRunId}`);
     if (projection.messages.some((message) => message.id === messageId)) return;
     const source = projection.runs.find((run) => run.id === input.sourceRunId);
