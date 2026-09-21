@@ -1345,6 +1345,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
     isComplete: boolean;
   } | null;
   isRunning: boolean;
+  activeTurnIsCompaction: boolean;
   followUpBehavior: "queue" | "steer";
   alternateShortcutLabel: string | null;
   showPlanFollowUpPrompt: boolean;
@@ -1381,6 +1382,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         compact={props.compact}
         pendingAction={props.pendingAction}
         isRunning={props.isRunning}
+        activeTurnIsCompaction={props.activeTurnIsCompaction}
         followUpBehavior={props.followUpBehavior}
         alternateShortcutLabel={props.alternateShortcutLabel}
         showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
@@ -1506,6 +1508,8 @@ export interface ChatComposerProps {
 
   // Session phase
   phase: SessionPhase;
+  /** The in-flight turn is context compaction, so follow-ups queue behind it. */
+  activeTurnIsCompaction: boolean;
   isConnecting: boolean;
   isSendBusy: boolean;
   isRevertingCheckpoint?: boolean;
@@ -1678,6 +1682,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     forceExpandedOnMobile,
     projectSelectionRequired,
     phase,
+    activeTurnIsCompaction,
     isConnecting,
     isSendBusy,
     isRevertingCheckpoint = false,
@@ -4106,6 +4111,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 running: phase === "running",
                 alternateModifier: false,
                 activeTurnDefault: settings.followUpBehavior,
+                activeTurnIsCompaction,
               }),
             submissionIntent,
           );
@@ -4127,6 +4133,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       noProviderAvailable,
       onSend,
       settings.followUpBehavior,
+      activeTurnIsCompaction,
       phase,
       promptRef,
       shouldBlurMobileComposerOnSubmit,
@@ -4141,10 +4148,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           running: phase === "running",
           alternateModifier: event.metaKey || event.ctrlKey,
           activeTurnDefault: settings.followUpBehavior,
+          activeTurnIsCompaction,
         }),
       );
     },
-    [phase, settings.followUpBehavior, submitComposer],
+    [phase, activeTurnIsCompaction, settings.followUpBehavior, submitComposer],
   );
   const submitCitationAndSend = useCallback(() => {
     submitComposer(
@@ -4153,9 +4161,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         running: phase === "running",
         alternateModifier: false,
         activeTurnDefault: settings.followUpBehavior,
+        activeTurnIsCompaction,
       }),
     );
-  }, [phase, settings.followUpBehavior, submitComposer]);
+  }, [phase, activeTurnIsCompaction, settings.followUpBehavior, submitComposer]);
   const compactThreadContext = useCallback(() => {
     if (
       compactDisabled ||
@@ -4335,6 +4344,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           running: phase === "running",
           alternateModifier: submissionIntent === "alternate",
           activeTurnDefault: settings.followUpBehavior,
+          activeTurnIsCompaction,
         }),
         submissionIntent,
       );
@@ -7418,6 +7428,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     activeThreadModelDisplayName={activeThreadModelDisplayName}
                     pendingAction={pendingPrimaryAction}
                     isRunning={phase === "running"}
+                    activeTurnIsCompaction={activeTurnIsCompaction}
                     followUpBehavior={settings.followUpBehavior}
                     alternateShortcutLabel={shortcutLabelForCommand(
                       keybindings,
