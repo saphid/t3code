@@ -22,6 +22,28 @@ function sink() {
   };
 }
 
+function bracketedSink() {
+  const calls = [];
+  return {
+    calls,
+    resetAndWrite(data) {
+      calls.push(["resetAndWrite", data]);
+    },
+    write(data) {
+      calls.push(["write", data]);
+    },
+    clearScreen() {
+      calls.push(["clearScreen"]);
+    },
+    beginReplay() {
+      calls.push(["beginReplay"]);
+    },
+    endReplay() {
+      calls.push(["endReplay"]);
+    },
+  };
+}
+
 function frame(sequence, value, streamId = "stream-1") {
   return { streamId, sequence, value };
 }
@@ -448,6 +470,46 @@ NodeTest.describe("TerminalVtAttachment — failure paths", () => {
       ["write", "new-1new-2"],
     ]);
   });
+
+  NodeTest.it(
+    "a resubscribe snapshot extending past unanswered bytes keeps their claim mid-stream (P2)",
+    () => {
+      // Astra r4: an unanswered run is not necessarily a suffix of the
+      // replay stream — the resubscribe snapshot's retained contents can
+      // append newer output after it. Replay must suppress only the
+      // already-answered/history bytes around the run.
+      const vt = new TerminalVtAttachment("term-1");
+      vt.beginStream();
+      const snap0 = snapshot({ contents: "", retainedByteLength: 0, boundarySequence: 0 });
+      vt.applyFrame(frame(1, snap0), snap0);
+      vt.applyFrame(frame(2, output(1, "Q")), output(1, "Q"));
+      const closed = {
+        kind: "closed",
+        terminalId: "term-1",
+        streamEpoch: EPOCH,
+        reason: "overflow",
+      };
+      vt.applyFrame(frame(3, closed), closed);
+      vt.beginStream();
+      const snap1 = snapshot({
+        contents: "Qlater",
+        retainedByteLength: 6,
+        boundarySequence: 2,
+      });
+      vt.applyFrame(frame(1, snap1), snap1);
+      const s = bracketedSink();
+      vt.attach(s);
+      NodeAssert.deepEqual(s.calls, [
+        ["beginReplay"],
+        ["resetAndWrite", ""],
+        ["endReplay"],
+        ["write", "Q"],
+        ["beginReplay"],
+        ["write", "later"],
+        ["endReplay"],
+      ]);
+    },
+  );
 
   NodeTest.it("a throwing attach keeps the renderer failure sticky (P3)", () => {
     const vt = new TerminalVtAttachment("term-1");

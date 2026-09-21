@@ -59,14 +59,18 @@ re-flag the pane "live" while no renderer exists — only an `attach` whose
 replay completes clears the error (a throwing replay drops the
 half-written sink and keeps the failure).
 
-**Remount replay** splits at an unanswered boundary: bytes a live sink
+**Remount replay** splits around unanswered runs: bytes a live sink
 already parsed were answered once and replay with the PTY writer detached
 (`beginReplay`/`endReplay`), so DA/DSR/DECRQSS queries inside them are
-not re-sent. Live output buffered while detached was never parsed — it
-replays _with_ the writer attached so its queries get exactly one reply.
-Queries inside snapshot/history bytes are treated as already-rendered
-history and stay suppressed (the documented drop: only live output the
-attachment saw go undelivered earns a reply).
+not re-sent. Live output buffered while detached was never parsed — each
+contiguous run of it replays _with_ the writer attached so its queries
+get exactly one reply. A resubscribe snapshot can append newer retained
+output after (or between) those runs, so they are located by content
+inside the replay stream rather than assumed to be a suffix; bytes the
+server no longer retains are an explicit drop. Queries inside
+snapshot/history bytes are treated as already-rendered history and stay
+suppressed (the documented drop: only live output the attachment saw go
+undelivered earns a reply).
 
 Sequencing uses two fences: the broker's per-subscription frame sequence and
 the session's native `eventSequence` watermark, which must strictly increase

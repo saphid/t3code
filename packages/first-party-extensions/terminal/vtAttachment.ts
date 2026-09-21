@@ -62,12 +62,24 @@ interface PendingChunkGroup {
 const MAX_OUTPUT_CHUNK_DATA_LENGTH = 8192;
 const MAX_OUTPUT_CHUNKS = 64;
 
-/** The longest string that is a suffix of both `a` and `b`. */
-function commonSuffix(a: string, b: string): string {
-  const max = Math.min(a.length, b.length);
-  let i = 0;
-  while (i < max && a.charCodeAt(a.length - 1 - i) === b.charCodeAt(b.length - 1 - i)) i += 1;
-  return b.slice(b.length - i);
+/**
+ * The longest suffix of `text` that `haystack` still contains. Streams only
+ * ever drop leading bytes (retention cap, buffer eviction), so the
+ * surviving portion of a known range is always a suffix of it.
+ */
+function longestContainedSuffix(haystack: string, text: string): string {
+  if (text.length === 0) return "";
+  if (haystack.includes(text)) return text;
+  // Presence is monotone in suffix length — binary search the largest
+  // surviving one.
+  let lo = 0;
+  let hi = text.length;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (haystack.includes(text.slice(-mid))) lo = mid;
+    else hi = mid;
+  }
+  return lo === 0 ? "" : text.slice(-lo);
 }
 /**
  * Pre-sink buffer bound (UTF-16 units): output that arrives before the
@@ -117,17 +129,21 @@ export class TerminalVtAttachment {
    */
   #sinkFailure: string | null = null;
   /**
-   * Live output received but never parsed with the PTY reply writer
-   * attached — always a suffix of the replay stream (base + buffered).
-   * Bytes delivered to a live sink answered their terminal queries at
-   * write time; bytes buffered while detached produced no replies, so
-   * replaying them suppressed would silently drop queries the process is
-   * still waiting on. Replayed once with replies enabled, then cleared.
-   * Snapshot/history bytes themselves are treated as already-rendered
-   * history and stay suppressed (native parity) — only live output the
-   * attachment saw go undelivered earns a reply.
+   * Contiguous runs of live output that were never parsed with the PTY
+   * reply writer attached, in stream order. A resubscribe snapshot can
+   * append newer retained output after a run — or between two runs — so
+   * they are located by content inside the replay stream at replay time,
+   * not assumed to be a suffix. Bytes delivered to a live sink answered
+   * their terminal queries at write time; bytes buffered while detached
+   * produced no replies, so replaying them suppressed would silently drop
+   * queries the process is still waiting on. Replayed once with replies
+   * enabled, then cleared. Snapshot/history bytes are treated as
+   * already-rendered history and stay suppressed (native parity) — only
+   * live output the attachment saw go undelivered earns a reply.
    */
-  #unansweredTail = "";
+  #unanswered: string[] = [];
+  /** Whether the last unanswered run currently ends at the stream tail. */
+  #unansweredAtTail = false;
   #pending: PendingChunkGroup | null = null;
   #state: TerminalVtAttachmentState = {
     status: "connecting",
@@ -157,6 +173,65 @@ export class TerminalVtAttachment {
   }
 
   /**
+   * Re-parse `stream` into a parser, splitting at each unanswered run:
+   * bytes already parsed with replies enabled (or never seen live — plain
+   * retained history) replay suppressed, unanswered runs replay with the
+   * PTY writer attached so their queries get their single reply.
+   */
+  #replayInto(sink: TerminalVtSink, stream: string, resetBase: boolean) {
+    // Locate each run right-to-left, preferring the rightmost
+    // non-overlapping position — the bytes we received live are always the
+    // newest copies of their content in the stream.
+    const ranges: Array<[number, number]> = [];
+    let hi = stream.length;
+    for (let i = this.#unanswered.length - 1; i >= 0; i -= 1) {
+      const run = this.#unanswered[i]!;
+      const pos = run.length <= hi ? stream.lastIndexOf(run, hi - run.length) : -1;
+      if (pos < 0) continue; // evicted between reconcile and replay — gone
+      ranges.unshift([pos, pos + run.length]);
+      hi = pos;
+    }
+    const suppressed = (write: () => void) => {
+      sink.beginReplay?.();
+      try {
+        write();
+      } finally {
+        sink.endReplay?.();
+      }
+    };
+    // With a snapshot base the parser is re-based (RIS + retained
+    // contents); without one it is fresh, so the answered prefix is a
+    // plain suppressed write.
+    let pos = ranges[0]?.[0] ?? stream.length;
+    if (resetBase) {
+      suppressed(() => sink.resetAndWrite(stream.slice(0, pos)));
+    } else if (pos > 0) {
+      suppressed(() => sink.write(stream.slice(0, pos)));
+    }
+    for (const [start, end] of ranges) {
+      if (start > pos) suppressed(() => sink.write(stream.slice(pos, start)));
+      sink.write(stream.slice(start, end));
+      pos = end;
+    }
+    if (pos < stream.length) suppressed(() => sink.write(stream.slice(pos)));
+  }
+
+  /**
+   * Reconcile unanswered runs against `stream` after it dropped leading
+   * bytes (retention cut, buffer eviction): each run keeps its longest
+   * still-contained suffix, and a run no longer retained is an explicit
+   * drop — nothing remains to answer.
+   */
+  #reconcileUnanswered(stream: string) {
+    this.#unanswered = this.#unanswered
+      .map((run) => longestContainedSuffix(stream, run))
+      .filter((run) => run.length > 0);
+    this.#unansweredAtTail =
+      this.#unanswered.length > 0 &&
+      stream.endsWith(this.#unanswered[this.#unanswered.length - 1]!);
+  }
+
+  /**
    * Surface mounted (or remounted after a theme/font swap): replay the base
    * snapshot plus every live byte seen since. `resetAndWrite` rebuilds parser
    * state, so a late surface sees the same screen as a live one — unless the
@@ -166,31 +241,14 @@ export class TerminalVtAttachment {
    */
   attach(sink: TerminalVtSink) {
     const previousFailure = this.#sinkFailure;
-    // Replay splits at the unanswered boundary: bytes a live sink already
-    // parsed were answered once and replay with the PTY writer detached;
-    // bytes buffered while detached were never parsed — their queries get
-    // exactly one reply now, from this mount. The split falls on a byte
-    // boundary inside the contiguous stream, so parser state is continuous.
-    const replay = (this.#base ?? "") + this.#buffered.join("");
-    const tail = this.#unansweredTail;
-    const unanswered =
-      tail.length === 0 || replay.endsWith(tail) ? tail : commonSuffix(replay, tail);
-    const answered = replay.slice(0, replay.length - unanswered.length);
     this.#sink = sink;
     try {
-      sink.beginReplay?.();
-      try {
-        if (this.#base !== null) sink.resetAndWrite(answered);
-        else if (answered.length > 0) sink.write(answered);
-      } finally {
-        sink.endReplay?.();
-      }
-      if (unanswered.length > 0) sink.write(unanswered);
+      this.#replayInto(sink, (this.#base ?? "") + this.#buffered.join(""), this.#base !== null);
     } catch (error) {
       // A failed replay leaves the parser in an unknown partial state:
       // drop the sink so output buffers for a clean remount, and keep the
       // failure sticky — only a mount that completes clears it. The
-      // unanswered tail is kept too, so a retry may re-answer a query the
+      // unanswered range is kept too, so a retry may re-answer a query the
       // throw truncated mid-parse — a bounded duplicate beats a dropped
       // reply on an error path that is already visibly broken.
       this.#sink = null;
@@ -211,7 +269,8 @@ export class TerminalVtAttachment {
       throw error;
     }
     this.#sinkFailure = null;
-    this.#unansweredTail = "";
+    this.#unanswered = [];
+    this.#unansweredAtTail = false;
     if (this.#state.ended) return;
     const unfaithful = !this.#replayFaithful;
     if (previousFailure !== null || (unfaithful && !this.#state.degraded)) {
@@ -312,10 +371,17 @@ export class TerminalVtAttachment {
   #deliver(data: string) {
     if (this.#sink !== null) {
       this.#sink.write(data);
+      this.#unansweredAtTail = false;
     } else {
       // Never reached a parser: queries inside still await their one
-      // answer on the next attach.
-      this.#unansweredTail += data;
+      // answer on the next replay. Extend the last run only while it is
+      // still the stream tail — a snapshot may have placed it mid-stream.
+      if (this.#unansweredAtTail && this.#unanswered.length > 0) {
+        this.#unanswered[this.#unanswered.length - 1] += data;
+      } else {
+        this.#unanswered.push(data);
+      }
+      this.#unansweredAtTail = true;
     }
     // Always retain for remount replay; trim the tail past the bound.
     this.#buffered.push(data);
@@ -326,11 +392,8 @@ export class TerminalVtAttachment {
       this.#buffered.shift();
     }
     // Evicted bytes are gone — any unanswered queries among them are lost
-    // with the bytes (already flagged degraded); keep the tail honest.
-    this.#unansweredTail = commonSuffix(
-      (this.#base ?? "") + this.#buffered.join(""),
-      this.#unansweredTail,
-    );
+    // with the bytes (already flagged degraded); keep the runs honest.
+    this.#reconcileUnanswered((this.#base ?? "") + this.#buffered.join(""));
     // Replay needs bytes we no longer hold. A live surface still shows
     // everything, so only flag the visible pane when there is no sink — a
     // later remount flags itself degraded via #replayFaithful.
@@ -373,16 +436,25 @@ export class TerminalVtAttachment {
       this.#base = value.contents;
       this.#buffered = [];
       this.#bufferedLength = 0;
-      // Unanswered live bytes survive only as the snapshot's own suffix —
-      // bytes the server no longer retains are gone, and their queries
-      // with them (an explicit drop: nothing remains to answer).
-      this.#unansweredTail = commonSuffix(value.contents, this.#unansweredTail);
+      // The snapshot's retained contents may extend past the bytes we last
+      // received — the server kept accepting output while the subscription
+      // was closed. Unanswered live bytes keep their claim wherever they
+      // land inside the new contents (positioned runs, not necessarily a
+      // suffix); bytes no longer retained are gone, and their queries with
+      // them (explicit drop: nothing remains to answer).
+      this.#reconcileUnanswered(value.contents);
       // A snapshot only restores fidelity when the epoch's retained bytes
       // cover process start — an untruncated snapshot in a post-clear epoch
       // is still missing the mode-establishing output.
       this.#replayFaithful = !value.truncated && value.streamEpoch !== this.#clearedEpoch;
       const unfaithful = !this.#replayFaithful;
-      this.#sink?.resetAndWrite(value.contents);
+      if (this.#sink) {
+        // Re-base the live parser; unanswered runs inside the new
+        // contents still earn their one reply right now.
+        this.#replayInto(this.#sink, value.contents, true);
+        this.#unanswered = [];
+        this.#unansweredAtTail = false;
+      }
       const ended = value.status === "exited" || value.status === "error";
       const running = this.#runningStatus();
       this.#emit({
@@ -441,7 +513,8 @@ export class TerminalVtAttachment {
       this.#bufferedLength = 0;
       // Cleared bytes are gone — including any unanswered queries inside
       // them; nothing remains to answer.
-      this.#unansweredTail = "";
+      this.#unanswered = [];
+      this.#unansweredAtTail = false;
       // history-cleared drops retained output only — the process and its
       // negotiated modes keep running. A parser reset (RIS) would wipe the
       // application-cursor/bracketed-paste/kitty state the shell still

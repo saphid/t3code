@@ -51,13 +51,13 @@ var __t3Client = (() => {
     }
   });
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/generated-client.ts
+  // generated-client.ts
   var generated_client_exports = {};
   __export(generated_client_exports, {
     default: () => generated_client_default
   });
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/contracts.js
+  // ../../extension-sdk/dist/contracts.js
   var API_VERSION = 1;
   var MAX_PAYLOAD_BYTES = 64 * 1024;
   function assertId(value) {
@@ -145,7 +145,7 @@ var __t3Client = (() => {
     return manifest;
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/capabilities.js
+  // ../../extension-sdk/dist/capabilities.js
   function defineApi(definition) {
     return { definition: validateApiDefinition(definition) };
   }
@@ -238,7 +238,7 @@ var __t3Client = (() => {
     return api;
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/orchestration.js
+  // ../../extension-sdk/dist/orchestration.js
   var ORCHESTRATION_STATUS = "t3.orchestration/status";
   var ORCHESTRATION_CONTROL = "t3.orchestration/control";
   var ORCHESTRATION_READ = "t3.orchestration/read";
@@ -464,7 +464,7 @@ var __t3Client = (() => {
   }
   var ORCHESTRATION_CONTROL_API = orchestrationControlApi.definition;
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/textEdits.js
+  // ../../extension-sdk/dist/textEdits.js
   var WORKSPACE_READ_TEXT_EDITS = "t3.workspace/text-edits";
   var WORKSPACE_READ_TEXT_GRANT = "t3.workspace/read-text";
   var WORKSPACE_WRITE_TEXT = "t3.workspace/write-text";
@@ -657,7 +657,7 @@ var __t3Client = (() => {
     ]
   });
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/catalogue.js
+  // ../../extension-sdk/dist/catalogue.js
   var BROWSER_LOCAL_SERVERS = "t3.browser/local-servers";
   var BROWSER_READ_LOCAL_SERVERS = "t3.browser/read-local-servers";
   var browserLocalServersApi = defineStreamApi({
@@ -4043,7 +4043,7 @@ var __t3Client = (() => {
   var TERMINAL_OUTPUT_EVENTS_API = terminalOutputEventsApi.definition;
   var TERMINAL_CONTROL_API = terminalControlApi.definition;
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/environment.js
+  // ../../extension-sdk/dist/environment.js
   var ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
   var ENVIRONMENT_ASSET_MEDIA_TYPES = [
     "application/wasm",
@@ -4181,7 +4181,7 @@ var __t3Client = (() => {
     return { ...pkg, manifest };
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/authoring.js
+  // ../../extension-sdk/dist/authoring.js
   var statePreview = (state2) => {
     const encoded = JSON.stringify(state2);
     return encoded.length > 200 ? encoded.slice(0, 200) + "\u2026" : encoded;
@@ -4278,7 +4278,7 @@ var __t3Client = (() => {
     return { id: api.definition.id, versionRange };
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/shared/src/projectScripts.ts
+  // ../../shared/src/projectScripts.ts
   function projectScriptRuntimeEnv(input) {
     const env = {
       T3CODE_PROJECT_ROOT: input.project.cwd
@@ -4292,10 +4292,10 @@ var __t3Client = (() => {
     return env;
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/extension.tsx
+  // extension.tsx
   var import_react = __toESM(require_react(), 1);
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/runtime.ts
+  // ghostty/runtime.ts
   var textDecoder = new TextDecoder();
   var GhosttyRuntime = class _GhosttyRuntime {
     memory;
@@ -4481,15 +4481,15 @@ var __t3Client = (() => {
     return promise;
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/platform.ts
+  // ghostty/platform.ts
   function isMacPlatform(platform) {
     return /mac|iphone|ipad|ipod/i.test(platform);
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/selection.ts
+  // ghostty/selection.ts
   var SELECTION_MULTI_CLICK_INTERVAL_MS = 500;
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/terminal-links.ts
+  // ghostty/terminal-links.ts
   var URL_PATTERN = /https?:\/\/[^\s"'`<>]+/giu;
   var FILE_PATH_PATTERN = /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
   var TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
@@ -4578,7 +4578,7 @@ var __t3Client = (() => {
     };
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/keyCodes.ts
+  // ghostty/keyCodes.ts
   var ghosttyKeyboardCodes = [
     "Unidentified",
     "Backquote",
@@ -4818,7 +4818,7 @@ var __t3Client = (() => {
     return event.key.codePointAt(0) ?? 0;
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/core.ts
+  // ghostty/core.ts
   var GHOSTTY_SUCCESS = 0;
   var GHOSTTY_OUT_OF_SPACE = -3;
   var MAX_SCROLLBACK_ROWS = 1e4;
@@ -5815,7 +5815,7 @@ var __t3Client = (() => {
     return sameColor(left, right);
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/renderer.ts
+  // ghostty/renderer.ts
   var DEFAULT_SELECTION_BACKGROUND = "rgba(72, 122, 191, 0.35)";
   function cssColor(color) {
     return `rgb(${color.r}, ${color.g}, ${color.b})`;
@@ -6000,7 +6000,7 @@ var __t3Client = (() => {
     }
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/monospaceFonts.ts
+  // ghostty/monospaceFonts.ts
   function quoteFontFamilyName(name) {
     const bare = name.trim();
     if (bare.length === 0) return "";
@@ -6043,7 +6043,7 @@ var __t3Client = (() => {
     }
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/surface.ts
+  // ghostty/surface.ts
   var DEFAULT_TERMINAL_FONT_SIZE = 12;
   var MIN_TERMINAL_FONT_SIZE = 6;
   var MAX_TERMINAL_FONT_SIZE = 32;
@@ -7499,7 +7499,7 @@ var __t3Client = (() => {
     }
   };
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/surfaceKeys.ts
+  // ghostty/surfaceKeys.ts
   var TERMINAL_WORD_BACKWARD = "\x1Bb";
   var TERMINAL_WORD_FORWARD = "\x1Bf";
   var TERMINAL_LINE_START = "";
@@ -7562,7 +7562,7 @@ var __t3Client = (() => {
     return null;
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/terminalTheme.ts
+  // terminalTheme.ts
   function parseTerminalColor(value, fallback) {
     if (typeof document === "undefined") return fallback;
     const canvas = document.createElement("canvas");
@@ -7651,7 +7651,7 @@ var __t3Client = (() => {
     };
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/shared/src/terminalLabels.ts
+  // ../../shared/src/terminalLabels.ts
   function getTerminalLabel(terminalId) {
     const numericSuffix = /^term(?:inal)?-(\d+)$/i.exec(terminalId)?.[1];
     if (numericSuffix) {
@@ -7675,7 +7675,7 @@ var __t3Client = (() => {
     return `term-${nextIndex}`;
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/inputQueue.ts
+  // inputQueue.ts
   var TERMINAL_INPUT_SERIALIZED_BUDGET = 48 * 1024;
   var TERMINAL_INPUT_PENDING_BUDGET = 256 * 1024;
   var TERMINAL_INPUT_WRITE_TIMEOUT_MS = 3e4;
@@ -7874,7 +7874,7 @@ var __t3Client = (() => {
     }
   };
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/viewModel.ts
+  // viewModel.ts
   var TERMINAL_BUFFER_MAX_BYTES = 512 * 1024;
   var OVERFLOW_RESUBSCRIBE_WINDOW_MS = 1e4;
   var OVERFLOW_RESUBSCRIBE_MAX = 3;
@@ -8461,14 +8461,20 @@ var __t3Client = (() => {
     }
   };
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/vtAttachment.ts
+  // vtAttachment.ts
   var MAX_OUTPUT_CHUNK_DATA_LENGTH = 8192;
   var MAX_OUTPUT_CHUNKS = 64;
-  function commonSuffix(a, b) {
-    const max = Math.min(a.length, b.length);
-    let i = 0;
-    while (i < max && a.charCodeAt(a.length - 1 - i) === b.charCodeAt(b.length - 1 - i)) i += 1;
-    return b.slice(b.length - i);
+  function longestContainedSuffix(haystack, text) {
+    if (text.length === 0) return "";
+    if (haystack.includes(text)) return text;
+    let lo = 0;
+    let hi = text.length;
+    while (hi - lo > 1) {
+      const mid = lo + hi >> 1;
+      if (haystack.includes(text.slice(-mid))) lo = mid;
+      else hi = mid;
+    }
+    return lo === 0 ? "" : text.slice(-lo);
   }
   var MAX_PRE_SINK_OUTPUT_LENGTH = 512 * 1024;
   var TerminalVtAttachment = class {
@@ -8511,17 +8517,21 @@ var __t3Client = (() => {
      */
     #sinkFailure = null;
     /**
-     * Live output received but never parsed with the PTY reply writer
-     * attached — always a suffix of the replay stream (base + buffered).
-     * Bytes delivered to a live sink answered their terminal queries at
-     * write time; bytes buffered while detached produced no replies, so
-     * replaying them suppressed would silently drop queries the process is
-     * still waiting on. Replayed once with replies enabled, then cleared.
-     * Snapshot/history bytes themselves are treated as already-rendered
-     * history and stay suppressed (native parity) — only live output the
-     * attachment saw go undelivered earns a reply.
+     * Contiguous runs of live output that were never parsed with the PTY
+     * reply writer attached, in stream order. A resubscribe snapshot can
+     * append newer retained output after a run — or between two runs — so
+     * they are located by content inside the replay stream at replay time,
+     * not assumed to be a suffix. Bytes delivered to a live sink answered
+     * their terminal queries at write time; bytes buffered while detached
+     * produced no replies, so replaying them suppressed would silently drop
+     * queries the process is still waiting on. Replayed once with replies
+     * enabled, then cleared. Snapshot/history bytes are treated as
+     * already-rendered history and stay suppressed (native parity) — only
+     * live output the attachment saw go undelivered earns a reply.
      */
-    #unansweredTail = "";
+    #unanswered = [];
+    /** Whether the last unanswered run currently ends at the stream tail. */
+    #unansweredAtTail = false;
     #pending = null;
     #state = {
       status: "connecting",
@@ -8548,6 +8558,53 @@ var __t3Client = (() => {
       return this.#state;
     }
     /**
+     * Re-parse `stream` into a parser, splitting at each unanswered run:
+     * bytes already parsed with replies enabled (or never seen live — plain
+     * retained history) replay suppressed, unanswered runs replay with the
+     * PTY writer attached so their queries get their single reply.
+     */
+    #replayInto(sink, stream, resetBase) {
+      const ranges = [];
+      let hi = stream.length;
+      for (let i = this.#unanswered.length - 1; i >= 0; i -= 1) {
+        const run = this.#unanswered[i];
+        const pos2 = run.length <= hi ? stream.lastIndexOf(run, hi - run.length) : -1;
+        if (pos2 < 0) continue;
+        ranges.unshift([pos2, pos2 + run.length]);
+        hi = pos2;
+      }
+      const suppressed = (write) => {
+        sink.beginReplay?.();
+        try {
+          write();
+        } finally {
+          sink.endReplay?.();
+        }
+      };
+      let pos = ranges[0]?.[0] ?? stream.length;
+      if (resetBase) {
+        suppressed(() => sink.resetAndWrite(stream.slice(0, pos)));
+      } else if (pos > 0) {
+        suppressed(() => sink.write(stream.slice(0, pos)));
+      }
+      for (const [start, end] of ranges) {
+        if (start > pos) suppressed(() => sink.write(stream.slice(pos, start)));
+        sink.write(stream.slice(start, end));
+        pos = end;
+      }
+      if (pos < stream.length) suppressed(() => sink.write(stream.slice(pos)));
+    }
+    /**
+     * Reconcile unanswered runs against `stream` after it dropped leading
+     * bytes (retention cut, buffer eviction): each run keeps its longest
+     * still-contained suffix, and a run no longer retained is an explicit
+     * drop — nothing remains to answer.
+     */
+    #reconcileUnanswered(stream) {
+      this.#unanswered = this.#unanswered.map((run) => longestContainedSuffix(stream, run)).filter((run) => run.length > 0);
+      this.#unansweredAtTail = this.#unanswered.length > 0 && stream.endsWith(this.#unanswered[this.#unanswered.length - 1]);
+    }
+    /**
      * Surface mounted (or remounted after a theme/font swap): replay the base
      * snapshot plus every live byte seen since. `resetAndWrite` rebuilds parser
      * state, so a late surface sees the same screen as a live one — unless the
@@ -8557,20 +8614,9 @@ var __t3Client = (() => {
      */
     attach(sink) {
       const previousFailure = this.#sinkFailure;
-      const replay = (this.#base ?? "") + this.#buffered.join("");
-      const tail = this.#unansweredTail;
-      const unanswered = tail.length === 0 || replay.endsWith(tail) ? tail : commonSuffix(replay, tail);
-      const answered = replay.slice(0, replay.length - unanswered.length);
       this.#sink = sink;
       try {
-        sink.beginReplay?.();
-        try {
-          if (this.#base !== null) sink.resetAndWrite(answered);
-          else if (answered.length > 0) sink.write(answered);
-        } finally {
-          sink.endReplay?.();
-        }
-        if (unanswered.length > 0) sink.write(unanswered);
+        this.#replayInto(sink, (this.#base ?? "") + this.#buffered.join(""), this.#base !== null);
       } catch (error) {
         this.#sink = null;
         this.#sinkFailure = previousFailure ?? (error instanceof Error ? `Terminal renderer failed to start: ${error.message}` : "Terminal renderer failed to start.");
@@ -8586,7 +8632,8 @@ var __t3Client = (() => {
         throw error;
       }
       this.#sinkFailure = null;
-      this.#unansweredTail = "";
+      this.#unanswered = [];
+      this.#unansweredAtTail = false;
       if (this.#state.ended) return;
       const unfaithful = !this.#replayFaithful;
       if (previousFailure !== null || unfaithful && !this.#state.degraded) {
@@ -8673,8 +8720,14 @@ var __t3Client = (() => {
     #deliver(data) {
       if (this.#sink !== null) {
         this.#sink.write(data);
+        this.#unansweredAtTail = false;
       } else {
-        this.#unansweredTail += data;
+        if (this.#unansweredAtTail && this.#unanswered.length > 0) {
+          this.#unanswered[this.#unanswered.length - 1] += data;
+        } else {
+          this.#unanswered.push(data);
+        }
+        this.#unansweredAtTail = true;
       }
       this.#buffered.push(data);
       this.#bufferedLength += data.length;
@@ -8683,10 +8736,7 @@ var __t3Client = (() => {
         this.#bufferedLength -= this.#buffered[0].length;
         this.#buffered.shift();
       }
-      this.#unansweredTail = commonSuffix(
-        (this.#base ?? "") + this.#buffered.join(""),
-        this.#unansweredTail
-      );
+      this.#reconcileUnanswered((this.#base ?? "") + this.#buffered.join(""));
       this.#replayFaithful = false;
       if (this.#sink === null && !this.#state.degraded && !this.#state.ended) {
         this.#emit({
@@ -8719,10 +8769,14 @@ var __t3Client = (() => {
         this.#base = value.contents;
         this.#buffered = [];
         this.#bufferedLength = 0;
-        this.#unansweredTail = commonSuffix(value.contents, this.#unansweredTail);
+        this.#reconcileUnanswered(value.contents);
         this.#replayFaithful = !value.truncated && value.streamEpoch !== this.#clearedEpoch;
         const unfaithful = !this.#replayFaithful;
-        this.#sink?.resetAndWrite(value.contents);
+        if (this.#sink) {
+          this.#replayInto(this.#sink, value.contents, true);
+          this.#unanswered = [];
+          this.#unansweredAtTail = false;
+        }
         const ended = value.status === "exited" || value.status === "error";
         const running = this.#runningStatus();
         this.#emit({
@@ -8767,7 +8821,8 @@ var __t3Client = (() => {
         this.#base = "";
         this.#buffered = [];
         this.#bufferedLength = 0;
-        this.#unansweredTail = "";
+        this.#unanswered = [];
+        this.#unansweredAtTail = false;
         this.#replayFaithful = false;
         this.#clearedEpoch = this.#epoch;
         if (this.#sink) {
@@ -8875,7 +8930,7 @@ var __t3Client = (() => {
     }
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/extension.tsx
+  // extension.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
   var manifestId = "t3.terminal";
   var GHOSTTY_VT_ASSET = "assets/ghostty-vt.wasm";
@@ -9666,10 +9721,10 @@ var __t3Client = (() => {
     ]
   });
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/extension.ts
+  // extension.ts
   var extension_default2 = extension_default;
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/generated-client.ts
+  // generated-client.ts
   var generated_client_default = extension_default2.client;
   return __toCommonJS(generated_client_exports);
 })();

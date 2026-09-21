@@ -354,6 +354,108 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   });
 
   NodeTest.it(
+    "a resubscribe snapshot extending past an unanswered query still answers it (P2)",
+    async () => {
+      // Astra r4 repro: a live DSR arrives while detached, then a
+      // same-epoch resubscribe snapshot returns retained contents that
+      // append NEWER output after the query — the unanswered bytes are
+      // no longer a suffix of the replay stream, but their reply is
+      // still owed.
+      const attachment = new TerminalVtAttachment("term-1");
+      const snap = (contents, boundarySequence, retainedByteLength = contents.length) => ({
+        kind: "snapshot",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        status: "running",
+        contents,
+        retainedByteLength,
+        truncated: false,
+        boundarySequence,
+      });
+      const output = (sequence, data) => ({
+        kind: "output",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        sequence,
+        chunkIndex: 0,
+        chunkCount: 1,
+        data,
+      });
+      const closed = {
+        kind: "closed",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        reason: "overflow",
+      };
+      attachment.applyFrame({ streamId: "s", sequence: 1 }, snap("", 0, 0));
+      attachment.applyFrame({ streamId: "s", sequence: 2 }, output(1, "\x1b[6n"));
+      attachment.applyFrame({ streamId: "s", sequence: 3 }, closed);
+      attachment.beginStream();
+      // The retained stream kept growing while the subscription was down:
+      // the unanswered DSR sits mid-contents, followed by newer bytes.
+      attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap("\x1b[6nlater", 2));
+      const { core, writes } = await makeCore();
+      attachment.attach(core);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      NodeAssert.equal(writes.length, 1);
+      NodeAssert.match(writes[0], /\[\d+;\d+R/);
+      // The newer retained output still reached the screen.
+      const screen = core.snapshot();
+      NodeAssert.ok(screen.rowData.some((_, i) => rowText(screen, i).includes("later")));
+      core.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "unanswered runs separated by resubscribe output each get their reply (P2)",
+    async () => {
+      // The single-claim case generalizes: unanswered live bytes before a
+      // resubscribe snapshot AND more live bytes after it form two
+      // disjoint ranges of the replay stream — both must answer.
+      const attachment = new TerminalVtAttachment("term-1");
+      const snap = (contents, boundarySequence, retainedByteLength = contents.length) => ({
+        kind: "snapshot",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        status: "running",
+        contents,
+        retainedByteLength,
+        truncated: false,
+        boundarySequence,
+      });
+      const output = (sequence, data) => ({
+        kind: "output",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        sequence,
+        chunkIndex: 0,
+        chunkCount: 1,
+        data,
+      });
+      const closed = {
+        kind: "closed",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        reason: "overflow",
+      };
+      attachment.applyFrame({ streamId: "s", sequence: 1 }, snap("", 0, 0));
+      attachment.applyFrame({ streamId: "s", sequence: 2 }, output(1, "\x1b[6n"));
+      attachment.applyFrame({ streamId: "s", sequence: 3 }, closed);
+      attachment.beginStream();
+      attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap("\x1b[6nbetween", 2));
+      // Still detached: a second DSR lands after the snapshot — two
+      // disjoint unanswered runs in the replay stream.
+      attachment.applyFrame({ streamId: "s2", sequence: 2 }, output(3, "\x1b[6n"));
+      const { core, writes } = await makeCore();
+      attachment.attach(core);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      NodeAssert.equal(writes.length, 2);
+      for (const reply of writes) NodeAssert.match(reply, /\[\d+;\d+R/);
+      core.dispose();
+    },
+  );
+
+  NodeTest.it(
     "a query inside snapshot history stays suppressed — documented drop (P2)",
     async () => {
       // Snapshot contents are retained history, not live output: a query
