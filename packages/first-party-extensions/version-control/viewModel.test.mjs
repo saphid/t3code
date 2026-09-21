@@ -42,8 +42,12 @@ import {
   startMutation,
   syncLabel,
   canWorktreeRef,
+  dismissReceiptWhenSeen,
+  isNotificationDismissal,
   mutationToastSettle,
   mutationToastStart,
+  nextThemeVars,
+  releaseMutationReceipt,
   themeVarOverrides,
   workingTreeLabel,
   worktreeRows,
@@ -424,33 +428,93 @@ NodeTest.describe("vcs view model — commit plan", () => {
 
 NodeTest.describe("vcs view model — mutation phase machine", () => {
   NodeTest.it("idle -> running -> succeeded/failed; running refuses a second op", () => {
-    const running = startMutation(IDLE_MUTATION, "stage", "Staging 2 paths");
-    NodeAssert.deepEqual(running, { kind: "running", op: "stage", label: "Staging 2 paths" });
-    NodeAssert.equal(startMutation(running, "commit", "Committing"), null);
-    const ok = settleMutation("stage", { ok: true, detail: "Staged 2 paths" });
-    NodeAssert.deepEqual(ok, { kind: "succeeded", op: "stage", detail: "Staged 2 paths" });
-    const failed = settleMutation("stage", { ok: false, detail: "Staging failed: denied" });
+    const running = startMutation(IDLE_MUTATION, "stage", "Staging 2 paths", "inline");
+    NodeAssert.deepEqual(running, {
+      kind: "running",
+      op: "stage",
+      label: "Staging 2 paths",
+      receipt: "inline",
+    });
+    NodeAssert.equal(startMutation(running, "commit", "Committing", "inline"), null);
+    const ok = settleMutation(running, "stage", { ok: true, detail: "Staged 2 paths" });
+    NodeAssert.deepEqual(ok, {
+      kind: "succeeded",
+      op: "stage",
+      detail: "Staged 2 paths",
+      receipt: "inline",
+    });
+    const failed = settleMutation(running, "stage", {
+      ok: false,
+      detail: "Staging failed: denied",
+    });
     NodeAssert.deepEqual(failed, {
       kind: "failed",
       op: "stage",
       detail: "Staging failed: denied",
+      receipt: "inline",
     });
-    NodeAssert.notEqual(startMutation(ok, "unstage", "Unstaging"), null);
-    NodeAssert.notEqual(startMutation(failed, "unstage", "Unstaging"), null);
+    NodeAssert.notEqual(startMutation(ok, "unstage", "Unstaging", "inline"), null);
+    NodeAssert.notEqual(startMutation(failed, "unstage", "Unstaging", "inline"), null);
+  });
+
+  NodeTest.it("keeps the receipt channel across settle, on either channel", () => {
+    // A mutation that began before the capability probe resolved records
+    // "inline" and keeps the row after settling — a probe landing
+    // mid-mutation must not hide a receipt that never had a toast.
+    const inline = startMutation(IDLE_MUTATION, "push", "Pushing", "inline");
+    NodeAssert.equal(
+      settleMutation(inline, "push", { ok: true, detail: "Pushed main" }).receipt,
+      "inline",
+    );
+    const toasted = startMutation(IDLE_MUTATION, "push", "Pushing", "notification");
+    NodeAssert.equal(
+      settleMutation(toasted, "push", { ok: true, detail: "Pushed main" }).receipt,
+      "notification",
+    );
+    NodeAssert.equal(
+      settleMutation(toasted, "push", { ok: false, detail: "rejected" }).receipt,
+      "notification",
+    );
+  });
+
+  NodeTest.it("releaseMutationReceipt returns a lost toast receipt to the row", () => {
+    const running = startMutation(IDLE_MUTATION, "push", "Pushing", "notification");
+    NodeAssert.equal(releaseMutationReceipt("push")(running).receipt, "inline");
+    // The mapper is op-scoped: a different or already-inline phase is
+    // untouched, and idle stays idle.
+    NodeAssert.equal(releaseMutationReceipt("pull")(running), running);
+    NodeAssert.equal(releaseMutationReceipt("push")(IDLE_MUTATION), IDLE_MUTATION);
+    const inline = startMutation(IDLE_MUTATION, "push", "Pushing", "inline");
+    NodeAssert.equal(releaseMutationReceipt("push")(inline), inline);
   });
 
   NodeTest.it("describes every phase for the status line", () => {
     NodeAssert.equal(describeMutation(IDLE_MUTATION), null);
     NodeAssert.equal(
-      describeMutation({ kind: "running", op: "commit", label: "Committing" }),
+      describeMutation({
+        kind: "running",
+        op: "commit",
+        label: "Committing",
+        receipt: "inline",
+      }),
       "Committing…",
     );
     NodeAssert.equal(
-      describeMutation({ kind: "succeeded", op: "commit", detail: "Committed abc on main" }),
+      describeMutation({
+        kind: "succeeded",
+        op: "commit",
+        detail: "Committed abc on main",
+        receipt: "inline",
+      }),
       "Committed abc on main",
     );
     NodeAssert.equal(
-      describeMutation({ kind: "failed", op: "stage", detail: "Stage failed: denied" }),
+      describeMutation({
+        kind: "failed",
+        op: "stage",
+        detail: "Stage failed: denied",
+        receipt: "inline",
+      }),
       "Stage failed: denied",
     );
   });
@@ -1156,6 +1220,28 @@ NodeTest.describe("themeVarOverrides", () => {
   });
 });
 
+NodeTest.describe("nextThemeVars — no stale fallback", () => {
+  const cssVars = { text: "--app-theme-text" };
+
+  NodeTest.it("clears the published map on any read loss, even after a good read", () => {
+    // A resolved read followed by a failed refresh or a lost subscription
+    // must not leave the last theme painted — the map returns to null so
+    // the legacy var() chain renders.
+    const published = nextThemeVars({ ok: true, tokens: { text: "#111" }, cssVars });
+    NodeAssert.deepEqual(published, {
+      "--t3-version-control-text": "var(--app-theme-text, #111)",
+    });
+    NodeAssert.equal(nextThemeVars({ ok: false }), null);
+    NodeAssert.equal(nextThemeVars({ ok: false }), null);
+  });
+
+  NodeTest.it("recovers on the next resolved read, including hosts without css vars", () => {
+    NodeAssert.equal(nextThemeVars({ ok: false }), null);
+    const republished = nextThemeVars({ ok: true, tokens: { text: "#222" }, cssVars: {} });
+    NodeAssert.deepEqual(republished, { "--t3-version-control-text": "#222" });
+  });
+});
+
 NodeTest.describe("mutation toasts", () => {
   NodeTest.it("opens a loading toast with the running label", () => {
     NodeAssert.deepEqual(mutationToastStart("Pushing"), {
@@ -1180,5 +1266,74 @@ NodeTest.describe("mutation toasts", () => {
         body: "rejected: non-fast-forward",
       },
     );
+  });
+});
+
+NodeTest.describe("isNotificationDismissal", () => {
+  NodeTest.it("recognizes the bridged notification-expired code as user dismissal", () => {
+    NodeAssert.equal(
+      isNotificationDismissal(
+        new Error("notification-expired: The notification is unknown or expired."),
+      ),
+      true,
+    );
+    NodeAssert.equal(isNotificationDismissal("notification-expired"), true);
+  });
+
+  NodeTest.it("treats every other rejection as delivery loss, not dismissal", () => {
+    NodeAssert.equal(
+      isNotificationDismissal(new Error("notification-owner-mismatch: not yours")),
+      false,
+    );
+    NodeAssert.equal(isNotificationDismissal(new Error("client-provider-unavailable")), false);
+    NodeAssert.equal(isNotificationDismissal(new Error("View is inactive")), false);
+    NodeAssert.equal(isNotificationDismissal({ reason: "nope" }), false);
+  });
+});
+
+NodeTest.describe("dismissReceiptWhenSeen", () => {
+  const stubView = (visible) => {
+    const controller = new AbortController();
+    const view = {
+      visible,
+      signal: controller.signal,
+      listeners: /** @type {Set<(visible: boolean) => void>} */ (new Set()),
+      onVisibility(listener) {
+        view.listeners.add(listener);
+        return () => view.listeners.delete(listener);
+      },
+    };
+    return view;
+  };
+
+  NodeTest.it("dismisses immediately while the view is visible", () => {
+    const view = stubView(true);
+    let dismissed = 0;
+    dismissReceiptWhenSeen(view, () => dismissed++);
+    NodeAssert.equal(dismissed, 1);
+    NodeAssert.equal(view.listeners.size, 0);
+  });
+
+  NodeTest.it("holds an unseen receipt until the next visible paint", () => {
+    // The mutation settled while its thread was inactive — the success
+    // receipt must not expire against a view nobody is looking at.
+    const view = stubView(false);
+    let dismissed = 0;
+    dismissReceiptWhenSeen(view, () => dismissed++);
+    NodeAssert.equal(dismissed, 0);
+    for (const listener of view.listeners) listener(false);
+    NodeAssert.equal(dismissed, 0, "still hidden — no dismissal");
+    for (const listener of view.listeners) listener(true);
+    NodeAssert.equal(dismissed, 1);
+    NodeAssert.equal(view.listeners.size, 0, "listener unsubscribed after firing");
+  });
+
+  NodeTest.it("gives up when the session dies before the view returns", () => {
+    const view = stubView(false);
+    let dismissed = 0;
+    dismissReceiptWhenSeen(view, () => dismissed++);
+    view.signal.dispatchEvent(new Event("abort"));
+    NodeAssert.equal(view.listeners.size, 0);
+    NodeAssert.equal(dismissed, 0);
   });
 });

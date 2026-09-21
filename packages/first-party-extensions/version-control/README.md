@@ -92,17 +92,27 @@ The panel adopts the `t3.ui/*` client contracts the native surface uses:
   `--t3-version-control-*` variables ahead of each style's legacy `var()`
   chain, so an installation without the grant — or a host that never
   connects a theme provider — renders the pre-contract appearance
-  unchanged. `--success`, `--info`, and the `font-*` vars stay on the host
+  unchanged. A failed read or a lost subscription clears the published
+  overrides rather than retaining them: painting last-known values after
+  the contract stops serving them would lie about what the host paints.
+  `--success`, `--info`, and the `font-*` vars stay on the host
   constants: they sit outside the contract's color-role set.
 - `t3.ui/notifications@^1.0.0` — under the `t3.ui/notify` grant: every
   repository mutation opens a thread-anchored `loading` toast that updates
-  to `success` (auto-dismissed after the native 10 s window) or `error`
-  (pinned until dismissed), matching native `GitActionsControl` receipts.
-  The grant-free `getCapabilities` probe keeps provider-less hosts on the
-  inline mutation row, and a denied `notify` latches back to it — the
-  honest degraded path. Non-mutation statuses (refs/changes/remotes read
-  errors, selection, branch-create notes) stay inline because native
-  keeps them inline too.
+  to `success` or `error` on settle, matching native `GitActionsControl`
+  receipts. The receipt channel is recorded on the mutation itself: the
+  inline row renders unless that mutation actually started a toast, so a
+  capability probe resolving mid-mutation never hides a receipt that has
+  none. A success receipt dismisses after the native 10 s window, but the
+  dismissal defers to the next visible paint while the view is hidden —
+  the contract cannot express native's `dismissAfterVisibleMs`, and an
+  unseen receipt must not expire. Errors stay pinned until dismissed.
+  Every delivery loss — a denied `notify`, a rejected or unapplied
+  `update`, a user-dismissed loading toast — returns that mutation's
+  receipt to the inline row; only non-dismissal failures latch the
+  adapter dead. Non-mutation statuses (refs/changes/remotes read errors,
+  selection, branch-create notes) stay inline because native keeps them
+  inline too.
 
 The surface registers no `t3.ui/keybindings` commands — the native panel
 has no dedicated shortcuts (its inputs keep plain Enter/Escape handlers,

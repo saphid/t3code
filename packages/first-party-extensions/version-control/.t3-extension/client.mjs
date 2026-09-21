@@ -6483,12 +6483,16 @@ var __t3Client = (() => {
     return { disabled: null, label: "Commit all changes", paths: void 0 };
   }
   var IDLE_MUTATION = { kind: "idle" };
-  function startMutation(phase, op, label) {
+  function startMutation(phase, op, label, receipt2) {
     if (phase.kind === "running") return null;
-    return { kind: "running", op, label };
+    return { kind: "running", op, label, receipt: receipt2 };
   }
-  function settleMutation(op, result) {
-    return result.ok ? { kind: "succeeded", op, detail: result.detail } : { kind: "failed", op, detail: result.detail };
+  function settleMutation(phase, op, result) {
+    const receipt2 = phase.kind !== "idle" && phase.op === op ? phase.receipt : "inline";
+    return result.ok ? { kind: "succeeded", op, detail: result.detail, receipt: receipt2 } : { kind: "failed", op, detail: result.detail, receipt: receipt2 };
+  }
+  function releaseMutationReceipt(op) {
+    return (phase) => phase.kind !== "idle" && phase.op === op && phase.receipt === "notification" ? { ...phase, receipt: "inline" } : phase;
   }
   function describeMutation(phase) {
     switch (phase.kind) {
@@ -6851,7 +6855,26 @@ var __t3Client = (() => {
     }
     return overrides;
   }
+  function nextThemeVars(read) {
+    return read.ok ? themeVarOverrides(read.tokens, read.cssVars) : null;
+  }
   var MUTATION_TOAST_DISMISS_MS = 1e4;
+  function isNotificationDismissal(error) {
+    const message2 = error instanceof Error ? error.message : String(error);
+    return message2.includes("notification-expired");
+  }
+  function dismissReceiptWhenSeen(view, dismiss) {
+    if (view.visible) {
+      dismiss();
+      return;
+    }
+    const off = view.onVisibility((visible) => {
+      if (!visible) return;
+      off();
+      dismiss();
+    });
+    view.signal.addEventListener("abort", off, { once: true });
+  }
   function mutationToastStart(label) {
     return { severity: "loading", title: `${label}\u2026` };
   }
@@ -9922,11 +9945,14 @@ ${thread.id}`) === activity,
         void api.invoke("getTokens", {}, signal).then(
           (value) => {
             if (!signal.aborted && at === generation)
-              setVars(themeVarOverrides(value.tokens, value.cssVars));
+              setVars(nextThemeVars({ ok: true, tokens: value.tokens, cssVars: value.cssVars }));
           },
-          // Denial or absence leaves the last good map; initially that is the
-          // untouched legacy chain.
+          // A failed read cannot vouch for the last published map — the
+          // overrides clear and the panel returns to its legacy chain until a
+          // later read succeeds. Only the current generation may clear, so a
+          // stale rejection never wipes a newer good map.
           () => {
+            if (!signal.aborted && at === generation) setVars(nextThemeVars({ ok: false }));
           }
         );
       };
@@ -9934,10 +9960,15 @@ ${thread.id}`) === activity,
       void (async () => {
         try {
           for await (const frame of streams.subscribe("subscribeState", {}, signal)) {
-            if (signal.aborted || frame.type === "closed") return;
+            if (signal.aborted) return;
+            if (frame.type === "closed") break;
             refresh();
           }
         } catch {
+        }
+        if (!signal.aborted) {
+          generation++;
+          setVars(nextThemeVars({ ok: false }));
         }
       })();
       return () => controller.abort();
@@ -9968,7 +9999,7 @@ ${thread.id}`) === activity,
       dead.current = true;
       setToastsLive(false);
     };
-    const begin = (label) => {
+    const begin = (label, onReceiptLost) => {
       if (!toastsLive || dead.current) return null;
       const api = bindApi(uiNotificationsApi, host, session.context);
       const resource = session.context.resource;
@@ -9987,37 +10018,53 @@ ${thread.id}`) === activity,
         (result) => result.notificationId,
         () => {
           markDead();
+          onReceiptLost();
           return null;
         }
       );
+      const dismiss = (notificationId) => {
+        void api.invoke("dismiss", { notificationId }, session.signal).then(
+          () => {
+          },
+          () => {
+          }
+        );
+      };
       return {
         settle(result) {
           void posted.then((notificationId) => {
-            if (notificationId === null || dead.current) return;
+            if (notificationId === null) return;
+            if (dead.current) {
+              onReceiptLost();
+              dismiss(notificationId);
+              return;
+            }
             void api.invoke(
               "update",
               { notificationId, ...mutationToastSettle(label, result) },
               session.signal
             ).then(
-              () => {
-                if (!result.ok) return;
-                setTimeout(() => {
-                  void api.invoke("dismiss", { notificationId }, session.signal).then(
-                    () => {
-                    },
-                    () => {
-                    }
+              ({ applied }) => {
+                if (!applied) {
+                  onReceiptLost();
+                  return;
+                }
+                if (result.ok)
+                  setTimeout(
+                    () => dismissReceiptWhenSeen(session, () => dismiss(notificationId)),
+                    MUTATION_TOAST_DISMISS_MS
                   );
-                }, MUTATION_TOAST_DISMISS_MS);
               },
-              () => {
+              (error) => {
+                onReceiptLost();
+                if (!isNotificationDismissal(error)) markDead();
               }
             );
           });
         }
       };
     };
-    return { toastsLive, begin };
+    return { begin };
   }
   var border2 = "1px solid var(--t3-version-control-border, var(--border, #dfe3e8))";
   var muted2 = "var(--t3-version-control-muted-foreground, var(--muted-foreground, #667085))";
@@ -10073,7 +10120,7 @@ ${thread.id}`) === activity,
       session.save(next);
     };
     const repositoryVisible = visible && view === "repository";
-    const { toastsLive, begin: beginToast } = useMutationToasts(host, session, repositoryVisible);
+    const { begin: beginToast } = useMutationToasts(host, session, repositoryVisible);
     const { capabilities, error: capsError } = useCapabilities(
       host,
       session,
@@ -10142,18 +10189,22 @@ ${thread.id}`) === activity,
     const runMutation = (op, label, invoke) => {
       if (inFlight.current) return;
       inFlight.current = true;
-      setMutation((phase) => startMutation(phase, op, label) ?? phase);
-      const toast = beginToast(label);
+      const toast = beginToast(label, () => setMutation(releaseMutationReceipt(op)));
+      setMutation(
+        (phase) => startMutation(phase, op, label, toast === null ? "inline" : "notification") ?? phase
+      );
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       invoke(signal).then(
         (detail) => {
-          setMutation(settleMutation(op, { ok: true, detail }));
+          setMutation((phase) => settleMutation(phase, op, { ok: true, detail }));
           toast?.settle({ ok: true, detail });
         },
         (error) => {
           const detail = error instanceof Error ? error.message : "operation unavailable";
-          setMutation(settleMutation(op, { ok: false, detail: `${label} failed: ${detail}` }));
+          setMutation(
+            (phase) => settleMutation(phase, op, { ok: false, detail: `${label} failed: ${detail}` })
+          );
           toast?.settle({ ok: false, detail });
         }
       ).finally(() => {
@@ -10411,7 +10462,7 @@ ${thread.id}`) === activity,
               "Repository status unavailable \u2014 ",
               repo.detail
             ] }),
-            !toastsLive && describeMutation(mutation) !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+            mutation.kind !== "idle" && mutation.receipt === "inline" && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "output",
               {
                 "aria-label": "Mutation status",

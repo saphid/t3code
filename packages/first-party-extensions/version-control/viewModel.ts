@@ -216,37 +216,78 @@ export function planCommit(lanes: LaneGroups, message: string): CommitPlan {
   return { disabled: null, label: "Commit all changes", paths: undefined };
 }
 
+/**
+ * Where the mutation's transient receipt is delivered. "notification" means
+ * a live `t3.ui/notifications` toast carries it; "inline" paints the panel's
+ * mutation row. The channel is recorded on the phase — not on adapter
+ * liveness — so a mutation that began before the capability probe resolved
+ * keeps its inline row even when toasts come up mid-flight.
+ */
+export type MutationReceipt = "inline" | "notification";
+
 /** Single-flight mutation phase — one op at a time, like native's serialized VCS actions. */
 export type MutationPhase =
   | { readonly kind: "idle" }
-  | { readonly kind: "running"; readonly op: MutationOp; readonly label: string }
-  | { readonly kind: "succeeded"; readonly op: MutationOp; readonly detail: string }
-  | { readonly kind: "failed"; readonly op: MutationOp; readonly detail: string };
+  | {
+      readonly kind: "running";
+      readonly op: MutationOp;
+      readonly label: string;
+      readonly receipt: MutationReceipt;
+    }
+  | {
+      readonly kind: "succeeded";
+      readonly op: MutationOp;
+      readonly detail: string;
+      readonly receipt: MutationReceipt;
+    }
+  | {
+      readonly kind: "failed";
+      readonly op: MutationOp;
+      readonly detail: string;
+      readonly receipt: MutationReceipt;
+    };
 
 export const IDLE_MUTATION: MutationPhase = { kind: "idle" };
 
 /**
  * Begin a mutation. Returns null when one is already running — the view
  * disables all mutation controls on `running`, so a null here is also the
- * guard against a raced second click.
+ * guard against a raced second click. `receipt` names the channel the
+ * caller already secured: a begun toast or the inline fallback.
  */
 export function startMutation(
   phase: MutationPhase,
   op: MutationOp,
   label: string,
+  receipt: MutationReceipt,
 ): MutationPhase | null {
   if (phase.kind === "running") return null;
-  return { kind: "running", op, label };
+  return { kind: "running", op, label, receipt };
 }
 
 /** Settle the running op: rejection detail (the named error) or a success line. */
 export function settleMutation(
+  phase: MutationPhase,
   op: MutationOp,
   result: { readonly ok: boolean; readonly detail: string },
 ): MutationPhase {
+  const receipt = phase.kind !== "idle" && phase.op === op ? phase.receipt : "inline";
   return result.ok
-    ? { kind: "succeeded", op, detail: result.detail }
-    : { kind: "failed", op, detail: result.detail };
+    ? { kind: "succeeded", op, detail: result.detail, receipt }
+    : { kind: "failed", op, detail: result.detail, receipt };
+}
+
+/**
+ * Toast delivery for `op` failed after it began — a rejected `notify`, an
+ * unapplied `update`, or a dismissed loading toast. The phase keeps its
+ * detail but the receipt channel returns to the inline row; the mutation
+ * outcome must never silently vanish.
+ */
+export function releaseMutationReceipt(op: MutationOp): (phase: MutationPhase) => MutationPhase {
+  return (phase) =>
+    phase.kind !== "idle" && phase.op === op && phase.receipt === "notification"
+      ? { ...phase, receipt: "inline" }
+      : phase;
 }
 
 /** One-line rendering of the mutation phase for the panel status line. */
@@ -978,6 +1019,26 @@ export function themeVarOverrides(
   return overrides;
 }
 
+/**
+ * The override map the panel publishes after a theme read. A resolved read
+ * repaints fresh `--t3-version-control-*` vars; every loss — a rejected
+ * `getTokens`, a closed or errored `subscribeState` stream — clears the map
+ * entirely so the panel returns to its legacy `var()` chain. Publishing the
+ * last resolved map after the contract stops serving it would paint a theme
+ * the host no longer vouches for (the no-stale-fallback rule).
+ */
+export function nextThemeVars(
+  read:
+    | {
+        readonly ok: true;
+        readonly tokens: Readonly<Record<string, string>>;
+        readonly cssVars: Readonly<Record<string, string>>;
+      }
+    | { readonly ok: false },
+): Record<string, string> | null {
+  return read.ok ? themeVarOverrides(read.tokens, read.cssVars) : null;
+}
+
 // ---------------------------------------------------------------------------
 // t3.ui/notifications consumption
 // ---------------------------------------------------------------------------
@@ -988,10 +1049,53 @@ export function themeVarOverrides(
  * notification updates to `success` or `error` on settle. A success
  * receipt dismisses after MUTATION_TOAST_DISMISS_MS, matching native's
  * `dismissAfterVisibleMs` — the contract's `update` carries no duration,
- * so the adapter schedules `dismiss` itself. Errors stay pinned until the
- * user dismisses them, matching native failure toasts.
+ * so the adapter schedules `dismiss` itself and defers to the next visible
+ * paint when the view is hidden rather than expiring a receipt nobody saw.
+ * Errors stay pinned until the user dismisses them, matching native
+ * failure toasts.
  */
 export const MUTATION_TOAST_DISMISS_MS = 10_000;
+
+/**
+ * Whether an `update`/`dismiss` rejection is the notification having been
+ * dismissed rather than a delivery failure. Provider codes reach the plugin
+ * as the leading segment of the bridged error message (`"code: detail"`);
+ * `notification-expired` means the toast is already gone — overwhelmingly
+ * user dismissal of the loading toast — so the adapter stays live and the
+ * mutation's receipt returns to the inline row. Anything else is treated
+ * as delivery loss and latches the adapter dead.
+ */
+export function isNotificationDismissal(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("notification-expired");
+}
+
+/**
+ * Fire `dismiss` only while the view is visible; while hidden, defer to the
+ * next visible paint and give up if the session dies first. The contract's
+ * fixed-duration dismissal cannot express native's `dismissAfterVisibleMs`
+ * (toast.tsx pauses the clock while hidden), so this is the closest honest
+ * lifecycle: an unseen success receipt must not expire in the background.
+ */
+export function dismissReceiptWhenSeen(
+  view: {
+    readonly visible: boolean;
+    onVisibility(listener: (visible: boolean) => void): () => void;
+    readonly signal: AbortSignal;
+  },
+  dismiss: () => void,
+): void {
+  if (view.visible) {
+    dismiss();
+    return;
+  }
+  const off = view.onVisibility((visible) => {
+    if (!visible) return;
+    off();
+    dismiss();
+  });
+  view.signal.addEventListener("abort", off, { once: true });
+}
 
 export function mutationToastStart(label: string): {
   readonly severity: "loading";

@@ -38,13 +38,16 @@ import {
   describeStackedProgress,
   describeStackedResult,
   describeStatus,
+  dismissReceiptWhenSeen,
   entryMutation,
+  isNotificationDismissal,
   laneCount,
   laneMutation,
   laneTitle,
   lanesFromChanges,
   mutationToastSettle,
   mutationToastStart,
+  nextThemeVars,
   numstatFor,
   planCommit,
   planRefCreate,
@@ -54,6 +57,7 @@ import {
   refRows,
   refSwitchState,
   refSwitchTarget,
+  releaseMutationReceipt,
   remoteRows,
   repositoryState,
   retainSelection,
@@ -65,7 +69,6 @@ import {
   stackedActionOffers,
   stackedActionSuggestion,
   startMutation,
-  themeVarOverrides,
   worktreeRows,
   VCS_PATHS_MAX,
   type ChangeLane,
@@ -413,22 +416,34 @@ function useThemeVars(
       void api.invoke("getTokens", {}, signal).then(
         (value) => {
           if (!signal.aborted && at === generation)
-            setVars(themeVarOverrides(value.tokens, value.cssVars));
+            setVars(nextThemeVars({ ok: true, tokens: value.tokens, cssVars: value.cssVars }));
         },
-        // Denial or absence leaves the last good map; initially that is the
-        // untouched legacy chain.
-        () => {},
+        // A failed read cannot vouch for the last published map — the
+        // overrides clear and the panel returns to its legacy chain until a
+        // later read succeeds. Only the current generation may clear, so a
+        // stale rejection never wipes a newer good map.
+        () => {
+          if (!signal.aborted && at === generation) setVars(nextThemeVars({ ok: false }));
+        },
       );
     };
     refresh();
     void (async () => {
       try {
         for await (const frame of streams.subscribe("subscribeState", {}, signal)) {
-          if (signal.aborted || frame.type === "closed") return;
+          if (signal.aborted) return;
+          if (frame.type === "closed") break;
           refresh();
         }
       } catch {
-        // Stream loss only stops re-reads — the last resolved map stands.
+        // A lost stream lands in the same clear path as a clean close.
+      }
+      // The subscription is gone, so published overrides can silently go
+      // stale against the next host theme change — clear them and invalidate
+      // any in-flight read rather than painting last-known values.
+      if (!signal.aborted) {
+        generation++;
+        setVars(nextThemeVars({ ok: false }));
       }
     })();
     return () => controller.abort();
@@ -442,9 +457,10 @@ function useThemeVars(
  * notification updated to success or error on settle — never an inline row.
  * The grant-free `getCapabilities` probe names a provider-less host before
  * any write; a `notify` failure latches the adapter off (a denied grant
- * never recovers within a session), and `update`/`dismiss` failures are
- * swallowed — a user-dismissed loading toast must not kill the adapter.
- * Whenever toasts cannot run, the inline mutation row carries the receipt.
+ * never recovers within a session). Every delivery loss — rejected `notify`,
+ * rejected or unapplied `update` — hands that mutation's receipt back to the
+ * inline row through `onReceiptLost`, and a `notification-expired` update
+ * (a user-dismissed loading toast) does so without killing the adapter.
  */
 interface MutationToast {
   readonly settle: (result: { readonly ok: boolean; readonly detail: string }) => void;
@@ -454,7 +470,9 @@ function useMutationToasts(
   host: ClientHost,
   session: ViewSession,
   enabled: boolean,
-): { readonly toastsLive: boolean; readonly begin: (label: string) => MutationToast | null } {
+): {
+  readonly begin: (label: string, onReceiptLost: () => void) => MutationToast | null;
+} {
   const [toastsLive, setToastsLive] = useState(false);
   const dead = useRef(false);
   useEffect(() => {
@@ -483,7 +501,7 @@ function useMutationToasts(
     setToastsLive(false);
   };
 
-  const begin = (label: string): MutationToast | null => {
+  const begin = (label: string, onReceiptLost: () => void): MutationToast | null => {
     if (!toastsLive || dead.current) return null;
     const api = bindApi(uiNotificationsApi, host, session.context);
     const resource = session.context.resource;
@@ -506,13 +524,32 @@ function useMutationToasts(
         (result) => result.notificationId,
         () => {
           markDead();
+          onReceiptLost();
           return null;
         },
       );
+    // The contract's `update` carries no duration, so success receipts are
+    // dismissed on a timer — but an unseen receipt must not expire. Native's
+    // dismissAfterVisibleMs counts visible time; the closest the session
+    // exposes is the view's own visibility, so a hidden view defers the
+    // dismissal until the next visible paint.
+    const dismiss = (notificationId: string) => {
+      void api.invoke("dismiss", { notificationId }, session.signal).then(
+        () => {},
+        () => {},
+      );
+    };
     return {
       settle(result) {
         void posted.then((notificationId) => {
-          if (notificationId === null || dead.current) return;
+          if (notificationId === null) return;
+          if (dead.current) {
+            // The adapter died after this toast posted — retract the
+            // orphaned loading toast and hand the receipt to the row.
+            onReceiptLost();
+            dismiss(notificationId);
+            return;
+          }
           void api
             .invoke(
               "update",
@@ -520,22 +557,32 @@ function useMutationToasts(
               session.signal,
             )
             .then(
-              () => {
-                if (!result.ok) return;
-                setTimeout(() => {
-                  void api.invoke("dismiss", { notificationId }, session.signal).then(
-                    () => {},
-                    () => {},
+              ({ applied }) => {
+                if (!applied) {
+                  // The notification never took the patch — the outcome
+                  // returns to the inline row so it is not silently lost.
+                  onReceiptLost();
+                  return;
+                }
+                if (result.ok)
+                  setTimeout(
+                    () => dismissReceiptWhenSeen(session, () => dismiss(notificationId)),
+                    MUTATION_TOAST_DISMISS_MS,
                   );
-                }, MUTATION_TOAST_DISMISS_MS);
               },
-              () => {},
+              (error) => {
+                onReceiptLost();
+                // A dismissed toast reports notification-expired — the
+                // provider still works, only this receipt goes inline. Any
+                // other rejection is delivery loss and latches the adapter.
+                if (!isNotificationDismissal(error)) markDead();
+              },
             );
         });
       },
     };
   };
-  return { toastsLive, begin };
+  return { begin };
 }
 
 // Every theme-backed value chains a `--t3-version-control-*` hop (published
@@ -623,7 +670,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   };
 
   const repositoryVisible = visible && view === "repository";
-  const { toastsLive, begin: beginToast } = useMutationToasts(host, session, repositoryVisible);
+  const { begin: beginToast } = useMutationToasts(host, session, repositoryVisible);
   const { capabilities, error: capsError } = useCapabilities(
     host,
     session,
@@ -717,24 +764,31 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   ) => {
     if (inFlight.current) return;
     inFlight.current = true;
+    // The toast begins before the phase update so the receipt channel is
+    // recorded on the running phase itself: a mutation that could not start
+    // a notification keeps the inline row even if the capability probe
+    // resolves mid-flight, and a toast that later fails hands the receipt
+    // back through releaseMutationReceipt.
+    const toast = beginToast(label, () => setMutation(releaseMutationReceipt(op)));
     // The ref is the synchronous guard; startMutation is the same
     // single-flight rule expressed on the visible phase.
-    setMutation((phase) => startMutation(phase, op, label) ?? phase);
-    // Native parity: the transient receipt is a loading toast updated on
-    // settle (GitActionsControl). When the notifications contract cannot
-    // serve it, begin returns null and the inline row stays the receipt.
-    const toast = beginToast(label);
+    setMutation(
+      (phase) =>
+        startMutation(phase, op, label, toast === null ? "inline" : "notification") ?? phase,
+    );
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
     invoke(signal)
       .then(
         (detail) => {
-          setMutation(settleMutation(op, { ok: true, detail }));
+          setMutation((phase) => settleMutation(phase, op, { ok: true, detail }));
           toast?.settle({ ok: true, detail });
         },
         (error) => {
           const detail = error instanceof Error ? error.message : "operation unavailable";
-          setMutation(settleMutation(op, { ok: false, detail: `${label} failed: ${detail}` }));
+          setMutation((phase) =>
+            settleMutation(phase, op, { ok: false, detail: `${label} failed: ${detail}` }),
+          );
           toast?.settle({ ok: false, detail });
         },
       )
@@ -1083,7 +1137,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
               Repository status unavailable — {repo.detail}
             </p>
           )}
-          {!toastsLive && describeMutation(mutation) !== null && (
+          {mutation.kind !== "idle" && mutation.receipt === "inline" && (
             <output
               aria-label="Mutation status"
               role={mutation.kind === "failed" ? "alert" : "status"}
