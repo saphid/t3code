@@ -63,33 +63,6 @@ const MAX_OUTPUT_CHUNK_DATA_LENGTH = 8192;
 const MAX_OUTPUT_CHUNKS = 64;
 
 /**
- * Where the longest retained suffix of `text` sits inside `haystack` —
- * the overlap between the stream we received and the stream a snapshot
- * now reports. Streams only ever drop leading bytes, so the surviving
- * portion of our received stream is always a suffix of it; its position
- * in the snapshot contents anchors run positions without identifying the
- * runs themselves by content (identical queries recur).
- */
-function longestContainedSuffixAt(
-  haystack: string,
-  text: string,
-): { start: number; length: number } {
-  if (text.length === 0) return { start: 0, length: 0 };
-  const full = haystack.indexOf(text);
-  if (full >= 0) return { start: full, length: text.length };
-  // Presence is monotone in suffix length — binary search the largest
-  // surviving one.
-  let lo = 0;
-  let hi = text.length;
-  while (hi - lo > 1) {
-    const mid = (lo + hi) >> 1;
-    if (haystack.includes(text.slice(-mid))) lo = mid;
-    else hi = mid;
-  }
-  if (lo === 0) return { start: 0, length: 0 };
-  return { start: haystack.indexOf(text.slice(-lo)), length: lo };
-}
-/**
  * Pre-sink buffer bound (UTF-16 units): output that arrives before the
  * surface mounts is held for replay, but a stalled WASM/font load must not
  * grow it forever. Past the cap the oldest chunks drop and the replay base
@@ -157,6 +130,22 @@ export class TerminalVtAttachment {
    * discards the claims before any content reconciliation.
    */
   #unansweredEpoch: string | null = null;
+  /**
+   * Code units evicted from the front of `#buffered` since `#base` was
+   * set. While nonzero the compressed stream (base + buffered) is NOT a
+   * contiguous slice of the epoch stream, so snapshot reconciliation
+   * cannot prove where our bytes sit and pending claims are dropped.
+   */
+  #bufferedHole = 0;
+  /**
+   * Whether the start of the received stream is anchored: `#base` came
+   * from a snapshot's contents, so our stream begins at a known retention
+   * boundary and can only ever move forward. Post-clear streams
+   * (`#base === ""` after a reset) start mid-window — bytes the server
+   * emitted before our resubscribe sit inside the next snapshot ahead of
+   * our first byte — so position-0 provenance is unprovable there.
+   */
+  #receivedAnchored = false;
   #pending: PendingChunkGroup | null = null;
   #state: TerminalVtAttachmentState = {
     status: "connecting",
@@ -175,6 +164,14 @@ export class TerminalVtAttachment {
    * outer fence cannot see. `closed` frames carry no native sequence.
    */
   #nativeWatermark = -1;
+  /**
+   * Native sequence of the last event we consumed, persisted across
+   * `beginStream` (which must reset the per-subscription watermark for
+   * replay fencing). It marks the epoch-stream position where our
+   * received stream ends — the anchor that makes a resnapshot's contents
+   * provable when its boundary equals this sequence.
+   */
+  #receivedEndSequence = -1;
 
   constructor(terminalId: string, onChange?: () => void) {
     this.terminalId = terminalId;
@@ -192,14 +189,24 @@ export class TerminalVtAttachment {
    * PTY writer attached so their queries get their single reply.
    */
   #replayInto(sink: TerminalVtSink, stream: string, resetBase: boolean) {
+    // A pending reply releases only while its owning epoch is proven: the
+    // claim must match the currently established stream epoch. A mount in
+    // the beginStream→snapshot gap (epoch unproven, null) replays the
+    // bytes suppressed and KEEPS the claims — a later same-epoch snapshot
+    // can still prove and answer them; a different-epoch one discards
+    // them before reconcile. Releasing early would write an old-epoch
+    // reply to whatever process now owns the shared terminalId channel.
+    const releasable = this.#unansweredEpoch === this.#epoch;
     // Runs carry their position — verify the bytes still sit where
     // bookkeeping placed them rather than re-identifying them by content:
     // a resnapshot can hold an identical later copy that must NOT inherit
     // the pending reply.
     const ranges: Array<[number, number]> = [];
-    for (const run of this.#unanswered) {
-      if (stream.startsWith(run.data, run.start)) {
-        ranges.push([run.start, run.start + run.data.length]);
+    if (releasable) {
+      for (const run of this.#unanswered) {
+        if (stream.startsWith(run.data, run.start)) {
+          ranges.push([run.start, run.start + run.data.length]);
+        }
       }
     }
     const suppressed = (write: () => void) => {
@@ -225,24 +232,59 @@ export class TerminalVtAttachment {
       pos = end;
     }
     if (pos < stream.length) suppressed(() => sink.write(stream.slice(pos)));
+    // Released claims were answered — consume them. Unreleased claims
+    // stay pending: only epoch proof or an owner-ending lifecycle event
+    // resolves them. On a mid-replay throw this line is skipped, so a
+    // retry may re-answer a partially parsed query — a bounded duplicate
+    // beats a dropped reply on an already-visible error path.
+    if (releasable) this.#clearUnanswered();
   }
 
   /**
-   * A snapshot re-bases the stream: the portion of our received stream
-   * the server still retains is a suffix of it, sitting somewhere inside
-   * the new contents (which may have appended newer output). Map every
-   * run through that retained-overlap boundary by position — runs before
-   * the boundary are gone, and their queries with them (explicit drop:
-   * nothing remains to answer).
+   * A snapshot re-bases the stream. Equal text is never proof that bytes
+   * survived — an evicted query and a newer identical query look the same
+   * — so claims are only kept where the retention boundary itself proves
+   * their position, and dropped otherwise (explicit drop: nothing remains
+   * to answer, and migrating a claim would send an unsolicited reply).
+   *
+   * Two anchors are provable:
+   * - `boundarySequence === priorReceivedEnd`: no newer events exist, so
+   *   contents must end at our last received byte. `endsWith` then pins
+   *   both ends — contents IS our received suffix, truncation included.
+   * - `!truncated` with an anchored stream: an untruncated snapshot
+   *   covers every retained byte, and retention only drops at the far
+   *   larger buffer cap, so an untruncated epoch has never evicted —
+   *   contents position 0 is provably our stream's own start. `startsWith`
+   *   then verifies the server agrees byte-for-byte.
+   * Everything else — a truncated resnapshot, an unanchored post-clear
+   *   stream, a hole from our own eviction — leaves run positions
+   *   unprovable: drop the claims.
    */
-  #reconcileUnanswered(received: string, contents: string) {
+  #reconcileUnanswered(
+    received: string,
+    contents: string,
+    boundarySequence: number,
+    priorReceivedEnd: number,
+    truncated: boolean,
+  ) {
     if (this.#unanswered.length === 0) return;
-    const match = longestContainedSuffixAt(contents, received);
-    const drop = received.length - match.length;
+    let drop = -1;
+    if (this.#bufferedHole === 0) {
+      if (boundarySequence === priorReceivedEnd && received.endsWith(contents)) {
+        drop = received.length - contents.length;
+      } else if (!truncated && this.#receivedAnchored && contents.startsWith(received)) {
+        drop = 0;
+      }
+    }
+    if (drop < 0) {
+      this.#unanswered = [];
+      return;
+    }
     this.#unanswered = this.#unanswered.flatMap((run) => {
+      const end = run.start + run.data.length;
+      if (end <= drop) return [];
       const start = Math.max(run.start, drop);
-      if (run.start + run.data.length <= drop) return [];
-      return [{ start: match.start + start - drop, data: run.data.slice(start - run.start) }];
+      return [{ start: start - drop, data: run.data.slice(start - run.start) }];
     });
   }
 
@@ -306,7 +348,6 @@ export class TerminalVtAttachment {
       throw error;
     }
     this.#sinkFailure = null;
-    this.#clearUnanswered();
     if (this.#state.ended) return;
     const unfaithful = !this.#replayFaithful;
     if (previousFailure !== null || (unfaithful && !this.#state.degraded)) {
@@ -349,6 +390,7 @@ export class TerminalVtAttachment {
   /** The stream itself failed (network/authority), not the terminal. */
   applyTransportError(message: string) {
     this.#pending = null;
+    this.#clearUnanswered();
     this.#emit({
       status: "error",
       statusText: message,
@@ -395,6 +437,7 @@ export class TerminalVtAttachment {
 
   #fail(message: string) {
     this.#pending = null;
+    this.#clearUnanswered();
     this.#emit({
       status: "error",
       statusText: message,
@@ -433,6 +476,9 @@ export class TerminalVtAttachment {
     }
     // Evicted bytes are gone — any unanswered queries among them are lost
     // with the bytes (already flagged degraded); keep the runs honest.
+    // The stream also stops being a contiguous epoch slice, which makes
+    // the next snapshot's retention boundary unprovable for the survivors.
+    this.#bufferedHole += evicted;
     this.#mapRunsAfterCut(this.#base?.length ?? 0, evicted);
     // Replay needs bytes we no longer hold. A live surface still shows
     // everything, so only flag the visible pane when there is no sink — a
@@ -472,11 +518,15 @@ export class TerminalVtAttachment {
       }
       this.#pending = null;
       const received = (this.#base ?? "") + this.#buffered.join("");
+      const priorReceivedEnd = this.#receivedEndSequence;
       this.#epoch = value.streamEpoch;
       this.#nativeWatermark = value.boundarySequence;
+      this.#receivedEndSequence = value.boundarySequence;
       this.#base = value.contents;
+      this.#receivedAnchored = true;
       this.#buffered = [];
       this.#bufferedLength = 0;
+      this.#bufferedHole = 0;
       // Incarnation change: a pending reply belongs to the process that
       // asked. The new epoch's retained history never earned it — discard
       // the claims before any reconciliation, so a stale query cannot
@@ -486,11 +536,16 @@ export class TerminalVtAttachment {
       }
       // The snapshot's retained contents may extend past the bytes we last
       // received — the server kept accepting output while the subscription
-      // was closed. Unanswered live bytes keep their claim wherever their
-      // positions land inside the new contents; bytes no longer retained
-      // are gone, and their queries with them (explicit drop: nothing
-      // remains to answer).
-      this.#reconcileUnanswered(received, value.contents);
+      // was closed. Claims keep their positions only where the retention
+      // boundary provably anchors them; anything else is an explicit drop
+      // rather than a guess against identical bytes elsewhere.
+      this.#reconcileUnanswered(
+        received,
+        value.contents,
+        value.boundarySequence,
+        priorReceivedEnd,
+        value.truncated,
+      );
       // A snapshot only restores fidelity when the epoch's retained bytes
       // cover process start — an untruncated snapshot in a post-clear epoch
       // is still missing the mode-establishing output.
@@ -500,7 +555,6 @@ export class TerminalVtAttachment {
         // Re-base the live parser; unanswered runs inside the new
         // contents still earn their one reply right now.
         this.#replayInto(this.#sink, value.contents, true);
-        this.#clearUnanswered();
       }
       const ended = value.status === "exited" || value.status === "error";
       const running = this.#runningStatus();
@@ -529,6 +583,12 @@ export class TerminalVtAttachment {
 
     if (value.kind === "closed") {
       this.#pending = null;
+      // The owner of a pending reply is gone on every close except
+      // overflow (same incarnation, subscription-level). Identity change,
+      // terminal close, and terminal error all invalidate it now — a mount
+      // before the replacement snapshot must not release an old-epoch
+      // reply to the new process.
+      if (value.reason !== "overflow") this.#clearUnanswered();
       this.#emit({
         status: "closed",
         statusText: `Output unavailable: ${value.reason}.`,
@@ -554,10 +614,13 @@ export class TerminalVtAttachment {
         return;
       }
       this.#nativeWatermark = value.sequence;
+      this.#receivedEndSequence = value.sequence;
       this.#pending = null;
       this.#base = "";
+      this.#receivedAnchored = false;
       this.#buffered = [];
       this.#bufferedLength = 0;
+      this.#bufferedHole = 0;
       // Cleared bytes are gone — including any unanswered queries inside
       // them; nothing remains to answer.
       this.#clearUnanswered();
@@ -598,6 +661,9 @@ export class TerminalVtAttachment {
         return;
       }
       this.#nativeWatermark = value.sequence;
+      this.#receivedEndSequence = value.sequence;
+      // The process is gone — its pending queries died with it.
+      this.#clearUnanswered();
       this.#emit({
         status: "exited",
         statusText: `Terminal exited (code ${value.exitCode ?? "unknown"}).`,
@@ -637,6 +703,7 @@ export class TerminalVtAttachment {
       const data = this.#pending.parts.join("");
       this.#pending = null;
       this.#nativeWatermark = value.sequence;
+      this.#receivedEndSequence = value.sequence;
       this.#deliver(data);
       return;
     }
@@ -659,6 +726,7 @@ export class TerminalVtAttachment {
       return;
     }
     this.#nativeWatermark = value.sequence;
+    this.#receivedEndSequence = value.sequence;
     this.#deliver(value.data);
   }
 }

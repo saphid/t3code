@@ -51,13 +51,13 @@ var __t3Client = (() => {
     }
   });
 
-  // generated-client.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/generated-client.ts
   var generated_client_exports = {};
   __export(generated_client_exports, {
     default: () => generated_client_default
   });
 
-  // ../../extension-sdk/dist/contracts.js
+  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/contracts.js
   var API_VERSION = 1;
   var MAX_PAYLOAD_BYTES = 64 * 1024;
   function assertId(value) {
@@ -145,7 +145,7 @@ var __t3Client = (() => {
     return manifest;
   }
 
-  // ../../extension-sdk/dist/capabilities.js
+  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/capabilities.js
   function defineApi(definition) {
     return { definition: validateApiDefinition(definition) };
   }
@@ -238,7 +238,7 @@ var __t3Client = (() => {
     return api;
   }
 
-  // ../../extension-sdk/dist/orchestration.js
+  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/orchestration.js
   var ORCHESTRATION_STATUS = "t3.orchestration/status";
   var ORCHESTRATION_CONTROL = "t3.orchestration/control";
   var ORCHESTRATION_READ = "t3.orchestration/read";
@@ -464,7 +464,7 @@ var __t3Client = (() => {
   }
   var ORCHESTRATION_CONTROL_API = orchestrationControlApi.definition;
 
-  // ../../extension-sdk/dist/textEdits.js
+  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/textEdits.js
   var WORKSPACE_READ_TEXT_EDITS = "t3.workspace/text-edits";
   var WORKSPACE_READ_TEXT_GRANT = "t3.workspace/read-text";
   var WORKSPACE_WRITE_TEXT = "t3.workspace/write-text";
@@ -657,7 +657,7 @@ var __t3Client = (() => {
     ]
   });
 
-  // ../../extension-sdk/dist/catalogue.js
+  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/catalogue.js
   var BROWSER_LOCAL_SERVERS = "t3.browser/local-servers";
   var BROWSER_READ_LOCAL_SERVERS = "t3.browser/read-local-servers";
   var browserLocalServersApi = defineStreamApi({
@@ -4043,7 +4043,7 @@ var __t3Client = (() => {
   var TERMINAL_OUTPUT_EVENTS_API = terminalOutputEventsApi.definition;
   var TERMINAL_CONTROL_API = terminalControlApi.definition;
 
-  // ../../extension-sdk/dist/environment.js
+  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/environment.js
   var ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
   var ENVIRONMENT_ASSET_MEDIA_TYPES = [
     "application/wasm",
@@ -4181,7 +4181,7 @@ var __t3Client = (() => {
     return { ...pkg, manifest };
   }
 
-  // ../../extension-sdk/dist/authoring.js
+  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/authoring.js
   var statePreview = (state2) => {
     const encoded = JSON.stringify(state2);
     return encoded.length > 200 ? encoded.slice(0, 200) + "\u2026" : encoded;
@@ -4278,7 +4278,7 @@ var __t3Client = (() => {
     return { id: api.definition.id, versionRange };
   }
 
-  // ../../shared/src/projectScripts.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/shared/src/projectScripts.ts
   function projectScriptRuntimeEnv(input) {
     const env = {
       T3CODE_PROJECT_ROOT: input.project.cwd
@@ -4292,10 +4292,10 @@ var __t3Client = (() => {
     return env;
   }
 
-  // extension.tsx
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/extension.tsx
   var import_react = __toESM(require_react(), 1);
 
-  // ghostty/runtime.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/runtime.ts
   var textDecoder = new TextDecoder();
   var GhosttyRuntime = class _GhosttyRuntime {
     memory;
@@ -4481,15 +4481,15 @@ var __t3Client = (() => {
     return promise;
   }
 
-  // ghostty/platform.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/platform.ts
   function isMacPlatform(platform) {
     return /mac|iphone|ipad|ipod/i.test(platform);
   }
 
-  // ghostty/selection.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/selection.ts
   var SELECTION_MULTI_CLICK_INTERVAL_MS = 500;
 
-  // ghostty/terminal-links.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/terminal-links.ts
   var URL_PATTERN = /https?:\/\/[^\s"'`<>]+/giu;
   var FILE_PATH_PATTERN = /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
   var TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
@@ -4578,7 +4578,7 @@ var __t3Client = (() => {
     };
   }
 
-  // ghostty/keyCodes.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/keyCodes.ts
   var ghosttyKeyboardCodes = [
     "Unidentified",
     "Backquote",
@@ -4818,7 +4818,7 @@ var __t3Client = (() => {
     return event.key.codePointAt(0) ?? 0;
   }
 
-  // ghostty/core.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/core.ts
   var GHOSTTY_SUCCESS = 0;
   var GHOSTTY_OUT_OF_SPACE = -3;
   var MAX_SCROLLBACK_ROWS = 1e4;
@@ -5815,7 +5815,7 @@ var __t3Client = (() => {
     return sameColor(left, right);
   }
 
-  // ghostty/renderer.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/renderer.ts
   var DEFAULT_SELECTION_BACKGROUND = "rgba(72, 122, 191, 0.35)";
   function cssColor(color) {
     return `rgb(${color.r}, ${color.g}, ${color.b})`;
@@ -6000,7 +6000,7 @@ var __t3Client = (() => {
     }
   }
 
-  // ghostty/monospaceFonts.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/monospaceFonts.ts
   function quoteFontFamilyName(name) {
     const bare = name.trim();
     if (bare.length === 0) return "";
@@ -6043,7 +6043,7 @@ var __t3Client = (() => {
     }
   }
 
-  // ghostty/surface.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/surface.ts
   var DEFAULT_TERMINAL_FONT_SIZE = 12;
   var MIN_TERMINAL_FONT_SIZE = 6;
   var MAX_TERMINAL_FONT_SIZE = 32;
@@ -7499,7 +7499,7 @@ var __t3Client = (() => {
     }
   };
 
-  // ghostty/surfaceKeys.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/surfaceKeys.ts
   var TERMINAL_WORD_BACKWARD = "\x1Bb";
   var TERMINAL_WORD_FORWARD = "\x1Bf";
   var TERMINAL_LINE_START = "";
@@ -7562,7 +7562,7 @@ var __t3Client = (() => {
     return null;
   }
 
-  // terminalTheme.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/terminalTheme.ts
   function parseTerminalColor(value, fallback) {
     if (typeof document === "undefined") return fallback;
     const canvas = document.createElement("canvas");
@@ -7651,7 +7651,7 @@ var __t3Client = (() => {
     };
   }
 
-  // ../../shared/src/terminalLabels.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/shared/src/terminalLabels.ts
   function getTerminalLabel(terminalId) {
     const numericSuffix = /^term(?:inal)?-(\d+)$/i.exec(terminalId)?.[1];
     if (numericSuffix) {
@@ -7675,7 +7675,7 @@ var __t3Client = (() => {
     return `term-${nextIndex}`;
   }
 
-  // inputQueue.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/inputQueue.ts
   var TERMINAL_INPUT_SERIALIZED_BUDGET = 48 * 1024;
   var TERMINAL_INPUT_PENDING_BUDGET = 256 * 1024;
   var TERMINAL_INPUT_WRITE_TIMEOUT_MS = 3e4;
@@ -7874,7 +7874,7 @@ var __t3Client = (() => {
     }
   };
 
-  // viewModel.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/viewModel.ts
   var TERMINAL_BUFFER_MAX_BYTES = 512 * 1024;
   var OVERFLOW_RESUBSCRIBE_WINDOW_MS = 1e4;
   var OVERFLOW_RESUBSCRIBE_MAX = 3;
@@ -8461,23 +8461,9 @@ var __t3Client = (() => {
     }
   };
 
-  // vtAttachment.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/vtAttachment.ts
   var MAX_OUTPUT_CHUNK_DATA_LENGTH = 8192;
   var MAX_OUTPUT_CHUNKS = 64;
-  function longestContainedSuffixAt(haystack, text) {
-    if (text.length === 0) return { start: 0, length: 0 };
-    const full = haystack.indexOf(text);
-    if (full >= 0) return { start: full, length: text.length };
-    let lo = 0;
-    let hi = text.length;
-    while (hi - lo > 1) {
-      const mid = lo + hi >> 1;
-      if (haystack.includes(text.slice(-mid))) lo = mid;
-      else hi = mid;
-    }
-    if (lo === 0) return { start: 0, length: 0 };
-    return { start: haystack.indexOf(text.slice(-lo)), length: lo };
-  }
   var MAX_PRE_SINK_OUTPUT_LENGTH = 512 * 1024;
   var TerminalVtAttachment = class {
     terminalId;
@@ -8539,6 +8525,22 @@ var __t3Client = (() => {
      * discards the claims before any content reconciliation.
      */
     #unansweredEpoch = null;
+    /**
+     * Code units evicted from the front of `#buffered` since `#base` was
+     * set. While nonzero the compressed stream (base + buffered) is NOT a
+     * contiguous slice of the epoch stream, so snapshot reconciliation
+     * cannot prove where our bytes sit and pending claims are dropped.
+     */
+    #bufferedHole = 0;
+    /**
+     * Whether the start of the received stream is anchored: `#base` came
+     * from a snapshot's contents, so our stream begins at a known retention
+     * boundary and can only ever move forward. Post-clear streams
+     * (`#base === ""` after a reset) start mid-window — bytes the server
+     * emitted before our resubscribe sit inside the next snapshot ahead of
+     * our first byte — so position-0 provenance is unprovable there.
+     */
+    #receivedAnchored = false;
     #pending = null;
     #state = {
       status: "connecting",
@@ -8557,6 +8559,14 @@ var __t3Client = (() => {
      * outer fence cannot see. `closed` frames carry no native sequence.
      */
     #nativeWatermark = -1;
+    /**
+     * Native sequence of the last event we consumed, persisted across
+     * `beginStream` (which must reset the per-subscription watermark for
+     * replay fencing). It marks the epoch-stream position where our
+     * received stream ends — the anchor that makes a resnapshot's contents
+     * provable when its boundary equals this sequence.
+     */
+    #receivedEndSequence = -1;
     constructor(terminalId, onChange) {
       this.terminalId = terminalId;
       this.#onChange = onChange;
@@ -8571,10 +8581,13 @@ var __t3Client = (() => {
      * PTY writer attached so their queries get their single reply.
      */
     #replayInto(sink, stream, resetBase) {
+      const releasable = this.#unansweredEpoch === this.#epoch;
       const ranges = [];
-      for (const run of this.#unanswered) {
-        if (stream.startsWith(run.data, run.start)) {
-          ranges.push([run.start, run.start + run.data.length]);
+      if (releasable) {
+        for (const run of this.#unanswered) {
+          if (stream.startsWith(run.data, run.start)) {
+            ranges.push([run.start, run.start + run.data.length]);
+          }
         }
       }
       const suppressed = (write) => {
@@ -8597,23 +8610,47 @@ var __t3Client = (() => {
         pos = end;
       }
       if (pos < stream.length) suppressed(() => sink.write(stream.slice(pos)));
+      if (releasable) this.#clearUnanswered();
     }
     /**
-     * A snapshot re-bases the stream: the portion of our received stream
-     * the server still retains is a suffix of it, sitting somewhere inside
-     * the new contents (which may have appended newer output). Map every
-     * run through that retained-overlap boundary by position — runs before
-     * the boundary are gone, and their queries with them (explicit drop:
-     * nothing remains to answer).
+     * A snapshot re-bases the stream. Equal text is never proof that bytes
+     * survived — an evicted query and a newer identical query look the same
+     * — so claims are only kept where the retention boundary itself proves
+     * their position, and dropped otherwise (explicit drop: nothing remains
+     * to answer, and migrating a claim would send an unsolicited reply).
+     *
+     * Two anchors are provable:
+     * - `boundarySequence === priorReceivedEnd`: no newer events exist, so
+     *   contents must end at our last received byte. `endsWith` then pins
+     *   both ends — contents IS our received suffix, truncation included.
+     * - `!truncated` with an anchored stream: an untruncated snapshot
+     *   covers every retained byte, and retention only drops at the far
+     *   larger buffer cap, so an untruncated epoch has never evicted —
+     *   contents position 0 is provably our stream's own start. `startsWith`
+     *   then verifies the server agrees byte-for-byte.
+     * Everything else — a truncated resnapshot, an unanchored post-clear
+     *   stream, a hole from our own eviction — leaves run positions
+     *   unprovable: drop the claims.
      */
-    #reconcileUnanswered(received, contents2) {
+    #reconcileUnanswered(received, contents2, boundarySequence, priorReceivedEnd, truncated) {
       if (this.#unanswered.length === 0) return;
-      const match = longestContainedSuffixAt(contents2, received);
-      const drop = received.length - match.length;
+      let drop = -1;
+      if (this.#bufferedHole === 0) {
+        if (boundarySequence === priorReceivedEnd && received.endsWith(contents2)) {
+          drop = received.length - contents2.length;
+        } else if (!truncated && this.#receivedAnchored && contents2.startsWith(received)) {
+          drop = 0;
+        }
+      }
+      if (drop < 0) {
+        this.#unanswered = [];
+        return;
+      }
       this.#unanswered = this.#unanswered.flatMap((run) => {
+        const end = run.start + run.data.length;
+        if (end <= drop) return [];
         const start = Math.max(run.start, drop);
-        if (run.start + run.data.length <= drop) return [];
-        return [{ start: match.start + start - drop, data: run.data.slice(start - run.start) }];
+        return [{ start: start - drop, data: run.data.slice(start - run.start) }];
       });
     }
     /**
@@ -8664,7 +8701,6 @@ var __t3Client = (() => {
         throw error;
       }
       this.#sinkFailure = null;
-      this.#clearUnanswered();
       if (this.#state.ended) return;
       const unfaithful = !this.#replayFaithful;
       if (previousFailure !== null || unfaithful && !this.#state.degraded) {
@@ -8700,6 +8736,7 @@ var __t3Client = (() => {
     /** The stream itself failed (network/authority), not the terminal. */
     applyTransportError(message) {
       this.#pending = null;
+      this.#clearUnanswered();
       this.#emit({
         status: "error",
         statusText: message,
@@ -8740,6 +8777,7 @@ var __t3Client = (() => {
     }
     #fail(message) {
       this.#pending = null;
+      this.#clearUnanswered();
       this.#emit({
         status: "error",
         statusText: message,
@@ -8770,6 +8808,7 @@ var __t3Client = (() => {
         this.#bufferedLength -= this.#buffered[0].length;
         this.#buffered.shift();
       }
+      this.#bufferedHole += evicted;
       this.#mapRunsAfterCut(this.#base?.length ?? 0, evicted);
       this.#replayFaithful = false;
       if (this.#sink === null && !this.#state.degraded && !this.#state.ended) {
@@ -8799,20 +8838,29 @@ var __t3Client = (() => {
         }
         this.#pending = null;
         const received = (this.#base ?? "") + this.#buffered.join("");
+        const priorReceivedEnd = this.#receivedEndSequence;
         this.#epoch = value.streamEpoch;
         this.#nativeWatermark = value.boundarySequence;
+        this.#receivedEndSequence = value.boundarySequence;
         this.#base = value.contents;
+        this.#receivedAnchored = true;
         this.#buffered = [];
         this.#bufferedLength = 0;
+        this.#bufferedHole = 0;
         if (this.#unanswered.length > 0 && this.#unansweredEpoch !== value.streamEpoch) {
           this.#clearUnanswered();
         }
-        this.#reconcileUnanswered(received, value.contents);
+        this.#reconcileUnanswered(
+          received,
+          value.contents,
+          value.boundarySequence,
+          priorReceivedEnd,
+          value.truncated
+        );
         this.#replayFaithful = !value.truncated && value.streamEpoch !== this.#clearedEpoch;
         const unfaithful = !this.#replayFaithful;
         if (this.#sink) {
           this.#replayInto(this.#sink, value.contents, true);
-          this.#clearUnanswered();
         }
         const ended = value.status === "exited" || value.status === "error";
         const running = this.#runningStatus();
@@ -8831,6 +8879,7 @@ var __t3Client = (() => {
       }
       if (value.kind === "closed") {
         this.#pending = null;
+        if (value.reason !== "overflow") this.#clearUnanswered();
         this.#emit({
           status: "closed",
           statusText: `Output unavailable: ${value.reason}.`,
@@ -8854,10 +8903,13 @@ var __t3Client = (() => {
           return;
         }
         this.#nativeWatermark = value.sequence;
+        this.#receivedEndSequence = value.sequence;
         this.#pending = null;
         this.#base = "";
+        this.#receivedAnchored = false;
         this.#buffered = [];
         this.#bufferedLength = 0;
+        this.#bufferedHole = 0;
         this.#clearUnanswered();
         this.#replayFaithful = false;
         this.#clearedEpoch = this.#epoch;
@@ -8884,6 +8936,8 @@ var __t3Client = (() => {
           return;
         }
         this.#nativeWatermark = value.sequence;
+        this.#receivedEndSequence = value.sequence;
+        this.#clearUnanswered();
         this.#emit({
           status: "exited",
           statusText: `Terminal exited (code ${value.exitCode ?? "unknown"}).`,
@@ -8907,6 +8961,7 @@ var __t3Client = (() => {
         const data = this.#pending.parts.join("");
         this.#pending = null;
         this.#nativeWatermark = value.sequence;
+        this.#receivedEndSequence = value.sequence;
         this.#deliver(data);
         return;
       }
@@ -8927,6 +8982,7 @@ var __t3Client = (() => {
         return;
       }
       this.#nativeWatermark = value.sequence;
+      this.#receivedEndSequence = value.sequence;
       this.#deliver(value.data);
     }
   };
@@ -8966,7 +9022,7 @@ var __t3Client = (() => {
     }
   }
 
-  // extension.tsx
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/extension.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
   var manifestId = "t3.terminal";
   var GHOSTTY_VT_ASSET = "assets/ghostty-vt.wasm";
@@ -9757,10 +9813,10 @@ var __t3Client = (() => {
     ]
   });
 
-  // extension.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/extension.ts
   var extension_default2 = extension_default;
 
-  // generated-client.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/generated-client.ts
   var generated_client_default = extension_default2.client;
   return __toCommonJS(generated_client_exports);
 })();

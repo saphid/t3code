@@ -66,11 +66,19 @@ not re-sent. Live output buffered while detached was never parsed — each
 contiguous run of it replays _with_ the writer attached so its queries
 get exactly one reply, at the cursor position those bytes actually
 produce. Runs carry their position in the replay stream — identical
-queries recur, so position (adjusted through snapshot re-bases and
-eviction), not a content match, decides which bytes earn the reply. Runs
-are fenced to their stream epoch: a pending reply belongs to the process
-that asked and dies with it. Bytes the server no longer retains are an
-explicit drop. Queries inside snapshot/history bytes are treated as
+queries recur, so equal text is never treated as proof a byte survived.
+A resnapshot keeps a claim only where the retention boundary itself
+proves its position: `boundarySequence` equal to the last received event
+pins contents to the end of our stream (`endsWith`), and an untruncated
+snapshot in an eviction-free epoch pins it to the start (`startsWith`).
+Anything else — a truncated resnapshot, an unanchored post-clear stream,
+a hole left by our own buffer bound — is an explicit drop rather than a
+migration to a coincidental copy. Runs are fenced to their stream epoch
+in both directions: a pending reply belongs to the process that asked and
+is discarded at incarnation end (identity-changed/close/exit), and replay
+holds claims unreleased while the epoch is unproven — a mount inside the
+beginStream→snapshot gap answers nothing until a same-epoch snapshot
+re-proves the claim. Queries inside snapshot/history bytes are treated as
 already-rendered history and stay suppressed (the documented drop: only
 live output the attachment saw go undelivered earns a reply).
 

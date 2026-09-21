@@ -551,6 +551,211 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
     },
   );
 
+  NodeTest.it(
+    "an evicted unanswered query cannot migrate to a newer identical query (P2)",
+    async () => {
+      // Astra r6: the original query falls entirely outside the retained
+      // tail while a NEWER identical query lands inside the resnapshot.
+      // The pending reply must drop with its bytes — never re-anchor to
+      // the coincidental copy (which is snapshot history and stays
+      // suppressed). Expected: no replies at all.
+      const attachment = new TerminalVtAttachment("term-1");
+      const snap = (contents, boundarySequence, truncated, retainedByteLength) => ({
+        kind: "snapshot",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        status: "running",
+        contents,
+        retainedByteLength,
+        truncated,
+        boundarySequence,
+      });
+      const output = (sequence, data) => ({
+        kind: "output",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        sequence,
+        chunkIndex: 0,
+        chunkCount: 1,
+        data,
+      });
+      const closed = {
+        kind: "closed",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        reason: "overflow",
+      };
+      attachment.applyFrame({ streamId: "s", sequence: 1 }, snap("", 0, false, 0));
+      attachment.applyFrame({ streamId: "s", sequence: 2 }, output(1, "\x1b[6n"));
+      attachment.applyFrame({ streamId: "s", sequence: 3 }, closed);
+      attachment.beginStream();
+      // 8192 bytes emitted while disconnected: the original query is fully
+      // evicted, and the retained tail ends with a DIFFERENT ESC[6n.
+      const contents = `${"x".repeat(8180)}\x1b[Hlater\x1b[6n`;
+      attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap(contents, 2, true, 8196));
+      const { core, writes } = await makeCore();
+      attachment.attach(core);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      NodeAssert.deepEqual(writes, []);
+      core.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "a same-boundary resnapshot keeps provably-retained unanswered queries (P2)",
+    async () => {
+      // The retention boundary itself can prove survival: with no newer
+      // events (boundary === watermark) the contents MUST end at our last
+      // received byte, so a contents suffix match pins both ends — here
+      // the server evicted our leading output but the query survived.
+      const attachment = new TerminalVtAttachment("term-1");
+      const snap = (contents, boundarySequence, retainedByteLength = contents.length) => ({
+        kind: "snapshot",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        status: "running",
+        contents,
+        retainedByteLength,
+        truncated: false,
+        boundarySequence,
+      });
+      const output = (sequence, data) => ({
+        kind: "output",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        sequence,
+        chunkIndex: 0,
+        chunkCount: 1,
+        data,
+      });
+      const closed = {
+        kind: "closed",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        reason: "overflow",
+      };
+      attachment.applyFrame({ streamId: "s", sequence: 1 }, snap("", 0, 0));
+      attachment.applyFrame({ streamId: "s", sequence: 2 }, output(1, "AAAA"));
+      attachment.applyFrame({ streamId: "s", sequence: 3 }, output(2, "\x1b[6n"));
+      attachment.applyFrame({ streamId: "s", sequence: 4 }, closed);
+      attachment.beginStream();
+      // Same boundary — nothing newer. Retained contents are just the
+      // surviving tail: the DSR itself, its position proven by the pinned
+      // end of the stream.
+      attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap("\x1b[6n", 2, 4));
+      const { core, writes } = await makeCore();
+      attachment.attach(core);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      NodeAssert.deepEqual(writes, ["\x1b[1;1R"]);
+      core.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "a pending reply is dropped when mounting before the replacement snapshot (P2)",
+    async () => {
+      // Astra r6: identity-changed invalidates the pending reply AT the
+      // close — a renderer that finishes mounting before the replacement
+      // subscription delivers its snapshot must not emit an old-epoch
+      // reply to the new process over the shared terminalId channel.
+      const attachment = new TerminalVtAttachment("term-1");
+      const snap = (contents, boundarySequence, streamEpoch) => ({
+        kind: "snapshot",
+        terminalId: "term-1",
+        streamEpoch,
+        status: "running",
+        contents,
+        retainedByteLength: contents.length,
+        truncated: false,
+        boundarySequence,
+      });
+      const output = (sequence, data) => ({
+        kind: "output",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        sequence,
+        chunkIndex: 0,
+        chunkCount: 1,
+        data,
+      });
+      const closed = {
+        kind: "closed",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        reason: "identity-changed",
+      };
+      attachment.applyFrame({ streamId: "s", sequence: 1 }, snap("", 0, "epoch-1"));
+      attachment.applyFrame({ streamId: "s", sequence: 2 }, output(1, "\x1b[6n"));
+      attachment.applyFrame({ streamId: "s", sequence: 3 }, closed);
+      attachment.beginStream();
+      // Mount completes in the gap — the epoch-1 claim is already dead.
+      const { core, writes } = await makeCore();
+      attachment.attach(core);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      NodeAssert.deepEqual(writes, []);
+      // The replacement snapshot then re-bases the same renderer; its
+      // history-only query stays suppressed as well.
+      attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap("fresh\x1b[6n", 1, "epoch-2"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      NodeAssert.deepEqual(writes, []);
+      core.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "a mount in the resubscribe gap holds the reply until the epoch re-proves (P2)",
+    async () => {
+      // Overflow (not identity-changed): the same incarnation keeps
+      // running, so its pending reply is legitimate — but while the epoch
+      // is unproven (between beginStream and the replacement snapshot) a
+      // mount must not release it. The reply lands once, when the
+      // same-epoch snapshot proves the claim.
+      const attachment = new TerminalVtAttachment("term-1");
+      const snap = (contents, boundarySequence, retainedByteLength = contents.length) => ({
+        kind: "snapshot",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        status: "running",
+        contents,
+        retainedByteLength,
+        truncated: false,
+        boundarySequence,
+      });
+      const output = (sequence, data) => ({
+        kind: "output",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        sequence,
+        chunkIndex: 0,
+        chunkCount: 1,
+        data,
+      });
+      const closed = {
+        kind: "closed",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        reason: "overflow",
+      };
+      attachment.applyFrame({ streamId: "s", sequence: 1 }, snap("", 0, 0));
+      attachment.applyFrame({ streamId: "s", sequence: 2 }, output(1, "\x1b[6n"));
+      attachment.applyFrame({ streamId: "s", sequence: 3 }, closed);
+      attachment.beginStream();
+      const { core, writes } = await makeCore();
+      // Mount before the epoch is proven: the query parses suppressed —
+      // the reply is held, not released to whatever owns the channel.
+      attachment.attach(core);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      NodeAssert.deepEqual(writes, []);
+      // Same-epoch snapshot with no newer events: boundary === the last
+      // received sequence, contents is the provable retained suffix —
+      // the claim proves out and answers exactly once.
+      attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap("\x1b[6n", 1));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      NodeAssert.deepEqual(writes, ["\x1b[1;1R"]);
+      core.dispose();
+    },
+  );
+
   NodeTest.it("a pending reply does not cross a terminal incarnation change (P2)", async () => {
     // Astra r5: a query queued against epoch e must not deliver into
     // epoch e+1 — the new process's retained history never earned it,
