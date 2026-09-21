@@ -2,8 +2,9 @@
  * `t3.ui/*` adoption for the Diff panel: theme tokens, the keybinding
  * registration pair, and the panels ops behind the toggle. Everything here
  * degrades honestly — a missing grant or a host without the client-provider
- * seam leaves the panel working on its static fallbacks, and the toggle
- * command simply never registers.
+ * seam leaves the panel working on its static fallbacks, and a toggle that
+ * cannot reach `t3.ui/panels` is never offered, or withdraws itself once
+ * access is confirmed gone.
  *
  * Reference: design/t3-ui-contract.md §2.1 (theme), §2.2 (keybindings),
  * §2.3 (notifications), §2.4 (panels). The native `diff.toggle` binding is
@@ -145,6 +146,25 @@ export const DIFF_TOGGLE_VIEW_COMMANDS: readonly GlobalCommandDescriptor[] = [
 
 export type DiffSurfaceAction = "open" | "activate" | "close";
 
+/** `unavailable`: the panels capability is missing or revoked — not an operation failure. */
+export type DiffToggleOutcome = DiffSurfaceAction | "unavailable" | null;
+
+/**
+ * The ops `toggle` drives. `getCapabilities` is grant-free and reports
+ * provider reachability; grant state is enforced per-invoke by the broker
+ * (`API capability denied: <grant>`), so a denied or revoked `t3.ui/panels`
+ * surfaces as an invoke error even when every op reports reachable —
+ * `PANEL_ACCESS_DENIED` recognizes that specific denial as permanent.
+ */
+const PANEL_TOGGLE_OPERATIONS = [
+  "listSurfaces",
+  "openSurface",
+  "activateSurface",
+  "closeSurface",
+] as const;
+
+const PANEL_ACCESS_DENIED = /capability denied: t3\.ui\/panels/;
+
 /**
  * Toggle decision over a `listSurfaces` result: absent opens the surface, a
  * backgrounded tab activates it, and the active tab closes — the contract has
@@ -168,25 +188,35 @@ export function diffToggleAction(
 export async function toggleDiffSurface(
   host: ClientHost,
   context: ViewContext,
-): Promise<DiffSurfaceAction | null> {
+): Promise<DiffToggleOutcome> {
   const threadId = context.resource.threadId;
   if (threadId === undefined) return null;
   const signal = AbortSignal.timeout(10_000);
   const api = bindApi(uiPanelsApi, host, context);
-  const { surfaces } = await api.invoke("listSurfaces", { threadId }, signal);
-  const action = diffToggleAction(surfaces);
-  if (action === "open") {
-    await api.invoke(
-      "openSurface",
-      { surfaceId: DIFF_SURFACE_ID, placement: "side-panel", threadId },
-      signal,
-    );
-  } else if (action === "activate") {
-    await api.invoke("activateSurface", { surfaceId: DIFF_SURFACE_ID, threadId }, signal);
-  } else {
-    await api.invoke("closeSurface", { surfaceId: DIFF_SURFACE_ID, threadId }, signal);
+  try {
+    const capabilities = await api.invoke("getCapabilities", {}, signal);
+    if (
+      !PANEL_TOGGLE_OPERATIONS.every((operation) => capabilities.operations?.[operation] === true)
+    )
+      return "unavailable";
+    const { surfaces } = await api.invoke("listSurfaces", { threadId }, signal);
+    const action = diffToggleAction(surfaces);
+    if (action === "open") {
+      await api.invoke(
+        "openSurface",
+        { surfaceId: DIFF_SURFACE_ID, placement: "side-panel", threadId },
+        signal,
+      );
+    } else if (action === "activate") {
+      await api.invoke("activateSurface", { surfaceId: DIFF_SURFACE_ID, threadId }, signal);
+    } else {
+      await api.invoke("closeSurface", { surfaceId: DIFF_SURFACE_ID, threadId }, signal);
+    }
+    return action;
+  } catch (error) {
+    if (error instanceof Error && PANEL_ACCESS_DENIED.test(error.message)) return "unavailable";
+    throw error;
   }
-  return action;
 }
 
 /**
@@ -218,49 +248,108 @@ const reportToggleFailure = (host: ClientHost, context: ViewContext, error: unkn
     });
 };
 
+/** Same channel as `reportToggleFailure`, for access loss rather than op failure. */
+const reportToggleUnavailable = (host: ClientHost, context: ViewContext) => {
+  const threadId = context.resource.threadId;
+  void bindApi(uiNotificationsApi, host, context)
+    .invoke(
+      "notify",
+      {
+        severity: "error",
+        title: "The diff panel toggle is unavailable",
+        body: "The t3.ui/panels capability is not granted or its provider is gone; the toggle command has been withdrawn.",
+        dismissible: true,
+        durationMs: 8_000,
+        ...(threadId ? { threadId, anchor: "thread" as const } : { anchor: "global" as const }),
+      },
+      AbortSignal.timeout(10_000),
+    )
+    .catch(() => {
+      console.warn(`t3.diff/${DIFF_TOGGLE_COMMAND_ID} is unavailable: t3.ui/panels access lost`);
+    });
+};
+
+/**
+ * Shared dispatch for both registration paths. "unavailable" means the
+ * panels capability is gone — the command must not keep looking runnable:
+ * withdraw the owning set so the palette drops it, and say why. Withdrawal
+ * never waits on the notification channel.
+ */
+const dispatchToggle = (
+  host: ClientHost,
+  context: ViewContext,
+  commandSetToken: string | undefined,
+) => {
+  void toggleDiffSurface(host, context)
+    .then(async (result) => {
+      if (result !== "unavailable") return;
+      reportToggleUnavailable(host, context);
+      if (commandSetToken === undefined) return;
+      await bindApi(uiKeybindingsApi, host, context)
+        .invoke("unregisterCommands", { commandSetToken }, AbortSignal.timeout(10_000))
+        .catch(() => {});
+    })
+    .catch((error) => reportToggleFailure(host, context, error));
+};
+
 /**
  * Factory-time staging of the installation-scoped toggle. Absent on hosts
  * without the seam — nothing registers, dispatch and palette simply never
- * see the command.
+ * see the command. The host registry also rejects the set at commit when the
+ * installation lacks `t3.ui/panels`; a post-commit grant revocation is
+ * caught at dispatch, which withdraws the committed set.
  */
 export function stageDiffCommands(host: ClientHost): void {
-  host.registerGlobalCommands?.(DIFF_TOGGLE_GLOBAL_COMMANDS, ({ commandId, context }) => {
-    if (commandId !== DIFF_TOGGLE_COMMAND_ID) return;
-    void toggleDiffSurface(host, context).catch((error) =>
-      reportToggleFailure(host, context, error),
-    );
-  });
+  const handle = host.registerGlobalCommands?.(
+    DIFF_TOGGLE_GLOBAL_COMMANDS,
+    ({ commandId, context }) => {
+      if (commandId !== DIFF_TOGGLE_COMMAND_ID) return;
+      dispatchToggle(host, context, handle?.token);
+    },
+  );
 }
 
 /**
- * The mounted view's half of `t3.ui/keybindings`: register the view-scoped
- * command set on this session's context, then bind the view-local handler so
- * the focused-view dispatch tier closes the panel directly. A rejected
- * registration or a host without a binding store leaves the installation
- * tier as the only path; disposal unregisters the view's set.
+ * The mounted view's half of `t3.ui/keybindings`: probe `t3.ui/panels`
+ * reachability first — a view whose toggle cannot run never offers the
+ * command — then register the view-scoped set and bind the view-local
+ * handler so the focused-view dispatch tier closes the panel directly. A
+ * rejected registration or a host without a binding store leaves the
+ * installation tier as the only path; disposal unregisters the view's set.
  */
 export function bindDiffViewCommands(host: ClientHost, session: ViewSession): void {
-  const api = bindApi(uiKeybindingsApi, host, session.context);
-  void api.invoke("registerCommands", { commands: DIFF_TOGGLE_VIEW_COMMANDS }, session.signal).then(
-    ({ commandSetToken, results }) => {
+  const keybindings = bindApi(uiKeybindingsApi, host, session.context);
+  const panels = bindApi(uiPanelsApi, host, session.context);
+  void panels.invoke("getCapabilities", {}, session.signal).then(
+    (capabilities) => {
       if (session.signal.aborted) return;
-      session.onDispose(() => {
-        void api
-          .invoke("unregisterCommands", { commandSetToken }, AbortSignal.timeout(10_000))
-          .catch(() => {});
-      });
-      if (!results.every((result) => result.status === "registered")) return;
-      try {
-        session.bindCommands(commandSetToken, ({ commandId, context }) => {
-          if (commandId !== DIFF_TOGGLE_COMMAND_ID) return;
-          void toggleDiffSurface(host, context).catch((error) =>
-            reportToggleFailure(host, context, error),
-          );
-        });
-      } catch {
-        // No binding store on this host — dispatch stays on the
-        // installation-level handler staged at factory time.
-      }
+      if (
+        !PANEL_TOGGLE_OPERATIONS.every((operation) => capabilities.operations?.[operation] === true)
+      )
+        return;
+      void keybindings
+        .invoke("registerCommands", { commands: DIFF_TOGGLE_VIEW_COMMANDS }, session.signal)
+        .then(
+          ({ commandSetToken, results }) => {
+            if (session.signal.aborted) return;
+            session.onDispose(() => {
+              void keybindings
+                .invoke("unregisterCommands", { commandSetToken }, AbortSignal.timeout(10_000))
+                .catch(() => {});
+            });
+            if (!results.every((result) => result.status === "registered")) return;
+            try {
+              session.bindCommands(commandSetToken, ({ commandId, context }) => {
+                if (commandId !== DIFF_TOGGLE_COMMAND_ID) return;
+                dispatchToggle(host, context, commandSetToken);
+              });
+            } catch {
+              // No binding store on this host — dispatch stays on the
+              // installation-level handler staged at factory time.
+            }
+          },
+          () => {},
+        );
     },
     () => {},
   );

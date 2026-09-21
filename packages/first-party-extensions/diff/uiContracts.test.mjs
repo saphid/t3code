@@ -27,14 +27,39 @@ const CONTEXT = {
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-/** A ClientHost stub recording invokeApi calls; subscribeApi defaults to an ended stream. */
-const fakeHost = ({ invoke, subscribe } = {}) => {
+const ALL_PANEL_OPS = {
+  listSurfaces: true,
+  openSurface: true,
+  activateSurface: true,
+  closeSurface: true,
+  hideDock: true,
+  showDock: true,
+};
+
+/**
+ * A ClientHost stub recording invokeApi calls; subscribeApi defaults to an
+ * ended stream. `t3.ui/panels` getCapabilities answers all-ops-true unless
+ * `panelOps` overrides individual flags or is `false` (probe falls through
+ * to the custom invoke, e.g. to reject).
+ */
+const fakeHost = ({ invoke, subscribe, panelOps } = {}) => {
   const calls = [];
+  const capabilities = {
+    adapter: "fake",
+    operations: { ...ALL_PANEL_OPS, ...panelOps },
+    clients: [],
+  };
   return {
     calls,
     host: {
       invokeApi(request, _signal) {
         calls.push(request);
+        if (
+          request.id === "t3.ui/panels" &&
+          request.method === "getCapabilities" &&
+          panelOps !== false
+        )
+          return Promise.resolve(capabilities);
         return Promise.resolve(invoke ? invoke(request) : {});
       },
       subscribeApi(_request, signal) {
@@ -169,12 +194,13 @@ NodeTest.test("toggleDiffSurface opens, activates, or closes via t3.ui/panels", 
           : { applied: true, surfaceId: DIFF_SURFACE_ID },
     });
     const action = await toggleDiffSurface(host, CONTEXT);
-    NodeAssert.equal(calls[0].method, "listSurfaces");
-    NodeAssert.deepEqual(calls[0].input, { threadId: "thread-1" });
-    NodeAssert.equal(calls[1].method, method);
-    NodeAssert.equal(calls[1].input.surfaceId, DIFF_SURFACE_ID);
-    NodeAssert.equal(calls[1].input.threadId, "thread-1");
-    if (method === "openSurface") NodeAssert.equal(calls[1].input.placement, "side-panel");
+    NodeAssert.equal(calls[0].method, "getCapabilities");
+    NodeAssert.equal(calls[1].method, "listSurfaces");
+    NodeAssert.deepEqual(calls[1].input, { threadId: "thread-1" });
+    NodeAssert.equal(calls[2].method, method);
+    NodeAssert.equal(calls[2].input.surfaceId, DIFF_SURFACE_ID);
+    NodeAssert.equal(calls[2].input.threadId, "thread-1");
+    if (method === "openSurface") NodeAssert.equal(calls[2].input.placement, "side-panel");
     NodeAssert.equal(
       action,
       method === "openSurface" ? "open" : method === "activateSurface" ? "activate" : "close",
@@ -230,8 +256,29 @@ NodeTest.test("stageDiffCommands stages the native-equivalent global toggle", as
   await flush();
   NodeAssert.deepEqual(
     calls.map((call) => call.method),
-    ["listSurfaces", "closeSurface"],
+    ["getCapabilities", "listSurfaces", "closeSurface"],
   );
+});
+
+NodeTest.test("toggleDiffSurface reports unavailable when panels ops are missing", async () => {
+  const { host, calls } = fakeHost({ panelOps: { openSurface: false } });
+  NodeAssert.equal(await toggleDiffSurface(host, CONTEXT), "unavailable");
+  NodeAssert.deepEqual(
+    calls.map((call) => call.method),
+    ["getCapabilities"],
+  );
+});
+
+NodeTest.test("toggleDiffSurface maps a denied panels grant to unavailable", async () => {
+  // The broker's live grant check rejects every op even while the provider
+  // stays reachable — a revoked t3.ui/panels is access loss, not op failure.
+  const { host } = fakeHost({
+    invoke: (request) =>
+      request.id === "t3.ui/panels"
+        ? Promise.reject(new Error("API capability denied: t3.ui/panels"))
+        : {},
+  });
+  NodeAssert.equal(await toggleDiffSurface(host, CONTEXT), "unavailable");
 });
 
 NodeTest.test("toggle dispatch failures surface via t3.ui/notifications", async () => {
@@ -292,6 +339,70 @@ NodeTest.test(
   },
 );
 
+NodeTest.test("a global dispatch against missing panels access withdraws the command", async () => {
+  const { host, calls } = fakeHost({
+    panelOps: { closeSurface: false },
+    invoke: (request) =>
+      request.id === "t3.ui/notifications" ? { notificationId: "n-1" } : { unregistered: true },
+  });
+  let staged;
+  host.registerGlobalCommands = (commands, handler) => {
+    staged = { commands, handler };
+    return { status: "active", token: "global-tok", onDidChange: () => () => {} };
+  };
+  stageDiffCommands(host);
+  staged.handler({ commandId: DIFF_TOGGLE_COMMAND_ID, context: CONTEXT });
+  await flush();
+  const notify = calls.find(
+    (call) => call.id === "t3.ui/notifications" && call.method === "notify",
+  );
+  NodeAssert.ok(notify);
+  NodeAssert.equal(notify.input.severity, "error");
+  const unregister = calls.find(
+    (call) => call.id === "t3.ui/keybindings" && call.method === "unregisterCommands",
+  );
+  NodeAssert.ok(unregister);
+  NodeAssert.equal(unregister.input.commandSetToken, "global-tok");
+  NodeAssert.equal(
+    calls.some((call) => call.method === "listSurfaces"),
+    false,
+  );
+});
+
+NodeTest.test("unavailable toggles still report and withdraw when notify is denied", async () => {
+  const { host, calls } = fakeHost({
+    invoke: (request) => {
+      if (request.id === "t3.ui/panels")
+        return Promise.reject(new Error("API capability denied: t3.ui/panels"));
+      if (request.id === "t3.ui/notifications")
+        return Promise.reject(new Error("API capability denied: t3.ui/notify"));
+      return { unregistered: true };
+    },
+  });
+  let staged;
+  host.registerGlobalCommands = (commands, handler) => {
+    staged = { commands, handler };
+    return { status: "active", token: "global-tok", onDidChange: () => () => {} };
+  };
+  const warnings = [];
+  const original = console.warn;
+  console.warn = (...args) => warnings.push(args);
+  try {
+    stageDiffCommands(host);
+    staged.handler({ commandId: DIFF_TOGGLE_COMMAND_ID, context: CONTEXT });
+    await flush();
+  } finally {
+    console.warn = original;
+  }
+  const unregister = calls.find(
+    (call) => call.id === "t3.ui/keybindings" && call.method === "unregisterCommands",
+  );
+  NodeAssert.ok(unregister);
+  NodeAssert.equal(unregister.input.commandSetToken, "global-tok");
+  NodeAssert.equal(warnings.length, 1);
+  NodeAssert.equal(warnings[0][0], "t3.diff/toggle is unavailable: t3.ui/panels access lost");
+});
+
 NodeTest.test("bindDiffViewCommands registers the view set and binds its handler", async () => {
   const { host } = fakeHost({
     invoke: (request) =>
@@ -344,6 +455,16 @@ NodeTest.test(
     await flush();
     NodeAssert.equal(bound.length, 0);
 
+    // A failed capabilities probe must not throw either — registration is
+    // skipped and the installation tier keeps the command.
+    const deadProbe = fakeHost({
+      panelOps: false,
+      invoke: () => Promise.reject(new Error("no provider")),
+    });
+    NodeAssert.doesNotThrow(() => bindDiffViewCommands(deadProbe.host, session));
+    await flush();
+    NodeAssert.equal(bound.length, 0);
+
     // A host without a binding store throws synchronously from bindCommands —
     // the installation-level staged set remains the dispatch path.
     const noStore = fakeHost({
@@ -364,6 +485,73 @@ NodeTest.test(
     await flush();
   },
 );
+
+NodeTest.test(
+  "bindDiffViewCommands never offers the command when panels ops are unavailable",
+  async () => {
+    const { host, calls } = fakeHost({
+      panelOps: { listSurfaces: false },
+      invoke: () => ({
+        commandSetToken: "tok-1",
+        results: [{ commandId: DIFF_TOGGLE_COMMAND_ID, status: "registered" }],
+      }),
+    });
+    const bound = [];
+    const session = {
+      context: CONTEXT,
+      signal: new AbortController().signal,
+      bindCommands: (token, handler) => bound.push({ token, handler }),
+      onDispose: () => {},
+    };
+    bindDiffViewCommands(host, session);
+    await flush();
+    NodeAssert.equal(bound.length, 0);
+    NodeAssert.equal(
+      calls.some((call) => call.method === "registerCommands"),
+      false,
+    );
+  },
+);
+
+NodeTest.test("a revoked panels grant withdraws the view command at dispatch", async () => {
+  const { host, calls } = fakeHost({
+    invoke: (request) => {
+      if (request.id === "t3.ui/keybindings") {
+        if (request.method === "registerCommands")
+          return {
+            commandSetToken: "tok-1",
+            results: [{ commandId: DIFF_TOGGLE_COMMAND_ID, status: "registered" }],
+          };
+        return { unregistered: true };
+      }
+      if (request.id === "t3.ui/panels")
+        return Promise.reject(new Error("API capability denied: t3.ui/panels"));
+      return { notificationId: "n-1" };
+    },
+  });
+  const bound = [];
+  const session = {
+    context: CONTEXT,
+    signal: new AbortController().signal,
+    bindCommands: (token, handler) => bound.push({ token, handler }),
+    onDispose: () => {},
+  };
+  bindDiffViewCommands(host, session);
+  await flush();
+  NodeAssert.equal(bound.length, 1);
+  bound[0].handler({ commandId: DIFF_TOGGLE_COMMAND_ID, context: CONTEXT });
+  await flush();
+  const unregister = calls.find(
+    (call) => call.id === "t3.ui/keybindings" && call.method === "unregisterCommands",
+  );
+  NodeAssert.ok(unregister);
+  NodeAssert.equal(unregister.input.commandSetToken, "tok-1");
+  const notify = calls.find(
+    (call) => call.id === "t3.ui/notifications" && call.method === "notify",
+  );
+  NodeAssert.ok(notify);
+  NodeAssert.equal(notify.input.title, "The diff panel toggle is unavailable");
+});
 
 NodeTest.test("watchThemeTokens resolves tokens and re-resolves on stream events", async () => {
   let reads = 0;

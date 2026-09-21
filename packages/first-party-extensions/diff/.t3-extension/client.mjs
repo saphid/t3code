@@ -5435,6 +5435,13 @@ var __t3Client = (() => {
       scope: "thread"
     }
   ];
+  var PANEL_TOGGLE_OPERATIONS = [
+    "listSurfaces",
+    "openSurface",
+    "activateSurface",
+    "closeSurface"
+  ];
+  var PANEL_ACCESS_DENIED = /capability denied: t3\.ui\/panels/;
   function diffToggleAction(surfaces) {
     const existing = surfaces.find((surface) => surface.id === DIFF_SURFACE_ID);
     if (existing === void 0) return "open";
@@ -5445,20 +5452,28 @@ var __t3Client = (() => {
     if (threadId === void 0) return null;
     const signal = AbortSignal.timeout(1e4);
     const api = bindApi(uiPanelsApi, host, context);
-    const { surfaces } = await api.invoke("listSurfaces", { threadId }, signal);
-    const action = diffToggleAction(surfaces);
-    if (action === "open") {
-      await api.invoke(
-        "openSurface",
-        { surfaceId: DIFF_SURFACE_ID, placement: "side-panel", threadId },
-        signal
-      );
-    } else if (action === "activate") {
-      await api.invoke("activateSurface", { surfaceId: DIFF_SURFACE_ID, threadId }, signal);
-    } else {
-      await api.invoke("closeSurface", { surfaceId: DIFF_SURFACE_ID, threadId }, signal);
+    try {
+      const capabilities = await api.invoke("getCapabilities", {}, signal);
+      if (!PANEL_TOGGLE_OPERATIONS.every((operation) => capabilities.operations?.[operation] === true))
+        return "unavailable";
+      const { surfaces } = await api.invoke("listSurfaces", { threadId }, signal);
+      const action = diffToggleAction(surfaces);
+      if (action === "open") {
+        await api.invoke(
+          "openSurface",
+          { surfaceId: DIFF_SURFACE_ID, placement: "side-panel", threadId },
+          signal
+        );
+      } else if (action === "activate") {
+        await api.invoke("activateSurface", { surfaceId: DIFF_SURFACE_ID, threadId }, signal);
+      } else {
+        await api.invoke("closeSurface", { surfaceId: DIFF_SURFACE_ID, threadId }, signal);
+      }
+      return action;
+    } catch (error) {
+      if (error instanceof Error && PANEL_ACCESS_DENIED.test(error.message)) return "unavailable";
+      throw error;
     }
-    return action;
   }
   var reportToggleFailure = (host, context, error) => {
     const detail = error instanceof Error ? error.message : String(error);
@@ -5478,33 +5493,68 @@ var __t3Client = (() => {
       console.warn(`t3.diff/${DIFF_TOGGLE_COMMAND_ID} dispatch failed:`, error);
     });
   };
-  function stageDiffCommands(host) {
-    host.registerGlobalCommands?.(DIFF_TOGGLE_GLOBAL_COMMANDS, ({ commandId, context }) => {
-      if (commandId !== DIFF_TOGGLE_COMMAND_ID) return;
-      void toggleDiffSurface(host, context).catch(
-        (error) => reportToggleFailure(host, context, error)
-      );
+  var reportToggleUnavailable = (host, context) => {
+    const threadId = context.resource.threadId;
+    void bindApi(uiNotificationsApi, host, context).invoke(
+      "notify",
+      {
+        severity: "error",
+        title: "The diff panel toggle is unavailable",
+        body: "The t3.ui/panels capability is not granted or its provider is gone; the toggle command has been withdrawn.",
+        dismissible: true,
+        durationMs: 8e3,
+        ...threadId ? { threadId, anchor: "thread" } : { anchor: "global" }
+      },
+      AbortSignal.timeout(1e4)
+    ).catch(() => {
+      console.warn(`t3.diff/${DIFF_TOGGLE_COMMAND_ID} is unavailable: t3.ui/panels access lost`);
     });
+  };
+  var dispatchToggle = (host, context, commandSetToken) => {
+    void toggleDiffSurface(host, context).then(async (result) => {
+      if (result !== "unavailable") return;
+      reportToggleUnavailable(host, context);
+      if (commandSetToken === void 0) return;
+      await bindApi(uiKeybindingsApi, host, context).invoke("unregisterCommands", { commandSetToken }, AbortSignal.timeout(1e4)).catch(() => {
+      });
+    }).catch((error) => reportToggleFailure(host, context, error));
+  };
+  function stageDiffCommands(host) {
+    const handle = host.registerGlobalCommands?.(
+      DIFF_TOGGLE_GLOBAL_COMMANDS,
+      ({ commandId, context }) => {
+        if (commandId !== DIFF_TOGGLE_COMMAND_ID) return;
+        dispatchToggle(host, context, handle?.token);
+      }
+    );
   }
   function bindDiffViewCommands(host, session) {
-    const api = bindApi(uiKeybindingsApi, host, session.context);
-    void api.invoke("registerCommands", { commands: DIFF_TOGGLE_VIEW_COMMANDS }, session.signal).then(
-      ({ commandSetToken, results }) => {
+    const keybindings = bindApi(uiKeybindingsApi, host, session.context);
+    const panels = bindApi(uiPanelsApi, host, session.context);
+    void panels.invoke("getCapabilities", {}, session.signal).then(
+      (capabilities) => {
         if (session.signal.aborted) return;
-        session.onDispose(() => {
-          void api.invoke("unregisterCommands", { commandSetToken }, AbortSignal.timeout(1e4)).catch(() => {
-          });
-        });
-        if (!results.every((result) => result.status === "registered")) return;
-        try {
-          session.bindCommands(commandSetToken, ({ commandId, context }) => {
-            if (commandId !== DIFF_TOGGLE_COMMAND_ID) return;
-            void toggleDiffSurface(host, context).catch(
-              (error) => reportToggleFailure(host, context, error)
-            );
-          });
-        } catch {
-        }
+        if (!PANEL_TOGGLE_OPERATIONS.every((operation) => capabilities.operations?.[operation] === true))
+          return;
+        void keybindings.invoke("registerCommands", { commands: DIFF_TOGGLE_VIEW_COMMANDS }, session.signal).then(
+          ({ commandSetToken, results }) => {
+            if (session.signal.aborted) return;
+            session.onDispose(() => {
+              void keybindings.invoke("unregisterCommands", { commandSetToken }, AbortSignal.timeout(1e4)).catch(() => {
+              });
+            });
+            if (!results.every((result) => result.status === "registered")) return;
+            try {
+              session.bindCommands(commandSetToken, ({ commandId, context }) => {
+                if (commandId !== DIFF_TOGGLE_COMMAND_ID) return;
+                dispatchToggle(host, context, commandSetToken);
+              });
+            } catch {
+            }
+          },
+          () => {
+          }
+        );
       },
       () => {
       }
