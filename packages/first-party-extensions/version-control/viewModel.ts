@@ -477,12 +477,24 @@ export function stackedActionOffers(
   // An open PR is named before push feasibility — native's reason order.
   const openPrBlocked = hasOpenPr ? "A pull request is already open for this branch" : null;
   const prDeltaBlocked = !hasDefaultDelta ? "No commits over the default branch" : null;
+  /**
+   * `create_pr` needs push FEASIBILITY but not outstanding commits —
+   * native's canCreatePr only asks for a clean tree, a default-branch
+   * delta, no open PR and a reachable remote; GitManager skips the push
+   * phase when the upstream is already current. Requiring aheadCount > 0
+   * would strand the ordinary already-pushed branch.
+   */
+  const createPrBlocked =
+    openPrBlocked ??
+    (local.hasWorkingTreeChanges ? "Commit local changes first" : null) ??
+    pushPhaseBlocked ??
+    prDeltaBlocked;
   return [
     offer("commit", commitBlocked),
     offer("commit_push", commitBlocked ?? pushPhaseBlocked),
     offer("commit_push_pr", commitBlocked ?? openPrBlocked ?? pushPhaseBlocked ?? prDeltaBlocked),
     offer("push", pushBlocked),
-    offer("create_pr", openPrBlocked ?? pushBlocked ?? prDeltaBlocked),
+    offer("create_pr", createPrBlocked),
   ];
 }
 
@@ -516,6 +528,21 @@ export function stackedActionSuggestion(
   return null;
 }
 
+/**
+ * Native's `requiresDefaultBranchConfirmation` — every action except a
+ * plain commit needs an explicit continue/feature-ref decision before it
+ * runs on the default ref. Picking "new feature branch" IS the native
+ * alternative, so a checked featureBranch already answers the prompt.
+ */
+export function stackedActionNeedsConfirm(
+  action: VcsActionKind,
+  local: VcsStatusLocal | null,
+  featureBranch: boolean,
+): boolean {
+  if (featureBranch || local?.isDefaultRef !== true) return false;
+  return action !== "commit";
+}
+
 /** Live composite progress, folded from `actionProgress` events. */
 export interface StackedActionProgress {
   readonly action: VcsActionKind | null;
@@ -525,7 +552,7 @@ export interface StackedActionProgress {
   readonly hook: { readonly name: string | null; readonly lastLine: string | null } | null;
   readonly result: VcsActionResult | null;
   readonly failure: { readonly phase: VcsActionPhase | null; readonly message: string } | null;
-  readonly closed: "overflow" | null;
+  readonly closed: "overflow" | "authorization-revoked" | null;
 }
 
 export const IDLE_STACKED_PROGRESS: StackedActionProgress = {

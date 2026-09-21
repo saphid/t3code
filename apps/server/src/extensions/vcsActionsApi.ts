@@ -695,6 +695,30 @@ export function createVcsActionsApiProvider(
             Effect.andThen(resolve(scope.context)),
             Effect.asVoid,
           );
+          /**
+           * Post-service recheck — the broker's invoke post-check wraps
+           * only the early `actionId` return, so the detached fiber itself
+           * re-runs authority + the full caller-chain grant check + scope
+           * re-resolve once native work completes (the resourcesLease
+           * precedent's post half). A denial lands AFTER the phase
+           * terminal as `closed{authorization-revoked}` — git effects
+           * already persisted, so the event names the check that failed
+           * rather than a phase — and the link/refresh tail is skipped:
+           * revoked authority does not get to keep mutating.
+           */
+          const postCheck = Effect.tryPromise({
+            try: () => metadata.assertAuthority?.() ?? Promise.resolve(),
+            catch: () =>
+              failure("vcs.actions.run", "VCS authority was revoked after the action ran."),
+          }).pipe(
+            Effect.andThen(
+              createsPr
+                ? requireChainGrant("vcs.actions.run", PRS_WRITE, context, metadata)
+                : Effect.void,
+            ),
+            Effect.andThen(resolve(scope.context)),
+            Effect.asVoid,
+          );
           const work = preflight.pipe(
             Effect.andThen(
               dependencies.gitWorkflow.runStackedAction(
@@ -729,7 +753,22 @@ export function createVcsActionsApiProvider(
                   markDone(record);
                 }),
               onSuccess: (result) =>
-                linkAndRefresh(result).pipe(Effect.ensuring(Effect.sync(() => markDone(record)))),
+                postCheck.pipe(
+                  Effect.matchCauseEffect({
+                    onFailure: () =>
+                      Effect.sync(() => {
+                        appendEvent(record, {
+                          kind: "closed",
+                          reason: "authorization-revoked",
+                        });
+                        markDone(record);
+                      }),
+                    onSuccess: () =>
+                      linkAndRefresh(result).pipe(
+                        Effect.ensuring(Effect.sync(() => markDone(record))),
+                      ),
+                  }),
+                ),
             }),
           );
           yield* Effect.forkDetach(work);

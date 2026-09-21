@@ -54,6 +54,7 @@ import {
   prsChecksLabel,
   prsChecksSummary,
   prsCheckStatusLabel,
+  prsDraftKey,
   prsGate,
   prsListHasMore,
   prsListInput,
@@ -75,6 +76,7 @@ import {
   prsWriteUnavailableNote,
   prsWriteVerdictOptions,
   renderableFromPatch,
+  settlePrsDraft,
   type DiffFileRow,
   type PrsDiffDelivery,
   type PrsInvolvement,
@@ -891,6 +893,8 @@ interface PrsThreadWriteControls {
   readonly resolveError: string | null;
   readonly replyPending: boolean;
   readonly replyError: string | null;
+  readonly replyDraft: string;
+  readonly onReplyDraftChange: (value: string) => void;
   readonly onReply: (threadId: string, body: string) => void;
   readonly onResolve: (threadId: string, resolved: boolean) => void;
 }
@@ -906,10 +910,8 @@ function ReviewThreadSection(props: {
   pageError: string | null;
   /** Write controls for this thread; null where `t3.prs/write` is not ready. */
   write: PrsThreadWriteControls | null;
-  /** Remount key — a settled reply clears the box, a failed one keeps it. */
-  writeTick: number;
 }) {
-  const { thread, canPage, onLoadMore, paging, unrecoverable, pageError, write, writeTick } = props;
+  const { thread, canPage, onLoadMore, paging, unrecoverable, pageError, write } = props;
   return (
     <section
       aria-label={`Thread on ${prsThreadAnchor(thread)}`}
@@ -983,11 +985,12 @@ function ReviewThreadSection(props: {
           <PrsWriteErrorLine error={write.resolveError} />
           {write.canReply && (
             <PrsComposer
-              key={`${thread.id}:${writeTick}`}
               label="Reply"
               placeholder="Reply to this thread"
+              value={write.replyDraft}
               pending={write.replyPending}
               error={write.replyError}
+              onChange={write.onReplyDraftChange}
               onSubmit={(body) => write.onReply(thread.id, body)}
             />
           )}
@@ -1248,25 +1251,26 @@ function PrsActionButton(props: {
 
 /**
  * Textarea + submit shared by the comment composer, the review bar and
- * thread replies. The draft is not cleared on click — a failed write
- * keeps the author's words; success remounts the composer through the
- * caller's `writeTick` key.
+ * thread replies. The draft lives in the panel, not here — a refresh
+ * reprobe unmounts the whole ready subtree, and a composer-local
+ * useState would silently take the author's words with it.
  */
 function PrsComposer(props: {
   label: string;
   placeholder: string;
+  value: string;
   pending: boolean;
   error: string | null;
+  onChange: (value: string) => void;
   onSubmit: (body: string) => void;
 }) {
-  const { label, placeholder, pending, error, onSubmit } = props;
-  const [body, setBody] = useState("");
+  const { label, placeholder, value, pending, error, onChange, onSubmit } = props;
   return (
     <div style={{ padding: "4px 10px" }}>
       <textarea
         aria-label={label}
-        value={body}
-        onChange={(event) => setBody(event.target.value)}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
         rows={3}
         style={{ ...inputStyle, width: "100%", resize: "vertical" }}
@@ -1274,8 +1278,8 @@ function PrsComposer(props: {
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
         <button
           type="button"
-          disabled={pending || body.trim() === ""}
-          onClick={() => onSubmit(body)}
+          disabled={pending || value.trim() === ""}
+          onClick={() => onSubmit(value)}
           style={control}
         >
           {pending ? `${label}…` : label}
@@ -1293,19 +1297,20 @@ function PrsComposer(props: {
  */
 function PrsReviewComposer(props: {
   verdicts: readonly { readonly value: PrsWriteVerdict; readonly label: string }[];
+  body: string;
   pending: boolean;
   error: string | null;
+  onBodyChange: (value: string) => void;
   onSubmit: (verdict: PrsWriteVerdict, body: string) => void;
 }) {
-  const { verdicts, pending, error, onSubmit } = props;
+  const { verdicts, body, pending, error, onBodyChange, onSubmit } = props;
   const [verdict, setVerdict] = useState<PrsWriteVerdict>(verdicts[0]?.value ?? "comment");
-  const [body, setBody] = useState("");
   return (
     <div style={{ padding: "4px 10px" }}>
       <textarea
         aria-label="Review body"
         value={body}
-        onChange={(event) => setBody(event.target.value)}
+        onChange={(event) => onBodyChange(event.target.value)}
         placeholder={
           verdict === "approve" ? "Review body (optional for an approval)" : "Review body"
         }
@@ -1397,10 +1402,15 @@ export function PullRequestsPanel(props: {
   const writeProbe = usePrsWriteCapabilities(host, session, visible && ready, tick);
   const write = prsWriteGate(writeProbe.capabilities, writeProbe.error);
   const writeOps = write.kind === "ready" ? write.operations : null;
-  // Per-write-key ticks — a successful submit remounts only ITS composer
-  // empty; a draft on an unrelated control survives (a posted comment
-  // must not erase a half-written review).
-  const [writeTicks, setWriteTicks] = useState<Readonly<Record<string, number>>>({});
+  /**
+   * Drafts live HERE, above the capability-gated subtree — a completed
+   * invalidation bumps `tick`, the probes return null while they re-read,
+   * and `ready` unmounts every composer. Composer-local state dies with
+   * the subtree; panel state survives it. Keys are `${prsRefKey}:${kind}`
+   * so a draft belongs to its PR and its composer — a posted comment
+   * clears only the submitted version of its own text.
+   */
+  const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>({});
   const [writeState, setWriteState] = useState<PrsWriteState | null>(null);
 
   const refreshes = usePrsRefreshes(
@@ -1457,12 +1467,25 @@ export function PullRequestsPanel(props: {
       .finally(() => controller.abort());
   };
 
+  const selectedKey = selected === null ? null : prsRefKey(selected);
+  const draftKey = (key: string) => prsDraftKey(selectedKey, key);
+  const draft = (key: string) => drafts[draftKey(key)] ?? "";
+  const setDraft = (key: string, value: string) =>
+    setDrafts((current) => ({ ...current, [draftKey(key)]: value }));
+
   /**
    * Single-flight write runner — one invoke at a time so two clicks can
    * never double-post. A settled write re-reads through `runInvalidate`;
-   * a failed one keeps its named error on the control that asked.
+   * a failed one keeps its named error on the control that asked. `draft`
+   * names the submitted text: success clears it ONLY if the draft is
+   * still the submitted version — edits typed while the request was in
+   * flight are newer words and stay.
    */
-  const runWrite = (key: string, invoke: (signal: AbortSignal) => Promise<unknown>) => {
+  const runWrite = (
+    key: string,
+    invoke: (signal: AbortSignal) => Promise<unknown>,
+    draft?: { readonly key: string; readonly submitted: string },
+  ) => {
     if (writeState?.pending) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -1471,7 +1494,10 @@ export function PullRequestsPanel(props: {
       () => {
         if (signal.aborted) return;
         setWriteState(null);
-        setWriteTicks((ticks) => ({ ...ticks, [key]: (ticks[key] ?? 0) + 1 }));
+        if (draft !== undefined) {
+          const storeKey = draftKey(draft.key);
+          setDrafts((current) => settlePrsDraft(current, storeKey, draft.submitted));
+        }
         runInvalidate();
       },
       (error) => {
@@ -1518,16 +1544,21 @@ export function PullRequestsPanel(props: {
   const threadWrite = (thread: PrsReviewThread): PrsThreadWriteControls | null => {
     if (selected === null || write.kind !== "ready") return null;
     const ref = selected;
+    const replyKey = `reply:${thread.id}`;
     return {
       canReply: write.operations["prs.replyToThread"],
       canResolve: write.operations["prs.setThreadResolution"],
       resolvePending: writePending(`resolve:${thread.id}`),
       resolveError: writeError(`resolve:${thread.id}`),
-      replyPending: writePending(`reply:${thread.id}`),
-      replyError: writeError(`reply:${thread.id}`),
+      replyPending: writePending(replyKey),
+      replyError: writeError(replyKey),
+      replyDraft: draft(replyKey),
+      onReplyDraftChange: (value) => setDraft(replyKey, value),
       onReply: (threadId, body) =>
-        runWrite(`reply:${threadId}`, (signal) =>
-          writeApi().invoke("replyToThread", { ...ref, threadId, body }, signal),
+        runWrite(
+          replyKey,
+          (signal) => writeApi().invoke("replyToThread", { ...ref, threadId, body }, signal),
+          { key: replyKey, submitted: body },
         ),
       onResolve: (threadId, resolved) =>
         runWrite(`resolve:${threadId}`, (signal) =>
@@ -1536,7 +1567,6 @@ export function PullRequestsPanel(props: {
     };
   };
 
-  const selectedKey = selected === null ? null : prsRefKey(selected);
   const pagedScope = selectedKey === null ? null : `${revision}\n${selectedKey}`;
   useEffect(() => {
     const current = pagedGeneration.current;
@@ -2095,7 +2125,6 @@ export function PullRequestsPanel(props: {
                             pageError={paged?.error ?? null}
                             onLoadMore={loadThreadComments}
                             write={threadWrite(merged)}
-                            writeTick={writeTicks[`reply:${merged.id}`] ?? 0}
                           />
                         );
                       })}
@@ -2120,14 +2149,18 @@ export function PullRequestsPanel(props: {
                       )}
                       {writeOps?.["prs.comment"] === true && (
                         <PrsComposer
-                          key={`comment:${writeTicks["comment"] ?? 0}`}
                           label="Comment"
                           placeholder="Leave a comment"
+                          value={draft("comment")}
                           pending={writePending("comment")}
                           error={writeError("comment")}
+                          onChange={(value) => setDraft("comment", value)}
                           onSubmit={(body) =>
-                            runWrite("comment", (signal) =>
-                              writeApi().invoke("comment", { ...selected, body }, signal),
+                            runWrite(
+                              "comment",
+                              (signal) =>
+                                writeApi().invoke("comment", { ...selected, body }, signal),
+                              { key: "comment", submitted: body },
                             )
                           }
                         />
@@ -2140,17 +2173,21 @@ export function PullRequestsPanel(props: {
                         <section aria-label="Submit a review" style={{ paddingBottom: 4 }}>
                           <h3 style={headingStyle}>Submit a review</h3>
                           <PrsReviewComposer
-                            key={`review:${writeTicks["review"] ?? 0}`}
                             verdicts={prsWriteVerdictOptions(write.verdicts)}
+                            body={draft("review")}
                             pending={writePending("review")}
                             error={writeError("review")}
+                            onBodyChange={(value) => setDraft("review", value)}
                             onSubmit={(verdict, body) =>
-                              runWrite("review", (signal) =>
-                                writeApi().invoke(
-                                  "submitReview",
-                                  { ...selected, verdict, body, comments: [] },
-                                  signal,
-                                ),
+                              runWrite(
+                                "review",
+                                (signal) =>
+                                  writeApi().invoke(
+                                    "submitReview",
+                                    { ...selected, verdict, body, comments: [] },
+                                    signal,
+                                  ),
+                                { key: "review", submitted: body },
                               )
                             }
                           />

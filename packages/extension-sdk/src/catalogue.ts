@@ -4221,6 +4221,11 @@ export type VcsActionResult = {
  * stream by name when a consumer falls behind or the retained history is
  * cut, never a silent gap. `action_finished` means the git phases finished;
  * the adapter's link+refresh tail (native ordering) may still be settling.
+ * `closed{authorization-revoked}` may follow the phase terminal when the
+ * detached post-service recheck finds authority or the dynamic PR grant
+ * gone — git effects already persisted, so the denial is named by the
+ * check that failed, never a generic `action_failed{phase}`. Consumers
+ * must read the stream to settlement, not stop at `action_finished`.
  */
 export type VcsActionProgressEvent =
   | {
@@ -4260,7 +4265,7 @@ export type VcsActionProgressEvent =
       readonly phase: VcsActionPhase | null;
       readonly message: string;
     }
-  | { readonly kind: "closed"; readonly reason: "overflow" };
+  | { readonly kind: "closed"; readonly reason: "overflow" | "authorization-revoked" };
 
 export type VcsActionProgressInput = { readonly actionId: string };
 
@@ -4515,7 +4520,7 @@ const vcsActionProgressEventSchema = {
       required: ["kind", "reason"],
       properties: {
         kind: { const: "closed" },
-        reason: { enum: ["overflow"] },
+        reason: { enum: ["overflow", "authorization-revoked"] },
       },
     },
   ],

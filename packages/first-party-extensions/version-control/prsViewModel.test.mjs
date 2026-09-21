@@ -16,6 +16,7 @@ import {
   prsActorLabel,
   prsChecksLabel,
   prsChecksSummary,
+  prsDraftKey,
   prsGate,
   prsListHasMore,
   prsListInput,
@@ -40,6 +41,7 @@ import {
   prsWriteVerdictOptions,
   renderableFromPatch,
   resolveDiffPath,
+  settlePrsDraft,
   verifyPrsDiffAssembly,
 } from "./prsViewModel.ts";
 
@@ -680,4 +682,31 @@ NodeTest.test("prsWriteActionLabel and prsWriteUnavailableNote name the states",
     prsWriteUnavailableNote({ kind: "unavailable", reason: "cli-missing", detail: null }),
     /CLI/,
   );
+});
+
+NodeTest.test("prsDraftKey scopes a draft to its PR and composer", () => {
+  NodeAssert.equal(prsDraftKey("github:o/r#1", "comment"), "github:o/r#1\ncomment");
+  NodeAssert.notEqual(prsDraftKey("github:o/r#1", "review"), prsDraftKey("github:o/r#2", "review"));
+  NodeAssert.equal(prsDraftKey(null, "comment"), "-\ncomment");
+});
+
+NodeTest.test("settlePrsDraft clears only the submitted version", () => {
+  const drafts = {
+    "pr1\ncomment": "posted comment",
+    "pr1\nreview": "half-written review",
+    "pr1\nreply:t7": "reply draft",
+  };
+  // A successful comment write drops ITS draft and leaves the rest —
+  // this is the state a refresh reprobe must not have destroyed.
+  const settled = settlePrsDraft(drafts, "pr1\ncomment", "posted comment");
+  NodeAssert.deepEqual(settled, {
+    "pr1\nreview": "half-written review",
+    "pr1\nreply:t7": "reply draft",
+  });
+  // Edits typed while the request was in flight are newer work — the
+  // success must not discard them.
+  const edited = { ...drafts, "pr1\ncomment": "posted comment — and more" };
+  NodeAssert.equal(settlePrsDraft(edited, "pr1\ncomment", "posted comment"), edited);
+  // A failed or unrelated write never clears anything.
+  NodeAssert.equal(settlePrsDraft(drafts, "pr1\ncomment", "different text"), drafts);
 });

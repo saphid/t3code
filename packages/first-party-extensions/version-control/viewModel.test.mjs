@@ -34,6 +34,7 @@ import {
   retainSelection,
   settleMutation,
   stackedActionLabel,
+  stackedActionNeedsConfirm,
   stackedActionOffers,
   stackedActionSuggestion,
   startMutation,
@@ -794,6 +795,77 @@ NodeTest.describe("vcs view model — stacked actions", () => {
     NodeAssert.equal(offerOf(offers, "commit_push").disabled, null);
   });
 
+  NodeTest.it("offers create_pr on an already-pushed branch with a default delta", () => {
+    // Clean feature branch, upstream current (ahead 0), commits over the
+    // default ref — native's canCreatePr needs push feasibility, not
+    // outstanding commits: GitManager skips the push phase when the
+    // upstream is already current.
+    const offers = stackedActionOffers(
+      local({ hasWorkingTreeChanges: false }),
+      remote({ aheadCount: 0, aheadOfDefaultCount: 2 }),
+      EMPTY_LANES,
+      false,
+    );
+    NodeAssert.equal(offerOf(offers, "create_pr").disabled, null);
+    NodeAssert.equal(
+      stackedActionSuggestion(
+        local({ hasWorkingTreeChanges: false }),
+        remote({ aheadCount: 0, aheadOfDefaultCount: 2 }),
+      ),
+      "create_pr",
+    );
+    // Its own rules still stand: dirty tree, open PR, no delta.
+    NodeAssert.match(
+      offerOf(
+        stackedActionOffers(
+          local({ hasWorkingTreeChanges: true }),
+          remote({ aheadCount: 0, aheadOfDefaultCount: 2 }),
+          lanes(),
+          false,
+        ),
+        "create_pr",
+      ).disabled ?? "",
+      /Commit local changes/,
+    );
+    NodeAssert.match(
+      offerOf(
+        stackedActionOffers(
+          local({ hasWorkingTreeChanges: false }),
+          remote({ aheadCount: 0, aheadOfDefaultCount: 2, pr: { state: "open", number: 9 } }),
+          EMPTY_LANES,
+          false,
+        ),
+        "create_pr",
+      ).disabled ?? "",
+      /already open/,
+    );
+    NodeAssert.match(
+      offerOf(
+        stackedActionOffers(
+          local({ hasWorkingTreeChanges: false }),
+          remote({ aheadCount: 0, aheadOfDefaultCount: 0 }),
+          EMPTY_LANES,
+          false,
+        ),
+        "create_pr",
+      ).disabled ?? "",
+      /default branch/,
+    );
+  });
+
+  NodeTest.it("requires the default-branch confirmation for every action but commit", () => {
+    const onDefault = local({ isDefaultRef: true, refName: "main" });
+    NodeAssert.equal(stackedActionNeedsConfirm("commit", onDefault, false), false);
+    for (const action of ["push", "create_pr", "commit_push", "commit_push_pr"]) {
+      NodeAssert.equal(stackedActionNeedsConfirm(action, onDefault, false), true);
+    }
+    // A checked feature-branch choice IS the native alternative — no prompt.
+    NodeAssert.equal(stackedActionNeedsConfirm("commit_push_pr", onDefault, true), false);
+    // Off the default ref nothing needs the prompt.
+    NodeAssert.equal(stackedActionNeedsConfirm("commit_push_pr", local(), false), false);
+    NodeAssert.equal(stackedActionNeedsConfirm("push", null, false), false);
+  });
+
   NodeTest.it("lets a feature branch run with a clean tree and no branch delta", () => {
     const offers = stackedActionOffers(
       local({ hasWorkingTreeChanges: false, isDefaultRef: true }),
@@ -901,6 +973,32 @@ NodeTest.describe("vcs view model — stacked actions", () => {
       phase: "push",
       message: "rejected: non-fast-forward",
     });
+  });
+
+  NodeTest.it("carries the post-service revocation closed event by name", () => {
+    let model = IDLE_STACKED_PROGRESS;
+    model = applyStackedEvent(model, {
+      kind: "action_started",
+      action: "push",
+      phases: ["push"],
+    });
+    model = applyStackedEvent(model, {
+      kind: "action_finished",
+      action: "push",
+      result: {
+        action: "push",
+        branch: { status: "skipped_not_requested" },
+        commit: { status: "skipped_no_changes", messageSource: "not_applicable" },
+        push: { status: "pushed", branch: "feat" },
+        pr: { status: "skipped_not_requested", contentSource: "not_applicable" },
+        toast: { title: "Pushed", cta: { kind: "none" } },
+      },
+    });
+    // The phase terminal arrived — the detached post-check can still
+    // append a named denial after it.
+    model = applyStackedEvent(model, { kind: "closed", reason: "authorization-revoked" });
+    NodeAssert.equal(model.closed, "authorization-revoked");
+    NodeAssert.notEqual(model.result, null);
   });
 
   NodeTest.it("describes the settled result with provenance markers", () => {

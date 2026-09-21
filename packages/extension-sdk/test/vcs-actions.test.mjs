@@ -89,7 +89,9 @@ NodeTest.test("run returns an action id; progress carries the T2 event family", 
   const closed = vcsStreams.actionProgress.eventSchema.oneOf.find(
     (variant) => variant.properties.kind.const === "closed",
   );
-  NodeAssert.deepEqual(closed.properties.reason.enum, ["overflow"]);
+  // overflow = bounded-queue cut; authorization-revoked = the detached
+  // post-service recheck found authority/grant gone after phases ran.
+  NodeAssert.deepEqual(closed.properties.reason.enum, ["overflow", "authorization-revoked"]);
 });
 
 NodeTest.test("no clone or standalone prs.create surface exists on either contract", () => {

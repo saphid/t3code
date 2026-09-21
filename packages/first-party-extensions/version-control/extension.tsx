@@ -54,6 +54,7 @@ import {
   retainSelection,
   settleMutation,
   stackedActionLabel,
+  stackedActionNeedsConfirm,
   stackedActionOffers,
   stackedActionSuggestion,
   startMutation,
@@ -399,6 +400,10 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   const [commitMessage, setCommitMessage] = useState("");
   const [stackedChoice, setStackedChoice] = useState<VcsActionKind | null>(null);
   const [featureBranch, setFeatureBranch] = useState(false);
+  // Native's default-branch confirmation — set while the continue-or-
+  // feature-ref decision is on screen; the run fires only from its
+  // buttons.
+  const [pendingConfirm, setPendingConfirm] = useState<VcsActionKind | null>(null);
   const [stacked, setStacked] = useState<{
     actionId: string;
     model: StackedActionProgress;
@@ -607,10 +612,15 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
    * Blank commitMessage keeps native leave-blank auto-generate semantics;
    * a staged subset scopes the commit phase like `planCommit` does.
    */
-  const runStacked = (offer: { action: VcsActionKind; label: string; disabled: string | null }) => {
+  const runStacked = (
+    offer: { action: VcsActionKind; label: string; disabled: string | null },
+    options?: { featureBranch?: boolean },
+  ) => {
     if (offer.disabled !== null) return;
+    setPendingConfirm(null);
     const message = commitMessage.trim();
     const stagedPaths = lanes.staged.map((entry) => entry.path);
+    const useFeatureBranch = options?.featureBranch ?? featureBranch;
     const commits =
       offer.action === "commit" ||
       offer.action === "commit_push" ||
@@ -622,7 +632,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
         {
           action: offer.action,
           ...(message === "" ? {} : { commitMessage: message }),
-          ...(featureBranch ? { featureBranch: true } : {}),
+          ...(useFeatureBranch ? { featureBranch: true } : {}),
           ...(commits && stagedPaths.length > 0 ? { paths: stagedPaths } : {}),
         },
         signal,
@@ -634,23 +644,31 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
         { actionId },
         signal,
       );
+      // Read to settlement, not just `action_finished` — the detached
+      // post-service recheck can still append `closed` naming a revoked
+      // grant after the phase terminal.
       for await (const frame of stream) {
         model = applyStackedEvent(model, frame.value);
         setStacked({ actionId, model });
-        if (model.result !== null) {
-          setCommitMessage("");
-          return describeStackedResult(model.result);
-        }
-        if (model.failure !== null)
-          throw new Error(
-            model.failure.phase === null
-              ? model.failure.message
-              : `Failed during ${model.failure.phase}: ${model.failure.message}`,
-          );
-        if (model.closed === "overflow")
-          throw new Error("Action progress overflowed — result unknown");
       }
-      throw new Error("Action progress ended before the action settled");
+      if (model.failure !== null)
+        throw new Error(
+          model.failure.phase === null
+            ? model.failure.message
+            : `Failed during ${model.failure.phase}: ${model.failure.message}`,
+        );
+      if (model.closed === "overflow")
+        throw new Error("Action progress overflowed — result unknown");
+      if (model.closed === "authorization-revoked")
+        throw new Error(
+          "Authorization was revoked at the post-action check — the action's effects may have persisted",
+        );
+      if (model.result === null) throw new Error("Action progress ended before the action settled");
+      // Clear the box only when this action consumed the input and the
+      // author hasn't typed something new during the run — a push-only
+      // success must not erase an unrelated draft.
+      if (commits) setCommitMessage((current) => (current === commitMessage ? "" : current));
+      return describeStackedResult(model.result);
     });
   };
 
@@ -1159,7 +1177,10 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                         aria-label="Stacked action"
                         value={chosenOffer.action}
                         disabled={busy}
-                        onChange={(event) => setStackedChoice(event.target.value as VcsActionKind)}
+                        onChange={(event) => {
+                          setStackedChoice(event.target.value as VcsActionKind);
+                          setPendingConfirm(null);
+                        }}
                         style={{ ...control, padding: "2px 4px" }}
                       >
                         {stackedOffers.map((offer) => (
@@ -1175,7 +1196,11 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                       <button
                         type="button"
                         disabled={busy || chosenOffer.disabled !== null}
-                        onClick={() => runStacked(chosenOffer)}
+                        onClick={() =>
+                          stackedActionNeedsConfirm(chosenOffer.action, status.local, featureBranch)
+                            ? setPendingConfirm(chosenOffer.action)
+                            : runStacked(chosenOffer)
+                        }
                         style={control}
                       >
                         {busy && mutation.kind === "running" && mutation.op === "stacked"
@@ -1196,7 +1221,10 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                             type="checkbox"
                             checked={featureBranch}
                             disabled={busy}
-                            onChange={(event) => setFeatureBranch(event.target.checked)}
+                            onChange={(event) => {
+                              setFeatureBranch(event.target.checked);
+                              setPendingConfirm(null);
+                            }}
                           />
                           New feature branch
                         </label>
@@ -1206,6 +1234,69 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                       )}
                     </div>
                   )}
+                  {pendingConfirm !== null &&
+                    (() => {
+                      const pending = stackedOffers.find(
+                        (entry) => entry.action === pendingConfirm,
+                      );
+                      if (pending === undefined || pending.disabled !== null) return null;
+                      const branchName = status.local?.refName ?? "the default ref";
+                      return (
+                        <div
+                          role="alertdialog"
+                          aria-label="Confirm default-branch action"
+                          style={{
+                            margin: "4px 0",
+                            padding: "4px 6px",
+                            border: "1px solid var(--border, #dfe3e8)",
+                            borderRadius: 5,
+                            fontSize: 11,
+                          }}
+                        >
+                          <div style={{ marginBottom: 4 }}>
+                            {pending.label} on default ref &quot;{branchName}&quot;? You can
+                            continue on this ref or create a feature ref and run the same action
+                            there.
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                              flexWrap: "wrap",
+                            }}
+                          >
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => runStacked(pending, { featureBranch: false })}
+                              style={control}
+                            >
+                              {pending.label} on {branchName}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => {
+                                setFeatureBranch(true);
+                                runStacked(pending, { featureBranch: true });
+                              }}
+                              style={control}
+                            >
+                              New feature branch
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => setPendingConfirm(null)}
+                              style={control}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   {stacked !== null && (
                     <div
                       aria-label="Action progress"

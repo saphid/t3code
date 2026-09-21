@@ -628,6 +628,56 @@ it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
     }),
   );
 
+  it.effect(
+    "rechecks the dynamic grant after detached work and names the revocation on the stream",
+    () =>
+      Effect.gen(function* () {
+        // Admission and the in-fiber preflight both pass with PRS_WRITE
+        // held; the grant is revoked while the composite runs, so the
+        // post-service recheck must observe it. Under F-a the denial
+        // lands AFTER action_finished as a named closed event — the git
+        // effects persisted, so it names the check, not a phase — and the
+        // link/refresh tail never runs.
+        const workStarted = Deferred.makeUnsafe<void>();
+        const release = Deferred.makeUnsafe<void>();
+        const t = makeProvider({
+          grants: [PRS_WRITE],
+          runStackedAction: (input, options) =>
+            Effect.gen(function* () {
+              yield* options!.progressReporter!.publish({
+                actionId: input.actionId,
+                cwd: input.cwd,
+                action: input.action,
+                kind: "action_started",
+                phases: ["commit", "push", "pr"],
+              });
+              yield* Deferred.succeed(workStarted, undefined);
+              yield* Deferred.await(release);
+              yield* options!.progressReporter!.publish({
+                actionId: input.actionId,
+                cwd: input.cwd,
+                action: input.action,
+                kind: "action_finished",
+                result: stackedResult({ action: input.action }),
+              });
+              return stackedResult({ action: input.action });
+            }),
+        });
+        const started = (yield* invoke(t.provider, "run", { action: "commit_push_pr" })) as {
+          actionId: string;
+        };
+        yield* Deferred.await(workStarted);
+        t.grants.delete(PRS_WRITE);
+        yield* Deferred.succeed(release, undefined);
+        const events = yield* collectProgress(t.provider, started.actionId);
+        const kinds = events.map((event) => (event.value as { kind: string }).kind);
+        expect(kinds).toEqual(["action_started", "action_finished", "closed"]);
+        expect((events[2]!.value as { reason: string }).reason).toBe("authorization-revoked");
+        expect(t.dispatched).toHaveLength(0);
+        expect(t.refreshes).toHaveLength(0);
+      }),
+  );
+
   it.effect("names the composite's own failure phase without double-terminating", () =>
     Effect.gen(function* () {
       const t = makeProvider({

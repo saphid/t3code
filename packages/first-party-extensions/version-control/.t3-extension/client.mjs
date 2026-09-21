@@ -3840,7 +3840,7 @@ var __t3Client = (() => {
         required: ["kind", "reason"],
         properties: {
           kind: { const: "closed" },
-          reason: { enum: ["overflow"] }
+          reason: { enum: ["overflow", "authorization-revoked"] }
         }
       }
     ]
@@ -5467,12 +5467,13 @@ var __t3Client = (() => {
     const pushPhaseBlocked = (!hasBranch ? "Detached HEAD \u2014 checkout a ref first" : null) ?? remotePending ?? remoteBehind ?? remoteMissing;
     const openPrBlocked = hasOpenPr ? "A pull request is already open for this branch" : null;
     const prDeltaBlocked = !hasDefaultDelta ? "No commits over the default branch" : null;
+    const createPrBlocked = openPrBlocked ?? (local.hasWorkingTreeChanges ? "Commit local changes first" : null) ?? pushPhaseBlocked ?? prDeltaBlocked;
     return [
       offer("commit", commitBlocked),
       offer("commit_push", commitBlocked ?? pushPhaseBlocked),
       offer("commit_push_pr", commitBlocked ?? openPrBlocked ?? pushPhaseBlocked ?? prDeltaBlocked),
       offer("push", pushBlocked),
-      offer("create_pr", openPrBlocked ?? pushBlocked ?? prDeltaBlocked)
+      offer("create_pr", createPrBlocked)
     ];
   }
   function stackedActionSuggestion(local, remote) {
@@ -5492,6 +5493,10 @@ var __t3Client = (() => {
     if (isAhead) return hasOpenPr || local.isDefaultRef ? "push" : "create_pr";
     if (hasDefaultDelta && !local.isDefaultRef && !hasOpenPr) return "create_pr";
     return null;
+  }
+  function stackedActionNeedsConfirm(action, local, featureBranch) {
+    if (featureBranch || local?.isDefaultRef !== true) return false;
+    return action !== "commit";
   }
   var IDLE_STACKED_PROGRESS = {
     action: null,
@@ -6923,6 +6928,16 @@ ${ref.number}`;
     }
     return null;
   }
+  function prsDraftKey(prKey, writeKey) {
+    return `${prKey ?? "-"}
+${writeKey}`;
+  }
+  function settlePrsDraft(drafts, key, submitted) {
+    if ((drafts[key] ?? "") !== submitted) return drafts;
+    const next = { ...drafts };
+    delete next[key];
+    return next;
+  }
 
   // prsPanel.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
@@ -7548,7 +7563,7 @@ ${ref.number}`;
     );
   }
   function ReviewThreadSection(props) {
-    const { thread, canPage, onLoadMore, paging, unrecoverable, pageError, write, writeTick } = props;
+    const { thread, canPage, onLoadMore, paging, unrecoverable, pageError, write } = props;
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "section",
       {
@@ -7605,11 +7620,12 @@ ${ref.number}`;
               {
                 label: "Reply",
                 placeholder: "Reply to this thread",
+                value: write.replyDraft,
                 pending: write.replyPending,
                 error: write.replyError,
+                onChange: write.onReplyDraftChange,
                 onSubmit: (body) => write.onReply(thread.id, body)
-              },
-              `${thread.id}:${writeTick}`
+              }
             )
           ] })
         ]
@@ -7826,15 +7842,14 @@ ${ref.number}`;
     ] });
   }
   function PrsComposer(props) {
-    const { label, placeholder, pending, error, onSubmit } = props;
-    const [body, setBody] = (0, import_react.useState)("");
+    const { label, placeholder, value, pending, error, onChange, onSubmit } = props;
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { padding: "4px 10px" }, children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
         "textarea",
         {
           "aria-label": label,
-          value: body,
-          onChange: (event) => setBody(event.target.value),
+          value,
+          onChange: (event) => onChange(event.target.value),
           placeholder,
           rows: 3,
           style: { ...inputStyle, width: "100%", resize: "vertical" }
@@ -7844,8 +7859,8 @@ ${ref.number}`;
         "button",
         {
           type: "button",
-          disabled: pending || body.trim() === "",
-          onClick: () => onSubmit(body),
+          disabled: pending || value.trim() === "",
+          onClick: () => onSubmit(value),
           style: control,
           children: pending ? `${label}\u2026` : label
         }
@@ -7854,16 +7869,15 @@ ${ref.number}`;
     ] });
   }
   function PrsReviewComposer(props) {
-    const { verdicts, pending, error, onSubmit } = props;
+    const { verdicts, body, pending, error, onBodyChange, onSubmit } = props;
     const [verdict, setVerdict] = (0, import_react.useState)(verdicts[0]?.value ?? "comment");
-    const [body, setBody] = (0, import_react.useState)("");
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { padding: "4px 10px" }, children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
         "textarea",
         {
           "aria-label": "Review body",
           value: body,
-          onChange: (event) => setBody(event.target.value),
+          onChange: (event) => onBodyChange(event.target.value),
           placeholder: verdict === "approve" ? "Review body (optional for an approval)" : "Review body",
           rows: 3,
           style: { ...inputStyle, width: "100%", resize: "vertical" }
@@ -7915,7 +7929,7 @@ ${ref.number}`;
     const writeProbe = usePrsWriteCapabilities(host, session, visible && ready, tick);
     const write = prsWriteGate(writeProbe.capabilities, writeProbe.error);
     const writeOps = write.kind === "ready" ? write.operations : null;
-    const [writeTicks, setWriteTicks] = (0, import_react.useState)({});
+    const [drafts, setDrafts] = (0, import_react.useState)({});
     const [writeState, setWriteState] = (0, import_react.useState)(null);
     const refreshes = usePrsRefreshes(
       host,
@@ -7961,7 +7975,11 @@ ${ref.number}`;
         }
       ).finally(() => controller.abort());
     };
-    const runWrite = (key, invoke) => {
+    const selectedKey = selected === null ? null : prsRefKey(selected);
+    const draftKey = (key) => prsDraftKey(selectedKey, key);
+    const draft = (key) => drafts[draftKey(key)] ?? "";
+    const setDraft = (key, value) => setDrafts((current) => ({ ...current, [draftKey(key)]: value }));
+    const runWrite = (key, invoke, draft2) => {
       if (writeState?.pending) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -7970,7 +7988,10 @@ ${ref.number}`;
         () => {
           if (signal.aborted) return;
           setWriteState(null);
-          setWriteTicks((ticks) => ({ ...ticks, [key]: (ticks[key] ?? 0) + 1 }));
+          if (draft2 !== void 0) {
+            const storeKey = draftKey(draft2.key);
+            setDrafts((current) => settlePrsDraft(current, storeKey, draft2.submitted));
+          }
           runInvalidate();
         },
         (error) => {
@@ -8005,16 +8026,20 @@ ${ref.number}`;
     const threadWrite = (thread) => {
       if (selected === null || write.kind !== "ready") return null;
       const ref = selected;
+      const replyKey = `reply:${thread.id}`;
       return {
         canReply: write.operations["prs.replyToThread"],
         canResolve: write.operations["prs.setThreadResolution"],
         resolvePending: writePending(`resolve:${thread.id}`),
         resolveError: writeError(`resolve:${thread.id}`),
-        replyPending: writePending(`reply:${thread.id}`),
-        replyError: writeError(`reply:${thread.id}`),
+        replyPending: writePending(replyKey),
+        replyError: writeError(replyKey),
+        replyDraft: draft(replyKey),
+        onReplyDraftChange: (value) => setDraft(replyKey, value),
         onReply: (threadId, body) => runWrite(
-          `reply:${threadId}`,
-          (signal) => writeApi().invoke("replyToThread", { ...ref, threadId, body }, signal)
+          replyKey,
+          (signal) => writeApi().invoke("replyToThread", { ...ref, threadId, body }, signal),
+          { key: replyKey, submitted: body }
         ),
         onResolve: (threadId, resolved) => runWrite(
           `resolve:${threadId}`,
@@ -8022,7 +8047,6 @@ ${ref.number}`;
         )
       };
     };
-    const selectedKey = selected === null ? null : prsRefKey(selected);
     const pagedScope = selectedKey === null ? null : `${revision2}
 ${selectedKey}`;
     (0, import_react.useEffect)(() => {
@@ -8416,8 +8440,7 @@ ${thread.id}`) === activity,
                           unrecoverable: paged !== void 0 ? paged.truncated && paged.nextCursor === null : thread.nextCommentsCursor === void 0 && thread.commentCount !== void 0 && thread.commentCount > thread.comments.length,
                           pageError: paged?.error ?? null,
                           onLoadMore: loadThreadComments,
-                          write: threadWrite(merged),
-                          writeTick: writeTicks[`reply:${merged.id}`] ?? 0
+                          write: threadWrite(merged)
                         },
                         thread.id
                       );
@@ -8436,14 +8459,16 @@ ${thread.id}`) === activity,
                       {
                         label: "Comment",
                         placeholder: "Leave a comment",
+                        value: draft("comment"),
                         pending: writePending("comment"),
                         error: writeError("comment"),
+                        onChange: (value) => setDraft("comment", value),
                         onSubmit: (body) => runWrite(
                           "comment",
-                          (signal) => writeApi().invoke("comment", { ...selected, body }, signal)
+                          (signal) => writeApi().invoke("comment", { ...selected, body }, signal),
+                          { key: "comment", submitted: body }
                         )
-                      },
-                      `comment:${writeTicks["comment"] ?? 0}`
+                      }
                     )
                   ] }),
                   write.kind === "ready" && writeOps?.["prs.submitReview"] === true && write.verdicts.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Submit a review", style: { paddingBottom: 4 }, children: [
@@ -8452,18 +8477,20 @@ ${thread.id}`) === activity,
                       PrsReviewComposer,
                       {
                         verdicts: prsWriteVerdictOptions(write.verdicts),
+                        body: draft("review"),
                         pending: writePending("review"),
                         error: writeError("review"),
+                        onBodyChange: (value) => setDraft("review", value),
                         onSubmit: (verdict, body) => runWrite(
                           "review",
                           (signal) => writeApi().invoke(
                             "submitReview",
                             { ...selected, verdict, body, comments: [] },
                             signal
-                          )
+                          ),
+                          { key: "review", submitted: body }
                         )
-                      },
-                      `review:${writeTicks["review"] ?? 0}`
+                      }
                     )
                   ] }),
                   activity.commits.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Commits", style: { paddingBottom: 4 }, children: [
@@ -8729,6 +8756,7 @@ ${thread.id}`) === activity,
     const [commitMessage, setCommitMessage] = (0, import_react2.useState)("");
     const [stackedChoice, setStackedChoice] = (0, import_react2.useState)(null);
     const [featureBranch, setFeatureBranch] = (0, import_react2.useState)(false);
+    const [pendingConfirm, setPendingConfirm] = (0, import_react2.useState)(null);
     const [stacked, setStacked] = (0, import_react2.useState)(null);
     const [newRefName, setNewRefName] = (0, import_react2.useState)("");
     const [newWorktreeName, setNewWorktreeName] = (0, import_react2.useState)("");
@@ -8869,10 +8897,12 @@ ${thread.id}`) === activity,
         })
       );
     };
-    const runStacked = (offer) => {
+    const runStacked = (offer, options) => {
       if (offer.disabled !== null) return;
+      setPendingConfirm(null);
       const message2 = commitMessage.trim();
       const stagedPaths = lanes.staged.map((entry) => entry.path);
+      const useFeatureBranch = options?.featureBranch ?? featureBranch;
       const commits = offer.action === "commit" || offer.action === "commit_push" || offer.action === "commit_push_pr";
       runMutation("stacked", offer.label, async (signal) => {
         const api = bindApi(vcsActionsApi, host, session.context);
@@ -8881,7 +8911,7 @@ ${thread.id}`) === activity,
           {
             action: offer.action,
             ...message2 === "" ? {} : { commitMessage: message2 },
-            ...featureBranch ? { featureBranch: true } : {},
+            ...useFeatureBranch ? { featureBranch: true } : {},
             ...commits && stagedPaths.length > 0 ? { paths: stagedPaths } : {}
           },
           signal
@@ -8896,18 +8926,20 @@ ${thread.id}`) === activity,
         for await (const frame of stream) {
           model = applyStackedEvent(model, frame.value);
           setStacked({ actionId, model });
-          if (model.result !== null) {
-            setCommitMessage("");
-            return describeStackedResult(model.result);
-          }
-          if (model.failure !== null)
-            throw new Error(
-              model.failure.phase === null ? model.failure.message : `Failed during ${model.failure.phase}: ${model.failure.message}`
-            );
-          if (model.closed === "overflow")
-            throw new Error("Action progress overflowed \u2014 result unknown");
         }
-        throw new Error("Action progress ended before the action settled");
+        if (model.failure !== null)
+          throw new Error(
+            model.failure.phase === null ? model.failure.message : `Failed during ${model.failure.phase}: ${model.failure.message}`
+          );
+        if (model.closed === "overflow")
+          throw new Error("Action progress overflowed \u2014 result unknown");
+        if (model.closed === "authorization-revoked")
+          throw new Error(
+            "Authorization was revoked at the post-action check \u2014 the action's effects may have persisted"
+          );
+        if (model.result === null) throw new Error("Action progress ended before the action settled");
+        if (commits) setCommitMessage((current) => current === commitMessage ? "" : current);
+        return describeStackedResult(model.result);
       });
     };
     const runCreateRef = () => {
@@ -9353,7 +9385,10 @@ ${thread.id}`) === activity,
                           "aria-label": "Stacked action",
                           value: chosenOffer.action,
                           disabled: busy,
-                          onChange: (event) => setStackedChoice(event.target.value),
+                          onChange: (event) => {
+                            setStackedChoice(event.target.value);
+                            setPendingConfirm(null);
+                          },
                           style: { ...control2, padding: "2px 4px" },
                           children: stackedOffers.map((offer) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                             "option",
@@ -9371,7 +9406,7 @@ ${thread.id}`) === activity,
                         {
                           type: "button",
                           disabled: busy || chosenOffer.disabled !== null,
-                          onClick: () => runStacked(chosenOffer),
+                          onClick: () => stackedActionNeedsConfirm(chosenOffer.action, status.local, featureBranch) ? setPendingConfirm(chosenOffer.action) : runStacked(chosenOffer),
                           style: control2,
                           children: busy && mutation.kind === "running" && mutation.op === "stacked" ? `${chosenOffer.label}\u2026` : "Run"
                         }
@@ -9393,7 +9428,10 @@ ${thread.id}`) === activity,
                                 type: "checkbox",
                                 checked: featureBranch,
                                 disabled: busy,
-                                onChange: (event) => setFeatureBranch(event.target.checked)
+                                onChange: (event) => {
+                                  setFeatureBranch(event.target.checked);
+                                  setPendingConfirm(null);
+                                }
                               }
                             ),
                             "New feature branch"
@@ -9404,6 +9442,85 @@ ${thread.id}`) === activity,
                     ]
                   }
                 ),
+                pendingConfirm !== null && (() => {
+                  const pending = stackedOffers.find(
+                    (entry) => entry.action === pendingConfirm
+                  );
+                  if (pending === void 0 || pending.disabled !== null) return null;
+                  const branchName = status.local?.refName ?? "the default ref";
+                  return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                    "div",
+                    {
+                      role: "alertdialog",
+                      "aria-label": "Confirm default-branch action",
+                      style: {
+                        margin: "4px 0",
+                        padding: "4px 6px",
+                        border: "1px solid var(--border, #dfe3e8)",
+                        borderRadius: 5,
+                        fontSize: 11
+                      },
+                      children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { marginBottom: 4 }, children: [
+                          pending.label,
+                          ' on default ref "',
+                          branchName,
+                          '"? You can continue on this ref or create a feature ref and run the same action there.'
+                        ] }),
+                        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                          "div",
+                          {
+                            style: {
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                              flexWrap: "wrap"
+                            },
+                            children: [
+                              /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                                "button",
+                                {
+                                  type: "button",
+                                  disabled: busy,
+                                  onClick: () => runStacked(pending, { featureBranch: false }),
+                                  style: control2,
+                                  children: [
+                                    pending.label,
+                                    " on ",
+                                    branchName
+                                  ]
+                                }
+                              ),
+                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                                "button",
+                                {
+                                  type: "button",
+                                  disabled: busy,
+                                  onClick: () => {
+                                    setFeatureBranch(true);
+                                    runStacked(pending, { featureBranch: true });
+                                  },
+                                  style: control2,
+                                  children: "New feature branch"
+                                }
+                              ),
+                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                                "button",
+                                {
+                                  type: "button",
+                                  disabled: busy,
+                                  onClick: () => setPendingConfirm(null),
+                                  style: control2,
+                                  children: "Cancel"
+                                }
+                              )
+                            ]
+                          }
+                        )
+                      ]
+                    }
+                  );
+                })(),
                 stacked !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                   "div",
                   {

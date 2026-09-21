@@ -991,5 +991,30 @@ export function prsWriteUnavailableNote(gate: PrsWriteGate): string | null {
   return null;
 }
 
+/**
+ * Composer drafts keyed by `${prsRefKey}:${writeKey}` — the panel owns
+ * them so a refresh reprobe (which unmounts the ready subtree while the
+ * capability hooks re-read) cannot take the author's words with it.
+ */
+export function prsDraftKey(prKey: string | null, writeKey: string): string {
+  return `${prKey ?? "-"}\n${writeKey}`;
+}
+
+/**
+ * Settle a submitted draft: drop it only when it is still exactly what
+ * was submitted. Text typed while the request was in flight is newer
+ * work and survives the success.
+ */
+export function settlePrsDraft(
+  drafts: Readonly<Record<string, string>>,
+  key: string,
+  submitted: string,
+): Readonly<Record<string, string>> {
+  if ((drafts[key] ?? "") !== submitted) return drafts;
+  const next = { ...drafts };
+  delete next[key];
+  return next;
+}
+
 export const PRS_DIFF_CONTENTS_DEFERRED =
   "Full-file context expansion is deferred — streamDiffFileContents is not consumed by this panel yet.";
