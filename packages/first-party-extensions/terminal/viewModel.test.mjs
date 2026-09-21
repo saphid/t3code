@@ -737,7 +737,10 @@ import {
   registerPanelCommands,
   terminalAppearanceVars,
   themeVarOverrides,
+  watchTerminalAppearanceVars,
+  watchThemeVars,
 } from "./viewModel.ts";
+import * as NodeFS from "node:fs";
 
 const viewContext = { resource: { environmentId: "env-1", threadId: "thread-1" } };
 
@@ -993,5 +996,271 @@ NodeTest.describe("t3.ui/keybindings — registration + dispatch", () => {
     );
     const unregister = client.calls.find((call) => call.method === "unregisterCommands");
     NodeAssert.equal(unregister.input.commandSetToken, "cmdset-test");
+  });
+});
+
+NodeTest.describe("t3.ui/theme — watch lifecycle (no stale overrides)", () => {
+  const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+  /** Async iterable the test drives frame-by-frame. */
+  function controllableStream() {
+    const queue = [];
+    let waiter;
+    const pump = () => {
+      if (!waiter || !queue.length) return;
+      const item = queue.shift();
+      const { resolve, reject } = waiter;
+      waiter = undefined;
+      if (item.error !== undefined) reject(item.error);
+      else resolve(item);
+    };
+    return {
+      iterable: {
+        [Symbol.asyncIterator]() {
+          return {
+            next() {
+              const item = queue.shift();
+              if (item !== undefined)
+                return item.error !== undefined
+                  ? Promise.reject(item.error)
+                  : Promise.resolve(item);
+              return new Promise((resolve, reject) => {
+                waiter = { resolve, reject };
+              });
+            },
+            return() {
+              return Promise.resolve({ done: true, value: undefined });
+            },
+          };
+        },
+      },
+      push: (frame) => (queue.push({ done: false, value: frame }), pump()),
+      end: () => (queue.push({ done: true, value: undefined }), pump()),
+      fail: (error) => (queue.push({ error }), pump()),
+    };
+  }
+
+  function themeClient({ read, stream }) {
+    return {
+      invokeApi: (request) => {
+        NodeAssert.equal(request.method, "getTokens");
+        return read(request);
+      },
+      subscribeApi: (request) => {
+        NodeAssert.equal(request.name, "subscribeState");
+        return stream;
+      },
+    };
+  }
+
+  NodeTest.it("clears theme overrides when the state stream closes", async () => {
+    const stream = controllableStream();
+    const applied = [];
+    const client = themeClient({
+      read: () => Promise.resolve({ tokens: { text: "#111" }, cssVars: {} }),
+      stream: stream.iterable,
+    });
+    const done = watchThemeVars({
+      client,
+      context: viewContext,
+      signal: new AbortController().signal,
+      apply: (vars) => applied.push(vars),
+    });
+    await tick();
+    NodeAssert.deepEqual(applied.at(-1), themeVarOverrides({ text: "#111" }, {}));
+    stream.push({ type: "closed", value: {} });
+    await done;
+    NodeAssert.equal(applied.at(-1), null);
+  });
+
+  NodeTest.it("clears theme overrides when the state stream errors", async () => {
+    const stream = controllableStream();
+    const applied = [];
+    const client = themeClient({
+      read: () => Promise.resolve({ tokens: { text: "#111" }, cssVars: {} }),
+      stream: stream.iterable,
+    });
+    const done = watchThemeVars({
+      client,
+      context: viewContext,
+      signal: new AbortController().signal,
+      apply: (vars) => applied.push(vars),
+    });
+    await tick();
+    stream.fail(new Error("provider gone"));
+    await done;
+    NodeAssert.equal(applied.at(-1), null);
+  });
+
+  NodeTest.it("clears theme overrides when a refresh read is denied", async () => {
+    const stream = controllableStream();
+    const applied = [];
+    let call = 0;
+    const client = themeClient({
+      read: () => {
+        call += 1;
+        return call === 1
+          ? Promise.resolve({ tokens: { text: "#111" }, cssVars: {} })
+          : Promise.reject(new Error("grant revoked"));
+      },
+      stream: stream.iterable,
+    });
+    const done = watchThemeVars({
+      client,
+      context: viewContext,
+      signal: new AbortController().signal,
+      apply: (vars) => applied.push(vars),
+    });
+    await tick();
+    NodeAssert.deepEqual(applied.at(-1), themeVarOverrides({ text: "#111" }, {}));
+    stream.push({ type: "data", value: {} });
+    await tick();
+    NodeAssert.equal(applied.at(-1), null);
+    stream.end();
+    await done;
+  });
+
+  NodeTest.it("a late read response cannot restore stale overrides after stream loss", async () => {
+    const stream = controllableStream();
+    const read = deferred();
+    const applied = [];
+    const client = themeClient({ read: () => read.promise, stream: stream.iterable });
+    const done = watchThemeVars({
+      client,
+      context: viewContext,
+      signal: new AbortController().signal,
+      apply: (vars) => applied.push(vars),
+    });
+    stream.push({ type: "closed", value: {} });
+    await done;
+    read.resolve({ tokens: { text: "#111" }, cssVars: {} });
+    await tick();
+    NodeAssert.ok(applied.length >= 2);
+    NodeAssert.ok(applied.every((vars) => vars === null));
+  });
+
+  NodeTest.it("a failed refresh invalidates an older in-flight read", async () => {
+    const stream = controllableStream();
+    const stale = deferred();
+    const applied = [];
+    let call = 0;
+    const client = themeClient({
+      read: () => {
+        call += 1;
+        return call === 1 ? stale.promise : Promise.reject(new Error("denied"));
+      },
+      stream: stream.iterable,
+    });
+    const done = watchThemeVars({
+      client,
+      context: viewContext,
+      signal: new AbortController().signal,
+      apply: (vars) => applied.push(vars),
+    });
+    // Second read (stream frame) fails while the first is still in flight;
+    // the older response must not resurrect stale tokens.
+    stream.push({ type: "data", value: {} });
+    await tick();
+    NodeAssert.equal(applied.at(-1), null);
+    stale.resolve({ tokens: { text: "#111" }, cssVars: {} });
+    await tick();
+    NodeAssert.ok(applied.every((vars) => vars === null));
+    stream.end();
+    await done;
+  });
+
+  NodeTest.it("clears appearance overrides on closed, error, and malformed frames", async () => {
+    const appearance = {
+      theme: { background: "#000", foreground: "#fff", cursor: "#fff" },
+      font: {},
+      appearance: "dark",
+    };
+    const applied = [];
+    const stream = controllableStream();
+    const client = { subscribeApi: () => stream.iterable };
+    const done = watchTerminalAppearanceVars({
+      client,
+      context: viewContext,
+      signal: new AbortController().signal,
+      apply: (vars) => applied.push(vars),
+    });
+    stream.push({ type: "snapshot", value: appearance });
+    await tick();
+    NodeAssert.deepEqual(applied.at(-1), terminalAppearanceVars(appearance));
+    stream.push({ type: "closed", value: {} });
+    await tick();
+    NodeAssert.equal(applied.at(-1), null);
+    await done;
+  });
+
+  NodeTest.it("clears appearance overrides when the stream throws", async () => {
+    const applied = [];
+    const stream = controllableStream();
+    const done = watchTerminalAppearanceVars({
+      client: { subscribeApi: () => stream.iterable },
+      context: viewContext,
+      signal: new AbortController().signal,
+      apply: (vars) => applied.push(vars),
+    });
+    stream.push({
+      type: "snapshot",
+      value: {
+        theme: { background: "#000", foreground: "#fff", cursor: "#fff" },
+        font: {},
+        appearance: "dark",
+      },
+    });
+    await tick();
+    stream.fail(new Error("stream lost"));
+    await done;
+    NodeAssert.equal(applied.at(-1), null);
+  });
+
+  NodeTest.it("clears appearance overrides on a malformed frame", async () => {
+    const applied = [];
+    const stream = controllableStream();
+    const done = watchTerminalAppearanceVars({
+      client: { subscribeApi: () => stream.iterable },
+      context: viewContext,
+      signal: new AbortController().signal,
+      apply: (vars) => applied.push(vars),
+    });
+    stream.push({
+      type: "snapshot",
+      value: {
+        theme: { background: "#000", foreground: "#fff", cursor: "#fff" },
+        font: {},
+        appearance: "dark",
+      },
+    });
+    await tick();
+    stream.push({ type: "data", value: { not: "an appearance" } });
+    await tick();
+    NodeAssert.equal(applied.at(-1), null);
+    stream.end();
+    await done;
+  });
+});
+
+NodeTest.describe("package requirements — t3.ui/* adoption policy", () => {
+  NodeTest.it("declares the consumed t3.ui/* contracts as mandatory requirements", async () => {
+    // Invocation authority only exists for declared APIs, so these must stay
+    // in `requires`; capability resolution fails closed (missing-api) on a
+    // host without the providers rather than mounting a half-contracted panel.
+    const manifest = JSON.parse(
+      NodeFS.readFileSync(new URL("./.t3-extension/t3-extension.json", import.meta.url), "utf8"),
+    );
+    NodeAssert.deepEqual(
+      manifest.requires.map((item) => item.id),
+      [
+        "t3.terminal/sessions",
+        "t3.terminal/output",
+        "t3.terminal/output-events",
+        "t3.terminal/control",
+        "t3.ui/theme",
+        "t3.ui/keybindings",
+        "t3.ui/panels",
+      ],
+    );
   });
 });

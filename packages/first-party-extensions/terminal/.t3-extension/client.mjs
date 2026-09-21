@@ -6075,6 +6075,57 @@ var __t3Client = (() => {
     if (candidate.appearance !== "light" && candidate.appearance !== "dark") return null;
     return value;
   }
+  function watchThemeVars(options) {
+    const api = bindApi(uiThemeApi, options.client, options.context);
+    const streams = bindStreamApi(uiThemeApi, options.client, options.context);
+    if (!options.signal.aborted) options.apply(null);
+    let generation = 0;
+    const invalidate = () => {
+      generation += 1;
+      if (!options.signal.aborted) options.apply(null);
+    };
+    const refresh = () => {
+      const at = ++generation;
+      void api.invoke("getTokens", {}, options.signal).then((value) => {
+        if (!options.signal.aborted && at === generation)
+          options.apply(themeVarOverrides(value.tokens, value.cssVars));
+      }, invalidate);
+    };
+    refresh();
+    return (async () => {
+      try {
+        for await (const frame of streams.subscribe("subscribeState", {}, options.signal)) {
+          if (options.signal.aborted) return;
+          if (frame.type === "closed") break;
+          refresh();
+        }
+        invalidate();
+      } catch {
+        invalidate();
+      }
+    })();
+  }
+  function watchTerminalAppearanceVars(options) {
+    const streams = bindStreamApi(uiThemeApi, options.client, options.context);
+    if (!options.signal.aborted) options.apply(null);
+    return (async () => {
+      try {
+        for await (const frame of streams.subscribe(
+          "subscribeTerminalAppearance",
+          {},
+          options.signal
+        )) {
+          if (options.signal.aborted) return;
+          if (frame.type === "closed") break;
+          const appearance = asTerminalAppearance(frame.value);
+          options.apply(appearance === null ? null : terminalAppearanceVars(appearance));
+        }
+        if (!options.signal.aborted) options.apply(null);
+      } catch {
+        if (!options.signal.aborted) options.apply(null);
+      }
+    })();
+  }
 
   // extension.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
@@ -6238,33 +6289,12 @@ var __t3Client = (() => {
     (0, import_react.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
-      const signal = AbortSignal.any([controller.signal, session.signal]);
-      const api = bindApi(uiThemeApi, host, session.context);
-      const streams = bindStreamApi(uiThemeApi, host, session.context);
-      let generation = 0;
-      const refresh = () => {
-        const at = ++generation;
-        void api.invoke("getTokens", {}, signal).then(
-          (value) => {
-            if (!signal.aborted && at === generation)
-              setVars(themeVarOverrides(value.tokens, value.cssVars));
-          },
-          // Denial or absence leaves the last good map; initially that is the
-          // untouched legacy chain.
-          () => {
-          }
-        );
-      };
-      refresh();
-      void (async () => {
-        try {
-          for await (const frame of streams.subscribe("subscribeState", {}, signal)) {
-            if (signal.aborted || frame.type === "closed") return;
-            refresh();
-          }
-        } catch {
-        }
-      })();
+      void watchThemeVars({
+        client: host,
+        context: session.context,
+        signal: AbortSignal.any([controller.signal, session.signal]),
+        apply: setVars
+      });
       return () => controller.abort();
     }, [host, session, visible]);
     return vars;
@@ -6274,18 +6304,12 @@ var __t3Client = (() => {
     (0, import_react.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
-      const signal = AbortSignal.any([controller.signal, session.signal]);
-      const streams = bindStreamApi(uiThemeApi, host, session.context);
-      void (async () => {
-        try {
-          for await (const frame of streams.subscribe("subscribeTerminalAppearance", {}, signal)) {
-            if (signal.aborted || frame.type === "closed") return;
-            const appearance = asTerminalAppearance(frame.value);
-            if (appearance !== null) setVars(terminalAppearanceVars(appearance));
-          }
-        } catch {
-        }
-      })();
+      void watchTerminalAppearanceVars({
+        client: host,
+        context: session.context,
+        signal: AbortSignal.any([controller.signal, session.signal]),
+        apply: setVars
+      });
       return () => controller.abort();
     }, [host, session, visible]);
     return vars;
@@ -6668,8 +6692,11 @@ var __t3Client = (() => {
       requireApi(terminalOutputApi),
       requireApi(terminalOutputEventsApi),
       requireApi(terminalControlApi),
-      // Adopted opportunistically: every consumer degrades to the pre-contract
-      // path when the host cannot serve these, so they never gate mounting.
+      // Mandatory requirements — the broker only authorizes invocations for
+      // declared APIs, so the t3.ui/* contracts must be declared even though
+      // the panel degrades per-call. A host without these providers resolves
+      // the package missing-api rather than mounting it; the degraded paths
+      // cover denied or failing calls and dead streams on a capable host.
       requireApi(uiThemeApi),
       requireApi(uiKeybindingsApi),
       requireApi(uiPanelsApi)

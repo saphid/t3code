@@ -15,8 +15,8 @@ Interactive terminal plugin driven entirely by public contracts:
   preview, folded by the provider) and `subscribeState` re-reads it on every
   transition; `subscribeTerminalAppearance` carries the real terminal colors
   and font. Both republish as `--t3-terminal-*` custom properties ahead of
-  the legacy `var()` fallbacks, so a host without the contract renders the
-  pre-adoption chain unchanged
+  the legacy `var()` fallbacks; a denied read or a dead stream clears the
+  overrides so nothing contract-derived outlives its feed
 - `t3.ui/keybindings@^1.0.0` — per-view `toggle`/`new`/`close` commands
   (default keys mirror the native `mod+j`/`mod+n`/`mod+w` chords; the host's
   user/native precedence decides who claims them), plus a staged
@@ -25,6 +25,12 @@ Interactive terminal plugin driven entirely by public contracts:
   are bound per view through `ViewSession.bindCommands` and stay panel-local
 - `t3.ui/panels@^1.0.0` — the dispatched `toggle` closes the hosting surface
   via `closeSurface`; failures surface on the panel status row
+
+All seven APIs are mandatory requirements — invocation authority only exists
+for declared contracts, so a host without the `t3.ui/*` providers resolves
+this package `missing-api` rather than mounting a half-contracted panel. The
+degraded paths above cover denied grants, failing calls, and dead streams on
+a capable host.
 
 `t3.ui/notifications` is deliberately not adopted: the native terminal only
 toasts on link-preview failure, and this panel has no link-activation path —

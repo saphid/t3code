@@ -1,5 +1,6 @@
 import {
   uiKeybindingsApi,
+  uiThemeApi,
   type TerminalControlAck,
   type TerminalControlAttachInput,
   type TerminalControlCloseInput,
@@ -15,7 +16,7 @@ import {
   type TerminalSessionsListEvent,
   type UiTerminalAppearance,
 } from "@t3tools/extension-sdk/catalogue";
-import { bindApi, type ApiClient } from "@t3tools/extension-sdk/capabilities";
+import { bindApi, bindStreamApi, type ApiClient } from "@t3tools/extension-sdk/capabilities";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { GlobalCommandDescriptor } from "@t3tools/extension-sdk/environment";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
@@ -1021,11 +1022,11 @@ export async function registerPanelCommands(options: {
 /**
  * The roles this panel consumes, each republished as a `--t3-terminal-*`
  * custom property on the view root. Styles chain `var(--t3-terminal-x, …)`
- * ahead of their pre-contract fallbacks, so a host that cannot serve
- * `t3.ui/theme` (ungranted or provider-less) renders exactly what it rendered
- * before adoption. The `terminal*` roles are the generic token layer — the
- * dedicated terminal-appearance read overrides them with the host's real
- * terminal colors and font when that provider exists.
+ * ahead of their pre-contract fallbacks, so whenever the contract stops
+ * answering — denied read or a dead stream — the overrides clear and the
+ * panel renders exactly what it rendered before adoption. The `terminal*`
+ * roles are the generic token layer — the dedicated terminal-appearance
+ * stream overrides them with the host's real terminal colors and font.
  */
 export const TERMINAL_THEME_VARS = {
   canvas: "--t3-terminal-canvas",
@@ -1122,4 +1123,86 @@ export function asTerminalAppearance(value: unknown): UiTerminalAppearance | nul
     return null;
   if (candidate.appearance !== "light" && candidate.appearance !== "dark") return null;
   return value as UiTerminalAppearance;
+}
+
+/**
+ * Drives the theme-var layer: an initial `getTokens` read, re-read on every
+ * `subscribeState` frame. `apply` receives the published map after each
+ * successful read and `null` whenever the feed can't vouch for values —
+ * at subscription start (a fresh feed must not inherit the old one's map),
+ * on a denied read, and on a closed or lost stream (the no-stale-fallback
+ * rule). A failure also invalidates any older in-flight response so it
+ * cannot restore a stale map. The caller's `signal` owns the lifetime; the
+ * stream has no resume, so recovery is a fresh subscription from the view
+ * lifecycle (hide→show or session change).
+ */
+export function watchThemeVars(options: {
+  readonly client: Pick<ApiClient, "invokeApi" | "subscribeApi">;
+  readonly context: ViewContext;
+  readonly signal: AbortSignal;
+  readonly apply: (vars: Record<string, string> | null) => void;
+}): Promise<void> {
+  const api = bindApi(uiThemeApi, options.client, options.context);
+  const streams = bindStreamApi(uiThemeApi, options.client, options.context);
+  if (!options.signal.aborted) options.apply(null);
+  let generation = 0;
+  const invalidate = () => {
+    generation += 1;
+    if (!options.signal.aborted) options.apply(null);
+  };
+  const refresh = () => {
+    const at = ++generation;
+    void api.invoke("getTokens", {}, options.signal).then((value) => {
+      if (!options.signal.aborted && at === generation)
+        options.apply(themeVarOverrides(value.tokens, value.cssVars));
+    }, invalidate);
+  };
+  refresh();
+  return (async () => {
+    try {
+      for await (const frame of streams.subscribe("subscribeState", {}, options.signal)) {
+        if (options.signal.aborted) return;
+        if (frame.type === "closed") break;
+        refresh();
+      }
+      invalidate();
+    } catch {
+      invalidate();
+    }
+  })();
+}
+
+/**
+ * `subscribeTerminalAppearance` consumption — the host's real terminal
+ * colors and font, published on the output pane where they win over the
+ * generic token roles of the same name. The stream opens with a snapshot
+ * frame, so no separate read is needed; subscription start, a malformed
+ * frame, a close, or a lost stream all clear the map so literal colors and
+ * font metrics never outlive the feed that produced them.
+ */
+export function watchTerminalAppearanceVars(options: {
+  readonly client: Pick<ApiClient, "subscribeApi">;
+  readonly context: ViewContext;
+  readonly signal: AbortSignal;
+  readonly apply: (vars: Record<string, string> | null) => void;
+}): Promise<void> {
+  const streams = bindStreamApi(uiThemeApi, options.client, options.context);
+  if (!options.signal.aborted) options.apply(null);
+  return (async () => {
+    try {
+      for await (const frame of streams.subscribe(
+        "subscribeTerminalAppearance",
+        {},
+        options.signal,
+      )) {
+        if (options.signal.aborted) return;
+        if (frame.type === "closed") break;
+        const appearance = asTerminalAppearance(frame.value);
+        options.apply(appearance === null ? null : terminalAppearanceVars(appearance));
+      }
+      if (!options.signal.aborted) options.apply(null);
+    } catch {
+      if (!options.signal.aborted) options.apply(null);
+    }
+  })();
 }

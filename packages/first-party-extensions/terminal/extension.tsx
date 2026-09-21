@@ -22,13 +22,12 @@ import {
   TERMINAL_SURFACE_ID,
   TerminalPanel,
   applyOutputEvent,
-  asTerminalAppearance,
   dispatchTerminalCommand,
   isResumableOutputClose,
   noteOutputFrameForStreak,
   registerPanelCommands,
-  terminalAppearanceVars,
-  themeVarOverrides,
+  watchTerminalAppearanceVars,
+  watchThemeVars,
   workspaceLaunchFromRevision,
   type OutputBuffer,
   type TerminalCommandActions,
@@ -253,8 +252,8 @@ function useFitResize(
  * overlays, and external previews into the painted state — and each
  * `subscribeState` frame re-reads the tokens, so the panel tracks exactly
  * what the host paints without interpreting overlay semantics itself. The map
- * lands on the view root as `--t3-terminal-*` custom properties; an ungranted
- * or provider-less host yields null and every style falls back to its legacy
+ * lands on the view root as `--t3-terminal-*` custom properties; a denied
+ * read or a dead stream clears it and every style falls back to its legacy
  * `var()` chain — the honest degraded path.
  */
 function useThemeVars(
@@ -266,33 +265,12 @@ function useThemeVars(
   useEffect(() => {
     if (!visible) return;
     const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, session.signal]);
-    const api = bindApi(uiThemeApi, host, session.context);
-    const streams = bindStreamApi(uiThemeApi, host, session.context);
-    let generation = 0;
-    const refresh = () => {
-      const at = ++generation;
-      void api.invoke("getTokens", {}, signal).then(
-        (value) => {
-          if (!signal.aborted && at === generation)
-            setVars(themeVarOverrides(value.tokens, value.cssVars));
-        },
-        // Denial or absence leaves the last good map; initially that is the
-        // untouched legacy chain.
-        () => {},
-      );
-    };
-    refresh();
-    void (async () => {
-      try {
-        for await (const frame of streams.subscribe("subscribeState", {}, signal)) {
-          if (signal.aborted || frame.type === "closed") return;
-          refresh();
-        }
-      } catch {
-        // Stream loss only stops re-reads — the last resolved map stands.
-      }
-    })();
+    void watchThemeVars({
+      client: host,
+      context: session.context,
+      signal: AbortSignal.any([controller.signal, session.signal]),
+      apply: setVars,
+    });
     return () => controller.abort();
   }, [host, session, visible]);
   return vars;
@@ -302,8 +280,8 @@ function useThemeVars(
  * `subscribeTerminalAppearance` consumer — the host's real terminal colors
  * and font, published on the output pane so they win over the generic token
  * roles of the same name. The stream opens with a snapshot frame, so no
- * separate `getTerminalAppearance` call is needed; a host without the
- * provider leaves the token layer (or the legacy chain) governing.
+ * separate `getTerminalAppearance` call is needed; when it dies the map
+ * clears back to the token layer (or the legacy chain) governing.
  */
 function useTerminalAppearanceVars(
   host: ClientHost,
@@ -314,19 +292,12 @@ function useTerminalAppearanceVars(
   useEffect(() => {
     if (!visible) return;
     const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, session.signal]);
-    const streams = bindStreamApi(uiThemeApi, host, session.context);
-    void (async () => {
-      try {
-        for await (const frame of streams.subscribe("subscribeTerminalAppearance", {}, signal)) {
-          if (signal.aborted || frame.type === "closed") return;
-          const appearance = asTerminalAppearance(frame.value);
-          if (appearance !== null) setVars(terminalAppearanceVars(appearance));
-        }
-      } catch {
-        // No terminal-appearance provider — the token layer stands.
-      }
-    })();
+    void watchTerminalAppearanceVars({
+      client: host,
+      context: session.context,
+      signal: AbortSignal.any([controller.signal, session.signal]),
+      apply: setVars,
+    });
     return () => controller.abort();
   }, [host, session, visible]);
   return vars;
@@ -351,7 +322,7 @@ function closeOwnSurface(host: ClientHost, session: ViewSession): Promise<void> 
  * close) and binds the dispatch handler for the focused-view and thread
  * arbitration tiers. Every action stays panel-local — `new`/`close` drive the
  * tab model (close keeps the inline confirm), `toggle` dismisses the hosting
- * surface through `t3.ui/panels`. An ungranted or provider-less host leaves
+ * surface through `t3.ui/panels`. A denied or failing registration leaves
  * the toolbar buttons as the only path — nothing else changes.
  */
 function usePanelCommands(
@@ -391,7 +362,7 @@ function usePanelCommands(
         else release = registration.release;
       },
       () => {
-        // Ungranted or provider-less host: no panel commands.
+        // Denied or unavailable registration: no panel commands.
       },
     );
     return () => {
@@ -737,8 +708,11 @@ const authored = defineExtension({
     requireApi(terminalOutputApi),
     requireApi(terminalOutputEventsApi),
     requireApi(terminalControlApi),
-    // Adopted opportunistically: every consumer degrades to the pre-contract
-    // path when the host cannot serve these, so they never gate mounting.
+    // Mandatory requirements — the broker only authorizes invocations for
+    // declared APIs, so the t3.ui/* contracts must be declared even though
+    // the panel degrades per-call. A host without these providers resolves
+    // the package missing-api rather than mounting it; the degraded paths
+    // cover denied or failing calls and dead streams on a capable host.
     requireApi(uiThemeApi),
     requireApi(uiKeybindingsApi),
     requireApi(uiPanelsApi),
