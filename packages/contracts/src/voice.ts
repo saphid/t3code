@@ -11,7 +11,7 @@ import {
   TrimmedNonEmptyString,
   TrimmedString,
 } from "./baseSchemas.ts";
-import { EnvironmentConnectionState, ThreadEnvMode } from "./environment.ts";
+import { ThreadEnvMode } from "./environment.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { OrchestrationV2RunStatus } from "./orchestrationV2.ts";
 import { ServerProviderAvailability } from "./server.ts";
@@ -58,6 +58,15 @@ export type VoiceSessionId = typeof VoiceSessionId.Type;
     reported as "no matches". */
 export const VoiceEnvironmentStatus = Schema.Literals(["ok", "disconnected", "error", "partial"]);
 export type VoiceEnvironmentStatus = typeof VoiceEnvironmentStatus.Type;
+
+/** The client-local connection state exposed by voice environment discovery. */
+export const EnvironmentConnectionState = Schema.Literals([
+  "connecting",
+  "connected",
+  "disconnected",
+  "error",
+]);
+export type EnvironmentConnectionState = typeof EnvironmentConnectionState.Type;
 
 export const VoiceToolErrorCode = Schema.Literals([
   // Session or token lacks a required scope (e.g. broker start without
