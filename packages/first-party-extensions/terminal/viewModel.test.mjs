@@ -1169,6 +1169,67 @@ NodeTest.describe("t3.ui/theme — watch lifecycle (no stale overrides)", () => 
     await done;
   });
 
+  NodeTest.it("an older read's late rejection does not clear a newer applied map", async () => {
+    const stream = controllableStream();
+    const stale = deferred();
+    const applied = [];
+    let call = 0;
+    const client = themeClient({
+      read: () => {
+        call += 1;
+        return call === 1
+          ? stale.promise
+          : Promise.resolve({ tokens: { text: "#abcdef" }, cssVars: {} });
+      },
+      stream: stream.iterable,
+    });
+    const done = watchThemeVars({
+      client,
+      context: viewContext,
+      signal: new AbortController().signal,
+      apply: (vars) => applied.push(vars),
+    });
+    // The frame's read (call 2) resolves while the initial read pends, then
+    // the superseded read rejects — the applied map must stand.
+    stream.push({ type: "data", value: {} });
+    await tick();
+    NodeAssert.deepEqual(applied.at(-1), themeVarOverrides({ text: "#abcdef" }, {}));
+    stale.reject(new Error("late denial"));
+    await tick();
+    NodeAssert.deepEqual(applied.at(-1), themeVarOverrides({ text: "#abcdef" }, {}));
+    stream.end();
+    await done;
+  });
+
+  NodeTest.it("an older read's rejection does not invalidate a newer in-flight read", async () => {
+    const stream = controllableStream();
+    const first = deferred();
+    const second = deferred();
+    const reads = [first, second];
+    const applied = [];
+    const client = themeClient({
+      read: () => reads.shift()?.promise ?? Promise.reject(new Error("unexpected read")),
+      stream: stream.iterable,
+    });
+    const done = watchThemeVars({
+      client,
+      context: viewContext,
+      signal: new AbortController().signal,
+      apply: (vars) => applied.push(vars),
+    });
+    // Both reads in flight; the older rejects first — the newer success must
+    // still publish rather than being dropped with the invalidated map.
+    stream.push({ type: "data", value: {} });
+    await tick();
+    first.reject(new Error("late denial"));
+    await tick();
+    second.resolve({ tokens: { text: "#222" }, cssVars: {} });
+    await tick();
+    NodeAssert.deepEqual(applied.at(-1), themeVarOverrides({ text: "#222" }, {}));
+    stream.end();
+    await done;
+  });
+
   NodeTest.it("clears appearance overrides on closed, error, and malformed frames", async () => {
     const appearance = {
       theme: { background: "#000", foreground: "#fff", cursor: "#fff" },

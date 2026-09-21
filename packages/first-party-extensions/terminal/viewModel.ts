@@ -1152,10 +1152,17 @@ export function watchThemeVars(options: {
   };
   const refresh = () => {
     const at = ++generation;
-    void api.invoke("getTokens", {}, options.signal).then((value) => {
-      if (!options.signal.aborted && at === generation)
-        options.apply(themeVarOverrides(value.tokens, value.cssVars));
-    }, invalidate);
+    void api.invoke("getTokens", {}, options.signal).then(
+      (value) => {
+        if (!options.signal.aborted && at === generation)
+          options.apply(themeVarOverrides(value.tokens, value.cssVars));
+      },
+      // A superseded rejection carries no fresh information — only the
+      // newest read's failure may invalidate the published map.
+      () => {
+        if (at === generation) invalidate();
+      },
+    );
   };
   refresh();
   return (async () => {
