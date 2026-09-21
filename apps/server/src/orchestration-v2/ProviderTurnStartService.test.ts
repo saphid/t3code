@@ -332,7 +332,26 @@ effectIt.effect("retries a start effect that advanced the run before provider st
           Layer.mock(GitWorkflow.GitWorkflowService)({}),
           Layer.mock(ProjectService.ProjectService)({}),
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
-            getThreadProjection: () => Effect.succeed(projection),
+            getTurnStartContext: () =>
+              Effect.succeed({
+                ...projection,
+                hasConversation: projection.messages.some(
+                  (message) =>
+                    message.role === "user" &&
+                    (message.text.trim().toLowerCase() !== "/compact" ||
+                      message.attachments.length > 0),
+                ),
+              }),
+            getRuntimeRecoveryProjection: () =>
+              Effect.succeed({
+                ...projection,
+                hasConversation: projection.messages.some(
+                  (message) =>
+                    message.role === "user" &&
+                    (message.text.trim().toLowerCase() !== "/compact" ||
+                      message.attachments.length > 0),
+                ),
+              }),
           }),
           Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
             open: () => Effect.succeed(session),
