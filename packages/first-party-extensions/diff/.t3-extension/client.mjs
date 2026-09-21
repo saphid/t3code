@@ -5460,11 +5460,13 @@ var __t3Client = (() => {
     }
     return action;
   }
+  var reportToggleFailure = (error) => {
+    console.warn(`t3.diff/${DIFF_TOGGLE_COMMAND_ID} dispatch failed:`, error);
+  };
   function stageDiffCommands(host) {
     host.registerGlobalCommands?.(DIFF_TOGGLE_GLOBAL_COMMANDS, ({ commandId, context }) => {
       if (commandId !== DIFF_TOGGLE_COMMAND_ID) return;
-      void toggleDiffSurface(host, context).catch(() => {
-      });
+      void toggleDiffSurface(host, context).catch(reportToggleFailure);
     });
   }
   function bindDiffViewCommands(host, session) {
@@ -5480,8 +5482,7 @@ var __t3Client = (() => {
         try {
           session.bindCommands(commandSetToken, ({ commandId, context }) => {
             if (commandId !== DIFF_TOGGLE_COMMAND_ID) return;
-            void toggleDiffSurface(host, context).catch(() => {
-            });
+            void toggleDiffSurface(host, context).catch(reportToggleFailure);
           });
         } catch {
         }
@@ -5492,23 +5493,31 @@ var __t3Client = (() => {
   }
   function watchThemeTokens(host, context, signal, onTokens) {
     const api = bindApi(uiThemeApi, host, context);
-    const refresh = () => api.invoke("getTokens", {}, signal).then((result) => {
-      if (!signal.aborted) onTokens(result.tokens);
-    });
-    void refresh().catch(() => {
-    });
+    let latest = 0;
+    const refresh = () => {
+      const seq = ++latest;
+      return api.invoke("getTokens", {}, signal).then(
+        (result) => {
+          if (!signal.aborted && seq === latest) onTokens(result.tokens);
+        },
+        () => {
+          if (!signal.aborted && seq === latest) onTokens(null);
+        }
+      );
+    };
+    void refresh();
     void (async () => {
       const stream = bindStreamApi(uiThemeApi, host, context).subscribe("subscribeState", {}, signal);
       for await (const frame of stream) {
         if (signal.aborted) return;
-        if (frame.type === "snapshot" || frame.type === "data") {
-          try {
-            await refresh();
-          } catch {
-          }
-        }
+        if (frame.type === "closed") break;
+        await refresh();
       }
+      latest += 1;
+      if (!signal.aborted) onTokens(null);
     })().catch(() => {
+      latest += 1;
+      if (!signal.aborted) onTokens(null);
     });
   }
 

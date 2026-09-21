@@ -56,6 +56,46 @@ const streamOf = (frames) => ({
   },
 });
 
+/** A manually driven async iterable: push frames, end, or fail on demand. */
+const manualStream = () => {
+  const END = Symbol("end");
+  const queue = [];
+  const waiters = [];
+  const deliver = (item) => {
+    const waiter = waiters.shift();
+    if (waiter) waiter(item);
+    else queue.push(item);
+  };
+  const iterable = {
+    async *[Symbol.asyncIterator]() {
+      for (;;) {
+        const item = queue.length
+          ? queue.shift()
+          : await new Promise((resolve) => waiters.push(resolve));
+        if (item === END) return;
+        if (item instanceof Error) throw item;
+        yield item;
+      }
+    },
+  };
+  return {
+    iterable,
+    push: (frame) => deliver(frame),
+    end: () => deliver(END),
+    fail: (error) => deliver(error),
+  };
+};
+
+/** A deferred promise for controlling invokeApi resolution order. */
+const deferred = () => {
+  let resolve, reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+};
+
 NodeTest.test("themeVar falls back to the static value without tokens", () => {
   NodeAssert.equal(themeVar(null, "--border", "border", "#dfe3e8"), "var(--border, #dfe3e8)");
   NodeAssert.equal(
@@ -194,6 +234,29 @@ NodeTest.test("stageDiffCommands stages the native-equivalent global toggle", as
   );
 });
 
+NodeTest.test("toggle dispatch failures are reported, not silently discarded", async () => {
+  const { host } = fakeHost({
+    invoke: () => Promise.reject(new Error("grant revoked")),
+  });
+  let staged;
+  host.registerGlobalCommands = (commands, handler) => {
+    staged = { commands, handler };
+    return { status: "staged", onDidChange: () => () => {} };
+  };
+  const warnings = [];
+  const original = console.warn;
+  console.warn = (...args) => warnings.push(args);
+  try {
+    stageDiffCommands(host);
+    staged.handler({ commandId: DIFF_TOGGLE_COMMAND_ID, context: CONTEXT });
+    await flush();
+  } finally {
+    console.warn = original;
+  }
+  NodeAssert.equal(warnings.length, 1);
+  NodeAssert.equal(warnings[0][0], "t3.diff/toggle dispatch failed:");
+});
+
 NodeTest.test("bindDiffViewCommands registers the view set and binds its handler", async () => {
   const { host } = fakeHost({
     invoke: (request) =>
@@ -272,12 +335,112 @@ NodeTest.test("watchThemeTokens resolves tokens and re-resolves on stream events
   const seen = [];
   const { host } = fakeHost({
     invoke: () => ({ tokens: { border: `#${++reads}` }, cssVars: {} }),
-    subscribe: () => streamOf([{ type: "snapshot" }, { type: "data" }, { type: "closed" }]),
+    subscribe: () => streamOf([{ type: "snapshot" }, { type: "data" }]),
   });
   watchThemeTokens(host, CONTEXT, new AbortController().signal, (tokens) => seen.push(tokens));
   await flush();
   NodeAssert.equal(reads, 3);
-  NodeAssert.deepEqual(seen, [{ border: "#1" }, { border: "#2" }, { border: "#3" }]);
+  // Stream end is a lost subscription: overrides clear to static fallbacks.
+  NodeAssert.deepEqual(seen, [{ border: "#1" }, { border: "#2" }, { border: "#3" }, null]);
+});
+
+NodeTest.test(
+  "watchThemeTokens publishes only the latest read — stale responses lose",
+  async () => {
+    const reads = [];
+    const stream = manualStream();
+    const { host } = fakeHost({
+      invoke: () => {
+        const read = deferred();
+        reads.push(read);
+        return read.promise;
+      },
+      subscribe: () => stream.iterable,
+    });
+    const seen = [];
+    watchThemeTokens(host, CONTEXT, new AbortController().signal, (tokens) => seen.push(tokens));
+    await flush();
+    NodeAssert.equal(reads.length, 1);
+    stream.push({ type: "data" });
+    await flush();
+    NodeAssert.equal(reads.length, 2);
+    // The newer read resolves first; the stale read must not overwrite it.
+    reads[1].resolve({ tokens: { border: "#new" }, cssVars: {} });
+    await flush();
+    reads[0].resolve({ tokens: { border: "#old" }, cssVars: {} });
+    await flush();
+    NodeAssert.deepEqual(seen, [{ border: "#new" }]);
+  },
+);
+
+NodeTest.test(
+  "watchThemeTokens: a stale read's failure cannot clear a newer resolution",
+  async () => {
+    const reads = [];
+    const stream = manualStream();
+    const { host } = fakeHost({
+      invoke: () => {
+        const read = deferred();
+        reads.push(read);
+        return read.promise;
+      },
+      subscribe: () => stream.iterable,
+    });
+    const seen = [];
+    watchThemeTokens(host, CONTEXT, new AbortController().signal, (tokens) => seen.push(tokens));
+    await flush();
+    stream.push({ type: "data" });
+    await flush();
+    NodeAssert.equal(reads.length, 2);
+    reads[1].resolve({ tokens: { border: "#new" }, cssVars: {} });
+    await flush();
+    reads[0].reject(new Error("stale transport failure"));
+    await flush();
+    NodeAssert.deepEqual(seen, [{ border: "#new" }]);
+  },
+);
+
+NodeTest.test("watchThemeTokens clears overrides when the subscription is lost", async () => {
+  const reads = [];
+  const stream = manualStream();
+  const { host } = fakeHost({
+    invoke: () => {
+      const read = deferred();
+      reads.push(read);
+      return read.promise;
+    },
+    subscribe: () => stream.iterable,
+  });
+  const seen = [];
+  watchThemeTokens(host, CONTEXT, new AbortController().signal, (tokens) => seen.push(tokens));
+  await flush();
+  reads[0].resolve({ tokens: { border: "#live" }, cssVars: {} });
+  await flush();
+  NodeAssert.deepEqual(seen, [{ border: "#live" }]);
+  // The stream dies while a refresh is in flight: the overrides clear and a
+  // read that resolves after the loss cannot resurrect stale tokens.
+  stream.push({ type: "data" });
+  await flush();
+  NodeAssert.equal(reads.length, 2);
+  stream.fail(new Error("connection lost"));
+  reads[1].resolve({ tokens: { border: "#late" }, cssVars: {} });
+  await flush();
+  NodeAssert.equal(seen.at(-1), null);
+});
+
+NodeTest.test("watchThemeTokens clears on failed reads — no stale retention", async () => {
+  let call = 0;
+  const seen = [];
+  const { host } = fakeHost({
+    invoke: () =>
+      ++call === 1
+        ? Promise.resolve({ tokens: { border: "#live" }, cssVars: {} })
+        : Promise.reject(new Error("grant revoked")),
+    subscribe: () => streamOf([{ type: "data" }, { type: "closed" }]),
+  });
+  watchThemeTokens(host, CONTEXT, new AbortController().signal, (tokens) => seen.push(tokens));
+  await flush();
+  NodeAssert.deepEqual(seen, [{ border: "#live" }, null, null]);
 });
 
 NodeTest.test(
@@ -292,7 +455,9 @@ NodeTest.test(
       watchThemeTokens(host, CONTEXT, new AbortController().signal, (tokens) => seen.push(tokens)),
     );
     await flush();
-    NodeAssert.equal(seen.length, 0);
+    // Every publication is the cleared state — never stale tokens.
+    NodeAssert.ok(seen.length > 0);
+    NodeAssert.ok(seen.every((tokens) => tokens === null));
   },
 );
 

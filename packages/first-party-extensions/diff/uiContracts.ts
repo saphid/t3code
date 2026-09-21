@@ -184,6 +184,15 @@ export async function toggleDiffSurface(
 }
 
 /**
+ * A rejected toggle (revoked grant, dead connection, raced surface list) is
+ * reported, never swallowed — the host's visible state stays authoritative
+ * and the failure is diagnosable.
+ */
+const reportToggleFailure = (error: unknown) => {
+  console.warn(`t3.diff/${DIFF_TOGGLE_COMMAND_ID} dispatch failed:`, error);
+};
+
+/**
  * Factory-time staging of the installation-scoped toggle. Absent on hosts
  * without the seam — nothing registers, dispatch and palette simply never
  * see the command.
@@ -191,7 +200,7 @@ export async function toggleDiffSurface(
 export function stageDiffCommands(host: ClientHost): void {
   host.registerGlobalCommands?.(DIFF_TOGGLE_GLOBAL_COMMANDS, ({ commandId, context }) => {
     if (commandId !== DIFF_TOGGLE_COMMAND_ID) return;
-    void toggleDiffSurface(host, context).catch(() => {});
+    void toggleDiffSurface(host, context).catch(reportToggleFailure);
   });
 }
 
@@ -216,7 +225,7 @@ export function bindDiffViewCommands(host: ClientHost, session: ViewSession): vo
       try {
         session.bindCommands(commandSetToken, ({ commandId, context }) => {
           if (commandId !== DIFF_TOGGLE_COMMAND_ID) return;
-          void toggleDiffSurface(host, context).catch(() => {});
+          void toggleDiffSurface(host, context).catch(reportToggleFailure);
         });
       } catch {
         // No binding store on this host — dispatch stays on the
@@ -231,34 +240,47 @@ export function bindDiffViewCommands(host: ClientHost, session: ViewSession): vo
  * `t3.ui/theme` consumption: one `getTokens` read plus a `subscribeState`
  * stream whose events re-resolve tokens — stored preference writes, session
  * overlays, and external/editor previews all surface through the stream.
- * A rejected read or a dead stream keeps the last good tokens (or none,
- * meaning the static fallbacks stand). Caller owns the signal.
+ * Only the most recently issued read may publish, so a slow stale response
+ * cannot overwrite (or clear) a newer resolution. A failed read and a lost
+ * subscription both clear the overrides — the panel reverts to its static
+ * fallbacks rather than painting stale tokens forever. Caller owns the
+ * signal; aborting suppresses every publish.
  */
 export function watchThemeTokens(
   host: ClientHost,
   context: ViewContext,
   signal: AbortSignal,
-  onTokens: (tokens: ThemeTokens) => void,
+  onTokens: (tokens: ThemeTokens | null) => void,
 ): void {
   const api = bindApi(uiThemeApi, host, context);
-  const refresh = () =>
-    api.invoke("getTokens", {}, signal).then((result) => {
-      if (!signal.aborted) onTokens(result.tokens);
-    });
-  void refresh().catch(() => {});
+  let latest = 0;
+  const refresh = () => {
+    const seq = ++latest;
+    return api.invoke("getTokens", {}, signal).then(
+      (result) => {
+        if (!signal.aborted && seq === latest) onTokens(result.tokens);
+      },
+      () => {
+        if (!signal.aborted && seq === latest) onTokens(null);
+      },
+    );
+  };
+  void refresh();
   void (async () => {
     const stream = bindStreamApi<{
       subscribeState: { input: Record<string, never>; event: Json };
     }>(uiThemeApi, host, context).subscribe("subscribeState", {}, signal);
     for await (const frame of stream) {
       if (signal.aborted) return;
-      if (frame.type === "snapshot" || frame.type === "data") {
-        try {
-          await refresh();
-        } catch {
-          /* A transient read failure must not kill the change stream. */
-        }
-      }
+      if (frame.type === "closed") break;
+      await refresh();
     }
-  })().catch(() => {});
+    // Iteration ended: the subscription is gone. Invalidate any in-flight
+    // read, then clear — retained tokens would be unverifiable stale paint.
+    latest += 1;
+    if (!signal.aborted) onTokens(null);
+  })().catch(() => {
+    latest += 1;
+    if (!signal.aborted) onTokens(null);
+  });
 }
