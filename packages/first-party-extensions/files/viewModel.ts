@@ -1102,3 +1102,130 @@ export function describeFileOpen(state: FileOpenState): string {
 export function isMarkdownPath(relativePath: string): boolean {
   return /\.(?:md|mdx)$/i.test(relativePath);
 }
+
+// ---------------------------------------------------------------------------
+// t3.ui/theme consumption
+// ---------------------------------------------------------------------------
+
+/**
+ * The theme roles this panel consumes, each republished as a `--t3-files-*`
+ * custom property on the view root. Component styles chain
+ * `var(--t3-files-x, …)` ahead of their pre-contract fallbacks, so a host
+ * that cannot serve the contract (ungranted or provider-less) renders
+ * exactly what it rendered before adoption. The `font-*` vars are not color
+ * roles and stay outside the contract map on purpose.
+ */
+export const FILES_THEME_VARS = {
+  text: "--t3-files-text",
+  canvas: "--t3-files-canvas",
+  mutedForeground: "--t3-files-muted-foreground",
+  border: "--t3-files-border",
+  muted: "--t3-files-muted",
+  accentSurface: "--t3-files-accent-surface",
+  messageAction: "--t3-files-message-action",
+} as const;
+
+/**
+ * `getTokens` output → root-level custom properties. Each override carries
+ * the contract's advertised var name with the resolved value as its
+ * fallback, so the panel tracks `--app-theme-*` paints live and still gets
+ * the right color on hosts that answer the contract without painting those
+ * variables. A role missing from `tokens` is skipped entirely rather than
+ * overridden with a lie.
+ */
+export function themeVarOverrides(
+  tokens: Readonly<Record<string, string>>,
+  cssVars: Readonly<Record<string, string>>,
+): Record<string, string> {
+  const overrides: Record<string, string> = {};
+  for (const [role, property] of Object.entries(FILES_THEME_VARS)) {
+    const value = tokens[role];
+    if (value === undefined) continue;
+    const contractVar = cssVars[role];
+    overrides[property] = contractVar ? `var(${contractVar}, ${value})` : value;
+  }
+  return overrides;
+}
+
+// ---------------------------------------------------------------------------
+// t3.ui/keybindings consumption
+// ---------------------------------------------------------------------------
+
+/**
+ * The panel's command set for `t3.ui/keybindings`. `surface` scope keeps
+ * dispatch at the focused-view arbitration tier — each command acts only on
+ * the view instance that registered it, and the palette greys it unless that
+ * view is focused. `defaultKey`s sit beneath user and native rules, so they
+ * only fill a true miss; `mod+r`/`mod+f` mirror the app's own refresh and
+ * find conventions and carry the surface-focus `when` clause — without it a
+ * default matches `extensionCommandForKeydown` even while another
+ * extension's view is focused, and first-match wins the chord before
+ * eligibility drops the dispatch. Commands that collide with an
+ * unconditional native rule (`mod+o` → `editor.openFavorite`) ship unbound
+ * rather than registering a losing conflict. Element-local keys (Escape in
+ * the editor and search field) stay element-local — the contract is for
+ * named commands, not DOM key handling.
+ */
+export const FILES_VIEW_COMMANDS: readonly {
+  readonly id: string;
+  readonly title: string;
+  readonly defaultKey?: string;
+  readonly when?: string;
+  readonly scope: "surface";
+}[] = [
+  {
+    id: "refresh",
+    title: "Refresh files",
+    defaultKey: "mod+r",
+    when: "extension.t3.files/view.focus",
+    scope: "surface",
+  },
+  {
+    id: "focusSearch",
+    title: "Focus file search",
+    defaultKey: "mod+f",
+    when: "extension.t3.files/view.focus",
+    scope: "surface",
+  },
+  { id: "openIn", title: "Open file in…", scope: "surface" },
+  { id: "toggleMarkdown", title: "Toggle rendered markdown", scope: "surface" },
+];
+
+// ---------------------------------------------------------------------------
+// t3.ui/notifications consumption
+// ---------------------------------------------------------------------------
+
+/**
+ * The `notify` input for a failed open-in-presentation — the one place the
+ * native Files surface toasts (`FilePreviewPanel` raises "Unable to open file
+ * in browser" on a failed preview open). Thread-anchored when the view runs
+ * in a thread context, matching the native `stackedThreadToast`; otherwise
+ * the global drawer. `durationMs` matches the toast manager's 5 s default —
+ * the contract provider pins `timeout: 0` and dismisses only on an explicit
+ * duration, so omitting it would leave every failed open permanently
+ * displayed. Non-failure states return null: resolving and resolved are
+ * inline status in both implementations, and save/search surfaces never
+ * toast natively.
+ */
+export function fileOpenNotification(
+  state: FileOpenState,
+  threadId: string | undefined,
+): {
+  readonly severity: "error";
+  readonly title: string;
+  readonly body: string;
+  readonly durationMs: number;
+  readonly anchor?: "thread";
+  readonly threadId?: string;
+} | null {
+  if (state.status !== "denied" && state.status !== "unavailable") return null;
+  return {
+    severity: "error",
+    title: "Unable to open file",
+    body: describeFileOpen(state),
+    durationMs: 5_000,
+    ...(threadId !== undefined && threadId.length > 0
+      ? { anchor: "thread" as const, threadId }
+      : {}),
+  };
+}

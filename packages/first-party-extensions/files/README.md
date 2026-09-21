@@ -14,6 +14,28 @@ reveals for search hits and `#L…`/`path:line` targets, and composer-mention
 drags are package-owned (F1 #23); the drag payload uses the MIME the host
 composer already claims, so no composer contract is needed.
 
+UI contracts (`t3.ui/*`, adopted opportunistically — every one degrades
+without its grant or provider):
+
+- `t3.ui/theme@^1.0.0` — under `t3.ui/theme.read`: `getTokens` resolves the
+  host's effective theme (stored preference, session overlay, or external
+  preview — the provider folds them) and `subscribeState` re-reads on every
+  transition. Resolved values land on the view root as `--t3-files-*`
+  variables ahead of each style's legacy `var()` chain, so an installation
+  without the grant renders the pre-contract appearance unchanged.
+- `t3.ui/keybindings@^1.0.0` — under `t3.ui/keybindings`: the panel's actions
+  register as a `surface`-scope command set (Refresh files `mod+r`, Focus
+  file search `mod+f`, Open file in…, Toggle rendered markdown) bound through
+  the view session, so the host's arbitration decides dispatch — user rules
+  and native defaults outrank the plugin `defaultKey`s, which fire only while
+  the panel is focused. Element-local keys (Escape) stay element-local.
+- `t3.ui/notifications@^1.0.0` — under `t3.ui/notify`: a failed "Open in…"
+  toasts, matching the native panel's thread toast; every other status stays
+  inline because the native panel keeps it there.
+
+The surface declares no `capabilities` — that field gates mounting on host
+services, and these adoptions ride on `requires` + install grants instead.
+
 Build and check with the SDK CLI (`npm run build`, `npm run check`), then
 install the generated `.t3-extension/` directory through the normal installer.
 The audit (`npm run audit`, shared script at `../scripts/audit-imports.mjs`)
