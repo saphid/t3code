@@ -438,6 +438,48 @@ export const SETTLED_STATE_NOTE =
   "Thread settled state is not projected by t3.orchestration/status, so Settle and Unsettle are both offered when the provider supports them; the receipt reports the outcome.";
 
 // ---------------------------------------------------------------------------
+// t3.ui/theme consumption
+// ---------------------------------------------------------------------------
+
+/**
+ * The roles this panel consumes, each republished as a `--t3-agents-*` custom
+ * property on the view root. Component styles chain `var(--t3-agents-x, …)`
+ * onto their pre-contract fallbacks, so a host that cannot serve the contract
+ * (ungranted or provider-less) renders exactly what it rendered before
+ * adoption. Roles absent here stay theme-independent on purpose: `--info` and
+ * `--success` are host constants outside the contract's role set, and the
+ * `font-*` vars are not color tokens.
+ */
+export const AGENTS_THEME_VARS = {
+  mutedForeground: "--t3-agents-muted-foreground",
+  border: "--t3-agents-border",
+  error: "--t3-agents-error",
+  text: "--t3-agents-text",
+  canvas: "--t3-agents-canvas",
+} as const;
+
+/**
+ * `getTokens` output → root-level custom properties. Each override carries the
+ * contract's advertised var name with the resolved value as its fallback, so
+ * the panel tracks `--app-theme-*` paints live and still gets the right color
+ * on hosts that answer the contract without painting those variables. A role
+ * missing from `tokens` is skipped entirely rather than overridden with a lie.
+ */
+export function themeVarOverrides(
+  tokens: Readonly<Record<string, string>>,
+  cssVars: Readonly<Record<string, string>>,
+): Record<string, string> {
+  const overrides: Record<string, string> = {};
+  for (const [role, property] of Object.entries(AGENTS_THEME_VARS)) {
+    const value = tokens[role];
+    if (value === undefined) continue;
+    const contractVar = cssVars[role];
+    overrides[property] = contractVar ? `var(${contractVar}, ${value})` : value;
+  }
+  return overrides;
+}
+
+// ---------------------------------------------------------------------------
 // Live orchestration model — t3.orchestration/status + t3.orchestration/control
 // ---------------------------------------------------------------------------
 

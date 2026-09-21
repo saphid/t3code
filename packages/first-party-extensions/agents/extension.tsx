@@ -2,6 +2,7 @@ import {
   orchestrationControlApi,
   orchestrationStatusApi,
   terminalControlApi,
+  uiThemeApi,
   workspaceFilesApi,
   type ApprovalDecision,
   type OrchestrationCapabilities,
@@ -51,6 +52,7 @@ import {
   runWorkspaceScript,
   scriptRunNonce,
   setQuestionCustomAnswer,
+  themeVarOverrides,
   toggleQuestionOption,
   userInputOptionValue,
   workspaceFromRevision,
@@ -67,8 +69,11 @@ import {
 
 const manifestId = "t3.agents";
 
-const muted = "var(--muted-foreground, #667085)";
-const border = "1px solid var(--border, #dfe3e8)";
+// Every theme-backed value chains a `--t3-agents-*` hop (published on the view
+// root from `t3.ui/theme` tokens) ahead of the legacy host vars. When the
+// contract is unavailable the hop never resolves and the legacy chain renders.
+const muted = "var(--t3-agents-muted-foreground, var(--muted-foreground, #667085))";
+const border = "1px solid var(--t3-agents-border, var(--border, #dfe3e8))";
 const mono = "var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace)";
 const control = {
   padding: "4px 8px",
@@ -99,10 +104,12 @@ const sectionTitle = {
   padding: "2px 0 6px",
 } as const;
 const toneColor = {
+  // `--info`/`--success` are host constants deliberately outside the theme
+  // contract's role set — the native panel reads the same variables.
   info: "var(--info, #2e90fa)",
   muted,
   success: "var(--success, #12b76a)",
-  danger: "var(--destructive, #f04438)",
+  danger: "var(--t3-agents-error, var(--destructive, #f04438))",
 } as const;
 
 /** Long patches stay verified but render-capped so one frame cannot flood the DOM. */
@@ -116,6 +123,57 @@ function useVisible(session: ViewSession): boolean {
   const [visible, setVisible] = useState(session.visible);
   useEffect(() => session.onVisibility(setVisible), [session]);
   return visible;
+}
+
+/**
+ * `t3.ui/theme` consumer. `getTokens` resolves the host's *effective* theme —
+ * the provider's projection already folds the stored preference, live session
+ * overlays, and external previews into the painted state — and each
+ * `subscribeState` frame re-reads the tokens, so the panel tracks exactly
+ * what the host paints without interpreting overlay semantics itself. The map
+ * lands on the view root as `--t3-agents-*` custom properties; an ungranted
+ * or provider-less host yields null and every style falls back to its legacy
+ * `var()` chain — the honest degraded path.
+ */
+function useThemeVars(
+  host: ClientHost,
+  session: ViewSession,
+  visible: boolean,
+): Record<string, string> | null {
+  const [vars, setVars] = useState<Record<string, string> | null>(null);
+  useEffect(() => {
+    if (!visible) return;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    const api = bindApi(uiThemeApi, host, session.context);
+    const streams = bindStreamApi(uiThemeApi, host, session.context);
+    let generation = 0;
+    const refresh = () => {
+      const at = ++generation;
+      void api.invoke("getTokens", {}, signal).then(
+        (value) => {
+          if (!signal.aborted && at === generation)
+            setVars(themeVarOverrides(value.tokens, value.cssVars));
+        },
+        // Denial or absence leaves the last good map; initially that is the
+        // untouched legacy chain.
+        () => {},
+      );
+    };
+    refresh();
+    void (async () => {
+      try {
+        for await (const frame of streams.subscribe("subscribeState", {}, signal)) {
+          if (signal.aborted || frame.type === "closed") return;
+          refresh();
+        }
+      } catch {
+        // Stream loss only stops re-reads — the last resolved map stands.
+      }
+    })();
+    return () => controller.abort();
+  }, [host, session, visible]);
+  return vars;
 }
 
 interface AgentsFeed {
@@ -780,7 +838,7 @@ function AgentRow(props: { readonly agent: RuntimeSubagent }) {
                 fontFamily: mono,
                 fontSize: 10,
                 color: muted,
-                border: "1px solid var(--border, #dfe3e8)",
+                border,
                 borderRadius: 3,
                 padding: "0 3px",
                 flexShrink: 0,
@@ -1112,6 +1170,7 @@ async function runScript(
 function AgentsView(props: { host: ClientHost; session: ViewSession }) {
   const { host, session } = props;
   const visible = useVisible(session);
+  const themeVars = useThemeVars(host, session, visible);
   const workspace = workspaceFromRevision(session.context.workspaceRevision);
   const scriptsRead = useApiRead(host, session, workspaceFilesApi, "readText", {
     relativePath: "t3.json",
@@ -1164,10 +1223,11 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
         display: "flex",
         flexDirection: "column",
         minHeight: 0,
-        color: "var(--foreground, #20252d)",
-        background: "var(--background, #fff)",
+        color: "var(--t3-agents-text, var(--foreground, #20252d))",
+        background: "var(--t3-agents-canvas, var(--background, #fff))",
         fontFamily: "var(--font-sans, system-ui, sans-serif)",
         fontSize: 13,
+        ...themeVars,
       }}
     >
       <header
@@ -1430,6 +1490,7 @@ export default defineExtension({
     requireApi(terminalControlApi),
     requireApi(orchestrationStatusApi),
     requireApi(orchestrationControlApi),
+    requireApi(uiThemeApi),
   ],
   surfaces: [
     {

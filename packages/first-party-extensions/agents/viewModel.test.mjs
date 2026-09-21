@@ -42,6 +42,7 @@ import {
   scriptWriteData,
   setQuestionCustomAnswer,
   terminalBusy,
+  themeVarOverrides,
   toggleQuestionOption,
   userInputOptionValue,
   workspaceFromRevision,
@@ -914,5 +915,57 @@ NodeTest.describe("verified diff reassembly", () => {
     });
     NodeAssert.equal(result.ok, false);
     NodeAssert.match(result.detail, /before the manifest/);
+  });
+});
+
+NodeTest.describe("themeVarOverrides", () => {
+  const cssVars = {
+    mutedForeground: "--app-theme-muted-foreground",
+    border: "--app-theme-border",
+    error: "--app-theme-error",
+    text: "--app-theme-text",
+    canvas: "--app-theme-canvas",
+  };
+
+  NodeTest.it("republishes contract tokens as panel-scoped vars", () => {
+    const overrides = themeVarOverrides(
+      {
+        mutedForeground: "#98a2b3",
+        border: "#eaecf0",
+        error: "#f04438",
+        text: "#101828",
+        canvas: "#ffffff",
+      },
+      cssVars,
+    );
+    NodeAssert.deepEqual(overrides, {
+      "--t3-agents-muted-foreground": "var(--app-theme-muted-foreground, #98a2b3)",
+      "--t3-agents-border": "var(--app-theme-border, #eaecf0)",
+      "--t3-agents-error": "var(--app-theme-error, #f04438)",
+      "--t3-agents-text": "var(--app-theme-text, #101828)",
+      "--t3-agents-canvas": "var(--app-theme-canvas, #ffffff)",
+    });
+  });
+
+  NodeTest.it("skips roles the host did not resolve rather than overriding them", () => {
+    const overrides = themeVarOverrides({ text: "#101828" }, cssVars);
+    NodeAssert.deepEqual(overrides, {
+      "--t3-agents-text": "var(--app-theme-text, #101828)",
+    });
+  });
+
+  NodeTest.it("falls back to the resolved value when no css var is advertised", () => {
+    const overrides = themeVarOverrides({ mutedForeground: "#98a2b3" }, {});
+    NodeAssert.deepEqual(overrides, {
+      "--t3-agents-muted-foreground": "#98a2b3",
+    });
+  });
+
+  NodeTest.it("ignores unrelated roles the contract does not publish to this panel", () => {
+    const overrides = themeVarOverrides(
+      { mutedForeground: "#98a2b3", terminalBackground: "#000000", chrome: "#111" },
+      { ...cssVars, terminalBackground: "--app-theme-terminal-background" },
+    );
+    NodeAssert.deepEqual(Object.keys(overrides), ["--t3-agents-muted-foreground"]);
   });
 });
