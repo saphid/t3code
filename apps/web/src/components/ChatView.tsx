@@ -10598,6 +10598,7 @@ export default function ChatView(props: ChatViewProps) {
                             forceExpandedOnMobile={forceExpandedMobileComposer && isDraftHeroState}
                             projectSelectionRequired={isLocalDraftThread && activeProject === null}
                             phase={phase}
+                            activeTurnIsCompaction={isCompacting}
                             isConnecting={isConnecting}
                             isSendBusy={isSendBusy || isSavingQueuedEdit}
                             isRevertingCheckpoint={isRevertingCheckpoint}
