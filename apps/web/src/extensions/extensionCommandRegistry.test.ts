@@ -10,6 +10,7 @@ import {
   discardStagedGlobalCommands,
   dispatchExtensionCommand,
   extensionCommandForKeydown,
+  extensionCommandRevision,
   installExtensionCommandKeybindings,
   listExtensionCommandConflicts,
   listPaletteExtensionCommands,
@@ -18,6 +19,7 @@ import {
   setActiveExtensionThreadRef,
   stageGlobalCommands,
   stagedGlobalCommandsFor,
+  subscribeExtensionCommands,
   unconfigureExtensionCommandEnvironment,
   unregisterCommands,
   unregisterInstallationCommands,
@@ -813,5 +815,42 @@ describe("connection-aware arbitration regressions (r2)", () => {
       if (oldDocument === undefined) delete (globalThis as { document?: unknown }).document;
       else globalThis.document = oldDocument;
     }
+  });
+});
+
+describe("palette focus and conditional conflicts (r3)", () => {
+  it("focus changes invalidate palette and unsubscribe removes observers", async () => {
+    const old = globalThis.document;
+    const target = new EventTarget();
+    Object.assign(globalThis, { document: target });
+    const listener = vi.fn();
+    const close = subscribeExtensionCommands(listener);
+    try {
+      const before = extensionCommandRevision();
+      target.dispatchEvent(new Event("focusin"));
+      await Promise.resolve();
+      expect(extensionCommandRevision()).toBeGreaterThan(before);
+      expect(listener).toHaveBeenCalledOnce();
+      close();
+      target.dispatchEvent(new Event("focusout"));
+      await Promise.resolve();
+      expect(listener).toHaveBeenCalledOnce();
+    } finally {
+      close();
+      if (old === undefined) delete (globalThis as { document?: unknown }).document;
+      else globalThis.document = old;
+    }
+  });
+
+  it("conflict report must not declare an inactive when clause the winner", () => {
+    configureExtensionCommandEnvironment(ENV, { ...envDeps(), keybindings: () => [] });
+    register([
+      command({ id: "one", defaultKey: "ctrl+alt+r", when: "terminalFocus" }),
+      command({ id: "two", defaultKey: "ctrl+alt+r" }),
+    ]);
+    expect(extensionCommandForKeydown(keydownEvent("r", { ctrl: true, alt: true }), "Linux")).toBe(
+      "ext.ext.a.two",
+    );
+    expect(listExtensionCommandConflicts(ENV)).toEqual([]);
   });
 });

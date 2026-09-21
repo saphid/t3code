@@ -1079,6 +1079,9 @@ export function listExtensionCommandConflicts(environmentId: string): readonly {
     if (!registrationIsLive(registration)) continue;
     for (const command of registration.commands) {
       if (!command.defaultKey || !command.defaultShortcut) continue;
+      // A declaration whose `when` is inactive cannot claim the chord — it is
+      // neither a winner nor a loser, matching `extensionCommandForKeydown`.
+      if (!matchesWhenClause(command.whenAst ?? undefined, when)) continue;
       const conflictKey = shortcutConflictKey(command.defaultShortcut);
       const full = extensionCommandName(registration.installationId, command.id);
       const winner = winnerFor(conflictKey);
