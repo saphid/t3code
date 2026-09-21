@@ -52,6 +52,18 @@
     {
       "id": "t3.orchestration/control",
       "versionRange": "^1.0.0"
+    },
+    {
+      "id": "t3.ui/theme",
+      "versionRange": "^1.0.0"
+    },
+    {
+      "id": "t3.ui/keybindings",
+      "versionRange": "^1.0.0"
+    },
+    {
+      "id": "t3.ui/panels",
+      "versionRange": "^1.0.0"
     }
   ],
   "dependencies": []
