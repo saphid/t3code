@@ -52,7 +52,7 @@ import {
   runWorkspaceScript,
   scriptRunNonce,
   setQuestionCustomAnswer,
-  themeVarOverrides,
+  trackThemeVars,
   toggleQuestionOption,
   userInputOptionValue,
   workspaceFromRevision,
@@ -126,14 +126,13 @@ function useVisible(session: ViewSession): boolean {
 }
 
 /**
- * `t3.ui/theme` consumer. `getTokens` resolves the host's *effective* theme —
- * the provider's projection already folds the stored preference, live session
- * overlays, and external previews into the painted state — and each
- * `subscribeState` frame re-reads the tokens, so the panel tracks exactly
- * what the host paints without interpreting overlay semantics itself. The map
- * lands on the view root as `--t3-agents-*` custom properties; an ungranted
- * or provider-less host yields null and every style falls back to its legacy
- * `var()` chain — the honest degraded path.
+ * `t3.ui/theme` consumer. `trackThemeVars` owns the read/subscribe lifecycle
+ * (see viewModel.ts): the map lands on the view root as `--t3-agents-*`
+ * custom properties, and emits null — the honest degraded path back to the
+ * legacy `var()` chain — on an ungranted host, a failed token read, or a lost
+ * state stream. Retaining a stale map after stream loss is banned by the
+ * design's no-stale-fallback rule, so the map is also reset on re-show: the
+ * subscription is torn down while hidden and the theme may have moved.
  */
 function useThemeVars(
   host: ClientHost,
@@ -147,31 +146,20 @@ function useThemeVars(
     const signal = AbortSignal.any([controller.signal, session.signal]);
     const api = bindApi(uiThemeApi, host, session.context);
     const streams = bindStreamApi(uiThemeApi, host, session.context);
-    let generation = 0;
-    const refresh = () => {
-      const at = ++generation;
-      void api.invoke("getTokens", {}, signal).then(
-        (value) => {
-          if (!signal.aborted && at === generation)
-            setVars(themeVarOverrides(value.tokens, value.cssVars));
-        },
-        // Denial or absence leaves the last good map; initially that is the
-        // untouched legacy chain.
-        () => {},
-      );
+    trackThemeVars(
+      {
+        getTokens: (s) => api.invoke("getTokens", {}, s),
+        subscribeState: (s) => streams.subscribe("subscribeState", {}, s),
+      },
+      signal,
+      setVars,
+    );
+    return () => {
+      controller.abort();
+      // The subscription is dead from here on — drop the overrides so a
+      // re-show never briefly paints a theme the panel stopped observing.
+      setVars(null);
     };
-    refresh();
-    void (async () => {
-      try {
-        for await (const frame of streams.subscribe("subscribeState", {}, signal)) {
-          if (signal.aborted || frame.type === "closed") return;
-          refresh();
-        }
-      } catch {
-        // Stream loss only stops re-reads — the last resolved map stands.
-      }
-    })();
-    return () => controller.abort();
   }, [host, session, visible]);
   return vars;
 }

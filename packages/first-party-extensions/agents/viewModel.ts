@@ -479,6 +479,69 @@ export function themeVarOverrides(
   return overrides;
 }
 
+/** `getTokens` output shape (the contract's resolved effective-theme pair). */
+export interface UiThemeTokensResult {
+  readonly tokens: Readonly<Record<string, string>>;
+  readonly cssVars: Readonly<Record<string, string>>;
+}
+
+/** The two `t3.ui/theme` operations the panel needs, injected for tests. */
+export interface ThemeVarsSource {
+  getTokens(signal: AbortSignal): Promise<UiThemeTokensResult>;
+  subscribeState(signal: AbortSignal): AsyncIterable<{ readonly type: string }>;
+}
+
+/**
+ * Drives the `t3.ui/theme` read/subscribe pair and reports the custom-property
+ * map through `emit`. `getTokens` resolves the host's effective theme — the
+ * provider folds stored preference, session overlays, and external previews
+ * into the painted state — and each `subscribeState` frame re-reads.
+ *
+ * The design's no-stale-fallback rule: the overrides exist only while the
+ * contract can vouch for what the host is painting. A failed `getTokens` and
+ * a closed, errored, or ended `subscribeState` stream both emit `null` so the
+ * legacy `var()` chain takes over — a retained map would keep painting a
+ * theme the panel can no longer observe changing. Once the stream is gone no
+ * further read is trusted (in-flight resolutions are invalidated), and an
+ * aborted signal silences the tracker entirely.
+ */
+export function trackThemeVars(
+  source: ThemeVarsSource,
+  signal: AbortSignal,
+  emit: (vars: Record<string, string> | null) => void,
+): void {
+  let generation = 0;
+  let live = true;
+  const refresh = () => {
+    const at = ++generation;
+    void source.getTokens(signal).then(
+      (snapshot) => {
+        if (live && !signal.aborted && at === generation)
+          emit(themeVarOverrides(snapshot.tokens, snapshot.cssVars));
+      },
+      () => {
+        if (live && !signal.aborted && at === generation) emit(null);
+      },
+    );
+  };
+  refresh();
+  void (async () => {
+    try {
+      for await (const frame of source.subscribeState(signal)) {
+        if (signal.aborted) return;
+        if (frame.type === "closed") break;
+        refresh();
+      }
+    } catch {
+      // A rejected or errored stream is stream loss, same as a closed frame.
+    }
+    if (signal.aborted) return;
+    live = false;
+    generation += 1;
+    emit(null);
+  })();
+}
+
 // ---------------------------------------------------------------------------
 // Live orchestration model — t3.orchestration/status + t3.orchestration/control
 // ---------------------------------------------------------------------------

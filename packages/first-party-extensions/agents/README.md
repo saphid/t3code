@@ -50,7 +50,10 @@ terminal.
   re-reads on every transition. Resolved values land on the view root as
   `--t3-agents-*` variables ahead of each style's legacy `var()` chain, so an
   installation without the grant — or a host that never connects a theme
-  provider — renders the pre-contract appearance unchanged. The panel keeps
+  provider — renders the pre-contract appearance unchanged. The overrides are
+  cleared, never retained, when a read fails or the state stream is lost:
+  the contract can no longer vouch for the painted theme, so the legacy chain
+  takes back over. The panel keeps
   inline `<output>` receipts instead of `t3.ui/notifications` toasts (the
   native Agents surface is read-only and never toasts), and registers no
   `t3.ui/keybindings` commands (the surface has no shortcuts natively; the
