@@ -239,7 +239,12 @@ function SubagentTimelineLink(props: {
   const threadId = props.threadId;
   const statusLabel = props.status.replaceAll("_", " ");
   const icon = (
-    <ThreadRelationshipIcon driver={props.driver} provider={props.provider} status={props.status} />
+    <ThreadRelationshipIcon
+      driver={props.driver}
+      provider={props.provider}
+      status={props.status}
+      pulse
+    />
   );
   const label = <span className="block truncate">{props.title}</span>;
   return (

@@ -368,6 +368,7 @@ export function ThreadRelationshipsPanel(props: {
                     provider={provider}
                     fallbackIcon={RelationshipIcon}
                     status={edge.status}
+                    pulse={isSubagent && !isParent}
                   />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[13px] font-medium leading-4 text-foreground/85">
