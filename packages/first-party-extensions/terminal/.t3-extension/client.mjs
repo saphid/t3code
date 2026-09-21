@@ -8464,9 +8464,10 @@ var __t3Client = (() => {
   // vtAttachment.ts
   var MAX_OUTPUT_CHUNK_DATA_LENGTH = 8192;
   var MAX_OUTPUT_CHUNKS = 64;
-  function longestContainedSuffix(haystack, text) {
-    if (text.length === 0) return "";
-    if (haystack.includes(text)) return text;
+  function longestContainedSuffixAt(haystack, text) {
+    if (text.length === 0) return { start: 0, length: 0 };
+    const full = haystack.indexOf(text);
+    if (full >= 0) return { start: full, length: text.length };
     let lo = 0;
     let hi = text.length;
     while (hi - lo > 1) {
@@ -8474,7 +8475,8 @@ var __t3Client = (() => {
       if (haystack.includes(text.slice(-mid))) lo = mid;
       else hi = mid;
     }
-    return lo === 0 ? "" : text.slice(-lo);
+    if (lo === 0) return { start: 0, length: 0 };
+    return { start: haystack.indexOf(text.slice(-lo)), length: lo };
   }
   var MAX_PRE_SINK_OUTPUT_LENGTH = 512 * 1024;
   var TerminalVtAttachment = class {
@@ -8518,20 +8520,25 @@ var __t3Client = (() => {
     #sinkFailure = null;
     /**
      * Contiguous runs of live output that were never parsed with the PTY
-     * reply writer attached, in stream order. A resubscribe snapshot can
-     * append newer retained output after a run — or between two runs — so
-     * they are located by content inside the replay stream at replay time,
-     * not assumed to be a suffix. Bytes delivered to a live sink answered
-     * their terminal queries at write time; bytes buffered while detached
-     * produced no replies, so replaying them suppressed would silently drop
-     * queries the process is still waiting on. Replayed once with replies
-     * enabled, then cleared. Snapshot/history bytes are treated as
-     * already-rendered history and stay suppressed (native parity) — only
-     * live output the attachment saw go undelivered earns a reply.
+     * reply writer attached, in stream order. Each run carries its POSITION
+     * in the replay stream (base + buffered), adjusted as snapshots re-base
+     * the stream and eviction trims it — identical queries recur, so a run
+     * is identified by where its bytes sit, never by rightmost content
+     * match. Bytes delivered to a live sink answered their terminal queries
+     * at write time; bytes buffered while detached produced no replies, so
+     * replaying them suppressed would silently drop queries the process is
+     * still waiting on. Replayed once with replies enabled, then cleared.
+     * Snapshot/history bytes are treated as already-rendered history and
+     * stay suppressed (native parity) — only live output the attachment saw
+     * go undelivered earns a reply.
      */
     #unanswered = [];
-    /** Whether the last unanswered run currently ends at the stream tail. */
-    #unansweredAtTail = false;
+    /**
+     * The stream epoch that owns the pending runs. A reply queued while
+     * detached belongs to the process that asked — an incarnation change
+     * discards the claims before any content reconciliation.
+     */
+    #unansweredEpoch = null;
     #pending = null;
     #state = {
       status: "connecting",
@@ -8565,13 +8572,10 @@ var __t3Client = (() => {
      */
     #replayInto(sink, stream, resetBase) {
       const ranges = [];
-      let hi = stream.length;
-      for (let i = this.#unanswered.length - 1; i >= 0; i -= 1) {
-        const run = this.#unanswered[i];
-        const pos2 = run.length <= hi ? stream.lastIndexOf(run, hi - run.length) : -1;
-        if (pos2 < 0) continue;
-        ranges.unshift([pos2, pos2 + run.length]);
-        hi = pos2;
+      for (const run of this.#unanswered) {
+        if (stream.startsWith(run.data, run.start)) {
+          ranges.push([run.start, run.start + run.data.length]);
+        }
       }
       const suppressed = (write) => {
         sink.beginReplay?.();
@@ -8595,14 +8599,42 @@ var __t3Client = (() => {
       if (pos < stream.length) suppressed(() => sink.write(stream.slice(pos)));
     }
     /**
-     * Reconcile unanswered runs against `stream` after it dropped leading
-     * bytes (retention cut, buffer eviction): each run keeps its longest
-     * still-contained suffix, and a run no longer retained is an explicit
-     * drop — nothing remains to answer.
+     * A snapshot re-bases the stream: the portion of our received stream
+     * the server still retains is a suffix of it, sitting somewhere inside
+     * the new contents (which may have appended newer output). Map every
+     * run through that retained-overlap boundary by position — runs before
+     * the boundary are gone, and their queries with them (explicit drop:
+     * nothing remains to answer).
      */
-    #reconcileUnanswered(stream) {
-      this.#unanswered = this.#unanswered.map((run) => longestContainedSuffix(stream, run)).filter((run) => run.length > 0);
-      this.#unansweredAtTail = this.#unanswered.length > 0 && stream.endsWith(this.#unanswered[this.#unanswered.length - 1]);
+    #reconcileUnanswered(received, contents2) {
+      if (this.#unanswered.length === 0) return;
+      const match = longestContainedSuffixAt(contents2, received);
+      const drop = received.length - match.length;
+      this.#unanswered = this.#unanswered.flatMap((run) => {
+        const start = Math.max(run.start, drop);
+        if (run.start + run.data.length <= drop) return [];
+        return [{ start: match.start + start - drop, data: run.data.slice(start - run.start) }];
+      });
+    }
+    /**
+     * The retained buffer dropped `cutLength` bytes starting at `cutStart`
+     * (the buffered tail's front). Runs never straddle the base|buffered
+     * boundary, so each is either before the cut, inside it, or after it.
+     */
+    #mapRunsAfterCut(cutStart, cutLength) {
+      const cutEnd = cutStart + cutLength;
+      this.#unanswered = this.#unanswered.flatMap((run) => {
+        const end = run.start + run.data.length;
+        if (end <= cutStart) return [run];
+        if (run.start >= cutEnd) return [{ start: run.start - cutLength, data: run.data }];
+        const keep = end - Math.max(run.start, cutEnd);
+        if (keep <= 0) return [];
+        return [{ start: cutStart, data: run.data.slice(run.data.length - keep) }];
+      });
+    }
+    #clearUnanswered() {
+      this.#unanswered = [];
+      this.#unansweredEpoch = null;
     }
     /**
      * Surface mounted (or remounted after a theme/font swap): replay the base
@@ -8632,8 +8664,7 @@ var __t3Client = (() => {
         throw error;
       }
       this.#sinkFailure = null;
-      this.#unanswered = [];
-      this.#unansweredAtTail = false;
+      this.#clearUnanswered();
       if (this.#state.ended) return;
       const unfaithful = !this.#replayFaithful;
       if (previousFailure !== null || unfaithful && !this.#state.degraded) {
@@ -8718,25 +8749,28 @@ var __t3Client = (() => {
       });
     }
     #deliver(data) {
+      const tail = (this.#base?.length ?? 0) + this.#bufferedLength;
       if (this.#sink !== null) {
         this.#sink.write(data);
-        this.#unansweredAtTail = false;
       } else {
-        if (this.#unansweredAtTail && this.#unanswered.length > 0) {
-          this.#unanswered[this.#unanswered.length - 1] += data;
+        const last = this.#unanswered[this.#unanswered.length - 1];
+        if (last !== void 0 && last.start + last.data.length === tail) {
+          last.data += data;
         } else {
-          this.#unanswered.push(data);
+          this.#unanswered.push({ start: tail, data });
         }
-        this.#unansweredAtTail = true;
+        this.#unansweredEpoch = this.#epoch;
       }
       this.#buffered.push(data);
       this.#bufferedLength += data.length;
       if (this.#bufferedLength <= MAX_PRE_SINK_OUTPUT_LENGTH) return;
+      let evicted = 0;
       while (this.#buffered.length > 0 && this.#bufferedLength > MAX_PRE_SINK_OUTPUT_LENGTH) {
+        evicted += this.#buffered[0].length;
         this.#bufferedLength -= this.#buffered[0].length;
         this.#buffered.shift();
       }
-      this.#reconcileUnanswered((this.#base ?? "") + this.#buffered.join(""));
+      this.#mapRunsAfterCut(this.#base?.length ?? 0, evicted);
       this.#replayFaithful = false;
       if (this.#sink === null && !this.#state.degraded && !this.#state.ended) {
         this.#emit({
@@ -8764,18 +8798,21 @@ var __t3Client = (() => {
           return;
         }
         this.#pending = null;
+        const received = (this.#base ?? "") + this.#buffered.join("");
         this.#epoch = value.streamEpoch;
         this.#nativeWatermark = value.boundarySequence;
         this.#base = value.contents;
         this.#buffered = [];
         this.#bufferedLength = 0;
-        this.#reconcileUnanswered(value.contents);
+        if (this.#unanswered.length > 0 && this.#unansweredEpoch !== value.streamEpoch) {
+          this.#clearUnanswered();
+        }
+        this.#reconcileUnanswered(received, value.contents);
         this.#replayFaithful = !value.truncated && value.streamEpoch !== this.#clearedEpoch;
         const unfaithful = !this.#replayFaithful;
         if (this.#sink) {
           this.#replayInto(this.#sink, value.contents, true);
-          this.#unanswered = [];
-          this.#unansweredAtTail = false;
+          this.#clearUnanswered();
         }
         const ended = value.status === "exited" || value.status === "error";
         const running = this.#runningStatus();
@@ -8821,8 +8858,7 @@ var __t3Client = (() => {
         this.#base = "";
         this.#buffered = [];
         this.#bufferedLength = 0;
-        this.#unanswered = [];
-        this.#unansweredAtTail = false;
+        this.#clearUnanswered();
         this.#replayFaithful = false;
         this.#clearedEpoch = this.#epoch;
         if (this.#sink) {

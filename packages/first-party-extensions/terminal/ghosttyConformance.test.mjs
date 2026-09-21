@@ -456,6 +456,146 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   );
 
   NodeTest.it(
+    "a repeated query in a resubscribe snapshot answers at its OWN position (P2)",
+    async () => {
+      // Astra r5: the resnapshot holds TWO identical DSRs — the live one
+      // we received (position 0) and a newer history-only copy emitted
+      // while disconnected. Content matching picks the rightmost copy and
+      // answers at the wrong cursor position; position tracking answers
+      // the bytes that were actually received live.
+      const attachment = new TerminalVtAttachment("term-1");
+      const snap = (contents, boundarySequence, retainedByteLength = contents.length) => ({
+        kind: "snapshot",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        status: "running",
+        contents,
+        retainedByteLength,
+        truncated: false,
+        boundarySequence,
+      });
+      const output = (sequence, data) => ({
+        kind: "output",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        sequence,
+        chunkIndex: 0,
+        chunkCount: 1,
+        data,
+      });
+      const closed = {
+        kind: "closed",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        reason: "overflow",
+      };
+      attachment.applyFrame({ streamId: "s", sequence: 1 }, snap("", 0, 0));
+      attachment.applyFrame({ streamId: "s", sequence: 2 }, output(1, "\x1b[6n"));
+      attachment.applyFrame({ streamId: "s", sequence: 3 }, closed);
+      attachment.beginStream();
+      // Retained contents: our live DSR, newer output, then ANOTHER DSR
+      // the process emitted while we were gone (history-only — suppressed).
+      attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap("\x1b[6nlater\x1b[6n", 2));
+      const { core, writes } = await makeCore();
+      attachment.attach(core);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      // Exactly one reply, and it must be the cursor position at the FIRST
+      // query — the one that went undelivered live — not the newer copy.
+      NodeAssert.deepEqual(writes, ["\x1b[1;1R"]);
+      core.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "repeated queries around a resubscribe boundary each answer at their own position (P2)",
+    async () => {
+      // Same collision, plus a second live DSR after the snapshot: the
+      // replay owes TWO replies at distinct cursor positions.
+      const attachment = new TerminalVtAttachment("term-1");
+      const snap = (contents, boundarySequence, retainedByteLength = contents.length) => ({
+        kind: "snapshot",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        status: "running",
+        contents,
+        retainedByteLength,
+        truncated: false,
+        boundarySequence,
+      });
+      const output = (sequence, data) => ({
+        kind: "output",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        sequence,
+        chunkIndex: 0,
+        chunkCount: 1,
+        data,
+      });
+      const closed = {
+        kind: "closed",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        reason: "overflow",
+      };
+      attachment.applyFrame({ streamId: "s", sequence: 1 }, snap("", 0, 0));
+      attachment.applyFrame({ streamId: "s", sequence: 2 }, output(1, "\x1b[6n"));
+      attachment.applyFrame({ streamId: "s", sequence: 3 }, closed);
+      attachment.beginStream();
+      attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap("\x1b[6nlater\x1b[6n", 2));
+      attachment.applyFrame({ streamId: "s2", sequence: 2 }, output(3, "Z\x1b[6n"));
+      const { core, writes } = await makeCore();
+      attachment.attach(core);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      NodeAssert.deepEqual(writes, ["\x1b[1;1R", "\x1b[1;7R"]);
+      core.dispose();
+    },
+  );
+
+  NodeTest.it("a pending reply does not cross a terminal incarnation change (P2)", async () => {
+    // Astra r5: a query queued against epoch e must not deliver into
+    // epoch e+1 — the new process's retained history never earned it,
+    // even when identical bytes appear there.
+    const attachment = new TerminalVtAttachment("term-1");
+    const snap = (contents, boundarySequence, streamEpoch) => ({
+      kind: "snapshot",
+      terminalId: "term-1",
+      streamEpoch,
+      status: "running",
+      contents,
+      retainedByteLength: contents.length,
+      truncated: false,
+      boundarySequence,
+    });
+    const output = (sequence, data) => ({
+      kind: "output",
+      terminalId: "term-1",
+      streamEpoch: "epoch-1",
+      sequence,
+      chunkIndex: 0,
+      chunkCount: 1,
+      data,
+    });
+    const closed = {
+      kind: "closed",
+      terminalId: "term-1",
+      streamEpoch: "epoch-1",
+      reason: "identity-changed",
+    };
+    attachment.applyFrame({ streamId: "s", sequence: 1 }, snap("", 0, "epoch-1"));
+    attachment.applyFrame({ streamId: "s", sequence: 2 }, output(1, "\x1b[6n"));
+    attachment.applyFrame({ streamId: "s", sequence: 3 }, closed);
+    attachment.beginStream();
+    // New incarnation: identical query bytes exist in its history but
+    // belong to the new process — suppressed like any snapshot query.
+    attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap("fresh\x1b[6n", 1, "epoch-2"));
+    const { core, writes } = await makeCore();
+    attachment.attach(core);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    NodeAssert.deepEqual(writes, []);
+    core.dispose();
+  });
+
+  NodeTest.it(
     "a query inside snapshot history stays suppressed — documented drop (P2)",
     async () => {
       // Snapshot contents are retained history, not live output: a query
