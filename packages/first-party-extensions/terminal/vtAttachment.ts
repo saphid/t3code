@@ -146,6 +146,17 @@ export class TerminalVtAttachment {
    * our first byte — so position-0 provenance is unprovable there.
    */
   #receivedAnchored = false;
+  /**
+   * Identity of the retained-history window the received stream belongs
+   * to — the last snapshot's epoch + `clearGeneration`. A history clear
+   * does NOT end the epoch, so a clear inside a subscription gap is
+   * otherwise invisible: the next snapshot's `truncated:false` only
+   * means "all CURRENT retained bytes", not "same history origin". Same
+   * epoch with a different generation means the old window's bytes are
+   * gone. null when the stream's window is unknown — no snapshot yet,
+   * or an observed reset restarted the stream mid-window.
+   */
+  #baseWindow: { readonly epoch: string; readonly generation: number } | null = null;
   #pending: PendingChunkGroup | null = null;
   #state: TerminalVtAttachmentState = {
     status: "connecting",
@@ -251,11 +262,12 @@ export class TerminalVtAttachment {
    * - `boundarySequence === priorReceivedEnd`: no newer events exist, so
    *   contents must end at our last received byte. `endsWith` then pins
    *   both ends — contents IS our received suffix, truncation included.
-   * - `!truncated` with an anchored stream: an untruncated snapshot
-   *   covers every retained byte, and retention only drops at the far
-   *   larger buffer cap, so an untruncated epoch has never evicted —
-   *   contents position 0 is provably our stream's own start. `startsWith`
-   *   then verifies the server agrees byte-for-byte.
+   * - `!truncated` with an anchored stream in the same clear generation:
+   *   an untruncated snapshot covers every retained byte, retention only
+   *   drops at the far larger buffer cap, and an unchanged generation
+   *   proves no clear moved the window's start — so contents position 0
+   *   is provably our stream's own start. `startsWith` then verifies the
+   *   server agrees byte-for-byte.
    * Everything else — a truncated resnapshot, an unanchored post-clear
    *   stream, a hole from our own eviction — leaves run positions
    *   unprovable: drop the claims.
@@ -266,13 +278,15 @@ export class TerminalVtAttachment {
     boundarySequence: number,
     priorReceivedEnd: number,
     truncated: boolean,
+    priorAnchored: boolean,
+    priorHole: number,
   ) {
     if (this.#unanswered.length === 0) return;
     let drop = -1;
-    if (this.#bufferedHole === 0) {
+    if (priorHole === 0) {
       if (boundarySequence === priorReceivedEnd && received.endsWith(contents)) {
         drop = received.length - contents.length;
-      } else if (!truncated && this.#receivedAnchored && contents.startsWith(received)) {
+      } else if (!truncated && priorAnchored && contents.startsWith(received)) {
         drop = 0;
       }
     }
@@ -512,13 +526,25 @@ export class TerminalVtAttachment {
     this.#sequence = frame.sequence;
 
     if (value.kind === "snapshot") {
-      if (!Number.isSafeInteger(value.boundarySequence) || value.boundarySequence < 0) {
+      if (
+        !Number.isSafeInteger(value.boundarySequence) ||
+        value.boundarySequence < 0 ||
+        !Number.isSafeInteger(value.clearGeneration) ||
+        value.clearGeneration < 0
+      ) {
         this.#fail("Output snapshot boundary is invalid.");
         return;
       }
       this.#pending = null;
+      // Capture the OLD stream's provenance before re-basing — the
+      // reconcile below evaluates where OUR bytes sat, not the new
+      // snapshot's. `#epoch` is unusable here (beginStream nulls it), so
+      // the window identity travels with the stream itself.
       const received = (this.#base ?? "") + this.#buffered.join("");
       const priorReceivedEnd = this.#receivedEndSequence;
+      const priorAnchored = this.#receivedAnchored;
+      const priorHole = this.#bufferedHole;
+      const priorWindow = this.#baseWindow;
       this.#epoch = value.streamEpoch;
       this.#nativeWatermark = value.boundarySequence;
       this.#receivedEndSequence = value.boundarySequence;
@@ -527,25 +553,45 @@ export class TerminalVtAttachment {
       this.#buffered = [];
       this.#bufferedLength = 0;
       this.#bufferedHole = 0;
+      this.#baseWindow = { epoch: value.streamEpoch, generation: value.clearGeneration };
       // Incarnation change: a pending reply belongs to the process that
       // asked. The new epoch's retained history never earned it — discard
       // the claims before any reconciliation, so a stale query cannot
       // attach to identical bytes in another incarnation's stream.
-      if (this.#unanswered.length > 0 && this.#unansweredEpoch !== value.streamEpoch) {
+      //
+      // Same-epoch history reset missed while detached: a clear does not
+      // end the epoch, so only the snapshot's clear generation proves the
+      // retained window still shares our stream's origin. A mismatch
+      // means the old bytes are gone — claims die with them, and the
+      // post-clear tail no longer contains mode-establishing output, so
+      // the epoch counts as cleared for fidelity too.
+      const missedClear =
+        priorWindow !== null &&
+        priorWindow.epoch === value.streamEpoch &&
+        priorWindow.generation !== value.clearGeneration;
+      if (missedClear) this.#clearedEpoch = value.streamEpoch;
+      if (
+        this.#unanswered.length > 0 &&
+        (this.#unansweredEpoch !== value.streamEpoch || missedClear)
+      ) {
         this.#clearUnanswered();
+      } else {
+        // The snapshot's retained contents may extend past the bytes we
+        // last received — the server kept accepting output while the
+        // subscription was closed. Claims keep their positions only where
+        // the retention boundary provably anchors them; anything else is
+        // an explicit drop rather than a guess against identical bytes
+        // elsewhere.
+        this.#reconcileUnanswered(
+          received,
+          value.contents,
+          value.boundarySequence,
+          priorReceivedEnd,
+          value.truncated,
+          priorAnchored,
+          priorHole,
+        );
       }
-      // The snapshot's retained contents may extend past the bytes we last
-      // received — the server kept accepting output while the subscription
-      // was closed. Claims keep their positions only where the retention
-      // boundary provably anchors them; anything else is an explicit drop
-      // rather than a guess against identical bytes elsewhere.
-      this.#reconcileUnanswered(
-        received,
-        value.contents,
-        value.boundarySequence,
-        priorReceivedEnd,
-        value.truncated,
-      );
       // A snapshot only restores fidelity when the epoch's retained bytes
       // cover process start — an untruncated snapshot in a post-clear epoch
       // is still missing the mode-establishing output.
@@ -618,6 +664,7 @@ export class TerminalVtAttachment {
       this.#pending = null;
       this.#base = "";
       this.#receivedAnchored = false;
+      this.#baseWindow = null;
       this.#buffered = [];
       this.#bufferedLength = 0;
       this.#bufferedHole = 0;

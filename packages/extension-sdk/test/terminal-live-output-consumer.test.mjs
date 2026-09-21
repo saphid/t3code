@@ -9,6 +9,7 @@ const snapshot = (extra = {}) => ({
   contents: "before",
   retainedByteLength: 6,
   truncated: false,
+  clearGeneration: 0,
   boundarySequence: 10,
   ...extra,
 });

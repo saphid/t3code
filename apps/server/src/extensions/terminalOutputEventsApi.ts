@@ -86,6 +86,7 @@ function publicEvents(event: TerminalOutputObservationEvent): readonly ApiStream
             contents: event.snapshot.contents,
             retainedByteLength: event.snapshot.retainedByteLength,
             truncated: event.snapshot.truncated,
+            clearGeneration: event.clearGeneration,
             boundarySequence: event.sequence,
           } satisfies TerminalOutputEventsSnapshot,
         },

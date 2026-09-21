@@ -607,6 +607,28 @@ it.layer(
     }),
   );
 
+  it.effect("bumps the snapshot clear generation across a history clear", () =>
+    Effect.gen(function* () {
+      const { manager } = yield* createManager();
+      yield* manager.open(openInput());
+      const snapshotGeneration = () => {
+        const events: TerminalManager.TerminalOutputObservationEvent[] = [];
+        return Effect.gen(function* () {
+          const unsubscribe = yield* manager.subscribeOutput(
+            { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+            (event) => events.push(event),
+          );
+          yield* Effect.sync(unsubscribe);
+          const snapshot = events.find((event) => event.type === "snapshot");
+          return snapshot?.type === "snapshot" ? snapshot.clearGeneration : -1;
+        });
+      };
+      expect(yield* snapshotGeneration()).toBe(0);
+      yield* manager.clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+      expect(yield* snapshotGeneration()).toBe(1);
+    }),
+  );
+
   it.effect("terminates an old observation on reincarnation without accepting old identity", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();

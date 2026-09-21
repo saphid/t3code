@@ -37,6 +37,7 @@ const snapshotValue = (overrides = {}) => ({
   contents: "$ echo hi\nhi\n",
   retainedByteLength: 12,
   truncated: false,
+  clearGeneration: 0,
   boundarySequence: 0,
   ...overrides,
 });

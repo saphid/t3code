@@ -854,6 +854,12 @@ export class BoundedTerminalHistory {
   private start = 0;
   private byteLength = 0;
   private lineBreaks = 0;
+  // Bumped on every clear() so an output snapshot can identify which
+  // retained-history window its tail was cut from — a clear inside a
+  // subscription gap does not end the observation epoch, so without a
+  // generation the post-clear tail is indistinguishable from the
+  // pre-clear stream's continuation.
+  private clearCount = 0;
   // Reading the old string's tail on each append can force chunk concatenation.
   private lastCodeUnit: number | undefined;
   private cachedValue: string | null = "";
@@ -1006,7 +1012,12 @@ export class BoundedTerminalHistory {
     }
   }
 
+  get clearGeneration(): number {
+    return this.clearCount;
+  }
+
   clear(): void {
+    this.clearCount += 1;
     this.chunks = [];
     this.start = 0;
     this.byteLength = 0;
@@ -1134,6 +1145,7 @@ export type TerminalOutputObservationEvent =
       readonly threadId: string;
       readonly terminalId: string;
       readonly sequence: number;
+      readonly clearGeneration: number;
       readonly snapshot: TerminalOutputSnapshot;
     };
 
@@ -2991,6 +3003,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             threadId: session.threadId,
             terminalId: session.terminalId,
             sequence: initialSequence,
+            clearGeneration: session.history.clearGeneration,
             snapshot: {
               threadId: session.threadId,
               terminalId: session.terminalId,

@@ -289,6 +289,14 @@ export type TerminalOutputEventsSnapshot = {
   readonly contents: string;
   readonly retainedByteLength: number;
   readonly truncated: boolean;
+  /**
+   * Identity of the retained-history window the tail was cut from. A
+   * history clear preserves `streamEpoch`, so a snapshot taken after a
+   * missed `reset` frame is only distinguishable by this counter: a
+   * value different from the previous snapshot's means the old window's
+   * bytes are gone even when `truncated` is false.
+   */
+  readonly clearGeneration: number;
   readonly boundarySequence: number;
 };
 export type TerminalOutputEventsOutput = {
@@ -812,6 +820,7 @@ const terminalOutputEventsValueSchema = {
         "contents",
         "retainedByteLength",
         "truncated",
+        "clearGeneration",
         "boundarySequence",
       ],
       properties: {
@@ -822,6 +831,7 @@ const terminalOutputEventsValueSchema = {
         contents: { type: "string", maxLength: 8192 },
         retainedByteLength: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
         truncated: { type: "boolean" },
+        clearGeneration: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
         boundarySequence: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
       },
     },

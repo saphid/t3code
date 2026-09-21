@@ -70,10 +70,14 @@ queries recur, so equal text is never treated as proof a byte survived.
 A resnapshot keeps a claim only where the retention boundary itself
 proves its position: `boundarySequence` equal to the last received event
 pins contents to the end of our stream (`endsWith`), and an untruncated
-snapshot in an eviction-free epoch pins it to the start (`startsWith`).
-Anything else — a truncated resnapshot, an unanchored post-clear stream,
-a hole left by our own buffer bound — is an explicit drop rather than a
-migration to a coincidental copy. Runs are fenced to their stream epoch
+snapshot in an eviction-free epoch pins it to the start (`startsWith`)
+— but only while the snapshot's `clearGeneration` matches, since a
+history clear inside a subscription gap does not end the epoch and an
+untruncated post-clear tail means "all current retained bytes", not
+"same history origin". Anything else — a truncated resnapshot, a bumped
+generation, an unanchored post-clear stream, a hole left by our own
+buffer bound — is an explicit drop rather than a migration to a
+coincidental copy. Runs are fenced to their stream epoch
 in both directions: a pending reply belongs to the process that asked and
 is discarded at incarnation end (identity-changed/close/exit), and replay
 holds claims unreleased while the epoch is unproven — a mount inside the

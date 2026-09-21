@@ -57,6 +57,7 @@ function snapshot(overrides = {}) {
     contents: "prompt$ ",
     retainedByteLength: 8,
     truncated: false,
+    clearGeneration: 0,
     boundarySequence: 7,
     ...overrides,
   };

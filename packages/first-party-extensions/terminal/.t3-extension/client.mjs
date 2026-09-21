@@ -51,13 +51,13 @@ var __t3Client = (() => {
     }
   });
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/generated-client.ts
+  // packages/first-party-extensions/terminal/generated-client.ts
   var generated_client_exports = {};
   __export(generated_client_exports, {
     default: () => generated_client_default
   });
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/contracts.js
+  // packages/extension-sdk/dist/contracts.js
   var API_VERSION = 1;
   var MAX_PAYLOAD_BYTES = 64 * 1024;
   function assertId(value) {
@@ -145,7 +145,7 @@ var __t3Client = (() => {
     return manifest;
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/capabilities.js
+  // packages/extension-sdk/dist/capabilities.js
   function defineApi(definition) {
     return { definition: validateApiDefinition(definition) };
   }
@@ -238,7 +238,7 @@ var __t3Client = (() => {
     return api;
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/orchestration.js
+  // packages/extension-sdk/dist/orchestration.js
   var ORCHESTRATION_STATUS = "t3.orchestration/status";
   var ORCHESTRATION_CONTROL = "t3.orchestration/control";
   var ORCHESTRATION_READ = "t3.orchestration/read";
@@ -464,7 +464,7 @@ var __t3Client = (() => {
   }
   var ORCHESTRATION_CONTROL_API = orchestrationControlApi.definition;
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/textEdits.js
+  // packages/extension-sdk/dist/textEdits.js
   var WORKSPACE_READ_TEXT_EDITS = "t3.workspace/text-edits";
   var WORKSPACE_READ_TEXT_GRANT = "t3.workspace/read-text";
   var WORKSPACE_WRITE_TEXT = "t3.workspace/write-text";
@@ -657,7 +657,7 @@ var __t3Client = (() => {
     ]
   });
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/catalogue.js
+  // packages/extension-sdk/dist/catalogue.js
   var BROWSER_LOCAL_SERVERS = "t3.browser/local-servers";
   var BROWSER_READ_LOCAL_SERVERS = "t3.browser/read-local-servers";
   var browserLocalServersApi = defineStreamApi({
@@ -1094,6 +1094,7 @@ var __t3Client = (() => {
           "contents",
           "retainedByteLength",
           "truncated",
+          "clearGeneration",
           "boundarySequence"
         ],
         properties: {
@@ -1104,6 +1105,7 @@ var __t3Client = (() => {
           contents: { type: "string", maxLength: 8192 },
           retainedByteLength: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
           truncated: { type: "boolean" },
+          clearGeneration: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
           boundarySequence: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER }
         }
       },
@@ -4043,7 +4045,7 @@ var __t3Client = (() => {
   var TERMINAL_OUTPUT_EVENTS_API = terminalOutputEventsApi.definition;
   var TERMINAL_CONTROL_API = terminalControlApi.definition;
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/environment.js
+  // packages/extension-sdk/dist/environment.js
   var ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
   var ENVIRONMENT_ASSET_MEDIA_TYPES = [
     "application/wasm",
@@ -4181,7 +4183,7 @@ var __t3Client = (() => {
     return { ...pkg, manifest };
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/authoring.js
+  // packages/extension-sdk/dist/authoring.js
   var statePreview = (state2) => {
     const encoded = JSON.stringify(state2);
     return encoded.length > 200 ? encoded.slice(0, 200) + "\u2026" : encoded;
@@ -4278,7 +4280,7 @@ var __t3Client = (() => {
     return { id: api.definition.id, versionRange };
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/shared/src/projectScripts.ts
+  // packages/shared/src/projectScripts.ts
   function projectScriptRuntimeEnv(input) {
     const env = {
       T3CODE_PROJECT_ROOT: input.project.cwd
@@ -4292,10 +4294,10 @@ var __t3Client = (() => {
     return env;
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/extension.tsx
+  // packages/first-party-extensions/terminal/extension.tsx
   var import_react = __toESM(require_react(), 1);
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/runtime.ts
+  // packages/first-party-extensions/terminal/ghostty/runtime.ts
   var textDecoder = new TextDecoder();
   var GhosttyRuntime = class _GhosttyRuntime {
     memory;
@@ -4481,15 +4483,15 @@ var __t3Client = (() => {
     return promise;
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/platform.ts
+  // packages/first-party-extensions/terminal/ghostty/platform.ts
   function isMacPlatform(platform) {
     return /mac|iphone|ipad|ipod/i.test(platform);
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/selection.ts
+  // packages/first-party-extensions/terminal/ghostty/selection.ts
   var SELECTION_MULTI_CLICK_INTERVAL_MS = 500;
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/terminal-links.ts
+  // packages/first-party-extensions/terminal/ghostty/terminal-links.ts
   var URL_PATTERN = /https?:\/\/[^\s"'`<>]+/giu;
   var FILE_PATH_PATTERN = /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
   var TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
@@ -4578,7 +4580,7 @@ var __t3Client = (() => {
     };
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/keyCodes.ts
+  // packages/first-party-extensions/terminal/ghostty/keyCodes.ts
   var ghosttyKeyboardCodes = [
     "Unidentified",
     "Backquote",
@@ -4818,7 +4820,7 @@ var __t3Client = (() => {
     return event.key.codePointAt(0) ?? 0;
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/core.ts
+  // packages/first-party-extensions/terminal/ghostty/core.ts
   var GHOSTTY_SUCCESS = 0;
   var GHOSTTY_OUT_OF_SPACE = -3;
   var MAX_SCROLLBACK_ROWS = 1e4;
@@ -5815,7 +5817,7 @@ var __t3Client = (() => {
     return sameColor(left, right);
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/renderer.ts
+  // packages/first-party-extensions/terminal/ghostty/renderer.ts
   var DEFAULT_SELECTION_BACKGROUND = "rgba(72, 122, 191, 0.35)";
   function cssColor(color) {
     return `rgb(${color.r}, ${color.g}, ${color.b})`;
@@ -6000,7 +6002,7 @@ var __t3Client = (() => {
     }
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/monospaceFonts.ts
+  // packages/first-party-extensions/terminal/ghostty/monospaceFonts.ts
   function quoteFontFamilyName(name) {
     const bare = name.trim();
     if (bare.length === 0) return "";
@@ -6043,7 +6045,7 @@ var __t3Client = (() => {
     }
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/surface.ts
+  // packages/first-party-extensions/terminal/ghostty/surface.ts
   var DEFAULT_TERMINAL_FONT_SIZE = 12;
   var MIN_TERMINAL_FONT_SIZE = 6;
   var MAX_TERMINAL_FONT_SIZE = 32;
@@ -7499,7 +7501,7 @@ var __t3Client = (() => {
     }
   };
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/surfaceKeys.ts
+  // packages/first-party-extensions/terminal/ghostty/surfaceKeys.ts
   var TERMINAL_WORD_BACKWARD = "\x1Bb";
   var TERMINAL_WORD_FORWARD = "\x1Bf";
   var TERMINAL_LINE_START = "";
@@ -7562,7 +7564,7 @@ var __t3Client = (() => {
     return null;
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/terminalTheme.ts
+  // packages/first-party-extensions/terminal/terminalTheme.ts
   function parseTerminalColor(value, fallback) {
     if (typeof document === "undefined") return fallback;
     const canvas = document.createElement("canvas");
@@ -7651,7 +7653,7 @@ var __t3Client = (() => {
     };
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/shared/src/terminalLabels.ts
+  // packages/shared/src/terminalLabels.ts
   function getTerminalLabel(terminalId) {
     const numericSuffix = /^term(?:inal)?-(\d+)$/i.exec(terminalId)?.[1];
     if (numericSuffix) {
@@ -7675,7 +7677,7 @@ var __t3Client = (() => {
     return `term-${nextIndex}`;
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/inputQueue.ts
+  // packages/first-party-extensions/terminal/inputQueue.ts
   var TERMINAL_INPUT_SERIALIZED_BUDGET = 48 * 1024;
   var TERMINAL_INPUT_PENDING_BUDGET = 256 * 1024;
   var TERMINAL_INPUT_WRITE_TIMEOUT_MS = 3e4;
@@ -7874,7 +7876,7 @@ var __t3Client = (() => {
     }
   };
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/viewModel.ts
+  // packages/first-party-extensions/terminal/viewModel.ts
   var TERMINAL_BUFFER_MAX_BYTES = 512 * 1024;
   var OVERFLOW_RESUBSCRIBE_WINDOW_MS = 1e4;
   var OVERFLOW_RESUBSCRIBE_MAX = 3;
@@ -8461,7 +8463,7 @@ var __t3Client = (() => {
     }
   };
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/vtAttachment.ts
+  // packages/first-party-extensions/terminal/vtAttachment.ts
   var MAX_OUTPUT_CHUNK_DATA_LENGTH = 8192;
   var MAX_OUTPUT_CHUNKS = 64;
   var MAX_PRE_SINK_OUTPUT_LENGTH = 512 * 1024;
@@ -8541,6 +8543,17 @@ var __t3Client = (() => {
      * our first byte — so position-0 provenance is unprovable there.
      */
     #receivedAnchored = false;
+    /**
+     * Identity of the retained-history window the received stream belongs
+     * to — the last snapshot's epoch + `clearGeneration`. A history clear
+     * does NOT end the epoch, so a clear inside a subscription gap is
+     * otherwise invisible: the next snapshot's `truncated:false` only
+     * means "all CURRENT retained bytes", not "same history origin". Same
+     * epoch with a different generation means the old window's bytes are
+     * gone. null when the stream's window is unknown — no snapshot yet,
+     * or an observed reset restarted the stream mid-window.
+     */
+    #baseWindow = null;
     #pending = null;
     #state = {
       status: "connecting",
@@ -8623,22 +8636,23 @@ var __t3Client = (() => {
      * - `boundarySequence === priorReceivedEnd`: no newer events exist, so
      *   contents must end at our last received byte. `endsWith` then pins
      *   both ends — contents IS our received suffix, truncation included.
-     * - `!truncated` with an anchored stream: an untruncated snapshot
-     *   covers every retained byte, and retention only drops at the far
-     *   larger buffer cap, so an untruncated epoch has never evicted —
-     *   contents position 0 is provably our stream's own start. `startsWith`
-     *   then verifies the server agrees byte-for-byte.
+     * - `!truncated` with an anchored stream in the same clear generation:
+     *   an untruncated snapshot covers every retained byte, retention only
+     *   drops at the far larger buffer cap, and an unchanged generation
+     *   proves no clear moved the window's start — so contents position 0
+     *   is provably our stream's own start. `startsWith` then verifies the
+     *   server agrees byte-for-byte.
      * Everything else — a truncated resnapshot, an unanchored post-clear
      *   stream, a hole from our own eviction — leaves run positions
      *   unprovable: drop the claims.
      */
-    #reconcileUnanswered(received, contents2, boundarySequence, priorReceivedEnd, truncated) {
+    #reconcileUnanswered(received, contents2, boundarySequence, priorReceivedEnd, truncated, priorAnchored, priorHole) {
       if (this.#unanswered.length === 0) return;
       let drop = -1;
-      if (this.#bufferedHole === 0) {
+      if (priorHole === 0) {
         if (boundarySequence === priorReceivedEnd && received.endsWith(contents2)) {
           drop = received.length - contents2.length;
-        } else if (!truncated && this.#receivedAnchored && contents2.startsWith(received)) {
+        } else if (!truncated && priorAnchored && contents2.startsWith(received)) {
           drop = 0;
         }
       }
@@ -8832,13 +8846,16 @@ var __t3Client = (() => {
       }
       this.#sequence = frame.sequence;
       if (value.kind === "snapshot") {
-        if (!Number.isSafeInteger(value.boundarySequence) || value.boundarySequence < 0) {
+        if (!Number.isSafeInteger(value.boundarySequence) || value.boundarySequence < 0 || !Number.isSafeInteger(value.clearGeneration) || value.clearGeneration < 0) {
           this.#fail("Output snapshot boundary is invalid.");
           return;
         }
         this.#pending = null;
         const received = (this.#base ?? "") + this.#buffered.join("");
         const priorReceivedEnd = this.#receivedEndSequence;
+        const priorAnchored = this.#receivedAnchored;
+        const priorHole = this.#bufferedHole;
+        const priorWindow = this.#baseWindow;
         this.#epoch = value.streamEpoch;
         this.#nativeWatermark = value.boundarySequence;
         this.#receivedEndSequence = value.boundarySequence;
@@ -8847,16 +8864,22 @@ var __t3Client = (() => {
         this.#buffered = [];
         this.#bufferedLength = 0;
         this.#bufferedHole = 0;
-        if (this.#unanswered.length > 0 && this.#unansweredEpoch !== value.streamEpoch) {
+        this.#baseWindow = { epoch: value.streamEpoch, generation: value.clearGeneration };
+        const missedClear = priorWindow !== null && priorWindow.epoch === value.streamEpoch && priorWindow.generation !== value.clearGeneration;
+        if (missedClear) this.#clearedEpoch = value.streamEpoch;
+        if (this.#unanswered.length > 0 && (this.#unansweredEpoch !== value.streamEpoch || missedClear)) {
           this.#clearUnanswered();
+        } else {
+          this.#reconcileUnanswered(
+            received,
+            value.contents,
+            value.boundarySequence,
+            priorReceivedEnd,
+            value.truncated,
+            priorAnchored,
+            priorHole
+          );
         }
-        this.#reconcileUnanswered(
-          received,
-          value.contents,
-          value.boundarySequence,
-          priorReceivedEnd,
-          value.truncated
-        );
         this.#replayFaithful = !value.truncated && value.streamEpoch !== this.#clearedEpoch;
         const unfaithful = !this.#replayFaithful;
         if (this.#sink) {
@@ -8907,6 +8930,7 @@ var __t3Client = (() => {
         this.#pending = null;
         this.#base = "";
         this.#receivedAnchored = false;
+        this.#baseWindow = null;
         this.#buffered = [];
         this.#bufferedLength = 0;
         this.#bufferedHole = 0;
@@ -9022,7 +9046,7 @@ var __t3Client = (() => {
     }
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/extension.tsx
+  // packages/first-party-extensions/terminal/extension.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
   var manifestId = "t3.terminal";
   var GHOSTTY_VT_ASSET = "assets/ghostty-vt.wasm";
@@ -9813,10 +9837,10 @@ var __t3Client = (() => {
     ]
   });
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/extension.ts
+  // packages/first-party-extensions/terminal/extension.ts
   var extension_default2 = extension_default;
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/generated-client.ts
+  // packages/first-party-extensions/terminal/generated-client.ts
   var generated_client_default = extension_default2.client;
   return __toCommonJS(generated_client_exports);
 })();

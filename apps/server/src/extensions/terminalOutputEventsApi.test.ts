@@ -42,6 +42,7 @@ const snapshot: TerminalOutputObservationEvent = {
   threadId: "thread",
   terminalId: "term-1",
   sequence: 0,
+  clearGeneration: 0,
   snapshot: {
     threadId: "thread",
     terminalId: "term-1",

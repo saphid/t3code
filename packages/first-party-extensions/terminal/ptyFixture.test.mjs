@@ -46,6 +46,7 @@ NodeTest.it("raw-mode PTY fixture replays to the correct final screen", async ()
       contents: "",
       retainedByteLength: 0,
       truncated: false,
+      clearGeneration: 0,
       boundarySequence: 0,
     };
     attachment.applyFrame({ streamId: "s1", sequence: 1 }, snapshot);

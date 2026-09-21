@@ -276,6 +276,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       contents: "",
       retainedByteLength: 0,
       truncated: false,
+      clearGeneration: 0,
       boundarySequence: 7,
     };
     attachment.applyFrame({ streamId: "s", sequence: 1 }, snap);
@@ -322,6 +323,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       contents: "",
       retainedByteLength: 0,
       truncated: false,
+      clearGeneration: 0,
       boundarySequence: 7,
     };
     attachment.applyFrame({ streamId: "s", sequence: 1 }, snap);
@@ -370,6 +372,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
         contents,
         retainedByteLength,
         truncated: false,
+        clearGeneration: 0,
         boundarySequence,
       });
       const output = (sequence, data) => ({
@@ -421,6 +424,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
         contents,
         retainedByteLength,
         truncated: false,
+        clearGeneration: 0,
         boundarySequence,
       });
       const output = (sequence, data) => ({
@@ -472,6 +476,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
         contents,
         retainedByteLength,
         truncated: false,
+        clearGeneration: 0,
         boundarySequence,
       });
       const output = (sequence, data) => ({
@@ -520,6 +525,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
         contents,
         retainedByteLength,
         truncated: false,
+        clearGeneration: 0,
         boundarySequence,
       });
       const output = (sequence, data) => ({
@@ -568,6 +574,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
         contents,
         retainedByteLength,
         truncated,
+        clearGeneration: 0,
         boundarySequence,
       });
       const output = (sequence, data) => ({
@@ -617,6 +624,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
         contents,
         retainedByteLength,
         truncated: false,
+        clearGeneration: 0,
         boundarySequence,
       });
       const output = (sequence, data) => ({
@@ -667,6 +675,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
         contents,
         retainedByteLength: contents.length,
         truncated: false,
+        clearGeneration: 0,
         boundarySequence,
       });
       const output = (sequence, data) => ({
@@ -719,6 +728,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
         contents,
         retainedByteLength,
         truncated: false,
+        clearGeneration: 0,
         boundarySequence,
       });
       const output = (sequence, data) => ({
@@ -756,6 +766,114 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
     },
   );
 
+  NodeTest.it(
+    "a pending reply dies when a missed clear bumped the snapshot generation (P2)",
+    async () => {
+      // Astra r7: a history clear does not end the epoch, so an overflow
+      // resubscription can miss the reset entirely. The next untruncated
+      // snapshot's contents then start at the CLEAR POINT, not our
+      // stream's origin — truncated:false only means "all current
+      // retained bytes". The bumped clearGeneration is what proves the
+      // window changed: the old claim drops rather than answering the
+      // new generation's coincidentally identical query.
+      const attachment = new TerminalVtAttachment("term-1");
+      const snap = (contents, boundarySequence, clearGeneration) => ({
+        kind: "snapshot",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        status: "running",
+        contents,
+        retainedByteLength: contents.length,
+        truncated: false,
+        clearGeneration,
+        boundarySequence,
+      });
+      const output = (sequence, data) => ({
+        kind: "output",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        sequence,
+        chunkIndex: 0,
+        chunkCount: 1,
+        data,
+      });
+      const closed = {
+        kind: "closed",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        reason: "overflow",
+      };
+      attachment.applyFrame({ streamId: "s", sequence: 1 }, snap("", 0, 0));
+      attachment.applyFrame({ streamId: "s", sequence: 2 }, output(1, "\x1b[6n"));
+      attachment.applyFrame({ streamId: "s", sequence: 3 }, closed);
+      attachment.beginStream();
+      // While disconnected: the host clears retained history (seq 2),
+      // then the process emits a NEW ESC[6n plus "later" (seq 3) — both
+      // unseen. The resnapshot is untruncated yet covers only post-clear
+      // bytes, marked by clearGeneration 1.
+      attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap("\x1b[6nlater", 3, 1));
+      const { core, writes } = await makeCore();
+      attachment.attach(core);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      NodeAssert.deepEqual(writes, []);
+      core.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "a gap mount cannot release a reply whose generation was cleared mid-gap (P2)",
+    async () => {
+      // Same missed clear as above, opposite mount order: the renderer
+      // attaches INSIDE the beginStream→snapshot gap. The epoch fence
+      // holds the claim during the gap; the bumped-generation snapshot
+      // then discards it — the coincidentally identical post-clear query
+      // never earns the old reply.
+      const attachment = new TerminalVtAttachment("term-1");
+      const snap = (contents, boundarySequence, clearGeneration) => ({
+        kind: "snapshot",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        status: "running",
+        contents,
+        retainedByteLength: contents.length,
+        truncated: false,
+        clearGeneration,
+        boundarySequence,
+      });
+      const output = (sequence, data) => ({
+        kind: "output",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        sequence,
+        chunkIndex: 0,
+        chunkCount: 1,
+        data,
+      });
+      const closed = {
+        kind: "closed",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        reason: "overflow",
+      };
+      attachment.applyFrame({ streamId: "s", sequence: 1 }, snap("", 0, 0));
+      attachment.applyFrame({ streamId: "s", sequence: 2 }, output(1, "\x1b[6n"));
+      attachment.applyFrame({ streamId: "s", sequence: 3 }, closed);
+      attachment.beginStream();
+      const { core, writes } = await makeCore();
+      // Mount in the gap — the claim is held, not released.
+      attachment.attach(core);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      NodeAssert.deepEqual(writes, []);
+      // The generation-bumped snapshot arrives over the LIVE sink: it
+      // discards the claim, and its own history-only query stays
+      // suppressed as well.
+      attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap("\x1b[6nlater", 3, 1));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      NodeAssert.deepEqual(writes, []);
+      core.dispose();
+    },
+  );
+
   NodeTest.it("a pending reply does not cross a terminal incarnation change (P2)", async () => {
     // Astra r5: a query queued against epoch e must not deliver into
     // epoch e+1 — the new process's retained history never earned it,
@@ -769,6 +887,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       contents,
       retainedByteLength: contents.length,
       truncated: false,
+      clearGeneration: 0,
       boundarySequence,
     });
     const output = (sequence, data) => ({
@@ -817,6 +936,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
         contents: "\x1b[6n",
         retainedByteLength: 4,
         truncated: false,
+        clearGeneration: 0,
         boundarySequence: 7,
       };
       attachment.applyFrame({ streamId: "s", sequence: 1 }, snap);
