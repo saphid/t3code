@@ -6,12 +6,18 @@
  * command simply never registers.
  *
  * Reference: design/t3-ui-contract.md §2.1 (theme), §2.2 (keybindings),
- * §2.4 (panels). The native `diff.toggle` binding is `mod+d` with
- * `!terminalFocus` (packages/shared/src/keybindings.ts) and the native panel
- * surfaces no toasts, so `t3.ui/notifications` is deliberately not adopted —
- * the panel's inline status rows already match native rendering.
+ * §2.3 (notifications), §2.4 (panels). The native `diff.toggle` binding is
+ * `mod+d` with `!terminalFocus` (packages/shared/src/keybindings.ts). The
+ * native panel surfaces no toasts, so `t3.ui/notifications` is used only to
+ * report command-dispatch failures — a failure path the native toggle cannot
+ * have; the panel's inline status rows already match native rendering.
  */
-import { uiKeybindingsApi, uiPanelsApi, uiThemeApi } from "@t3tools/extension-sdk/catalogue";
+import {
+  uiKeybindingsApi,
+  uiNotificationsApi,
+  uiPanelsApi,
+  uiThemeApi,
+} from "@t3tools/extension-sdk/catalogue";
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ClientHost, GlobalCommandDescriptor } from "@t3tools/extension-sdk/environment";
@@ -185,11 +191,31 @@ export async function toggleDiffSurface(
 
 /**
  * A rejected toggle (revoked grant, dead connection, raced surface list) is
- * reported, never swallowed — the host's visible state stays authoritative
- * and the failure is diagnosable.
+ * surfaced through `t3.ui/notifications` — the keybinding has no in-panel
+ * affordance, so the toast is the honest failure channel — with a console
+ * record as the last resort when notifications themselves are unavailable.
+ * This is the only notification the panel sends: inline statuses stay inline,
+ * matching the native panel.
  */
-const reportToggleFailure = (error: unknown) => {
-  console.warn(`t3.diff/${DIFF_TOGGLE_COMMAND_ID} dispatch failed:`, error);
+const reportToggleFailure = (host: ClientHost, context: ViewContext, error: unknown) => {
+  const detail = error instanceof Error ? error.message : String(error);
+  const threadId = context.resource.threadId;
+  void bindApi(uiNotificationsApi, host, context)
+    .invoke(
+      "notify",
+      {
+        severity: "error",
+        title: "Could not toggle the diff panel",
+        body: detail.slice(0, 500),
+        dismissible: true,
+        durationMs: 8_000,
+        ...(threadId ? { threadId, anchor: "thread" as const } : { anchor: "global" as const }),
+      },
+      AbortSignal.timeout(10_000),
+    )
+    .catch(() => {
+      console.warn(`t3.diff/${DIFF_TOGGLE_COMMAND_ID} dispatch failed:`, error);
+    });
 };
 
 /**
@@ -200,7 +226,9 @@ const reportToggleFailure = (error: unknown) => {
 export function stageDiffCommands(host: ClientHost): void {
   host.registerGlobalCommands?.(DIFF_TOGGLE_GLOBAL_COMMANDS, ({ commandId, context }) => {
     if (commandId !== DIFF_TOGGLE_COMMAND_ID) return;
-    void toggleDiffSurface(host, context).catch(reportToggleFailure);
+    void toggleDiffSurface(host, context).catch((error) =>
+      reportToggleFailure(host, context, error),
+    );
   });
 }
 
@@ -225,7 +253,9 @@ export function bindDiffViewCommands(host: ClientHost, session: ViewSession): vo
       try {
         session.bindCommands(commandSetToken, ({ commandId, context }) => {
           if (commandId !== DIFF_TOGGLE_COMMAND_ID) return;
-          void toggleDiffSurface(host, context).catch(reportToggleFailure);
+          void toggleDiffSurface(host, context).catch((error) =>
+            reportToggleFailure(host, context, error),
+          );
         });
       } catch {
         // No binding store on this host — dispatch stays on the
@@ -240,11 +270,15 @@ export function bindDiffViewCommands(host: ClientHost, session: ViewSession): vo
  * `t3.ui/theme` consumption: one `getTokens` read plus a `subscribeState`
  * stream whose events re-resolve tokens — stored preference writes, session
  * overlays, and external/editor previews all surface through the stream.
- * Only the most recently issued read may publish, so a slow stale response
- * cannot overwrite (or clear) a newer resolution. A failed read and a lost
- * subscription both clear the overrides — the panel reverts to its static
- * fallbacks rather than painting stale tokens forever. Caller owns the
- * signal; aborting suppresses every publish.
+ *
+ * Two fences keep the paint honest. The `latest` sequence orders reads: only
+ * the most recently issued one may publish or clear. The `alive` flag is the
+ * generation fence: the pump polls the stream without awaiting reads, so a
+ * dead subscription is observed immediately and any read still in flight
+ * resolves into a dead generation — it can never publish late tokens. A
+ * failed latest read and a lost subscription both clear the overrides to the
+ * static fallbacks. Caller owns the signal; aborting suppresses every
+ * publish.
  */
 export function watchThemeTokens(
   host: ClientHost,
@@ -253,17 +287,23 @@ export function watchThemeTokens(
   onTokens: (tokens: ThemeTokens | null) => void,
 ): void {
   const api = bindApi(uiThemeApi, host, context);
+  let alive = true;
   let latest = 0;
   const refresh = () => {
     const seq = ++latest;
     return api.invoke("getTokens", {}, signal).then(
       (result) => {
-        if (!signal.aborted && seq === latest) onTokens(result.tokens);
+        if (!signal.aborted && alive && seq === latest) onTokens(result.tokens);
       },
       () => {
         if (!signal.aborted && seq === latest) onTokens(null);
       },
     );
+  };
+  const markDead = () => {
+    alive = false;
+    latest += 1;
+    if (!signal.aborted) onTokens(null);
   };
   void refresh();
   void (async () => {
@@ -271,16 +311,11 @@ export function watchThemeTokens(
       subscribeState: { input: Record<string, never>; event: Json };
     }>(uiThemeApi, host, context).subscribe("subscribeState", {}, signal);
     for await (const frame of stream) {
-      if (signal.aborted) return;
-      if (frame.type === "closed") break;
-      await refresh();
+      if (signal.aborted || frame.type === "closed") break;
+      // Deliberately unawaited: the pump keeps polling next() so stream death
+      // is observed even while a token read is still in flight.
+      void refresh();
     }
-    // Iteration ended: the subscription is gone. Invalidate any in-flight
-    // read, then clear — retained tokens would be unverifiable stale paint.
-    latest += 1;
-    if (!signal.aborted) onTokens(null);
-  })().catch(() => {
-    latest += 1;
-    if (!signal.aborted) onTokens(null);
-  });
+    markDead();
+  })().catch(markDead);
 }

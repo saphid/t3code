@@ -66,8 +66,10 @@ This is a read-oriented panel. It consumes `t3.vcs/read` plus the
   thread-matched binding → installation handler → cold activation)
   owns precedence, and the toggle itself runs through
   `t3.ui/panels` (`listSurfaces` → open/activate/close, matching the
-  native `diff.toggle`). `t3.ui/notify` is deliberately not adopted —
-  the native panel renders status inline, no toasts.
+  native `diff.toggle`). `t3.ui/notify` is used only to report
+  command-dispatch failures — a rejected toggle has no in-panel
+  affordance, so an error toast is the honest channel; status rows
+  stay inline, matching the native panel.
 
 Deferred slices: split view + Pierre renderer features (react-dom is
 bundler-banned), diff-line comments (`t3.messages/enrichment`),

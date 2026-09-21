@@ -3,6 +3,7 @@ import {
   orchestrationControlApi,
   orchestrationStatusApi,
   uiKeybindingsApi,
+  uiNotificationsApi,
   uiPanelsApi,
   uiThemeApi,
   vcsDiffApi,
@@ -1584,6 +1585,7 @@ const authored = defineExtension({
     requireApi(uiThemeApi),
     requireApi(uiKeybindingsApi),
     requireApi(uiPanelsApi),
+    requireApi(uiNotificationsApi),
   ],
   surfaces: [
     {

@@ -5460,13 +5460,30 @@ var __t3Client = (() => {
     }
     return action;
   }
-  var reportToggleFailure = (error) => {
-    console.warn(`t3.diff/${DIFF_TOGGLE_COMMAND_ID} dispatch failed:`, error);
+  var reportToggleFailure = (host, context, error) => {
+    const detail = error instanceof Error ? error.message : String(error);
+    const threadId = context.resource.threadId;
+    void bindApi(uiNotificationsApi, host, context).invoke(
+      "notify",
+      {
+        severity: "error",
+        title: "Could not toggle the diff panel",
+        body: detail.slice(0, 500),
+        dismissible: true,
+        durationMs: 8e3,
+        ...threadId ? { threadId, anchor: "thread" } : { anchor: "global" }
+      },
+      AbortSignal.timeout(1e4)
+    ).catch(() => {
+      console.warn(`t3.diff/${DIFF_TOGGLE_COMMAND_ID} dispatch failed:`, error);
+    });
   };
   function stageDiffCommands(host) {
     host.registerGlobalCommands?.(DIFF_TOGGLE_GLOBAL_COMMANDS, ({ commandId, context }) => {
       if (commandId !== DIFF_TOGGLE_COMMAND_ID) return;
-      void toggleDiffSurface(host, context).catch(reportToggleFailure);
+      void toggleDiffSurface(host, context).catch(
+        (error) => reportToggleFailure(host, context, error)
+      );
     });
   }
   function bindDiffViewCommands(host, session) {
@@ -5482,7 +5499,9 @@ var __t3Client = (() => {
         try {
           session.bindCommands(commandSetToken, ({ commandId, context }) => {
             if (commandId !== DIFF_TOGGLE_COMMAND_ID) return;
-            void toggleDiffSurface(host, context).catch(reportToggleFailure);
+            void toggleDiffSurface(host, context).catch(
+              (error) => reportToggleFailure(host, context, error)
+            );
           });
         } catch {
         }
@@ -5493,32 +5512,33 @@ var __t3Client = (() => {
   }
   function watchThemeTokens(host, context, signal, onTokens) {
     const api = bindApi(uiThemeApi, host, context);
+    let alive = true;
     let latest = 0;
     const refresh = () => {
       const seq = ++latest;
       return api.invoke("getTokens", {}, signal).then(
         (result) => {
-          if (!signal.aborted && seq === latest) onTokens(result.tokens);
+          if (!signal.aborted && alive && seq === latest) onTokens(result.tokens);
         },
         () => {
           if (!signal.aborted && seq === latest) onTokens(null);
         }
       );
     };
+    const markDead = () => {
+      alive = false;
+      latest += 1;
+      if (!signal.aborted) onTokens(null);
+    };
     void refresh();
     void (async () => {
       const stream = bindStreamApi(uiThemeApi, host, context).subscribe("subscribeState", {}, signal);
       for await (const frame of stream) {
-        if (signal.aborted) return;
-        if (frame.type === "closed") break;
-        await refresh();
+        if (signal.aborted || frame.type === "closed") break;
+        void refresh();
       }
-      latest += 1;
-      if (!signal.aborted) onTokens(null);
-    })().catch(() => {
-      latest += 1;
-      if (!signal.aborted) onTokens(null);
-    });
+      markDead();
+    })().catch(markDead);
   }
 
   // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/constants.js
@@ -8180,7 +8200,8 @@ ${prefix}`;
       requireApi(orchestrationControlApi),
       requireApi(uiThemeApi),
       requireApi(uiKeybindingsApi),
-      requireApi(uiPanelsApi)
+      requireApi(uiPanelsApi),
+      requireApi(uiNotificationsApi)
     ],
     surfaces: [
       {

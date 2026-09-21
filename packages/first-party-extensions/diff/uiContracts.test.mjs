@@ -234,9 +234,12 @@ NodeTest.test("stageDiffCommands stages the native-equivalent global toggle", as
   );
 });
 
-NodeTest.test("toggle dispatch failures are reported, not silently discarded", async () => {
-  const { host } = fakeHost({
-    invoke: () => Promise.reject(new Error("grant revoked")),
+NodeTest.test("toggle dispatch failures surface via t3.ui/notifications", async () => {
+  const { host, calls } = fakeHost({
+    invoke: (request) =>
+      request.id === "t3.ui/panels"
+        ? Promise.reject(new Error("grant revoked"))
+        : { notificationId: "n-1" },
   });
   let staged;
   host.registerGlobalCommands = (commands, handler) => {
@@ -253,9 +256,41 @@ NodeTest.test("toggle dispatch failures are reported, not silently discarded", a
   } finally {
     console.warn = original;
   }
-  NodeAssert.equal(warnings.length, 1);
-  NodeAssert.equal(warnings[0][0], "t3.diff/toggle dispatch failed:");
+  const notify = calls.find(
+    (call) => call.id === "t3.ui/notifications" && call.method === "notify",
+  );
+  NodeAssert.ok(notify);
+  NodeAssert.equal(notify.input.severity, "error");
+  NodeAssert.equal(notify.input.threadId, "thread-1");
+  NodeAssert.equal(notify.input.anchor, "thread");
+  NodeAssert.equal(warnings.length, 0);
 });
+
+NodeTest.test(
+  "toggle dispatch failures fall back to console when notify is unavailable",
+  async () => {
+    const { host } = fakeHost({
+      invoke: () => Promise.reject(new Error("everything down")),
+    });
+    let staged;
+    host.registerGlobalCommands = (commands, handler) => {
+      staged = { commands, handler };
+      return { status: "staged", onDidChange: () => () => {} };
+    };
+    const warnings = [];
+    const original = console.warn;
+    console.warn = (...args) => warnings.push(args);
+    try {
+      stageDiffCommands(host);
+      staged.handler({ commandId: DIFF_TOGGLE_COMMAND_ID, context: CONTEXT });
+      await flush();
+    } finally {
+      console.warn = original;
+    }
+    NodeAssert.equal(warnings.length, 1);
+    NodeAssert.equal(warnings[0][0], "t3.diff/toggle dispatch failed:");
+  },
+);
 
 NodeTest.test("bindDiffViewCommands registers the view set and binds its handler", async () => {
   const { host } = fakeHost({
@@ -417,15 +452,18 @@ NodeTest.test("watchThemeTokens clears overrides when the subscription is lost",
   reads[0].resolve({ tokens: { border: "#live" }, cssVars: {} });
   await flush();
   NodeAssert.deepEqual(seen, [{ border: "#live" }]);
-  // The stream dies while a refresh is in flight: the overrides clear and a
-  // read that resolves after the loss cannot resurrect stale tokens.
+  // The stream dies while a refresh is in flight: the pump observes the
+  // failure without waiting on the read, the generation fences the late
+  // response, and the overrides clear — "#late" is never published.
   stream.push({ type: "data" });
   await flush();
   NodeAssert.equal(reads.length, 2);
   stream.fail(new Error("connection lost"));
+  await flush();
+  NodeAssert.deepEqual(seen, [{ border: "#live" }, null]);
   reads[1].resolve({ tokens: { border: "#late" }, cssVars: {} });
   await flush();
-  NodeAssert.equal(seen.at(-1), null);
+  NodeAssert.deepEqual(seen, [{ border: "#live" }, null]);
 });
 
 NodeTest.test("watchThemeTokens clears on failed reads — no stale retention", async () => {
