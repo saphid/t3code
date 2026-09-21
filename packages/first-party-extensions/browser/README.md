@@ -16,6 +16,26 @@ The panel renders through public contracts only:
   silence.
 - `t3.file/presentation.open` routes browser-previewable files
   (`.html`/`.htm`/`.pdf`) to `t3.browser/view`.
+- `t3.ui/theme` — under the `t3.ui/theme.read` grant: `getTokens` resolves
+  the host's effective theme (stored preference, session overlay, or
+  external preview — the provider folds them) and `subscribeState` re-reads
+  on every transition. Resolved values land on the view root as
+  `--t3-browser-*` variables ahead of each style's legacy `var()` chain, so
+  an installation without the grant — or a host that never connects a theme
+  provider — renders the pre-contract appearance unchanged.
+- `t3.ui/keybindings` (`t3.ui/keybindings` grant; `t3.ui/keybindings.global`
+  for the toggle) — `mod+r` (reload) and `mod+l` (focus address) are
+  `surface`-scoped commands registered per view and bound through
+  `session.bindCommands`, so the host's focused-view arbitration reaches the
+  handler; `mod+shift+j` is an installation-scoped `toggle` staged through
+  `registerGlobalCommands` at factory time. User and native rules always win
+  — a chord the native `preview.*` rules claim never reaches the plugin.
+- `t3.ui/panels` + `t3.ui/notifications` (`t3.ui/panels` / `t3.ui/notify`
+  grants) — the `toggle` command runs the native open/activate/close cycle
+  and toasts through `t3.ui/notifications` when it cannot act (the native
+  `preview.toggle` "desktop-only" parity). Transient panel status —
+  navigation failures, ended sessions — stays inline like the native
+  unreachable view; nothing else toasts.
 
 Chrome row + navigation state stay panel-local (`viewModel.ts`, pure and
 tested); the persisted URL history lives in `historyStore.ts`; addresses
