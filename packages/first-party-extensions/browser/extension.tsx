@@ -31,9 +31,10 @@ import {
 import {
   BROWSER_GLOBAL_COMMANDS,
   BROWSER_VIEW_COMMANDS,
+  focusAddressInput,
   notifyToggleFailure,
-  themeVarOverrides,
   togglePanelSurface,
+  watchThemeVars,
 } from "./uiContracts.js";
 import {
   canGoBack,
@@ -75,9 +76,10 @@ const buttonStyle = {
  * overlays, and external previews into the painted state — and each
  * `subscribeState` frame re-reads the tokens, so the panel tracks exactly
  * what the host paints without interpreting overlay semantics itself. The map
- * lands on the view root as `--t3-browser-*` custom properties; an ungranted
- * or provider-less host yields null and every style falls back to its legacy
- * `var()` chain.
+ * lands on the view root as `--t3-browser-*` custom properties; the contract
+ * lifecycle lives in `watchThemeVars`, which clears the map on a failed read
+ * or a closed/lost subscription so an obsolete palette never poses as
+ * current — every style then falls back to its legacy `var()` chain.
  */
 function useThemeVars(
   host: ClientHost,
@@ -88,33 +90,12 @@ function useThemeVars(
   useEffect(() => {
     if (!visible) return;
     const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, session.signal]);
-    const api = bindApi(uiThemeApi, host, session.context);
-    const streams = bindStreamApi(uiThemeApi, host, session.context);
-    let generation = 0;
-    const refresh = () => {
-      const at = ++generation;
-      void api.invoke("getTokens", {}, signal).then(
-        (value) => {
-          if (!signal.aborted && at === generation)
-            setVars(themeVarOverrides(value.tokens, value.cssVars));
-        },
-        // Denial or absence leaves the last good map; initially that is the
-        // untouched legacy chain.
-        () => {},
-      );
-    };
-    refresh();
-    void (async () => {
-      try {
-        for await (const frame of streams.subscribe("subscribeState", {}, signal)) {
-          if (signal.aborted || frame.type === "closed") return;
-          refresh();
-        }
-      } catch {
-        // Stream loss only stops re-reads — the last resolved map stands.
-      }
-    })();
+    watchThemeVars(
+      bindApi(uiThemeApi, host, session.context),
+      bindStreamApi(uiThemeApi, host, session.context),
+      AbortSignal.any([controller.signal, session.signal]),
+      setVars,
+    );
     return () => controller.abort();
   }, [host, session, visible]);
   return vars;
@@ -447,7 +428,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         if (held) command("reload");
         else commit(reload(state));
       } else if (commandId === "focusAddress") {
-        addressRef.current?.focus();
+        focusAddressInput(addressRef.current);
       }
     };
   });

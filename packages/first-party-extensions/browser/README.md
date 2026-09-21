@@ -20,9 +20,11 @@ The panel renders through public contracts only:
   the host's effective theme (stored preference, session overlay, or
   external preview — the provider folds them) and `subscribeState` re-reads
   on every transition. Resolved values land on the view root as
-  `--t3-browser-*` variables ahead of each style's legacy `var()` chain, so
-  an installation without the grant — or a host that never connects a theme
-  provider — renders the pre-contract appearance unchanged.
+  `--t3-browser-*` variables ahead of each style's legacy `var()` chain. An
+  installation without the grant — or a host that never connects a theme
+  provider — renders the pre-contract appearance unchanged, and a failed
+  read or a lost subscription clears the overrides rather than presenting
+  an obsolete palette as current.
 - `t3.ui/keybindings` (`t3.ui/keybindings` grant; `t3.ui/keybindings.global`
   for the toggle) — `mod+r` (reload) and `mod+l` (focus address) are
   `surface`-scoped commands registered per view and bound through

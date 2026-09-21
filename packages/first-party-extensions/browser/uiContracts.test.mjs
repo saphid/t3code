@@ -1,8 +1,8 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 
-import { bindApi } from "@t3tools/extension-sdk/capabilities";
-import { uiNotificationsApi, uiPanelsApi } from "@t3tools/extension-sdk/catalogue";
+import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
+import { uiNotificationsApi, uiPanelsApi, uiThemeApi } from "@t3tools/extension-sdk/catalogue";
 import {
   parseKeybindingShortcut,
   parseKeybindingWhenExpression,
@@ -12,9 +12,11 @@ import {
   BROWSER_GLOBAL_COMMANDS,
   BROWSER_SURFACE_ID,
   BROWSER_VIEW_COMMANDS,
+  focusAddressInput,
   notifyToggleFailure,
   themeVarOverrides,
   togglePanelSurface,
+  watchThemeVars,
 } from "./uiContracts.ts";
 
 const context = {
@@ -39,6 +41,73 @@ function fakeClient(answers, calls) {
       return answer;
     },
   };
+}
+
+/** Flushes queued microtasks across the stream→invoke→apply hop chain. */
+const settle = async () => {
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+};
+
+/** A manually driven `subscribeApi` iterable — push frames, close, or fail. */
+function controllableStream() {
+  const queued = [];
+  const waiters = [];
+  let ended = false;
+  let failure = null;
+  const iterable = {
+    [Symbol.asyncIterator]() {
+      return {
+        next() {
+          if (queued.length > 0) return Promise.resolve(queued.shift());
+          if (failure) return Promise.reject(failure);
+          if (ended) return Promise.resolve({ done: true, value: undefined });
+          return new Promise((resolve, reject) => waiters.push({ resolve, reject }));
+        },
+      };
+    },
+  };
+  const settleWaiter = (entry) => {
+    const waiter = waiters.shift();
+    if (waiter) waiter.resolve(entry);
+    else queued.push(entry);
+  };
+  return {
+    iterable,
+    push: (frame) => settleWaiter({ value: frame, done: false }),
+    close() {
+      const waiter = waiters.shift();
+      if (waiter) waiter.resolve({ done: true, value: undefined });
+      else ended = true;
+    },
+    fail(error) {
+      const waiter = waiters.shift();
+      if (waiter) waiter.reject(error);
+      else failure = error;
+    },
+  };
+}
+
+/** Bound `t3.ui/theme` api whose `getTokens` consumes `reads` in order. */
+function fakeTheme(reads) {
+  return bindApi(
+    uiThemeApi,
+    fakeClient(
+      {
+        getTokens: () => {
+          const read = reads.shift();
+          if (read instanceof Error) throw read;
+          return read;
+        },
+      },
+      [],
+    ),
+    context,
+  );
+}
+
+function fakeThemeStreams(stream) {
+  return bindStreamApi(uiThemeApi, { subscribeApi: () => stream.iterable }, context);
 }
 
 NodeTest.describe("themeVarOverrides", () => {
@@ -249,5 +318,132 @@ NodeTest.describe("notifyToggleFailure", () => {
     );
     await notifyToggleFailure(notifications, "thread", "denied", new AbortController().signal);
     NodeAssert.equal(calls[0].input.body, undefined);
+  });
+});
+
+NodeTest.describe("watchThemeVars", () => {
+  const themeResult = {
+    tokens: { text: "#101828" },
+    cssVars: { text: "--app-theme-text" },
+  };
+  const themeVars = { "--t3-browser-text": "var(--app-theme-text, #101828)" };
+  const frame = (sequence = 1) => ({
+    type: "data",
+    value: {},
+    streamId: "stream",
+    sequence,
+  });
+
+  NodeTest.it("publishes resolved tokens on start", async () => {
+    const stream = controllableStream();
+    const applied = [];
+    const controller = new AbortController();
+    watchThemeVars(fakeTheme([themeResult]), fakeThemeStreams(stream), controller.signal, (vars) =>
+      applied.push(vars),
+    );
+    await settle();
+    NodeAssert.deepEqual(applied, [themeVars]);
+    controller.abort();
+  });
+
+  NodeTest.it("clears the applied map when a refresh rejects — no stale fallback", async () => {
+    const stream = controllableStream();
+    const applied = [];
+    const controller = new AbortController();
+    watchThemeVars(
+      fakeTheme([themeResult, new Error("grant revoked")]),
+      fakeThemeStreams(stream),
+      controller.signal,
+      (vars) => applied.push(vars),
+    );
+    await settle();
+    NodeAssert.deepEqual(applied, [themeVars]);
+    stream.push(frame());
+    await settle();
+    NodeAssert.deepEqual(applied, [themeVars, null]);
+    controller.abort();
+  });
+
+  NodeTest.it("republishes fresh tokens on a live frame after a cleared failure", async () => {
+    const stream = controllableStream();
+    const applied = [];
+    const controller = new AbortController();
+    watchThemeVars(
+      fakeTheme([new Error("denied"), themeResult]),
+      fakeThemeStreams(stream),
+      controller.signal,
+      (vars) => applied.push(vars),
+    );
+    await settle();
+    NodeAssert.deepEqual(applied, [null]);
+    stream.push(frame());
+    await settle();
+    NodeAssert.deepEqual(applied, [null, themeVars]);
+    controller.abort();
+  });
+
+  NodeTest.it("a closed stream clears the map and fences a read still in flight", async () => {
+    const stream = controllableStream();
+    const applied = [];
+    const controller = new AbortController();
+    let resolveRead;
+    const pending = new Promise((resolve) => {
+      resolveRead = resolve;
+    });
+    watchThemeVars(fakeTheme([pending]), fakeThemeStreams(stream), controller.signal, (vars) =>
+      applied.push(vars),
+    );
+    await settle();
+    stream.close();
+    await settle();
+    NodeAssert.deepEqual(applied, [null]);
+    // The obsolete read must not republish after its subscription is gone.
+    resolveRead(themeResult);
+    await settle();
+    NodeAssert.deepEqual(applied, [null]);
+    controller.abort();
+  });
+
+  NodeTest.it("a failed stream clears the last applied map", async () => {
+    const stream = controllableStream();
+    const applied = [];
+    const controller = new AbortController();
+    watchThemeVars(fakeTheme([themeResult]), fakeThemeStreams(stream), controller.signal, (vars) =>
+      applied.push(vars),
+    );
+    await settle();
+    NodeAssert.deepEqual(applied, [themeVars]);
+    stream.fail(new Error("connection lost"));
+    await settle();
+    NodeAssert.deepEqual(applied, [themeVars, null]);
+    controller.abort();
+  });
+
+  NodeTest.it("applies nothing after the watcher's signal aborts", async () => {
+    const stream = controllableStream();
+    const applied = [];
+    const controller = new AbortController();
+    watchThemeVars(fakeTheme([themeResult]), fakeThemeStreams(stream), controller.signal, (vars) =>
+      applied.push(vars),
+    );
+    controller.abort();
+    stream.close();
+    await settle();
+    NodeAssert.deepEqual(applied, []);
+  });
+});
+
+NodeTest.describe("focusAddressInput", () => {
+  NodeTest.it("focuses then selects so typing replaces the address", () => {
+    const calls = [];
+    focusAddressInput({
+      focus: () => calls.push("focus"),
+      select: () => calls.push("select"),
+    });
+    NodeAssert.deepEqual(calls, ["focus", "select"]);
+  });
+
+  NodeTest.it("is a no-op without a mounted input", () => {
+    focusAddressInput(null);
   });
 });

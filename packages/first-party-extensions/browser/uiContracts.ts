@@ -4,8 +4,14 @@
  * open/activate/close decision over `t3.ui/panels`. Everything here is pure
  * or client-injected so the logic is testable without a mounted view.
  */
-import type { ApiMethodTypes, TypedApi } from "@t3tools/extension-sdk/capabilities";
-import type { uiNotificationsApi, uiPanelsApi } from "@t3tools/extension-sdk/catalogue";
+import type {
+  ApiMethodTypes,
+  ApiStreamTypes,
+  TypedApi,
+  TypedApiStreamFrame,
+  TypedStreamApi,
+} from "@t3tools/extension-sdk/capabilities";
+import type { uiNotificationsApi, uiPanelsApi, uiThemeApi } from "@t3tools/extension-sdk/catalogue";
 import type { GlobalCommandDescriptor } from "@t3tools/extension-sdk/environment";
 
 /** Full manifest id of the thread-scoped browser surface (`t3.browser` + `view`). */
@@ -19,6 +25,18 @@ type BoundInvoke<T extends ApiMethodTypes> = <K extends keyof T & string>(
 
 /** The structural shape `bindApi` returns — tests inject a fake client behind it. */
 type BoundApi<A> = A extends TypedApi<infer T> ? { invoke: BoundInvoke<T> } : never;
+
+/** The structural shape `bindStreamApi` returns — tests inject a fake client behind it. */
+type BoundStreams<A> =
+  A extends TypedStreamApi<infer T>
+    ? {
+        subscribe: <K extends keyof T & string>(
+          name: K,
+          input: T[K]["input"],
+          signal: AbortSignal,
+        ) => AsyncIterable<TypedApiStreamFrame<T[K]["event"]>>;
+      }
+    : never;
 
 // ---------------------------------------------------------------------------
 // t3.ui/theme
@@ -57,6 +75,63 @@ export function themeVarOverrides(
     overrides[property] = contractVar ? `var(${contractVar}, ${value})` : value;
   }
   return overrides;
+}
+
+/**
+ * The theme-consumption lifecycle, kept free of React so the stale-fallback
+ * rule is directly testable. Contract tokens are current exactly while the
+ * contract is live: a rejected `getTokens` clears the applied map, and a
+ * `closed` or lost `subscribeState` stream both clears it and fences any read
+ * still in flight — an obsolete successful read must never republish after
+ * the subscription that made it meaningful is gone. `apply(null)` restores
+ * the legacy `var()` chain; a later live frame re-reads and republishes.
+ */
+export function watchThemeVars(
+  theme: BoundApi<typeof uiThemeApi>,
+  streams: BoundStreams<typeof uiThemeApi>,
+  signal: AbortSignal,
+  apply: (vars: Record<string, string> | null) => void,
+): void {
+  let generation = 0;
+  let live = true;
+  const refresh = () => {
+    const at = ++generation;
+    void theme.invoke("getTokens", {}, signal).then(
+      (value) => {
+        if (live && !signal.aborted && at === generation)
+          apply(themeVarOverrides(value.tokens, value.cssVars));
+      },
+      () => {
+        if (!signal.aborted && at === generation) apply(null);
+      },
+    );
+  };
+  refresh();
+  void (async () => {
+    try {
+      for await (const frame of streams.subscribe("subscribeState", {}, signal)) {
+        if (signal.aborted || frame.type === "closed") break;
+        refresh();
+      }
+    } catch {
+      // Errored and closed subscriptions land in the same place below.
+    }
+    live = false;
+    generation++;
+    if (!signal.aborted) apply(null);
+  })();
+}
+
+/**
+ * `preview.focusUrl` parity: the chord focuses the address field and selects
+ * its contents (the native row's onFocus queues `select()`), so the next
+ * keystroke replaces the URL rather than editing at the caret.
+ */
+export function focusAddressInput(
+  input: { readonly focus: () => void; readonly select: () => void } | null,
+): void {
+  input?.focus();
+  input?.select();
 }
 
 // ---------------------------------------------------------------------------
