@@ -53,6 +53,8 @@ import {
   repositoryState,
   retainSelection,
   settleMutation,
+  stackedActionCommits,
+  stackedActionInput,
   stackedActionLabel,
   stackedActionNeedsConfirm,
   stackedActionOffers,
@@ -620,21 +622,18 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
     setPendingConfirm(null);
     const message = commitMessage.trim();
     const stagedPaths = lanes.staged.map((entry) => entry.path);
-    const useFeatureBranch = options?.featureBranch ?? featureBranch;
-    const commits =
-      offer.action === "commit" ||
-      offer.action === "commit_push" ||
-      offer.action === "commit_push_pr";
     runMutation("stacked", offer.label, async (signal) => {
       const api = bindApi(vcsActionsApi, host, session.context);
       const { actionId } = await api.invoke(
         "run",
-        {
+        // stackedActionInput drops featureBranch/paths on actions without
+        // a commit phase — the service rejects those combinations.
+        stackedActionInput({
           action: offer.action,
-          ...(message === "" ? {} : { commitMessage: message }),
-          ...(useFeatureBranch ? { featureBranch: true } : {}),
-          ...(commits && stagedPaths.length > 0 ? { paths: stagedPaths } : {}),
-        },
+          commitMessage: message,
+          featureBranch: options?.featureBranch ?? featureBranch,
+          stagedPaths,
+        }),
         signal,
       );
       let model = IDLE_STACKED_PROGRESS;
@@ -667,7 +666,8 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
       // Clear the box only when this action consumed the input and the
       // author hasn't typed something new during the run — a push-only
       // success must not erase an unrelated draft.
-      if (commits) setCommitMessage((current) => (current === commitMessage ? "" : current));
+      if (stackedActionCommits(offer.action))
+        setCommitMessage((current) => (current === commitMessage ? "" : current));
       return describeStackedResult(model.result);
     });
   };
@@ -1207,28 +1207,29 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                           ? `${chosenOffer.label}…`
                           : "Run"}
                       </button>
-                      {status.local?.isDefaultRef === true && (
-                        <label
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 4,
-                            fontSize: 11,
-                            color: muted,
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={featureBranch}
-                            disabled={busy}
-                            onChange={(event) => {
-                              setFeatureBranch(event.target.checked);
-                              setPendingConfirm(null);
+                      {status.local?.isDefaultRef === true &&
+                        stackedActionCommits(chosenOffer.action) && (
+                          <label
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 4,
+                              fontSize: 11,
+                              color: muted,
                             }}
-                          />
-                          New feature branch
-                        </label>
-                      )}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={featureBranch}
+                              disabled={busy}
+                              onChange={(event) => {
+                                setFeatureBranch(event.target.checked);
+                                setPendingConfirm(null);
+                              }}
+                            />
+                            New feature branch
+                          </label>
+                        )}
                       {chosenOffer.disabled !== null && (
                         <span style={{ color: muted, fontSize: 11 }}>{chosenOffer.disabled}</span>
                       )}
@@ -1241,6 +1242,10 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                       );
                       if (pending === undefined || pending.disabled !== null) return null;
                       const branchName = status.local?.refName ?? "the default ref";
+                      // The feature-ref alternative exists only where a
+                      // commit phase gives the new ref its delta — the
+                      // service rejects featureBranch on push/PR-only runs.
+                      const canFeatureBranch = stackedActionCommits(pending.action);
                       return (
                         <div
                           role="alertdialog"
@@ -1254,9 +1259,10 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                           }}
                         >
                           <div style={{ marginBottom: 4 }}>
-                            {pending.label} on default ref &quot;{branchName}&quot;? You can
-                            continue on this ref or create a feature ref and run the same action
-                            there.
+                            {pending.label} on default ref &quot;{branchName}&quot;?
+                            {canFeatureBranch
+                              ? " You can continue on this ref or create a feature ref and run the same action there."
+                              : " Continue on this ref or cancel."}
                           </div>
                           <div
                             style={{
@@ -1274,17 +1280,19 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                             >
                               {pending.label} on {branchName}
                             </button>
-                            <button
-                              type="button"
-                              disabled={busy}
-                              onClick={() => {
-                                setFeatureBranch(true);
-                                runStacked(pending, { featureBranch: true });
-                              }}
-                              style={control}
-                            >
-                              New feature branch
-                            </button>
+                            {canFeatureBranch && (
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => {
+                                  setFeatureBranch(true);
+                                  runStacked(pending, { featureBranch: true });
+                                }}
+                                style={control}
+                              >
+                                New feature branch
+                              </button>
+                            )}
                             <button
                               type="button"
                               disabled={busy}

@@ -975,6 +975,21 @@ export function prsWriteVerdictOptions(
     .map((verdict) => ({ value: verdict, label: labels[verdict] }));
 }
 
+/**
+ * The effective verdict for the review composer. The selection lives in
+ * the draft store so a refresh remount cannot downgrade it — a stored
+ * value the host still declares wins; anything else (unset, or a verdict
+ * the provider no longer lists) falls back to the first declared option.
+ */
+export function prsReviewVerdict(
+  draft: string,
+  verdicts: readonly { readonly value: PrsWriteVerdict }[],
+): PrsWriteVerdict {
+  return verdicts.some((option) => option.value === draft)
+    ? (draft as PrsWriteVerdict)
+    : (verdicts[0]?.value ?? "comment");
+}
+
 /** Shown where write controls would stand when the write probe failed. */
 export function prsWriteUnavailableNote(gate: PrsWriteGate): string | null {
   if (gate.kind === "loading") return "Reading write capabilities…";

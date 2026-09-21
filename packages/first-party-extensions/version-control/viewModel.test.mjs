@@ -33,6 +33,8 @@ import {
   repositoryState,
   retainSelection,
   settleMutation,
+  stackedActionCommits,
+  stackedActionInput,
   stackedActionLabel,
   stackedActionNeedsConfirm,
   stackedActionOffers,
@@ -864,6 +866,62 @@ NodeTest.describe("vcs view model — stacked actions", () => {
     // Off the default ref nothing needs the prompt.
     NodeAssert.equal(stackedActionNeedsConfirm("commit_push_pr", local(), false), false);
     NodeAssert.equal(stackedActionNeedsConfirm("push", null, false), false);
+  });
+
+  NodeTest.it(
+    "lets a stale featureBranch flag skip the prompt only where a commit phase exists",
+    () => {
+      const onDefault = local({ isDefaultRef: true, refName: "main" });
+      // Commit-capable actions accept the flag as the feature-ref answer.
+      for (const action of ["commit_push", "commit_push_pr"]) {
+        NodeAssert.equal(stackedActionNeedsConfirm(action, onDefault, true), false);
+      }
+      // push/create_pr cannot carry a feature branch — a checked flag
+      // answers nothing and the prompt still stands.
+      for (const action of ["push", "create_pr"]) {
+        NodeAssert.equal(stackedActionNeedsConfirm(action, onDefault, true), true);
+      }
+    },
+  );
+
+  NodeTest.it("never sends featureBranch or scoped paths on push/PR-only actions", () => {
+    for (const action of ["push", "create_pr"]) {
+      NodeAssert.equal(stackedActionCommits(action), false);
+      NodeAssert.deepEqual(
+        stackedActionInput({
+          action,
+          commitMessage: "msg",
+          featureBranch: true,
+          stagedPaths: ["a.ts"],
+        }),
+        { action, commitMessage: "msg" },
+      );
+    }
+  });
+
+  NodeTest.it("keeps featureBranch and scoped paths on commit-capable actions", () => {
+    for (const action of ["commit", "commit_push", "commit_push_pr"]) {
+      NodeAssert.equal(stackedActionCommits(action), true);
+      NodeAssert.deepEqual(
+        stackedActionInput({
+          action,
+          commitMessage: "msg",
+          featureBranch: true,
+          stagedPaths: ["a.ts"],
+        }),
+        { action, commitMessage: "msg", featureBranch: true, paths: ["a.ts"] },
+      );
+    }
+    // Blank message is omitted — native leave-blank auto-generate.
+    NodeAssert.deepEqual(
+      stackedActionInput({
+        action: "commit_push",
+        commitMessage: "",
+        featureBranch: false,
+        stagedPaths: [],
+      }),
+      { action: "commit_push" },
+    );
   });
 
   NodeTest.it("lets a feature branch run with a clean tree and no branch delta", () => {

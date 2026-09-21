@@ -64,6 +64,7 @@ import {
   prsRefKey,
   prsRefreshClosedLabel,
   prsReviewLabel,
+  prsReviewVerdict,
   prsReviewVerdictLabel,
   prsRowMeta,
   prsStackLabel,
@@ -1213,11 +1214,12 @@ function PrsWriteErrorLine({ error }: { error: string | null }) {
 function PrsActionButton(props: {
   offer: PrsWriteActionOffer;
   pending: boolean;
+  method: string;
+  onMethodChange: (value: string) => void;
   onRun: (offer: PrsWriteActionOffer, method?: string) => void;
 }) {
-  const { offer, pending, onRun } = props;
+  const { offer, pending, method, onMethodChange, onRun } = props;
   const choices: readonly string[] = offer.methods ?? offer.updateMethods ?? [];
-  const [method, setMethod] = useState<string>(choices[0] ?? "");
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
       <button
@@ -1235,7 +1237,7 @@ function PrsActionButton(props: {
         <select
           aria-label={`${offer.label} method`}
           value={method}
-          onChange={(event) => setMethod(event.target.value)}
+          onChange={(event) => onMethodChange(event.target.value)}
           style={{ ...control, padding: "2px 4px" }}
         >
           {choices.map((choice) => (
@@ -1297,14 +1299,16 @@ function PrsComposer(props: {
  */
 function PrsReviewComposer(props: {
   verdicts: readonly { readonly value: PrsWriteVerdict; readonly label: string }[];
+  verdict: PrsWriteVerdict;
   body: string;
   pending: boolean;
   error: string | null;
+  onVerdictChange: (value: PrsWriteVerdict) => void;
   onBodyChange: (value: string) => void;
   onSubmit: (verdict: PrsWriteVerdict, body: string) => void;
 }) {
-  const { verdicts, body, pending, error, onBodyChange, onSubmit } = props;
-  const [verdict, setVerdict] = useState<PrsWriteVerdict>(verdicts[0]?.value ?? "comment");
+  const { verdicts, verdict, body, pending, error, onVerdictChange, onBodyChange, onSubmit } =
+    props;
   return (
     <div style={{ padding: "4px 10px" }}>
       <textarea
@@ -1321,7 +1325,7 @@ function PrsReviewComposer(props: {
         <select
           aria-label="Review verdict"
           value={verdict}
-          onChange={(event) => setVerdict(event.target.value as PrsWriteVerdict)}
+          onChange={(event) => onVerdictChange(event.target.value as PrsWriteVerdict)}
           style={{ ...control, padding: "2px 4px" }}
         >
           {verdicts.map((option) => (
@@ -1476,15 +1480,16 @@ export function PullRequestsPanel(props: {
   /**
    * Single-flight write runner — one invoke at a time so two clicks can
    * never double-post. A settled write re-reads through `runInvalidate`;
-   * a failed one keeps its named error on the control that asked. `draft`
-   * names the submitted text: success clears it ONLY if the draft is
-   * still the submitted version — edits typed while the request was in
-   * flight are newer words and stay.
+   * a failed one keeps its named error on the control that asked.
+   * `settled` names the draft entries the write consumed (a review eats
+   * its body AND its verdict): success clears each ONLY if it is still
+   * the submitted version — edits made while the request was in flight
+   * are newer work and stay.
    */
   const runWrite = (
     key: string,
     invoke: (signal: AbortSignal) => Promise<unknown>,
-    draft?: { readonly key: string; readonly submitted: string },
+    settled?: readonly { readonly key: string; readonly submitted: string }[],
   ) => {
     if (writeState?.pending) return;
     const controller = new AbortController();
@@ -1494,9 +1499,13 @@ export function PullRequestsPanel(props: {
       () => {
         if (signal.aborted) return;
         setWriteState(null);
-        if (draft !== undefined) {
-          const storeKey = draftKey(draft.key);
-          setDrafts((current) => settlePrsDraft(current, storeKey, draft.submitted));
+        if (settled !== undefined && settled.length > 0) {
+          setDrafts((current) =>
+            settled.reduce(
+              (acc, entry) => settlePrsDraft(acc, draftKey(entry.key), entry.submitted),
+              current,
+            ),
+          );
         }
         runInvalidate();
       },
@@ -1518,21 +1527,24 @@ export function PullRequestsPanel(props: {
 
   const runPrAction = (offer: PrsWriteActionOffer, method?: string) => {
     if (selected === null) return;
-    runWrite(`action:${offer.action}`, (signal) =>
-      writeApi().invoke(
-        "runAction",
-        {
-          ...selected,
-          action: offer.action,
-          ...(offer.action === "merge" && method !== undefined
-            ? { mergeMethod: method as PrsWriteMergeMethod }
-            : {}),
-          ...(offer.action === "update-branch" && method !== undefined
-            ? { updateMethod: method as PrsWriteUpdateMethod }
-            : {}),
-        },
-        signal,
-      ),
+    runWrite(
+      `action:${offer.action}`,
+      (signal) =>
+        writeApi().invoke(
+          "runAction",
+          {
+            ...selected,
+            action: offer.action,
+            ...(offer.action === "merge" && method !== undefined
+              ? { mergeMethod: method as PrsWriteMergeMethod }
+              : {}),
+            ...(offer.action === "update-branch" && method !== undefined
+              ? { updateMethod: method as PrsWriteUpdateMethod }
+              : {}),
+          },
+          signal,
+        ),
+      [{ key: `method:${offer.action}`, submitted: method ?? "" }],
     );
   };
 
@@ -1558,7 +1570,7 @@ export function PullRequestsPanel(props: {
         runWrite(
           replyKey,
           (signal) => writeApi().invoke("replyToThread", { ...ref, threadId, body }, signal),
-          { key: replyKey, submitted: body },
+          [{ key: replyKey, submitted: body }],
         ),
       onResolve: (threadId, resolved) =>
         runWrite(`resolve:${threadId}`, (signal) =>
@@ -1971,6 +1983,12 @@ export function PullRequestsPanel(props: {
                           key={offer.action}
                           offer={offer}
                           pending={writeState?.pending === true}
+                          method={
+                            draft(`method:${offer.action}`) ||
+                            (offer.methods ?? offer.updateMethods ?? [])[0] ||
+                            ""
+                          }
+                          onMethodChange={(value) => setDraft(`method:${offer.action}`, value)}
                           onRun={runPrAction}
                         />
                       ))}
@@ -2160,7 +2178,7 @@ export function PullRequestsPanel(props: {
                               "comment",
                               (signal) =>
                                 writeApi().invoke("comment", { ...selected, body }, signal),
-                              { key: "comment", submitted: body },
+                              [{ key: "comment", submitted: body }],
                             )
                           }
                         />
@@ -2174,9 +2192,14 @@ export function PullRequestsPanel(props: {
                           <h3 style={headingStyle}>Submit a review</h3>
                           <PrsReviewComposer
                             verdicts={prsWriteVerdictOptions(write.verdicts)}
+                            verdict={prsReviewVerdict(
+                              draft("review-verdict"),
+                              prsWriteVerdictOptions(write.verdicts),
+                            )}
                             body={draft("review")}
                             pending={writePending("review")}
                             error={writeError("review")}
+                            onVerdictChange={(value) => setDraft("review-verdict", value)}
                             onBodyChange={(value) => setDraft("review", value)}
                             onSubmit={(verdict, body) =>
                               runWrite(
@@ -2187,7 +2210,10 @@ export function PullRequestsPanel(props: {
                                     { ...selected, verdict, body, comments: [] },
                                     signal,
                                   ),
-                                { key: "review", submitted: body },
+                                [
+                                  { key: "review", submitted: body },
+                                  { key: "review-verdict", submitted: verdict },
+                                ],
                               )
                             }
                           />

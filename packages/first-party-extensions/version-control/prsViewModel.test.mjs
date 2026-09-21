@@ -26,6 +26,7 @@ import {
   prsRefKey,
   prsRefreshClosedLabel,
   prsReviewLabel,
+  prsReviewVerdict,
   prsReviewVerdictLabel,
   prsRowMeta,
   prsStackLabel,
@@ -709,4 +710,17 @@ NodeTest.test("settlePrsDraft clears only the submitted version", () => {
   NodeAssert.equal(settlePrsDraft(edited, "pr1\ncomment", "posted comment"), edited);
   // A failed or unrelated write never clears anything.
   NodeAssert.equal(settlePrsDraft(drafts, "pr1\ncomment", "different text"), drafts);
+});
+
+NodeTest.test("prsReviewVerdict keeps a stored pick across remounts", () => {
+  const options = prsWriteVerdictOptions(["comment", "approve", "request-changes"]);
+  // A "Request changes" pick survives the remount a refresh causes —
+  // the bug this guards was a silent downgrade back to "comment".
+  NodeAssert.equal(prsReviewVerdict("request-changes", options), "request-changes");
+  // An unset draft defaults to the first declared option.
+  NodeAssert.equal(prsReviewVerdict("", options), "comment");
+  // A draft the host no longer declares can't come back through it.
+  const approveOnly = prsWriteVerdictOptions(["approve"]);
+  NodeAssert.equal(prsReviewVerdict("request-changes", approveOnly), "approve");
+  NodeAssert.equal(prsReviewVerdict("", []), "comment");
 });

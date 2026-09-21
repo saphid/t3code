@@ -5494,9 +5494,21 @@ var __t3Client = (() => {
     if (hasDefaultDelta && !local.isDefaultRef && !hasOpenPr) return "create_pr";
     return null;
   }
+  function stackedActionCommits(action) {
+    return action === "commit" || action === "commit_push" || action === "commit_push_pr";
+  }
+  function stackedActionInput(input) {
+    const commits = stackedActionCommits(input.action);
+    return {
+      action: input.action,
+      ...input.commitMessage === "" ? {} : { commitMessage: input.commitMessage },
+      ...commits && input.featureBranch ? { featureBranch: true } : {},
+      ...commits && input.stagedPaths.length > 0 ? { paths: input.stagedPaths } : {}
+    };
+  }
   function stackedActionNeedsConfirm(action, local, featureBranch) {
-    if (featureBranch || local?.isDefaultRef !== true) return false;
-    return action !== "commit";
+    if (local?.isDefaultRef !== true || action === "commit") return false;
+    return !(featureBranch && stackedActionCommits(action));
   }
   var IDLE_STACKED_PROGRESS = {
     action: null,
@@ -6919,6 +6931,9 @@ ${ref.number}`;
     };
     return order.filter((verdict) => verdicts.includes(verdict)).map((verdict) => ({ value: verdict, label: labels[verdict] }));
   }
+  function prsReviewVerdict(draft, verdicts) {
+    return verdicts.some((option) => option.value === draft) ? draft : verdicts[0]?.value ?? "comment";
+  }
   function prsWriteUnavailableNote(gate) {
     if (gate.kind === "loading") return "Reading write capabilities\u2026";
     if (gate.kind === "error") return `Pull-request writes unavailable \u2014 ${gate.detail}`;
@@ -7812,9 +7827,8 @@ ${writeKey}`;
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 11 }, children: error });
   }
   function PrsActionButton(props) {
-    const { offer, pending, onRun } = props;
+    const { offer, pending, method, onMethodChange, onRun } = props;
     const choices = offer.methods ?? offer.updateMethods ?? [];
-    const [method, setMethod] = (0, import_react.useState)(choices[0] ?? "");
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { display: "inline-flex", alignItems: "center", gap: 4 }, children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
         "button",
@@ -7834,7 +7848,7 @@ ${writeKey}`;
         {
           "aria-label": `${offer.label} method`,
           value: method,
-          onChange: (event) => setMethod(event.target.value),
+          onChange: (event) => onMethodChange(event.target.value),
           style: { ...control, padding: "2px 4px" },
           children: choices.map((choice) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: choice, children: choice }, choice))
         }
@@ -7869,8 +7883,7 @@ ${writeKey}`;
     ] });
   }
   function PrsReviewComposer(props) {
-    const { verdicts, body, pending, error, onBodyChange, onSubmit } = props;
-    const [verdict, setVerdict] = (0, import_react.useState)(verdicts[0]?.value ?? "comment");
+    const { verdicts, verdict, body, pending, error, onVerdictChange, onBodyChange, onSubmit } = props;
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { padding: "4px 10px" }, children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
         "textarea",
@@ -7889,7 +7902,7 @@ ${writeKey}`;
           {
             "aria-label": "Review verdict",
             value: verdict,
-            onChange: (event) => setVerdict(event.target.value),
+            onChange: (event) => onVerdictChange(event.target.value),
             style: { ...control, padding: "2px 4px" },
             children: verdicts.map((option) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: option.value, children: option.label }, option.value))
           }
@@ -7979,7 +7992,7 @@ ${writeKey}`;
     const draftKey = (key) => prsDraftKey(selectedKey, key);
     const draft = (key) => drafts[draftKey(key)] ?? "";
     const setDraft = (key, value) => setDrafts((current) => ({ ...current, [draftKey(key)]: value }));
-    const runWrite = (key, invoke, draft2) => {
+    const runWrite = (key, invoke, settled) => {
       if (writeState?.pending) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -7988,9 +8001,13 @@ ${writeKey}`;
         () => {
           if (signal.aborted) return;
           setWriteState(null);
-          if (draft2 !== void 0) {
-            const storeKey = draftKey(draft2.key);
-            setDrafts((current) => settlePrsDraft(current, storeKey, draft2.submitted));
+          if (settled !== void 0 && settled.length > 0) {
+            setDrafts(
+              (current) => settled.reduce(
+                (acc, entry) => settlePrsDraft(acc, draftKey(entry.key), entry.submitted),
+                current
+              )
+            );
           }
           runInvalidate();
         },
@@ -8020,7 +8037,8 @@ ${writeKey}`;
             ...offer.action === "update-branch" && method !== void 0 ? { updateMethod: method } : {}
           },
           signal
-        )
+        ),
+        [{ key: `method:${offer.action}`, submitted: method ?? "" }]
       );
     };
     const threadWrite = (thread) => {
@@ -8039,7 +8057,7 @@ ${writeKey}`;
         onReply: (threadId, body) => runWrite(
           replyKey,
           (signal) => writeApi().invoke("replyToThread", { ...ref, threadId, body }, signal),
-          { key: replyKey, submitted: body }
+          [{ key: replyKey, submitted: body }]
         ),
         onResolve: (threadId, resolved) => runWrite(
           `resolve:${threadId}`,
@@ -8343,6 +8361,8 @@ ${thread.id}`;
                         {
                           offer,
                           pending: writeState?.pending === true,
+                          method: draft(`method:${offer.action}`) || (offer.methods ?? offer.updateMethods ?? [])[0] || "",
+                          onMethodChange: (value) => setDraft(`method:${offer.action}`, value),
                           onRun: runPrAction
                         },
                         offer.action
@@ -8466,7 +8486,7 @@ ${thread.id}`) === activity,
                         onSubmit: (body) => runWrite(
                           "comment",
                           (signal) => writeApi().invoke("comment", { ...selected, body }, signal),
-                          { key: "comment", submitted: body }
+                          [{ key: "comment", submitted: body }]
                         )
                       }
                     )
@@ -8477,9 +8497,14 @@ ${thread.id}`) === activity,
                       PrsReviewComposer,
                       {
                         verdicts: prsWriteVerdictOptions(write.verdicts),
+                        verdict: prsReviewVerdict(
+                          draft("review-verdict"),
+                          prsWriteVerdictOptions(write.verdicts)
+                        ),
                         body: draft("review"),
                         pending: writePending("review"),
                         error: writeError("review"),
+                        onVerdictChange: (value) => setDraft("review-verdict", value),
                         onBodyChange: (value) => setDraft("review", value),
                         onSubmit: (verdict, body) => runWrite(
                           "review",
@@ -8488,7 +8513,10 @@ ${thread.id}`) === activity,
                             { ...selected, verdict, body, comments: [] },
                             signal
                           ),
-                          { key: "review", submitted: body }
+                          [
+                            { key: "review", submitted: body },
+                            { key: "review-verdict", submitted: verdict }
+                          ]
                         )
                       }
                     )
@@ -8902,18 +8930,18 @@ ${thread.id}`) === activity,
       setPendingConfirm(null);
       const message2 = commitMessage.trim();
       const stagedPaths = lanes.staged.map((entry) => entry.path);
-      const useFeatureBranch = options?.featureBranch ?? featureBranch;
-      const commits = offer.action === "commit" || offer.action === "commit_push" || offer.action === "commit_push_pr";
       runMutation("stacked", offer.label, async (signal) => {
         const api = bindApi(vcsActionsApi, host, session.context);
         const { actionId } = await api.invoke(
           "run",
-          {
+          // stackedActionInput drops featureBranch/paths on actions without
+          // a commit phase — the service rejects those combinations.
+          stackedActionInput({
             action: offer.action,
-            ...message2 === "" ? {} : { commitMessage: message2 },
-            ...useFeatureBranch ? { featureBranch: true } : {},
-            ...commits && stagedPaths.length > 0 ? { paths: stagedPaths } : {}
-          },
+            commitMessage: message2,
+            featureBranch: options?.featureBranch ?? featureBranch,
+            stagedPaths
+          }),
           signal
         );
         let model = IDLE_STACKED_PROGRESS;
@@ -8938,7 +8966,8 @@ ${thread.id}`) === activity,
             "Authorization was revoked at the post-action check \u2014 the action's effects may have persisted"
           );
         if (model.result === null) throw new Error("Action progress ended before the action settled");
-        if (commits) setCommitMessage((current) => current === commitMessage ? "" : current);
+        if (stackedActionCommits(offer.action))
+          setCommitMessage((current) => current === commitMessage ? "" : current);
         return describeStackedResult(model.result);
       });
     };
@@ -9411,7 +9440,7 @@ ${thread.id}`) === activity,
                           children: busy && mutation.kind === "running" && mutation.op === "stacked" ? `${chosenOffer.label}\u2026` : "Run"
                         }
                       ),
-                      status.local?.isDefaultRef === true && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                      status.local?.isDefaultRef === true && stackedActionCommits(chosenOffer.action) && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                         "label",
                         {
                           style: {
@@ -9448,6 +9477,7 @@ ${thread.id}`) === activity,
                   );
                   if (pending === void 0 || pending.disabled !== null) return null;
                   const branchName = status.local?.refName ?? "the default ref";
+                  const canFeatureBranch = stackedActionCommits(pending.action);
                   return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                     "div",
                     {
@@ -9465,7 +9495,8 @@ ${thread.id}`) === activity,
                           pending.label,
                           ' on default ref "',
                           branchName,
-                          '"? You can continue on this ref or create a feature ref and run the same action there.'
+                          '"?',
+                          canFeatureBranch ? " You can continue on this ref or create a feature ref and run the same action there." : " Continue on this ref or cancel."
                         ] }),
                         /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                           "div",
@@ -9491,7 +9522,7 @@ ${thread.id}`) === activity,
                                   ]
                                 }
                               ),
-                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                              canFeatureBranch && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                                 "button",
                                 {
                                   type: "button",

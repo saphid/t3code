@@ -17,6 +17,7 @@ import type {
   VcsActionPhase,
   VcsActionProgressEvent,
   VcsActionResult,
+  VcsActionRunInput,
   VcsCapabilitiesResult,
   VcsChangeEntry,
   VcsListRefsResult,
@@ -529,18 +530,51 @@ export function stackedActionSuggestion(
 }
 
 /**
+ * Which actions carry a commit phase — GitManager's `isCommitAction`.
+ * `featureBranch` is only meaningful there: the service rejects it on
+ * push-only or PR-only requests, and a fresh ref off the default branch
+ * has nothing to push or open a PR from until the commit phase lands.
+ */
+export function stackedActionCommits(action: VcsActionKind): boolean {
+  return action === "commit" || action === "commit_push" || action === "commit_push_pr";
+}
+
+/**
+ * The request payload for `actions.run`. `featureBranch` and `paths`
+ * ride along only when the action has a commit phase — sending either
+ * on a push-only or PR-only action gets the request rejected.
+ */
+export function stackedActionInput(input: {
+  readonly action: VcsActionKind;
+  /** Trimmed; "" keeps native leave-blank auto-generate semantics. */
+  readonly commitMessage: string;
+  readonly featureBranch: boolean;
+  readonly stagedPaths: readonly string[];
+}): VcsActionRunInput {
+  const commits = stackedActionCommits(input.action);
+  return {
+    action: input.action,
+    ...(input.commitMessage === "" ? {} : { commitMessage: input.commitMessage }),
+    ...(commits && input.featureBranch ? { featureBranch: true } : {}),
+    ...(commits && input.stagedPaths.length > 0 ? { paths: input.stagedPaths } : {}),
+  };
+}
+
+/**
  * Native's `requiresDefaultBranchConfirmation` — every action except a
  * plain commit needs an explicit continue/feature-ref decision before it
  * runs on the default ref. Picking "new feature branch" IS the native
- * alternative, so a checked featureBranch already answers the prompt.
+ * alternative, so a checked featureBranch already answers the prompt —
+ * but only where a commit phase can use it; a stale flag on a push-only
+ * or PR-only pick answers nothing.
  */
 export function stackedActionNeedsConfirm(
   action: VcsActionKind,
   local: VcsStatusLocal | null,
   featureBranch: boolean,
 ): boolean {
-  if (featureBranch || local?.isDefaultRef !== true) return false;
-  return action !== "commit";
+  if (local?.isDefaultRef !== true || action === "commit") return false;
+  return !(featureBranch && stackedActionCommits(action));
 }
 
 /** Live composite progress, folded from `actionProgress` events. */
