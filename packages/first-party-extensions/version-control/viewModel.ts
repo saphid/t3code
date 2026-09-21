@@ -930,3 +930,86 @@ export function repositoryState(
   }
   return { kind: "ready", capabilities };
 }
+
+// ---------------------------------------------------------------------------
+// t3.ui/theme consumption
+// ---------------------------------------------------------------------------
+
+/**
+ * The roles this panel consumes, each republished as a
+ * `--t3-version-control-*` custom property on the view root. Component
+ * styles chain `var(--t3-version-control-x, …)` onto their pre-contract
+ * fallbacks, so a host that cannot serve the contract (ungranted or
+ * provider-less) renders exactly what it rendered before adoption. Roles
+ * absent here stay theme-independent on purpose: `--info` and `--success`
+ * are host constants outside the contract's role set, and the `font-*`
+ * vars are not color tokens.
+ */
+export const VC_THEME_VARS = {
+  mutedForeground: "--t3-version-control-muted-foreground",
+  border: "--t3-version-control-border",
+  error: "--t3-version-control-error",
+  warning: "--t3-version-control-warning",
+  text: "--t3-version-control-text",
+  canvas: "--t3-version-control-canvas",
+  accentSurface: "--t3-version-control-accent-surface",
+  muted: "--t3-version-control-muted",
+} as const;
+
+/**
+ * `getTokens` output → root-level custom properties. Each override carries
+ * the contract's advertised var name with the resolved value as its
+ * fallback, so the panel tracks `--app-theme-*` paints live and still gets
+ * the right color on hosts that answer the contract without painting those
+ * variables. A role missing from `tokens` is skipped entirely rather than
+ * overridden with a lie.
+ */
+export function themeVarOverrides(
+  tokens: Readonly<Record<string, string>>,
+  cssVars: Readonly<Record<string, string>>,
+): Record<string, string> {
+  const overrides: Record<string, string> = {};
+  for (const [role, property] of Object.entries(VC_THEME_VARS)) {
+    const value = tokens[role];
+    if (value === undefined) continue;
+    const contractVar = cssVars[role];
+    overrides[property] = contractVar ? `var(${contractVar}, ${value})` : value;
+  }
+  return overrides;
+}
+
+// ---------------------------------------------------------------------------
+// t3.ui/notifications consumption
+// ---------------------------------------------------------------------------
+
+/**
+ * The toast lifecycle for one mutation — the panel's mirror of native
+ * GitActionsControl receipts: `loading` opens on start and the same
+ * notification updates to `success` or `error` on settle. A success
+ * receipt dismisses after MUTATION_TOAST_DISMISS_MS, matching native's
+ * `dismissAfterVisibleMs` — the contract's `update` carries no duration,
+ * so the adapter schedules `dismiss` itself. Errors stay pinned until the
+ * user dismisses them, matching native failure toasts.
+ */
+export const MUTATION_TOAST_DISMISS_MS = 10_000;
+
+export function mutationToastStart(label: string): {
+  readonly severity: "loading";
+  readonly title: string;
+} {
+  return { severity: "loading", title: `${label}…` };
+}
+
+/** The `update` patch for a settled mutation; failures split the named error into the body. */
+export function mutationToastSettle(
+  label: string,
+  result: { readonly ok: boolean; readonly detail: string },
+): {
+  readonly severity: "success" | "error";
+  readonly title: string;
+  readonly body?: string;
+} {
+  return result.ok
+    ? { severity: "success", title: result.detail }
+    : { severity: "error", title: `${label} failed`, body: result.detail };
+}

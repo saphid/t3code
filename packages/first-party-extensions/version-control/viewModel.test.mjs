@@ -42,6 +42,9 @@ import {
   startMutation,
   syncLabel,
   canWorktreeRef,
+  mutationToastSettle,
+  mutationToastStart,
+  themeVarOverrides,
   workingTreeLabel,
   worktreeRows,
 } from "./viewModel.ts";
@@ -1088,6 +1091,94 @@ NodeTest.describe("vcs view model — stacked actions", () => {
     NodeAssert.equal(
       describeStackedResult(existing),
       "Created PR — existing PR https://github.com/o/r/pull/9",
+    );
+  });
+});
+
+NodeTest.describe("themeVarOverrides", () => {
+  const cssVars = {
+    mutedForeground: "--app-theme-muted-foreground",
+    border: "--app-theme-border",
+    error: "--app-theme-error",
+    warning: "--app-theme-warning",
+    text: "--app-theme-text",
+    canvas: "--app-theme-canvas",
+    accentSurface: "--app-theme-accent-surface",
+    muted: "--app-theme-muted",
+  };
+
+  NodeTest.it("republishes contract tokens as panel-scoped vars", () => {
+    const overrides = themeVarOverrides(
+      {
+        mutedForeground: "#98a2b3",
+        border: "#eaecf0",
+        error: "#f04438",
+        warning: "#dc6803",
+        text: "#101828",
+        canvas: "#ffffff",
+        accentSurface: "#e8eef7",
+        muted: "#f4f5f7",
+      },
+      cssVars,
+    );
+    NodeAssert.deepEqual(overrides, {
+      "--t3-version-control-muted-foreground": "var(--app-theme-muted-foreground, #98a2b3)",
+      "--t3-version-control-border": "var(--app-theme-border, #eaecf0)",
+      "--t3-version-control-error": "var(--app-theme-error, #f04438)",
+      "--t3-version-control-warning": "var(--app-theme-warning, #dc6803)",
+      "--t3-version-control-text": "var(--app-theme-text, #101828)",
+      "--t3-version-control-canvas": "var(--app-theme-canvas, #ffffff)",
+      "--t3-version-control-accent-surface": "var(--app-theme-accent-surface, #e8eef7)",
+      "--t3-version-control-muted": "var(--app-theme-muted, #f4f5f7)",
+    });
+  });
+
+  NodeTest.it("skips roles the host did not resolve rather than overriding them", () => {
+    const overrides = themeVarOverrides({ text: "#101828" }, cssVars);
+    NodeAssert.deepEqual(overrides, {
+      "--t3-version-control-text": "var(--app-theme-text, #101828)",
+    });
+  });
+
+  NodeTest.it("falls back to the resolved value when no css var is advertised", () => {
+    const overrides = themeVarOverrides({ mutedForeground: "#98a2b3" }, {});
+    NodeAssert.deepEqual(overrides, {
+      "--t3-version-control-muted-foreground": "#98a2b3",
+    });
+  });
+
+  NodeTest.it("ignores unrelated roles the contract does not publish to this panel", () => {
+    const overrides = themeVarOverrides(
+      { mutedForeground: "#98a2b3", terminalBackground: "#000000", chrome: "#111" },
+      { ...cssVars, terminalBackground: "--app-theme-terminal-background" },
+    );
+    NodeAssert.deepEqual(Object.keys(overrides), ["--t3-version-control-muted-foreground"]);
+  });
+});
+
+NodeTest.describe("mutation toasts", () => {
+  NodeTest.it("opens a loading toast with the running label", () => {
+    NodeAssert.deepEqual(mutationToastStart("Pushing"), {
+      severity: "loading",
+      title: "Pushing…",
+    });
+  });
+
+  NodeTest.it("settles success as the receipt detail on the same toast", () => {
+    NodeAssert.deepEqual(mutationToastSettle("Pushing", { ok: true, detail: "Pushed main" }), {
+      severity: "success",
+      title: "Pushed main",
+    });
+  });
+
+  NodeTest.it("settles failure as a named title with the error in the body", () => {
+    NodeAssert.deepEqual(
+      mutationToastSettle("Pushing", { ok: false, detail: "rejected: non-fast-forward" }),
+      {
+        severity: "error",
+        title: "Pushing failed",
+        body: "rejected: non-fast-forward",
+      },
     );
   });
 });
