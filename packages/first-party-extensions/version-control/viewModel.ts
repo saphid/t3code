@@ -1047,10 +1047,10 @@ export function nextThemeVars(
  * The toast lifecycle for one mutation — the panel's mirror of native
  * GitActionsControl receipts: `loading` opens on start and the same
  * notification updates to `success` or `error` on settle. A success
- * receipt dismisses after MUTATION_TOAST_DISMISS_MS, matching native's
- * `dismissAfterVisibleMs` — the contract's `update` carries no duration,
- * so the adapter schedules `dismiss` itself and defers to the next visible
- * paint when the view is hidden rather than expiring a receipt nobody saw.
+ * receipt dismisses after MUTATION_TOAST_DISMISS_MS of *seen* time,
+ * matching native's `dismissAfterVisibleMs` — the contract's `update`
+ * carries no duration, so the adapter schedules `dismiss` itself on a
+ * pause/resume clock that never runs while the receipt can't be read.
  * Errors stay pinned until the user dismisses them, matching native
  * failure toasts.
  */
@@ -1071,30 +1071,81 @@ export function isNotificationDismissal(error: unknown): boolean {
 }
 
 /**
- * Fire `dismiss` only while the view is visible; while hidden, defer to the
- * next visible paint and give up if the session dies first. The contract's
- * fixed-duration dismissal cannot express native's `dismissAfterVisibleMs`
- * (toast.tsx pauses the clock while hidden), so this is the closest honest
- * lifecycle: an unseen success receipt must not expire in the background.
+ * What the receipt-dismiss clock reads: `seen()` reports whether the
+ * receipt can actually be read right now — the view is shown and the
+ * document is visible and focused, the native
+ * ThreadToastVisibleAutoDismiss predicate — and `onChange` fires on every
+ * transition so the accumulator can pause/resume.
  */
-export function dismissReceiptWhenSeen(
-  view: {
-    readonly visible: boolean;
-    onVisibility(listener: (visible: boolean) => void): () => void;
-    readonly signal: AbortSignal;
-  },
+export interface ReceiptSeenSource {
+  readonly seen: () => boolean;
+  readonly onChange: (listener: () => void) => () => void;
+  readonly signal: AbortSignal;
+}
+
+/**
+ * `dismiss` after `windowMs` of *seen* time — a pause/resume accumulator
+ * mirroring native ThreadToastVisibleAutoDismiss (toast.tsx). Hidden spans
+ * pause the clock rather than expiring the receipt, so a success that
+ * settled while its thread was inactive — or while the document was
+ * backgrounded/unfocused — still gets its full readable window after the
+ * user returns. The abort signal ends the watch without firing.
+ */
+export function dismissReceiptAfterSeen(
+  source: ReceiptSeenSource,
+  windowMs: number,
   dismiss: () => void,
 ): void {
-  if (view.visible) {
-    dismiss();
-    return;
-  }
-  const off = view.onVisibility((visible) => {
-    if (!visible) return;
+  let remainingMs = windowMs;
+  let startedAtMs: number | null = null;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let done = false;
+  let off: () => void = () => {};
+
+  const clearTimer = () => {
+    if (timeoutId === null) return;
+    clearTimeout(timeoutId);
+    timeoutId = null;
+  };
+  const finish = () => {
+    if (done) return;
+    done = true;
+    clearTimer();
     off();
+    source.signal.removeEventListener("abort", onAbort);
     dismiss();
-  });
-  view.signal.addEventListener("abort", off, { once: true });
+  };
+  const pause = () => {
+    if (startedAtMs === null) return;
+    remainingMs = Math.max(0, remainingMs - (Date.now() - startedAtMs));
+    startedAtMs = null;
+    clearTimer();
+  };
+  const start = () => {
+    if (done || startedAtMs !== null) return;
+    if (remainingMs <= 0) {
+      finish();
+      return;
+    }
+    startedAtMs = Date.now();
+    timeoutId = setTimeout(() => {
+      startedAtMs = null;
+      remainingMs = 0;
+      finish();
+    }, remainingMs);
+  };
+  const sync = () => {
+    if (source.seen()) start();
+    else pause();
+  };
+  const onAbort = () => {
+    done = true;
+    pause();
+    off();
+  };
+  off = source.onChange(sync);
+  source.signal.addEventListener("abort", onAbort, { once: true });
+  sync();
 }
 
 export function mutationToastStart(label: string): {

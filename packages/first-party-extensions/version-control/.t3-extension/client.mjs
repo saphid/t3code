@@ -6863,17 +6863,57 @@ var __t3Client = (() => {
     const message2 = error instanceof Error ? error.message : String(error);
     return message2.includes("notification-expired");
   }
-  function dismissReceiptWhenSeen(view, dismiss) {
-    if (view.visible) {
-      dismiss();
-      return;
-    }
-    const off = view.onVisibility((visible) => {
-      if (!visible) return;
+  function dismissReceiptAfterSeen(source, windowMs, dismiss) {
+    let remainingMs = windowMs;
+    let startedAtMs = null;
+    let timeoutId = null;
+    let done = false;
+    let off = () => {
+    };
+    const clearTimer = () => {
+      if (timeoutId === null) return;
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    };
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimer();
       off();
+      source.signal.removeEventListener("abort", onAbort);
       dismiss();
-    });
-    view.signal.addEventListener("abort", off, { once: true });
+    };
+    const pause = () => {
+      if (startedAtMs === null) return;
+      remainingMs = Math.max(0, remainingMs - (Date.now() - startedAtMs));
+      startedAtMs = null;
+      clearTimer();
+    };
+    const start = () => {
+      if (done || startedAtMs !== null) return;
+      if (remainingMs <= 0) {
+        finish();
+        return;
+      }
+      startedAtMs = Date.now();
+      timeoutId = setTimeout(() => {
+        startedAtMs = null;
+        remainingMs = 0;
+        finish();
+      }, remainingMs);
+    };
+    const sync = () => {
+      if (source.seen()) start();
+      else pause();
+    };
+    const onAbort = () => {
+      done = true;
+      pause();
+      off();
+    };
+    off = source.onChange(sync);
+    source.signal.addEventListener("abort", onAbort, { once: true });
+    sync();
   }
   function mutationToastStart(label) {
     return { severity: "loading", title: `${label}\u2026` };
@@ -10003,6 +10043,14 @@ ${thread.id}`) === activity,
       if (!toastsLive || dead.current) return null;
       const api = bindApi(uiNotificationsApi, host, session.context);
       const resource = session.context.resource;
+      const dismiss = (notificationId) => {
+        void api.invoke("dismiss", { notificationId }, session.signal).then(
+          () => {
+          },
+          () => {
+          }
+        );
+      };
       const posted = api.invoke(
         "notify",
         {
@@ -10015,20 +10063,32 @@ ${thread.id}`) === activity,
         },
         session.signal
       ).then(
-        (result) => result.notificationId,
+        (result) => {
+          if (dead.current) dismiss(result.notificationId);
+          return result.notificationId;
+        },
         () => {
           markDead();
           onReceiptLost();
           return null;
         }
       );
-      const dismiss = (notificationId) => {
-        void api.invoke("dismiss", { notificationId }, session.signal).then(
-          () => {
-          },
-          () => {
-          }
-        );
+      const receiptSeen = {
+        signal: session.signal,
+        seen: () => session.visible && (typeof document === "undefined" || typeof window === "undefined" || document.visibilityState === "visible" && document.hasFocus()),
+        onChange: (listener) => {
+          const offView = session.onVisibility(listener);
+          if (typeof document === "undefined" || typeof window === "undefined") return offView;
+          document.addEventListener("visibilitychange", listener);
+          window.addEventListener("focus", listener);
+          window.addEventListener("blur", listener);
+          return () => {
+            offView();
+            document.removeEventListener("visibilitychange", listener);
+            window.removeEventListener("focus", listener);
+            window.removeEventListener("blur", listener);
+          };
+        }
       };
       return {
         settle(result) {
@@ -10050,9 +10110,10 @@ ${thread.id}`) === activity,
                   return;
                 }
                 if (result.ok)
-                  setTimeout(
-                    () => dismissReceiptWhenSeen(session, () => dismiss(notificationId)),
-                    MUTATION_TOAST_DISMISS_MS
+                  dismissReceiptAfterSeen(
+                    receiptSeen,
+                    MUTATION_TOAST_DISMISS_MS,
+                    () => dismiss(notificationId)
                   );
               },
               (error) => {

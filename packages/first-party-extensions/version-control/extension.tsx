@@ -38,7 +38,7 @@ import {
   describeStackedProgress,
   describeStackedResult,
   describeStatus,
-  dismissReceiptWhenSeen,
+  dismissReceiptAfterSeen,
   entryMutation,
   isNotificationDismissal,
   laneCount,
@@ -505,6 +505,12 @@ function useMutationToasts(
     if (!toastsLive || dead.current) return null;
     const api = bindApi(uiNotificationsApi, host, session.context);
     const resource = session.context.resource;
+    const dismiss = (notificationId: string) => {
+      void api.invoke("dismiss", { notificationId }, session.signal).then(
+        () => {},
+        () => {},
+      );
+    };
     const posted = api
       .invoke(
         "notify",
@@ -521,7 +527,12 @@ function useMutationToasts(
         session.signal,
       )
       .then(
-        (result) => result.notificationId,
+        (result) => {
+          // A resolution landing after the adapter died posts a loading
+          // toast nothing will update — retract it on arrival.
+          if (dead.current) dismiss(result.notificationId);
+          return result.notificationId;
+        },
         () => {
           markDead();
           onReceiptLost();
@@ -529,15 +540,31 @@ function useMutationToasts(
         },
       );
     // The contract's `update` carries no duration, so success receipts are
-    // dismissed on a timer — but an unseen receipt must not expire. Native's
-    // dismissAfterVisibleMs counts visible time; the closest the session
-    // exposes is the view's own visibility, so a hidden view defers the
-    // dismissal until the next visible paint.
-    const dismiss = (notificationId: string) => {
-      void api.invoke("dismiss", { notificationId }, session.signal).then(
-        () => {},
-        () => {},
-      );
+    // dismissed on a timer — but an unseen receipt must not expire.
+    // dismissReceiptAfterSeen mirrors native's dismissAfterVisibleMs: the
+    // clock runs only while the receipt can be read — the view is shown
+    // and the document is visible and focused. DOM globals are absent only
+    // where nothing can paint, so the view's own visibility decides there.
+    const receiptSeen = {
+      signal: session.signal,
+      seen: () =>
+        session.visible &&
+        (typeof document === "undefined" ||
+          typeof window === "undefined" ||
+          (document.visibilityState === "visible" && document.hasFocus())),
+      onChange: (listener: () => void) => {
+        const offView = session.onVisibility(listener);
+        if (typeof document === "undefined" || typeof window === "undefined") return offView;
+        document.addEventListener("visibilitychange", listener);
+        window.addEventListener("focus", listener);
+        window.addEventListener("blur", listener);
+        return () => {
+          offView();
+          document.removeEventListener("visibilitychange", listener);
+          window.removeEventListener("focus", listener);
+          window.removeEventListener("blur", listener);
+        };
+      },
     };
     return {
       settle(result) {
@@ -565,9 +592,8 @@ function useMutationToasts(
                   return;
                 }
                 if (result.ok)
-                  setTimeout(
-                    () => dismissReceiptWhenSeen(session, () => dismiss(notificationId)),
-                    MUTATION_TOAST_DISMISS_MS,
+                  dismissReceiptAfterSeen(receiptSeen, MUTATION_TOAST_DISMISS_MS, () =>
+                    dismiss(notificationId),
                   );
               },
               (error) => {

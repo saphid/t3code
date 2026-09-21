@@ -103,10 +103,11 @@ The panel adopts the `t3.ui/*` client contracts the native surface uses:
   receipts. The receipt channel is recorded on the mutation itself: the
   inline row renders unless that mutation actually started a toast, so a
   capability probe resolving mid-mutation never hides a receipt that has
-  none. A success receipt dismisses after the native 10 s window, but the
-  dismissal defers to the next visible paint while the view is hidden —
-  the contract cannot express native's `dismissAfterVisibleMs`, and an
-  unseen receipt must not expire. Errors stay pinned until dismissed.
+  none. A success receipt dismisses after the native 10 s window, counting
+  only time the receipt can actually be read — the view shown and the
+  document visible and focused — pausing across hidden spans like native's
+  `dismissAfterVisibleMs`; an unseen receipt never expires in the
+  background. Errors stay pinned until dismissed.
   Every delivery loss — a denied `notify`, a rejected or unapplied
   `update`, a user-dismissed loading toast — returns that mutation's
   receipt to the inline row; only non-dismissal failures latch the

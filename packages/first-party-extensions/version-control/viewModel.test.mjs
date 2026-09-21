@@ -42,7 +42,7 @@ import {
   startMutation,
   syncLabel,
   canWorktreeRef,
-  dismissReceiptWhenSeen,
+  dismissReceiptAfterSeen,
   isNotificationDismissal,
   mutationToastSettle,
   mutationToastStart,
@@ -1291,49 +1291,83 @@ NodeTest.describe("isNotificationDismissal", () => {
   });
 });
 
-NodeTest.describe("dismissReceiptWhenSeen", () => {
-  const stubView = (visible) => {
+NodeTest.describe("dismissReceiptAfterSeen", () => {
+  const stubSource = (seen) => {
     const controller = new AbortController();
-    const view = {
-      visible,
+    const source = {
+      seenNow: seen,
       signal: controller.signal,
-      listeners: /** @type {Set<(visible: boolean) => void>} */ (new Set()),
-      onVisibility(listener) {
-        view.listeners.add(listener);
-        return () => view.listeners.delete(listener);
+      listeners: /** @type {Set<() => void>} */ (new Set()),
+      seen() {
+        return source.seenNow;
+      },
+      onChange(listener) {
+        source.listeners.add(listener);
+        return () => source.listeners.delete(listener);
+      },
+      setSeen(next) {
+        source.seenNow = next;
+        for (const listener of source.listeners) listener();
       },
     };
-    return view;
+    return source;
   };
 
-  NodeTest.it("dismisses immediately while the view is visible", () => {
-    const view = stubView(true);
+  NodeTest.it("dismisses after the window when seen throughout", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000 });
+    const source = stubSource(true);
     let dismissed = 0;
-    dismissReceiptWhenSeen(view, () => dismissed++);
-    NodeAssert.equal(dismissed, 1);
-    NodeAssert.equal(view.listeners.size, 0);
-  });
-
-  NodeTest.it("holds an unseen receipt until the next visible paint", () => {
-    // The mutation settled while its thread was inactive — the success
-    // receipt must not expire against a view nobody is looking at.
-    const view = stubView(false);
-    let dismissed = 0;
-    dismissReceiptWhenSeen(view, () => dismissed++);
+    dismissReceiptAfterSeen(source, 10_000, () => dismissed++);
+    t.mock.timers.tick(9_999);
     NodeAssert.equal(dismissed, 0);
-    for (const listener of view.listeners) listener(false);
-    NodeAssert.equal(dismissed, 0, "still hidden — no dismissal");
-    for (const listener of view.listeners) listener(true);
+    t.mock.timers.tick(1);
     NodeAssert.equal(dismissed, 1);
-    NodeAssert.equal(view.listeners.size, 0, "listener unsubscribed after firing");
+    NodeAssert.equal(source.listeners.size, 0, "watch torn down on fire");
   });
 
-  NodeTest.it("gives up when the session dies before the view returns", () => {
-    const view = stubView(false);
+  NodeTest.it("a settle while unseen keeps its full window after returning", (t) => {
+    // The mutation completed while another thread was active or the
+    // document was backgrounded — the clock must not run while unseen,
+    // and returning must not dismiss without a readable interval.
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000 });
+    const source = stubSource(false);
     let dismissed = 0;
-    dismissReceiptWhenSeen(view, () => dismissed++);
-    view.signal.dispatchEvent(new Event("abort"));
-    NodeAssert.equal(view.listeners.size, 0);
+    dismissReceiptAfterSeen(source, 10_000, () => dismissed++);
+    t.mock.timers.tick(120_000);
+    NodeAssert.equal(dismissed, 0, "no clock while unseen");
+    source.setSeen(true);
+    NodeAssert.equal(dismissed, 0, "returning does not dismiss on the spot");
+    t.mock.timers.tick(9_999);
+    NodeAssert.equal(dismissed, 0);
+    t.mock.timers.tick(1);
+    NodeAssert.equal(dismissed, 1, "full readable window after return");
+  });
+
+  NodeTest.it("pauses and resumes across hidden spans instead of restarting", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000 });
+    const source = stubSource(true);
+    let dismissed = 0;
+    dismissReceiptAfterSeen(source, 10_000, () => dismissed++);
+    t.mock.timers.tick(4_000);
+    source.setSeen(false);
+    t.mock.timers.tick(60_000);
+    NodeAssert.equal(dismissed, 0, "hidden span does not burn the window");
+    source.setSeen(true);
+    t.mock.timers.tick(5_999);
+    NodeAssert.equal(dismissed, 0);
+    t.mock.timers.tick(1);
+    NodeAssert.equal(dismissed, 1, "the remaining 6 s resume, not a fresh 10 s");
+  });
+
+  NodeTest.it("gives up without firing when the session dies mid-window", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000 });
+    const source = stubSource(true);
+    let dismissed = 0;
+    dismissReceiptAfterSeen(source, 10_000, () => dismissed++);
+    t.mock.timers.tick(2_000);
+    source.signal.dispatchEvent(new Event("abort"));
+    NodeAssert.equal(source.listeners.size, 0);
+    t.mock.timers.tick(60_000);
     NodeAssert.equal(dismissed, 0);
   });
 });
