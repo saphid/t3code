@@ -182,6 +182,39 @@ NodeTest.describe("parseInlines", () => {
     NodeAssert.ok(depth <= 64, `link nesting depth ${depth} exceeds the cap`);
     NodeAssert.ok(inlineText(parsed).includes("end"), "innermost text survives as literal");
   });
+
+  NodeTest.it("bounds recursion on malformed input, not only well-formed nesting", () => {
+    const maxDepth = (nodes, depth = 0) =>
+      nodes.reduce(
+        (max, n) => Math.max(max, n.children ? maxDepth(n.children, depth + 1) : depth),
+        depth,
+      );
+
+    // Mis-nested link text/targets still drive real recursion — each level
+    // strips one `[x `…`](u)` pair — so the cap must land here too.
+    const misnested = "[x ".repeat(200) + "y" + "](u)".repeat(200);
+    NodeAssert.equal(maxDepth(parseInlines(misnested)), 64);
+
+    // Unclosed delimiters and marker soup degrade to literal text.
+    for (const source of [
+      "[".repeat(400) + "x" + "]".repeat(400),
+      "![".repeat(400) + "x" + "]".repeat(400),
+      "*a ".repeat(400),
+      "~~".repeat(400),
+    ]) {
+      NodeAssert.ok(maxDepth(parseInlines(source)) <= 64);
+    }
+
+    // Malformed inline content inside a deep quote hits the same block cap.
+    const quote = parseMarkdown("> ".repeat(300) + "[unclosed" + "![".repeat(100));
+    let quoteDepth = 0;
+    let node = quote[0];
+    while (node !== undefined && node.type === "quote") {
+      quoteDepth += 1;
+      node = node.children[0];
+    }
+    NodeAssert.ok(quoteDepth <= 64, `malformed quote depth ${quoteDepth} exceeds the cap`);
+  });
 });
 
 NodeTest.describe("markdown safety — no raw-HTML surface", () => {
