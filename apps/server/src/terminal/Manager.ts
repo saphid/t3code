@@ -1065,29 +1065,23 @@ export class BoundedTerminalHistory {
    *
    * The sequence end is proven over the complete retained window before
    * anything is dropped: an escape ends retroactively at its first byte
-   * on a non-final byte, so intermediates-only chunks are ordinary text
-   * until a later chunk decides — a chunk-local drop would discard them
-   * irreversibly.
+   * on a non-final byte, so intermediates-only regions are ordinary text
+   * until a later byte decides — and where that first byte sat decides
+   * whether the endpoint lands inside or before the window. Only a
+   * single window-global scan places it correctly.
    */
   private alignSequenceBoundary(): void {
     if (this.evictedSequenceState === "none") return;
-    let state: SequenceParseState = this.evictedSequenceState;
-    let dropUnits = 0;
-    let closed = false;
-    for (let i = this.start; i < this.chunks.length; i += 1) {
-      const data = this.chunks[i]!.data;
-      const scan = scanTerminalSequenceState(data, state);
-      state = scan.state;
-      if (scan.endIndex !== null) {
-        // 0 means the sequence ended retroactively before this chunk —
-        // every retained unit is ordinary text.
-        dropUnits = scan.endIndex === 0 ? 0 : dropUnits + scan.endIndex;
-        closed = true;
-        break;
-      }
-      dropUnits += data.length;
+    const scan = scanTerminalSequenceState(this.value(), this.evictedSequenceState);
+    // value() cached the pre-drop window; the drops below must not see it.
+    this.cachedValue = null;
+    if (scan.endIndex === 0) {
+      // The sequence ended retroactively before the window — every
+      // retained unit is ordinary text.
+      this.evictedSequenceState = "none";
+      return;
     }
-    let remaining = dropUnits;
+    let remaining = scan.endIndex ?? Number.MAX_SAFE_INTEGER;
     while (remaining > 0) {
       const first = this.chunks[this.start];
       if (!first) break;
@@ -1108,7 +1102,7 @@ export class BoundedTerminalHistory {
       this.trimChunk(remaining, Buffer.byteLength(dropped), lineBreaks);
       remaining = 0;
     }
-    if (closed) this.evictedSequenceState = "none";
+    if (scan.endIndex !== null) this.evictedSequenceState = "none";
   }
 
   private discardChunk(): void {

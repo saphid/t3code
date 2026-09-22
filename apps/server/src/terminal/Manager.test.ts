@@ -746,6 +746,41 @@ it("drops an intermediates run through a final byte even across chunks", () => {
   expect(boundary.value()).toBe(`${")".repeat(16_375)}\x01KEEPtail`);
 });
 
+it("locates a retroactive escape end in window coordinates across chunks", () => {
+  // r15 finding: the deciding non-final byte can sit in a later chunk
+  // than the first intermediate — endIndex===0 was then read as "ended
+  // before the window", but the true endpoint is window offset 1.
+  const input = "p".repeat(16_382) + "\x1b))\x01" + "K".repeat(16_382);
+  const history = new TerminalManager.BoundedTerminalHistory(5_000, "", 16_385);
+  history.append(input);
+  // The escape is "ESC)" (input units 16382–16383); the cut at 16383
+  // leaves one dangling ')', dropped through window offset 1.
+  expect(history.value()).toBe(input.slice(16_384));
+  expect(history.value().length).toBe(16_384);
+  expect(history.value().startsWith(")\x01KKK")).toBe(true);
+  expect(history.appendedUnitLength - history.value().length).toBe(16_384);
+  expect(history.sanitizedValue()).toBe(input.slice(16_384));
+  expect(history.sanitizedTail(8_192, 8_192).contents).toBe(input.slice(input.length - 8_192));
+
+  // Variant where the endpoint IS before the window: the first
+  // intermediate was evicted with the ESC, so nothing is dropped.
+  const beforeWindow = new TerminalManager.BoundedTerminalHistory(5_000, "", 16_385);
+  const before = "p".repeat(16_381) + "\x1b)))" + "\x01" + "K".repeat(16_382);
+  beforeWindow.append(before);
+  // Escape = "ESC)" (units 16381–16382); cut at 16383 retains only text.
+  expect(beforeWindow.value()).toBe(before.slice(16_383));
+  expect(beforeWindow.value().length).toBe(16_385);
+
+  // Variant with a real mid-window endpoint: the run ends with a final
+  // byte inside the window, so the drop reaches it exactly.
+  const midWindow = new TerminalManager.BoundedTerminalHistory(5_000, "", 16_384);
+  const mid = "p".repeat(16_382) + "\x1b)))X" + "K".repeat(16_380);
+  midWindow.append(mid);
+  // Escape = "ESC)))X" (units 16382–16387); cut at 16383 drops through it.
+  expect(midWindow.value()).toBe("K".repeat(16_380));
+  expect(midWindow.appendedUnitLength - midWindow.value().length).toBe(16_387);
+});
+
 // The sanitizer's own parse as a span oracle: every sequence's extent per
 // sanitizeTerminalHistoryChunk's grammar, using its actual helpers.
 function sequenceSpans(text: string): Array<readonly [number, number]> {
