@@ -4263,7 +4263,9 @@ describe("PreviewManager", () => {
         );
         expect(keyEvents("down")).toHaveLength(1);
 
-        // lease-b's keyUp must not release lease-a's physical press.
+        // D1 physical-up semantics (certified §3.7): a key-up is honored
+        // regardless of which lease owns the held entry — the key is
+        // physically released, so the entry clears and the up dispatches.
         yield* manager.dispatchRemoteInput(
           remoteTabId,
           "lease-b",
@@ -4271,9 +4273,10 @@ describe("PreviewManager", () => {
           { type: "key", phase: "up", key: "Shift", code: "ShiftLeft" },
           { width: 100, height: 100 },
         );
-        expect(keyEvents("up")).toHaveLength(0);
+        expect(keyEvents("up")).toHaveLength(1);
 
-        // The owning lease's keyUp releases it.
+        // A second key-up with nothing held still dispatches the physical
+        // release — the guest may have seen an ambiguous down.
         yield* manager.dispatchRemoteInput(
           remoteTabId,
           "lease-a",
@@ -4281,7 +4284,7 @@ describe("PreviewManager", () => {
           { type: "key", phase: "up", key: "Shift", code: "ShiftLeft" },
           { width: 100, height: 100 },
         );
-        expect(keyEvents("up")).toHaveLength(1);
+        expect(keyEvents("up")).toHaveLength(2);
 
         // A packet naming a dead guest generation never reaches the guest.
         const staleExit = yield* Effect.exit(
@@ -4344,6 +4347,235 @@ describe("PreviewManager", () => {
         // lease-b's held key is still held until its own release.
         yield* manager.releaseRemoteInput(remoteTabId, "lease-b");
         expect(keyUps()).toHaveLength(2);
+      }),
+    ),
+  );
+
+  effectIt.effect("an ambiguous down rejection still owes key release", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents({ id: 42 });
+        Object.assign(preview.webContents, { focus: vi.fn() });
+        fromId.mockReturnValue(preview.webContents);
+        const remoteTabId = '["env-a","thread-a","epoch-1","tab-1"]';
+        yield* manager.createTab(remoteTabId);
+        yield* manager.registerWebview(remoteTabId, 42);
+        const sendCommand = (
+          preview.webContents as { debugger: { sendCommand: ReturnType<typeof vi.fn> } }
+        ).debugger.sendCommand;
+        // The down send rejects but may have applied — held intent is
+        // recorded before dispatch, so cleanup still owes the key-up.
+        sendCommand.mockImplementation(async (method: string, args: { type?: string }) => {
+          if (method === "Input.dispatchKeyEvent" && args.type !== "keyUp")
+            throw new Error("applied but rejected");
+          return undefined;
+        });
+        yield* manager
+          .dispatchRemoteInput(
+            remoteTabId,
+            "l",
+            "42",
+            { type: "key", phase: "down", key: "Shift", code: "ShiftLeft" },
+            { width: 100, height: 100 },
+          )
+          .pipe(Effect.ignore);
+        yield* manager.releaseRemoteInput(remoteTabId, "l");
+        expect(
+          sendCommand.mock.calls.filter(
+            (call) =>
+              call[0] === "Input.dispatchKeyEvent" &&
+              (call[1] as { type?: string } | undefined)?.type === "keyUp",
+          ),
+        ).toHaveLength(1);
+      }),
+    ),
+  );
+
+  effectIt.effect("queued unsent input is cancelled when lease cleanup begins", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents({ id: 42 });
+        Object.assign(preview.webContents, { focus: vi.fn() });
+        fromId.mockReturnValue(preview.webContents);
+        const remoteTabId = '["env-a","thread-a","epoch-1","tab-1"]';
+        yield* manager.createTab(remoteTabId);
+        yield* manager.registerWebview(remoteTabId, 42);
+        const sendCommand = (
+          preview.webContents as { debugger: { sendCommand: ReturnType<typeof vi.fn> } }
+        ).debugger.sendCommand;
+        const started = yield* Deferred.make<void>();
+        const finish = yield* Deferred.make<void>();
+        sendCommand.mockImplementation((method: string, args: { type?: string }) =>
+          method === "Input.dispatchMouseEvent" && args.type === "mouseMoved"
+            ? Effect.runPromise(
+                Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(finish))),
+              )
+            : Promise.resolve(undefined),
+        );
+        const first = yield* manager
+          .dispatchRemoteInput(
+            remoteTabId,
+            "l",
+            "42",
+            { type: "pointer", phase: "move", x: 0, y: 0 },
+            { width: 100, height: 100 },
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(started);
+        const second = yield* manager
+          .dispatchRemoteInput(
+            remoteTabId,
+            "l",
+            "42",
+            { type: "text", text: "must be cancelled" },
+            { width: 100, height: 100 },
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        const end = yield* manager
+          .releaseRemoteInput(remoteTabId, "l")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.succeed(finish, undefined);
+        yield* Fiber.join(first);
+        yield* Fiber.join(second).pipe(Effect.ignore);
+        yield* Fiber.join(end);
+        expect(
+          sendCommand.mock.calls.filter((call) => call[0] === "Input.insertText"),
+        ).toHaveLength(0);
+      }),
+    ),
+  );
+
+  effectIt.effect("action focus cleanup cannot overlap a lease claim", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents({ id: 42 });
+        Object.assign(preview.webContents, { focus: vi.fn() });
+        fromId.mockReturnValue(preview.webContents);
+        const remoteTabId = '["env-a","thread-a","epoch-1","tab-1"]';
+        yield* manager.createTab(remoteTabId);
+        yield* manager.registerWebview(remoteTabId, 42);
+        const sendCommand = (
+          preview.webContents as { debugger: { sendCommand: ReturnType<typeof vi.fn> } }
+        ).debugger.sendCommand;
+        const started = yield* Deferred.make<void>();
+        const finish = yield* Deferred.make<void>();
+        let disabling = false;
+        let overlap = false;
+        sendCommand.mockImplementation((method: string, args: { enabled?: boolean }) => {
+          if (method === "Emulation.setFocusEmulationEnabled" && args.enabled === false) {
+            disabling = true;
+            return Effect.runPromise(
+              Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(Deferred.await(finish)),
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    disabling = false;
+                  }),
+                ),
+              ),
+            );
+          }
+          if (method === "Emulation.setFocusEmulationEnabled" && args.enabled === true && disabling)
+            overlap = true;
+          return Promise.resolve(undefined);
+        });
+        const action = yield* manager
+          .automationPress(remoteTabId, { key: "Shift" })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(started);
+        const lease = yield* manager
+          .dispatchRemoteInput(
+            remoteTabId,
+            "l",
+            "42",
+            { type: "text", text: "hello" },
+            { width: 100, height: 100 },
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(finish, undefined);
+        yield* Fiber.join(action);
+        yield* Fiber.join(lease).pipe(Effect.ignore);
+        expect(overlap).toBe(false);
+      }),
+    ),
+  );
+
+  effectIt.effect("resize during capture drops the unstable frame", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const finish = yield* Deferred.make<void>();
+        let width = 100;
+        const frames: Array<unknown> = [];
+        const wc = makeTestPreviewWebContents(() =>
+          Effect.runPromise(
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Deferred.await(finish)),
+              Effect.as({
+                toJPEG: () => Buffer.from("pixels"),
+                getSize: () => ({ width: 100, height: 100 }),
+              }),
+            ),
+          ),
+        );
+        wc.executeJavaScript = vi.fn(async () => ({ width, height: 100 }));
+        fromId.mockReturnValue(wc as never);
+        const remoteTabId = '["env-a","thread-a","epoch-1","tab-1"]';
+        yield* manager.createTab(remoteTabId);
+        yield* manager.registerWebview(remoteTabId, 42);
+        yield* manager.subscribeRemoteFrames((frame) =>
+          Effect.sync(() => {
+            frames.push(frame);
+          }),
+        );
+        const start = yield* manager
+          .startRemoteCapture(remoteTabId)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(started);
+        width = 200;
+        yield* Deferred.succeed(finish, undefined);
+        yield* Fiber.join(start);
+        yield* manager.stopRemoteCapture(remoteTabId);
+        expect(frames).toHaveLength(0);
+      }),
+    ),
+  );
+
+  effectIt.effect("stopping during initial capture leaves remoteLive false", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const finish = yield* Deferred.make<void>();
+        const states: Array<{ remoteLive?: boolean }> = [];
+        const wc = makeTestPreviewWebContents(() =>
+          Effect.runPromise(
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Deferred.await(finish)),
+              Effect.as({
+                toJPEG: () => Buffer.from("pixels"),
+                getSize: () => ({ width: 100, height: 100 }),
+              }),
+            ),
+          ),
+        );
+        fromId.mockReturnValue(wc as never);
+        const remoteTabId = '["env-a","thread-a","epoch-1","tab-1"]';
+        yield* manager.createTab(remoteTabId);
+        yield* manager.registerWebview(remoteTabId, 42);
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            states.push(state);
+          }),
+        );
+        const start = yield* manager
+          .startRemoteCapture(remoteTabId)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(started);
+        yield* manager.stopRemoteCapture(remoteTabId);
+        yield* Deferred.succeed(finish, undefined);
+        yield* Fiber.join(start);
+        expect(states.at(-1)?.remoteLive).toBe(false);
       }),
     ),
   );

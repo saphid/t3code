@@ -54,7 +54,7 @@ import * as Socket from "effect/unstable/socket/Socket";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import { SessionStore } from "../auth/SessionStore.ts";
+import { SessionStore, type SessionCredentialChange } from "../auth/SessionStore.ts";
 import {
   failEnvironmentAuthInvalid,
   failEnvironmentInternal,
@@ -64,6 +64,7 @@ import { EnvironmentExtensions } from "../extensions/EnvironmentExtensions.ts";
 import { ExtensionCatalogueChanges } from "../extensions/catalogueChanges.ts";
 import {
   canonicalizeFrameHubOrigin,
+  type FrameHubConnectionEvent,
   PreviewAutomationBroker,
   type BrowserFrameHubEndpoint,
 } from "../mcp/PreviewAutomationBroker.ts";
@@ -72,6 +73,7 @@ import {
   BrowserFrameLeases,
   browserFrameAuthorityKey,
   type BrowserFrameAuthority,
+  type BrowserFrameLeaseInvalidation,
   type BrowserFrameTicketRecord,
 } from "./BrowserFrameLeases.ts";
 
@@ -116,6 +118,7 @@ const STRIPPED_UPSTREAM_PARAMS = new Set([
   "x-t3-engine-generation",
   "x-t3-lease",
   "x-t3-lease-expires",
+  "x-t3-ticket-seq",
 ]);
 
 const isWebSocketUpgrade = (request: HttpServerRequest.HttpServerRequest) =>
@@ -294,7 +297,7 @@ const upstreamParams = (
   params: URLSearchParams,
   session: BrowserFrameSessionTuple,
   engineGeneration: string | null,
-  leaseBinding?: { leaseId?: string; expiresAt?: number },
+  leaseBinding?: { leaseId?: string; expiresAt?: number; ticketSeq?: number },
 ): string => {
   const upstream = new URLSearchParams();
   for (const [name, value] of params) {
@@ -319,6 +322,11 @@ const upstreamParams = (
   // never leaves pixels or input flowing past a dead ticket (design §3.7.7).
   if (leaseBinding?.expiresAt !== undefined) {
     upstream.set("x-t3-lease-expires", String(leaseBinding.expiresAt));
+  }
+  // The ticket sequence rides along so the hub can refuse a bind from an
+  // older verified ticket than the one already holding the socket.
+  if (leaseBinding?.ticketSeq !== undefined) {
+    upstream.set("x-t3-ticket-seq", String(leaseBinding.ticketSeq));
   }
   return upstream.toString();
 };
@@ -374,22 +382,24 @@ const makeAuthorityStillValid = (extensions: EnvironmentExtensions["Service"]) =
   });
 
 /**
- * An interrupt handle for one bound channel: completes when the record's
- * lease is revoked/superseded, its authority dies, or its engine-host
- * connection goes away. Subscriptions open before the channel so a queued
- * invalidation cannot be missed.
+ * Arm the interrupt for one bound channel on subscriptions the caller opened
+ * BEFORE the ticket was verified: completes when the record's lease is
+ * revoked/superseded, its authority dies, or its engine-host connection goes
+ * away. Because the subscriptions predate verification, a revocation racing
+ * the redeem is either caught by the post-check re-verify or already queued
+ * on these streams — never missed in the gap.
  */
-const channelInterrupt = Effect.fn("BrowserFrameProxy.channelInterrupt")(function* (
+const armChannelInterrupt = Effect.fn("BrowserFrameProxy.armChannelInterrupt")(function* (
   record: BrowserFrameTicketRecord,
+  invalidations: Stream.Stream<BrowserFrameLeaseInvalidation>,
+  hubEvents: Stream.Stream<FrameHubConnectionEvent>,
 ) {
   const fired = yield* Deferred.make<void>();
-  const leases = yield* BrowserFrameLeases;
-  const broker = yield* PreviewAutomationBroker;
   const matches = (leaseId: string | undefined) =>
     record.leaseId !== undefined && leaseId === record.leaseId;
   const authorityKey = browserFrameAuthorityKey(record.authority);
   yield* Effect.forkScoped(
-    Stream.runForEach(leases.invalidations, (event) => {
+    Stream.runForEach(invalidations, (event) => {
       const hit =
         (event.type === "lease" && matches(event.leaseId)) ||
         (event.type === "authority" && event.authorityKey === authorityKey) ||
@@ -399,13 +409,33 @@ const channelInterrupt = Effect.fn("BrowserFrameProxy.channelInterrupt")(functio
   );
   if (record.hostConnectionId !== null) {
     yield* Effect.forkScoped(
-      Stream.runForEach(broker.frameHubEvents, (event) =>
+      Stream.runForEach(hubEvents, (event) =>
         event.connectionId === record.hostConnectionId
           ? Deferred.succeed(fired, undefined)
           : Effect.void,
       ),
     );
   }
+  return Deferred.await(fired);
+});
+
+/**
+ * Session-credential GET channels get the same treatment: the subscription is
+ * opened before authentication, the session is revalidated after it, and this
+ * drain fires the interrupt when a later removal lands.
+ */
+const armSessionInterrupt = Effect.fn("BrowserFrameProxy.armSessionInterrupt")(function* (
+  sessionId: AuthSessionId,
+  watched: Stream.Stream<SessionCredentialChange>,
+) {
+  const fired = yield* Deferred.make<void>();
+  yield* Effect.forkScoped(
+    Stream.runForEach(watched, (change) =>
+      change.type === "clientRemoved" && change.sessionId === sessionId
+        ? Deferred.succeed(fired, undefined)
+        : Effect.void,
+    ),
+  );
   return Deferred.await(fired);
 });
 
@@ -445,9 +475,15 @@ const makeHandler = (
       // verified — with its authority — before the upgrade is accepted.
       const tabId = inputMatch[1];
       const ticket = params.get("inputTicket");
+      // Subscribe BEFORE verifying: a revocation landing anywhere in the
+      // verify→authority→re-verify window is already queued on these streams,
+      // so the channel can never miss its own death.
+      const invalidations = yield* leases.watchInvalidations();
+      const hubEvents = yield* broker.watchFrameHubEvents();
       const record =
         ticket === null || tabId === undefined ? Option.none() : yield* leases.verify(ticket);
       if (
+        ticket === null ||
         tabId === undefined ||
         Option.isNone(record) ||
         record.value.kind !== "input" ||
@@ -456,6 +492,11 @@ const makeHandler = (
         return HttpServerResponse.text("Unauthorized", { status: 401 });
       }
       if (!(yield* authorityStillValid(record.value.authority))) {
+        return HttpServerResponse.text("Unauthorized", { status: 401 });
+      }
+      // Re-verify after the authority wait — catches a revocation that landed
+      // between the first verify and now; anything later hits the armed drains.
+      if (Option.isNone(yield* leases.verify(ticket))) {
         return HttpServerResponse.text("Unauthorized", { status: 401 });
       }
       const session = record.value.session;
@@ -474,29 +515,40 @@ const makeHandler = (
       const search = upstreamParams(params, session, record.value.engineGeneration, {
         ...(record.value.leaseId !== undefined ? { leaseId: record.value.leaseId } : {}),
         expiresAt: record.value.expiresAt,
+        ticketSeq: record.value.ticketSeq,
       });
       // Node's WebSocket cannot set upgrade headers — the hub secret rides the
       // query, which the hub accepts only on this loopback hop.
       const upstream = `${hub.origin.replace(/^http/, "ws")}${hubPath}?${search}&x-t3-hub-auth=${encodeURIComponent(hub.secret)}`;
-      const interrupt = yield* channelInterrupt(record.value);
+      const interrupt = yield* armChannelInterrupt(record.value, invalidations, hubEvents);
       return yield* proxyWebSocket(request, upstream, interrupt);
     }
 
     // GET routes: a frameTicket authorizes extension viewers; otherwise the
     // request must carry an environment session at read scope.
     const frameTicket = params.get("frameTicket");
+    // Subscribe BEFORE verifying under either credential mode — same
+    // subscribe-first guarantee as the input upgrade path.
+    const invalidations = yield* leases.watchInvalidations();
+    const hubEvents = yield* broker.watchFrameHubEvents();
     let sessionTuple: Option.Option<BrowserFrameSessionTuple>;
     let engineGeneration: string | null = null;
     let boundHostClientId: string | null = null;
     let boundHostConnectionId: string | null = null;
     let credentialExpiresAt: number | undefined;
     let ticketRecord: BrowserFrameTicketRecord | undefined;
+    let sessionInterrupt: Effect.Effect<unknown> | undefined;
     if (frameTicket !== null) {
       const record = yield* leases.verify(frameTicket);
       if (Option.isNone(record) || record.value.kind !== "stream") {
         return HttpServerResponse.text("Unauthorized", { status: 401 });
       }
       if (!(yield* authorityStillValid(record.value.authority))) {
+        return HttpServerResponse.text("Unauthorized", { status: 401 });
+      }
+      // Re-verify after the authority wait: a revocation landing mid-check is
+      // caught here; anything later is already queued on the subscriptions.
+      if (Option.isNone(yield* leases.verify(frameTicket))) {
         return HttpServerResponse.text("Unauthorized", { status: 401 });
       }
       ticketRecord = record.value;
@@ -506,7 +558,16 @@ const makeHandler = (
       boundHostConnectionId = record.value.hostConnectionId;
       credentialExpiresAt = record.value.expiresAt;
     } else {
+      const sessions = yield* SessionStore;
+      const watched = yield* sessions.watchChanges();
       const sessionAuth = yield* authenticateSessionRead;
+      // The session could have been removed between subscription and auth —
+      // revalidate closes that window; later removals hit the armed drain.
+      const revalidated = yield* sessions.revalidate(sessionAuth.sessionId).pipe(Effect.option);
+      if (Option.isNone(revalidated)) {
+        return HttpServerResponse.text("Unauthorized", { status: 401 });
+      }
+      sessionInterrupt = yield* armSessionInterrupt(sessionAuth.sessionId, watched);
       const pathTabId = SESSION_GET_PATH.test(hubPath)
         ? decodeURIComponent(hubPath.split("/")[2] ?? "")
         : null;
@@ -566,7 +627,9 @@ const makeHandler = (
       return yield* proxySessionsScoped(request, upstreamUrl, hub.origin, injected, session);
     }
     const interrupt =
-      ticketRecord !== undefined ? yield* channelInterrupt(ticketRecord) : Effect.never;
+      ticketRecord !== undefined
+        ? yield* armChannelInterrupt(ticketRecord, invalidations, hubEvents)
+        : (sessionInterrupt ?? Effect.never);
     return yield* proxyHttp(request, upstreamUrl, hub.origin, injected, interrupt);
   });
 
@@ -600,7 +663,16 @@ const invalidationWatchers = Effect.gen(function* () {
         if (stale) return true;
         const leaf = installations.value.find((item) => item.id === authority.callerId);
         if (!leaf || !leaf.enabled) return true;
-        return !authority.grants.every((grant) => leaf.grants.capabilities.includes(grant));
+        if (!authority.grants.every((grant) => leaf.grants.capabilities.includes(grant))) {
+          return true;
+        }
+        // A caller whose project scope shrank loses mints made under the old
+        // context — same wall `authorityStillValid` enforces at redeem.
+        const projectId =
+          typeof authority.context === "object" && authority.context !== null
+            ? (authority.context as { resource?: { projectId?: ProjectId } }).resource?.projectId
+            : undefined;
+        return projectId !== undefined && !leaf.grants.projectIds.includes(projectId);
       });
     }),
   ).pipe(Effect.forkScoped);

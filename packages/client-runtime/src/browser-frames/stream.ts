@@ -136,8 +136,18 @@ interface MjpegPart {
 /**
  * Incremental splitter for `multipart/x-mixed-replace`. `Content-Length`
  * carries the payload size so JPEG bytes can never be mistaken for framing.
+ *
+ * Bounds: the buffer never exceeds `MAX_BUFFER_BYTES` (oldest bytes drop
+ * first), a part header that stays unterminated past `MAX_HEADER_BYTES` is
+ * resynced past its delimiter, and when no declared part body is in flight
+ * the un-consumed tail is kept to `MAX_TAIL_BYTES` — a peer cannot grow the
+ * parser state without bound.
  */
 export class MjpegDemuxer {
+  static readonly MAX_BUFFER_BYTES = 32 * 1024 * 1024;
+  static readonly MAX_HEADER_BYTES = 64 * 1024;
+  static readonly MAX_TAIL_BYTES = 1024 * 1024;
+
   private buffer = new Uint8Array(256 * 1024);
   private length = 0;
   private readonly delimiter: Uint8Array;
@@ -147,18 +157,28 @@ export class MjpegDemuxer {
   }
 
   push(bytes: Uint8Array): MjpegPart[] {
-    if (this.length + bytes.length > this.buffer.length) {
+    const incoming =
+      bytes.length > MjpegDemuxer.MAX_BUFFER_BYTES
+        ? bytes.subarray(bytes.length - MjpegDemuxer.MAX_BUFFER_BYTES)
+        : bytes;
+    const overflow = this.length + incoming.length - MjpegDemuxer.MAX_BUFFER_BYTES;
+    if (overflow > 0) {
+      this.buffer.copyWithin(0, overflow, this.length);
+      this.length -= overflow;
+    }
+    if (this.length + incoming.length > this.buffer.length) {
       let capacity = this.buffer.length;
-      while (capacity < this.length + bytes.length) capacity *= 2;
-      const grown = new Uint8Array(capacity);
+      while (capacity < this.length + incoming.length) capacity *= 2;
+      const grown = new Uint8Array(Math.min(capacity, MjpegDemuxer.MAX_BUFFER_BYTES));
       grown.set(this.buffer.subarray(0, this.length));
       this.buffer = grown;
     }
-    this.buffer.set(bytes, this.length);
-    this.length += bytes.length;
+    this.buffer.set(incoming, this.length);
+    this.length += incoming.length;
 
     const parts: MjpegPart[] = [];
     let offset = 0;
+    let awaitingBody = false;
     for (;;) {
       const start = this.indexOf(this.delimiter, offset);
       if (start < 0) break;
@@ -166,7 +186,15 @@ export class MjpegDemuxer {
       // Optional CRLF after the delimiter line.
       if (this.buffer[cursor] === 0x0d && this.buffer[cursor + 1] === 0x0a) cursor += 2;
       const headerEnd = this.indexOf(HEADER_END, cursor);
-      if (headerEnd < 0) break;
+      if (headerEnd < 0) {
+        if (this.length - cursor > MjpegDemuxer.MAX_HEADER_BYTES) {
+          // Not a header — resync past the delimiter rather than buffering
+          // an unterminated header forever.
+          offset = cursor;
+          continue;
+        }
+        break;
+      }
       const headers: Record<string, string> = {};
       const headerText = textDecoder.decode(this.buffer.subarray(cursor, headerEnd));
       for (const line of headerText.split("\r\n")) {
@@ -176,12 +204,19 @@ export class MjpegDemuxer {
       }
       const bodyStart = headerEnd + HEADER_END.length;
       const contentLength = Number(headers["content-length"]);
-      if (!Number.isFinite(contentLength) || contentLength < 0) {
-        // Malformed part: resync at the next boundary.
+      if (
+        !Number.isFinite(contentLength) ||
+        contentLength < 0 ||
+        contentLength > MjpegDemuxer.MAX_BUFFER_BYTES
+      ) {
+        // Malformed or oversized part: resync at the next boundary.
         offset = bodyStart;
         continue;
       }
-      if (this.length - bodyStart < contentLength) break;
+      if (this.length - bodyStart < contentLength) {
+        awaitingBody = true;
+        break;
+      }
       parts.push({ headers, jpeg: this.buffer.slice(bodyStart, bodyStart + contentLength) });
       offset = bodyStart + contentLength;
     }
@@ -190,7 +225,13 @@ export class MjpegDemuxer {
       this.length -= offset;
     }
     // Keep the un-consumed tail bounded: a stream that never completes a part
-    // within one capacity growth is dropped wholesale on the next push.
+    // drops to the newest slice; a declared body in flight may retain what it
+    // still needs (already capped by MAX_BUFFER_BYTES).
+    if (!awaitingBody && this.length > MjpegDemuxer.MAX_TAIL_BYTES) {
+      const drop = this.length - MjpegDemuxer.MAX_TAIL_BYTES;
+      this.buffer.copyWithin(0, drop, this.length);
+      this.length = MjpegDemuxer.MAX_TAIL_BYTES;
+    }
     return parts;
   }
 
@@ -325,17 +366,23 @@ export function createBrowserFrameClient(
 
   // ------------------------------------------------------------------ config
 
-  const fetchConfig = async (): Promise<BrowserFrameConfig | null> => {
+  /**
+   * `expectedGeneration` fences the whole continuation: a completion that
+   * lands after stop/start must not mutate the restarted client's config,
+   * geometry, or input state.
+   */
+  const fetchConfig = async (expectedGeneration: number): Promise<BrowserFrameConfig | null> => {
     try {
       const response = await fetch(httpUrl("config"), {
         credentials: access.credentials ? "include" : "same-origin",
       });
       if (response.status === 401 || response.status === 403) {
-        handleUnauthorized();
+        if (!stopped && generation === expectedGeneration) handleUnauthorized();
         return null;
       }
       if (!response.ok) return null;
       const parsed = (await response.json()) as BrowserFrameConfig;
+      if (stopped || generation !== expectedGeneration) return null;
       config = parsed;
       geometrySeq = parsed.geometrySeq;
       events.onConfig(parsed);
@@ -367,8 +414,11 @@ export function createBrowserFrameClient(
         // (the engine generation may have moved) and reconnect.
         if (firstFrame) {
           connecting();
-          void fetchConfig().then((next) => {
-            if (next !== null && !stopped) scheduleRetry("stream", startStream);
+          const imageGeneration = generation;
+          void fetchConfig(imageGeneration).then((next) => {
+            if (next !== null && !stopped && generation === imageGeneration) {
+              scheduleRetry("stream", startStream);
+            }
           });
         } else {
           fail("Could not receive the browser frame stream. Reconnect to try again.");
@@ -508,12 +558,14 @@ export function createBrowserFrameClient(
         if (done) break;
         for (const part of demuxer.push(value)) {
           if (!notePart(part)) {
-            // Engine generation moved mid-stream: the response is stale.
+            // Engine generation moved mid-stream: the response is stale, and
+            // the input lease bound to that generation is no longer usable.
             await reader.cancel().catch(() => {});
             if (alive()) {
               controller = null;
               streamController.abort();
-              void fetchConfig().then((next) => {
+              resetInput();
+              void fetchConfig(sessionGeneration).then((next) => {
                 if (next !== null && alive()) scheduleRetry("stream", startStream);
               });
             }
@@ -535,7 +587,8 @@ export function createBrowserFrameClient(
       // End-of-body: the bound engine or epoch moved on. Re-read config so the
       // next attempt fences against the live generation, then reconnect.
       connecting(retryDetail);
-      void fetchConfig().then(() => {
+      resetInput();
+      void fetchConfig(sessionGeneration).then(() => {
         if (alive()) scheduleRetry("stream", startStream);
       });
     }
@@ -587,11 +640,29 @@ export function createBrowserFrameClient(
     }, delay);
   };
 
+  /**
+   * A stream boundary (generation move, EOF, config restart) invalidates the
+   * lease-bound socket state: the socket was bound against the old
+   * geometry/generation. Close it, drop the lease, and re-mint through the
+   * normal retry path while input is still wanted.
+   */
+  const resetInput = () => {
+    closeInputSocket();
+    clearInputRenewal();
+    inputLease = null;
+    inputBound = false;
+    inputSeq = 0;
+    if (!stopped && inputWanted) scheduleRetry("input", () => void connectInput());
+  };
+
   const connectInput = async () => {
     if (stopped || !inputWanted || target.openInput === undefined) return;
     closeInputSocket();
+    const mintGeneration = generation;
     const mint = await target.openInput().catch(() => null);
-    if (stopped || !inputWanted) return;
+    // A mint that completes after a restart must not wire a socket into the
+    // new generation's state.
+    if (stopped || !inputWanted || generation !== mintGeneration) return;
     if (mint === null) {
       events.onInputConnected(false, "input-lease-unavailable");
       scheduleRetry("input", () => void connectInput());
@@ -709,8 +780,9 @@ export function createBrowserFrameClient(
     useCanvasPath = supportsCanvasPath() && !target.preferMjpeg;
     mjpeg = !useCanvasPath;
     connecting();
-    void fetchConfig().then((next) => {
-      if (stopped) return;
+    const startGeneration = generation;
+    void fetchConfig(startGeneration).then((next) => {
+      if (stopped || generation !== startGeneration) return;
       if (next === null) {
         scheduleRetry("stream", startStream);
         return;

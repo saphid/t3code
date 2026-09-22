@@ -34,6 +34,7 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
@@ -112,6 +113,16 @@ export class PreviewAutomationBroker extends Context.Service<
      * streams bound to that connection.
      */
     readonly frameHubEvents: Stream.Stream<FrameHubConnectionEvent>;
+    /**
+     * Acquire a hub-events subscription BEFORE returning its stream — the
+     * proxy subscribes before hub lookup so a disconnect racing the redeem is
+     * queued, not missed.
+     */
+    readonly watchFrameHubEvents: () => Effect.Effect<
+      Stream.Stream<FrameHubConnectionEvent>,
+      never,
+      Scope.Scope
+    >;
     readonly respond: (
       response: PreviewAutomationResponse,
     ) => Effect.Effect<void, PreviewAutomationError>;
@@ -400,7 +411,8 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
    * only with its own secret, so a forged registration that can't drive the
    * probe never becomes an upstream target. The probe provides its own client
    * so it stays off `acquireConnection` callers and the broker layer's
-   * requirements.
+   * requirements. Redirects are never followed — a `/health` that redirects
+   * would smuggle the hub secret to a private path or another origin.
    */
   const probeFrameHub = Effect.fn("PreviewAutomationBroker.probeFrameHub")(function* (endpoint: {
     readonly origin: string;
@@ -414,6 +426,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         }),
       )
       .pipe(
+        Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
         Effect.flatMap((response) =>
           response.status === 200
             ? response.json.pipe(
@@ -765,6 +778,8 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     focusHost,
     frameHubs,
     frameHubEvents: Stream.fromPubSub(hubEvents),
+    watchFrameHubEvents: () =>
+      PubSub.subscribe(hubEvents).pipe(Effect.map(Stream.fromSubscription)),
     respond,
     invoke,
   });

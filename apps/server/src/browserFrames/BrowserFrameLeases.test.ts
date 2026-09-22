@@ -19,6 +19,7 @@ import { describe, expect } from "vite-plus/test";
 import {
   type BrowserFrameAuthority,
   layer as BrowserFrameLeasesLayer,
+  make as BrowserFrameLeasesMake,
   BrowserFrameLeases,
 } from "./BrowserFrameLeases.ts";
 
@@ -37,7 +38,10 @@ const sessionAuthority = (sessionId: string, connectionId = "conn-1"): BrowserFr
   grants: ["orchestration.read"],
 });
 
-const extensionAuthority = (principalId: string, leafId = "ext-leaf"): BrowserFrameAuthority => ({
+const extensionAuthority = (
+  principalId: string,
+  leafId = "ext-leaf",
+): BrowserFrameAuthority & { kind: "extension" } => ({
   kind: "extension",
   principalKind: "environment-session",
   principalId,
@@ -58,6 +62,13 @@ const issue = (authority: BrowserFrameAuthority) => ({
 });
 
 const TestLayer = Layer.provideMerge(BrowserFrameLeasesLayer, NodeServices.layer);
+
+// Sweep tests need the explicit `sweep()` to be the collector — a 30s idle
+// interval would fire during a 5-minute TestClock jump and race it.
+const SlowSweepLayer = Layer.provideMerge(
+  Layer.effect(BrowserFrameLeases, BrowserFrameLeasesMake({ sweepInterval: "1 hour" })),
+  NodeServices.layer,
+);
 
 describe("BrowserFrameLeases", () => {
   it.effect("mints a stream ticket that verifies with its authority and tuple", () =>
@@ -112,9 +123,38 @@ describe("BrowserFrameLeases", () => {
       expect(second.value.leaseId).toBe(first.value.leaseId);
       expect(second.value.ticketSeq).toBe(first.value.ticketSeq + 1);
       expect(second.value.inputTicket).not.toBe(first.value.inputTicket);
-      // Both tickets still verify — socket exclusivity is the hub's bind-time job.
-      expect(Option.isSome(yield* leases.verify(first.value.inputTicket))).toBe(true);
+      // Renewal supersedes the older ticket: it cannot verify — and so can
+      // never seize the socket or reset packet replay at the hub.
+      expect(Option.isNone(yield* leases.verify(first.value.inputTicket))).toBe(true);
       expect(Option.isSome(yield* leases.verify(second.value.inputTicket))).toBe(true);
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("distinct extension contexts or generations cannot share a lease", () =>
+    Effect.gen(function* () {
+      const leases = yield* BrowserFrameLeases;
+      const base = issue(extensionAuthority("sess-a"));
+      const first = yield* leases.issueInputLease(base);
+      const otherContext = yield* leases.issueInputLease(
+        issue({
+          ...extensionAuthority("sess-a"),
+          context: { resource: { projectId: "proj-2" } },
+        }),
+      );
+      const otherGeneration = yield* leases.issueInputLease(
+        issue({
+          ...extensionAuthority("sess-a"),
+          callerGenerations: [
+            { pluginId: "ext-leaf", contentHash: "hash-1", installationGeneration: 2 },
+          ],
+        }),
+      );
+      if (Option.isNone(first) || Option.isNone(otherContext) || Option.isNone(otherGeneration)) {
+        throw new Error("expected all mints to succeed");
+      }
+      // Same session but a different authority shape is a different holder.
+      expect(otherContext.value.leaseId).not.toBe(first.value.leaseId);
+      expect(otherGeneration.value.leaseId).not.toBe(first.value.leaseId);
     }).pipe(Effect.provide(TestLayer)),
   );
 
@@ -278,6 +318,31 @@ describe("BrowserFrameLeases", () => {
       const snapshot = yield* leases.records;
       expect(snapshot.tickets).toHaveLength(0);
       expect(snapshot.leases).toHaveLength(0);
+    }).pipe(Effect.provide(SlowSweepLayer)),
+  );
+
+  it.effect("held surface claims register, expire, and revoke with their authority", () =>
+    Effect.gen(function* () {
+      const leases = yield* BrowserFrameLeases;
+      const now = yield* Clock.currentTimeMillis;
+      const claim = {
+        token: "tok-a",
+        authority: extensionAuthority("sess-a"),
+        session,
+        allowedCommands: ["attach", "present"],
+        expiresAt: now + 60_000,
+      };
+      yield* leases.recordHeldSurfaceClaim(claim);
+      expect(Option.isSome(yield* leases.heldSurfaceClaim("tok-a"))).toBe(true);
+
+      // revokeWhere sweeps held claims alongside tickets and leases — a
+      // catalogue sweep must not leave a mintable token behind.
+      yield* leases.revokeWhere((record) => record.authority.kind === "extension");
+      expect(Option.isNone(yield* leases.heldSurfaceClaim("tok-a"))).toBe(true);
+
+      yield* leases.recordHeldSurfaceClaim({ ...claim, token: "tok-b" });
+      yield* TestClock.adjust(61_000);
+      expect(Option.isNone(yield* leases.heldSurfaceClaim("tok-b"))).toBe(true);
     }).pipe(Effect.provide(TestLayer)),
   );
 });

@@ -549,9 +549,26 @@ interface RemoteGuestInputLedger {
  */
 interface RemoteInputLeaseState {
   readonly ledger: RemoteGuestInputLedger;
-  /** Whether this lease performed the focus grab below. */
-  focusClaimed: boolean;
+  /**
+   * Set when cleanup begins — a queued or arriving dispatch fails rather than
+   * sending into a guest whose held state is being released. The registry
+   * entry stays until release settles (sends/failures accounted, D3).
+   */
+  ending: boolean;
+  /**
+   * Focus restore target, overwritten on each fresh claim — a lease that
+   * loses guest focus to an action (or another lease) re-claims and
+   * re-captures it (claim generations, D2).
+   */
   previouslyFocusedId: number | null;
+}
+
+/** Truthful release accounting for lease cleanup and geometry held-release. */
+export interface RemoteInputReleaseResult {
+  /** Cleanup sends actually attempted (dead guests need none). */
+  readonly attempted: number;
+  /** Sends that failed — cleanup is incomplete, never silently reported clean. */
+  readonly failed: number;
 }
 
 interface PictureInPictureSession {
@@ -2960,6 +2977,23 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       }),
     );
     if (!currentCaptureSession) return;
+    // The capture spanned a possible resize: the pixels correspond to
+    // whatever geometry held mid-flight, so a changed geometry means this
+    // frame is unstable — drop it rather than emit a frame stamped with
+    // either side of the transition.
+    if (remoteLiveCapture && Option.isSome(viewportAtCapture)) {
+      const viewportAfterCapture = yield* readRemoteViewport(tabId, wc).pipe(
+        Effect.map(Option.some),
+        Effect.catch(() => Effect.succeed(Option.none<{ width: number; height: number }>())),
+      );
+      if (
+        Option.isNone(viewportAfterCapture) ||
+        viewportAfterCapture.value.width !== viewportAtCapture.value.width ||
+        viewportAfterCapture.value.height !== viewportAtCapture.value.height
+      ) {
+        return;
+      }
+    }
     const size = yield* attempt(
       {
         operation: "frameCapture.measureFrame",
@@ -4111,10 +4145,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const keySequence = makePreviewAutomationKeySequence(input, {
       isMac: hostPlatform === "darwin",
     });
-    const previouslyFocused = yield* attempt(
-      { operation: "automationPress.getFocusedWebContents", tabId, webContentsId: wc.id },
-      () => webContents.getFocusedWebContents(),
-    );
+    let previouslyFocused: Electron.WebContents | undefined;
     let keyDownAttempted = false;
     // The input-state owner record gates who may unwind guest-global focus
     // state: an exiting action skips the emulation disable and focus restore
@@ -4125,80 +4156,91 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     // takes ownership and this cleanup can never release the lease's press.
     const heldKey =
       keySequence.keyDown.code.length > 0 ? keySequence.keyDown.code : keySequence.keyDown.key;
-    let actionLedger: RemoteGuestInputLedger | null = null;
-    const releaseInput = Effect.gen(function* () {
-      if (keyDownAttempted && heldKey.length > 0 && actionLedger) {
-        yield* actionLedger.lane.withPermits(1)(
-          Effect.gen(function* () {
-            const entry = actionLedger!.keys.get(heldKey);
-            if (entry?.owner.kind === "action" && entry.owner.id === ownerToken) {
-              actionLedger!.keys.delete(heldKey);
-              actionLedger!.heldModifiers = ledgerModifiers(actionLedger!);
-              yield* sendCleanup("Input.dispatchKeyEvent", keySequence.keyUp).pipe(Effect.ignore);
-            }
-          }),
-        );
-      } else if (keyDownAttempted) {
-        yield* sendCleanup("Input.dispatchKeyEvent", keySequence.keyUp).pipe(Effect.ignore);
-      }
-      const owner = (yield* Ref.get(inputStateOwnerRef)).get(tabId);
-      if (owner?.kind === "action" && owner.id === ownerToken) {
-        yield* sendCleanup("Emulation.setFocusEmulationEnabled", { enabled: false }).pipe(
-          Effect.ignore,
-        );
-        if (
-          previouslyFocused &&
-          previouslyFocused.id !== wc.id &&
-          !previouslyFocused.isDestroyed()
-        ) {
-          yield* attempt(
-            {
-              operation: "automationPress.restoreFocusedWebContents",
-              tabId,
-              webContentsId: previouslyFocused.id,
-            },
-            () => previouslyFocused.focus(),
-          ).pipe(Effect.ignore);
+    const actionLedger = yield* remoteGuestLedgerFor(tabId, String(wc.id));
+    // Focus claim and release both ride the guest ledger lane (D2): an action
+    // press and a remote lease's focus claim/cleanup serialize against each
+    // other, so neither can interleave a `keyUp` or an emulation toggle into
+    // the other's still-running claim.
+    const releaseInput = actionLedger.lane.withPermits(1)(
+      Effect.gen(function* () {
+        if (keyDownAttempted && heldKey.length > 0) {
+          const entry = actionLedger.keys.get(heldKey);
+          if (entry?.owner.kind === "action" && entry.owner.id === ownerToken) {
+            actionLedger.keys.delete(heldKey);
+            actionLedger.heldModifiers = ledgerModifiers(actionLedger);
+            yield* sendCleanup("Input.dispatchKeyEvent", keySequence.keyUp).pipe(Effect.ignore);
+          }
+        } else if (keyDownAttempted) {
+          yield* sendCleanup("Input.dispatchKeyEvent", keySequence.keyUp).pipe(Effect.ignore);
         }
-        yield* Ref.update(inputStateOwnerRef, (owners) =>
-          replaceMap(owners, (copy) => {
-            copy.delete(tabId);
-          }),
-        );
-      }
-    });
+        const owner = (yield* Ref.get(inputStateOwnerRef)).get(tabId);
+        if (owner?.kind === "action" && owner.id === ownerToken) {
+          yield* sendCleanup("Emulation.setFocusEmulationEnabled", { enabled: false }).pipe(
+            Effect.ignore,
+          );
+          if (
+            previouslyFocused &&
+            previouslyFocused.id !== wc.id &&
+            !previouslyFocused.isDestroyed()
+          ) {
+            const restoreTarget = previouslyFocused;
+            yield* attempt(
+              {
+                operation: "automationPress.restoreFocusedWebContents",
+                tabId,
+                webContentsId: restoreTarget.id,
+              },
+              () => restoreTarget.focus(),
+            ).pipe(Effect.ignore);
+          }
+          yield* Ref.update(inputStateOwnerRef, (owners) =>
+            replaceMap(owners, (copy) => {
+              copy.delete(tabId);
+            }),
+          );
+        }
+      }),
+    );
 
     // Focus the guest WebContents itself, not its containing BrowserWindow. This
     // activates native keyboard behavior for hidden/background previews without
     // changing which thread is mounted in the UI. Restore the previous renderer
     // after dispatch so automation never leaves the app's input focus behind.
-    yield* Effect.gen(function* () {
-      yield* Ref.update(inputStateOwnerRef, (owners) =>
-        replaceMap(owners, (copy) => {
-          copy.set(tabId, { kind: "action", id: ownerToken });
-        }),
-      );
-      yield* attempt(
-        { operation: "automationPress.focusWebContents", tabId, webContentsId: wc.id },
-        () => wc.focus(),
-      );
-      yield* send("Page.bringToFront");
-      yield* send("Emulation.setFocusEmulationEnabled", { enabled: true });
-      yield* expectAgentInput(tabId, keySequence.signal);
-      keyDownAttempted = true;
-      if (heldKey.length > 0) {
-        actionLedger = yield* remoteGuestLedgerFor(tabId, String(wc.id));
-        yield* actionLedger.lane.withPermits(1)(
-          Effect.sync(() => {
-            actionLedger!.keys.set(heldKey, {
+    yield* actionLedger.lane
+      .withPermits(1)(
+        Effect.gen(function* () {
+          previouslyFocused =
+            (yield* attempt(
+              {
+                operation: "automationPress.getFocusedWebContents",
+                tabId,
+                webContentsId: wc.id,
+              },
+              () => webContents.getFocusedWebContents(),
+            )) ?? undefined;
+          yield* Ref.update(inputStateOwnerRef, (owners) =>
+            replaceMap(owners, (copy) => {
+              copy.set(tabId, { kind: "action", id: ownerToken });
+            }),
+          );
+          yield* attempt(
+            { operation: "automationPress.focusWebContents", tabId, webContentsId: wc.id },
+            () => wc.focus(),
+          );
+          yield* send("Page.bringToFront");
+          yield* send("Emulation.setFocusEmulationEnabled", { enabled: true });
+          yield* expectAgentInput(tabId, keySequence.signal);
+          keyDownAttempted = true;
+          if (heldKey.length > 0) {
+            actionLedger.keys.set(heldKey, {
               keyUp: keySequence.keyUp,
               owner: { kind: "action", id: ownerToken },
             });
-          }),
-        );
-      }
-      yield* send("Input.dispatchKeyEvent", keySequence.keyDown);
-    }).pipe(Effect.ensuring(releaseInput));
+          }
+          yield* send("Input.dispatchKeyEvent", keySequence.keyDown);
+        }),
+      )
+      .pipe(Effect.ensuring(releaseInput));
   });
 
   const automationPress = Effect.fn("PreviewManager.automationPress")(function* (
@@ -4572,7 +4614,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
   ) {
     yield* startFrameCapture(tabId, "remote-live");
-    yield* update(tabId, { remoteLive: true });
+    // A stop that landed while the acquisition was in flight already removed
+    // the consumer and cleared remoteLive — only reassert the flag when the
+    // consumer registration survived to here, or the state resurrects with
+    // no capture behind it.
+    const stillWanted =
+      (yield* SynchronizedRef.get(frameCaptureSessionsRef))
+        .get(tabId)
+        ?.consumers.has("remote-live") ?? false;
+    if (stillWanted) yield* update(tabId, { remoteLive: true });
   });
 
   const stopRemoteCapture = Effect.fn("PreviewManager.stopRemoteCapture")(function* (
@@ -4637,6 +4687,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       remoteInputLeaseKey(tabId, leaseId),
     );
     if (existing) {
+      if (existing.ending) {
+        return yield* new PreviewOperationError({
+          operation: "remoteFrames.inputLease",
+          tabId,
+          cause: new Error("Input lease is closing."),
+        });
+      }
       if (existing.ledger.generation !== engineGeneration) {
         return yield* new PreviewOperationError({
           operation: "remoteFrames.inputLease",
@@ -4656,12 +4713,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       });
     }
     const ledger = yield* remoteGuestLedgerFor(tabId, engineGeneration);
-    return yield* SynchronizedRef.modify(remoteInputStatesRef, (states) => {
+    const resolved = yield* SynchronizedRef.modify(remoteInputStatesRef, (states) => {
       const current = states.get(remoteInputLeaseKey(tabId, leaseId));
       if (current) return [current, states] as const;
       const created: RemoteInputLeaseState = {
         ledger,
-        focusClaimed: false,
+        ending: false,
         previouslyFocusedId: null,
       };
       return [
@@ -4671,6 +4728,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }),
       ] as const;
     });
+    if (resolved.ending) {
+      return yield* new PreviewOperationError({
+        operation: "remoteFrames.inputLease",
+        tabId,
+        cause: new Error("Input lease is closing."),
+      });
+    }
+    return resolved;
   });
 
   const REMOTE_INPUT_MODIFIER_CODES: ReadonlyMap<string, number> = new Map([
@@ -4711,6 +4776,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     viewportCss: { readonly width: number; readonly height: number } | null,
   ) {
     const ledger = state.ledger;
+    // Cleanup began after this packet was admitted: it drops here rather than
+    // dispatching into a guest whose held state is being released.
+    if (state.ending) {
+      return yield* new PreviewOperationError({
+        operation: "remoteFrames.dispatch",
+        tabId,
+        cause: new Error("Input lease is closing."),
+      });
+    }
     const wc = yield* requireWebContents(tabId);
     // Re-fence inside the lane: a packet admitted before a guest replacement
     // must fail here rather than dispatch into the new webContents.
@@ -4743,32 +4817,36 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       runFork(settleHumanInputMarking(tabId));
     }
 
-    // Focus-affecting classes claim the guest-global input state once per
-    // lease, mirroring the action path's focus grab. The owner record keeps
-    // either side's cleanup from unwinding the other's claim.
+    // Focus-affecting classes hold the guest-global input state, mirroring
+    // the action path's focus grab. Ownership is re-checked inside the lane
+    // on EVERY such event (D2 claim generations): a lease that lost focus to
+    // an action or another lease re-claims and re-captures the previously
+    // focused target — a one-way flag could never re-acquire.
     const focusAffecting =
       (event.type === "pointer" && event.phase === "down") ||
       (event.type === "key" && event.phase === "down") ||
       event.type === "text";
-    if (focusAffecting && !state.focusClaimed) {
-      const previouslyFocused = yield* attempt(
-        { operation: "remoteInput.getFocusedWebContents", tabId, webContentsId: wc.id },
-        () => webContents.getFocusedWebContents(),
-      );
-      state.previouslyFocusedId =
-        previouslyFocused && previouslyFocused.id !== wc.id ? previouslyFocused.id : null;
-      yield* attempt(
-        { operation: "remoteInput.focusWebContents", tabId, webContentsId: wc.id },
-        () => wc.focus(),
-      );
-      yield* send("Page.bringToFront", {});
-      yield* send("Emulation.setFocusEmulationEnabled", { enabled: true });
-      state.focusClaimed = true;
-      yield* Ref.update(inputStateOwnerRef, (owners) =>
-        replaceMap(owners, (copy) => {
-          copy.set(tabId, { kind: "lease", id: leaseId });
-        }),
-      );
+    if (focusAffecting) {
+      const focusOwner = (yield* Ref.get(inputStateOwnerRef)).get(tabId);
+      if (!(focusOwner?.kind === "lease" && focusOwner.id === leaseId)) {
+        const previouslyFocused = yield* attempt(
+          { operation: "remoteInput.getFocusedWebContents", tabId, webContentsId: wc.id },
+          () => webContents.getFocusedWebContents(),
+        );
+        state.previouslyFocusedId =
+          previouslyFocused && previouslyFocused.id !== wc.id ? previouslyFocused.id : null;
+        yield* attempt(
+          { operation: "remoteInput.focusWebContents", tabId, webContentsId: wc.id },
+          () => wc.focus(),
+        );
+        yield* send("Page.bringToFront", {});
+        yield* send("Emulation.setFocusEmulationEnabled", { enabled: true });
+        yield* Ref.update(inputStateOwnerRef, (owners) =>
+          replaceMap(owners, (copy) => {
+            copy.set(tabId, { kind: "lease", id: leaseId });
+          }),
+        );
+      }
     }
 
     switch (event.type) {
@@ -4797,12 +4875,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           });
           return;
         }
-        const held = ledger.buttons.get(button);
-        if (!held || held.kind !== "lease" || held.id !== leaseId) {
-          // Not held by this lease — the up must not release another lane's
-          // physical press, and a stray release is not dispatched.
-          return;
-        }
+        // Physical up is honored regardless of the ledger owner (D1): the
+        // pointer is physically released, so the entry clears for whichever
+        // lane owns it and the release dispatches unconditionally.
         ledger.buttons.delete(button);
         yield* send("Input.dispatchMouseEvent", {
           type: "mouseReleased",
@@ -4843,15 +4918,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           yield* send("Input.dispatchKeyEvent", keyDown);
           return;
         }
+        // Physical key-up is honored regardless of the ledger owner (D1):
+        // the key is physically up, so the entry clears for whichever lane
+        // owns it and the release dispatches unconditionally.
         const entry = ledger.keys.get(heldKey);
-        if (!entry || entry.owner.kind !== "lease" || entry.owner.id !== leaseId) {
-          // Not held by this lease — the up must not release another lane's
-          // physical press, and a stray release is not dispatched.
+        if (entry !== undefined) {
+          ledger.keys.delete(heldKey);
+          ledger.heldModifiers = ledgerModifiers(ledger);
+          yield* send("Input.dispatchKeyEvent", entry.keyUp);
           return;
         }
-        ledger.keys.delete(heldKey);
-        ledger.heldModifiers = ledgerModifiers(ledger);
-        yield* send("Input.dispatchKeyEvent", entry.keyUp);
+        yield* send("Input.dispatchKeyEvent", { ...sequence.keyUp, code });
         return;
       }
       case "text": {
@@ -4891,113 +4968,147 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   ) {
     const releaseFocus = options?.releaseFocus ?? false;
     const previouslyFocusedId = options?.previouslyFocusedId ?? null;
-    yield* ledger.lane
-      .withPermits(1)(
-        Effect.gen(function* () {
-          const generationId = Number(ledger.generation);
-          const wc = Number.isFinite(generationId) ? webContents.fromId(generationId) : undefined;
-          const live = wc !== undefined && !wc.isDestroyed();
-          const control = live
-            ? (yield* SynchronizedRef.get(controlSessionsRef)).get(wc.id)
-            : undefined;
-          const sendCleanup = (method: string, params: Record<string, unknown>) =>
-            live && control
-              ? attemptPromise(
+    return yield* ledger.lane.withPermits(1)(
+      Effect.gen(function* () {
+        const generationId = Number(ledger.generation);
+        const wc = Number.isFinite(generationId) ? webContents.fromId(generationId) : undefined;
+        const live = wc !== undefined && !wc.isDestroyed();
+        const control = live
+          ? (yield* SynchronizedRef.get(controlSessionsRef)).get(wc.id)
+          : undefined;
+        // Truthful accounting (D3): every send attempt is counted before it
+        // runs; a failed send keeps `failed` nonzero so callers can surface
+        // cleanup-incomplete instead of reporting a clean release.
+        let attempted = 0;
+        let failed = 0;
+        const sendCleanup = (method: string, params: Record<string, unknown>) =>
+          live && control
+            ? Effect.andThen(
+                Effect.sync(() => {
+                  attempted += 1;
+                }),
+                attemptPromise(
                   {
                     operation: `remoteInput.cleanup.${method}`,
                     tabId,
                     webContentsId: wc.id,
                   },
                   () => control.debugger.sendCommand(method, params),
-                ).pipe(Effect.ignore)
-              : Effect.void;
-          for (const [button, buttonOwner] of Array.from(ledger.buttons.entries())) {
-            if (buttonOwner.kind !== "lease" || buttonOwner.id !== leaseId) continue;
-            ledger.buttons.delete(button);
-            yield* sendCleanup("Input.dispatchMouseEvent", {
-              type: "mouseReleased",
-              x: ledger.lastPointer?.x ?? 0,
-              y: ledger.lastPointer?.y ?? 0,
-              button,
-              clickCount: 1,
-            });
-          }
-          for (const [heldKey, entry] of Array.from(ledger.keys.entries())) {
-            if (entry.owner.kind !== "lease" || entry.owner.id !== leaseId) continue;
-            ledger.keys.delete(heldKey);
-            yield* sendCleanup("Input.dispatchKeyEvent", entry.keyUp);
-          }
-          ledger.heldModifiers = ledgerModifiers(ledger);
-          if (releaseFocus) {
-            const owner = (yield* Ref.get(inputStateOwnerRef)).get(tabId);
-            if (owner?.kind === "lease" && owner.id === leaseId) {
-              yield* sendCleanup("Emulation.setFocusEmulationEnabled", { enabled: false });
-              if (previouslyFocusedId !== null) {
-                const previous = webContents.fromId(previouslyFocusedId);
-                if (previous && !previous.isDestroyed()) {
-                  yield* attempt(
-                    {
-                      operation: "remoteInput.restoreFocusedWebContents",
-                      tabId,
-                      webContentsId: previous.id,
-                    },
-                    () => previous.focus(),
-                  ).pipe(Effect.ignore);
-                }
+                ),
+              ).pipe(
+                Effect.catch(() =>
+                  Effect.sync(() => {
+                    failed += 1;
+                  }),
+                ),
+              )
+            : Effect.void;
+        for (const [button, buttonOwner] of Array.from(ledger.buttons.entries())) {
+          if (buttonOwner.kind !== "lease" || buttonOwner.id !== leaseId) continue;
+          ledger.buttons.delete(button);
+          yield* sendCleanup("Input.dispatchMouseEvent", {
+            type: "mouseReleased",
+            x: ledger.lastPointer?.x ?? 0,
+            y: ledger.lastPointer?.y ?? 0,
+            button,
+            clickCount: 1,
+          });
+        }
+        for (const [heldKey, entry] of Array.from(ledger.keys.entries())) {
+          if (entry.owner.kind !== "lease" || entry.owner.id !== leaseId) continue;
+          ledger.keys.delete(heldKey);
+          yield* sendCleanup("Input.dispatchKeyEvent", entry.keyUp);
+        }
+        ledger.heldModifiers = ledgerModifiers(ledger);
+        if (releaseFocus) {
+          const owner = (yield* Ref.get(inputStateOwnerRef)).get(tabId);
+          if (owner?.kind === "lease" && owner.id === leaseId) {
+            yield* sendCleanup("Emulation.setFocusEmulationEnabled", { enabled: false });
+            if (previouslyFocusedId !== null) {
+              const previous = webContents.fromId(previouslyFocusedId);
+              if (previous && !previous.isDestroyed()) {
+                yield* attempt(
+                  {
+                    operation: "remoteInput.restoreFocusedWebContents",
+                    tabId,
+                    webContentsId: previous.id,
+                  },
+                  () => previous.focus(),
+                ).pipe(
+                  Effect.catch(() =>
+                    Effect.sync(() => {
+                      attempted += 1;
+                      failed += 1;
+                    }),
+                  ),
+                );
               }
-              yield* Ref.update(inputStateOwnerRef, (owners) =>
-                replaceMap(owners, (copy) => {
-                  copy.delete(tabId);
-                }),
-              );
             }
+            yield* Ref.update(inputStateOwnerRef, (owners) =>
+              replaceMap(owners, (copy) => {
+                copy.delete(tabId);
+              }),
+            );
           }
-        }),
-      )
-      .pipe(Effect.ignore);
+        }
+        return { attempted, failed } satisfies RemoteInputReleaseResult;
+      }),
+    );
   });
 
   /**
-   * Lease cleanup: releases everything the lease holds, on the guest ledger's
-   * lane so a `keyUp` can never dispatch ahead of a still-queued `keyDown`.
-   * Runs on every lease end path — socket close, supersession, fence
-   * mismatch, revocation, expiry.
+   * Lease cleanup: marks the lease `ending` inside the registry (queued lane
+   * work and fresh dispatches fail from here), releases everything the lease
+   * holds on the guest ledger's lane so a `keyUp` can never dispatch ahead of
+   * a still-queued `keyDown`, and only then removes the entry — sends and
+   * failures are accounted before the record disappears (D3). Runs on every
+   * lease end path — socket close, supersession, fence mismatch, revocation,
+   * expiry.
    */
   const releaseRemoteInput = Effect.fn("PreviewManager.releaseRemoteInput")(function* (
     tabId: string,
     leaseId: string,
   ) {
+    const key = remoteInputLeaseKey(tabId, leaseId);
     const state = yield* SynchronizedRef.modify(remoteInputStatesRef, (states) => {
-      const current = states.get(remoteInputLeaseKey(tabId, leaseId));
-      if (!current) return [undefined, states] as const;
-      return [
-        current,
-        replaceMap(states, (copy) => {
-          copy.delete(remoteInputLeaseKey(tabId, leaseId));
-        }),
-      ] as const;
+      const current = states.get(key);
+      if (!current || current.ending) return [undefined, states] as const;
+      current.ending = true;
+      return [current, states] as const;
     });
-    if (!state) return;
-    yield* releaseLeaseHeldState(tabId, leaseId, state.ledger, {
-      releaseFocus: state.focusClaimed,
+    if (!state) return { attempted: 0, failed: 0 };
+    const result = yield* releaseLeaseHeldState(tabId, leaseId, state.ledger, {
+      // Focus unwind is gated inside on who currently owns the claim — a lease
+      // that re-lost focus before cleanup does not touch another lane's claim.
+      releaseFocus: true,
       previouslyFocusedId: state.previouslyFocusedId,
     });
+    yield* SynchronizedRef.update(remoteInputStatesRef, (states) =>
+      replaceMap(states, (copy) => {
+        if (copy.get(key) === state) copy.delete(key);
+      }),
+    );
+    return result;
   });
 
   /**
    * Ordered held-state release WITHOUT ending the lease: used when the
    * session geometry changes (design §3.7) so stale up events cannot strand
-   * keys/buttons across the geometry bump. Focus is left claimed.
+   * keys/buttons across the geometry bump. Focus is left claimed. Failures
+   * aggregate so the hub can flag the bound socket cleanup-incomplete.
    */
   const releaseRemoteInputHeld = Effect.fn("PreviewManager.releaseRemoteInputHeld")(function* (
     tabId: string,
   ) {
     const states = yield* SynchronizedRef.get(remoteInputStatesRef);
-    yield* Effect.forEach(
+    const results = yield* Effect.forEach(
       Array.from(states.entries()).filter(([key]) => key.startsWith(`${tabId} `)),
       ([key, state]) => releaseLeaseHeldState(tabId, key.slice(tabId.length + 1), state.ledger),
-      { discard: true },
     );
+    return {
+      attempted: results.reduce((sum, result) => sum + result.attempted, 0),
+      failed: results.reduce((sum, result) => sum + result.failed, 0),
+    };
   });
 
   const releaseAllRemoteInput = Effect.fn("PreviewManager.releaseAllRemoteInput")(function* (
@@ -5533,13 +5644,18 @@ export class PreviewManager extends Context.Service<
       event: BrowserFrameInputEvent,
       viewportCss: { readonly width: number; readonly height: number } | null,
     ) => Effect.Effect<void, PreviewManagerError>;
-    readonly releaseRemoteInput: (tabId: string, leaseId: string) => Effect.Effect<void>;
+    readonly releaseRemoteInput: (
+      tabId: string,
+      leaseId: string,
+    ) => Effect.Effect<RemoteInputReleaseResult>;
     /**
      * Ordered held-state release across every remote-input lease on the tab,
      * keeping the leases alive. Called on a geometry bump before the new
-     * geometry is advertised (design §3.7).
+     * geometry is advertised (design §3.7). `failed > 0` means cleanup did
+     * not fully settle — callers should flag the surface cleanup-incomplete
+     * rather than report a clean release.
      */
-    readonly releaseRemoteInputHeld: (tabId: string) => Effect.Effect<void>;
+    readonly releaseRemoteInputHeld: (tabId: string) => Effect.Effect<RemoteInputReleaseResult>;
   }
 >()("@t3tools/desktop/preview/Manager/PreviewManager") {}
 

@@ -36,7 +36,10 @@ import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
-import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
+import {
+  canonicalizeFrameHubOrigin,
+  PreviewAutomationBroker,
+} from "../../mcp/PreviewAutomationBroker.ts";
 import {
   BrowserFrameLeases,
   browserFrameAuthorityKey,
@@ -173,16 +176,23 @@ export function createBrowserFramesApiProvider(
             ),
           ),
         );
+        // Same resolution the mint applies: only a canonical, reachable,
+        // unambiguous engine host counts — zero or ambiguous hubs report
+        // unsupported rather than promising a mint that will be refused.
         const hubs = (yield* dependencies.broker.frameHubs.pipe(
           Effect.mapError(operationError(operation)),
-        )).filter((hub) => hub.environmentId === dependencies.environmentId);
+        )).filter(
+          (hub) =>
+            hub.environmentId === dependencies.environmentId &&
+            canonicalizeFrameHubOrigin(hub.origin) === hub.origin,
+        );
+        const unambiguous = hubs.length === 1;
         return {
           metadata: { supported: true },
-          stream:
-            hubs.length > 0
-              ? { supported: true }
-              : { supported: false, reason: "engine-unavailable" },
-          input: { supported: hubs.length > 0 },
+          stream: unambiguous
+            ? { supported: true }
+            : { supported: false, reason: "engine-unavailable" },
+          input: { supported: unambiguous },
         } satisfies BrowserFramesCapabilities;
       }
 
@@ -231,8 +241,9 @@ export function createBrowserFramesApiProvider(
         }
         // The mint requires a held presentation claim for exactly this session
         // tuple — watching without presentation authority is not enough.
+        const surfaceToken = surfaceTokenFromLease(target.surfaceLease);
         const claims = yield* dependencies
-          .verifySurfaceClaims(surfaceTokenFromLease(target.surfaceLease), {
+          .verifySurfaceClaims(surfaceToken, {
             environmentId: dependencies.environmentId,
             threadId,
             tabId: target.tabId,
@@ -246,9 +257,32 @@ export function createBrowserFramesApiProvider(
             "no live browser-surface presentation lease covers this session.",
           );
         }
+        // A valid signature is not mint authority: the claim must have been
+        // acquired through `t3.resources/lease` by this same authority for
+        // this same tuple — an unheld or foreign-held token is denied.
+        const held = yield* dependencies.leases.heldSurfaceClaim(surfaceToken);
+        if (
+          Option.isNone(held) ||
+          browserFrameAuthorityKey(held.value.authority) !== browserFrameAuthorityKey(authority) ||
+          held.value.session.environmentId !== dependencies.environmentId ||
+          held.value.session.threadId !== threadId ||
+          held.value.session.serverEpoch !== target.serverEpoch ||
+          held.value.session.tabId !== target.tabId ||
+          !held.value.allowedCommands.includes("present")
+        ) {
+          return yield* named(
+            operation,
+            "BrowserSurfaceClaimDenied",
+            "the presented browser-surface claim is not held by this authority for this session.",
+          );
+        }
         const hubs = (yield* dependencies.broker.frameHubs.pipe(
           Effect.mapError(operationError(operation)),
-        )).filter((hub) => hub.environmentId === dependencies.environmentId);
+        )).filter(
+          (hub) =>
+            hub.environmentId === dependencies.environmentId &&
+            canonicalizeFrameHubOrigin(hub.origin) === hub.origin,
+        );
         if (hubs.length === 0) {
           return yield* named(
             operation,

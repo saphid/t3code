@@ -76,6 +76,35 @@ describe("MjpegDemuxer", () => {
     expect(parts).toHaveLength(1);
     expect(parts[0]?.jpeg).toEqual(payload);
   });
+
+  it("caps a part that never completes instead of growing without bound", () => {
+    const demuxer = new MjpegDemuxer();
+    // A part header announcing a huge payload that never completes.
+    demuxer.push(
+      encoder.encode("--t3frame\r\nContent-Type: image/jpeg\r\nContent-Length: 536870912\r\n\r\n"),
+    );
+    const chunk = new Uint8Array(1024 * 1024);
+    for (let index = 0; index < 40; index++) demuxer.push(chunk);
+    const internals = demuxer as unknown as { buffer: Uint8Array; length: number };
+    expect(internals.buffer.length).toBeLessThanOrEqual(MjpegDemuxer.MAX_BUFFER_BYTES);
+  });
+
+  it("caps a header that never terminates", () => {
+    const demuxer = new MjpegDemuxer();
+    demuxer.push(encoder.encode("--t3frame\r\n"));
+    const chunk = new Uint8Array(1024 * 1024).fill(0x61);
+    for (let index = 0; index < 40; index++) demuxer.push(chunk);
+    const internals = demuxer as unknown as { buffer: Uint8Array; length: number };
+    expect(internals.buffer.length).toBeLessThanOrEqual(MjpegDemuxer.MAX_BUFFER_BYTES);
+  });
+
+  it("drops an un-consumed tail past the bound rather than retaining it", () => {
+    const demuxer = new MjpegDemuxer();
+    const chunk = new Uint8Array(1024 * 1024).fill(0x78);
+    for (let index = 0; index < 16; index++) demuxer.push(chunk);
+    const internals = demuxer as unknown as { length: number };
+    expect(internals.length).toBeLessThanOrEqual(MjpegDemuxer.MAX_TAIL_BYTES);
+  });
 });
 
 class FakeWebSocket {
@@ -344,6 +373,63 @@ describe("createBrowserFrameClient input lane", () => {
     releaseDecode?.({ width: 100, height: 100, close: () => {} });
     await vi.waitFor(() => expect(client.state().geometrySeq).toBe(7));
     expect(drawImage).toHaveBeenCalled();
+    client.stop();
+  });
+
+  it("ignores a config completion from before stop when a new lifetime started", async () => {
+    let resolveStale: ((response: Response) => void) | undefined;
+    let configReads = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/config")) {
+          configReads += 1;
+          if (configReads === 1) {
+            return new Promise<Response>((resolve) => {
+              resolveStale = resolve;
+            });
+          }
+          return Response.json({
+            ...session,
+            engineGeneration: "gen-1",
+            viewport: { cssWidth: 100, cssHeight: 100 },
+            zoomFactor: 1,
+            geometrySeq: 2,
+          });
+        }
+        if (url.includes("stream.mjpeg")) {
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start: (controller) => streamControllers.push(controller),
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response("{}", { status: 404 });
+      }),
+    );
+    const events = makeEvents();
+    const client = createBrowserFrameClient({ access, session }, { canvas: fakeCanvas() }, events);
+    client.start();
+    await vi.waitFor(() => expect(configReads).toBe(1));
+    // The first lifetime's config read is still in flight when the client is
+    // stopped and restarted.
+    client.stop();
+    client.start();
+    await vi.waitFor(() => expect(client.state().geometrySeq).toBe(2));
+    // The stale completion must not mutate the restarted client's state.
+    resolveStale?.(
+      Response.json({
+        ...session,
+        engineGeneration: "gen-1",
+        viewport: { cssWidth: 100, cssHeight: 100 },
+        zoomFactor: 1,
+        geometrySeq: 99,
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(client.state().geometrySeq).toBe(2);
     client.stop();
   });
 

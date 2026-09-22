@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off -- Loopback HTTP/WS server at the native socket boundary; expiry deadlines and the geometry poll run as Node timers outside Effect fibers.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off globalTimersInEffect:off -- Loopback HTTP/WS server at the native socket boundary; expiry deadlines and the geometry poll run as Node timers outside Effect fibers.
 /**
  * Loopback browser-frame hub for `t3.browser/frames@1.0.0`.
  *
@@ -12,10 +12,18 @@
  * server-side; the secret is what makes loopback non-authoritative-by-
  * omission rather than non-authoritative-by-accident.
  *
+ * Input sockets run the certified §3.7 machine: one active socket plus one
+ * pending candidate per session. An upgrade while an incumbent is
+ * bound/live/closing parks as the pending candidate (latest arrival wins —
+ * a parked candidate is closed `superseded` when a newer upgrade lands) and
+ * guarded-binds only after the incumbent's held-input cleanup settles. A
+ * same-lease upgrade carrying an older `x-t3-ticket-seq` never seizes the
+ * slot: it binds as a shadow that dispatches and expires but owns nothing.
+ *
  * Actions never cross this surface: input packets map onto CDP `Input.*`
  * through the Manager's human lane only.
  */
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import * as crypto from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 
@@ -39,6 +47,16 @@ const MJPEG_BOUNDARY = "t3frame";
 const FRAME_FPS = 12;
 const GEOMETRY_POLL_MS = 1_000;
 const INPUT_CLOSE_CODE = 4000;
+/**
+ * A stalled cleanup lane cannot hold the pending slot hostage: the incumbent
+ * wait is bounded and a deadline overrun counts as a failed cleanup on the
+ * successor's `bound` notice (`cleanupIncomplete`).
+ */
+const INPUT_CLEANUP_DEADLINE_MS = 5_000;
+/** In-flight + queued dispatch work per socket; overflow rejects `backpressured`. */
+const INPUT_DISPATCH_QUEUE_MAX = 32;
+/** Idle sessions (no viewers, no input, no pending) are dropped after this. */
+const ACTIVITY_IDLE_MS = 60_000;
 
 const SESSION_PATH = /^\/sessions$/;
 const HEALTH_PATH = /^\/health$/;
@@ -59,28 +77,62 @@ interface HubGeometry {
 
 interface SessionActivity {
   viewers: number;
+  /** The owning input socket — the slot a same-or-newer ticket supersedes. */
   input: HubInputSocket | null;
+  /**
+   * Bound sockets whose ticketSeq is older than the incumbent's for the same
+   * lease: they dispatch and expire but never own the slot, run lease
+   * cleanup, or receive geometry notices.
+   */
+  shadows: Set<HubInputSocket>;
+  /** The single parked upgrade awaiting the incumbent's `ended`. */
+  pending: PendingCandidate | null;
   geometry: HubGeometry | null;
   /** Latest capture-loop frame — seeds newly attached viewers (F9). */
   latestFrame: PreviewManager.RemoteLiveFrame | null;
   lastFrame: { readonly width: number; readonly height: number; readonly seq: number } | null;
   /** Latest config-derived css viewport, asserted to input dispatch. */
   viewportCss: { readonly width: number; readonly height: number } | null;
+  /**
+   * Per-lease token buckets retained across socket replacement so rebinding
+   * cannot reset rate protection.
+   */
+  rateByLease: Map<string, { tokens: number; tokensAt: number }>;
+  /** Last time the session had viewers, input, or pending work — idle GC. */
+  lastTouchedAt: number;
+}
+
+interface PendingCandidate {
+  readonly ws: WebSocket;
+  readonly asserted: AssertedSession;
+  readonly leaseId: string;
+  readonly ticketSeq: number;
+  readonly expiresAt: number;
+  /** The `x-t3-engine-generation` pin presented at upgrade, re-checked at bind. */
+  readonly engineGeneration: string | null;
+  cancelled: boolean;
+  readonly expiryTimer: NodeJS.Timeout;
 }
 
 interface HubInputSocket {
   readonly runtimeTabId: string;
   readonly leaseId: string;
+  readonly ticketSeq: number;
   readonly expiresAt: number;
   readonly engineGeneration: string;
   readonly socket: WebSocket;
+  /** Owning sockets hold `activity.input`; shadows never do. */
+  readonly owning: boolean;
   state: "bound" | "live" | "closing" | "ended";
   lastSeq: number;
   seqGaps: number;
   rejected: number;
   dispatchFailures: number;
-  tokens: number;
-  tokensAt: number;
+  /** Single-flight cleanup — the first terminal trigger owns it. */
+  endPromise: Promise<PreviewManager.RemoteInputReleaseResult> | null;
+  /** Serialized dispatch: packets enter the guest lane in arrival order. */
+  dispatchTail: Promise<void>;
+  queuedDispatch: number;
   readonly expiryTimer: NodeJS.Timeout;
 }
 
@@ -139,26 +191,15 @@ const parseAssertedSession = (url: URL): AssertedSession | null => {
 };
 
 const writeJson = (res: ServerResponse, status: number, body: unknown): void => {
+  if (res.headersSent || res.destroyed) {
+    res.destroy();
+    return;
+  }
   res.writeHead(status, {
     "content-type": "application/json",
     "cache-control": "no-store, no-transform",
   });
   res.end(JSON.stringify(body));
-};
-
-const startGeometryPoller = (
-  activities: ReadonlyMap<string, SessionActivity>,
-  refreshGeometry: (runtimeTabId: string) => Promise<number | null>,
-): NodeJS.Timeout => {
-  const poller = setInterval(() => {
-    for (const [runtimeTabId, activity] of activities) {
-      if (activity.viewers > 0 || (activity.input && activity.input.state !== "ended")) {
-        void refreshGeometry(runtimeTabId);
-      }
-    }
-  }, GEOMETRY_POLL_MS);
-  poller.unref();
-  return poller;
 };
 
 const make = Effect.gen(function* () {
@@ -175,8 +216,8 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const secret = randomBytes(32).toString("hex");
-  const secretDigest = createHash("sha256").update(secret).digest();
+  const secret = crypto.randomBytes(32).toString("hex");
+  const secretDigest = crypto.createHash("sha256").update(secret).digest();
   /** Constant-time check via a digest so header length never leaks the secret. */
   const authorized = (req: IncomingMessage): boolean => {
     const presented = req.headers["x-t3-hub-auth"];
@@ -190,20 +231,27 @@ const make = Effect.gen(function* () {
           : undefined;
     }
     if (typeof value !== "string" || value.length === 0) return false;
-    return timingSafeEqual(createHash("sha256").update(value).digest(), secretDigest);
+    return crypto.timingSafeEqual(crypto.createHash("sha256").update(value).digest(), secretDigest);
   };
 
   const activities = new Map<string, SessionActivity>();
   const activityFor = (runtimeTabId: string): SessionActivity => {
     const existing = activities.get(runtimeTabId);
-    if (existing) return existing;
+    if (existing) {
+      existing.lastTouchedAt = Date.now();
+      return existing;
+    }
     const created: SessionActivity = {
       viewers: 0,
       input: null,
+      shadows: new Set(),
+      pending: null,
       geometry: null,
       latestFrame: null,
       lastFrame: null,
       viewportCss: null,
+      rateByLease: new Map(),
+      lastTouchedAt: Date.now(),
     };
     activities.set(runtimeTabId, created);
     return created;
@@ -231,39 +279,119 @@ const make = Effect.gen(function* () {
     }
   };
 
-  const endSocket = (socket: HubInputSocket, reason: string): Effect.Effect<void> =>
-    Effect.gen(function* () {
-      if (socket.state === "ended") return;
-      if (socket.state !== "closing") {
-        socket.state = "closing";
-        tryClose(socket.socket, reason);
-      }
-      clearTimeout(socket.expiryTimer);
-      // Held-input cleanup joins the guest ledger's lane behind queued sends
-      // and targets the lease's bound generation, never a replacement guest.
-      yield* manager.releaseRemoteInput(socket.runtimeTabId, socket.leaseId);
+  /**
+   * Single-flight terminal transition: the first trigger closes the socket
+   * with the named reason and owns the cleanup; later triggers join the same
+   * completion. Only the shared completion may mark `ended`, so a successor
+   * can never bind before the incumbent's held-input release has settled —
+   * or been bounded by the cleanup deadline. Shadow sockets skip the lease
+   * release: their packets ran under the owner's lease, whose cleanup is the
+   * owner's obligation.
+   */
+  const endSocket = (
+    socket: HubInputSocket,
+    reason: string,
+  ): Promise<PreviewManager.RemoteInputReleaseResult> => {
+    if (socket.endPromise !== null) return socket.endPromise;
+    socket.state = "closing";
+    tryClose(socket.socket, reason);
+    clearTimeout(socket.expiryTimer);
+    const cleanup: Promise<PreviewManager.RemoteInputReleaseResult> = socket.owning
+      ? runPromise(manager.releaseRemoteInput(socket.runtimeTabId, socket.leaseId))
+          .then((result) => result ?? { attempted: 0, failed: 0 })
+          .catch(() => ({ attempted: 1, failed: 1 }))
+      : Promise.resolve({ attempted: 0, failed: 0 });
+    socket.endPromise = Promise.race([
+      cleanup,
+      new Promise<PreviewManager.RemoteInputReleaseResult>((resolve) => {
+        const timer = setTimeout(
+          () => resolve({ attempted: 1, failed: 1 }),
+          INPUT_CLEANUP_DEADLINE_MS,
+        );
+        timer.unref();
+        cleanup.then(
+          () => clearTimeout(timer),
+          () => clearTimeout(timer),
+        );
+      }),
+    ]).then((result) => {
       socket.state = "ended";
       const activity = activities.get(socket.runtimeTabId);
-      if (activity?.input === socket) {
-        activity.input = null;
+      if (activity !== undefined) {
+        if (activity.input === socket) activity.input = null;
+        activity.shadows.delete(socket);
       }
       if (socket.seqGaps + socket.rejected + socket.dispatchFailures > 0) {
-        yield* Effect.logInfo("Browser frame input socket ended with dropped input.", {
-          leaseId: socket.leaseId,
-          reason,
-          seqGaps: socket.seqGaps,
-          rejected: socket.rejected,
-          dispatchFailures: socket.dispatchFailures,
-        });
+        runFork(
+          Effect.logInfo("Browser frame input socket ended with dropped input.", {
+            leaseId: socket.leaseId,
+            reason,
+            seqGaps: socket.seqGaps,
+            rejected: socket.rejected,
+            dispatchFailures: socket.dispatchFailures,
+          }),
+        );
       }
+      return result;
     });
+    return socket.endPromise;
+  };
+
+  /**
+   * The parked candidate's bind re-runs the upgrade fences: socket still
+   * open, its own injected credential deadline still in the future, and the
+   * engine-generation pin still matching `remoteFrameConfig`. Pass → `bound`
+   * (with `cleanupIncomplete` when the incumbent's release failed or hit the
+   * deadline); fail → closed, slot empty.
+   */
+  const bindPending = (
+    runtimeTabId: string,
+    cleanup: PreviewManager.RemoteInputReleaseResult | null,
+  ): void => {
+    const activity = activities.get(runtimeTabId);
+    const candidate = activity?.pending ?? null;
+    if (activity === undefined || candidate === null) return;
+    activity.pending = null;
+    clearTimeout(candidate.expiryTimer);
+    if (
+      candidate.cancelled ||
+      candidate.ws.readyState !== WebSocket.OPEN ||
+      Date.now() >= candidate.expiresAt
+    ) {
+      tryClose(candidate.ws, "expired");
+      return;
+    }
+    void runPromise(manager.remoteFrameConfig(runtimeTabId))
+      .then((config) => {
+        if (candidate.ws.readyState !== WebSocket.OPEN || candidate.cancelled) return;
+        if (
+          candidate.engineGeneration !== null &&
+          config.engineGeneration !== candidate.engineGeneration
+        ) {
+          tryClose(candidate.ws, "replaced");
+          return;
+        }
+        bindInputSocket(
+          candidate.ws,
+          candidate.asserted,
+          candidate.leaseId,
+          candidate.ticketSeq,
+          candidate.expiresAt,
+          config.engineGeneration,
+          true,
+          cleanup !== null && cleanup.failed > 0,
+        );
+      })
+      .catch(() => tryClose(candidate.ws, "closing"));
+  };
 
   /**
    * Observe a geometry key (from a frame stamp or a config read) and advance
    * the session's `geometrySeq` when it changed. Ordering matters: on a
    * geometry bump the held-input release runs BEFORE the `geometry` notice
    * is advertised, so no stale up event can strand a key across the bump; on
-   * an engine-generation change the input socket ends instead.
+   * an engine-generation change the input socket ends instead, and the
+   * cached seed frame is invalidated — it is the old guest's pixels.
    */
   const observeGeometryKey = (runtimeTabId: string, key: string): Promise<number | null> => {
     const activity = activities.get(runtimeTabId);
@@ -272,24 +400,38 @@ const make = Effect.gen(function* () {
       return Promise.resolve(activity.geometry.seq);
     }
     const generation = key.slice(0, key.indexOf(":"));
-    const input = activity.input;
-    const inputLive = input !== null && (input.state === "bound" || input.state === "live");
-    if (inputLive && input.engineGeneration !== generation) {
-      // Guest replacement ends the socket outright — a geometry notice cannot
-      // rebase a lease bound to a dead engine generation.
-      return runPromise(endSocket(input, "replaced")).then(() => activity.geometry?.seq ?? null);
-    }
+    const priorGeneration =
+      activity.geometry !== null
+        ? activity.geometry.key.slice(0, activity.geometry.key.indexOf(":"))
+        : null;
     const seq = (activity.geometry?.seq ?? -1) + 1;
     activity.geometry = { seq, key };
-    if (inputLive) {
-      return runPromise(manager.releaseRemoteInputHeld(runtimeTabId).pipe(Effect.ignore)).then(
-        () => {
-          sendNotice(input, { type: "geometry", geometrySeq: seq });
-          return seq;
-        },
-      );
+    if (priorGeneration !== null && priorGeneration !== generation) {
+      activity.latestFrame = null;
+      activity.lastFrame = null;
     }
-    return Promise.resolve(seq);
+    const liveSockets = [activity.input, ...activity.shadows].filter(
+      (socket): socket is HubInputSocket =>
+        socket !== null && (socket.state === "bound" || socket.state === "live"),
+    );
+    const owning = activity.input;
+    if (owning !== null && owning.engineGeneration !== generation) {
+      // Guest replacement ends the socket outright — a geometry notice cannot
+      // rebase a lease bound to a dead engine generation.
+      return endSocket(owning, "replaced").then(() => seq);
+    }
+    if (liveSockets.length === 0) return Promise.resolve(seq);
+    return runPromise(manager.releaseRemoteInputHeld(runtimeTabId))
+      .then((result) => {
+        if (result.failed > 0) {
+          for (const socket of liveSockets) sendNotice(socket, { type: "held-release-failed" });
+        }
+        for (const socket of liveSockets) {
+          sendNotice(socket, { type: "geometry", geometrySeq: seq });
+        }
+        return seq;
+      })
+      .catch(() => seq);
   };
 
   /**
@@ -317,8 +459,27 @@ const make = Effect.gen(function* () {
 
   // Geometry changes are infrequent (guest resize, engine swap) but must be
   // fenced promptly: while anything watches or controls a session, poll its
-  // authoritative geometry once a second.
-  const geometryPoller = startGeometryPoller(activities, refreshGeometry);
+  // authoritative geometry once a second. Sessions nobody watches are
+  // reclaimed once they have been idle past ACTIVITY_IDLE_MS — the map (and
+  // its cached frames) cannot grow without bound.
+  const geometryPoller = setInterval(() => {
+    const now = Date.now();
+    for (const [runtimeTabId, activity] of activities) {
+      const inputLive =
+        (activity.input !== null && activity.input.state !== "ended") ||
+        activity.pending !== null ||
+        activity.shadows.size > 0;
+      if (activity.viewers > 0 || inputLive) {
+        activity.lastTouchedAt = now;
+        void refreshGeometry(runtimeTabId);
+        continue;
+      }
+      if (now - activity.lastTouchedAt > ACTIVITY_IDLE_MS) {
+        activities.delete(runtimeTabId);
+      }
+    }
+  }, GEOMETRY_POLL_MS);
+  geometryPoller.unref();
 
   // One Manager subscription fans frames out to every connected stream. The
   // seq stamped on each part is capture-scoped, so viewers see identical
@@ -379,22 +540,44 @@ const make = Effect.gen(function* () {
   ): void => {
     const { runtimeTabId } = asserted;
     const activity = activityFor(runtimeTabId);
+    // The generation this stream is bound to — the open-time config value
+    // once verified, so a produced frame naming a different generation ends
+    // the response instead of emitting replacement-guest pixels.
+    let boundGeneration: string | null = null;
+    // Frames are stamped with the geometry seq in force when they ARRIVE —
+    // never at write time — so a frame drained after a bump keeps the seq its
+    // pixels were captured against.
+    let headersSent = false;
+    let backpressured = false;
+    let pending: {
+      readonly frame: PreviewManager.RemoteLiveFrame;
+      readonly geometrySeq: number;
+    } | null = null;
     const geometrySeqFor = (frame: PreviewManager.RemoteLiveFrame): number => {
       const geometry = activities.get(frame.tabId)?.geometry;
       return geometry?.key === frame.geometryKey ? geometry.seq : (geometry?.seq ?? 0);
     };
-    let pending: PreviewManager.RemoteLiveFrame | null = null;
-    let backpressured = false;
+    const writeStamped = (stamped: {
+      readonly frame: PreviewManager.RemoteLiveFrame;
+      readonly geometrySeq: number;
+    }): boolean => writeFramePart(res, stamped.frame, stamped.geometrySeq);
+    const flushPending = (): void => {
+      const next = pending;
+      pending = null;
+      if (next === null) return;
+      if (!writeStamped(next)) backpressured = true;
+    };
     const listener = (frame: PreviewManager.RemoteLiveFrame): void => {
-      // Latest-wins under backpressure: keep only the newest unwritten
-      // frame rather than buffering a queue behind a slow client.
-      if (backpressured) {
-        pending = frame;
+      if (boundGeneration !== null && frame.engineGeneration !== boundGeneration) {
+        res.end();
         return;
       }
-      if (!writeFramePart(res, frame, geometrySeqFor(frame))) {
-        backpressured = true;
+      const stamped = { frame, geometrySeq: geometrySeqFor(frame) };
+      if (!headersSent || backpressured) {
+        pending = stamped;
+        return;
       }
+      if (!writeStamped(stamped)) backpressured = true;
     };
     // One idempotent teardown for the whole response lifetime, attached
     // BEFORE any async work: `close` and `error` can both fire, and a client
@@ -402,6 +585,7 @@ const make = Effect.gen(function* () {
     // when it was the last — the capture stop.
     let counted = false;
     let cleanedUp = false;
+    let captureStarted = false;
     let expiryTimer: NodeJS.Timeout | null = null;
     const cleanup = (): void => {
       if (cleanedUp) return;
@@ -413,7 +597,6 @@ const make = Effect.gen(function* () {
       counted = false;
       activity.viewers = Math.max(0, activity.viewers - 1);
       if (activity.viewers === 0) {
-        activity.latestFrame = null;
         runFork(manager.stopRemoteCapture(runtimeTabId).pipe(Effect.ignore));
       }
     };
@@ -421,10 +604,7 @@ const make = Effect.gen(function* () {
     res.on("error", cleanup);
     res.on("drain", () => {
       backpressured = false;
-      if (pending === null) return;
-      const frame = pending;
-      pending = null;
-      if (!writeFramePart(res, frame, geometrySeqFor(frame))) backpressured = true;
+      flushPending();
     });
 
     void runPromise(
@@ -433,10 +613,13 @@ const make = Effect.gen(function* () {
         if (engineGeneration !== null && config.engineGeneration !== engineGeneration) {
           return "engine-generation-mismatch" as const;
         }
+        boundGeneration = config.engineGeneration;
         if (res.destroyed || res.closed) return "client-gone" as const;
         // Register the listener and count the viewer BEFORE starting capture:
         // the initial frame must reach this subscriber even when its bytes
-        // dedupe against the capture session's lastDeliveredFrame.
+        // dedupe against the capture session's lastDeliveredFrame. Frames
+        // arriving before headers buffer into `pending` — no part bytes may
+        // precede the 200.
         yield* Effect.sync(() => {
           const listeners = streamListeners.get(runtimeTabId) ?? new Set();
           listeners.add(listener);
@@ -445,6 +628,7 @@ const make = Effect.gen(function* () {
           counted = true;
         });
         yield* manager.startRemoteCapture(runtimeTabId);
+        captureStarted = true;
         return null;
       }),
     )
@@ -454,48 +638,75 @@ const make = Effect.gen(function* () {
           return;
         }
         if (mismatch !== null || res.destroyed || res.closed || cleanedUp) {
-          // The client died during startup (or never started): the attached
-          // cleanup already ran or will run on the pending close.
           cleanup();
+          if (captureStarted) {
+            // The disconnect ran stopRemoteCapture while startRemoteCapture
+            // was still in flight; the late-resolved start could resurrect
+            // the capture — re-stop now that it has settled.
+            runFork(manager.stopRemoteCapture(runtimeTabId).pipe(Effect.ignore));
+          }
           return;
         }
         return refreshGeometry(runtimeTabId).then(() => {
           if (res.destroyed || res.closed || cleanedUp) return;
-          if (expiresAt !== null) {
-            expiryTimer = setTimeout(() => res.end(), Math.max(0, expiresAt - Date.now()));
-            expiryTimer.unref();
-          }
-          res.writeHead(200, {
-            "content-type": `multipart/x-mixed-replace; boundary=${MJPEG_BOUNDARY}`,
-            "cache-control": "no-store, no-transform",
-            "x-accel-buffering": "no",
-          });
           // Seed the new viewer immediately: unchanged content is deduped
           // capture-side, so without a seed a joiner waits for the next edit.
-          const seed = activity.latestFrame;
-          if (seed !== null) {
-            listener(seed);
-          } else {
-            void runPromise(manager.captureFrameJpeg(runtimeTabId))
-              .then((frame) => {
-                if (res.destroyed || res.closed || cleanedUp) return;
-                const seeded: PreviewManager.RemoteLiveFrame = {
-                  tabId: runtimeTabId,
-                  seq: activities.get(runtimeTabId)?.lastFrame?.seq ?? 0,
-                  jpeg: frame.jpeg,
-                  width: frame.width,
-                  height: frame.height,
-                  engineGeneration: frame.engineGeneration,
-                  geometryKey: frame.geometryKey,
-                };
-                void observeGeometryKey(runtimeTabId, seeded.geometryKey).then(() =>
-                  listener(seeded),
+          // The seed must carry the bound generation — a cached frame from a
+          // replaced guest is never served, and a fresh capture that comes
+          // back on the wrong generation fails the open with a 409 the client
+          // can retry against.
+          const seed = async (): Promise<void> => {
+            if (pending === null) {
+              let frame = activity.latestFrame;
+              if (frame !== null && frame.engineGeneration !== boundGeneration) frame = null;
+              if (frame === null) {
+                const captured = await runPromise(manager.captureFrameJpeg(runtimeTabId)).catch(
+                  () => null,
                 );
-              })
-              .catch(() => {
-                // No seed — the capture loop delivers the first frame.
+                if (captured !== null) {
+                  if (captured.engineGeneration !== boundGeneration) {
+                    writeJson(res, 409, { error: "engine-generation-mismatch" });
+                    return;
+                  }
+                  frame = {
+                    tabId: runtimeTabId,
+                    seq: activities.get(runtimeTabId)?.lastFrame?.seq ?? 0,
+                    jpeg: captured.jpeg,
+                    width: captured.width,
+                    height: captured.height,
+                    engineGeneration: captured.engineGeneration,
+                    geometryKey: captured.geometryKey,
+                  };
+                  await observeGeometryKey(runtimeTabId, frame.geometryKey);
+                }
+              }
+              if (res.destroyed || res.closed || cleanedUp) return;
+              if (expiresAt !== null) {
+                expiryTimer = setTimeout(() => res.end(), Math.max(0, expiresAt - Date.now()));
+                expiryTimer.unref();
+              }
+              res.writeHead(200, {
+                "content-type": `multipart/x-mixed-replace; boundary=${MJPEG_BOUNDARY}`,
+                "cache-control": "no-store, no-transform",
+                "x-accel-buffering": "no",
               });
-          }
+              headersSent = true;
+              if (frame !== null) listener(frame);
+              return;
+            }
+            if (expiresAt !== null) {
+              expiryTimer = setTimeout(() => res.end(), Math.max(0, expiresAt - Date.now()));
+              expiryTimer.unref();
+            }
+            res.writeHead(200, {
+              "content-type": `multipart/x-mixed-replace; boundary=${MJPEG_BOUNDARY}`,
+              "cache-control": "no-store, no-transform",
+              "x-accel-buffering": "no",
+            });
+            headersSent = true;
+            flushPending();
+          };
+          return seed();
         });
       })
       .catch((error: unknown) => {
@@ -510,40 +721,51 @@ const make = Effect.gen(function* () {
     ws: WebSocket,
     asserted: AssertedSession,
     leaseId: string,
+    ticketSeq: number,
     expiresAt: number,
     engineGeneration: string,
+    owning: boolean,
+    cleanupIncomplete = false,
   ): void => {
     const { runtimeTabId } = asserted;
     const activity = activityFor(runtimeTabId);
     const socket: HubInputSocket = {
       runtimeTabId,
       leaseId,
+      ticketSeq,
       expiresAt,
       engineGeneration,
       socket: ws,
+      owning,
       state: "bound",
       lastSeq: 0,
       seqGaps: 0,
       rejected: 0,
       dispatchFailures: 0,
-      tokens: BROWSER_FRAME_INPUT_MAX_EVENTS_PER_SECOND,
-      tokensAt: Date.now(),
+      endPromise: null,
+      dispatchTail: Promise.resolve(),
+      queuedDispatch: 0,
       expiryTimer: setTimeout(
-        () => runFork(endSocket(socket, "expired")),
+        () => void endSocket(socket, "expired"),
         Math.max(0, expiresAt - Date.now()),
       ),
     };
     socket.expiryTimer.unref();
-    activity.input = socket;
+    if (owning) {
+      activity.input = socket;
+    } else {
+      activity.shadows.add(socket);
+    }
 
-    void refreshGeometry(runtimeTabId).then((geometrySeq) => {
+    void refreshGeometry(runtimeTabId).then((geometrySeq) =>
       sendNotice(socket, {
         type: "bound",
         leaseId,
         geometrySeq: geometrySeq ?? activity.geometry?.seq ?? 0,
         expiresAt,
-      });
-    });
+        ...(cleanupIncomplete ? { cleanupIncomplete: true } : {}),
+      }),
+    );
 
     ws.on("message", (data: Buffer) => {
       if (socket.state === "ended" || socket.state === "closing") return;
@@ -560,7 +782,7 @@ const make = Effect.gen(function* () {
         return;
       }
       if (now >= socket.expiresAt) {
-        runFork(endSocket(socket, "expired"));
+        void endSocket(socket, "expired");
         return;
       }
       if (packet.seq <= socket.lastSeq) {
@@ -576,45 +798,63 @@ const make = Effect.gen(function* () {
         rejectPacket(socket, packet.seq, "stale-geometry");
         return;
       }
-      socket.tokens = Math.min(
+      // The rate bucket is retained per lease across socket replacement, so
+      // rebinding (or a shadow socket on the same lease) cannot reset it.
+      let bucket = activity.rateByLease.get(leaseId);
+      if (bucket === undefined) {
+        bucket = { tokens: BROWSER_FRAME_INPUT_MAX_EVENTS_PER_SECOND, tokensAt: now };
+        activity.rateByLease.set(leaseId, bucket);
+      }
+      bucket.tokens = Math.min(
         BROWSER_FRAME_INPUT_MAX_EVENTS_PER_SECOND,
-        socket.tokens +
-          ((now - socket.tokensAt) / 1000) * BROWSER_FRAME_INPUT_MAX_EVENTS_PER_SECOND,
+        bucket.tokens +
+          ((now - bucket.tokensAt) / 1000) * BROWSER_FRAME_INPUT_MAX_EVENTS_PER_SECOND,
       );
-      socket.tokensAt = now;
-      if (socket.tokens < 1) {
+      bucket.tokensAt = now;
+      if (bucket.tokens < 1) {
         rejectPacket(socket, packet.seq, "rate-limited");
         return;
       }
-      socket.tokens -= 1;
+      if (socket.queuedDispatch >= INPUT_DISPATCH_QUEUE_MAX) {
+        rejectPacket(socket, packet.seq, "backpressured");
+        return;
+      }
+      bucket.tokens -= 1;
       socket.state = "live";
-      runFork(
-        manager
-          .dispatchRemoteInput(
-            runtimeTabId,
-            leaseId,
-            socket.engineGeneration,
-            packet.event,
-            activity.viewportCss,
-          )
-          .pipe(
-            Effect.catch((error) =>
-              Effect.logWarning("Remote input dispatch failed.", {
+      // Dispatch is serialized per socket: packets enter the guest ledger's
+      // lane in arrival order, and the queue is bounded so a stalled lane
+      // rejects new packets instead of accumulating unbounded work.
+      socket.queuedDispatch += 1;
+      socket.dispatchTail = socket.dispatchTail
+        .then(() => {
+          if (socket.state === "ended" || socket.state === "closing") return undefined;
+          return runPromise(
+            manager
+              .dispatchRemoteInput(
+                runtimeTabId,
                 leaseId,
-                error,
-              }).pipe(
-                Effect.andThen(
-                  Effect.sync(() => {
-                    socket.dispatchFailures += 1;
+                socket.engineGeneration,
+                packet.event,
+                activity.viewportCss,
+              )
+              .pipe(
+                Effect.catch((error) =>
+                  Effect.logWarning("Remote input dispatch failed.", {
+                    leaseId,
+                    error,
                   }),
                 ),
               ),
-            ),
-          ),
-      );
+          ).catch(() => {
+            socket.dispatchFailures += 1;
+          });
+        })
+        .finally(() => {
+          socket.queuedDispatch -= 1;
+        });
     });
-    ws.on("close", () => runFork(endSocket(socket, "closing")));
-    ws.on("error", () => runFork(endSocket(socket, "closing")));
+    ws.on("close", () => void endSocket(socket, "closing"));
+    ws.on("error", () => void endSocket(socket, "closing"));
   };
 
   const handleInputUpgrade = (
@@ -651,9 +891,15 @@ const make = Effect.gen(function* () {
       return;
     }
     const engineGeneration = url.searchParams.get("x-t3-engine-generation");
+    const ticketSeqRaw = url.searchParams.get("x-t3-ticket-seq");
+    const ticketSeq = ticketSeqRaw === null ? 0 : Number(ticketSeqRaw);
+    if (!Number.isFinite(ticketSeq) || ticketSeq < 0) {
+      reject();
+      return;
+    }
     wss.handleUpgrade(req, socket, head, (ws) => {
-      // Fence before binding: a stale engine generation or dead tab closes the
-      // socket with the named reason rather than silently accepting input.
+      // Fence before the machine runs: a stale engine generation or dead tab
+      // closes the socket with the named reason rather than parking it.
       void runPromise(manager.remoteFrameConfig(asserted.runtimeTabId))
         .then((config) => {
           if (engineGeneration !== null && config.engineGeneration !== engineGeneration) {
@@ -661,19 +907,61 @@ const make = Effect.gen(function* () {
             return;
           }
           const activity = activityFor(asserted.runtimeTabId);
-          const existing = activity.input;
-          const bind = (): void =>
-            bindInputSocket(ws, asserted, leaseId, expiresAt, config.engineGeneration);
-          if (existing && existing.state !== "ended") {
-            // Supersede ordering: the previous lease's held-input cleanup
-            // completes before the new socket binds (design §3.7 item 9).
-            runFork(
-              endSocket(existing, existing.leaseId === leaseId ? "replaced" : "superseded").pipe(
-                Effect.andThen(Effect.sync(bind)),
-              ),
+          const incumbent =
+            activity.input !== null && activity.input.state !== "ended" ? activity.input : null;
+          // A same-lease ticket older than the incumbent's is a valid
+          // credential but may not seize the slot or reset its state: it
+          // binds immediately as a shadow and never runs lease cleanup.
+          const supersedes =
+            incumbent === null || incumbent.leaseId !== leaseId || ticketSeq >= incumbent.ticketSeq;
+          if (incumbent !== null && !supersedes) {
+            bindInputSocket(
+              ws,
+              asserted,
+              leaseId,
+              ticketSeq,
+              expiresAt,
+              config.engineGeneration,
+              false,
             );
+            return;
+          }
+          // Latest arrival wins the single pending slot: a parked candidate
+          // is closed `superseded` when a newer upgrade lands.
+          const prior = activity.pending;
+          if (prior !== null) {
+            prior.cancelled = true;
+            clearTimeout(prior.expiryTimer);
+            tryClose(prior.ws, "superseded");
+          }
+          const candidate: PendingCandidate = {
+            ws,
+            asserted,
+            leaseId,
+            ticketSeq,
+            expiresAt,
+            engineGeneration,
+            cancelled: false,
+            expiryTimer: setTimeout(
+              () => {
+                if (activity.pending === candidate) activity.pending = null;
+                tryClose(ws, "expired");
+              },
+              Math.max(0, expiresAt - Date.now()),
+            ),
+          };
+          candidate.expiryTimer.unref();
+          activity.pending = candidate;
+          ws.once("close", () => {
+            if (activity.pending === candidate) activity.pending = null;
+          });
+          if (incumbent !== null) {
+            void endSocket(
+              incumbent,
+              incumbent.leaseId === leaseId ? "replaced" : "superseded",
+            ).then((outcome) => bindPending(asserted.runtimeTabId, outcome));
           } else {
-            bind();
+            bindPending(asserted.runtimeTabId, null);
           }
         })
         .catch(() => ws.close(INPUT_CLOSE_CODE, "closing"));
@@ -760,6 +1048,10 @@ const make = Effect.gen(function* () {
     if (leaf[2] === "snapshot") {
       void runPromise(manager.captureFrameJpeg(asserted.runtimeTabId))
         .then(async (frame) => {
+          if (engineGeneration !== null && frame.engineGeneration !== engineGeneration) {
+            writeJson(res, 409, { error: "engine-generation-mismatch" });
+            return;
+          }
           const geometrySeq = await observeGeometryKey(asserted.runtimeTabId, frame.geometryKey);
           res.writeHead(200, {
             "content-type": "image/jpeg",
@@ -816,7 +1108,12 @@ const make = Effect.gen(function* () {
       );
   };
 
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({
+    noServer: true,
+    // Enforced inside ws before a fragmented message is reassembled — the
+    // assembled-byteLength check below is only the backstop.
+    maxPayload: BROWSER_FRAME_INPUT_PACKET_MAX_BYTES,
+  });
   const server: Server = createServer((req, res) => {
     try {
       handleRequest(req, res);
@@ -837,8 +1134,16 @@ const make = Effect.gen(function* () {
     Effect.sync(() => {
       clearInterval(geometryPoller);
       for (const activity of activities.values()) {
-        if (activity.input) {
-          runFork(endSocket(activity.input, "closing"));
+        if (activity.pending !== null) {
+          activity.pending.cancelled = true;
+          clearTimeout(activity.pending.expiryTimer);
+          tryClose(activity.pending.ws, "closing");
+        }
+        if (activity.input !== null) {
+          void endSocket(activity.input, "closing");
+        }
+        for (const shadow of activity.shadows) {
+          void endSocket(shadow, "closing");
         }
       }
       wss.close();

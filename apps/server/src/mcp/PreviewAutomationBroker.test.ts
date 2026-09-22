@@ -1,4 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off globalFetch:off -- Loopback HTTP probes exercise the frame-hub readiness check end to end.
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { createServer, type Server } from "node:http";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
@@ -1082,6 +1084,108 @@ it.effect("accepts responses only from the host that received the request", () =
 
       const result = yield* broker.invoke<string>({ scope, operation: "status", input: {} });
       expect(result).toBe("owner");
+    }),
+  ),
+);
+
+const listen = (server: Server): Promise<string> =>
+  new Promise((resolve, reject) => {
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (typeof address === "object" && address !== null) {
+        resolve(`http://127.0.0.1:${address.port}`);
+      } else {
+        reject(new Error("no address"));
+      }
+    });
+  });
+
+const closeServer = (server: Server) =>
+  Effect.promise(
+    () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+  );
+
+const connectReady = (
+  broker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  host: PreviewAutomationHost,
+) =>
+  Effect.gen(function* () {
+    const ready = yield* Deferred.make<void>();
+    yield* Stream.runForEach(yield* broker.connect(host), (event) =>
+      event.type === "connected" ? Deferred.succeed(ready, undefined) : Effect.void,
+    ).pipe(Effect.forkScoped);
+    yield* Deferred.await(ready);
+  });
+
+it.effect(
+  "registers a frame hub only for a canonical loopback origin that answers the authenticated health probe",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const paths: Array<string> = [];
+        const server = createServer((req, res) => {
+          paths.push(req.url ?? "");
+          res.setHeader("content-type", "application/json");
+          res.end(JSON.stringify({ service: "t3.browser-frame-hub" }));
+        });
+        const origin = yield* Effect.promise(() => listen(server));
+        try {
+          const broker = yield* makeBroker;
+          // A path-bearing or non-loopback origin is never probed — a forged
+          // registration must not turn the broker into an SSRF client.
+          yield* connectReady(
+            broker,
+            makeHost({
+              clientId: "forged",
+              frameHub: { origin: `${origin}/private`, secret: "s" },
+            }),
+          );
+          expect(yield* broker.frameHubs).toHaveLength(0);
+          expect(paths).toHaveLength(0);
+
+          yield* connectReady(
+            broker,
+            makeHost({ clientId: "real", frameHub: { origin, secret: "s" } }),
+          );
+          expect(yield* broker.frameHubs).toHaveLength(1);
+          expect(paths).toEqual(["/health"]);
+        } finally {
+          yield* closeServer(server);
+        }
+      }),
+    ),
+);
+
+it.effect("the hub health probe never follows a redirect into a private path", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const paths: Array<string> = [];
+      const server = createServer((req, res) => {
+        paths.push(req.url ?? "");
+        if (req.url === "/health") {
+          res.writeHead(302, { location: "/private" });
+          res.end();
+          return;
+        }
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ service: "t3.browser-frame-hub" }));
+      });
+      const origin = yield* Effect.promise(() => listen(server));
+      try {
+        const broker = yield* makeBroker;
+        yield* connectReady(
+          broker,
+          makeHost({ clientId: "redirecting", frameHub: { origin, secret: "s" } }),
+        );
+        expect(paths).toEqual(["/health"]);
+        expect(yield* broker.frameHubs).toHaveLength(0);
+      } finally {
+        yield* closeServer(server);
+      }
     }),
   ),
 );

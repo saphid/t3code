@@ -129,6 +129,12 @@ export const BrowserFrameInputNotice = Schema.Union([
     leaseId: TrimmedNonEmptyString,
     geometrySeq: NonNegativeInt,
     expiresAt: Schema.Int.check(Schema.isGreaterThan(0)),
+    /**
+     * Set when the superseded socket's held-input cleanup could not fully
+     * settle before this bind — the guest may still carry released-state the
+     * ledger could not confirm. Design §3.7 cleanup vocabulary.
+     */
+    cleanupIncomplete: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("geometry"),
@@ -139,6 +145,12 @@ export const BrowserFrameInputNotice = Schema.Union([
     seq: PositiveInt,
     reason: BrowserFrameInputRejectReason,
   }),
+  /**
+   * A geometry-bump held release failed while this socket stayed live — held
+   * keys/buttons may still be physically down in the guest; the client may
+   * re-press at the new geometry.
+   */
+  Schema.Struct({ type: Schema.Literal("held-release-failed") }),
 ]);
 export type BrowserFrameInputNotice = typeof BrowserFrameInputNotice.Type;
 

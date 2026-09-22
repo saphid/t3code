@@ -111,6 +111,7 @@ const makeDeps = (overrides: Partial<Deps> = {}): Deps => ({
   issueUrl: () => Effect.succeed({ relativeUrl: fakeUrl("workspace-file"), expiresAt: 999 }),
   issueBrowserSurface: () =>
     Effect.succeed({ relativeUrl: fakeUrl("browser-surface", "browser-surface"), expiresAt: 999 }),
+  recordHeldBrowserSurface: () => Effect.void,
   authorizeGrant: async () => true,
   ...overrides,
 });
@@ -526,6 +527,7 @@ describe("t3.resources/lease adapter", () => {
             allowedCommands: readonly string[];
           }
         | undefined;
+      let held: Parameters<Deps["recordHeldBrowserSurface"]>[0] | undefined;
       const provider = createResourcesLeaseApiProvider(
         makeDeps({
           authorizeGrant: async (_callerId, requested) => {
@@ -538,6 +540,10 @@ describe("t3.resources/lease adapter", () => {
               relativeUrl: fakeUrl("browser-surface", "browser-surface"),
               expiresAt: 7,
             });
+          },
+          recordHeldBrowserSurface: (input) => {
+            held = input;
+            return Effect.void;
           },
         }),
       );
@@ -558,6 +564,23 @@ describe("t3.resources/lease adapter", () => {
         serverEpoch: "epoch-1",
         allowedCommands: ["attach", "present"],
       });
+      // The mint must register the claim as held: the frames mint only honors
+      // tokens that passed through this path under the same authority.
+      expect(held).toMatchObject({
+        token: expect.any(String),
+        environmentId: "env",
+        threadId: "thread",
+        tabId: "tab-1",
+        serverEpoch: "epoch-1",
+        allowedCommands: ["attach", "present"],
+        expiresAt: 7,
+        grant: BROWSER_SESSIONS,
+      });
+      // The registered metadata/context is what `browserFrameAuthorityKey`
+      // binds the frames mint to — wrong caller identity would never match.
+      expect(held?.metadata.callerId).toBe("caller");
+      expect(held?.metadata.rootCallerId).toBe("root");
+      expect(held?.context.resource.projectId).toBe("project");
     }),
   );
 
