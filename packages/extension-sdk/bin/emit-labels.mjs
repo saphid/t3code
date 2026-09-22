@@ -24,10 +24,12 @@
 // - JSX dev metadata: `fileName` in the argument-4 source object of a
 //   `jsxDEV` call, only when the callee's namespace object is a top-level
 //   `var` initialized by a prologue `__toESM`/`__toCommonJS` over the
-//   `require_*` of a module whose metafile key is the jsx-dev-runtime —
-//   or a bare `jsxDEV` imported from the pinned `react/jsx-dev-runtime`
-//   specifier. A dependency that merely exports a `jsxDEV` member is not
-//   that module.
+//   `require_*` of a module whose metafile key is the runtime's resolved
+//   identity — `host-react:react/jsx-dev-runtime` or a
+//   `node_modules/react/jsx-dev-runtime.js` path — or a bare `jsxDEV`
+//   imported from the pinned `react/jsx-dev-runtime` specifier. A
+//   dependency that merely exports a `jsxDEV` member, or ships a
+//   colliding filename, is not that module.
 // - `//` line comments at line start whose whole text is an emitted
 //   label, or whose ` in <label>` suffix follows a call-shaped prefix —
 //   esbuild's banner and glob-synthetic comment forms.
@@ -313,12 +315,14 @@ export const rewriteEmittedLabels = (text, inputs, dir) => {
   for (const [label, canon] of wanted)
     if (claimants.get(canon) === 1 && !insideKeys.has(canon)) finals.set(label, canon);
   // Module keys pinned as this build's JSX dev runtime — the host-react
-  // plugin namespace or a real react package's file.
+  // plugin namespace or the file `react/jsx-dev-runtime` actually resolves
+  // to: `jsx-dev-runtime.js` inside a `react` package directory. A
+  // look-alike filename inside an unrelated package is not the runtime.
   const devRuntimeKeys = new Set(
     [...labels].filter(
       (key) =>
         key === "host-react:react/jsx-dev-runtime" ||
-        /(^|\/)react\/jsx-dev-runtime\.[cm]?[jt]s$/.test(key),
+        /(^|\/)node_modules\/react\/jsx-dev-runtime\.js$/.test(key),
     ),
   );
   const comments = [];
@@ -383,7 +387,13 @@ export const rewriteEmittedLabels = (text, inputs, dir) => {
   const wrapperCalls = new Map();
   if (bundleBody !== null) {
     const list = statementList(bundleBody);
-    let prevEnd = bundleBody.start;
+    // Start one byte before the body so a comment at offset zero (the
+    // first module's banner, or any other leading comment) is part of the
+    // first statement's gap: esbuild never emits user code ahead of its
+    // banner, so only the bundler's own prelude can precede the first
+    // freestanding comment — a no-helper module cannot contribute
+    // prologue bindings.
+    let prevEnd = bundleBody.start - 1;
     let prologueOpen = true;
     // The last freestanding comment seen, carried across consecutive `var`
     // statements: a generated module's banner precedes its wrapper var,

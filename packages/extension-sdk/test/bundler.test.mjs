@@ -761,6 +761,38 @@ NodeTest.test("emitted-label rewriter edits only generated positions", async (t)
   // and filenames that begin with an angle bracket.
   const angle = rewriteEmittedLabels(`// <stdin>\nvar x = 1;\n`, ["<stdin>", "<local.cjs"], dir);
   NodeAssert.ok(angle.includes("// <stdin>"), "pseudo-input banner was rewritten");
+
+  // A comment at byte zero bounds the prologue: a first-module banner (or
+  // a leading user comment) means the bundle's first `var` already sits
+  // under a comment and cannot be a helper, so a later banner cannot
+  // promote it into provenance. The banner itself still rewrites; the
+  // user map's keys and unknown keys are data and never validated.
+  const bannerAtZero =
+    `// ${label}\nvar __esm = (x) => Object.keys(x);\n` +
+    `// entry.js\nvar init_x = __esm({ "entry.js": 1, ${JSON.stringify(label)}: 2 });\n`;
+  const bannerAtZeroOut = rewriteEmittedLabels(bannerAtZero, [...inputs, "entry.js"], dir);
+  NodeAssert.ok(
+    bannerAtZeroOut.includes(`${JSON.stringify(label)}: 2`),
+    "user map under a byte-zero banner was rewritten",
+  );
+  const commentAtZero =
+    `// user comment\nvar __esm = (x) => Object.keys(x);\n` +
+    `// entry.js\nvar init_x = __esm({ "entry.js": 1, ${JSON.stringify(label)}: 2 });\n`;
+  NodeAssert.equal(
+    rewriteEmittedLabels(commentAtZero, [...inputs, "entry.js"], dir),
+    commentAtZero,
+    "user comment at byte zero leaked a user var into the prologue",
+  );
+  const leadingNewline =
+    `\n// user comment\nvar __esm = (x) => Object.keys(x);\n` +
+    `// entry.js\nvar init_x = __esm({ "entry.js": 1, "customer-record": 2 });\n`;
+  NodeAssert.doesNotThrow(() => rewriteEmittedLabels(leadingNewline, [...inputs, "entry.js"], dir));
+  NodeAssert.ok(
+    rewriteEmittedLabels(leadingNewline, [...inputs, "entry.js"], dir).includes(
+      '"customer-record": 2',
+    ),
+    "user map after a leading newline was validated",
+  );
 });
 
 NodeTest.test(
@@ -877,6 +909,114 @@ export default {
       "dep-exported jsxDEV fileName was rewritten",
     );
     NodeAssert.equal(mod.default.angled, "angle", "<-named file failed to bundle");
+  },
+);
+
+NodeTest.test(
+  "production CLI never trusts prologue-position user helpers or look-alike runtime paths",
+  async (t) => {
+    // Round-6 provenance negatives, end to end. An ESM dep emitting a
+    // top-level `var __esm` puts a user declaration where a no-helper
+    // bundle's prologue would be: the module banner at byte zero must
+    // still bound the prologue, so a later module's banner cannot promote
+    // the user var into a trusted helper — neither its matching-key map
+    // nor its unknown-key map is validated or rewritten. A dep whose file
+    // collides with the dev runtime's filename is not the runtime: only
+    // the resolved `node_modules/react/jsx-dev-runtime.js` (or the
+    // controlled host-react namespace) proves the jsxDEV provenance.
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-bundler-"));
+    t.after(() => NodeFSP.rm(root, { recursive: true, force: true }));
+    const w = async (p, s) => {
+      await NodeFSP.mkdir(NodePath.dirname(p), { recursive: true });
+      await NodeFSP.writeFile(p, s);
+    };
+    await w(
+      NodePath.join(root, "esm-dep", "package.json"),
+      JSON.stringify({ name: "esm-dep", type: "module", main: "index.js" }),
+    );
+    await w(
+      NodePath.join(root, "esm-dep", "index.js"),
+      "// @ts-nocheck\nexport var __esm = (x) => Object.keys(x);\n",
+    );
+    for (const [pkg, file] of [
+      ["spoof-cjs", "react/jsx-dev-runtime.cjs"],
+      ["spoof-js", "react/jsx-dev-runtime.js"],
+    ]) {
+      await w(NodePath.join(root, pkg, "package.json"), JSON.stringify({ name: pkg, main: file }));
+      await w(
+        NodePath.join(root, pkg, file),
+        "// @ts-nocheck\nexports.jsxDEV = (a, b, c, d, source) => source.fileName;\n",
+      );
+    }
+    const dir = NodePath.join(root, "proj");
+    await NodeFSP.mkdir(NodePath.join(dir, "node_modules"), { recursive: true });
+    for (const pkg of ["esm-dep", "spoof-cjs", "spoof-js"])
+      await NodeFSP.symlink(NodePath.join(root, pkg), NodePath.join(dir, "node_modules", pkg));
+    await w(
+      NodePath.join(dir, "tsconfig.json"),
+      tsconfig("react-jsxdev").replace(
+        '"strict": true',
+        '"strict": true, "checkJs": false, "allowJs": true',
+      ),
+    );
+    await w(
+      NodePath.join(dir, "extension.ts"),
+      `export default {
+  package: {
+    format: 2,
+    manifest: { id: "test.prologue-spoof", apiVersion: 1, version: "1.0.0", surfaces: [] },
+    serverEntry: "server.mjs",
+    tools: [],
+    dependencies: [],
+    provides: [],
+    requires: [],
+  },
+  serverEntry: "server.ts",
+};
+`,
+    );
+    await w(
+      NodePath.join(dir, "server.ts"),
+      `// @ts-nocheck
+import { __esm } from "esm-dep";
+import { jsxDEV as spoofCjs } from "spoof-cjs";
+import { jsxDEV as spoofJs } from "spoof-js";
+var init_user = __esm({ "server.ts": 1, "../esm-dep/index.js": 2 });
+export default {
+  tools: [],
+  matched: init_user,
+  unmatched: __esm({ "customer-record": 3 }),
+  cjs: spoofCjs(null, null, null, null, { fileName: "../spoof-cjs/react/jsx-dev-runtime.cjs", lineNumber: 7 }),
+  js: spoofJs(null, null, null, null, { fileName: "../spoof-js/react/jsx-dev-runtime.js", lineNumber: 7 }),
+};
+`,
+    );
+    build(dir, root);
+    const mod = await import(
+      NodeURL.pathToFileURL(NodePath.join(dir, ".t3-extension", "server.mjs")).href +
+        "?t=" +
+        Date.now()
+    );
+    NodeAssert.deepEqual(
+      mod.default.matched,
+      ["server.ts", "../esm-dep/index.js"],
+      "first-module user helper map was rewritten",
+    );
+    NodeAssert.deepEqual(
+      mod.default.unmatched,
+      ["customer-record"],
+      "unknown-key user map was validated or rewritten",
+    );
+    NodeAssert.equal(
+      mod.default.cjs,
+      "../spoof-cjs/react/jsx-dev-runtime.cjs",
+      "colliding .cjs runtime filename was treated as the real runtime",
+    );
+    NodeAssert.equal(
+      mod.default.js,
+      "../spoof-js/react/jsx-dev-runtime.js",
+      "colliding .js runtime filename was treated as the real runtime",
+    );
   },
 );
 
