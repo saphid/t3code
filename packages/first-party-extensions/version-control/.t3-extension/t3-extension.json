@@ -52,6 +52,14 @@
     {
       "id": "t3.vcs/repository",
       "versionRange": "^1.0.0"
+    },
+    {
+      "id": "t3.ui/theme",
+      "versionRange": "^1.0.0"
+    },
+    {
+      "id": "t3.ui/notifications",
+      "versionRange": "^1.0.0"
     }
   ],
   "dependencies": []

@@ -1,6 +1,8 @@
 import {
   prsReadApi,
   prsWriteApi,
+  uiNotificationsApi,
+  uiThemeApi,
   vcsActionsApi,
   vcsChangesApi,
   vcsRefsApi,
@@ -26,6 +28,7 @@ import {
   CONNECTING_STATUS,
   IDLE_MUTATION,
   IDLE_STACKED_PROGRESS,
+  MUTATION_TOAST_DISMISS_MS,
   applyStackedEvent,
   applyStatusEvent,
   canWorktreeRef,
@@ -35,11 +38,16 @@ import {
   describeStackedProgress,
   describeStackedResult,
   describeStatus,
+  dismissReceiptAfterSeen,
   entryMutation,
+  isNotificationDismissal,
   laneCount,
   laneMutation,
   laneTitle,
   lanesFromChanges,
+  mutationToastSettle,
+  mutationToastStart,
+  nextThemeVars,
   numstatFor,
   planCommit,
   planRefCreate,
@@ -49,6 +57,7 @@ import {
   refRows,
   refSwitchState,
   refSwitchTarget,
+  releaseMutationReceipt,
   remoteRows,
   repositoryState,
   retainSelection,
@@ -379,9 +388,239 @@ function useRemotesList(
   return { remotes: result.remotes, error: result.key === revision ? result.error : null };
 }
 
+/**
+ * `t3.ui/theme` consumer. `getTokens` resolves the host's *effective* theme —
+ * the provider's projection already folds the stored preference, live session
+ * overlays, and external previews into the painted state — and each
+ * `subscribeState` frame re-reads the tokens, so the panel tracks exactly
+ * what the host paints without interpreting overlay semantics itself. The map
+ * lands on the view root as `--t3-version-control-*` custom properties; an
+ * ungranted or provider-less host yields null and every style falls back to
+ * its legacy `var()` chain — the honest degraded path.
+ */
+function useThemeVars(
+  host: ClientHost,
+  session: ViewSession,
+  visible: boolean,
+): Record<string, string> | null {
+  const [vars, setVars] = useState<Record<string, string> | null>(null);
+  useEffect(() => {
+    if (!visible) return;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    const api = bindApi(uiThemeApi, host, session.context);
+    const streams = bindStreamApi(uiThemeApi, host, session.context);
+    let generation = 0;
+    const refresh = () => {
+      const at = ++generation;
+      void api.invoke("getTokens", {}, signal).then(
+        (value) => {
+          if (!signal.aborted && at === generation)
+            setVars(nextThemeVars({ ok: true, tokens: value.tokens, cssVars: value.cssVars }));
+        },
+        // A failed read cannot vouch for the last published map — the
+        // overrides clear and the panel returns to its legacy chain until a
+        // later read succeeds. Only the current generation may clear, so a
+        // stale rejection never wipes a newer good map.
+        () => {
+          if (!signal.aborted && at === generation) setVars(nextThemeVars({ ok: false }));
+        },
+      );
+    };
+    refresh();
+    void (async () => {
+      try {
+        for await (const frame of streams.subscribe("subscribeState", {}, signal)) {
+          if (signal.aborted) return;
+          if (frame.type === "closed") break;
+          refresh();
+        }
+      } catch {
+        // A lost stream lands in the same clear path as a clean close.
+      }
+      // The subscription is gone, so published overrides can silently go
+      // stale against the next host theme change — clear them and invalidate
+      // any in-flight read rather than painting last-known values.
+      if (!signal.aborted) {
+        generation++;
+        setVars(nextThemeVars({ ok: false }));
+      }
+    })();
+    return () => controller.abort();
+  }, [host, session, visible]);
+  return vars;
+}
+
+/**
+ * `t3.ui/notifications` consumer. Native repository mutations report through
+ * toast progress (GitActionsControl): a loading toast on start, the same
+ * notification updated to success or error on settle — never an inline row.
+ * The grant-free `getCapabilities` probe names a provider-less host before
+ * any write; a `notify` failure latches the adapter off (a denied grant
+ * never recovers within a session). Every delivery loss — rejected `notify`,
+ * rejected or unapplied `update` — hands that mutation's receipt back to the
+ * inline row through `onReceiptLost`, and a `notification-expired` update
+ * (a user-dismissed loading toast) does so without killing the adapter.
+ */
+interface MutationToast {
+  readonly settle: (result: { readonly ok: boolean; readonly detail: string }) => void;
+}
+
+function useMutationToasts(
+  host: ClientHost,
+  session: ViewSession,
+  enabled: boolean,
+): {
+  readonly begin: (label: string, onReceiptLost: () => void) => MutationToast | null;
+} {
+  const [toastsLive, setToastsLive] = useState(false);
+  const dead = useRef(false);
+  useEffect(() => {
+    if (!enabled) return;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    void bindApi(uiNotificationsApi, host, session.context)
+      .invoke("getCapabilities", {}, signal)
+      .then(
+        (capabilities) => {
+          // A latched-dead adapter stays dead across re-probes — a denied
+          // grant never recovers within a session.
+          if (!signal.aborted && !dead.current)
+            setToastsLive(
+              capabilities.operations.notify === true && capabilities.operations.update === true,
+            );
+        },
+        () => {},
+      );
+    return () => controller.abort();
+  }, [host, session, enabled]);
+
+  const markDead = () => {
+    if (dead.current || session.signal.aborted) return;
+    dead.current = true;
+    setToastsLive(false);
+  };
+
+  const begin = (label: string, onReceiptLost: () => void): MutationToast | null => {
+    if (!toastsLive || dead.current) return null;
+    const api = bindApi(uiNotificationsApi, host, session.context);
+    const resource = session.context.resource;
+    const dismiss = (notificationId: string) => {
+      void api.invoke("dismiss", { notificationId }, session.signal).then(
+        () => {},
+        () => {},
+      );
+    };
+    const posted = api
+      .invoke(
+        "notify",
+        {
+          ...mutationToastStart(label),
+          // A thread-anchored toast paints only while its thread is active —
+          // the native threadToastData behavior. Targeting fields may only
+          // name this context's own scope.
+          ...(resource.threadId !== undefined
+            ? { anchor: "thread" as const, threadId: resource.threadId }
+            : {}),
+          ...(resource.projectId !== undefined ? { projectId: resource.projectId } : {}),
+        },
+        session.signal,
+      )
+      .then(
+        (result) => {
+          // A resolution landing after the adapter died posts a loading
+          // toast nothing will update — retract it on arrival.
+          if (dead.current) dismiss(result.notificationId);
+          return result.notificationId;
+        },
+        () => {
+          markDead();
+          onReceiptLost();
+          return null;
+        },
+      );
+    // The contract's `update` carries no duration, so success receipts are
+    // dismissed on a timer — but an unseen receipt must not expire.
+    // dismissReceiptAfterSeen mirrors native's dismissAfterVisibleMs: the
+    // clock runs only while the receipt can be read — the view is shown
+    // and the document is visible and focused. DOM globals are absent only
+    // where nothing can paint, so the view's own visibility decides there.
+    const receiptSeen = {
+      signal: session.signal,
+      seen: () =>
+        session.visible &&
+        (typeof document === "undefined" ||
+          typeof window === "undefined" ||
+          (document.visibilityState === "visible" && document.hasFocus())),
+      onChange: (listener: () => void) => {
+        const offView = session.onVisibility(listener);
+        if (typeof document === "undefined" || typeof window === "undefined") return offView;
+        document.addEventListener("visibilitychange", listener);
+        window.addEventListener("focus", listener);
+        window.addEventListener("blur", listener);
+        return () => {
+          offView();
+          document.removeEventListener("visibilitychange", listener);
+          window.removeEventListener("focus", listener);
+          window.removeEventListener("blur", listener);
+        };
+      },
+    };
+    return {
+      settle(result) {
+        void posted.then((notificationId) => {
+          if (notificationId === null) return;
+          if (dead.current) {
+            // The adapter died after this toast posted — retract the
+            // orphaned loading toast and hand the receipt to the row.
+            onReceiptLost();
+            dismiss(notificationId);
+            return;
+          }
+          void api
+            .invoke(
+              "update",
+              { notificationId, ...mutationToastSettle(label, result) },
+              session.signal,
+            )
+            .then(
+              ({ applied }) => {
+                if (!applied) {
+                  // The notification never took the patch — the outcome
+                  // returns to the inline row so it is not silently lost.
+                  onReceiptLost();
+                  return;
+                }
+                if (result.ok)
+                  dismissReceiptAfterSeen(receiptSeen, MUTATION_TOAST_DISMISS_MS, () =>
+                    dismiss(notificationId),
+                  );
+              },
+              (error) => {
+                onReceiptLost();
+                // A dismissed toast reports notification-expired — the
+                // provider still works, only this receipt goes inline. Any
+                // other rejection is delivery loss and latches the adapter.
+                if (!isNotificationDismissal(error)) markDead();
+              },
+            );
+        });
+      },
+    };
+  };
+  return { begin };
+}
+
+// Every theme-backed value chains a `--t3-version-control-*` hop (published
+// on the view root from `t3.ui/theme` tokens) ahead of the legacy host vars.
+// When the contract is unavailable the hop never resolves and the legacy
+// chain renders.
+const border = "1px solid var(--t3-version-control-border, var(--border, #dfe3e8))";
+const muted = "var(--t3-version-control-muted-foreground, var(--muted-foreground, #667085))";
+
 const control = {
   padding: "4px 8px",
-  border: "1px solid var(--border, #dfe3e8)",
+  border,
   borderRadius: 5,
   background: "transparent",
   color: "inherit",
@@ -389,8 +628,6 @@ const control = {
   fontSize: 12,
   cursor: "pointer",
 } as const;
-
-const muted = "var(--muted-foreground, #667085)";
 
 function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   const { host, session } = props;
@@ -420,6 +657,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   );
   const inFlight = useRef(false);
   useEffect(() => session.onVisibility(setVisible), [session]);
+  const themeVars = useThemeVars(host, session, visible);
 
   const restored =
     session.restoreState &&
@@ -458,6 +696,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   };
 
   const repositoryVisible = visible && view === "repository";
+  const { begin: beginToast } = useMutationToasts(host, session, repositoryVisible);
   const { capabilities, error: capsError } = useCapabilities(
     host,
     session,
@@ -551,21 +790,33 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   ) => {
     if (inFlight.current) return;
     inFlight.current = true;
+    // The toast begins before the phase update so the receipt channel is
+    // recorded on the running phase itself: a mutation that could not start
+    // a notification keeps the inline row even if the capability probe
+    // resolves mid-flight, and a toast that later fails hands the receipt
+    // back through releaseMutationReceipt.
+    const toast = beginToast(label, () => setMutation(releaseMutationReceipt(op)));
     // The ref is the synchronous guard; startMutation is the same
     // single-flight rule expressed on the visible phase.
-    setMutation((phase) => startMutation(phase, op, label) ?? phase);
+    setMutation(
+      (phase) =>
+        startMutation(phase, op, label, toast === null ? "inline" : "notification") ?? phase,
+    );
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
     invoke(signal)
       .then(
-        (detail) => setMutation(settleMutation(op, { ok: true, detail })),
-        (error) =>
-          setMutation(
-            settleMutation(op, {
-              ok: false,
-              detail: `${label} failed: ${error instanceof Error ? error.message : "operation unavailable"}`,
-            }),
-          ),
+        (detail) => {
+          setMutation((phase) => settleMutation(phase, op, { ok: true, detail }));
+          toast?.settle({ ok: true, detail });
+        },
+        (error) => {
+          const detail = error instanceof Error ? error.message : "operation unavailable";
+          setMutation((phase) =>
+            settleMutation(phase, op, { ok: false, detail: `${label} failed: ${detail}` }),
+          );
+          toast?.settle({ ok: false, detail });
+        },
       )
       .finally(() => {
         inFlight.current = false;
@@ -828,10 +1079,11 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
         display: "flex",
         flexDirection: "column",
         minHeight: 0,
-        color: "var(--foreground, #20252d)",
-        background: "var(--background, #fff)",
+        color: "var(--t3-version-control-text, var(--foreground, #20252d))",
+        background: "var(--t3-version-control-canvas, var(--background, #fff))",
         fontFamily: "var(--font-sans, system-ui, sans-serif)",
         fontSize: 13,
+        ...themeVars,
       }}
     >
       <header
@@ -839,7 +1091,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
           display: "flex",
           gap: 6,
           padding: 8,
-          borderBottom: "1px solid var(--border, #dfe3e8)",
+          borderBottom: border,
           flexShrink: 0,
           alignItems: "center",
         }}
@@ -865,7 +1117,10 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                 padding: "2px 7px",
                 fontSize: 11,
                 fontWeight: view === value ? 600 : 400,
-                background: view === value ? "var(--accent, #e8eef7)" : "transparent",
+                background:
+                  view === value
+                    ? "var(--t3-version-control-accent-surface, var(--accent, #e8eef7))"
+                    : "transparent",
               }}
             >
               {label}
@@ -908,14 +1163,17 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
               Repository status unavailable — {repo.detail}
             </p>
           )}
-          {describeMutation(mutation) !== null && (
+          {mutation.kind !== "idle" && mutation.receipt === "inline" && (
             <output
               aria-label="Mutation status"
               role={mutation.kind === "failed" ? "alert" : "status"}
               style={{
                 display: "block",
                 padding: "4px 10px",
-                color: mutation.kind === "failed" ? "var(--destructive, #b42318)" : muted,
+                color:
+                  mutation.kind === "failed"
+                    ? "var(--t3-version-control-error, var(--destructive, #b42318))"
+                    : muted,
                 fontSize: 11,
               }}
             >
@@ -1058,10 +1316,10 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                               border: "1px solid transparent",
                               borderRadius: 5,
                               cursor: "pointer",
-                              color: "var(--foreground, #20252d)",
+                              color: "var(--t3-version-control-text, var(--foreground, #20252d))",
                               background:
                                 selected?.path === entry.path && selected.lane === lane
-                                  ? "var(--accent, #e8eef7)"
+                                  ? "var(--t3-version-control-accent-surface, var(--accent, #e8eef7))"
                                   : "transparent",
                               overflow: "hidden",
                               textOverflow: "ellipsis",
@@ -1120,7 +1378,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                         margin: 0,
                         padding: "2px 6px",
                         fontSize: 11,
-                        color: "var(--warning, #b54708)",
+                        color: "var(--t3-version-control-warning, var(--warning, #b54708))",
                       }}
                     >
                       Warning: committing on the default branch
@@ -1141,7 +1399,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                       padding: "4px 6px",
                       font: "inherit",
                       fontSize: 12,
-                      border: "1px solid var(--border, #dfe3e8)",
+                      border,
                       borderRadius: 5,
                       background: "transparent",
                       color: "inherit",
@@ -1397,7 +1655,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                         font: "inherit",
                         fontSize: 12,
                         padding: "3px 6px",
-                        border: "1px solid var(--border, #dfe3e8)",
+                        border,
                         borderRadius: 5,
                         background: "transparent",
                         color: "inherit",
@@ -1536,7 +1794,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                           font: "inherit",
                           fontSize: 12,
                           padding: "3px 6px",
-                          border: "1px solid var(--border, #dfe3e8)",
+                          border,
                           borderRadius: 5,
                           background: "transparent",
                           color: "inherit",
@@ -1623,7 +1881,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                               padding: "1px 6px",
                               fontSize: 11,
                               flexShrink: 0,
-                              color: "var(--destructive, #b42318)",
+                              color: "var(--t3-version-control-error, var(--destructive, #b42318))",
                             }}
                           >
                             Force remove
@@ -1730,7 +1988,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                 padding: "6px 10px",
                 color: muted,
                 fontSize: 11,
-                borderTop: "1px solid var(--border, #dfe3e8)",
+                borderTop: border,
                 flexShrink: 0,
               }}
             >
@@ -1749,7 +2007,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
           padding: "6px 10px",
           color: muted,
           fontSize: 11,
-          borderTop: "1px solid var(--border, #dfe3e8)",
+          borderTop: border,
           flexShrink: 0,
         }}
       >
@@ -1774,6 +2032,8 @@ export default defineExtension({
     requireApi(vcsChangesApi),
     requireApi(vcsRefsApi),
     requireApi(vcsRepositoryApi, REPOSITORY_API_RANGE),
+    requireApi(uiThemeApi),
+    requireApi(uiNotificationsApi),
   ],
   surfaces: [
     {

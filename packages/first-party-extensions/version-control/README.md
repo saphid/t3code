@@ -83,6 +83,46 @@ so the panel still loads against a 1.0.0 host; the 1.1.0 additions
 (push/fetch/listRemotes) gate on `operations` keys a 1.0.0 host never
 reports and simply hide.
 
+The panel adopts the `t3.ui/*` client contracts the native surface uses:
+
+- `t3.ui/theme@^1.0.0` — under the `t3.ui/theme.read` grant: `getTokens`
+  resolves the host's effective theme (stored preference, session overlay,
+  or external preview — the provider folds them) and `subscribeState`
+  re-reads on every transition. Resolved values land on the view root as
+  `--t3-version-control-*` variables ahead of each style's legacy `var()`
+  chain, so an installation without the grant — or a host that never
+  connects a theme provider — renders the pre-contract appearance
+  unchanged. A failed read or a lost subscription clears the published
+  overrides rather than retaining them: painting last-known values after
+  the contract stops serving them would lie about what the host paints.
+  `--success`, `--info`, and the `font-*` vars stay on the host
+  constants: they sit outside the contract's color-role set.
+- `t3.ui/notifications@^1.0.0` — under the `t3.ui/notify` grant: every
+  repository mutation opens a thread-anchored `loading` toast that updates
+  to `success` or `error` on settle, matching native `GitActionsControl`
+  receipts. The receipt channel is recorded on the mutation itself: the
+  inline row renders unless that mutation actually started a toast, so a
+  capability probe resolving mid-mutation never hides a receipt that has
+  none. A success receipt dismisses after the native 10 s window, counting
+  only time the receipt can actually be read — the view shown and the
+  document visible and focused — pausing across hidden spans like native's
+  `dismissAfterVisibleMs`; an unseen receipt never expires in the
+  background. Errors stay pinned until dismissed.
+  Every delivery loss — a denied `notify`, a rejected or unapplied
+  `update`, a user-dismissed loading toast — returns that mutation's
+  receipt to the inline row; only non-dismissal failures latch the
+  adapter dead. Non-mutation statuses (refs/changes/remotes read errors,
+  selection, branch-create notes) stay inline because native keeps them
+  inline too.
+
+The surface registers no `t3.ui/keybindings` commands — the native panel
+has no dedicated shortcuts (its inputs keep plain Enter/Escape handlers,
+mirrored here) — and makes no `t3.ui/panels` calls, since nothing in the
+native surface opens or closes panels programmatically.
+`SurfaceDescriptor.capabilities` stays empty: the field gates mounting on
+required host services, and `t3.ui/*` contracts are opportunistic
+client-provider APIs, not mount requirements.
+
 Still deferred: PR mutations (a later `t3.prs/*` control contract),
 publish/clone flows (no remote-creation contract — `sourceControl.*`
 provisioning is host-side), stash (no native binding exists to mirror),

@@ -85,11 +85,16 @@ import {
   type PrsWriteActionOffer,
 } from "./prsViewModel.js";
 
-const muted = "var(--muted-foreground, #667085)";
+// Theme-backed values chain a `--t3-version-control-*` hop (published on the
+// view root from `t3.ui/theme` tokens) ahead of the legacy host vars; an
+// unserved hop never resolves and the legacy chain renders.
+const muted = "var(--t3-version-control-muted-foreground, var(--muted-foreground, #667085))";
+const border = "1px solid var(--t3-version-control-border, var(--border, #dfe3e8))";
+const hairline = "1px solid var(--t3-version-control-border, var(--border, #f0f2f5))";
 
 const control = {
   padding: "4px 8px",
-  border: "1px solid var(--border, #dfe3e8)",
+  border,
   borderRadius: 5,
   background: "transparent",
   color: "inherit",
@@ -106,7 +111,7 @@ const inputStyle = {
   font: "inherit",
   fontSize: 12,
   padding: "3px 6px",
-  border: "1px solid var(--border, #dfe3e8)",
+  border,
   borderRadius: 5,
   background: "transparent",
   color: "inherit",
@@ -669,10 +674,12 @@ function useDebounced<T>(value: T, delay: number): T {
 
 function badge(text: string, tone: "open" | "closed" | "merged" | "muted") {
   const colors: Record<string, string> = {
+    // `--success`/`--info` are host constants outside the theme contract's
+    // role set — the native panel reads the same variables.
     open: "var(--success, #2da44e)",
-    closed: "var(--muted-foreground, #667085)",
+    closed: muted,
     merged: "var(--info, #8250df)",
-    muted: "var(--muted-foreground, #667085)",
+    muted,
   };
   return (
     <span
@@ -721,7 +728,7 @@ function PrListRow(props: {
           border: "1px solid transparent",
           borderRadius: 5,
           cursor: "pointer",
-          color: "var(--foreground, #20252d)",
+          color: "var(--t3-version-control-text, var(--foreground, #20252d))",
           background: "transparent",
         }}
       >
@@ -793,7 +800,7 @@ function PrListRow(props: {
                   fontSize: 10,
                   padding: "0 5px",
                   borderRadius: 8,
-                  border: "1px solid var(--border, #dfe3e8)",
+                  border,
                   color: muted,
                 }}
               >
@@ -835,7 +842,7 @@ function CheckRow({ check }: { check: PrsCheck }) {
             check.status === "success"
               ? "var(--success, #2da44e)"
               : check.status === "failure" || check.status === "action-required"
-                ? "var(--destructive, #b42318)"
+                ? "var(--t3-version-control-error, var(--destructive, #b42318))"
                 : muted,
           flexShrink: 0,
         }}
@@ -865,9 +872,7 @@ function CheckRow({ check }: { check: PrsCheck }) {
 function CommentRow({ comment }: { comment: PrsComment }) {
   const verdict = prsReviewVerdictLabel(comment.reviewState);
   return (
-    <li
-      style={{ padding: "4px 10px", fontSize: 12, borderTop: "1px solid var(--border, #f0f2f5)" }}
-    >
+    <li style={{ padding: "4px 10px", fontSize: 12, borderTop: hairline }}>
       <div style={{ color: muted, fontSize: 11 }}>
         {prsActorLabel(comment.author)}
         {verdict !== null ? ` ${verdict}` : comment.kind === "review" ? " reviewed" : " commented"}
@@ -916,7 +921,7 @@ function ReviewThreadSection(props: {
   return (
     <section
       aria-label={`Thread on ${prsThreadAnchor(thread)}`}
-      style={{ borderTop: "1px solid var(--border, #f0f2f5)", paddingBottom: 4 }}
+      style={{ borderTop: hairline, paddingBottom: 4 }}
     >
       <h4 style={{ ...headingStyle, padding: "4px 10px 2px", textTransform: "none" }}>
         <span style={{ fontFamily: "var(--font-mono, ui-monospace, monospace)" }}>
@@ -1028,7 +1033,7 @@ function PrsDiffRow({ row }: { row: ReturnType<typeof fileRows>[number] }) {
           ...diffRowBase,
           justifyContent: "center",
           color: muted,
-          background: "var(--muted, #f4f5f7)",
+          background: "var(--t3-version-control-muted, var(--muted, #f4f5f7))",
           fontStyle: "italic",
         }}
       >
@@ -1045,7 +1050,7 @@ function PrsDiffRow({ row }: { row: ReturnType<typeof fileRows>[number] }) {
         background: addition
           ? "color-mix(in srgb, var(--success, #2da44e) 14%, transparent)"
           : deletion
-            ? "color-mix(in srgb, var(--destructive, #cf222e) 12%, transparent)"
+            ? "color-mix(in srgb, var(--t3-version-control-error, var(--destructive, #cf222e)) 12%, transparent)"
             : "transparent",
       }}
     >
@@ -1066,10 +1071,7 @@ function PrsFileSection({ row }: { row: DiffFileRow }) {
     [collapsed, row],
   );
   return (
-    <section
-      aria-label={displayPath(row)}
-      style={{ borderTop: "1px solid var(--border, #f0f2f5)" }}
-    >
+    <section aria-label={displayPath(row)} style={{ borderTop: hairline }}>
       <header
         style={{
           display: "flex",
@@ -1686,7 +1688,7 @@ export function PullRequestsPanel(props: {
           alignItems: "center",
           gap: 6,
           padding: "4px 8px",
-          borderBottom: "1px solid var(--border, #f0f2f5)",
+          borderBottom: hairline,
           flexShrink: 0,
           flexWrap: "wrap",
         }}
@@ -1704,7 +1706,9 @@ export function PullRequestsPanel(props: {
                     ...iconButton,
                     fontWeight: listState === option.value ? 600 : 400,
                     background:
-                      listState === option.value ? "var(--accent, #e8eef7)" : "transparent",
+                      listState === option.value
+                        ? "var(--t3-version-control-accent-surface, var(--accent, #e8eef7))"
+                        : "transparent",
                   }}
                 >
                   {option.label}
@@ -1943,7 +1947,7 @@ export function PullRequestsPanel(props: {
                           fontSize: 11,
                           whiteSpace: "pre-wrap",
                           overflowWrap: "anywhere",
-                          background: "var(--muted, #f4f5f7)",
+                          background: "var(--t3-version-control-muted, var(--muted, #f4f5f7))",
                           borderRadius: 5,
                           maxHeight: 220,
                           overflow: "auto",
