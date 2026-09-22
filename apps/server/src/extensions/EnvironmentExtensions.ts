@@ -49,10 +49,12 @@ import { makeTextEditsApiProvider } from "./textEditsApi.ts";
 import { makeWorkspaceResourcesApiProvider } from "./workspaceResourcesApi.ts";
 import { makeResourcesLeaseApiProvider } from "./resourcesLeaseApi.ts";
 import { makeVcsApiProviders } from "./vcsApi.ts";
+import { makeVcsActionsApiProvider } from "./vcsActionsApi.ts";
 import { makeVcsDiffApiProvider } from "./vcsDiffApi.ts";
 import { makeComposerApiProviders } from "./composerApi.ts";
 import { makePrsApiProvider } from "./prs/v1.ts";
 import { makeProvidersStatusApiProvider } from "./providersStatusApi.ts";
+import { makePrsWriteApiProvider } from "./prs/write.ts";
 import { boundedWorkspaceText } from "./workspaceText.ts";
 import { make as makeClientApiProviders } from "./ClientApiProviders.ts";
 import { createUiClientApiProviders } from "./uiClientApis.ts";
@@ -139,6 +141,14 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
       return entry !== undefined && (await authorize(entry, grant, context));
     },
   });
+  // Same late-bound caller-chain grant check as the lease provider —
+  // publishRepository and the composite's pr phase ask for `t3.prs/write`
+  // dynamically, which `requiredGrants` cannot express.
+  const vcsActionsApi = yield* makeVcsActionsApiProvider(async (callerId, grant, context) => {
+    const entry = extensionRuntime?.list().find((item) => item.id === callerId);
+    return entry !== undefined && (await authorize(entry, grant, context));
+  });
+  const prsWriteApi = yield* makePrsWriteApiProvider();
   const read = Effect.fn("EnvironmentExtensions.readWorkspace")(function* (
     input: unknown,
     context: ViewContext,
@@ -188,10 +198,12 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
             terminalOutputEventsApi,
             terminalControlApi,
             ...vcsApis,
+            vcsActionsApi,
             vcsDiffApi,
             ...orchestrationApis,
             prsApi,
             providersStatusApi,
+            prsWriteApi,
             resourcesLeaseApi,
             ...composerApis,
             ...uiApis,

@@ -15,8 +15,10 @@
  * feeds; this file keeps the patch-faithful row model only (full-file
  * context expansion waits on `streamDiffFileContents`, a named defer).
  *
- * PR mutations are out of scope by contract design — `t3.prs/read`
- * ships no write methods and the panel renders no fake controls.
+ * Writes ride `t3.prs/write`: the write gate's probe result decides
+ * which affordances exist (host-declared actions, merge methods,
+ * verdicts, per-op support), and a grant the installation does not
+ * hold surfaces as a named unavailability rather than a dead button.
  */
 import type { FileDiffMetadata } from "@pierre/diffs/types";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
@@ -32,6 +34,12 @@ import type {
   PrsProviderSummary,
   PrsReviewThread,
   PrsStackMembership,
+  PrsWriteActionKind,
+  PrsWriteCapabilitiesResult,
+  PrsWriteMergeMethod,
+  PrsWriteOperationsSupport,
+  PrsWriteUpdateMethod,
+  PrsWriteVerdict,
 } from "@t3tools/extension-sdk/catalogue";
 
 /* ---------------- capability gate ---------------- */
@@ -794,14 +802,234 @@ export function fileStatLabel(row: DiffFileRow): string {
   return `+${row.additions} −${row.deletions}`;
 }
 
-/* ---------------- honest deferrals ---------------- */
+/* ---------------- writes (t3.prs/write) ---------------- */
+
+export type PrsWriteGate =
+  | { readonly kind: "loading" }
+  /** The `getCapabilities` invoke itself failed — grant denial or broker error, surfaced verbatim. */
+  | { readonly kind: "error"; readonly detail: string }
+  /** The probe answered a named unavailable state. */
+  | {
+      readonly kind: "unavailable";
+      readonly reason: PrsUnavailableReason;
+      readonly detail: string | null;
+    }
+  | {
+      readonly kind: "ready";
+      readonly operations: PrsWriteOperationsSupport;
+      readonly actions: readonly PrsWriteActionKind[];
+      readonly mergeMethods: readonly PrsWriteMergeMethod[];
+      readonly updateMethods: readonly PrsWriteUpdateMethod[];
+      readonly verdicts: readonly PrsWriteVerdict[];
+    };
 
 /**
- * The read contract ships no write methods — the panel names what the
- * later control contract will own instead of rendering fake controls.
+ * The write gate, run against `t3.prs/write`'s own probe. A grant the
+ * installation does not hold fails the invoke outright — the error kind
+ * carries the denial verbatim rather than implying support.
  */
-export const PRS_MUTATIONS_DEFERRED =
-  "Pull-request mutations are not part of this contract — merge and update actions, comments, reviews, thread resolution, reactions, reviewers, and labels are deferred to a later control contract.";
+export function prsWriteGate(
+  capabilities: PrsWriteCapabilitiesResult | null,
+  error: string | null,
+): PrsWriteGate {
+  if (error !== null) return { kind: "error", detail: error };
+  if (capabilities === null) return { kind: "loading" };
+  if (capabilities.hosted && capabilities.reason === null) {
+    return {
+      kind: "ready",
+      operations: capabilities.operations,
+      actions: capabilities.actions,
+      mergeMethods: capabilities.mergeMethods,
+      updateMethods: capabilities.updateMethods,
+      verdicts: capabilities.verdicts,
+    };
+  }
+  return {
+    kind: "unavailable",
+    reason: capabilities.reason ?? "provider-unsupported",
+    detail: capabilities.detail,
+  };
+}
+
+/** Button text for a host action — the native panel's own verbs. */
+export function prsWriteActionLabel(action: PrsWriteActionKind): string {
+  switch (action) {
+    case "merge":
+      return "Merge";
+    case "ready":
+      return "Mark ready for review";
+    case "draft":
+      return "Convert to draft";
+    case "close":
+      return "Close";
+    case "reopen":
+      return "Reopen";
+    case "update-branch":
+      return "Update branch";
+    case "enable-auto-merge":
+      return "Enable auto-merge";
+    case "disable-auto-merge":
+      return "Disable auto-merge";
+    case "revert":
+      return "Revert";
+    case "approve-workflows":
+      return "Approve workflows";
+  }
+}
+
+export interface PrsWriteActionOffer {
+  readonly action: PrsWriteActionKind;
+  readonly label: string;
+  /** `merge` picks among the host's declared methods when it has more than one. */
+  readonly methods?: readonly PrsWriteMergeMethod[];
+  /** `update-branch` picks among the host's declared methods when it has more than one. */
+  readonly updateMethods?: readonly PrsWriteUpdateMethod[];
+  /** Close/revert are destructive-direction writes — drawn apart from the rest. */
+  readonly destructive: boolean;
+}
+
+/**
+ * The actions bar for a loaded detail: state decides which writes are
+ * even sensible (a closed change request has no merge to offer), then the
+ * host's declared `actions` intersects that set — nothing is drawn that
+ * the provider did not claim, which is the native panel's own rule.
+ */
+export function prsWriteActionOffers(
+  detail: {
+    readonly state: "open" | "closed" | "merged";
+    readonly isDraft: boolean;
+    readonly baseComparison?: "ahead" | "behind" | "diverged" | "up-to-date" | string;
+    readonly autoMergeEnabled?: boolean;
+    readonly workflowApprovalsRequired?: number;
+  },
+  write: {
+    readonly actions: readonly PrsWriteActionKind[];
+    readonly mergeMethods: readonly PrsWriteMergeMethod[];
+    readonly updateMethods: readonly PrsWriteUpdateMethod[];
+  },
+): readonly PrsWriteActionOffer[] {
+  const declared = new Set(write.actions);
+  const offer = (
+    action: PrsWriteActionKind,
+    extra?: Partial<Pick<PrsWriteActionOffer, "methods" | "updateMethods">>,
+  ): PrsWriteActionOffer | null =>
+    declared.has(action)
+      ? {
+          action,
+          label: prsWriteActionLabel(action),
+          destructive: action === "close" || action === "revert",
+          ...(extra?.methods !== undefined ? { methods: extra.methods } : {}),
+          ...(extra?.updateMethods !== undefined ? { updateMethods: extra.updateMethods } : {}),
+        }
+      : null;
+  const offers: PrsWriteActionOffer[] = [];
+  if (detail.state === "open") {
+    if (!detail.isDraft) {
+      const merge = offer("merge", { methods: write.mergeMethods });
+      if (merge !== null) offers.push(merge);
+      const draft = offer("draft");
+      if (draft !== null) offers.push(draft);
+    } else {
+      const ready = offer("ready");
+      if (ready !== null) offers.push(ready);
+    }
+    if (detail.baseComparison === "behind" || detail.baseComparison === "diverged") {
+      const update = offer("update-branch", { updateMethods: write.updateMethods });
+      if (update !== null) offers.push(update);
+    }
+    if (detail.autoMergeEnabled === true) {
+      const disarm = offer("disable-auto-merge");
+      if (disarm !== null) offers.push(disarm);
+    } else if (detail.autoMergeEnabled === false) {
+      const arm = offer("enable-auto-merge");
+      if (arm !== null) offers.push(arm);
+    }
+    const close = offer("close");
+    if (close !== null) offers.push(close);
+    if ((detail.workflowApprovalsRequired ?? 0) > 0) {
+      const approve = offer("approve-workflows");
+      if (approve !== null) offers.push(approve);
+    }
+  } else if (detail.state === "closed") {
+    const reopen = offer("reopen");
+    if (reopen !== null) offers.push(reopen);
+  } else {
+    const revert = offer("revert");
+    if (revert !== null) offers.push(revert);
+  }
+  return offers;
+}
+
+/** Review verdicts the host accepts, as picker options in the native order. */
+export function prsWriteVerdictOptions(
+  verdicts: readonly PrsWriteVerdict[],
+): readonly { readonly value: PrsWriteVerdict; readonly label: string }[] {
+  const order: readonly PrsWriteVerdict[] = ["comment", "approve", "request-changes"];
+  const labels: Record<PrsWriteVerdict, string> = {
+    comment: "Comment",
+    approve: "Approve",
+    "request-changes": "Request changes",
+  };
+  return order
+    .filter((verdict) => verdicts.includes(verdict))
+    .map((verdict) => ({ value: verdict, label: labels[verdict] }));
+}
+
+/**
+ * The effective verdict for the review composer. The selection lives in
+ * the draft store so a refresh remount cannot downgrade it — a stored
+ * value the host still declares wins; anything else (unset, or a verdict
+ * the provider no longer lists) falls back to the first declared option.
+ */
+export function prsReviewVerdict(
+  draft: string,
+  verdicts: readonly { readonly value: PrsWriteVerdict }[],
+): PrsWriteVerdict {
+  return verdicts.some((option) => option.value === draft)
+    ? (draft as PrsWriteVerdict)
+    : (verdicts[0]?.value ?? "comment");
+}
+
+/** Shown where write controls would stand when the write probe failed. */
+export function prsWriteUnavailableNote(gate: PrsWriteGate): string | null {
+  if (gate.kind === "loading") return "Reading write capabilities…";
+  if (gate.kind === "error") return `Pull-request writes unavailable — ${gate.detail}`;
+  if (gate.kind === "unavailable") {
+    const base =
+      gate.reason === "cli-missing"
+        ? "Pull-request writes need a host CLI that is not installed"
+        : gate.reason === "cli-unauthenticated"
+          ? "Pull-request writes need an authenticated host CLI"
+          : "This project's host cannot take pull-request writes";
+    return gate.detail !== null ? `${base} — ${gate.detail}` : base;
+  }
+  return null;
+}
+
+/**
+ * Composer drafts keyed by `${prsRefKey}:${writeKey}` — the panel owns
+ * them so a refresh reprobe (which unmounts the ready subtree while the
+ * capability hooks re-read) cannot take the author's words with it.
+ */
+export function prsDraftKey(prKey: string | null, writeKey: string): string {
+  return `${prKey ?? "-"}\n${writeKey}`;
+}
+
+/**
+ * Settle a submitted draft: drop it only when it is still exactly what
+ * was submitted. Text typed while the request was in flight is newer
+ * work and survives the success.
+ */
+export function settlePrsDraft(
+  drafts: Readonly<Record<string, string>>,
+  key: string,
+  submitted: string,
+): Readonly<Record<string, string>> {
+  if ((drafts[key] ?? "") !== submitted) return drafts;
+  const next = { ...drafts };
+  delete next[key];
+  return next;
+}
 
 export const PRS_DIFF_CONTENTS_DEFERRED =
   "Full-file context expansion is deferred — streamDiffFileContents is not consumed by this panel yet.";

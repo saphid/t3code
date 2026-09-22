@@ -4230,6 +4230,1102 @@ export const prsReadApi: TypedApi<{
 export const PRS_READ_API = prsReadApi.definition;
 
 /* ------------------------------------------------------------------------
+ * t3.vcs/actions — repository mutation actions (the native stacked-action
+ * composite plus the Operate-scoped git seams the composite family owns).
+ *
+ * `run` starts the native `gitRunStackedAction` composite under a
+ * server-minted action id and returns that id; progress travels on the
+ * separate `actionProgress` stream (T2 transport — the broker's streams are
+ * read-only, so a mutating stream is not an option). `cwd`, `threadId`, and
+ * `actionId` are server-side: the scope resolver binds the workspace, the
+ * scope's own thread receives the created-PR link, and the adapter mints
+ * the id. `commitMessage` left blank keeps the native leave-blank
+ * auto-generate dialog semantics — the composite generates the message.
+ */
+
+export const VCS_ACTIONS = "t3.vcs/actions";
+
+export type VcsActionKind = "commit" | "push" | "create_pr" | "commit_push" | "commit_push_pr";
+export type VcsActionPhase = "branch" | "commit" | "push" | "pr";
+export type VcsActionRunInput = {
+  readonly action: VcsActionKind;
+  /** Blank or absent keeps native semantics — the composite generates the message. */
+  readonly commitMessage?: string;
+  readonly featureBranch?: boolean;
+  readonly paths?: readonly string[];
+};
+export type VcsActionRunResult = { readonly actionId: string };
+
+/**
+ * P1 provenance — success-only UI metadata. `"caller"` means the text was
+ * supplied to this operation (transport provenance, not human authorship);
+ * `"generated"` the composite wrote it; `"existing"` an already-open change
+ * request of unknown authorship; `"not_applicable"` the phase did not run.
+ * Partial-failure provenance (a generated commit under a failed push)
+ * carries no flag — the failure event names the phase instead.
+ */
+export type VcsActionMessageSource = "caller" | "generated" | "not_applicable";
+export type VcsActionContentSource = "caller" | "generated" | "existing" | "not_applicable";
+
+export type VcsActionResult = {
+  readonly action: VcsActionKind;
+  readonly branch: {
+    readonly status: "created" | "skipped_not_requested";
+    readonly name?: string;
+  };
+  readonly commit: {
+    readonly status: "created" | "skipped_no_changes" | "skipped_not_requested";
+    readonly commitSha?: string;
+    readonly subject?: string;
+    readonly messageSource: VcsActionMessageSource;
+  };
+  readonly push: {
+    readonly status: "pushed" | "skipped_not_requested" | "skipped_up_to_date";
+    readonly branch?: string;
+    readonly upstreamBranch?: string;
+    readonly setUpstream?: boolean;
+  };
+  readonly pr: {
+    readonly status: "created" | "opened_existing" | "skipped_not_requested";
+    readonly url?: string;
+    readonly number?: number;
+    readonly baseBranch?: string;
+    readonly headBranch?: string;
+    readonly title?: string;
+    readonly contentSource: VcsActionContentSource;
+  };
+  readonly toast: {
+    readonly title: string;
+    readonly description?: string;
+    readonly cta:
+      | { readonly kind: "none" }
+      | { readonly kind: "open_pr"; readonly label: string; readonly url: string }
+      | {
+          readonly kind: "run_action";
+          readonly label: string;
+          readonly action: { readonly kind: VcsActionKind };
+        };
+  };
+};
+
+/**
+ * `actionProgress` events — the native `GitActionProgressEvent` union minus
+ * `actionId`/`cwd` (server-side correlation), with the terminal result
+ * carrying the SDK-side provenance annotations. `closed{overflow}` ends the
+ * stream by name when a consumer falls behind or the retained history is
+ * cut, never a silent gap. `action_finished` means the git phases finished;
+ * the adapter's link+refresh tail (native ordering) may still be settling.
+ * `closed{authorization-revoked}` may follow the phase terminal when the
+ * detached post-service recheck finds authority or the dynamic PR grant
+ * gone — git effects already persisted, so the denial is named by the
+ * check that failed, never a generic `action_failed{phase}`. Consumers
+ * must read the stream to settlement, not stop at `action_finished`.
+ */
+export type VcsActionProgressEvent =
+  | {
+      readonly kind: "action_started";
+      readonly action: VcsActionKind;
+      readonly phases: readonly VcsActionPhase[];
+    }
+  | {
+      readonly kind: "phase_started";
+      readonly action: VcsActionKind;
+      readonly phase: VcsActionPhase;
+      readonly label: string;
+    }
+  | { readonly kind: "hook_started"; readonly action: VcsActionKind; readonly hookName: string }
+  | {
+      readonly kind: "hook_output";
+      readonly action: VcsActionKind;
+      readonly hookName: string | null;
+      readonly stream: "stdout" | "stderr";
+      readonly text: string;
+    }
+  | {
+      readonly kind: "hook_finished";
+      readonly action: VcsActionKind;
+      readonly hookName: string;
+      readonly exitCode: number | null;
+      readonly durationMs: number | null;
+    }
+  | {
+      readonly kind: "action_finished";
+      readonly action: VcsActionKind;
+      readonly result: VcsActionResult;
+    }
+  | {
+      readonly kind: "action_failed";
+      readonly action: VcsActionKind;
+      readonly phase: VcsActionPhase | null;
+      readonly message: string;
+    }
+  | { readonly kind: "closed"; readonly reason: "overflow" | "authorization-revoked" };
+
+export type VcsActionProgressInput = { readonly actionId: string };
+
+export type VcsActionResolvedPullRequest = {
+  readonly number: number;
+  readonly title: string;
+  readonly url: string;
+  readonly baseBranch: string;
+  readonly headBranch: string;
+  readonly state: "open" | "closed" | "merged";
+};
+export type VcsActionResolvePullRequestInput = { readonly reference: string };
+export type VcsActionResolvePullRequestResult = {
+  readonly pullRequest: VcsActionResolvedPullRequest;
+};
+export type VcsActionPrepareThreadInput = {
+  readonly reference: string;
+  readonly mode: "local" | "worktree";
+};
+export type VcsActionPrepareThreadResult = {
+  readonly pullRequest: VcsActionResolvedPullRequest;
+  readonly branch: string;
+  readonly worktreePath: string | null;
+  readonly isOnPullRequestHead: boolean;
+};
+export type VcsActionPublishInput = {
+  readonly provider: PrsProviderKind;
+  readonly repository: string;
+  readonly visibility: "private" | "public";
+  readonly remoteName?: string;
+  readonly protocol?: "auto" | "ssh" | "https";
+};
+export type VcsActionPublishResult = {
+  readonly repository: {
+    readonly provider: PrsProviderKind;
+    readonly nameWithOwner: string;
+    readonly url: string;
+    readonly sshUrl: string;
+  };
+  readonly remoteName: string;
+  readonly remoteUrl: string;
+  readonly branch: string;
+  readonly upstreamBranch?: string;
+  readonly status: "pushed" | "remote_added";
+};
+/** Per-operation support flags keyed by `actions.<method|stream>`. */
+export type VcsActionsOperationsSupport = {
+  readonly "actions.run": boolean;
+  readonly "actions.resolvePullRequest": boolean;
+  readonly "actions.preparePullRequestThread": boolean;
+  readonly "actions.publishRepository": boolean;
+  readonly "actions.actionProgress": boolean;
+};
+export type VcsActionsCapabilitiesResult = {
+  readonly detected: boolean;
+  readonly kind: VcsDriverKindValue | null;
+  readonly detail: string | null;
+  readonly driver: VcsDriverCapabilitiesInfo | null;
+  readonly operations: VcsActionsOperationsSupport;
+};
+
+const vcsActionKindSchema = {
+  enum: ["commit", "push", "create_pr", "commit_push", "commit_push_pr"],
+} as const;
+const vcsActionPhaseSchema = { enum: ["branch", "commit", "push", "pr"] } as const;
+const vcsActionMessageSourceSchema = { enum: ["caller", "generated", "not_applicable"] } as const;
+const vcsActionContentSourceSchema = {
+  enum: ["caller", "generated", "existing", "not_applicable"],
+} as const;
+const vcsActionResultSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["action", "branch", "commit", "push", "pr", "toast"],
+  properties: {
+    action: vcsActionKindSchema,
+    branch: {
+      type: "object",
+      additionalProperties: false,
+      required: ["status"],
+      properties: {
+        status: { enum: ["created", "skipped_not_requested"] },
+        name: { type: "string", minLength: 1, maxLength: 4096 },
+      },
+    },
+    commit: {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "messageSource"],
+      properties: {
+        status: { enum: ["created", "skipped_no_changes", "skipped_not_requested"] },
+        commitSha: { type: "string", minLength: 1, maxLength: 128 },
+        subject: { type: "string", minLength: 1, maxLength: 4096 },
+        messageSource: vcsActionMessageSourceSchema,
+      },
+    },
+    push: {
+      type: "object",
+      additionalProperties: false,
+      required: ["status"],
+      properties: {
+        status: { enum: ["pushed", "skipped_not_requested", "skipped_up_to_date"] },
+        branch: { type: "string", minLength: 1, maxLength: 4096 },
+        upstreamBranch: { type: "string", minLength: 1, maxLength: 4096 },
+        setUpstream: { type: "boolean" },
+      },
+    },
+    pr: {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "contentSource"],
+      properties: {
+        status: { enum: ["created", "opened_existing", "skipped_not_requested"] },
+        url: { type: "string", minLength: 1, maxLength: 4096 },
+        number: { type: "integer", minimum: 1 },
+        baseBranch: { type: "string", minLength: 1, maxLength: 4096 },
+        headBranch: { type: "string", minLength: 1, maxLength: 4096 },
+        title: { type: "string", minLength: 1, maxLength: 2048 },
+        contentSource: vcsActionContentSourceSchema,
+      },
+    },
+    toast: {
+      type: "object",
+      additionalProperties: false,
+      required: ["title", "cta"],
+      properties: {
+        title: { type: "string", minLength: 1, maxLength: 512 },
+        description: { type: "string", minLength: 1, maxLength: 1024 },
+        cta: {
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind"],
+              properties: { kind: { const: "none" } },
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "label", "url"],
+              properties: {
+                kind: { const: "open_pr" },
+                label: { type: "string", minLength: 1, maxLength: 256 },
+                url: { type: "string", maxLength: 4096 },
+              },
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "label", "action"],
+              properties: {
+                kind: { const: "run_action" },
+                label: { type: "string", minLength: 1, maxLength: 256 },
+                action: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["kind"],
+                  properties: { kind: vcsActionKindSchema },
+                },
+              },
+            },
+          ],
+        },
+      },
+    },
+  },
+} as const;
+const vcsActionEventBase = {
+  action: vcsActionKindSchema,
+} as const;
+const vcsActionProgressEventSchema = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "action", "phases"],
+      properties: {
+        kind: { const: "action_started" },
+        ...vcsActionEventBase,
+        phases: { type: "array", maxItems: 4, items: vcsActionPhaseSchema },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "action", "phase", "label"],
+      properties: {
+        kind: { const: "phase_started" },
+        ...vcsActionEventBase,
+        phase: vcsActionPhaseSchema,
+        label: { type: "string", minLength: 1, maxLength: 1024 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "action", "hookName"],
+      properties: {
+        kind: { const: "hook_started" },
+        ...vcsActionEventBase,
+        hookName: { type: "string", minLength: 1, maxLength: 512 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "action", "hookName", "stream", "text"],
+      properties: {
+        kind: { const: "hook_output" },
+        ...vcsActionEventBase,
+        hookName: { type: ["string", "null"], minLength: 1, maxLength: 512 },
+        stream: { enum: ["stdout", "stderr"] },
+        // Native bounds hook lines at 500 chars; keep slack for future raises.
+        text: { type: "string", minLength: 1, maxLength: 4096 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "action", "hookName", "exitCode", "durationMs"],
+      properties: {
+        kind: { const: "hook_finished" },
+        ...vcsActionEventBase,
+        hookName: { type: "string", minLength: 1, maxLength: 512 },
+        exitCode: { type: ["integer", "null"] },
+        durationMs: { type: ["integer", "null"], minimum: 0 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "action", "result"],
+      properties: {
+        kind: { const: "action_finished" },
+        ...vcsActionEventBase,
+        result: vcsActionResultSchema,
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "action", "phase", "message"],
+      properties: {
+        kind: { const: "action_failed" },
+        ...vcsActionEventBase,
+        phase: { type: ["string", "null"], enum: ["branch", "commit", "push", "pr", null] },
+        message: { type: "string", minLength: 1, maxLength: 4096 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "reason"],
+      properties: {
+        kind: { const: "closed" },
+        reason: { enum: ["overflow", "authorization-revoked"] },
+      },
+    },
+  ],
+} as const;
+const vcsActionResolvedPullRequestSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["number", "title", "url", "baseBranch", "headBranch", "state"],
+  properties: {
+    number: { type: "integer", minimum: 1 },
+    title: { type: "string", minLength: 1, maxLength: 2048 },
+    url: { type: "string", maxLength: 4096 },
+    baseBranch: { type: "string", minLength: 1, maxLength: 4096 },
+    headBranch: { type: "string", minLength: 1, maxLength: 4096 },
+    state: { enum: ["open", "closed", "merged"] },
+  },
+} as const;
+const vcsActionReferenceInputSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["reference"],
+  properties: {
+    reference: { type: "string", minLength: 1, maxLength: 2048 },
+  },
+} as const;
+const vcsActionsOperationsSupportSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "actions.run",
+    "actions.resolvePullRequest",
+    "actions.preparePullRequestThread",
+    "actions.publishRepository",
+    "actions.actionProgress",
+  ],
+  properties: {
+    "actions.run": { type: "boolean" },
+    "actions.resolvePullRequest": { type: "boolean" },
+    "actions.preparePullRequestThread": { type: "boolean" },
+    "actions.publishRepository": { type: "boolean" },
+    "actions.actionProgress": { type: "boolean" },
+  },
+} as const;
+const vcsActionsCapabilitiesResultSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["detected", "kind", "detail", "driver", "operations"],
+  properties: {
+    detected: { type: "boolean" },
+    kind: { type: ["string", "null"], enum: ["git", "jj", "unknown", null] },
+    detail: { type: ["string", "null"], maxLength: 512 },
+    driver: vcsDriverCapabilitiesSchema,
+    operations: vcsActionsOperationsSupportSchema,
+  },
+} as const;
+
+export const vcsActionsApi: TypedApi<{
+  getCapabilities: { input: Record<string, never>; output: VcsActionsCapabilitiesResult };
+  run: { input: VcsActionRunInput; output: VcsActionRunResult };
+  resolvePullRequest: {
+    input: VcsActionResolvePullRequestInput;
+    output: VcsActionResolvePullRequestResult;
+  };
+  preparePullRequestThread: {
+    input: VcsActionPrepareThreadInput;
+    output: VcsActionPrepareThreadResult;
+  };
+  publishRepository: { input: VcsActionPublishInput; output: VcsActionPublishResult };
+}> &
+  TypedStreamApi<{
+    actionProgress: { input: VcsActionProgressInput; event: VcsActionProgressEvent };
+  }> = defineStreamApi<{
+  actionProgress: { input: VcsActionProgressInput; event: VcsActionProgressEvent };
+}>({
+  id: VCS_ACTIONS,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [VCS_READ],
+      inputSchema: prsEmptyInputSchema,
+      outputSchema: vcsActionsCapabilitiesResultSchema,
+    },
+    {
+      name: "run",
+      effect: "write",
+      requiredGrants: [VCS_MUTATE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["action"],
+        properties: {
+          action: vcsActionKindSchema,
+          commitMessage: { type: "string", maxLength: 10000 },
+          featureBranch: { type: "boolean" },
+          paths: {
+            type: "array",
+            minItems: 1,
+            maxItems: 100,
+            items: { type: "string", minLength: 1, maxLength: 512 },
+          },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["actionId"],
+        properties: { actionId: { type: "string", minLength: 1, maxLength: 128 } },
+      },
+    },
+    {
+      name: "resolvePullRequest",
+      // Read-shaped but Operate-gated: it shells the provider CLI, matching
+      // the native RPC's Operate scope (design: `t3.vcs/mutate`).
+      effect: "read",
+      requiredGrants: [VCS_MUTATE],
+      inputSchema: vcsActionReferenceInputSchema,
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["pullRequest"],
+        properties: { pullRequest: vcsActionResolvedPullRequestSchema },
+      },
+    },
+    {
+      name: "preparePullRequestThread",
+      effect: "write",
+      requiredGrants: [VCS_MUTATE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["reference", "mode"],
+        properties: {
+          reference: { type: "string", minLength: 1, maxLength: 2048 },
+          mode: { enum: ["local", "worktree"] },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["pullRequest", "branch", "worktreePath", "isOnPullRequestHead"],
+        properties: {
+          pullRequest: vcsActionResolvedPullRequestSchema,
+          branch: { type: "string", minLength: 1, maxLength: 4096 },
+          worktreePath: { type: ["string", "null"], minLength: 1, maxLength: 32768 },
+          isOnPullRequestHead: { type: "boolean" },
+        },
+      },
+    },
+    {
+      name: "publishRepository",
+      // Declared `t3.vcs/mutate`; the adapter additionally requires every
+      // caller in the chain to hold `t3.prs/write` (P-a conjunctive under
+      // G3 — a comment-only grant must never reach pushCurrentBranch).
+      effect: "write",
+      requiredGrants: [VCS_MUTATE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["provider", "repository", "visibility"],
+        properties: {
+          provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+          repository: { type: "string", minLength: 1, maxLength: 512 },
+          visibility: { enum: ["private", "public"] },
+          remoteName: { type: "string", minLength: 1, maxLength: 256 },
+          protocol: { enum: ["auto", "ssh", "https"] },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["repository", "remoteName", "remoteUrl", "branch", "status"],
+        properties: {
+          repository: {
+            type: "object",
+            additionalProperties: false,
+            required: ["provider", "nameWithOwner", "url", "sshUrl"],
+            properties: {
+              provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+              nameWithOwner: { type: "string", minLength: 1, maxLength: 512 },
+              url: { type: "string", minLength: 1, maxLength: 4096 },
+              sshUrl: { type: "string", minLength: 1, maxLength: 4096 },
+            },
+          },
+          remoteName: { type: "string", minLength: 1, maxLength: 256 },
+          remoteUrl: { type: "string", minLength: 1, maxLength: 4096 },
+          branch: { type: "string", minLength: 1, maxLength: 4096 },
+          upstreamBranch: { type: "string", minLength: 1, maxLength: 4096 },
+          status: { enum: ["pushed", "remote_added"] },
+        },
+      },
+    },
+  ],
+  streams: [
+    {
+      name: "actionProgress",
+      requiredGrants: [VCS_READ],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["actionId"],
+        properties: { actionId: { type: "string", minLength: 1, maxLength: 128 } },
+      },
+      eventSchema: vcsActionProgressEventSchema,
+    },
+  ],
+});
+export const VCS_ACTIONS_API = vcsActionsApi.definition;
+
+/* ------------------------------------------------------------------------
+ * t3.prs/write — the pull-request write family. Ten host-write ops 1:1 on
+ * the native `pullRequests.*` mutations under the same bound-ref rules as
+ * t3.prs/read: `repository`/`host` are validated against the granted
+ * project's own repository identity server-side and never forwarded, so a
+ * reference cannot route to another project's credentials. Viewer-permission
+ * and capability gating live in PullRequestService — a host that cannot do
+ * a write fails by name rather than reporting support it does not have.
+ */
+
+export const PRS_WRITE = "t3.prs/write";
+
+/** Per-write-operation support flags keyed by `prs.<method>`. */
+export type PrsWriteOperationsSupport = {
+  readonly "prs.runAction": boolean;
+  readonly "prs.update": boolean;
+  readonly "prs.comment": boolean;
+  readonly "prs.updateComment": boolean;
+  readonly "prs.submitReview": boolean;
+  readonly "prs.replyToThread": boolean;
+  readonly "prs.setThreadResolution": boolean;
+  readonly "prs.setReaction": boolean;
+  readonly "prs.requestReviewers": boolean;
+  readonly "prs.setLabels": boolean;
+};
+export type PrsWriteActionKind =
+  | "merge"
+  | "ready"
+  | "draft"
+  | "close"
+  | "reopen"
+  | "update-branch"
+  | "enable-auto-merge"
+  | "disable-auto-merge"
+  | "revert"
+  | "approve-workflows";
+export type PrsWriteMergeMethod = "merge" | "squash" | "rebase";
+export type PrsWriteUpdateMethod = "merge" | "rebase";
+export type PrsWriteVerdict = "comment" | "approve" | "request-changes";
+
+export type PrsWriteCapabilitiesResult = {
+  /** Same meaning as `PrsCapabilitiesResult.hosted` — a registered provider serves the bound repository. */
+  readonly hosted: boolean;
+  readonly reason: "cli-missing" | "cli-unauthenticated" | "provider-unsupported" | null;
+  readonly detail: string | null;
+  readonly operations: PrsWriteOperationsSupport;
+  /**
+   * The actions the bound provider declares it can carry out — a surface
+   * offers only what this lists, which is the same `actions` list the
+   * native panel reads before drawing a button.
+   */
+  readonly actions: readonly PrsWriteActionKind[];
+  /** Merge strategies the provider offers before repository settings narrow them. */
+  readonly mergeMethods: readonly PrsWriteMergeMethod[];
+  /** How the host can bring a stale branch up to date; empty means `update-branch` is absent from `actions` anyway. */
+  readonly updateMethods: readonly PrsWriteUpdateMethod[];
+  /** Verdicts a submitted review can carry; empty means reviews cannot be submitted. */
+  readonly verdicts: readonly PrsWriteVerdict[];
+};
+
+export type PrsWriteActionInput = PrsRef & {
+  readonly action: PrsWriteActionKind;
+  readonly mergeMethod?: PrsWriteMergeMethod;
+  readonly updateMethod?: "merge" | "rebase";
+  readonly stackNumber?: number;
+  readonly expectedStackHeads?: readonly { readonly number: number; readonly headSha: string }[];
+};
+export type PrsWriteUpdateInput = PrsRef & {
+  readonly title?: string;
+  readonly body?: string;
+};
+export type PrsWriteCommentInput = PrsRef & { readonly body: string };
+export type PrsWriteUpdateCommentInput = PrsRef & {
+  readonly commentId: string;
+  readonly kind: "issue-comment" | "review-comment";
+  readonly body: string;
+};
+export type PrsWriteReviewCommentDraft = {
+  readonly path: string;
+  readonly oldPath?: string;
+  readonly position:
+    | { readonly kind: "added"; readonly newLine: number }
+    | { readonly kind: "deleted"; readonly oldLine: number }
+    | {
+        readonly kind: "context";
+        readonly oldLine: number;
+        readonly newLine: number;
+        readonly side: "left" | "right";
+      };
+  readonly body: string;
+};
+export type PrsWriteSubmitReviewInput = PrsRef & {
+  readonly verdict: PrsWriteVerdict;
+  readonly body: string;
+  readonly comments: readonly PrsWriteReviewCommentDraft[];
+};
+export type PrsWriteReplyInput = PrsRef & {
+  readonly threadId: string;
+  readonly body: string;
+};
+export type PrsWriteThreadResolutionInput = PrsRef & {
+  readonly threadId: string;
+  readonly resolved: boolean;
+};
+export type PrsWriteReactionInput = PrsRef & {
+  readonly subjectId?: string;
+  readonly content:
+    | "thumbs-up"
+    | "thumbs-down"
+    | "laugh"
+    | "hooray"
+    | "confused"
+    | "heart"
+    | "rocket"
+    | "eyes";
+  readonly reacted: boolean;
+};
+export type PrsWriteReviewerRequestInput = PrsRef & {
+  readonly reviewers: readonly { readonly id: string; readonly kind: "user" | "team" }[];
+  readonly requested: boolean;
+};
+export type PrsWriteLabelsInput = PrsRef & {
+  readonly labels: readonly string[];
+  readonly applied: boolean;
+};
+export type PrsWriteEmptyResult = Record<string, never>;
+
+const prsWriteBodySchema = { type: "string", minLength: 1, maxLength: 65536 } as const;
+const prsWriteOperationsSupportSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "prs.runAction",
+    "prs.update",
+    "prs.comment",
+    "prs.updateComment",
+    "prs.submitReview",
+    "prs.replyToThread",
+    "prs.setThreadResolution",
+    "prs.setReaction",
+    "prs.requestReviewers",
+    "prs.setLabels",
+  ],
+  properties: {
+    "prs.runAction": { type: "boolean" },
+    "prs.update": { type: "boolean" },
+    "prs.comment": { type: "boolean" },
+    "prs.updateComment": { type: "boolean" },
+    "prs.submitReview": { type: "boolean" },
+    "prs.replyToThread": { type: "boolean" },
+    "prs.setThreadResolution": { type: "boolean" },
+    "prs.setReaction": { type: "boolean" },
+    "prs.requestReviewers": { type: "boolean" },
+    "prs.setLabels": { type: "boolean" },
+  },
+} as const;
+const prsWriteActionKindSchema = {
+  enum: [
+    "merge",
+    "ready",
+    "draft",
+    "close",
+    "reopen",
+    "update-branch",
+    "enable-auto-merge",
+    "disable-auto-merge",
+    "revert",
+    "approve-workflows",
+  ],
+} as const;
+const prsWriteMergeMethodSchema = { enum: ["merge", "squash", "rebase"] } as const;
+const prsWriteVerdictSchema = { enum: ["comment", "approve", "request-changes"] } as const;
+const prsWriteCapabilitiesResultSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "hosted",
+    "reason",
+    "detail",
+    "operations",
+    "actions",
+    "mergeMethods",
+    "updateMethods",
+    "verdicts",
+  ],
+  properties: {
+    hosted: { type: "boolean" },
+    reason: {
+      enum: ["cli-missing", "cli-unauthenticated", "provider-unsupported", null],
+    },
+    detail: { type: ["string", "null"], maxLength: 1024 },
+    operations: prsWriteOperationsSupportSchema,
+    actions: { type: "array", maxItems: 16, items: prsWriteActionKindSchema },
+    mergeMethods: { type: "array", maxItems: 8, items: prsWriteMergeMethodSchema },
+    updateMethods: {
+      type: "array",
+      maxItems: 4,
+      items: { enum: ["merge", "rebase"] },
+    },
+    verdicts: { type: "array", maxItems: 8, items: prsWriteVerdictSchema },
+  },
+} as const;
+const prsWriteActionInputSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["repository", "number", "action"],
+  properties: {
+    host: prsHostField,
+    repository: prsRepositoryField,
+    number: { type: "integer", minimum: 1 },
+    action: prsWriteActionKindSchema,
+    mergeMethod: prsWriteMergeMethodSchema,
+    updateMethod: { enum: ["merge", "rebase"] },
+    stackNumber: { type: "integer", minimum: 1 },
+    expectedStackHeads: {
+      type: "array",
+      maxItems: 100,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["number", "headSha"],
+        properties: {
+          number: { type: "integer", minimum: 1 },
+          headSha: { type: "string", minLength: 1, maxLength: 128 },
+        },
+      },
+    },
+  },
+} as const;
+const prsWriteReviewCommentDraftSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["path", "position", "body"],
+  properties: {
+    path: { type: "string", minLength: 1, maxLength: 1024 },
+    oldPath: { type: "string", minLength: 1, maxLength: 1024 },
+    position: {
+      oneOf: [
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["kind", "newLine"],
+          properties: {
+            kind: { const: "added" },
+            newLine: { type: "integer", minimum: 1 },
+          },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["kind", "oldLine"],
+          properties: {
+            kind: { const: "deleted" },
+            oldLine: { type: "integer", minimum: 1 },
+          },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["kind", "oldLine", "newLine", "side"],
+          properties: {
+            kind: { const: "context" },
+            oldLine: { type: "integer", minimum: 1 },
+            newLine: { type: "integer", minimum: 1 },
+            side: { enum: ["left", "right"] },
+          },
+        },
+      ],
+    },
+    body: prsWriteBodySchema,
+  },
+} as const;
+
+export const prsWriteApi = defineApi<{
+  getCapabilities: { input: Record<string, never>; output: PrsWriteCapabilitiesResult };
+  runAction: { input: PrsWriteActionInput; output: PrsWriteEmptyResult };
+  update: { input: PrsWriteUpdateInput; output: PrsWriteEmptyResult };
+  comment: { input: PrsWriteCommentInput; output: PrsWriteEmptyResult };
+  updateComment: { input: PrsWriteUpdateCommentInput; output: PrsWriteEmptyResult };
+  submitReview: { input: PrsWriteSubmitReviewInput; output: PrsWriteEmptyResult };
+  replyToThread: { input: PrsWriteReplyInput; output: PrsWriteEmptyResult };
+  setThreadResolution: { input: PrsWriteThreadResolutionInput; output: PrsWriteEmptyResult };
+  setReaction: { input: PrsWriteReactionInput; output: PrsWriteEmptyResult };
+  requestReviewers: { input: PrsWriteReviewerRequestInput; output: PrsWriteEmptyResult };
+  setLabels: { input: PrsWriteLabelsInput; output: PrsWriteEmptyResult };
+}>({
+  id: PRS_WRITE,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [PRS_WRITE],
+      inputSchema: prsEmptyInputSchema,
+      outputSchema: prsWriteCapabilitiesResultSchema,
+    },
+    {
+      name: "runAction",
+      effect: "write",
+      requiredGrants: [PRS_WRITE],
+      inputSchema: prsWriteActionInputSchema,
+      outputSchema: prsEmptyOutputSchema,
+    },
+    {
+      name: "update",
+      effect: "write",
+      requiredGrants: [PRS_WRITE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["repository", "number"],
+        properties: {
+          host: prsHostField,
+          repository: prsRepositoryField,
+          number: { type: "integer", minimum: 1 },
+          title: { type: "string", minLength: 1, maxLength: 1024 },
+          body: { type: "string", maxLength: 65536 },
+        },
+      },
+      outputSchema: prsEmptyOutputSchema,
+    },
+    {
+      name: "comment",
+      effect: "write",
+      requiredGrants: [PRS_WRITE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["repository", "number", "body"],
+        properties: {
+          host: prsHostField,
+          repository: prsRepositoryField,
+          number: { type: "integer", minimum: 1 },
+          body: prsWriteBodySchema,
+        },
+      },
+      outputSchema: prsEmptyOutputSchema,
+    },
+    {
+      name: "updateComment",
+      effect: "write",
+      requiredGrants: [PRS_WRITE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["repository", "number", "commentId", "kind", "body"],
+        properties: {
+          host: prsHostField,
+          repository: prsRepositoryField,
+          number: { type: "integer", minimum: 1 },
+          commentId: { type: "string", minLength: 1, maxLength: 512 },
+          kind: { enum: ["issue-comment", "review-comment"] },
+          body: prsWriteBodySchema,
+        },
+      },
+      outputSchema: prsEmptyOutputSchema,
+    },
+    {
+      name: "submitReview",
+      effect: "write",
+      requiredGrants: [PRS_WRITE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["repository", "number", "verdict", "body", "comments"],
+        properties: {
+          host: prsHostField,
+          repository: prsRepositoryField,
+          number: { type: "integer", minimum: 1 },
+          verdict: { enum: ["comment", "approve", "request-changes"] },
+          body: { type: "string", maxLength: 65536 },
+          comments: { type: "array", maxItems: 100, items: prsWriteReviewCommentDraftSchema },
+        },
+      },
+      outputSchema: prsEmptyOutputSchema,
+    },
+    {
+      name: "replyToThread",
+      effect: "write",
+      requiredGrants: [PRS_WRITE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["repository", "number", "threadId", "body"],
+        properties: {
+          host: prsHostField,
+          repository: prsRepositoryField,
+          number: { type: "integer", minimum: 1 },
+          threadId: { type: "string", minLength: 1, maxLength: 512 },
+          body: prsWriteBodySchema,
+        },
+      },
+      outputSchema: prsEmptyOutputSchema,
+    },
+    {
+      name: "setThreadResolution",
+      effect: "write",
+      requiredGrants: [PRS_WRITE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["repository", "number", "threadId", "resolved"],
+        properties: {
+          host: prsHostField,
+          repository: prsRepositoryField,
+          number: { type: "integer", minimum: 1 },
+          threadId: { type: "string", minLength: 1, maxLength: 512 },
+          resolved: { type: "boolean" },
+        },
+      },
+      outputSchema: prsEmptyOutputSchema,
+    },
+    {
+      name: "setReaction",
+      effect: "write",
+      requiredGrants: [PRS_WRITE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["repository", "number", "content", "reacted"],
+        properties: {
+          host: prsHostField,
+          repository: prsRepositoryField,
+          number: { type: "integer", minimum: 1 },
+          subjectId: { type: "string", minLength: 1, maxLength: 512 },
+          content: {
+            enum: [
+              "thumbs-up",
+              "thumbs-down",
+              "laugh",
+              "hooray",
+              "confused",
+              "heart",
+              "rocket",
+              "eyes",
+            ],
+          },
+          reacted: { type: "boolean" },
+        },
+      },
+      outputSchema: prsEmptyOutputSchema,
+    },
+    {
+      name: "requestReviewers",
+      effect: "write",
+      requiredGrants: [PRS_WRITE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["repository", "number", "reviewers", "requested"],
+        properties: {
+          host: prsHostField,
+          repository: prsRepositoryField,
+          number: { type: "integer", minimum: 1 },
+          reviewers: {
+            type: "array",
+            minItems: 1,
+            maxItems: 25,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["id", "kind"],
+              properties: {
+                id: { type: "string", minLength: 1, maxLength: 512 },
+                kind: { enum: ["user", "team"] },
+              },
+            },
+          },
+          requested: { type: "boolean" },
+        },
+      },
+      outputSchema: prsEmptyOutputSchema,
+    },
+    {
+      name: "setLabels",
+      effect: "write",
+      requiredGrants: [PRS_WRITE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["repository", "number", "labels", "applied"],
+        properties: {
+          host: prsHostField,
+          repository: prsRepositoryField,
+          number: { type: "integer", minimum: 1 },
+          labels: {
+            type: "array",
+            minItems: 1,
+            maxItems: 25,
+            items: { type: "string", minLength: 1, maxLength: 512 },
+          },
+          applied: { type: "boolean" },
+        },
+      },
+      outputSchema: prsEmptyOutputSchema,
+    },
+  ],
+});
+export const PRS_WRITE_API = prsWriteApi.definition;
+
+/* ------------------------------------------------------------------------
  * t3.browser/sessions — per-thread browser session metadata (P08-B).
  *
  * Metadata only: the API projects the server's preview-manager state and
@@ -6028,10 +7124,12 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   vcsRepositoryApi.definition,
   vcsRepositoryApiV1.definition,
   vcsDiffApiV1.definition,
+  vcsActionsApi.definition,
   resourcesLeaseApi.definition,
   resourcesLeaseApiV1.definition,
   workspaceResourcesApi.definition,
   prsReadApi.definition,
+  prsWriteApi.definition,
   composerContextApi.definition,
   messagesEnrichmentApi.definition,
   uiThemeApi.definition,

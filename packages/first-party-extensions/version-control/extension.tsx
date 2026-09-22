@@ -1,10 +1,14 @@
 import {
   prsReadApi,
+  prsWriteApi,
+  vcsActionsApi,
   vcsChangesApi,
   vcsRefsApi,
   vcsRepositoryApi,
   vcsStatusApi,
   type PrsRef,
+  type VcsActionKind,
+  type VcsActionsCapabilitiesResult,
   type VcsCapabilitiesResult,
   type VcsChangesListResult,
   type VcsListRefsResult,
@@ -21,11 +25,15 @@ import {
   CHANGE_LANES,
   CONNECTING_STATUS,
   IDLE_MUTATION,
+  IDLE_STACKED_PROGRESS,
+  applyStackedEvent,
   applyStatusEvent,
   canWorktreeRef,
   describeEntry,
   describeMutation,
   describeRef,
+  describeStackedProgress,
+  describeStackedResult,
   describeStatus,
   entryMutation,
   laneCount,
@@ -45,6 +53,12 @@ import {
   repositoryState,
   retainSelection,
   settleMutation,
+  stackedActionCommits,
+  stackedActionInput,
+  stackedActionLabel,
+  stackedActionNeedsConfirm,
+  stackedActionOffers,
+  stackedActionSuggestion,
   startMutation,
   worktreeRows,
   VCS_PATHS_MAX,
@@ -52,6 +66,7 @@ import {
   type ChangeSelection,
   type MutationOp,
   type MutationPhase,
+  type StackedActionProgress,
   type StatusModel,
 } from "./viewModel.js";
 import { PullRequestsPanel } from "./prsPanel.js";
@@ -189,6 +204,47 @@ function useStatusStream(host: ClientHost, session: ViewSession, visible: boolea
     return () => controller.abort();
   }, [host, session, visible, tick]);
   return model?.key === tick ? model.status : CONNECTING_STATUS;
+}
+
+/**
+ * One-shot `t3.vcs/actions` capability probe — the composite surface
+ * renders only when `actions.run` is declared for the detected driver.
+ * A denied `t3.vcs/read` fails the invoke and the controls hide; there
+ * is no point drawing a run button whose call cannot even report.
+ */
+function useVcsActionsCapabilities(
+  host: ClientHost,
+  session: ViewSession,
+  visible: boolean,
+  tick: number,
+) {
+  const [result, setResult] = useState<{
+    key: number;
+    capabilities: VcsActionsCapabilitiesResult | null;
+    error: string | null;
+  } | null>(null);
+  useEffect(() => {
+    if (!visible) return;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    void bindApi(vcsActionsApi, host, session.context)
+      .invoke("getCapabilities", {}, signal)
+      .then(
+        (capabilities) => {
+          if (!signal.aborted) setResult({ key: tick, capabilities, error: null });
+        },
+        (error) => {
+          if (!signal.aborted)
+            setResult({
+              key: tick,
+              capabilities: null,
+              error: error instanceof Error ? error.message : "Action capabilities unavailable",
+            });
+        },
+      );
+    return () => controller.abort();
+  }, [host, session, visible, tick]);
+  return result?.key === tick ? result : { capabilities: null, error: null };
 }
 
 /**
@@ -344,6 +400,16 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   const [mutation, setMutation] = useState<MutationPhase>(IDLE_MUTATION);
   const [mutationSerial, setMutationSerial] = useState(0);
   const [commitMessage, setCommitMessage] = useState("");
+  const [stackedChoice, setStackedChoice] = useState<VcsActionKind | null>(null);
+  const [featureBranch, setFeatureBranch] = useState(false);
+  // Native's default-branch confirmation — set while the continue-or-
+  // feature-ref decision is on screen; the run fires only from its
+  // buttons.
+  const [pendingConfirm, setPendingConfirm] = useState<VcsActionKind | null>(null);
+  const [stacked, setStacked] = useState<{
+    actionId: string;
+    model: StackedActionProgress;
+  } | null>(null);
   const [newRefName, setNewRefName] = useState("");
   const [newWorktreeName, setNewWorktreeName] = useState("");
   // Paths whose plain `worktree remove` already failed — the force retry
@@ -400,6 +466,12 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   );
   const repo = repositoryState(capabilities, capsError);
   const status = useStatusStream(host, session, repositoryVisible && repo.kind === "ready", tick);
+  const actionCaps = useVcsActionsCapabilities(
+    host,
+    session,
+    repositoryVisible && repo.kind === "ready",
+    tick,
+  );
   const isRepo = status.local?.isRepo === true;
   // The list revision folds the stream's localRevision with the panel's
   // mutationSerial so index-only mutations (stage/unstage emit no stream
@@ -443,6 +515,22 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   const canRemoveWorktree = ops?.["repository.removeWorktree"] === true;
   const busy = mutation.kind === "running";
   const commit = planCommit(lanes, commitMessage);
+  // The composite surface exists only when the host declares actions.run —
+  // no run button against a driver the adapter named unsupported.
+  const canRunActions = actionCaps.capabilities?.operations["actions.run"] === true;
+  const stackedOffers = useMemo(
+    () => stackedActionOffers(status.local, status.remote, lanes, featureBranch),
+    [status.local, status.remote, lanes, featureBranch],
+  );
+  const stackedDefault = stackedActionSuggestion(status.local, status.remote);
+  const chosenOffer = stackedOffers.find(
+    (offer) => offer.action === (stackedChoice ?? stackedDefault),
+  ) ??
+    stackedOffers.find((offer) => offer.disabled === null) ?? {
+      action: "commit" as const,
+      label: stackedActionLabel("commit"),
+      disabled: "Repository status pending",
+    };
   const create = planRefCreate(newRefName, rows);
   const currentBranch = rows.find((row) => row.current && row.remote === null)?.name ?? null;
   const pull = pullState(status.local, status.remote);
@@ -516,6 +604,72 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
           }`;
         }),
     );
+  };
+
+  /**
+   * The stacked composite (t3.vcs/actions): `run` mints the actionId
+   * server-side, then the `actionProgress` stream carries phases until a
+   * terminal event — the invoke's promise only settles once that stream
+   * does, so the single-flight mutation line IS the action's truth.
+   * Blank commitMessage keeps native leave-blank auto-generate semantics;
+   * a staged subset scopes the commit phase like `planCommit` does.
+   */
+  const runStacked = (
+    offer: { action: VcsActionKind; label: string; disabled: string | null },
+    options?: { featureBranch?: boolean },
+  ) => {
+    if (offer.disabled !== null) return;
+    setPendingConfirm(null);
+    const message = commitMessage.trim();
+    const stagedPaths = lanes.staged.map((entry) => entry.path);
+    runMutation("stacked", offer.label, async (signal) => {
+      const api = bindApi(vcsActionsApi, host, session.context);
+      const { actionId } = await api.invoke(
+        "run",
+        // stackedActionInput drops featureBranch/paths on actions without
+        // a commit phase — the service rejects those combinations.
+        stackedActionInput({
+          action: offer.action,
+          commitMessage: message,
+          featureBranch: options?.featureBranch ?? featureBranch,
+          stagedPaths,
+        }),
+        signal,
+      );
+      let model = IDLE_STACKED_PROGRESS;
+      setStacked({ actionId, model });
+      const stream = bindStreamApi(vcsActionsApi, host, session.context).subscribe(
+        "actionProgress",
+        { actionId },
+        signal,
+      );
+      // Read to settlement, not just `action_finished` — the detached
+      // post-service recheck can still append `closed` naming a revoked
+      // grant after the phase terminal.
+      for await (const frame of stream) {
+        model = applyStackedEvent(model, frame.value);
+        setStacked({ actionId, model });
+      }
+      if (model.failure !== null)
+        throw new Error(
+          model.failure.phase === null
+            ? model.failure.message
+            : `Failed during ${model.failure.phase}: ${model.failure.message}`,
+        );
+      if (model.closed === "overflow")
+        throw new Error("Action progress overflowed — result unknown");
+      if (model.closed === "authorization-revoked")
+        throw new Error(
+          "Authorization was revoked at the post-action check — the action's effects may have persisted",
+        );
+      if (model.result === null) throw new Error("Action progress ended before the action settled");
+      // Clear the box only when this action consumed the input and the
+      // author hasn't typed something new during the run — a push-only
+      // success must not erase an unrelated draft.
+      if (stackedActionCommits(offer.action))
+        setCommitMessage((current) => (current === commitMessage ? "" : current));
+      return describeStackedResult(model.result);
+    });
   };
 
   const runCreateRef = () => {
@@ -945,7 +1099,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                 );
               })}
 
-              {canCommit && (
+              {(canCommit || canRunActions) && (
                 <section aria-label="Commit" style={{ marginTop: 4, marginBottom: 8 }}>
                   <h3
                     style={{
@@ -994,19 +1148,214 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                       resize: "vertical",
                     }}
                   />
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <button
-                      type="button"
-                      disabled={busy || commit.disabled !== null}
-                      onClick={runCommit}
-                      style={control}
+                  {canCommit && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <button
+                        type="button"
+                        disabled={busy || commit.disabled !== null}
+                        onClick={runCommit}
+                        style={control}
+                      >
+                        {commit.label}
+                      </button>
+                      {commit.disabled !== null && (
+                        <span style={{ color: muted, fontSize: 11 }}>{commit.disabled}</span>
+                      )}
+                    </div>
+                  )}
+                  {canRunActions && (
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        marginTop: 4,
+                        flexWrap: "wrap",
+                      }}
                     >
-                      {commit.label}
-                    </button>
-                    {commit.disabled !== null && (
-                      <span style={{ color: muted, fontSize: 11 }}>{commit.disabled}</span>
-                    )}
-                  </div>
+                      <select
+                        aria-label="Stacked action"
+                        value={chosenOffer.action}
+                        disabled={busy}
+                        onChange={(event) => {
+                          setStackedChoice(event.target.value as VcsActionKind);
+                          setPendingConfirm(null);
+                        }}
+                        style={{ ...control, padding: "2px 4px" }}
+                      >
+                        {stackedOffers.map((offer) => (
+                          <option
+                            key={offer.action}
+                            value={offer.action}
+                            disabled={offer.disabled !== null}
+                          >
+                            {offer.label}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        disabled={busy || chosenOffer.disabled !== null}
+                        onClick={() =>
+                          stackedActionNeedsConfirm(chosenOffer.action, status.local, featureBranch)
+                            ? setPendingConfirm(chosenOffer.action)
+                            : runStacked(chosenOffer)
+                        }
+                        style={control}
+                      >
+                        {busy && mutation.kind === "running" && mutation.op === "stacked"
+                          ? `${chosenOffer.label}…`
+                          : "Run"}
+                      </button>
+                      {status.local?.isDefaultRef === true &&
+                        stackedActionCommits(chosenOffer.action) && (
+                          <label
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 4,
+                              fontSize: 11,
+                              color: muted,
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={featureBranch}
+                              disabled={busy}
+                              onChange={(event) => {
+                                setFeatureBranch(event.target.checked);
+                                setPendingConfirm(null);
+                              }}
+                            />
+                            New feature branch
+                          </label>
+                        )}
+                      {chosenOffer.disabled !== null && (
+                        <span style={{ color: muted, fontSize: 11 }}>{chosenOffer.disabled}</span>
+                      )}
+                    </div>
+                  )}
+                  {pendingConfirm !== null &&
+                    (() => {
+                      const pending = stackedOffers.find(
+                        (entry) => entry.action === pendingConfirm,
+                      );
+                      if (pending === undefined || pending.disabled !== null) return null;
+                      const branchName = status.local?.refName ?? "the default ref";
+                      // The feature-ref alternative exists only where a
+                      // commit phase gives the new ref its delta — the
+                      // service rejects featureBranch on push/PR-only runs.
+                      const canFeatureBranch = stackedActionCommits(pending.action);
+                      return (
+                        <div
+                          role="alertdialog"
+                          aria-label="Confirm default-branch action"
+                          style={{
+                            margin: "4px 0",
+                            padding: "4px 6px",
+                            border: "1px solid var(--border, #dfe3e8)",
+                            borderRadius: 5,
+                            fontSize: 11,
+                          }}
+                        >
+                          <div style={{ marginBottom: 4 }}>
+                            {pending.label} on default ref &quot;{branchName}&quot;?
+                            {canFeatureBranch
+                              ? " You can continue on this ref or create a feature ref and run the same action there."
+                              : " Continue on this ref or cancel."}
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                              flexWrap: "wrap",
+                            }}
+                          >
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => runStacked(pending, { featureBranch: false })}
+                              style={control}
+                            >
+                              {pending.label} on {branchName}
+                            </button>
+                            {canFeatureBranch && (
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => {
+                                  setFeatureBranch(true);
+                                  runStacked(pending, { featureBranch: true });
+                                }}
+                                style={control}
+                              >
+                                New feature branch
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => setPendingConfirm(null)}
+                              style={control}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  {stacked !== null && (
+                    <div
+                      aria-label="Action progress"
+                      style={{
+                        margin: "4px 0",
+                        padding: "4px 6px",
+                        border: "1px solid var(--border, #dfe3e8)",
+                        borderRadius: 5,
+                        fontSize: 11,
+                      }}
+                    >
+                      <div>{describeStackedProgress(stacked.model)}</div>
+                      {stacked.model.phases.length > 0 && (
+                        <div style={{ color: muted }}>
+                          {stacked.model.phases
+                            .map((phase) => {
+                              const startedAt = stacked.model.started.findIndex(
+                                (entry) => entry.phase === phase,
+                              );
+                              const mark =
+                                startedAt === -1
+                                  ? "○"
+                                  : stacked.model.result !== null ||
+                                      stacked.model.failure !== null ||
+                                      startedAt < stacked.model.started.length - 1
+                                    ? "✓"
+                                    : "…";
+                              return `${mark} ${phase}`;
+                            })
+                            .join(" · ")}
+                        </div>
+                      )}
+                      {stacked.model.failure !== null && (
+                        <p
+                          role="alert"
+                          style={{ margin: "2px 0 0", color: "var(--destructive, #b42318)" }}
+                        >
+                          Failed
+                          {stacked.model.failure.phase === null
+                            ? ""
+                            : ` during ${stacked.model.failure.phase}`}
+                          : {stacked.model.failure.message}
+                        </p>
+                      )}
+                      {stacked.model.result !== null && (
+                        <p style={{ margin: "2px 0 0", color: muted }}>
+                          {describeStackedResult(stacked.model.result)}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </section>
               )}
 
@@ -1404,10 +1753,11 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
           flexShrink: 0,
         }}
       >
-        Version Control on t3.vcs + t3.prs/read: pull-request browse/detail/diff (read-only),
-        status, staging lanes, stage/unstage/commit, branch create/switch, pull/push/fetch, init,
-        worktrees, and remotes (t3.vcs/mutate). PR mutations, publish/clone, stash, and per-hunk
-        diff expansion are deferred slices.
+        Version Control on t3.vcs + t3.prs: pull-request browse/detail/diff plus host writes
+        (actions, comments, reviews, thread reply/resolve — t3.prs/write), status, staging lanes,
+        stage/unstage/commit, branch create/switch, pull/push/fetch, init, worktrees, and remotes
+        (t3.vcs/mutate). Composite commit+push+PR actions, publish/clone, stash, and per-hunk diff
+        expansion are deferred slices.
       </output>
     </section>
   );
@@ -1418,6 +1768,8 @@ export default defineExtension({
   version: "0.4.0",
   requires: [
     requireApi(prsReadApi),
+    requireApi(prsWriteApi),
+    requireApi(vcsActionsApi),
     requireApi(vcsStatusApi),
     requireApi(vcsChangesApi),
     requireApi(vcsRefsApi),
