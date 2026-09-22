@@ -1,18 +1,24 @@
-import type {
-  TerminalControlAck,
-  TerminalControlAttachInput,
-  TerminalControlCloseInput,
-  TerminalControlClearInput,
-  TerminalControlOpenInput,
-  TerminalControlResizeInput,
-  TerminalControlRestartInput,
-  TerminalControlWriteInput,
-  TerminalOutputEventsClosed,
-  TerminalOutputEventsValue,
-  TerminalSessionMetadata,
-  TerminalSessionResult,
-  TerminalSessionsListEvent,
+import {
+  uiKeybindingsApi,
+  uiThemeApi,
+  type TerminalControlAck,
+  type TerminalControlAttachInput,
+  type TerminalControlCloseInput,
+  type TerminalControlClearInput,
+  type TerminalControlOpenInput,
+  type TerminalControlResizeInput,
+  type TerminalControlRestartInput,
+  type TerminalControlWriteInput,
+  type TerminalOutputEventsClosed,
+  type TerminalOutputEventsValue,
+  type TerminalSessionMetadata,
+  type TerminalSessionResult,
+  type TerminalSessionsListEvent,
+  type UiTerminalAppearance,
 } from "@t3tools/extension-sdk/catalogue";
+import { bindApi, bindStreamApi, type ApiClient } from "@t3tools/extension-sdk/capabilities";
+import type { ViewContext } from "@t3tools/extension-sdk/contracts";
+import type { GlobalCommandDescriptor } from "@t3tools/extension-sdk/environment";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 
 /** Matches the native client retained-output cap (client-runtime terminalOutput.ts:45). */
@@ -606,6 +612,16 @@ export class TerminalPanel {
     this.#emit();
   }
 
+  /**
+   * A failed panel-level op outside the session stream — e.g. a dispatched
+   * keybinding command whose `t3.ui/panels` call the host rejected. The next
+   * stream transition overwrites it; it must not masquerade as stream state.
+   */
+  notePanelError(message: string) {
+    this.#panelError = message;
+    this.#emit();
+  }
+
   /** Open a fresh terminal; the client picks the id (#15). */
   async openTerminal(): Promise<string | null> {
     const launch = this.#launch;
@@ -838,4 +854,362 @@ export class TerminalPanel {
   dispose() {
     this.#disposed = true;
   }
+}
+
+// ---------------------------------------------------------------------------
+// t3.ui/* consumption — theme, keybindings, panels
+// ---------------------------------------------------------------------------
+
+/** The view surface's host-visible id (`<manifestId>/<surfaceName>`). */
+export const TERMINAL_SURFACE_ID = "t3.terminal/view";
+
+/**
+ * Host-computed `when` key for the focused extension surface —
+ * `extension.<surfaceId>.focus`, the plugin-side mirror of the native
+ * `terminalFocus` gate on terminal-scoped chords.
+ */
+export const TERMINAL_FOCUS_WHEN = `extension.${TERMINAL_SURFACE_ID}.focus`;
+
+/**
+ * View-scoped command set registered through `t3.ui/keybindings` — the
+ * focused-view and thread tiers of the contract's arbitration (focused
+ * binding → exactly-one thread binding → installation → activation). The
+ * `defaultKey`s mirror the native terminal chords; the host always resolves
+ * user and native rules first, so a displaced default is honest metadata
+ * `listConflicts` reports rather than a stolen chord. Split chords stay
+ * unregistered — the panel has no split layout to dispatch them to — and the
+ * Ghostty-level editing intercepts (clear, word-nav, delete) remain deferred
+ * with VT rendering.
+ */
+export const TERMINAL_VIEW_COMMANDS: readonly GlobalCommandDescriptor[] = [
+  {
+    id: "toggle",
+    title: "Toggle terminal",
+    description: "Close this terminal panel.",
+    scope: "global",
+    defaultKey: "mod+j",
+  },
+  {
+    id: "new",
+    title: "New terminal",
+    scope: "surface",
+    defaultKey: "mod+n",
+    when: TERMINAL_FOCUS_WHEN,
+  },
+  {
+    id: "close",
+    title: "Close terminal",
+    scope: "surface",
+    defaultKey: "mod+w",
+    when: TERMINAL_FOCUS_WHEN,
+  },
+];
+
+/**
+ * Installation-tier set staged through `ClientHost.registerGlobalCommands` at
+ * factory time: the same `toggle` command gains the cold-open activation
+ * fallback — a chord press with no live binding opens this surface in the
+ * active thread's dock, or focuses the instance already mounted there.
+ * `activation` is legal only on an installation-scoped global command under
+ * the `t3.ui/keybindings.global` + `t3.ui/panels` grants; without them the
+ * host reports the command rejected and the rest of the panel is unaffected.
+ */
+export const TERMINAL_GLOBAL_COMMANDS: readonly GlobalCommandDescriptor[] = [
+  {
+    id: "toggle",
+    title: "Toggle terminal",
+    description: "Open the terminal panel, or close it when a terminal view answers.",
+    scope: "global",
+    defaultKey: "mod+j",
+    activation: { surfaceId: TERMINAL_SURFACE_ID, placement: "bottom-dock" },
+  },
+];
+
+/** Actions a dispatched command can drive; all panel-local. */
+export interface TerminalCommandActions {
+  /** Open a fresh terminal in this surface's workspace. */
+  readonly newTerminal: () => void;
+  /** Close the active terminal — the panel's inline confirm still applies. */
+  readonly closeTerminal: () => void;
+  /** Dismiss the hosting surface (a `t3.ui/panels` closeSurface call). */
+  readonly toggleSurface: () => void;
+}
+
+/** Maps a dispatched command id to its panel action; false for unknown ids. */
+export function dispatchTerminalCommand(
+  commandId: string,
+  actions: TerminalCommandActions,
+): boolean {
+  switch (commandId) {
+    case "toggle":
+      actions.toggleSurface();
+      return true;
+    case "new":
+      actions.newTerminal();
+      return true;
+    case "close":
+      actions.closeTerminal();
+      return true;
+    default:
+      return false;
+  }
+}
+
+export interface PanelCommandRegistration {
+  readonly commandSetToken: string;
+  readonly results: readonly {
+    commandId: string;
+    status: "registered" | "rejected";
+    reason?: string;
+  }[];
+  /** Best-effort unregister; the host drops the binding with the view anyway. */
+  readonly release: () => void;
+}
+
+/**
+ * Registers the view command set through `t3.ui/keybindings` and binds the
+ * dispatch handler. Returns null when the caller's signal aborted mid-flight;
+ * a `bindCommands` failure unwinds the registration so unreachable commands
+ * never linger in the host's registry.
+ */
+export async function registerPanelCommands(options: {
+  readonly client: Pick<ApiClient, "invokeApi">;
+  readonly context: ViewContext;
+  readonly signal: AbortSignal;
+  readonly bindCommands: (
+    commandSetToken: string,
+    handler: (call: { readonly commandId: string; readonly context: ViewContext }) => void,
+  ) => string;
+  readonly onCommand: (commandId: string) => void;
+}): Promise<PanelCommandRegistration | null> {
+  const api = bindApi(uiKeybindingsApi, options.client, options.context);
+  const response = await api.invoke(
+    "registerCommands",
+    { commands: TERMINAL_VIEW_COMMANDS },
+    options.signal,
+  );
+  const release = () => {
+    void api
+      .invoke(
+        "unregisterCommands",
+        { commandSetToken: response.commandSetToken },
+        AbortSignal.timeout(5_000),
+      )
+      .catch(() => {});
+  };
+  if (options.signal.aborted) {
+    release();
+    return null;
+  }
+  const registered = new Set(
+    response.results
+      .filter((result) => result.status === "registered")
+      .map((result) => result.commandId),
+  );
+  try {
+    options.bindCommands(response.commandSetToken, ({ commandId }) => {
+      if (registered.has(commandId)) options.onCommand(commandId);
+    });
+  } catch (error) {
+    // A host without the binding store leaves the set registered but
+    // unreachable — unwind so no phantom commands linger.
+    release();
+    throw error;
+  }
+  return { commandSetToken: response.commandSetToken, results: response.results, release };
+}
+
+/**
+ * The roles this panel consumes, each republished as a `--t3-terminal-*`
+ * custom property on the view root. Styles chain `var(--t3-terminal-x, …)`
+ * ahead of their pre-contract fallbacks, so whenever the contract stops
+ * answering — denied read or a dead stream — the overrides clear and the
+ * panel renders exactly what it rendered before adoption. The `terminal*`
+ * roles are the generic token layer — the dedicated terminal-appearance
+ * stream overrides them with the host's real terminal colors and font.
+ */
+export const TERMINAL_THEME_VARS = {
+  canvas: "--t3-terminal-canvas",
+  text: "--t3-terminal-text",
+  textMuted: "--t3-terminal-muted",
+  border: "--t3-terminal-border",
+  input: "--t3-terminal-input",
+  accentSurface: "--t3-terminal-accent-surface",
+  terminalBackground: "--t3-terminal-background",
+  terminalForeground: "--t3-terminal-foreground",
+  terminalSelection: "--t3-terminal-selection",
+} as const;
+
+/**
+ * `getTokens` output → root-level custom properties. Each override carries
+ * the contract's advertised var name with the resolved value as its fallback,
+ * so the panel tracks `--app-theme-*` paints live and still gets the right
+ * color on hosts that answer the contract without painting those variables.
+ * A role missing from `tokens` is skipped entirely rather than overridden
+ * with a lie.
+ */
+export function themeVarOverrides(
+  tokens: Readonly<Record<string, string>>,
+  cssVars: Readonly<Record<string, string>>,
+): Record<string, string> {
+  const overrides: Record<string, string> = {};
+  for (const [role, property] of Object.entries(TERMINAL_THEME_VARS)) {
+    const value = tokens[role];
+    if (value === undefined) continue;
+    const contractVar = cssVars[role];
+    overrides[property] = contractVar ? `var(${contractVar}, ${value})` : value;
+  }
+  return overrides;
+}
+
+/**
+ * `getTerminalAppearance`/`subscribeTerminalAppearance` payload →
+ * custom properties published on the output pane, where they win over the
+ * token-layer roles of the same name. Optional fields are skipped so their
+ * `var()` fallbacks keep governing.
+ */
+export function terminalAppearanceVars(appearance: UiTerminalAppearance): Record<string, string> {
+  const vars: Record<string, string> = {
+    "--t3-terminal-background": appearance.theme.background,
+    "--t3-terminal-foreground": appearance.theme.foreground,
+    "--t3-terminal-color-scheme": appearance.appearance,
+  };
+  if (appearance.theme.selectionBackground !== undefined)
+    vars["--t3-terminal-selection"] = appearance.theme.selectionBackground;
+  if (appearance.font.family !== undefined)
+    vars["--t3-terminal-font-family"] = appearance.font.family;
+  if (appearance.font.size !== undefined)
+    vars["--t3-terminal-font-size"] = `${appearance.font.size}px`;
+  if (appearance.font.lineHeight !== undefined)
+    vars["--t3-terminal-line-height"] = String(appearance.font.lineHeight);
+  if (appearance.font.ligatures !== undefined)
+    vars["--t3-terminal-ligatures"] = appearance.font.ligatures ? "normal" : "none";
+  return vars;
+}
+
+/**
+ * Structural guard for `watchAppearance` frames — the typed stream surface is
+ * erased on the wire, so a malformed payload must narrow honestly rather than
+ * leak into the style map.
+ */
+export function asTerminalAppearance(value: unknown): UiTerminalAppearance | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as {
+    readonly theme?: unknown;
+    readonly font?: unknown;
+    readonly appearance?: unknown;
+  };
+  const theme = candidate.theme;
+  if (!theme || typeof theme !== "object" || Array.isArray(theme)) return null;
+  const colors = theme as Record<string, unknown>;
+  if (
+    typeof colors.background !== "string" ||
+    typeof colors.foreground !== "string" ||
+    typeof colors.cursor !== "string" ||
+    (colors.selectionBackground !== undefined && typeof colors.selectionBackground !== "string")
+  )
+    return null;
+  const font = candidate.font;
+  if (!font || typeof font !== "object" || Array.isArray(font)) return null;
+  const fontFields = font as Record<string, unknown>;
+  if (
+    (fontFields.family !== undefined && typeof fontFields.family !== "string") ||
+    (fontFields.size !== undefined &&
+      (typeof fontFields.size !== "number" || !Number.isFinite(fontFields.size))) ||
+    (fontFields.lineHeight !== undefined &&
+      (typeof fontFields.lineHeight !== "number" || !Number.isFinite(fontFields.lineHeight))) ||
+    (fontFields.ligatures !== undefined && typeof fontFields.ligatures !== "boolean")
+  )
+    return null;
+  if (candidate.appearance !== "light" && candidate.appearance !== "dark") return null;
+  return value as UiTerminalAppearance;
+}
+
+/**
+ * Drives the theme-var layer: an initial `getTokens` read, re-read on every
+ * `subscribeState` frame. `apply` receives the published map after each
+ * successful read and `null` whenever the feed can't vouch for values —
+ * at subscription start (a fresh feed must not inherit the old one's map),
+ * on a denied read, and on a closed or lost stream (the no-stale-fallback
+ * rule). A failure also invalidates any older in-flight response so it
+ * cannot restore a stale map. The caller's `signal` owns the lifetime; the
+ * stream has no resume, so recovery is a fresh subscription from the view
+ * lifecycle (hide→show or session change).
+ */
+export function watchThemeVars(options: {
+  readonly client: Pick<ApiClient, "invokeApi" | "subscribeApi">;
+  readonly context: ViewContext;
+  readonly signal: AbortSignal;
+  readonly apply: (vars: Record<string, string> | null) => void;
+}): Promise<void> {
+  const api = bindApi(uiThemeApi, options.client, options.context);
+  const streams = bindStreamApi(uiThemeApi, options.client, options.context);
+  if (!options.signal.aborted) options.apply(null);
+  let generation = 0;
+  const invalidate = () => {
+    generation += 1;
+    if (!options.signal.aborted) options.apply(null);
+  };
+  const refresh = () => {
+    const at = ++generation;
+    void api.invoke("getTokens", {}, options.signal).then(
+      (value) => {
+        if (!options.signal.aborted && at === generation)
+          options.apply(themeVarOverrides(value.tokens, value.cssVars));
+      },
+      // A superseded rejection carries no fresh information — only the
+      // newest read's failure may invalidate the published map.
+      () => {
+        if (at === generation) invalidate();
+      },
+    );
+  };
+  refresh();
+  return (async () => {
+    try {
+      for await (const frame of streams.subscribe("subscribeState", {}, options.signal)) {
+        if (options.signal.aborted) return;
+        if (frame.type === "closed") break;
+        refresh();
+      }
+      invalidate();
+    } catch {
+      invalidate();
+    }
+  })();
+}
+
+/**
+ * `subscribeTerminalAppearance` consumption — the host's real terminal
+ * colors and font, published on the output pane where they win over the
+ * generic token roles of the same name. The stream opens with a snapshot
+ * frame, so no separate read is needed; subscription start, a malformed
+ * frame, a close, or a lost stream all clear the map so literal colors and
+ * font metrics never outlive the feed that produced them.
+ */
+export function watchTerminalAppearanceVars(options: {
+  readonly client: Pick<ApiClient, "subscribeApi">;
+  readonly context: ViewContext;
+  readonly signal: AbortSignal;
+  readonly apply: (vars: Record<string, string> | null) => void;
+}): Promise<void> {
+  const streams = bindStreamApi(uiThemeApi, options.client, options.context);
+  if (!options.signal.aborted) options.apply(null);
+  return (async () => {
+    try {
+      for await (const frame of streams.subscribe(
+        "subscribeTerminalAppearance",
+        {},
+        options.signal,
+      )) {
+        if (options.signal.aborted) return;
+        if (frame.type === "closed") break;
+        const appearance = asTerminalAppearance(frame.value);
+        options.apply(appearance === null ? null : terminalAppearanceVars(appearance));
+      }
+      if (!options.signal.aborted) options.apply(null);
+    } catch {
+      if (!options.signal.aborted) options.apply(null);
+    }
+  })();
 }

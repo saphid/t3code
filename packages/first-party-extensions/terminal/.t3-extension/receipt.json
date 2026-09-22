@@ -4,8 +4,8 @@
   "packageId": "t3.terminal",
   "version": "0.2.0",
   "hashes": {
-    "t3-extension.json": "33c908e3f58082a2c2bf4763da6c79393a043451fc7cec1cd44ed85ea4dc77a7",
-    "client.mjs": "a17aa1d2a6b4ee041c8fae8fac5830fe9ebdb64cdb852522755ff944d3c12ceb"
+    "t3-extension.json": "bbd77afc429daf7a7c1fd678ace17dfa8578fc369522f71b2c0421e15b56b28d",
+    "client.mjs": "8679eb8f4ff9b8eb890591c562020e0fcebd146efcc3ea55f1acef3a86081a45"
   },
   "generator": "t3-extension",
   "sourceEntrySha256": "fb20f105ee5f533a9f4e318318e5684b06a72b91698d80a7e6451c11a824d5cb"
