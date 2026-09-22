@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
@@ -15,16 +16,83 @@ const sha = (bytes) => NodeCrypto.createHash("sha256").update(bytes).digest("hex
 // process working directory — into `//` banner comments, CommonJS wrapper
 // keys ("../../dep/index.js"(exports, module){…}), and jsxdev fileName
 // metadata, so emitted bytes (and every receipt hash) used to depend on
-// where the build ran and where the checkout lived. Post-hoc text removal
-// cannot fix that safely (an identical line inside a template literal is
-// data), and virtual namespaces can't either (they bypass glob-expansion
-// resolution and drop package.json module-type semantics). The builds
-// below instead pin absWorkingDir to the realpath'd package directory and
-// resolve with preserveSymlinks, so every module's emitted identity is its
-// import spelling — extension.ts, node_modules/<name>/index.cjs — which is
-// location-independent by construction, keeps nameless or duplicated
-// installs distinct, and keeps native CJS/ESM interop. packageSha256 now
-// verifies regardless of build cwd, checkout location, or machine.
+// where the build ran and where the checkout lived. Resolution stays
+// native (realpath'd): preserveSymlinks made labels pretty but stopped
+// finding dependencies installed beside a linked package's real target
+// and bundled two spellings of one module as separate singletons. Instead
+// the builds pin absWorkingDir to the realpath'd package directory, then
+// each dep label is rewritten to its canonical form — node_modules/<name>/
+// plus the path inside the package, read from the nearest enclosing
+// package.json — so the emitted identity is the package's own name,
+// identical whether the module was reached through a store link, a
+// workspace symlink, or a real install. Rewrites only fire on exact
+// quoted labels, full-line `// <label>` comments, and the importer path
+// inside a glob-expansion module's synthetic `require("<pattern>") in
+// <path>` name — all paths reported by the metafile — so source text that
+// merely resembles a path is never touched. A dep file with no named
+// package above it falls back to the path suffix starting at its last
+// node_modules/ segment; one outside both (a file: link to a bare
+// directory) keeps its emitted label — that residue is location-dependent,
+// and deliberately so rather than guessed at.
+const packageLabel = (file) => {
+  let cursor = NodePath.dirname(file);
+  while (true) {
+    try {
+      const pkg = JSON.parse(NodeFS.readFileSync(NodePath.join(cursor, "package.json"), "utf8"));
+      if (typeof pkg.name === "string" && pkg.name.length > 0) {
+        const rel = NodePath.relative(cursor, file).split(NodePath.sep).join("/");
+        return `node_modules/${pkg.name}/${rel}`;
+      }
+    } catch {}
+    const parent = NodePath.dirname(cursor);
+    if (parent === cursor) return null;
+    cursor = parent;
+  }
+};
+const canonicalModuleIds = (text, metafile, dir) => {
+  const emitted = Object.keys(metafile.inputs);
+  const labels = new Map();
+  const claimants = new Map();
+  for (const input of emitted) {
+    // Only dep inputs — paths that escape the package root — get labels;
+    // the extension's own files keep their source spelling.
+    if (!input.startsWith("..")) continue;
+    const label =
+      packageLabel(NodePath.resolve(dir, input)) ??
+      (() => {
+        const at = input.lastIndexOf("node_modules/");
+        return at > 0 ? input.slice(at) : null;
+      })();
+    if (label === null) continue;
+    labels.set(input, label);
+    claimants.set(label, (claimants.get(label) ?? 0) + 1);
+  }
+  for (const [input, label] of labels) {
+    // Two different real modules claiming one canonical label would merge
+    // in the emitted wrapper map; likewise a label that already belongs to
+    // another input. Ambiguous groups keep their emitted labels.
+    if (claimants.get(label) > 1 || emitted.includes(label)) continue;
+    text = text.split(`"${input}"`).join(`"${label}"`);
+    text = text
+      .split("\n")
+      .map((line) =>
+        line.trimStart() === "// " + input ? line.replace("// " + input, "// " + label) : line,
+      )
+      .join("\n");
+    // Glob-expansion modules get a synthetic `require("<pattern>") in
+    // <importer>` name that is not itself an input; its trailing importer
+    // path is. It emits single-quoted, so the quoted-label pass above
+    // never sees it.
+    text = text.replace(
+      new RegExp(
+        `((?:require|import)\\("[^"]*"\\) in )${input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+        "g",
+      ),
+      () => `$1${label}`,
+    );
+  }
+  return text;
+};
 async function check(dir) {
   const pkg = validateEnvironmentPackage(
     JSON.parse(await NodeFSP.readFile(NodePath.join(dir, "t3-extension.json"), "utf8")),
@@ -113,7 +181,6 @@ async function main() {
       format: "esm",
       target: "node24",
       logLevel: "silent",
-      preserveSymlinks: true,
     });
     const authored = (
       await import(NodeURL.pathToFileURL(NodePath.join(temp, "definition.mjs")).href)
@@ -174,21 +241,21 @@ async function main() {
     if (typecheck.status !== 0)
       throw new Error("Declared entry typecheck failed (exit " + typecheck.status + ")");
     await NodeFSP.rm(config);
-    const bundle = async (contents, platform) =>
-      (
-        await build({
-          absWorkingDir: dir,
-          tsconfig: NodePath.join(dir, "tsconfig.json"),
-          stdin: { contents, resolveDir: dir, sourcefile: "generated-entry.ts", loader: "ts" },
-          bundle: true,
-          write: false,
-          platform,
-          format: "esm",
-          target: platform === "browser" ? "es2022" : "node24",
-          logLevel: "silent",
-          preserveSymlinks: true,
-        })
-      ).outputFiles[0].text;
+    const bundle = async (contents, platform) => {
+      const result = await build({
+        absWorkingDir: dir,
+        tsconfig: NodePath.join(dir, "tsconfig.json"),
+        stdin: { contents, resolveDir: dir, sourcefile: "generated-entry.ts", loader: "ts" },
+        bundle: true,
+        write: false,
+        metafile: true,
+        platform,
+        format: "esm",
+        target: platform === "browser" ? "es2022" : "node24",
+        logLevel: "silent",
+      });
+      return canonicalModuleIds(result.outputFiles[0].text, result.metafile, dir);
+    };
     if (pkg.clientEntry) {
       // Evaluate dependency modules inside each factory so imported hooks share the host identity.
       const client = await build({
@@ -202,12 +269,12 @@ async function main() {
         },
         bundle: true,
         write: false,
+        metafile: true,
         platform: "browser",
         format: "iife",
         globalName: "__t3Client",
         target: "es2022",
         logLevel: "silent",
-        preserveSymlinks: true,
         plugins: [
           {
             name: "host-react",
@@ -257,7 +324,7 @@ async function main() {
       await NodeFSP.writeFile(
         NodePath.join(temp, pkg.clientEntry),
         "export default function (__t3Host) {\n" +
-          client.outputFiles[0].text +
+          canonicalModuleIds(client.outputFiles[0].text, client.metafile, dir) +
           "\nreturn __t3Client.default(__t3Host);\n}\n",
       );
     }

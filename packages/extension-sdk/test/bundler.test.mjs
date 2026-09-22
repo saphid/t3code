@@ -101,6 +101,9 @@ import left from "left-dep";
 import right from "right-dep";
 import inner from "inner-dep";
 import glob from "glob-dep";
+import singleA from "alias-a";
+import singleB from "alias-b";
+import realPkg from "real-pkg";
 const text = \`before
 // server.ts
 after\`;
@@ -111,12 +114,17 @@ export default {
   values: [left, right],
   interop: inner,
   globbed: glob("a"),
+  singleA,
+  singleB,
+  transitive: realPkg,
 };
 `;
 
 // Real external dependencies that live OUTSIDE the package directory and
 // are reached through node_modules symlinks — the shapes that used to leak
-// checkout-relative paths into emitted module identities:
+// checkout-relative paths into emitted module identities. Everything sits
+// under depDir/node_modules so realpath resolution lands modules on a path
+// whose canonical label is the node_modules/ suffix:
 // - fixture-dep: ordinary named CJS package.
 // - left-dep/right-dep: nameless packages (no "name" in package.json) whose
 //   index.cjs bytes are IDENTICAL but whose relative imports must resolve
@@ -124,6 +132,12 @@ export default {
 // - inner-dep: "type": "module" package whose .js entry default-imports a
 //   transpiled-looking .cjs — native interop must yield module.exports.
 // - glob-dep: dynamic require glob — expanded files never reach onResolve.
+// - single: one physical package the fixture links under two names — the
+//   bundle must wire both spellings to one instance, not two copies.
+// - real-pkg: package whose own dependency (transitive-dep) exists ONLY
+//   beside its real target — reachable by realpath, invisible from the
+//   symlink spelling.
+// - transitive-dep: pulled in solely through real-pkg's sibling lookup.
 async function writeSharedDeps(dir) {
   const w = async (pkg, files) => {
     await NodeFSP.mkdir(pkg, { recursive: true });
@@ -135,8 +149,9 @@ async function writeSharedDeps(dir) {
       }),
     );
   };
+  const modules = NodePath.join(dir, "node_modules");
   await Promise.all([
-    w(NodePath.join(dir, "fixture-dep"), {
+    w(NodePath.join(modules, "fixture-dep"), {
       "package.json": JSON.stringify({
         name: "fixture-dep",
         version: "1.0.0",
@@ -149,7 +164,7 @@ async function writeSharedDeps(dir) {
     }),
     // left-dep / right-dep (nameless, byte-identical index.cjs)
     ...["left", "right"].map((value) =>
-      w(NodePath.join(dir, value), {
+      w(NodePath.join(modules, value), {
         "package.json": JSON.stringify({
           version: "1.0.0",
           type: "commonjs",
@@ -161,7 +176,7 @@ async function writeSharedDeps(dir) {
         "index.d.ts": "declare const v: string;\nexport default v;\n",
       }),
     ),
-    w(NodePath.join(dir, "inner"), {
+    w(NodePath.join(modules, "inner"), {
       "package.json": JSON.stringify({
         name: "inner-dep",
         version: "1.0.0",
@@ -174,7 +189,7 @@ async function writeSharedDeps(dir) {
         'exports.__esModule = true;\nexports.default = "inner";\nexports.extra = "outer";\n',
       "entry.d.ts": "declare const v: { default: string; extra: string };\nexport default v;\n",
     }),
-    w(NodePath.join(dir, "glob-dep"), {
+    w(NodePath.join(modules, "glob-dep"), {
       "package.json": JSON.stringify({
         name: "glob-dep",
         version: "1.0.0",
@@ -185,6 +200,40 @@ async function writeSharedDeps(dir) {
       "index.cjs": 'module.exports = (name) => require("./features/" + name + ".cjs");\n',
       "features/a.cjs": 'module.exports = "loaded";\n',
       "index.d.ts": "declare const load: (name: string) => unknown;\nexport default load;\n",
+    }),
+    // One physical package the fixture links under two spellings.
+    w(NodePath.join(modules, "single"), {
+      "package.json": JSON.stringify({
+        name: "single-dep",
+        version: "1.0.0",
+        type: "commonjs",
+        main: "index.cjs",
+        types: "index.d.ts",
+      }),
+      "index.cjs": 'module.exports = { marker: "single" };\n',
+      "index.d.ts": "declare const v: { marker: string };\nexport default v;\n",
+    }),
+    // real-pkg's require("transitive-dep") resolves only by walking up from
+    // its real location — the fixture never links transitive-dep itself.
+    w(NodePath.join(modules, "real-pkg"), {
+      "package.json": JSON.stringify({
+        name: "real-pkg",
+        version: "1.0.0",
+        type: "commonjs",
+        main: "index.cjs",
+        types: "index.d.ts",
+      }),
+      "index.cjs": 'module.exports = require("transitive-dep");\n',
+      "index.d.ts": "declare const v: string;\nexport default v;\n",
+    }),
+    w(NodePath.join(modules, "transitive-dep"), {
+      "package.json": JSON.stringify({
+        name: "transitive-dep",
+        version: "1.0.0",
+        type: "commonjs",
+        main: "index.cjs",
+      }),
+      "index.cjs": 'module.exports = "transitive-loaded";\n',
     }),
   ]);
 }
@@ -211,8 +260,14 @@ async function writeFixture(dir, jsx = "react-jsx", depDir) {
     ["right-dep", "right"],
     ["inner-dep", "inner"],
     ["glob-dep", "glob-dep"],
+    ["alias-a", "single"],
+    ["alias-b", "single"],
+    ["real-pkg", "real-pkg"],
   ])
-    await NodeFSP.symlink(NodePath.join(depDir, target), NodePath.join(dir, "node_modules", entry));
+    await NodeFSP.symlink(
+      NodePath.join(depDir, "node_modules", target),
+      NodePath.join(dir, "node_modules", entry),
+    );
   await NodeFSP.writeFile(NodePath.join(dir, "tsconfig.json"), tsconfig(jsx));
   await NodeFSP.writeFile(NodePath.join(dir, "extension.ts"), extension(suffix));
   await NodeFSP.writeFile(NodePath.join(dir, "component.tsx"), component(suffix, list));
@@ -274,6 +329,10 @@ NodeTest.test("bundler output is deterministic across build cwd and checkout pat
       server.includes('"node_modules/glob-dep/features/a.cjs"'),
       `glob-expanded file lost its canonical key: ${jsx}`,
     );
+    NodeAssert.ok(
+      server.includes('"node_modules/transitive-dep/index.cjs"'),
+      `transitive dep beside a linked package's real target lost its canonical key: ${jsx}`,
+    );
     // The built server module imports with everything intact.
     const built = (
       await import(
@@ -295,6 +354,20 @@ NodeTest.test("bundler output is deterministic across build cwd and checkout pat
       `package-type interop changed (${jsx})`,
     );
     NodeAssert.equal(built.globbed, "loaded", `glob-expanded dep not wired (${jsx})`);
+    // Two spellings of one physical package share a single module instance —
+    // preserveSymlinks bundled them as separate singletons.
+    NodeAssert.equal(
+      built.singleA,
+      built.singleB,
+      `same physical dep under two names bundled twice (${jsx})`,
+    );
+    // real-pkg's dependency exists only beside its real target — resolution
+    // must walk the realpath, not the symlink spelling.
+    NodeAssert.equal(
+      built.transitive,
+      "transitive-loaded",
+      `dep beside a linked package's real target did not resolve (${jsx})`,
+    );
     for (const entry of ["client", "server"]) {
       const text = firstBytes[entry].toString("utf8");
       for (const line of text.split("\n"))
