@@ -146,6 +146,8 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
+import { layer as PreviewAutomationBrokerLayer } from "./mcp/PreviewAutomationBroker.ts";
+import { layer as BrowserFrameLeasesLayer } from "./browserFrames/BrowserFrameLeases.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
@@ -1049,6 +1051,9 @@ const buildAppUnderTest = (options?: {
     );
 
     const appLayer = servedRoutesLayer.pipe(
+      // `serve` unwraps route-handler requirements into ambient requirements
+      // of the served layer; the real server provides them via makeServerLayer.
+      Layer.provide(Layer.mergeAll(PreviewAutomationBrokerLayer, BrowserFrameLeasesLayer)),
       Layer.provide(resourceTelemetryLayer),
       Layer.provide(UsageService.layerTest),
       Layer.provide(

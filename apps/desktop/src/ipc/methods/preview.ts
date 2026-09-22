@@ -34,6 +34,7 @@ import * as NodeURL from "node:url";
 
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as BrowserImport from "../../preview/BrowserImport/BrowserImport.ts";
+import * as BrowserFrameHub from "../../preview/FrameHub.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import { PREVIEW_WEBVIEW_PREFERENCES } from "../../preview/WebviewPreferences.ts";
 import * as IpcChannels from "../channels.ts";
@@ -374,6 +375,21 @@ export const copyArtifactToClipboard = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.preview.copyArtifactToClipboard")(function* ({ path }) {
     const manager = yield* PreviewManager.PreviewManager;
     yield* manager.copyArtifactToClipboard(path);
+  }),
+});
+
+/**
+ * Registered separately from `methods`: it carries `BrowserFrameHub` in its
+ * context rather than `PreviewManager`, so it does not unify with the shared
+ * loop in `DesktopIpcHandlers`.
+ */
+export const frameHubOrigin = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_FRAME_HUB_ORIGIN_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.NullOr(Schema.String),
+  handler: Effect.fn("desktop.ipc.preview.frameHubOrigin")(function* () {
+    const hub = yield* BrowserFrameHub.BrowserFrameHub;
+    return hub.origin;
   }),
 });
 

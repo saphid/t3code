@@ -298,6 +298,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       close: (tabId) =>
         ipcRenderer.invoke(IpcChannels.PREVIEW_PICTURE_IN_PICTURE_CLOSE_CHANNEL, { tabId }),
     },
+    frames: {
+      hubOrigin: () => ipcRenderer.invoke(IpcChannels.PREVIEW_FRAME_HUB_ORIGIN_CHANNEL),
+    },
     recording: {
       startScreencast: (tabId) =>
         ipcRenderer.invoke(IpcChannels.PREVIEW_RECORDING_START_CHANNEL, { tabId }),

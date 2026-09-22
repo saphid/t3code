@@ -67,6 +67,7 @@ import {
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   RpcClientId,
+  BrowserFramesError,
   EnvironmentAuthorizationError,
   ThreadId,
   type TerminalAttachStreamEvent,
@@ -118,6 +119,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
+import * as BrowserFrameLeases from "./browserFrames/BrowserFrameLeases.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -628,6 +630,7 @@ const makeWsRpcLayer = (
       const pullRequests = yield* PullRequestService.PullRequestService;
       const extensionCatalogueChanges = yield* ExtensionCatalogueChanges;
       const environmentExtensions = yield* EnvironmentExtensions;
+      const browserFrameLeases = yield* BrowserFrameLeases.BrowserFrameLeases;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const sessions = yield* SessionStore.SessionStore;
@@ -2766,6 +2769,60 @@ const makeWsRpcLayer = (
             WS_METHODS.previewAutomationFocusHost,
             previewAutomationBroker.focusHost(input),
             { "rpc.aggregate": "preview-automation" },
+          ),
+        [WS_METHODS.browserFramesOpenInput]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.browserFramesOpenInput,
+            Effect.gen(function* () {
+              const details = yield* previewManager.listDetails({ threadId: input.threadId });
+              const session = details.sessions.find(
+                (detail) => detail.snapshot.tabId === input.tabId,
+              );
+              if (!session || details.serverEpoch !== input.serverEpoch) {
+                return yield* new BrowserFramesError({
+                  reason: "session-not-found",
+                  message: "No live browser session matches the requested tuple.",
+                });
+              }
+              const hubs = yield* previewAutomationBroker.frameHubs;
+              const candidates = hubs.filter((hub) => hub.environmentId === input.environmentId);
+              if (candidates.length === 0) {
+                return yield* new BrowserFramesError({
+                  reason: "engine-unavailable",
+                  message: "No connected engine host serves browser frames.",
+                });
+              }
+              return yield* browserFrameLeases.issueInputLease({
+                principal: currentSession.subject,
+                scopes: currentSession.scopes,
+                session: {
+                  environmentId: input.environmentId,
+                  threadId: input.threadId,
+                  serverEpoch: input.serverEpoch,
+                  tabId: input.tabId,
+                },
+                engineGeneration: input.engineGeneration ?? null,
+                hostClientId: candidates.length === 1 ? (candidates[0]?.clientId ?? null) : null,
+              });
+            }),
+            { "rpc.aggregate": "browser-frames" },
+          ),
+        [WS_METHODS.browserFramesCloseInput]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.browserFramesCloseInput,
+            browserFrameLeases.resolveLease(input.leaseId).pipe(
+              Effect.flatMap(
+                Option.match({
+                  onNone: () => Effect.void,
+                  onSome: (lease) =>
+                    lease.principal === currentSession.subject &&
+                    lease.session.environmentId === input.environmentId
+                      ? browserFrameLeases.revokeLease(input.leaseId).pipe(Effect.asVoid)
+                      : Effect.void,
+                }),
+              ),
+            ),
+            { "rpc.aggregate": "browser-frames" },
           ),
         [WS_METHODS.subscribePreviewEvents]: (_input) =>
           observeRpcStream(WS_METHODS.subscribePreviewEvents, previewManager.events, {

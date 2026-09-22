@@ -1,5 +1,6 @@
 import { makeBrowserLocalServersApiProvider } from "./browserLocalServersApi.ts";
 import { makeBrowserSessionsApiProvider } from "./browserSessions/v1.ts";
+import { makeBrowserFramesApiProvider } from "./browserFrames/v1.ts";
 import { makeOrchestrationApiProviders } from "./orchestration/v1.ts";
 import { makeWorkspaceChangesApiProvider } from "./workspaceChangesApi.ts";
 import { makeWorkspaceSearchApiProvider } from "./workspaceSearchApi.ts";
@@ -82,6 +83,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   const workspace = yield* WorkspaceFileSystem;
   const browserLocalServersApi = yield* makeBrowserLocalServersApiProvider();
   const browserSessionsApi = yield* makeBrowserSessionsApiProvider();
+  const browserFramesApi = yield* makeBrowserFramesApiProvider();
   const workspaceApi = yield* makeWorkspaceApiProvider();
   const workspaceTreeApi = yield* makeWorkspaceTreeApiProvider();
   const workspaceSearchApi = yield* makeWorkspaceSearchApiProvider();
@@ -161,6 +163,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
           apiProviders: [
             browserLocalServersApi,
             browserSessionsApi,
+            browserFramesApi,
             workspaceApi,
             workspaceTreeApi,
             workspaceSearchApi,

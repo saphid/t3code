@@ -286,8 +286,35 @@ export function PreviewAutomationHosts() {
   );
 }
 
+/**
+ * Resolves the loopback frame-hub origin before mounting the host so the
+ * broker sees exactly one registration carrying `frameHub` — re-registering
+ * to add it later would churn the automation request stream.
+ */
 function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId }) {
   const { environmentId } = props;
+  const [frameHubOrigin, setFrameHubOrigin] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    void previewBridge?.frames
+      .hubOrigin()
+      .then((origin) => !cancelled && setFrameHubOrigin(origin))
+      .catch(() => !cancelled && setFrameHubOrigin(null));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  if (frameHubOrigin === undefined) return null;
+  return (
+    <PreviewAutomationHostInner environmentId={environmentId} frameHubOrigin={frameHubOrigin} />
+  );
+}
+
+function PreviewAutomationHostInner(props: {
+  readonly environmentId: EnvironmentId;
+  readonly frameHubOrigin: string | null;
+}) {
+  const { environmentId, frameHubOrigin } = props;
   const registry = useContext(RegistryContext);
   const [automationClientId] = useState(createPreviewAutomationClientId);
   const initialAutomationHost = useMemo<PreviewAutomationHostState>(
@@ -295,8 +322,9 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
       clientId: automationClientId,
       environmentId,
       supportedOperations: [...PREVIEW_AUTOMATION_OPERATIONS],
+      ...(frameHubOrigin === null ? {} : { frameHub: { origin: frameHubOrigin } }),
     }),
-    [automationClientId, environmentId],
+    [automationClientId, environmentId, frameHubOrigin],
   );
   const automationRequestsAtom = previewEnvironment.automationRequests({
     environmentId,

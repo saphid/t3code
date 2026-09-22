@@ -46,6 +46,14 @@ export interface PreviewAutomationInvokeInput {
   readonly timeoutMs?: number;
 }
 
+/** Live engine host that advertised a `t3.browser/frames` loopback hub. */
+export interface BrowserFrameHubEndpoint {
+  readonly clientId: string;
+  readonly connectionId: string;
+  readonly environmentId: string;
+  readonly origin: string;
+}
+
 export class PreviewAutomationBroker extends Context.Service<
   PreviewAutomationBroker,
   {
@@ -53,6 +61,12 @@ export class PreviewAutomationBroker extends Context.Service<
       host: PreviewAutomationHost,
     ) => Effect.Effect<Stream.Stream<PreviewAutomationStreamEvent>>;
     readonly focusHost: (host: PreviewAutomationHostFocus) => Effect.Effect<void>;
+    /**
+     * Engine hosts currently connected with a browser-frame hub. The list is
+     * what the `/api/browser-frames` proxy and lease mint resolve `hostId`
+     * against; entries disappear with their connection.
+     */
+    readonly frameHubs: Effect.Effect<ReadonlyArray<BrowserFrameHubEndpoint>>;
     readonly respond: (
       response: PreviewAutomationResponse,
     ) => Effect.Effect<void, PreviewAutomationError>;
@@ -69,6 +83,7 @@ interface ClientConnection {
   readonly supportedOperations: ReadonlySet<PreviewAutomationOperation>;
   readonly focused: boolean;
   readonly focusOrder: number;
+  readonly frameHubOrigin?: string;
   readonly queue: Queue.Queue<PreviewAutomationStreamEvent>;
 }
 
@@ -357,6 +372,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       supportedOperations: new Set(host.supportedOperations ?? PREVIEW_AUTOMATION_V1_OPERATIONS),
       focused: false,
       focusOrder: 0,
+      ...(host.frameHub?.origin !== undefined ? { frameHubOrigin: host.frameHub.origin } : {}),
       queue,
     };
     const registration = yield* SynchronizedRef.modify(state, (current) => {
@@ -605,7 +621,26 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     return result;
   });
 
-  return PreviewAutomationBroker.of({ connect, focusHost, respond, invoke });
+  const frameHubs: PreviewAutomationBroker["Service"]["frameHubs"] = SynchronizedRef.get(
+    state,
+  ).pipe(
+    Effect.map((current) =>
+      Array.from(current.clients.values()).flatMap((connection) =>
+        connection.frameHubOrigin === undefined
+          ? []
+          : [
+              {
+                clientId: connection.clientId,
+                connectionId: connection.connectionId,
+                environmentId: connection.environmentId,
+                origin: connection.frameHubOrigin,
+              },
+            ],
+      ),
+    ),
+  );
+
+  return PreviewAutomationBroker.of({ connect, focusHost, frameHubs, respond, invoke });
 }).pipe(Effect.withSpan("PreviewAutomationBroker.make"));
 
 export const layer = Layer.effect(PreviewAutomationBroker, make);

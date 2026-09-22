@@ -19,7 +19,10 @@ import {
   type ApiMethodTypes,
 } from "./capabilities.js";
 import {
+  BROWSER_FRAMES,
   BROWSER_SURFACE,
+  browserFramesApi,
+  type BrowserFramesViewState,
   type BrowserSurfaceAcquireResult,
   type BrowserSurfaceDenial,
   type BrowserSurfaceLease,
@@ -566,6 +569,200 @@ export function useBrowserSurfaceSlot(
     ref,
     lease: result?.ok ? result.lease : null,
     denial: result && !result.ok ? result.denial : null,
+  };
+}
+
+/** Session identity for remote frames — the held `t3.browser/sessions` ref plus its last engine generation. */
+export interface RemoteBrowserFramesSession {
+  readonly tabId: string;
+  readonly serverEpoch: string;
+  /** Latest engine-reported generation; the mints fence on it. */
+  readonly engineGeneration: string | null;
+}
+
+export interface RemoteBrowserFramesOptions {
+  readonly session: RemoteBrowserFramesSession | null;
+  /** Mount only while the slot is visible and a session is held. */
+  readonly enabled: boolean;
+}
+
+export type RemoteBrowserFramesStatus =
+  | { readonly kind: "idle" }
+  /** No remote-frame transport or engine host — fall back to a plain notice. */
+  | { readonly kind: "unsupported"; readonly detail: string }
+  | { readonly kind: "connecting" }
+  | { readonly kind: "streaming" }
+  | { readonly kind: "error"; readonly detail: string };
+
+export interface RemoteBrowserFrames {
+  readonly ref: (node: HTMLElement | null) => void;
+  readonly status: RemoteBrowserFramesStatus;
+  /** Whether the input lease is bound — pointer/key events reach the guest. */
+  readonly inputConnected: boolean;
+  /** Frames the engine produced that this client dropped before painting. */
+  readonly droppedFrames: number;
+  /** Input packets the hub rejected (replay, stale geometry, rate limit, …). */
+  readonly rejectedInput: number;
+}
+
+/**
+ * The SDK mirror of the remote-frame presenter: mints lease-bound tickets
+ * through `t3.browser/frames` and mounts the host's frame view on the
+ * element. Use it when `useBrowserSurfaceSlot` reports the host cannot
+ * composite (`presentation.supported === false` or no `browserSurface`
+ * capability) — it is the remote-client counterpart of the native slot.
+ * A view is bound to one session identity; change `options.session` to move
+ * it, and set `enabled` false to stop transport entirely.
+ */
+export function useRemoteBrowserFrames(
+  host: ClientHost,
+  session: ViewSession,
+  options: RemoteBrowserFramesOptions,
+): RemoteBrowserFrames {
+  const { useCallback, useEffect, useRef, useState } = host.React;
+  const [element, setElement] = useState<HTMLElement | null>(null);
+  const [status, setStatus] = useState<RemoteBrowserFramesStatus>({ kind: "idle" });
+  const [view, setView] = useState<BrowserFramesViewState>({
+    status: "connecting",
+    inputConnected: false,
+    droppedFrames: 0,
+    rejectedInput: 0,
+  });
+  const sessionRef = useRef(options.session);
+  sessionRef.current = options.session;
+  const targetKey = options.session
+    ? `${options.session.serverEpoch} ${options.session.tabId}`
+    : "";
+  const ref = useCallback((node: HTMLElement | null) => setElement(node), []);
+
+  useEffect(() => {
+    setStatus({ kind: "idle" });
+    setView({ status: "connecting", inputConnected: false, droppedFrames: 0, rejectedInput: 0 });
+    if (!element || !options.enabled || !options.session) return;
+    const target = options.session;
+    const frames = host.browserFrames;
+    const major = Number.parseInt(frames?.version.split(".")[0] ?? "", 10);
+    if (!frames || frames.id !== BROWSER_FRAMES || major !== 1) {
+      setStatus({
+        kind: "unsupported",
+        detail: `This host does not implement ${BROWSER_FRAMES}@1.x presentation.`,
+      });
+      return;
+    }
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    const api = bindApi(browserFramesApi, host, session.context);
+    let detach: () => void = () => {};
+    let inputLeaseId: string | null = null;
+    void (async () => {
+      try {
+        const capabilities = await api.invoke("getCapabilities", {}, signal);
+        if (signal.aborted) return;
+        if (!capabilities.stream.supported) {
+          setStatus({
+            kind: "unsupported",
+            detail: "No engine host serves remote frames for this environment.",
+          });
+          return;
+        }
+      } catch (error) {
+        if (signal.aborted) return;
+        setStatus({
+          kind: "error",
+          detail: error instanceof Error ? error.message : "Browser frames are unavailable.",
+        });
+        return;
+      }
+      const presented = frames.present({
+        context: session.context,
+        session: { tabId: target.tabId, serverEpoch: target.serverEpoch },
+        slot: element,
+        signal,
+        openStream: async () => {
+          try {
+            const descriptor = await api.invoke(
+              "openStream",
+              {
+                tabId: target.tabId,
+                serverEpoch: target.serverEpoch,
+                expectedEngineGeneration: sessionRef.current?.engineGeneration ?? null,
+              },
+              signal,
+            );
+            return { ticket: descriptor.ticket, expiresAt: descriptor.expiresAt };
+          } catch {
+            return null;
+          }
+        },
+        openInput: async () => {
+          try {
+            const lease = await api.invoke(
+              "openInput",
+              {
+                tabId: target.tabId,
+                serverEpoch: target.serverEpoch,
+                expectedEngineGeneration: sessionRef.current?.engineGeneration ?? null,
+              },
+              signal,
+            );
+            inputLeaseId = lease.leaseId;
+            return {
+              leaseId: lease.leaseId,
+              inputTicket: lease.inputTicket,
+              expiresAt: lease.expiresAt,
+            };
+          } catch {
+            return null;
+          }
+        },
+      });
+      if (signal.aborted) {
+        if (presented.ok) presented.view.detach();
+        return;
+      }
+      if (!presented.ok) {
+        setStatus(
+          presented.denial.reason === "frames-unsupported"
+            ? { kind: "unsupported", detail: presented.denial.detail }
+            : { kind: "error", detail: presented.denial.detail },
+        );
+        return;
+      }
+      const unsubscribe = presented.view.onDidChangeState(setView);
+      setView(presented.view.state);
+      setStatus({ kind: "connecting" });
+      detach = () => {
+        unsubscribe();
+        presented.view.detach();
+      };
+    })();
+    return () => {
+      controller.abort();
+      detach();
+      // Honest release: the socket close already unwinds the hub side; this
+      // retires the lease record early so a second presenter does not wait
+      // out the TTL. Best-effort — the signal may already be dead.
+      if (inputLeaseId !== null) {
+        void api.invoke("closeInput", { leaseId: inputLeaseId }, session.signal).catch(() => {});
+      }
+    };
+    // The view is re-presented only when the element or session identity changes.
+  }, [element, targetKey, options.enabled, host, session]);
+
+  const statusWithView: RemoteBrowserFramesStatus =
+    status.kind !== "connecting"
+      ? status
+      : view.status === "streaming"
+        ? { kind: "streaming" }
+        : view.status === "error"
+          ? { kind: "error", detail: view.detail ?? "Remote frame transport failed." }
+          : { kind: "connecting" };
+  return {
+    ref,
+    status: statusWithView,
+    inputConnected: view.inputConnected,
+    droppedFrames: view.droppedFrames,
+    rejectedInput: view.rejectedInput,
   };
 }
 /* oxlint-enable react/hooks */

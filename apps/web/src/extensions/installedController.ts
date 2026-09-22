@@ -25,7 +25,8 @@ import type {
 import type { SurfaceRenderer } from "@t3tools/extension-sdk/react";
 import type * as React from "react";
 import type { BrowserSurfaceBinding } from "./browserSurfaceBridge";
-import type { BrowserSurfaceHost } from "@t3tools/extension-sdk/catalogue";
+import type { BrowserFramesBinding } from "./browserFramesBridge";
+import type { BrowserFramesHost, BrowserSurfaceHost } from "@t3tools/extension-sdk/catalogue";
 
 export type InstalledPackage = Omit<ExtensionInstallation, "package"> & {
   readonly package: EnvironmentPackage;
@@ -168,6 +169,12 @@ export function createInstalledExtensionController(options: {
    * and ends its leases with the installation lifetime.
    */
   readonly browserSurface?: (binding: BrowserSurfaceBinding) => BrowserSurfaceHost;
+  /**
+   * `t3.browser/frames@1.0.0` presenter bridge — bound per installation so
+   * the resulting `host.browserFrames` checks that installation's grants
+   * and detaches its views with the installation lifetime.
+   */
+  readonly browserFrames?: (binding: BrowserFramesBinding) => BrowserFramesHost;
 }) {
   const active = new Map<string, { signature: string; stop: () => void }>();
   let generation = 0;
@@ -321,6 +328,10 @@ export function createInstalledExtensionController(options: {
               grants: item.grants,
               lifetime: lifetime.signal,
             });
+            const browserFrames = options.browserFrames?.({
+              grants: item.grants,
+              lifetime: lifetime.signal,
+            });
             const clientHost: ClientHost = {
               React: options.React,
               async invokeApi(request, callerSignal) {
@@ -450,6 +461,7 @@ export function createInstalledExtensionController(options: {
                 return copyJson(result);
               },
               ...(browserSurface ? { browserSurface } : {}),
+              ...(browserFrames ? { browserFrames } : {}),
             };
             const extension = (factory as ClientFactory)(clientHost);
             if (canonical(extension.manifest) !== canonical(item.package.manifest))

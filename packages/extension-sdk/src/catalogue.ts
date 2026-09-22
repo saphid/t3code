@@ -4827,6 +4827,255 @@ export const browserSessionsApi: TypedApi<{
 export const BROWSER_SESSIONS_API = browserSessionsApi.definition;
 
 /* ------------------------------------------------------------------------
+ * t3.browser/frames — remote pixel transport for a browser session
+ *
+ * Actions never ride this contract; automation stays on t3.browser/sessions
+ * and no raw CDP surface is exposed. The methods mint lease-bound tickets —
+ * the frames themselves move over `/api/browser-frames/*`, not through the
+ * invoke channel.
+ */
+
+export const BROWSER_FRAMES = "t3.browser/frames";
+export const BROWSER_FRAMES_VERSION = "1.0.0";
+
+/** Fencing identity for one live browser session, as advertised by the engine. */
+export type BrowserFrameSessionIdentity = {
+  readonly environmentId: string;
+  readonly threadId: string;
+  readonly serverEpoch: string;
+  readonly tabId: string;
+  /**
+   * Engine generation the mint observed, if the caller asserted one.
+   * `null` means "not asserted"; the authoritative generation is always in
+   * `/config`, `/sessions`, and frame headers — never in this descriptor.
+   */
+  readonly engineGeneration: string | null;
+};
+
+export type BrowserFrameStreamDescriptor = {
+  readonly session: BrowserFrameSessionIdentity;
+  /** Engine-host id to pass as `hostId` on the proxy, or null for the default host. */
+  readonly hostId: string | null;
+  /**
+   * Paths on the environment HTTP origin. Append `frameTicket` (or a session
+   * `wsTicket`) plus the session tuple as query parameters. Geometry,
+   * dimensions, and the authoritative engine generation come from `config`
+   * and stream part headers — they are deliberately not duplicated here.
+   */
+  readonly paths: {
+    readonly stream: string;
+    readonly snapshot: string;
+    readonly config: string;
+  };
+  /** Lease-bound stream ticket; expires at `expiresAt` (epoch ms). */
+  readonly ticket: string;
+  readonly expiresAt: number;
+};
+
+export type BrowserFrameInputLease = {
+  readonly leaseId: string;
+  /** Bearer credential for `GET /sessions/<tabId>/input` (WS upgrade). */
+  readonly inputTicket: string;
+  readonly expiresAt: number;
+  readonly paths: { readonly input: string };
+};
+
+export type BrowserFramesCapabilities = {
+  readonly metadata: { readonly supported: true };
+  readonly stream:
+    | { readonly supported: true }
+    | { readonly supported: false; readonly reason: "engine-unavailable" };
+  readonly input: { readonly supported: boolean };
+};
+
+const browserFrameSessionIdentity = {
+  type: "object",
+  additionalProperties: false,
+  required: ["environmentId", "threadId", "serverEpoch", "tabId", "engineGeneration"],
+  properties: {
+    environmentId: { type: "string", minLength: 1, maxLength: 128 },
+    threadId: { type: "string", minLength: 1, maxLength: 128 },
+    serverEpoch: { type: "string", minLength: 1, maxLength: 128 },
+    tabId: browserSessionTabId,
+    engineGeneration: { type: ["string", "null"], minLength: 1, maxLength: 128 },
+  },
+} as const;
+const browserFrameTarget = {
+  type: "object",
+  additionalProperties: false,
+  required: ["tabId", "serverEpoch"],
+  properties: {
+    tabId: browserSessionTabId,
+    serverEpoch: browserSessionEpoch,
+    expectedEngineGeneration: { type: ["string", "null"], minLength: 1, maxLength: 128 },
+  },
+} as const;
+const browserFrameStreamDescriptor = {
+  type: "object",
+  additionalProperties: false,
+  required: ["session", "hostId", "paths", "ticket", "expiresAt"],
+  properties: {
+    session: browserFrameSessionIdentity,
+    hostId: { type: ["string", "null"], minLength: 1, maxLength: 128 },
+    paths: {
+      type: "object",
+      additionalProperties: false,
+      required: ["stream", "snapshot", "config"],
+      properties: {
+        stream: { type: "string", minLength: 1, maxLength: 512 },
+        snapshot: { type: "string", minLength: 1, maxLength: 512 },
+        config: { type: "string", minLength: 1, maxLength: 512 },
+      },
+    },
+    ticket: { type: "string", minLength: 1, maxLength: 256 },
+    expiresAt: { type: "integer", minimum: 1 },
+  },
+} as const;
+const browserFrameInputLease = {
+  type: "object",
+  additionalProperties: false,
+  required: ["leaseId", "inputTicket", "expiresAt", "paths"],
+  properties: {
+    leaseId: { type: "string", minLength: 1, maxLength: 128 },
+    inputTicket: { type: "string", minLength: 1, maxLength: 256 },
+    expiresAt: { type: "integer", minimum: 1 },
+    paths: {
+      type: "object",
+      additionalProperties: false,
+      required: ["input"],
+      properties: { input: { type: "string", minLength: 1, maxLength: 512 } },
+    },
+  },
+} as const;
+
+export const browserFramesApi: TypedApi<{
+  getCapabilities: { input: Record<string, never>; output: BrowserFramesCapabilities };
+  openStream: {
+    input: {
+      readonly tabId: string;
+      readonly serverEpoch: string;
+      readonly expectedEngineGeneration?: string | null;
+    };
+    output: BrowserFrameStreamDescriptor;
+  };
+  openInput: {
+    input: {
+      readonly tabId: string;
+      readonly serverEpoch: string;
+      readonly expectedEngineGeneration?: string | null;
+    };
+    output: BrowserFrameInputLease;
+  };
+  closeInput: {
+    input: { readonly leaseId: string };
+    output: { readonly closed: boolean };
+  };
+}> = defineApi<{
+  getCapabilities: { input: Record<string, never>; output: BrowserFramesCapabilities };
+  openStream: {
+    input: {
+      readonly tabId: string;
+      readonly serverEpoch: string;
+      readonly expectedEngineGeneration?: string | null;
+    };
+    output: BrowserFrameStreamDescriptor;
+  };
+  openInput: {
+    input: {
+      readonly tabId: string;
+      readonly serverEpoch: string;
+      readonly expectedEngineGeneration?: string | null;
+    };
+    output: BrowserFrameInputLease;
+  };
+  closeInput: {
+    input: { readonly leaseId: string };
+    output: { readonly closed: boolean };
+  };
+}>({
+  id: BROWSER_FRAMES,
+  version: BROWSER_FRAMES_VERSION,
+  methods: [
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [BROWSER_FRAMES],
+      inputSchema: browserSessionEmptyInput,
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["metadata", "stream", "input"],
+        properties: {
+          metadata: {
+            type: "object",
+            additionalProperties: false,
+            required: ["supported"],
+            properties: { supported: { const: true } },
+          },
+          stream: {
+            oneOf: [
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["supported"],
+                properties: { supported: { const: true } },
+              },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["supported", "reason"],
+                properties: {
+                  supported: { const: false },
+                  reason: { enum: ["engine-unavailable"] },
+                },
+              },
+            ],
+          },
+          input: {
+            type: "object",
+            additionalProperties: false,
+            required: ["supported"],
+            properties: { supported: { type: "boolean" } },
+          },
+        },
+      },
+    },
+    {
+      name: "openStream",
+      effect: "read",
+      requiredGrants: [BROWSER_SESSIONS, BROWSER_FRAMES],
+      inputSchema: browserFrameTarget,
+      outputSchema: browserFrameStreamDescriptor,
+    },
+    {
+      name: "openInput",
+      effect: "write",
+      requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE, BROWSER_FRAMES],
+      inputSchema: browserFrameTarget,
+      outputSchema: browserFrameInputLease,
+    },
+    {
+      name: "closeInput",
+      effect: "write",
+      requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE, BROWSER_FRAMES],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["leaseId"],
+        properties: { leaseId: { type: "string", minLength: 1, maxLength: 128 } },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["closed"],
+        properties: { closed: { type: "boolean" } },
+      },
+    },
+  ],
+});
+export const BROWSER_FRAMES_API = browserFramesApi.definition;
+
+/* ------------------------------------------------------------------------
  * t3.browser/surface — host-local presentation lease for a browser session
  * (P08-D; engine-attachment row of the binding disposition).
  *
@@ -4995,6 +5244,129 @@ export interface BrowserSurfaceHost {
   /** Static for the host's lifetime — compositing cannot appear mid-session. */
   readonly presentation: BrowserSurfacePresentationSupport;
   acquire(request: BrowserSurfaceAcquireRequest): BrowserSurfaceAcquireResult;
+}
+
+/* ------------------------------------------------------------------------
+ * t3.browser/frames — remote pixel transport presenter
+ *
+ * The host-side half of `t3.browser/frames@1.0.0`, mirroring
+ * `BrowserSurfaceHost`: a `ClientHost.browserFrames` capability, not a
+ * brokered method. A host that can run the remote-frame transport (fetch +
+ * MJPEG decode + input WebSocket) mounts a frame view inside a caller-owned
+ * element. Authorization is never asserted through this capability — the
+ * caller supplies the lease-bound mints (`openStream`/`openInput`), and a
+ * caller without the grants simply cannot produce working tickets.
+ *
+ * Present when the host can present remote frames; absent on hosts that
+ * predate the contract or cannot run the transport (treat as the named
+ * "host-unavailable" state). Presentation support is not tied to
+ * `browserSurface` compositing — a host may do either, both, or neither.
+ * --------------------------------------------------------------------- */
+
+/** Public session identity, as reported by `t3.browser/sessions`. */
+export interface BrowserFramesSessionRef {
+  readonly tabId: string;
+  readonly serverEpoch: string;
+}
+
+/** A lease-bound stream ticket minted by `t3.browser/frames` `openStream`. */
+export interface BrowserFramesStreamMint {
+  readonly ticket: string;
+  /** Epoch milliseconds; the stream ends when the ticket floor passes. */
+  readonly expiresAt: number;
+}
+
+/** An input lease minted by `t3.browser/frames` `openInput`. */
+export interface BrowserFramesInputMint {
+  readonly leaseId: string;
+  readonly inputTicket: string;
+  /** Epoch milliseconds; the input socket closes when the lease floor passes. */
+  readonly expiresAt: number;
+}
+
+export interface BrowserFramesPresentRequest {
+  /**
+   * The calling view's own context. It must resolve to a thread inside this
+   * environment; a plugin cannot present a session from another
+   * environment or thread.
+   */
+  readonly context: ViewContext;
+  readonly session: BrowserFramesSessionRef;
+  /**
+   * Caller-owned mount point. The host appends its frame element and wires
+   * pointer/wheel/keyboard input on it; the caller keeps layout and paint
+   * order (overlays render above the frame element as ordinary DOM).
+   */
+  readonly slot: HTMLElement;
+  /** Caller lifetime — pass `ViewSession.signal`. Aborting detaches the view. */
+  readonly signal?: AbortSignal;
+  /**
+   * Mint (or re-mint) a stream ticket through `openStream`. Called at
+   * present, again when the hub/proxy reports the credential rejected, and
+   * ahead of expiry. Returning `null` keeps the view connecting.
+   */
+  readonly openStream: () => Promise<BrowserFramesStreamMint | null>;
+  /**
+   * Mint (or renew) an input lease through `openInput`. Called on the
+   * viewer's first input and on lease renewal; returning `null` keeps the
+   * view present-but-not-controlling. Absent means the caller never wants
+   * input — a presenter need not control.
+   */
+  readonly openInput?: () => Promise<BrowserFramesInputMint | null>;
+}
+
+export type BrowserFramesDenialReason =
+  /** `grant` names the missing installation grant. */
+  | "grant-denied"
+  /** The host could not resolve this environment's frame endpoint right now. */
+  | "host-unavailable"
+  /** Context is not a thread scope inside this environment. */
+  | "scope-invalid"
+  /** The session identity is malformed or not a `t3.browser/sessions` ref. */
+  | "session-invalid"
+  /** This host has no remote-frame transport to offer. */
+  | "frames-unsupported";
+
+export interface BrowserFramesDenial {
+  readonly reason: BrowserFramesDenialReason;
+  readonly detail: string;
+  /** Set when reason is "grant-denied". */
+  readonly grant?: string;
+}
+
+export type BrowserFramesViewStatus = "connecting" | "streaming" | "error";
+
+export interface BrowserFramesViewState {
+  readonly status: BrowserFramesViewStatus;
+  /** Whether the input lease is bound and accepting packets. */
+  readonly inputConnected: boolean;
+  /** Frames the engine produced that this client dropped before painting. */
+  readonly droppedFrames: number;
+  /** Input packets the hub rejected (replay, stale geometry, rate limit, …). */
+  readonly rejectedInput: number;
+  readonly detail?: string;
+}
+
+export interface BrowserFramesView {
+  readonly state: BrowserFramesViewState;
+  onDidChangeState(listener: (state: BrowserFramesViewState) => void): () => void;
+  /** Idempotent. Stops the transport and removes the frame element. */
+  detach(): void;
+}
+
+export type BrowserFramesPresentResult =
+  | { readonly ok: true; readonly view: BrowserFramesView }
+  | { readonly ok: false; readonly denial: BrowserFramesDenial };
+
+/**
+ * The host side of `t3.browser/frames@1.0.0`. Present on `ClientHost` as
+ * `browserFrames`; absence means the host predates the contract or has no
+ * remote-frame transport (treat as "host-unavailable").
+ */
+export interface BrowserFramesHost {
+  readonly id: typeof BROWSER_FRAMES;
+  readonly version: string;
+  present(request: BrowserFramesPresentRequest): BrowserFramesPresentResult;
 }
 
 /**
@@ -5296,6 +5668,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   orchestrationControlApi.definition,
   browserLocalServersApi.definition,
   browserSessionsApi.definition,
+  browserFramesApi.definition,
   workspaceFilesApi.definition,
   workspaceTreeApi.definition,
   workspaceSearchApi.definition,
