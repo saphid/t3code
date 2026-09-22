@@ -67,9 +67,11 @@ This is a read-oriented panel. It consumes `t3.vcs/read` plus the
   owns precedence, and the toggle itself runs through
   `t3.ui/panels` (`listSurfaces` → open/activate/close, matching the
   native `diff.toggle`). Panel access gates availability: the view
-  skips registering when the ops are unreachable, and a dispatch that
-  finds the capability denied or revoked withdraws the command set so
-  the palette stops offering it. `t3.ui/notify` is used only to report
+  runs a grant-enforced `listSurfaces` read before registering
+  (denied or unreachable panels access means the command is never
+  offered), and a dispatch that finds the capability denied or
+  revoked withdraws the command set so the palette stops offering
+  it. `t3.ui/notify` is used only to report
   command-dispatch failures and access loss — a rejected toggle has
   no in-panel affordance, so an error toast is the honest channel;
   status rows stay inline, matching the native panel.

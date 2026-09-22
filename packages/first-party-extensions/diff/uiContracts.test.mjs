@@ -411,7 +411,9 @@ NodeTest.test("bindDiffViewCommands registers the view set and binds its handler
             commandSetToken: "tok-1",
             results: [{ commandId: DIFF_TOGGLE_COMMAND_ID, status: "registered" }],
           }
-        : { unregistered: true },
+        : request.method === "listSurfaces"
+          ? { surfaces: [] }
+          : { unregistered: true },
   });
   const bound = [];
   const disposers = [];
@@ -455,10 +457,9 @@ NodeTest.test(
     await flush();
     NodeAssert.equal(bound.length, 0);
 
-    // A failed capabilities probe must not throw either — registration is
+    // A failed grant-enforced probe must not throw either — registration is
     // skipped and the installation tier keeps the command.
     const deadProbe = fakeHost({
-      panelOps: false,
       invoke: () => Promise.reject(new Error("no provider")),
     });
     NodeAssert.doesNotThrow(() => bindDiffViewCommands(deadProbe.host, session));
@@ -487,14 +488,19 @@ NodeTest.test(
 );
 
 NodeTest.test(
-  "bindDiffViewCommands never offers the command when panels ops are unavailable",
+  "bindDiffViewCommands never offers the command when the panels grant is denied",
   async () => {
+    // Ops stay reachable (getCapabilities reports all true) but the
+    // grant-enforced listSurfaces read is denied — registration must not run.
     const { host, calls } = fakeHost({
-      panelOps: { listSurfaces: false },
-      invoke: () => ({
-        commandSetToken: "tok-1",
-        results: [{ commandId: DIFF_TOGGLE_COMMAND_ID, status: "registered" }],
-      }),
+      invoke: (request) => {
+        if (request.id === "t3.ui/panels")
+          return Promise.reject(new Error("API capability denied: t3.ui/panels"));
+        return {
+          commandSetToken: "tok-1",
+          results: [{ commandId: DIFF_TOGGLE_COMMAND_ID, status: "registered" }],
+        };
+      },
     });
     const bound = [];
     const session = {
@@ -510,10 +516,18 @@ NodeTest.test(
       calls.some((call) => call.method === "registerCommands"),
       false,
     );
+    NodeAssert.equal(
+      calls.some((call) => call.method === "listSurfaces"),
+      true,
+    );
   },
 );
 
 NodeTest.test("a revoked panels grant withdraws the view command at dispatch", async () => {
+  // The bind-time listSurfaces probe succeeds (grant present), then the
+  // grant is revoked before dispatch — the op read denies and the set
+  // withdraws itself.
+  let lists = 0;
   const { host, calls } = fakeHost({
     invoke: (request) => {
       if (request.id === "t3.ui/keybindings") {
@@ -524,8 +538,11 @@ NodeTest.test("a revoked panels grant withdraws the view command at dispatch", a
           };
         return { unregistered: true };
       }
-      if (request.id === "t3.ui/panels")
-        return Promise.reject(new Error("API capability denied: t3.ui/panels"));
+      if (request.id === "t3.ui/panels" && request.method === "listSurfaces") {
+        lists += 1;
+        if (lists > 1) return Promise.reject(new Error("API capability denied: t3.ui/panels"));
+        return { surfaces: [] };
+      }
       return { notificationId: "n-1" };
     },
   });

@@ -310,23 +310,24 @@ export function stageDiffCommands(host: ClientHost): void {
 }
 
 /**
- * The mounted view's half of `t3.ui/keybindings`: probe `t3.ui/panels`
- * reachability first — a view whose toggle cannot run never offers the
- * command — then register the view-scoped set and bind the view-local
+ * The mounted view's half of `t3.ui/keybindings`: a grant-enforced
+ * `listSurfaces` read gates registration — `getCapabilities` is grant-free
+ * and reports provider reachability, so denied `t3.ui/panels` access must
+ * be proven against a protected op, not the caps map. A view whose toggle
+ * cannot run never offers the command — then register the view-scoped set
+ * and bind the view-local
  * handler so the focused-view dispatch tier closes the panel directly. A
  * rejected registration or a host without a binding store leaves the
  * installation tier as the only path; disposal unregisters the view's set.
  */
 export function bindDiffViewCommands(host: ClientHost, session: ViewSession): void {
+  const threadId = session.context.resource.threadId;
+  if (threadId === undefined) return;
   const keybindings = bindApi(uiKeybindingsApi, host, session.context);
   const panels = bindApi(uiPanelsApi, host, session.context);
-  void panels.invoke("getCapabilities", {}, session.signal).then(
-    (capabilities) => {
+  void panels.invoke("listSurfaces", { threadId }, session.signal).then(
+    () => {
       if (session.signal.aborted) return;
-      if (
-        !PANEL_TOGGLE_OPERATIONS.every((operation) => capabilities.operations?.[operation] === true)
-      )
-        return;
       void keybindings
         .invoke("registerCommands", { commands: DIFF_TOGGLE_VIEW_COMMANDS }, session.signal)
         .then(

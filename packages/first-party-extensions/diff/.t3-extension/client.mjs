@@ -5529,13 +5529,13 @@ var __t3Client = (() => {
     );
   }
   function bindDiffViewCommands(host, session) {
+    const threadId = session.context.resource.threadId;
+    if (threadId === void 0) return;
     const keybindings = bindApi(uiKeybindingsApi, host, session.context);
     const panels = bindApi(uiPanelsApi, host, session.context);
-    void panels.invoke("getCapabilities", {}, session.signal).then(
-      (capabilities) => {
+    void panels.invoke("listSurfaces", { threadId }, session.signal).then(
+      () => {
         if (session.signal.aborted) return;
-        if (!PANEL_TOGGLE_OPERATIONS.every((operation) => capabilities.operations?.[operation] === true))
-          return;
         void keybindings.invoke("registerCommands", { commands: DIFF_TOGGLE_VIEW_COMMANDS }, session.signal).then(
           ({ commandSetToken, results }) => {
             if (session.signal.aborted) return;
