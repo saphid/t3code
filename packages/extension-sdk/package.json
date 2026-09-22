@@ -72,6 +72,10 @@
     "./authoring": {
       "types": "./dist/authoring.d.ts",
       "default": "./dist/authoring.js"
+    },
+    "./clientProviders": {
+      "types": "./dist/clientProviders.d.ts",
+      "default": "./dist/clientProviders.js"
     }
   },
   "scripts": {

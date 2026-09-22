@@ -117,6 +117,7 @@ import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import type { ClientApiProviders } from "./extensions/ClientApiProviders.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
@@ -482,11 +483,17 @@ const makeWsRpcLayer = (
   clientOrigin: OrchestrationClientOrigin,
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  clientApiProviders: ClientApiProviders["Service"],
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const crypto = yield* Crypto.Crypto;
+      // Minted at socket accept: this connection's identity for the
+      // client-provider seam, bound to this socket's authenticated session
+      // for the socket's lifetime. Registration, respond and emit frames are
+      // accepted only when they arrive on this socket.
+      const clientConnectionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
       const sql = yield* SqlClient.SqlClient;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       /** A reference's host-level link key; the project's own host where the ref names none. */
@@ -2767,6 +2774,47 @@ const makeWsRpcLayer = (
             previewAutomationBroker.focusHost(input),
             { "rpc.aggregate": "preview-automation" },
           ),
+        [WS_METHODS.extensionsClientProvidersConnect]: (input) =>
+          observeRpcStreamEffect(
+            WS_METHODS.extensionsClientProvidersConnect,
+            clientApiProviders.connect(
+              {
+                connectionId: clientConnectionId,
+                sessionId: currentSessionId,
+                announcedOrigin: {
+                  ...(typeof clientAnalyticsProps.surface === "string"
+                    ? { surface: clientAnalyticsProps.surface }
+                    : {}),
+                  ...(typeof clientAnalyticsProps.appVersion === "string"
+                    ? { appVersion: clientAnalyticsProps.appVersion }
+                    : {}),
+                  ...(typeof clientAnalyticsProps.clientOs === "string"
+                    ? { os: clientAnalyticsProps.clientOs }
+                    : {}),
+                  ...(typeof clientAnalyticsProps.clientDeviceType === "string"
+                    ? { deviceType: clientAnalyticsProps.clientDeviceType }
+                    : {}),
+                  ...(typeof clientAnalyticsProps.connectionMethod === "string"
+                    ? { connectionMethod: clientAnalyticsProps.connectionMethod }
+                    : {}),
+                },
+              },
+              input,
+            ),
+            { "rpc.aggregate": "extensions" },
+          ),
+        [WS_METHODS.extensionsClientProvidersRespond]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.extensionsClientProvidersRespond,
+            clientApiProviders.respond(clientConnectionId, input),
+            { "rpc.aggregate": "extensions" },
+          ),
+        [WS_METHODS.extensionsClientProvidersEmit]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.extensionsClientProvidersEmit,
+            clientApiProviders.emit(clientConnectionId, input),
+            { "rpc.aggregate": "extensions" },
+          ),
         [WS_METHODS.subscribePreviewEvents]: (_input) =>
           observeRpcStream(WS_METHODS.subscribePreviewEvents, previewManager.events, {
             "rpc.aggregate": "preview",
@@ -3047,6 +3095,9 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     const pullRequests = yield* PullRequestService.PullRequestService;
     const extensionCatalogueChanges = yield* ExtensionCatalogueChanges;
     const sharedEnvironmentExtensions = yield* EnvironmentExtensions;
+    // The registry instance lives on EnvironmentExtensions so WS handlers and
+    // server adapters share one socket-derived ownership map per environment.
+    const clientApiProviders = sharedEnvironmentExtensions.clientApiProviders;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3080,6 +3131,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               clientOrigin,
               clientAnalyticsProps,
               previewAutomationBroker,
+              clientApiProviders,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),

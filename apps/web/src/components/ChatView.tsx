@@ -1,4 +1,9 @@
 import { installedWorkspaceContext } from "../extensions/installedContext";
+import {
+  dispatchExtensionCommand,
+  extensionCommandForKeydown,
+  setActiveExtensionThreadRef,
+} from "../extensions/extensionCommandRegistry";
 import { InstalledExtensionMenu } from "../extensions/InstalledExtensionMenu";
 import {
   assertContextBudget,
@@ -1275,6 +1280,10 @@ export default function ChatView(props: ChatViewProps) {
     [activeThreadEnvironmentId, activeThreadId],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+  useEffect(() => {
+    setActiveExtensionThreadRef(activeThreadRef);
+    return () => setActiveExtensionThreadRef(null);
+  }, [activeThreadRef]);
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
@@ -5535,11 +5544,28 @@ export default function ChatView(props: ChatViewProps) {
       const command = resolveShortcutCommand(event, keybindings, {
         context: shortcutContext,
       });
-      if (!command) return;
+      if (!command) {
+        // User/native rules always win — plugin default keys only see misses.
+        const extensionCommand = extensionCommandForKeydown(event);
+        if (extensionCommand === null) return;
+        if (dispatchExtensionCommand(extensionCommand).kind === "unavailable") return;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
 
       // The focused extension surface owns these commands; the host must not
       // consume the event or act on a native terminal surface for them.
       if (isExtensionClaimedTerminalCommand(command, terminalFocusOwner)) return;
+
+      // A user rule bound to an extension command resolves here like any
+      // other command — the native cases below do not know ext.* names.
+      if (command.startsWith("ext.")) {
+        if (dispatchExtensionCommand(command).kind === "unavailable") return;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
 
       if (command === "thread.copyReference") {
         event.preventDefault();

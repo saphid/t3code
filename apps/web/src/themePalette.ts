@@ -1635,6 +1635,21 @@ export function getThemePreviewOwner(): string | null {
 }
 
 /**
+ * Replace the live `__preview`'s owner tag without repainting — the legal way
+ * to supersede another writer's preview: acquire the owner record first, then
+ * repaint through applyThemeColorPreview, which now sees the caller as the
+ * owner. Returns false when no preview is active; a stored theme carries no
+ * owner record to transfer.
+ */
+export function transferThemePreviewOwner(owner: string): boolean {
+  if (typeof document === "undefined") return false;
+  const root = document.documentElement;
+  if (root?.dataset?.themeId !== THEME_PREVIEW_ID) return false;
+  root.dataset.themePreviewOwner = owner;
+  return true;
+}
+
+/**
  * Paint a draft palette onto the live app without installing it, so the editor
  * can be judged against the real interface instead of a miniature. The preview
  * is single-writer: while another owner's tag is set the call is refused and

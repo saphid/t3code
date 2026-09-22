@@ -41,3 +41,4 @@ export * from "./usage.ts";
 export * from "./rpc.ts";
 
 export * from "./extensions.ts";
+export * from "./clientProviders.ts";

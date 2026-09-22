@@ -86,6 +86,13 @@ import {
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
 import {
+  ClientProviderServerFrame,
+  ClientProvidersConnectInput,
+  ClientProvidersEmitInput,
+  ClientProvidersError,
+  ClientProvidersRespondInput,
+} from "./clientProviders.ts";
+import {
   ClientOrchestrationCommand,
   ORCHESTRATION_WS_METHODS,
   OrchestrationDispatchCommandError,
@@ -317,6 +324,11 @@ export const WS_METHODS = {
   previewAutomationConnect: "previewAutomation.connect",
   previewAutomationRespond: "previewAutomation.respond",
   previewAutomationFocusHost: "previewAutomation.focusHost",
+
+  // Extension client-provider seam (t3.client/* host-owned providers)
+  extensionsClientProvidersConnect: "extensions.clientProviders.connect",
+  extensionsClientProvidersRespond: "extensions.clientProviders.respond",
+  extensionsClientProvidersEmit: "extensions.clientProviders.emit",
 
   // Server meta
   serverProbe: "server.probe",
@@ -1070,6 +1082,29 @@ const WsPreviewAutomationFocusHostRpc = Rpc.make(WS_METHODS.previewAutomationFoc
   error: EnvironmentAuthorizationError,
 });
 
+const WsExtensionsClientProvidersConnectRpc = Rpc.make(
+  WS_METHODS.extensionsClientProvidersConnect,
+  {
+    payload: ClientProvidersConnectInput,
+    success: ClientProviderServerFrame,
+    error: Schema.Union([ClientProvidersError, EnvironmentAuthorizationError]),
+    stream: true,
+  },
+);
+
+const WsExtensionsClientProvidersRespondRpc = Rpc.make(
+  WS_METHODS.extensionsClientProvidersRespond,
+  {
+    payload: ClientProvidersRespondInput,
+    error: Schema.Union([ClientProvidersError, EnvironmentAuthorizationError]),
+  },
+);
+
+const WsExtensionsClientProvidersEmitRpc = Rpc.make(WS_METHODS.extensionsClientProvidersEmit, {
+  payload: ClientProvidersEmitInput,
+  error: Schema.Union([ClientProvidersError, EnvironmentAuthorizationError]),
+});
+
 const WsSubscribePreviewEventsRpc = Rpc.make(WS_METHODS.subscribePreviewEvents, {
   payload: Schema.Struct({}),
   success: PreviewEvent,
@@ -1330,6 +1365,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewAutomationConnectRpc,
   WsPreviewAutomationRespondRpc,
   WsPreviewAutomationFocusHostRpc,
+  WsExtensionsClientProvidersConnectRpc,
+  WsExtensionsClientProvidersRespondRpc,
+  WsExtensionsClientProvidersEmitRpc,
   WsSubscribePreviewEventsRpc,
   WsSubscribeDiscoveredLocalServersRpc,
   WsSubscribeServerConfigRpc,

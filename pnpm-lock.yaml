@@ -564,6 +564,9 @@ importers:
       '@types/yauzl':
         specifier: ^3.4.0
         version: 3.4.0
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
       effect-acp:
         specifier: workspace:*
         version: link:../../packages/effect-acp

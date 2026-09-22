@@ -37,6 +37,12 @@ export interface ApiInvocation {
   readonly context: ViewContext;
   readonly expectedGeneration?: number;
   readonly requestId?: string;
+  /**
+   * Session-validated `self` routing hint for client-provider-backed
+   * contracts. Set only by the client runtime's ClientHost wrapper — callers
+   * must not supply it; the wrapper overwrites any caller-supplied value.
+   */
+  readonly clientConnectionId?: string;
 }
 export interface ApiStreamInvocation {
   readonly id: string;
@@ -46,6 +52,7 @@ export interface ApiStreamInvocation {
   readonly context: ViewContext;
   readonly expectedGeneration?: number;
   readonly cursor?: string;
+  readonly clientConnectionId?: string;
 }
 export type ApiStreamEventType = "snapshot" | "data" | "reset" | "closed";
 export interface ApiStreamEvent {

@@ -8,10 +8,18 @@ import {
   type TypedStreamApi,
 } from "./capabilities.js";
 import type { JsonObject } from "./environment.js";
+import type { GlobalCommandDescriptor } from "./environment.js";
 import type { ViewContext } from "./contracts.js";
 import type { WorkspaceReadTextInput, WorkspaceReadTextResult } from "./workspace.js";
 import { textEditsApi, textEditsApiV1 } from "./textEdits.js";
 import { workspaceResourcesApi, WORKSPACE_RESOURCES } from "./workspaceResources.js";
+import {
+  themeProviderStateSchema,
+  terminalAppearanceSchema,
+  commandDescriptorSchema,
+  commandResultSchema,
+  themeHalvesSchema,
+} from "./clientProviders.js";
 
 export * from "./workspaceResources.js";
 
@@ -5283,6 +5291,711 @@ export const messagesEnrichmentApi = defineApi<{
 export const COMPOSER_CONTEXT_API = composerContextApi.definition;
 export const MESSAGES_ENRICHMENT_API = messagesEnrichmentApi.definition;
 
+/* ------------------------------------------------------------------------
+ * t3.ui/* — client-local UI state behind the client-provider seam.
+ *
+ * These contracts are backed by host-owned `t3.client/*` providers registered
+ * over the per-connection clientProviders connect stream (see
+ * ./clientProviders.ts for the private area definitions). Every adapter
+ * resolves an explicit target — the caller's own same-session connection
+ * (`self`) or a `connectionId` from `listClientTargets` — and never silently
+ * falls back to another client.
+ * --------------------------------------------------------------------- */
+export const UI_THEME = "t3.ui/theme";
+export const UI_THEME_READ = "t3.ui/theme.read";
+export const UI_THEME_WRITE = "t3.ui/theme.write";
+export const UI_KEYBINDINGS = "t3.ui/keybindings";
+export const UI_KEYBINDINGS_GLOBAL = "t3.ui/keybindings.global";
+export const UI_NOTIFY = "t3.ui/notify";
+export const UI_PANELS = "t3.ui/panels";
+
+const uiClientTargetSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["connectionId", "providers", "connectedAt"],
+  properties: {
+    connectionId: { type: "string", minLength: 1, maxLength: 160 },
+    announcedOrigin: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        surface: { type: "string", maxLength: 80 },
+        appVersion: { type: "string", maxLength: 80 },
+        os: { type: "string", maxLength: 120 },
+        deviceType: { type: "string", maxLength: 80 },
+        connectionMethod: { type: "string", maxLength: 40 },
+      },
+    },
+    providers: {
+      type: "array",
+      maxItems: 16,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "version"],
+        properties: {
+          id: { type: "string", maxLength: 80 },
+          version: { type: "string", maxLength: 40 },
+        },
+      },
+    },
+    connectedAt: { type: "string", maxLength: 80 },
+  },
+} as const;
+
+/** `getCapabilities` reports per-op support plus the `listClientTargets` directory. */
+const uiCapabilitiesOutput = (operations: readonly string[]) =>
+  ({
+    type: "object",
+    additionalProperties: false,
+    required: ["adapter", "operations", "clients"],
+    properties: {
+      adapter: { type: "string", maxLength: 64 },
+      operations: {
+        type: "object",
+        additionalProperties: false,
+        required: [...operations],
+        properties: Object.fromEntries(operations.map((name) => [name, { type: "boolean" }])),
+      },
+      clients: { type: "array", maxItems: 64, items: uiClientTargetSchema },
+    },
+  }) as const;
+
+export type UiThemeState = {
+  readonly theme: string;
+  readonly resolvedTheme: "light" | "dark";
+  readonly systemDark: boolean;
+  readonly followSystem: boolean;
+  readonly appearanceMode: "light" | "dark" | "system";
+  readonly themeHalves: { readonly light?: string; readonly dark?: string } | null;
+  readonly effectiveTheme:
+    | { readonly kind: "stored"; readonly theme: string }
+    | { readonly kind: "session-overlay"; readonly theme: string; readonly writer: string }
+    | {
+        readonly kind: "external-preview";
+        readonly tokens: Readonly<Record<string, string>>;
+        readonly writer?: string;
+      };
+  readonly sessionOverlay: {
+    readonly theme: string;
+    readonly appearanceMode?: "light" | "dark" | "system";
+    readonly themeHalves?: { readonly light?: string; readonly dark?: string };
+    readonly writer: string;
+  } | null;
+};
+
+export type UiThemeSetPreferenceInput = {
+  readonly theme?: string;
+  readonly appearanceMode?: "light" | "dark" | "system";
+  readonly themeHalves?: { readonly light?: string; readonly dark?: string };
+  readonly mode: "persist" | "session";
+  readonly clear?: boolean;
+};
+
+export type UiTerminalAppearance = {
+  readonly theme: {
+    readonly background: string;
+    readonly foreground: string;
+    readonly cursor: string;
+    readonly selectionBackground?: string;
+  };
+  readonly font: {
+    readonly family?: string;
+    readonly size?: number;
+    readonly lineHeight?: number;
+    readonly ligatures?: boolean;
+  };
+  readonly appearance: "light" | "dark";
+};
+
+export type UiCapabilities = {
+  readonly adapter: string;
+  readonly operations: Readonly<Record<string, boolean>>;
+  readonly clients: readonly {
+    readonly connectionId: string;
+    readonly announcedOrigin?: {
+      readonly surface?: string;
+      readonly appVersion?: string;
+      readonly os?: string;
+      readonly deviceType?: string;
+      readonly connectionMethod?: string;
+    };
+    readonly providers: readonly { readonly id: string; readonly version: string }[];
+    readonly connectedAt: string;
+  }[];
+};
+
+export const uiThemeApi = defineApi<{
+  getCapabilities: { input: Record<string, never>; output: UiCapabilities };
+  getState: { input: Record<string, never>; output: UiThemeState };
+  getTokens: {
+    input: { appearance?: "light" | "dark" };
+    output: { tokens: Record<string, string>; cssVars: Record<string, string> };
+  };
+  setPreference: {
+    input: UiThemeSetPreferenceInput;
+    output: {
+      applied: boolean;
+      reason?: string;
+      propagatedTo?: "storage-origin" | "connection";
+    };
+  };
+  getTerminalAppearance: { input: Record<string, never>; output: UiTerminalAppearance };
+}>({
+  id: UI_THEME,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: composerEmptyInputSchema,
+      outputSchema: uiCapabilitiesOutput([
+        "getState",
+        "getTokens",
+        "setPreference",
+        "subscribeState",
+        "getTerminalAppearance",
+        "subscribeTerminalAppearance",
+      ]),
+    },
+    {
+      name: "getState",
+      effect: "read",
+      requiredGrants: [UI_THEME_READ],
+      inputSchema: composerEmptyInputSchema,
+      outputSchema: themeProviderStateSchema,
+    },
+    {
+      name: "getTokens",
+      effect: "read",
+      requiredGrants: [UI_THEME_READ],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        properties: { appearance: { enum: ["light", "dark"] } },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["tokens", "cssVars"],
+        properties: {
+          tokens: { type: "object", additionalProperties: { type: "string", maxLength: 400 } },
+          cssVars: { type: "object", additionalProperties: { type: "string", maxLength: 80 } },
+        },
+      },
+    },
+    {
+      name: "setPreference",
+      effect: "write",
+      requiredGrants: [UI_THEME_WRITE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["mode"],
+        properties: {
+          theme: { type: "string", minLength: 1, maxLength: 160 },
+          appearanceMode: { enum: ["light", "dark", "system"] },
+          themeHalves: themeHalvesSchema,
+          mode: { enum: ["persist", "session"] },
+          clear: { type: "boolean" },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["applied"],
+        properties: {
+          applied: { type: "boolean" },
+          reason: { type: "string", maxLength: 200 },
+          propagatedTo: { enum: ["storage-origin", "connection"] },
+        },
+      },
+    },
+    {
+      name: "getTerminalAppearance",
+      effect: "read",
+      requiredGrants: [UI_THEME_READ],
+      inputSchema: composerEmptyInputSchema,
+      outputSchema: terminalAppearanceSchema,
+    },
+  ],
+  streams: [
+    {
+      name: "subscribeState",
+      inputSchema: composerEmptyInputSchema,
+      eventSchema: themeProviderStateSchema,
+      requiredGrants: [UI_THEME_READ],
+    },
+    {
+      name: "subscribeTerminalAppearance",
+      inputSchema: composerEmptyInputSchema,
+      eventSchema: terminalAppearanceSchema,
+      requiredGrants: [UI_THEME_READ],
+    },
+  ],
+});
+
+export const uiKeybindingsApi = defineApi<{
+  getCapabilities: { input: Record<string, never>; output: UiCapabilities };
+  registerCommands: {
+    input: { commands: readonly GlobalCommandDescriptor[] };
+    output: {
+      commandSetToken: string;
+      results: readonly {
+        commandId: string;
+        status: "registered" | "rejected";
+        reason?: string;
+      }[];
+    };
+  };
+  unregisterCommands: {
+    input: { commandSetToken: string };
+    output: { unregistered: boolean };
+  };
+  listConflicts: {
+    input: Record<string, never>;
+    output: {
+      conflicts: readonly {
+        command: string;
+        key: string;
+        winner: "user" | "native" | "plugin";
+        loser: string;
+      }[];
+    };
+  };
+}>({
+  id: UI_KEYBINDINGS,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: composerEmptyInputSchema,
+      outputSchema: uiCapabilitiesOutput([
+        "registerCommands",
+        "unregisterCommands",
+        "listConflicts",
+      ]),
+    },
+    {
+      name: "registerCommands",
+      effect: "write",
+      requiredGrants: [UI_KEYBINDINGS],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["commands"],
+        properties: {
+          commands: {
+            type: "array",
+            minItems: 1,
+            maxItems: 64,
+            items: commandDescriptorSchema,
+          },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["commandSetToken", "results"],
+        properties: {
+          commandSetToken: { type: "string", minLength: 1, maxLength: 160 },
+          results: { type: "array", maxItems: 64, items: commandResultSchema },
+        },
+      },
+    },
+    {
+      name: "unregisterCommands",
+      effect: "write",
+      requiredGrants: [UI_KEYBINDINGS],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["commandSetToken"],
+        properties: {
+          commandSetToken: { type: "string", minLength: 1, maxLength: 160 },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["unregistered"],
+        properties: { unregistered: { type: "boolean" } },
+      },
+    },
+    {
+      name: "listConflicts",
+      effect: "read",
+      requiredGrants: [UI_KEYBINDINGS],
+      inputSchema: composerEmptyInputSchema,
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["conflicts"],
+        properties: {
+          conflicts: {
+            type: "array",
+            maxItems: 256,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["command", "key", "winner", "loser"],
+              properties: {
+                command: { type: "string", maxLength: 256 },
+                key: { type: "string", maxLength: 64 },
+                winner: { enum: ["user", "native", "plugin"] },
+                loser: { type: "string", maxLength: 256 },
+              },
+            },
+          },
+        },
+      },
+    },
+  ],
+});
+
+const uiNotificationActionSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "label"],
+  properties: {
+    id: { type: "string", minLength: 1, maxLength: 80 },
+    label: { type: "string", minLength: 1, maxLength: 80 },
+    variant: { enum: ["default", "primary", "destructive"] },
+  },
+} as const;
+
+export type UiNotificationInput = {
+  readonly severity: "info" | "success" | "warning" | "error" | "loading";
+  readonly title: string;
+  readonly body?: string;
+  readonly threadId?: string;
+  readonly projectId?: string;
+  readonly anchor?: "global" | "thread";
+  readonly dismissible?: boolean;
+  readonly durationMs?: number;
+  readonly actions?: readonly {
+    readonly id: string;
+    readonly label: string;
+    readonly variant?: "default" | "primary" | "destructive";
+  }[];
+};
+
+export const uiNotificationsApi = defineApi<{
+  getCapabilities: { input: Record<string, never>; output: UiCapabilities };
+  notify: { input: UiNotificationInput; output: { notificationId: string } };
+  update: {
+    input: {
+      notificationId: string;
+      severity?: UiNotificationInput["severity"];
+      title?: string;
+      body?: string;
+      dismissible?: boolean;
+    };
+    output: { applied: boolean };
+  };
+  dismiss: { input: { notificationId: string }; output: { dismissed: boolean } };
+  awaitAction: {
+    input: { notificationId: string };
+    output: { actionId: string } | { dismissed: true };
+  };
+}>({
+  id: "t3.ui/notifications",
+  version: "1.0.0",
+  methods: [
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: composerEmptyInputSchema,
+      outputSchema: uiCapabilitiesOutput(["notify", "update", "dismiss", "awaitAction"]),
+    },
+    {
+      name: "notify",
+      effect: "write",
+      requiredGrants: [UI_NOTIFY],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["severity", "title"],
+        properties: {
+          severity: { enum: ["info", "success", "warning", "error", "loading"] },
+          title: { type: "string", minLength: 1, maxLength: 200 },
+          body: { type: "string", maxLength: 2000 },
+          threadId: { type: "string", maxLength: 128 },
+          projectId: { type: "string", maxLength: 128 },
+          anchor: { enum: ["global", "thread"] },
+          dismissible: { type: "boolean" },
+          durationMs: { type: "integer", minimum: 0, maximum: 60_000 },
+          actions: { type: "array", maxItems: 3, items: uiNotificationActionSchema },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["notificationId"],
+        properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } },
+      },
+    },
+    {
+      name: "update",
+      effect: "write",
+      requiredGrants: [UI_NOTIFY],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["notificationId"],
+        properties: {
+          notificationId: { type: "string", minLength: 1, maxLength: 160 },
+          severity: { enum: ["info", "success", "warning", "error", "loading"] },
+          title: { type: "string", minLength: 1, maxLength: 200 },
+          body: { type: "string", maxLength: 2000 },
+          dismissible: { type: "boolean" },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["applied"],
+        properties: { applied: { type: "boolean" } },
+      },
+    },
+    {
+      name: "dismiss",
+      effect: "write",
+      requiredGrants: [UI_NOTIFY],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["notificationId"],
+        properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["dismissed"],
+        properties: { dismissed: { type: "boolean" } },
+      },
+    },
+    {
+      name: "awaitAction",
+      effect: "read",
+      requiredGrants: [UI_NOTIFY],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["notificationId"],
+        properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } },
+      },
+      outputSchema: {
+        anyOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["actionId"],
+            properties: { actionId: { type: "string", minLength: 1, maxLength: 80 } },
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["dismissed"],
+            properties: { dismissed: { const: true } },
+          },
+        ],
+      },
+    },
+  ],
+});
+
+export const uiPanelsApi = defineApi<{
+  getCapabilities: { input: Record<string, never>; output: UiCapabilities };
+  openSurface: {
+    input: {
+      surfaceId: string;
+      title?: string;
+      placement?: "side-panel" | "bottom-dock";
+      threadId?: string;
+    };
+    output: { surfaceId: string };
+  };
+  activateSurface: {
+    input: { surfaceId: string; threadId?: string };
+    output: { applied: boolean };
+  };
+  closeSurface: {
+    input: { surfaceId: string; threadId?: string };
+    output: { applied: boolean };
+  };
+  listSurfaces: {
+    input: { threadId: string };
+    output: {
+      surfaces: readonly {
+        id: string;
+        title: string;
+        placement: "side-panel" | "bottom-dock";
+        active: boolean;
+      }[];
+    };
+  };
+  hideDock: { input: { threadId: string }; output: { applied: boolean } };
+  showDock: { input: { threadId: string }; output: { applied: boolean } };
+}>({
+  id: "t3.ui/panels",
+  version: "1.0.0",
+  methods: [
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: composerEmptyInputSchema,
+      outputSchema: uiCapabilitiesOutput([
+        "openSurface",
+        "activateSurface",
+        "closeSurface",
+        "listSurfaces",
+        "hideDock",
+        "showDock",
+      ]),
+    },
+    {
+      name: "openSurface",
+      effect: "write",
+      requiredGrants: [UI_PANELS],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["surfaceId"],
+        properties: {
+          surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+          title: { type: "string", minLength: 1, maxLength: 200 },
+          placement: { enum: ["side-panel", "bottom-dock"] },
+          threadId: { type: "string", maxLength: 128 },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["surfaceId"],
+        properties: { surfaceId: { type: "string", maxLength: 160 } },
+      },
+    },
+    {
+      name: "activateSurface",
+      effect: "write",
+      requiredGrants: [UI_PANELS],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["surfaceId"],
+        properties: {
+          surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+          threadId: { type: "string", maxLength: 128 },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["applied"],
+        properties: { applied: { type: "boolean" } },
+      },
+    },
+    {
+      name: "closeSurface",
+      effect: "write",
+      requiredGrants: [UI_PANELS],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["surfaceId"],
+        properties: {
+          surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+          threadId: { type: "string", maxLength: 128 },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["applied"],
+        properties: { applied: { type: "boolean" } },
+      },
+    },
+    {
+      name: "listSurfaces",
+      effect: "read",
+      requiredGrants: [UI_PANELS],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["threadId"],
+        properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["surfaces"],
+        properties: {
+          surfaces: {
+            type: "array",
+            maxItems: 64,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["id", "title", "placement", "active"],
+              properties: {
+                id: { type: "string", maxLength: 160 },
+                title: { type: "string", maxLength: 200 },
+                placement: { enum: ["side-panel", "bottom-dock"] },
+                active: { type: "boolean" },
+              },
+            },
+          },
+        },
+      },
+    },
+    {
+      name: "hideDock",
+      effect: "write",
+      requiredGrants: [UI_PANELS],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["threadId"],
+        properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["applied"],
+        properties: { applied: { type: "boolean" } },
+      },
+    },
+    {
+      name: "showDock",
+      effect: "write",
+      requiredGrants: [UI_PANELS],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["threadId"],
+        properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["applied"],
+        properties: { applied: { type: "boolean" } },
+      },
+    },
+  ],
+});
+
+export const UI_THEME_API = uiThemeApi.definition;
+export const UI_KEYBINDINGS_API = uiKeybindingsApi.definition;
+export const UI_NOTIFICATIONS_API = uiNotificationsApi.definition;
+export const UI_PANELS_API = uiPanelsApi.definition;
+
 /**
  * Contracts only: their presence does not advertise a functioning or
  * authorized provider. Shared ids may hold multiple frozen versions (newest
@@ -5321,6 +6034,10 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   prsReadApi.definition,
   composerContextApi.definition,
   messagesEnrichmentApi.definition,
+  uiThemeApi.definition,
+  uiKeybindingsApi.definition,
+  uiNotificationsApi.definition,
+  uiPanelsApi.definition,
 ];
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
