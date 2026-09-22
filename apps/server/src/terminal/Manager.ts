@@ -1084,7 +1084,7 @@ export class BoundedTerminalHistory {
    */
   private alignSequenceBoundary(): void {
     if (this.evictedSequenceState === "none") return;
-    let state = this.evictedSequenceState;
+    let state: SequenceParseState = this.evictedSequenceState;
     // Window offset where an open escapeIntermediates sequence would
     // retroactively end — the first byte after ESC, plus one. 0 when
     // that byte was evicted (entry state was already escapeIntermediates);
