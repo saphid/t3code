@@ -3,7 +3,14 @@ import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ClientProviderCaller, ClientProviderEmitEvent } from "@t3tools/contracts";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
-import { applyThemeColorPreview, getThemeColorVariable, THEME_PREVIEW_ID } from "../themePalette";
+import {
+  applyThemeColorPreview,
+  getThemeColorVariable,
+  getThemePreviewOwner,
+  restoreThemeAfterPreview,
+  transferThemePreviewOwner,
+  THEME_PREVIEW_ID,
+} from "../themePalette";
 import { themeStore } from "../hooks/useTheme";
 import {
   __setClientSettingsForTests,
@@ -307,8 +314,11 @@ describe("theme provider", () => {
   it("supersedes a peer installation's overlay — equal peers, last-writer-wins", () => {
     const peer = installation(THEME_CAPS, { id: "ext.peer" });
     const provider = createThemeClientProvider(makeDeps(THEME_CAPS, undefined, [peer]));
-    // A peer's overlay owns the paint — it is superseded, not refused.
-    applyThemeColorPreview({} as never, "light", "ext.peer");
+    // A peer's overlay owns the paint — it is superseded, not refused. The
+    // palette is single-writer, so supersede transfers the owner record to the
+    // new writer first, then repaints through the owner gate.
+    expect(applyThemeColorPreview({} as never, "light", "ext.peer")).toBe(true);
+    expect(getThemePreviewOwner()).toBe("ext.peer");
     const applied = provider.invoke(
       invokeCall("applyPreference", {
         writer: INSTALL,
@@ -318,6 +328,12 @@ describe("theme provider", () => {
     expect(applied.applied).toBe(true);
     const dataset = document.documentElement.dataset as Record<string, string>;
     expect(dataset.themePreviewOwner).toBe(INSTALL);
+    expect(getThemePreviewOwner()).toBe(INSTALL);
+    // The displaced peer lost the owner record — its owner-gated cleanup is
+    // inert now, so it cannot erase the superseding paint.
+    const peerRestore = vi.fn();
+    restoreThemeAfterPreview("ext.peer", peerRestore);
+    expect(peerRestore).not.toHaveBeenCalled();
     const state = provider.invoke(invokeCall("getState", {})) as {
       effectiveTheme: { kind: string; writer?: string };
     };
@@ -336,7 +352,10 @@ describe("theme provider", () => {
         preference: { mode: "session", theme: "ocean" },
       }),
     );
-    // An editor draft takes the paint — the held overlay record is superseded.
+    // An editor draft takes the paint through the same owner gate the real
+    // editor uses — ownership transfers to the host first, then it repaints.
+    // The held overlay record is superseded.
+    transferThemePreviewOwner("t3.theme-editor");
     applyThemeColorPreview({} as never, "light", "t3.theme-editor");
     const foreign = provider.invoke(invokeCall("getState", {})) as {
       effectiveTheme: { kind: string };
@@ -959,6 +978,7 @@ it("persisted preferences preserve the native editor paint", () => {
       preference: { mode: "session", theme: "ocean" },
     }),
   );
+  transferThemePreviewOwner("editor");
   applyThemeColorPreview({} as never, "light", "editor");
   expect(
     provider.invoke(

@@ -4,6 +4,7 @@ import type { ClientProviderEmitEvent } from "@t3tools/contracts";
 import type { Json } from "@t3tools/extension-sdk/contracts";
 import {
   applyThemeColorPreview,
+  transferThemePreviewOwner,
   getThemeColorVariable,
   getThemeColorsForMode,
   getThemeDefinition,
@@ -189,7 +190,7 @@ function resolveThemeTokens(appearance?: ThemeAppearance): Json {
   return { tokens, cssVars } as unknown as Json;
 }
 
-function paintOverlay(overlay: ThemeSessionOverlay): boolean {
+function paintOverlay(overlay: ThemeSessionOverlay): "painted" | "unknown-theme" | "refused" {
   const snapshot = themeStore.getSnapshot();
   const mode =
     overlay.appearanceMode === "light" || overlay.appearanceMode === "dark"
@@ -197,10 +198,15 @@ function paintOverlay(overlay: ThemeSessionOverlay): boolean {
       : snapshot.resolvedTheme;
   const themeId = resolveThemeHalf(overlay.theme, overlay.themeHalves ?? null, mode);
   const definition = getThemeDefinition(themeId);
-  if (!definition) return false;
+  if (!definition) return "unknown-theme";
   const colors = getThemeColorsForMode(definition, mode) ?? definition.colors;
-  applyThemeColorPreview(colors, mode, overlay.writer);
-  return true;
+  // A peer installation's overlay owns the paint: supersede acquires the
+  // owner record first, then repaints through the single-writer gate. The
+  // caller already refused foreign/editor/unattributed paint, so a tagged
+  // owner here is a peer (or this writer repainting its own overlay).
+  const owner = paintedPreviewOwner();
+  if (owner !== null && owner !== overlay.writer) transferThemePreviewOwner(overlay.writer);
+  return applyThemeColorPreview(colors, mode, overlay.writer) ? "painted" : "refused";
 }
 
 export function createThemeClientProvider(deps: ClientProviderDeps): ClientLocalProvider {
@@ -266,8 +272,12 @@ export function createThemeClientProvider(deps: ClientProviderDeps): ClientLocal
                 : {}),
               writer,
             };
-            if (!paintOverlay(next))
-              return { applied: false, reason: "unknown-theme" } as unknown as Json;
+            const painted = paintOverlay(next);
+            if (painted !== "painted")
+              return {
+                applied: false,
+                reason: painted === "unknown-theme" ? "unknown-theme" : "external-preview-active",
+              } as unknown as Json;
             setSessionOverlay(next);
             themeStore.emitChange();
             return { applied: true, propagatedTo: "connection" } as unknown as Json;
