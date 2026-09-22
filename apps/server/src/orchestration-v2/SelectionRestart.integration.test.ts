@@ -29,7 +29,6 @@ import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import {
-  ProviderAdapterOpenSessionError,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2Shape,
   type ProviderAdapterV2TurnInput,
@@ -89,7 +88,6 @@ interface RestartAdapterState {
     readonly attemptId: string;
   }>;
   readonly closedSessionCount: number;
-  readonly failedReplacementOpen: boolean;
 }
 
 function makeRestartAdapter(
@@ -109,32 +107,16 @@ function makeRestartAdapter(
       ),
     openSession: (sessionInput) =>
       Effect.gen(function* () {
-        const failThisOpen = yield* Ref.modify(state, (current) => {
-          const shouldFail =
-            sessionInput.modelSelection.model === replacementSelection.model &&
-            !current.failedReplacementOpen;
-          return [
-            shouldFail,
+        yield* Ref.update(state, (current) => ({
+          ...current,
+          opened: [
+            ...current.opened,
             {
-              ...current,
-              failedReplacementOpen: current.failedReplacementOpen || shouldFail,
-              opened: [
-                ...current.opened,
-                {
-                  model: sessionInput.modelSelection.model,
-                  cwd: sessionInput.runtimePolicy.cwd,
-                },
-              ],
+              model: sessionInput.modelSelection.model,
+              cwd: sessionInput.runtimePolicy.cwd,
             },
-          ] as const;
-        });
-        if (failThisOpen) {
-          return yield* new ProviderAdapterOpenSessionError({
-            driver,
-            providerSessionId: sessionInput.providerSessionId,
-            cause: "simulated replacement open failure",
-          });
-        }
+          ],
+        }));
 
         const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
         const now = yield* DateTime.now;
@@ -395,7 +377,7 @@ function makeCompletingHandoffAdapter(startCount: Ref.Ref<number>): ProviderAdap
   };
 }
 
-it.live("restarts selection as a new attempt and retries after old-session cleanup", () =>
+it.live("restarts selection as a new attempt after old-session cleanup", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("selection-restart-lifecycle");
@@ -405,7 +387,6 @@ it.live("restarts selection as a new attempt and retries after old-session clean
         opened: [],
         started: [],
         closedSessionCount: 0,
-        failedReplacementOpen: false,
       });
       const registry = makeSingleProviderAdapterRegistryLayer(makeRestartAdapter(state));
 
@@ -509,7 +490,6 @@ it.live("restarts selection as a new attempt and retries after old-session clean
         "selection restart supersede must not project hard-Stop interrupt items",
       );
       assert.equal(projection.runs[0]?.modelSelection.model, replacementSelection.model);
-      assert.isTrue(captured.failedReplacementOpen);
       // The old pooled process remains available to its other threads; this
       // thread moved to a freshly allocated replacement session.
       assert.equal(captured.closedSessionCount, 0);
@@ -517,7 +497,6 @@ it.live("restarts selection as a new attempt and retries after old-session clean
         captured.opened.map((open) => [open.model, open.cwd]),
         [
           [initialSelection.model, cwd],
-          [replacementSelection.model, cwd],
           [replacementSelection.model, cwd],
         ],
       );
@@ -555,9 +534,6 @@ for (const deadStatus of ["stopped", "error"] as const) {
             opened: [],
             started: [],
             closedSessionCount: 0,
-            // The dead record is seeded directly, so the adapter's one-shot
-            // simulated replacement-open failure is skipped.
-            failedReplacementOpen: true,
           });
           const registry = makeSingleProviderAdapterRegistryLayer(
             makeRestartAdapter(state, exclusiveCapabilities),
@@ -722,7 +698,6 @@ it.live("detaches the old provider session after an active provider handoff", ()
         opened: [],
         started: [],
         closedSessionCount: 0,
-        failedReplacementOpen: false,
       });
       const targetStartCount = yield* Ref.make(0);
       const registry = makeProviderAdapterRegistryLayer([
@@ -839,7 +814,6 @@ for (const mode of ["active", "idle", "selection-command", "pooled", "separate-h
           opened: [],
           started: [],
           closedSessionCount: 0,
-          failedReplacementOpen: true,
         });
         const resumes: Array<{
           instanceId: ProviderInstanceId;
