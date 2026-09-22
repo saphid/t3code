@@ -286,9 +286,40 @@ export type TerminalOutputEventsSnapshot = {
   readonly terminalId: string;
   readonly streamEpoch: string;
   readonly status: "starting" | "running" | "exited" | "error";
+  /**
+   * The retained tail of the raw output stream — exactly the bytes the
+   * process emitted, including unanswered terminal queries and a
+   * possibly incomplete trailing control sequence. Hosts may sanitize
+   * display copies of history, but this channel's contents and
+   * coordinates are always raw so `contentsUnitStart` and live output
+   * positions share one coordinate system.
+   */
   readonly contents: string;
   readonly retainedByteLength: number;
   readonly truncated: boolean;
+  /**
+   * Number of history clears observed inside the current `streamEpoch`
+   * (the clear counter resets when the epoch changes, so restart-path
+   * clears are not counted). A history clear preserves `streamEpoch`, so
+   * a snapshot taken after a missed `reset` frame is only
+   * distinguishable by this counter: a value different from the
+   * previous snapshot's means the old window's bytes are gone even when
+   * `truncated` is false. `clearGeneration === 0` is also the coverage
+   * evidence required before the retained window can be treated as
+   * complete since the process started.
+   */
+  readonly clearGeneration: number;
+  /**
+   * Absolute UTF-16 unit offset of `contents[0]` inside the current
+   * retained-history window — raw appended units since the last clear
+   * minus `contents.length`, counting every unit the process emitted
+   * (including bytes a display sanitizer would strip). Line eviction,
+   * byte eviction and tail truncation all move this forward; comparing
+   * it against the position recorded for a pending reply is the
+   * authoritative origin evidence for whether that reply's bytes still
+   * exist, independent of what the text says.
+   */
+  readonly contentsUnitStart: number;
   readonly boundarySequence: number;
 };
 export type TerminalOutputEventsOutput = {
@@ -305,6 +336,11 @@ export type TerminalOutputEventsReset = {
   readonly terminalId: string;
   readonly streamEpoch: string;
   readonly sequence: number;
+  /**
+   * `clearGeneration` of the new retained-history window created by this
+   * clear. Subsequent bytes in the epoch start again at unit offset 0.
+   */
+  readonly clearGeneration: number;
   readonly reason: "history-cleared";
 };
 export type TerminalOutputEventsExit = {
@@ -812,6 +848,8 @@ const terminalOutputEventsValueSchema = {
         "contents",
         "retainedByteLength",
         "truncated",
+        "clearGeneration",
+        "contentsUnitStart",
         "boundarySequence",
       ],
       properties: {
@@ -822,6 +860,12 @@ const terminalOutputEventsValueSchema = {
         contents: { type: "string", maxLength: 8192 },
         retainedByteLength: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
         truncated: { type: "boolean" },
+        clearGeneration: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        contentsUnitStart: {
+          type: "integer",
+          minimum: 0,
+          maximum: Number.MAX_SAFE_INTEGER,
+        },
         boundarySequence: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
       },
     },
@@ -850,12 +894,13 @@ const terminalOutputEventsValueSchema = {
     {
       type: "object",
       additionalProperties: false,
-      required: ["kind", "terminalId", "streamEpoch", "sequence", "reason"],
+      required: ["kind", "terminalId", "streamEpoch", "sequence", "clearGeneration", "reason"],
       properties: {
         kind: { const: "reset" },
         terminalId: { type: "string", minLength: 1, maxLength: 128 },
         streamEpoch: { type: "string", minLength: 1, maxLength: 128 },
         sequence: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        clearGeneration: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
         reason: { const: "history-cleared" },
       },
     },

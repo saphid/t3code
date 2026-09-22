@@ -21,7 +21,9 @@ import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { GlobalCommandDescriptor } from "@t3tools/extension-sdk/environment";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 
-/** Matches the native client retained-output cap (client-runtime terminalOutput.ts:45). */
+import { TerminalInputQueue } from "./inputQueue.ts";
+
+/** Matches the native client retained-output cap; bounds only the <pre> fallback path. */
 export const TERMINAL_BUFFER_MAX_BYTES = 512 * 1024;
 
 /**
@@ -89,6 +91,12 @@ export interface OutputBuffer {
   readonly exitCode: number | null;
   readonly epoch: string | null;
   readonly sequence: number;
+  /**
+   * Last accepted native event sequence (session eventSequence), seeded by
+   * the snapshot's boundarySequence — post-snapshot events must strictly
+   * increase. `closed` frames carry no native sequence.
+   */
+  readonly nativeWatermark: number;
   readonly ended: boolean;
 }
 
@@ -176,6 +184,7 @@ export const EMPTY_OUTPUT_BUFFER: OutputBuffer = {
   exitCode: null,
   epoch: null,
   sequence: 0,
+  nativeWatermark: -1,
   ended: false,
 };
 
@@ -203,24 +212,33 @@ export function applyOutputEvent(
   const base = { ...current, sequence };
 
   if (value.kind === "snapshot") {
-    if (frame.sequence < 0 || !Number.isSafeInteger(value.boundarySequence))
+    if (
+      frame.sequence < 0 ||
+      !Number.isSafeInteger(value.boundarySequence) ||
+      !Number.isSafeInteger(value.contentsUnitStart)
+    )
       return fail("Output snapshot boundary is invalid.");
     const contents = tailByBytes(value.contents, TERMINAL_BUFFER_MAX_BYTES);
     const ended = value.status === "exited" || value.status === "error";
+    // contentsUnitStart > 0 means the host dropped retained bytes ahead of
+    // the tail (line or byte eviction) even when the tail itself isn't
+    // truncated — the display is missing earlier output either way.
+    const omitted = value.truncated || value.contentsUnitStart > 0;
     return {
       buffer: {
         contents,
         retainedBytes: utf8Bytes(contents),
-        truncated: value.truncated,
+        truncated: omitted,
         status: ended ? "exited" : "live",
         statusText: ended
           ? `Terminal is ${value.status}.`
-          : value.truncated
+          : omitted
             ? "Watching live output. Older retained history was omitted."
             : "Watching live output.",
         exitCode: null,
         epoch: value.streamEpoch,
         sequence,
+        nativeWatermark: value.boundarySequence,
         ended,
       },
       pending: null,
@@ -244,6 +262,9 @@ export function applyOutputEvent(
   }
   if (!Number.isSafeInteger(value.sequence)) return fail("Output native sequence is invalid.");
   if (value.kind === "reset") {
+    if (pending) return fail("Output chunk group is discontinuous.");
+    if (value.sequence <= base.nativeWatermark)
+      return fail("Output event sequence is not monotonic.");
     return {
       buffer: {
         ...base,
@@ -252,18 +273,22 @@ export function applyOutputEvent(
         truncated: false,
         status: "live",
         statusText: "Terminal history cleared. Watching live output.",
+        nativeWatermark: value.sequence,
       },
       pending: null,
     };
   }
   if (value.kind === "exit") {
     if (pending) return fail("Terminal exited with incomplete output.");
+    if (value.sequence <= base.nativeWatermark)
+      return fail("Output event sequence is not monotonic.");
     return {
       buffer: {
         ...base,
         status: "exited",
         statusText: `Terminal exited (code ${value.exitCode ?? "unknown"}).`,
         exitCode: value.exitCode,
+        nativeWatermark: value.sequence,
         ended: true,
       },
       pending: null,
@@ -281,17 +306,40 @@ export function applyOutputEvent(
     value.data.length > 8192
   )
     return fail("Output chunk exceeds the public contract.");
-  const group =
-    pending && pending.sequence === value.sequence && pending.count === value.chunkCount
-      ? pending
-      : value.chunkIndex === 0
-        ? { sequence: value.sequence, count: value.chunkCount, parts: [] as string[] }
-        : null;
-  if (group === null || group.parts.length !== value.chunkIndex)
-    return fail("Output chunk group is discontinuous.");
-  group.parts.push(value.data);
-  if (group.parts.length < group.count) return { buffer: base, pending: group };
-  const contents = tailByBytes(base.contents + group.parts.join(""), TERMINAL_BUFFER_MAX_BYTES);
+  if (pending) {
+    // A chunk that does not continue the open group abandoned it — output
+    // bytes are missing, so fail rather than silently swap groups.
+    if (
+      value.sequence !== pending.sequence ||
+      value.chunkCount !== pending.count ||
+      value.chunkIndex !== pending.parts.length
+    )
+      return fail("Output chunk group is discontinuous.");
+    pending.parts.push(value.data);
+    if (pending.parts.length < pending.count) return { buffer: base, pending };
+    const data = pending.parts.join("");
+    const contents = tailByBytes(base.contents + data, TERMINAL_BUFFER_MAX_BYTES);
+    return {
+      buffer: {
+        ...base,
+        contents,
+        retainedBytes: utf8Bytes(contents),
+        status: "live",
+        statusText: "Watching live output.",
+        nativeWatermark: value.sequence,
+      },
+      pending: null,
+    };
+  }
+  if (value.chunkIndex !== 0) return fail("Output chunk group is discontinuous.");
+  if (value.sequence <= base.nativeWatermark)
+    return fail("Output event sequence is not monotonic.");
+  if (value.chunkCount > 1)
+    return {
+      buffer: base,
+      pending: { sequence: value.sequence, count: value.chunkCount, parts: [value.data] },
+    };
+  const contents = tailByBytes(base.contents + value.data, TERMINAL_BUFFER_MAX_BYTES);
   return {
     buffer: {
       ...base,
@@ -299,6 +347,7 @@ export function applyOutputEvent(
       retainedBytes: utf8Bytes(contents),
       status: "live",
       statusText: "Watching live output.",
+      nativeWatermark: value.sequence,
     },
     pending: null,
   };
@@ -404,6 +453,9 @@ export interface TerminalTabState {
   readonly confirmAction: TerminalConfirmAction | null;
   readonly error: string | null;
   readonly queuedInputCount: number;
+  /** A write failed with unknown outcome; input halts until Resume (B6). */
+  readonly inputStopped: boolean;
+  readonly inputMessage: string | null;
 }
 
 export interface TerminalPanelSnapshot {
@@ -414,15 +466,10 @@ export interface TerminalPanelSnapshot {
   readonly panelError: string | null;
 }
 
-const MAX_QUEUED_INPUT_BYTES = 64 * 1024;
-const MAX_QUEUED_INPUT_WRITES = 128;
-const MAX_WRITE_DATA_LENGTH = 65_536;
-
 interface TabInternal {
   meta: TerminalSessionMetadata | null;
   starting: boolean;
-  queue: string[];
-  queueBytes: number;
+  input: TerminalInputQueue;
   exiting: boolean;
   exitBanner: string | null;
   confirm: TerminalConfirmAction | null;
@@ -431,20 +478,6 @@ interface TabInternal {
   resizePending: { cols: number; rows: number } | null;
   resizeSent: { cols: number; rows: number } | null;
 }
-
-const newTab = (): TabInternal => ({
-  meta: null,
-  starting: false,
-  queue: [],
-  queueBytes: 0,
-  exiting: false,
-  exitBanner: null,
-  confirm: null,
-  error: null,
-  resizeInFlight: null,
-  resizePending: null,
-  resizeSent: null,
-});
 
 const clampDimension = (value: number, max: number) =>
   Number.isSafeInteger(value) && value >= 1 && value <= max ? value : null;
@@ -484,7 +517,7 @@ export class TerminalPanel {
     this.#onChange = options.onChange;
     this.#ids = normalizeTerminalIds(options.restored?.terminalIds ?? []);
     this.#active = resolveActiveTerminalId(this.#ids, options.restored?.activeTerminalId ?? null);
-    for (const id of this.#ids) this.#tabs.set(id, newTab());
+    for (const id of this.#ids) this.#tab(id);
   }
 
   get snapshot(): TerminalPanelSnapshot {
@@ -504,7 +537,9 @@ export class TerminalPanel {
           exitBanner: tab.exitBanner,
           confirmAction: tab.confirm,
           error: tab.error,
-          queuedInputCount: tab.queue.length,
+          queuedInputCount: tab.input.state.queuedCount,
+          inputStopped: tab.input.state.stopped,
+          inputMessage: tab.input.state.message,
         } satisfies TerminalTabState;
       }),
       stream: this.#stream,
@@ -521,17 +556,51 @@ export class TerminalPanel {
     this.#onChange?.();
   }
 
+  #newInputQueue(terminalId: string): TerminalInputQueue {
+    return new TerminalInputQueue({
+      terminalId,
+      write: (data) => this.#control.write({ terminalId, data }),
+      onChange: () => this.#emit(),
+    });
+  }
+
+  /**
+   * A queue whose panel was disposed is permanently dead — React StrictMode
+   * replays effect setup/cleanup/setup in dev and revives the panel, but the
+   * old queue would keep dropping every send with no stopped banner. A fresh
+   * queue takes over; the disposed one's pending bytes were dropped at
+   * dispose and are never resent.
+   */
+  #liveInput(terminalId: string, tab: TabInternal): TerminalInputQueue {
+    if (tab.input.disposed) tab.input = this.#newInputQueue(terminalId);
+    return tab.input;
+  }
+
   #tab(terminalId: string): TabInternal {
     let tab = this.#tabs.get(terminalId);
     if (!tab) {
-      tab = newTab();
+      tab = {
+        meta: null,
+        starting: false,
+        input: this.#newInputQueue(terminalId),
+        exiting: false,
+        exitBanner: null,
+        confirm: null,
+        error: null,
+        resizeInFlight: null,
+        resizePending: null,
+        resizeSent: null,
+      };
       this.#tabs.set(terminalId, tab);
       if (!this.#ids.includes(terminalId)) this.#ids = [...this.#ids, terminalId];
+    } else {
+      this.#liveInput(terminalId, tab);
     }
     return tab;
   }
 
   #removeTab(terminalId: string) {
+    this.#tabs.get(terminalId)?.input.dispose();
     this.#tabs.delete(terminalId);
     this.#ids = this.#ids.filter((id) => id !== terminalId);
     this.#active = resolveActiveTerminalId(this.#ids, this.#active);
@@ -601,6 +670,7 @@ export class TerminalPanel {
    */
   beginListStream() {
     this.#disposed = false;
+    for (const [terminalId, tab] of this.#tabs) this.#liveInput(terminalId, tab);
     if (this.#stream === "connecting") return;
     this.#stream = "connecting";
     this.#emit();
@@ -642,6 +712,10 @@ export class TerminalPanel {
     const terminalId = nextTerminalId(this.allocatableTerminalIds);
     const tab = this.#tab(terminalId);
     tab.starting = true;
+    // A fresh process epoch: stale queued input and a stale input-stopped
+    // flag both belong to the previous incarnation.
+    tab.input.reset();
+    tab.input.setReady(false);
     tab.error = null;
     this.#ids = [...this.#ids.filter((id) => id !== terminalId), terminalId];
     this.#active = terminalId;
@@ -656,12 +730,13 @@ export class TerminalPanel {
         ...(launch.env !== undefined ? { env: launch.env } : {}),
       });
       tab.starting = false;
+      tab.input.setReady(true);
       this.#observeMeta(meta);
       await this.#drain(terminalId);
     } catch (error) {
       tab.starting = false;
-      tab.queue = [];
-      tab.queueBytes = 0;
+      tab.input.reset();
+      tab.input.setReady(true);
       tab.error = error instanceof Error ? error.message : "Terminal open failed";
       this.#emit();
     }
@@ -675,6 +750,7 @@ export class TerminalPanel {
     if (!tab || !launch || tab.starting) return;
     if (tab.meta !== null && tab.meta.status !== "exited" && tab.meta.status !== "error") return;
     tab.starting = true;
+    this.#liveInput(terminalId, tab).setReady(false);
     tab.exiting = false;
     tab.exitBanner = null;
     tab.error = null;
@@ -690,62 +766,52 @@ export class TerminalPanel {
         ...(launch.env !== undefined ? { env: launch.env } : {}),
       });
       tab.starting = false;
+      this.#liveInput(terminalId, tab).setReady(true);
       this.#observeMeta(meta);
       await this.#drain(terminalId);
     } catch (error) {
       tab.starting = false;
+      this.#liveInput(terminalId, tab).setReady(true);
       tab.error = error instanceof Error ? error.message : "Terminal attach failed";
       this.#emit();
     }
   }
 
-  /** Flush queued input and the pending fit-resize after a start resolves. */
+  /** Flush the pending fit-resize after a start resolves. */
   async #drain(terminalId: string) {
     const tab = this.#tabs.get(terminalId);
     if (!tab) return;
-    const queued = tab.queue;
-    tab.queue = [];
-    tab.queueBytes = 0;
-    for (const data of queued) {
-      try {
-        await this.#control.write({ terminalId, data });
-      } catch (error) {
-        tab.error = error instanceof Error ? error.message : "Terminal write failed";
-        break;
-      }
-    }
     const pending = tab.resizePending;
     tab.resizePending = null;
     if (pending) await this.#sendResize(terminalId, pending);
     this.#emit();
   }
 
-  /** Type into a terminal; input sent while the session starts is queued. */
+  /**
+   * Type into a terminal. Batches by serialized invocation bytes and stops on
+   * an unknown write outcome — the queue owns ordering, bounds, and the
+   * input-stopped halt (B6); the panel only gates draining on `starting`.
+   */
   sendInput(terminalId: string, data: string) {
     const tab = this.#tabs.get(terminalId);
     if (!tab || data.length === 0 || this.#disposed) return;
-    if (data.length > MAX_WRITE_DATA_LENGTH) {
-      tab.error = "Input exceeds the 64 KiB write bound.";
+    const result = this.#liveInput(terminalId, tab).enqueue(data);
+    if (result === "dropped-full") {
+      tab.error = "Input dropped: the pending-input queue is full.";
       this.#emit();
-      return;
     }
-    if (tab.starting) {
-      if (
-        tab.queue.length >= MAX_QUEUED_INPUT_WRITES ||
-        tab.queueBytes + data.length > MAX_QUEUED_INPUT_BYTES
-      ) {
-        tab.error = "Input dropped: the pending-input queue is full.";
-      } else {
-        tab.queue.push(data);
-        tab.queueBytes += data.length;
-      }
-      this.#emit();
-      return;
-    }
-    this.#control.write({ terminalId, data }).catch((error: unknown) => {
-      tab.error = error instanceof Error ? error.message : "Terminal write failed";
-      this.#emit();
-    });
+  }
+
+  /** Explicit user resume after input-stopped. */
+  resumeInput(terminalId: string) {
+    const tab = this.#tabs.get(terminalId);
+    if (tab) this.#liveInput(terminalId, tab).resume();
+  }
+
+  /** Output stream signalled a new process epoch or lifecycle end — pending input is stale. */
+  resetInput(terminalId: string) {
+    const tab = this.#tabs.get(terminalId);
+    if (tab) this.#liveInput(terminalId, tab).reset();
   }
 
   /** Latest-wins resize: a new fit while one is in flight replaces the pending one. */
@@ -822,6 +888,9 @@ export class TerminalPanel {
       } else {
         if (!launch) throw new Error("Terminal requires a workspace scope.");
         tab.starting = true;
+        // New process epoch — input queued against the old one is stale.
+        this.#liveInput(terminalId, tab).reset();
+        tab.input.setReady(false);
         this.#emit();
         const meta = await this.#control.restart({
           terminalId,
@@ -832,6 +901,7 @@ export class TerminalPanel {
           ...(launch.env !== undefined ? { env: launch.env } : {}),
         });
         tab.starting = false;
+        tab.input.setReady(true);
         tab.exiting = false;
         tab.exitBanner = null;
         this.#observeMeta(meta);
@@ -840,6 +910,7 @@ export class TerminalPanel {
       }
     } catch (error) {
       tab.starting = false;
+      this.#liveInput(terminalId, tab).setReady(true);
       tab.error = error instanceof Error ? error.message : "Terminal action failed";
     }
     this.#emit();
@@ -853,6 +924,7 @@ export class TerminalPanel {
 
   dispose() {
     this.#disposed = true;
+    for (const tab of this.#tabs.values()) tab.input.dispose();
   }
 }
 
@@ -877,9 +949,10 @@ export const TERMINAL_FOCUS_WHEN = `extension.${TERMINAL_SURFACE_ID}.focus`;
  * `defaultKey`s mirror the native terminal chords; the host always resolves
  * user and native rules first, so a displaced default is honest metadata
  * `listConflicts` reports rather than a stolen chord. Split chords stay
- * unregistered — the panel has no split layout to dispatch them to — and the
- * Ghostty-level editing intercepts (clear, word-nav, delete) remain deferred
- * with VT rendering.
+ * unregistered — the panel has no split layout to dispatch them to. The
+ * Ghostty-level editing intercepts (clear, word-nav, delete) exist locally
+ * on the VT surface via `handleBeforeKey`; what remains absent is adopting
+ * them as configurable commands through `t3.ui/keybindings`.
  */
 export const TERMINAL_VIEW_COMMANDS: readonly GlobalCommandDescriptor[] = [
   {

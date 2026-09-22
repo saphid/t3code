@@ -294,7 +294,6 @@ interface TerminalSessionState {
   status: TerminalSessionStatus;
   pid: number | null;
   history: BoundedTerminalHistory;
-  pendingHistoryControlSequence: string;
   pendingProcessEvents: Array<PendingProcessEvent>;
   pendingProcessEventIndex: number;
   processEventDrainRunning: boolean;
@@ -303,6 +302,11 @@ interface TerminalSessionState {
   updatedAt: string;
   eventSequence: number;
   observationEpoch: string;
+  // History clears observed inside the current observation epoch. Reset
+  // with the epoch in startSession so a snapshot can distinguish "this
+  // incarnation's retained bytes were cleared" from restarts, which
+  // clear the history object before the epoch changes.
+  epochClearCount: number;
   cols: number;
   rows: number;
   process: PtyAdapter.PtyProcess | null;
@@ -391,7 +395,12 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
     worktreePath: session.worktreePath,
     status: session.status,
     pid: session.pid,
-    history: session.history.value(),
+    // The attach path replays retained history into a fresh terminal
+    // parser, so it receives the sanitized form: retained history itself
+    // is raw now (the output-events contract needs raw units for exact
+    // provenance), and this boundary keeps stripping queries that a
+    // replay would re-answer.
+    history: session.history.sanitizedValue(),
     exitCode: session.exitCode,
     exitSignal: session.exitSignal,
     label: terminalWireLabel(session),
@@ -847,6 +856,106 @@ interface TerminalHistoryChunk {
   lineBreaks: number;
 }
 
+export type SequenceParseState =
+  | "none"
+  | "escape"
+  | "escapeIntermediates"
+  | "csi"
+  | "string"
+  | "stringEscape";
+
+/**
+ * Advance a control-sequence parser over `data` from `state`, mirroring
+ * sanitizeTerminalHistoryChunk's grammar exactly: ESC introduces a
+ * sequence classified by its next byte (then intermediates until a final
+ * byte), CSI ends at a final byte, and string sequences (OSC/DCS/PM/APC)
+ * end at BEL or ST. `endIndex` is the index past the end of the sequence
+ * open at entry — null when `data` ends still inside it. Front eviction
+ * uses the state to learn where a cut lands, and `endIndex` to learn how
+ * far a dangling fragment continues into the retained window.
+ */
+export function scanTerminalSequenceState(
+  data: string,
+  state: SequenceParseState,
+  stopAtEndIndex = false,
+): { state: SequenceParseState; endIndex: number | null } {
+  const openAtEntry = state !== "none";
+  let endIndex: number | null = null;
+  // Index of the first byte after ESC in the current escape sequence —
+  // findEscapeSequenceEndIndex's `start + 1` fallback ends a non-final
+  // escape there, making the scanned intermediates ordinary text. -1 when
+  // that byte was already evicted (entry state was escapeIntermediates).
+  let escapeStart = -1;
+  let index = 0;
+  while (index < data.length) {
+    const codePoint = data.charCodeAt(index);
+    if (state === "escape") {
+      // The byte right after ESC classifies the sequence.
+      if (codePoint === 0x5b) state = "csi";
+      else if (codePoint === 0x5d || codePoint === 0x50 || codePoint === 0x5e || codePoint === 0x5f)
+        state = "string";
+      else if (isEscapeIntermediateByte(codePoint)) {
+        state = "escapeIntermediates";
+        escapeStart = index;
+      } else state = "none";
+    } else if (state === "escapeIntermediates") {
+      if (isEscapeIntermediateByte(codePoint)) {
+        index += 1;
+        continue;
+      }
+      if (isEscapeFinalByte(codePoint)) {
+        state = "none";
+        index += 1;
+        if (openAtEntry && endIndex === null) {
+          endIndex = index;
+          if (stopAtEndIndex) return { state, endIndex };
+        }
+        continue;
+      }
+      // A non-final byte ends the escape retroactively at `escapeStart`
+      // (`start + 1` in the sanitizer); this byte is not part of it.
+      state = "none";
+      if (openAtEntry && endIndex === null) {
+        endIndex = escapeStart < 0 ? 0 : escapeStart + 1;
+        if (stopAtEndIndex) return { state, endIndex };
+      }
+      continue;
+    } else if (state === "csi") {
+      if (isCsiFinalByte(codePoint)) state = "none";
+    } else if (state === "string") {
+      if (codePoint === 0x07 || codePoint === 0x9c) state = "none";
+      else if (codePoint === 0x1b) state = "stringEscape";
+    } else if (state === "stringEscape") {
+      // BEL and C1 ST terminate the string even right after an ESC —
+      // findStringTerminatorIndex treats them as terminators at their own
+      // position; only "\ pairs with the ESC, and another ESC re-arms.
+      state =
+        codePoint === 0x5c || codePoint === 0x07 || codePoint === 0x9c
+          ? "none"
+          : codePoint === 0x1b
+            ? "stringEscape"
+            : "string";
+    } else if (codePoint === 0x1b) {
+      state = "escape";
+    } else if (codePoint === 0x9b) {
+      state = "csi";
+    } else if (
+      codePoint === 0x9d ||
+      codePoint === 0x90 ||
+      codePoint === 0x9e ||
+      codePoint === 0x9f
+    ) {
+      state = "string";
+    }
+    index += 1;
+    if (openAtEntry && state === "none" && endIndex === null) {
+      endIndex = index;
+      if (stopAtEndIndex) return { state, endIndex };
+    }
+  }
+  return { state, endIndex };
+}
+
 export class BoundedTerminalHistory {
   private readonly maxLines: number;
   private readonly maxBytes: number;
@@ -854,6 +963,18 @@ export class BoundedTerminalHistory {
   private start = 0;
   private byteLength = 0;
   private lineBreaks = 0;
+  // Cumulative UTF-16 units appended since the last clear() — the
+  // absolute position space of the retained window. Line eviction and
+  // byte eviction both drop front units without otherwise marking the
+  // tail, so a snapshot needs totalUnits to name where its contents
+  // start: contentsUnitStart = totalUnits - contents.length.
+  private totalUnits = 0;
+  // Set when the most recent front eviction cut through a control
+  // sequence: the evicted bytes ended inside one, so the retained head
+  // is a dangling fragment tail (e.g. "6n…" after "ESC[" is evicted).
+  // The fragment must be dropped too — sanitizing or replaying it would
+  // surface query bytes as visible text.
+  private evictedSequenceState: SequenceParseState = "none";
   // Reading the old string's tail on each append can force chunk concatenation.
   private lastCodeUnit: number | undefined;
   private cachedValue: string | null = "";
@@ -890,6 +1011,7 @@ export class BoundedTerminalHistory {
       previous.data += text[0];
       previous.byteLength += 1;
       this.byteLength += 1;
+      this.totalUnits += 1;
       this.lastCodeUnit = firstCode;
       offset = 1;
       this.trim();
@@ -930,12 +1052,91 @@ export class BoundedTerminalHistory {
     }
     this.byteLength += byteLength;
     this.lineBreaks += lineBreaks;
+    this.totalUnits += data.length;
     this.lastCodeUnit = data.charCodeAt(data.length - 1);
     this.cachedValue = null;
   }
 
+  /**
+   * Track the sequence state at the end of text dropped from the front.
+   */
+  private trackEvicted(data: string): void {
+    this.evictedSequenceState = scanTerminalSequenceState(data, this.evictedSequenceState).state;
+  }
+
+  /**
+   * Front eviction can land inside a control sequence, leaving a dangling
+   * fragment at the retained head. The fragment is useless to every
+   * consumer — a stripped query's tail becomes visible junk, and even a
+   * kept sequence cannot be reconstructed — so keep dropping through its
+   * end: the retained origin is then always a sequence boundary. The
+   * drops flow through the same bookkeeping, so `appendedUnitLength`
+   * provenance and `contentsUnitStart` stay exact.
+   *
+   * The sequence end is proven over the complete retained window before
+   * anything is dropped: an escape ends retroactively at its first byte
+   * on a non-final byte, so intermediates-only regions are ordinary text
+   * until a later byte decides — and where that first byte sat decides
+   * whether the endpoint lands inside or before the window. The scan
+   * walks chunks in order without joining them — `escapeEnd` carries the
+   * retroactive endpoint across seams — so the cost is the open
+   * sequence's extent, not the whole window.
+   */
+  private alignSequenceBoundary(): void {
+    if (this.evictedSequenceState === "none") return;
+    let state: SequenceParseState = this.evictedSequenceState;
+    // Window offset where an open escapeIntermediates sequence would
+    // retroactively end — the first byte after ESC, plus one. 0 when
+    // that byte was evicted (entry state was already escapeIntermediates);
+    // an entry "escape" means the next scanned byte is that first byte.
+    let escapeEnd = state === "escapeIntermediates" ? 0 : -1;
+    let endIndex: number | null = null;
+    let offset = 0;
+    for (let index = this.start; index < this.chunks.length; index += 1) {
+      const data = this.chunks[index]!.data;
+      if (state === "escape") escapeEnd = offset + 1;
+      const scan = scanTerminalSequenceState(data, state, true);
+      state = scan.state;
+      if (scan.endIndex !== null) {
+        // A chunk-local 0 is the retroactive endpoint: escapeEnd places
+        // it in window coordinates — 0 means before the window, so the
+        // whole window is ordinary text and nothing is dropped.
+        endIndex = scan.endIndex === 0 ? escapeEnd : offset + scan.endIndex;
+        break;
+      }
+      offset += data.length;
+    }
+    if (endIndex === 0) {
+      this.evictedSequenceState = "none";
+      return;
+    }
+    let remaining = endIndex ?? Number.MAX_SAFE_INTEGER;
+    while (remaining > 0) {
+      const first = this.chunks[this.start];
+      if (!first) break;
+      if (first.data.length <= remaining) {
+        this.discardChunk();
+        remaining -= first.data.length;
+        continue;
+      }
+      const dropped = first.data.slice(0, remaining);
+      let lineBreaks = 0;
+      for (
+        let newline = dropped.indexOf("\n");
+        newline !== -1;
+        newline = dropped.indexOf("\n", newline + 1)
+      ) {
+        lineBreaks += 1;
+      }
+      this.trimChunk(remaining, Buffer.byteLength(dropped), lineBreaks);
+      remaining = 0;
+    }
+    if (endIndex !== null) this.evictedSequenceState = "none";
+  }
+
   private discardChunk(): void {
     const first = this.chunks[this.start]!;
+    this.trackEvicted(first.data);
     this.byteLength -= first.byteLength;
     this.lineBreaks -= first.lineBreaks;
     this.chunks[this.start++] = undefined;
@@ -947,6 +1148,7 @@ export class BoundedTerminalHistory {
       this.discardChunk();
       return;
     }
+    this.trackEvicted(first.data.slice(0, offset));
     first.data = first.data.slice(offset);
     first.byteLength -= byteLength;
     first.lineBreaks -= lineBreaks;
@@ -996,6 +1198,7 @@ export class BoundedTerminalHistory {
       }
       this.trimChunk(offset, bytes, lineBreaks);
     }
+    this.alignSequenceBoundary();
     if (
       this.start === this.chunks.length ||
       (this.start > 2_048 && this.start * 2 >= this.chunks.length)
@@ -1006,11 +1209,56 @@ export class BoundedTerminalHistory {
     }
   }
 
+  get appendedUnitLength(): number {
+    return this.totalUnits;
+  }
+
+  /**
+   * Retained output in the form display/replay consumers expect: the
+   * sanitizer runs over the raw chunks in order — per-chunk calls with
+   * the pending carry are exactly the input shape it was written for —
+   * and the tail is taken from the sanitized result without flattening
+   * this history into one string.
+   */
+  sanitizedTail(
+    maxBytes: number,
+    maxUnits: number,
+  ): {
+    readonly contents: string;
+    readonly retainedByteLength: number;
+    readonly truncated: boolean;
+  } {
+    const scratch = new BoundedTerminalHistory(
+      Number.MAX_SAFE_INTEGER,
+      "",
+      Number.MAX_SAFE_INTEGER,
+    );
+    let pending = "";
+    for (let index = this.start; index < this.chunks.length; index += 1) {
+      const chunk = this.chunks[index];
+      if (!chunk) continue;
+      const result = sanitizeTerminalHistoryChunk(pending, chunk.data);
+      pending = result.pendingControlSequence;
+      scratch.append(result.visibleText);
+    }
+    return scratch.tail(maxBytes, maxUnits);
+  }
+
+  /**
+   * The full retained contents sanitized for display/replay consumers.
+   * Only for callers that already flatten history (the attach snapshot).
+   */
+  sanitizedValue(): string {
+    return sanitizeTerminalHistoryChunk("", this.value()).visibleText;
+  }
+
   clear(): void {
     this.chunks = [];
     this.start = 0;
     this.byteLength = 0;
     this.lineBreaks = 0;
+    this.totalUnits = 0;
+    this.evictedSequenceState = "none";
     this.lastCodeUnit = undefined;
     this.cachedValue = "";
   }
@@ -1110,6 +1358,7 @@ export type TerminalOutputObservationEvent =
       readonly threadId: string;
       readonly terminalId: string;
       readonly sequence: number;
+      readonly clearGeneration: number;
     }
   | {
       readonly type: "exited";
@@ -1134,10 +1383,12 @@ export type TerminalOutputObservationEvent =
       readonly threadId: string;
       readonly terminalId: string;
       readonly sequence: number;
+      readonly clearGeneration: number;
+      readonly contentsUnitStart: number;
       readonly snapshot: TerminalOutputSnapshot;
     };
 
-function isCsiFinalByte(codePoint: number): boolean {
+export function isCsiFinalByte(codePoint: number): boolean {
   return codePoint >= 0x40 && codePoint <= 0x7e;
 }
 
@@ -1191,7 +1442,7 @@ function stripStringTerminator(value: string): string {
   return value;
 }
 
-function findStringTerminatorIndex(input: string, start: number): number | null {
+export function findStringTerminatorIndex(input: string, start: number): number | null {
   for (let index = start; index < input.length; index += 1) {
     const codePoint = input.charCodeAt(index);
     if (codePoint === 0x07 || codePoint === 0x9c) {
@@ -1204,15 +1455,15 @@ function findStringTerminatorIndex(input: string, start: number): number | null 
   return null;
 }
 
-function isEscapeIntermediateByte(codePoint: number): boolean {
+export function isEscapeIntermediateByte(codePoint: number): boolean {
   return codePoint >= 0x20 && codePoint <= 0x2f;
 }
 
-function isEscapeFinalByte(codePoint: number): boolean {
+export function isEscapeFinalByte(codePoint: number): boolean {
   return codePoint >= 0x30 && codePoint <= 0x7e;
 }
 
-function findEscapeSequenceEndIndex(input: string, start: number): number | null {
+export function findEscapeSequenceEndIndex(input: string, start: number): number | null {
   let cursor = start;
   while (cursor < input.length && isEscapeIntermediateByte(input.charCodeAt(cursor))) {
     cursor += 1;
@@ -2167,14 +2418,15 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         }
 
         if (nextEvent.type === "output") {
-          const sanitized = sanitizeTerminalHistoryChunk(
-            session.pendingHistoryControlSequence,
-            nextEvent.data,
-          );
-          session.pendingHistoryControlSequence = sanitized.pendingControlSequence;
-          if (sanitized.visibleText.length > 0) {
-            session.history.append(sanitized.visibleText);
-          }
+          // Retain the RAW output: the output-events contract's retained
+          // window is measured in delivered units, so a pending reply's
+          // position survives eviction arithmetic exactly. Sanitization
+          // stays a read-side concern for consumers that replay retained
+          // text into a parser (attach snapshot) or display it
+          // (readOutput) — it must not sit between delivery and retention,
+          // or the snapshot's coverage origin stops matching the bytes the
+          // stream actually carried.
+          session.history.append(nextEvent.data);
           const eventStamp = advanceEventSequence(session);
 
           return {
@@ -2182,7 +2434,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             threadId: session.threadId,
             terminalId: session.terminalId,
             sequence: eventStamp.sequence,
-            history: sanitized.visibleText.length > 0 ? session.history : null,
+            history: nextEvent.data.length > 0 ? session.history : null,
             data: nextEvent.data,
             sourceEpoch: session.observationEpoch,
           } as const;
@@ -2195,7 +2447,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         session.hasRunningSubprocess = false;
         session.childCommandLabel = null;
         session.status = "exited";
-        session.pendingHistoryControlSequence = "";
         session.pendingProcessEvents = [];
         session.pendingProcessEventIndex = 0;
         session.processEventDrainRunning = false;
@@ -2285,7 +2536,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       session.hasRunningSubprocess = false;
       session.childCommandLabel = null;
       session.status = "exited";
-      session.pendingHistoryControlSequence = "";
       session.pendingProcessEvents = [];
       session.pendingProcessEventIndex = 0;
       session.processEventDrainRunning = false;
@@ -2364,6 +2614,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   ) {
     const previousEpoch = session.observationEpoch;
     session.observationEpoch = NodeCrypto.randomUUID();
+    session.epochClearCount = 0;
     yield* publishOutputEvent({
       type: "closed",
       sourceEpoch: previousEpoch,
@@ -2740,7 +2991,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         status: "starting",
         pid: null,
         history,
-        pendingHistoryControlSequence: "",
         pendingProcessEvents: [],
         pendingProcessEventIndex: 0,
         processEventDrainRunning: false,
@@ -2749,6 +2999,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         updatedAt: yield* nowIso,
         eventSequence: 0,
         observationEpoch: NodeCrypto.randomUUID(),
+        epochClearCount: 0,
         cols,
         rows,
         process: null,
@@ -2802,7 +3053,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       liveSession.worktreePath = nextWorktreePath;
       liveSession.runtimeEnv = nextRuntimeEnv;
       liveSession.history.clear();
-      liveSession.pendingHistoryControlSequence = "";
       liveSession.pendingProcessEvents = [];
       liveSession.pendingProcessEventIndex = 0;
       liveSession.processEventDrainRunning = false;
@@ -2811,7 +3061,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       liveSession.runtimeEnv = nextRuntimeEnv;
       liveSession.worktreePath = nextWorktreePath;
       liveSession.history.clear();
-      liveSession.pendingHistoryControlSequence = "";
       liveSession.pendingProcessEvents = [];
       liveSession.pendingProcessEventIndex = 0;
       liveSession.processEventDrainRunning = false;
@@ -2932,7 +3181,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       Effect.map((session) => {
         if (Option.isNone(session)) return null;
         const current = session.value;
-        const tail = current.history.tail(8_192, 8_192);
+        // readOutput serves retained output as display text — the
+        // sanitized tail of the raw retained window, preserving the
+        // pre-raw-retention contract for this API.
+        const tail = current.history.sanitizedTail(8_192, 8_192);
         return {
           threadId: current.threadId,
           terminalId: current.terminalId,
@@ -2991,6 +3243,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             threadId: session.threadId,
             terminalId: session.terminalId,
             sequence: initialSequence,
+            clearGeneration: session.epochClearCount,
+            contentsUnitStart: session.history.appendedUnitLength - tail.contents.length,
             snapshot: {
               threadId: session.threadId,
               terminalId: session.terminalId,
@@ -3245,7 +3499,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         const terminalId = input.terminalId;
         const session = yield* requireSession(input.threadId, terminalId);
         session.history.clear();
-        session.pendingHistoryControlSequence = "";
+        session.epochClearCount += 1;
         session.pendingProcessEvents = [];
         session.pendingProcessEventIndex = 0;
         session.processEventDrainRunning = false;
@@ -3267,6 +3521,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           threadId: input.threadId,
           terminalId,
           sequence: observation.sequence,
+          clearGeneration: session.epochClearCount,
         });
       }),
     );
@@ -3291,7 +3546,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           status: "starting",
           pid: null,
           history: new BoundedTerminalHistory(historyLineLimit, "", historyByteLimit),
-          pendingHistoryControlSequence: "",
           pendingProcessEvents: [],
           pendingProcessEventIndex: 0,
           processEventDrainRunning: false,
@@ -3300,6 +3554,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           updatedAt: yield* nowIso,
           eventSequence: 0,
           observationEpoch: NodeCrypto.randomUUID(),
+          epochClearCount: 0,
           cols,
           rows,
           process: null,
@@ -3328,7 +3583,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       const rows = input.rows ?? session.rows;
 
       session.history.clear();
-      session.pendingHistoryControlSequence = "";
       session.pendingProcessEvents = [];
       session.pendingProcessEventIndex = 0;
       session.processEventDrainRunning = false;

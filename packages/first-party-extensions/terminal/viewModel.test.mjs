@@ -37,6 +37,8 @@ const snapshotValue = (overrides = {}) => ({
   contents: "$ echo hi\nhi\n",
   retainedByteLength: 12,
   truncated: false,
+  clearGeneration: 0,
+  contentsUnitStart: 0,
   boundarySequence: 0,
   ...overrides,
 });
@@ -175,6 +177,7 @@ NodeTest.describe("terminal view model — output stream", () => {
       terminalId: "term-1",
       streamEpoch: "epoch-1",
       sequence: 8,
+      clearGeneration: 1,
       reason: "history-cleared",
     });
     NodeAssert.equal(buffer.contents, "");
@@ -487,14 +490,16 @@ NodeTest.describe("terminal panel — input, resize, lifecycle", () => {
     NodeAssert.equal(control.calls.filter(([m]) => m === "write").length, 0);
     gate.resolve(meta(id));
     await opening;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Bursts merge into one ordered batch — the PTY sees identical bytes.
     NodeAssert.deepEqual(
       control.calls.filter(([m]) => m === "write").map(([, i]) => i.data),
-      ["echo one\r", "echo two\r"],
+      ["echo one\recho two\r"],
     );
     panel.dispose();
   });
 
-  NodeTest.it("caps the starting-input queue instead of growing unbounded", async () => {
+  NodeTest.it("caps the pending input queue at 256 KiB serialized", async () => {
     const control = fakeControl();
     const gate = deferred();
     control.gate.open = gate.promise;
@@ -502,24 +507,53 @@ NodeTest.describe("terminal panel — input, resize, lifecycle", () => {
     panel.applySessionsEvent({ kind: "snapshot", terminals: [] });
     const opening = panel.openTerminal();
     const id = panel.snapshot.activeTerminalId;
-    for (let i = 0; i < 200; i += 1) panel.sendInput(id, "x".repeat(1024));
+    // ~308 KiB of serialized input exceeds the 256 KiB pending bound.
+    for (let i = 0; i < 300; i += 1) panel.sendInput(id, "x".repeat(1024));
     const tab = panel.snapshot.tabs[0];
-    NodeAssert.ok(tab.queuedInputCount <= 128);
+    NodeAssert.ok(tab.queuedInputCount < 300);
+    NodeAssert.ok(tab.queuedInputCount > 200);
     NodeAssert.match(tab.error, /queue is full/);
     gate.resolve(meta(id));
     await opening;
     panel.dispose();
   });
 
-  NodeTest.it("rejects oversized writes before any host call", () => {
+  NodeTest.it("splits oversized input into budgeted writes", async () => {
     const control = fakeControl();
     const panel = new TerminalPanel({ control, launch });
     panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
     panel.sendInput("term-1", "x".repeat(65_537));
-    NodeAssert.equal(control.calls.filter(([m]) => m === "write").length, 0);
-    NodeAssert.match(panel.snapshot.tabs[0].error, /64 KiB/);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const writes = control.calls.filter(([m]) => m === "write").map(([, i]) => i.data);
+    NodeAssert.ok(writes.length >= 2);
+    for (const data of writes) NodeAssert.ok(data.length <= 49 * 1024);
+    NodeAssert.equal(writes.join(""), "x".repeat(65_537));
     panel.dispose();
   });
+
+  NodeTest.it(
+    "StrictMode replay revives input: dispose + beginListStream does not leave dead queues (P2)",
+    async () => {
+      const control = fakeControl();
+      const panel = new TerminalPanel({
+        control,
+        launch,
+        restored: { terminalIds: ["term-1"], activeTerminalId: "term-1" },
+      });
+      // Dev StrictMode runs setup → cleanup → setup: panel.dispose() kills
+      // the queues, then the sessions effect calls beginListStream() again.
+      panel.dispose();
+      panel.beginListStream();
+      panel.sendInput("term-1", "hello");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const writes = control.calls.filter(([m]) => m === "write").map(([, i]) => i.data);
+      NodeAssert.deepEqual(writes, ["hello"]);
+      const tab = panel.snapshot.tabs[0];
+      NodeAssert.equal(tab.inputStopped, false);
+      NodeAssert.equal(tab.inputMessage, null);
+      panel.dispose();
+    },
+  );
 
   NodeTest.it("resizes latest-wins while a resize is in flight", async () => {
     const control = fakeControl();
