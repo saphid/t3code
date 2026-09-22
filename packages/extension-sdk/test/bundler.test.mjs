@@ -7,6 +7,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 import React from "react";
 import TestRenderer from "react-test-renderer";
+import { rewriteEmittedLabels } from "../bin/emit-labels.mjs";
 
 const sdk = NodeURL.fileURLToPath(new URL("..", import.meta.url));
 const cli = NodePath.join(sdk, "bin/t3-extension.mjs");
@@ -215,6 +216,7 @@ async function writeSharedDeps(dir) {
         'exports.plugin = (name) => require("./plugins/" + name + ".cjs");\n',
       "features/a.cjs": 'module.exports = "loaded";\n',
       "features/fail-é.cjs": 'throw new Error("glob-fault");\n',
+      "features/ok-🚀.cjs": 'module.exports = "astral";\n',
       'features/qu"ote.cjs': 'module.exports = "quoted";\n',
       "plugins/b.cjs": 'module.exports = "plugged";\n',
       "index.d.ts":
@@ -387,6 +389,12 @@ NodeTest.test("bundler output is deterministic across build cwd and checkout pat
     NodeAssert.ok(
       server.includes('"node_modules/glob-dep/features/fail-\\xE9.cjs"('),
       `escaped glob-expanded key not canonicalized: ${jsx}`,
+    );
+    // Astral-plane filenames escape as uppercase \u{…} — matching esbuild's
+    // convention so the emitted spelling stays canonical.
+    NodeAssert.ok(
+      server.includes('"node_modules/glob-dep/features/ok-\\u{1F680}.cjs"('),
+      `astral dep key not canonicalized: ${jsx}`,
     );
     NodeAssert.ok(
       server.includes("'node_modules/glob-dep/features/qu\"ote.cjs'("),
@@ -606,6 +614,227 @@ after\`,
   NodeAssert.ok(
     server.includes('"node_modules/fixture-dep/index.cjs"'),
     "dep wrapper key lost its canonical label",
+  );
+});
+
+NodeTest.test("emitted-label rewriter edits only generated positions", async (t) => {
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-emit-labels-"));
+  t.after(() => NodeFSP.rm(root, { recursive: true, force: true }));
+  await NodeFSP.mkdir(NodePath.join(root, "dep", "node_modules", "fixture-dep"), {
+    recursive: true,
+  });
+  await NodeFSP.writeFile(
+    NodePath.join(root, "dep", "node_modules", "fixture-dep", "package.json"),
+    JSON.stringify({ name: "fixture-dep", type: "commonjs", main: "index.cjs" }),
+  );
+  await NodeFSP.writeFile(
+    NodePath.join(root, "dep", "node_modules", "fixture-dep", "index.cjs"),
+    "module.exports = 1;\n",
+  );
+  const dir = NodePath.join(root, "proj");
+  await NodeFSP.mkdir(dir, { recursive: true });
+  const label = "../dep/node_modules/fixture-dep/index.cjs";
+  const canon = "node_modules/fixture-dep/index.cjs";
+  const helper = "var __commonJS = (cb, mod) => () => cb[Object.keys(cb)[0]]();\n";
+  const inputs = [label, "server.ts"];
+
+  // Banner comment and helper map key are generated positions; both rewrite.
+  const emitted =
+    helper +
+    `// ${label}\nvar require_dep = __commonJS({ ${JSON.stringify(label)}(exports, module) {} });\n`;
+  const out = rewriteEmittedLabels(emitted, inputs, dir);
+  NodeAssert.ok(out.includes(`// ${canon}`), "banner comment kept raw label");
+  NodeAssert.ok(
+    out.includes(`${JSON.stringify(canon)}(exports, module)`),
+    "helper map key kept raw label",
+  );
+
+  // A string key the build cannot explain fails the build — generated
+  // metadata must never be half-rewritten.
+  NodeAssert.throws(
+    () =>
+      rewriteEmittedLabels(helper + `__commonJS({ "unexplained/key.cjs"() {} });\n`, inputs, dir),
+    /not a bundled input/,
+  );
+
+  // A user declaration shadowing the helper name makes the call user code:
+  // its keys are data, never validated or rewritten.
+  const shadowed =
+    helper +
+    `{ function __commonJS(x) { return x; } __commonJS({ ${JSON.stringify(label)}() {} }); }\n` +
+    `const f = function __esm() { return __esm({ ${JSON.stringify(label)}() {} }); };\n`;
+  const shadowedOut = rewriteEmittedLabels(shadowed, inputs, dir);
+  NodeAssert.equal(
+    shadowedOut.split(label).length - 1,
+    2,
+    "shadowed helper calls had label-shaped keys rewritten",
+  );
+
+  // fileName metadata only rewrites inside a generated jsxDEV call — not a
+  // user object's method, and not any other argument position.
+  const jsx =
+    `import runtime from "jsx-dev-runtime";\n` +
+    `runtime.jsxDEV(a, b, c, d, { fileName: ${JSON.stringify(label)}, lineNumber: 1 });\n` +
+    `userObj.jsxDEV(a, b, c, d, { fileName: ${JSON.stringify(label)}, lineNumber: 1 });\n` +
+    `runtime.jsxDEV(a, b, c, { fileName: ${JSON.stringify(label)}, lineNumber: 1 }, self);\n`;
+  const jsxOut = rewriteEmittedLabels(jsx, inputs, dir);
+  NodeAssert.ok(
+    jsxOut.includes(`d, { fileName: ${JSON.stringify(canon)}, lineNumber: 1 })`),
+    "jsxDEV source fileName kept raw label",
+  );
+  NodeAssert.equal(
+    jsxOut.split(label).length - 1,
+    2,
+    "non-generated fileName positions were rewritten",
+  );
+
+  // In IIFE output the jsx namespace is a bundler `var` initialized through
+  // __toESM — fileName rewrites there, but not through a look-alike var.
+  const wrapped =
+    `var __toESM = (x, m) => x;\n` +
+    `var import_jsx_dev_runtime = __toESM(require_x());\n` +
+    `var notRuntime = userFactory();\n` +
+    `import_jsx_dev_runtime.jsxDEV(a, b, c, d, { fileName: ${JSON.stringify(label)}, lineNumber: 1 });\n` +
+    `notRuntime.jsxDEV(a, b, c, d, { fileName: ${JSON.stringify(label)}, lineNumber: 1 });\n`;
+  const wrappedOut = rewriteEmittedLabels(wrapped, inputs, dir);
+  NodeAssert.ok(
+    wrappedOut.includes(`d, { fileName: ${JSON.stringify(canon)}, lineNumber: 1 })`),
+    "bundler-namespace jsxDEV fileName kept raw label",
+  );
+  NodeAssert.equal(
+    wrappedOut.split(label).length - 1,
+    1,
+    "user-namespace jsxDEV fileName was rewritten",
+  );
+
+  // Plugin-namespace inputs (host-react:…) are valid helper-map keys but
+  // not filesystem labels — accepted, never rewritten.
+  const namespaced = rewriteEmittedLabels(
+    helper + `__commonJS({ "host-react:react/jsx-dev-runtime"(exports) {} });\n`,
+    [...inputs, "host-react:react/jsx-dev-runtime"],
+    dir,
+  );
+  NodeAssert.ok(namespaced.includes('"host-react:react/jsx-dev-runtime"'));
+});
+
+NodeTest.test("canonicalization preserves manifest semantics and never degrades", async (t) => {
+  // Round-3 regression pair: a staged rebuild dropped an inherited
+  // package.json `sideEffects` entry, and tsconfig `paths` (or absolute
+  // imports) silently shipped location-dependent labels. The emitted-text
+  // post-process leaves the authoritative compile untouched, so both hold.
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-bundler-"));
+  t.after(() => NodeFSP.rm(root, { recursive: true, force: true }));
+  const depDir = NodePath.join(root, "shared-deps");
+  await writeSharedDeps(depDir);
+  // The extension sits inside a parent package whose manifest marks the
+  // entry's side effect — esbuild must see that context directly. Each
+  // fixture copy writes the manifest at its own parent so the
+  // package-relative path matches in both.
+  const writeProbe = async (dir) => {
+    await NodeFSP.mkdir(NodePath.dirname(dir), { recursive: true });
+    await NodeFSP.writeFile(
+      NodePath.join(NodePath.dirname(dir), "package.json"),
+      JSON.stringify({
+        name: "parent",
+        type: "module",
+        sideEffects: ["./proj/effect.js"],
+      }),
+    );
+    await NodeFSP.mkdir(NodePath.join(dir, "node_modules"), { recursive: true });
+    await NodeFSP.symlink(
+      NodePath.join(depDir, "node_modules", "fixture-dep"),
+      NodePath.join(dir, "node_modules", "fixture-dep"),
+    );
+    await NodeFSP.mkdir(NodePath.join(dir, "lib"), { recursive: true });
+    await NodeFSP.writeFile(
+      NodePath.join(dir, "lib", "util.ts"),
+      'export const v = "via-paths";\n',
+    );
+    await NodeFSP.writeFile(
+      NodePath.join(dir, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          target: "ES2022",
+          module: "NodeNext",
+          moduleResolution: "NodeNext",
+          strict: true,
+          noEmit: true,
+          skipLibCheck: true,
+          allowJs: true,
+          checkJs: false,
+          allowImportingTsExtensions: true,
+          paths: { "lib/*": ["./lib/*"] },
+        },
+      }),
+    );
+    await NodeFSP.writeFile(
+      NodePath.join(dir, "extension.ts"),
+      `export default {
+  package: {
+    format: 2,
+    manifest: {
+      id: "test.manifest-probe",
+      apiVersion: 1,
+      version: "1.0.0",
+      surfaces: [],
+    },
+    serverEntry: "server.mjs",
+    tools: [],
+    dependencies: [],
+    provides: [],
+    requires: [],
+  },
+  serverEntry: "server.ts",
+};
+`,
+    );
+    await NodeFSP.writeFile(
+      NodePath.join(dir, "effect.js"),
+      "// @ts-nocheck\nglobalThis.__effectCount = (globalThis.__effectCount ?? 0) + 1;\n",
+    );
+    await NodeFSP.writeFile(
+      NodePath.join(dir, "server.ts"),
+      `import "./effect.js";
+import dep from "fixture-dep";
+// @ts-ignore - resolved through tsconfig paths
+import { v } from "lib/util.ts";
+export default { tools: [], dep, v, load: () => import("./effect.js") };
+`,
+    );
+  };
+  const shallow = NodePath.join(root, "proj");
+  await writeProbe(shallow);
+  build(shallow, root);
+  const shallowServer = (await readBundle(shallow, "server.mjs")).toString("utf8");
+  NodeAssert.ok(
+    shallowServer.includes('"node_modules/fixture-dep/index.cjs"'),
+    "dep label not canonicalized beside a tsconfig paths import",
+  );
+  NodeAssert.ok(
+    !/^\/\/ \.\./m.test(shallowServer),
+    "checkout-relative banner leaked into canonical output",
+  );
+  // The inherited-manifest side effect executes eagerly at module init;
+  // the dynamic import returns the same evaluated module.
+  globalThis.__effectCount = 0;
+  const mod = await import(
+    NodeURL.pathToFileURL(NodePath.join(shallow, ".t3-extension", "server.mjs")).href +
+      "?t=" +
+      Date.now()
+  );
+  NodeAssert.equal(globalThis.__effectCount, 1, "inherited-manifest side effect dropped");
+  await mod.default.load();
+  NodeAssert.equal(globalThis.__effectCount, 1, "dynamic import re-executed or lost");
+  NodeAssert.equal(mod.default.v, "via-paths");
+  // The same sources at another checkout depth are byte-identical — no
+  // fallback path exists to silently degrade to.
+  const deep = NodePath.join(root, "x", "y", "z", "proj");
+  await writeProbe(deep);
+  build(deep, root);
+  NodeAssert.equal(
+    (await readBundle(deep, "server.mjs")).toString("utf8"),
+    shallowServer,
+    "tsconfig-paths build changed bytes across checkout depth",
   );
 });
 
