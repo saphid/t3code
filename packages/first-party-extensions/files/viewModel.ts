@@ -1,8 +1,11 @@
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
-import type {
-  WorkspaceResourceReadEvent,
-  WorkspaceResourceReason,
+import {
+  uiThemeApi,
+  type WorkspaceResourceReadEvent,
+  type WorkspaceResourceReason,
 } from "@t3tools/extension-sdk/catalogue";
+import { bindApi, bindStreamApi, type ApiClient } from "@t3tools/extension-sdk/capabilities";
+import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 
 /**
  * Pure view-model for the Files tree panel. Owns F1 row #6's panel-local
@@ -1145,6 +1148,60 @@ export function themeVarOverrides(
     overrides[property] = contractVar ? `var(${contractVar}, ${value})` : value;
   }
   return overrides;
+}
+
+/**
+ * Drives the theme-var layer: an initial `getTokens` read, re-read on every
+ * `subscribeState` frame. `apply` receives the published map after each
+ * successful read and `null` whenever the feed can't vouch for values —
+ * at subscription start (a fresh feed must not inherit the old one's map),
+ * on a denied read, and on a closed or lost stream (the no-stale-fallback
+ * rule). A failure also invalidates any older in-flight response so it
+ * cannot restore a stale map. The caller's `signal` owns the lifetime; the
+ * stream has no resume, so recovery is a fresh subscription from the view
+ * lifecycle (hide→show or session change).
+ */
+export function watchThemeVars(options: {
+  readonly client: Pick<ApiClient, "invokeApi" | "subscribeApi">;
+  readonly context: ViewContext;
+  readonly signal: AbortSignal;
+  readonly apply: (vars: Record<string, string> | null) => void;
+}): Promise<void> {
+  const api = bindApi(uiThemeApi, options.client, options.context);
+  const streams = bindStreamApi(uiThemeApi, options.client, options.context);
+  if (!options.signal.aborted) options.apply(null);
+  let generation = 0;
+  const invalidate = () => {
+    generation += 1;
+    if (!options.signal.aborted) options.apply(null);
+  };
+  const refresh = () => {
+    const at = ++generation;
+    void api.invoke("getTokens", {}, options.signal).then(
+      (value) => {
+        if (!options.signal.aborted && at === generation)
+          options.apply(themeVarOverrides(value.tokens, value.cssVars));
+      },
+      // A superseded rejection carries no fresh information — only the
+      // newest read's failure may invalidate the published map.
+      () => {
+        if (at === generation) invalidate();
+      },
+    );
+  };
+  refresh();
+  return (async () => {
+    try {
+      for await (const frame of streams.subscribe("subscribeState", {}, options.signal)) {
+        if (options.signal.aborted) return;
+        if (frame.type === "closed") break;
+        refresh();
+      }
+      invalidate();
+    } catch {
+      invalidate();
+    }
+  })();
 }
 
 // ---------------------------------------------------------------------------

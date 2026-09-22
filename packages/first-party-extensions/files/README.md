@@ -21,8 +21,9 @@ without its grant or provider):
   host's effective theme (stored preference, session overlay, or external
   preview — the provider folds them) and `subscribeState` re-reads on every
   transition. Resolved values land on the view root as `--t3-files-*`
-  variables ahead of each style's legacy `var()` chain, so an installation
-  without the grant renders the pre-contract appearance unchanged.
+  variables ahead of each style's legacy `var()` chain; a denied read or a
+  lost stream clears them, so an installation without the grant — or after
+  losing it — renders the pre-contract appearance unchanged.
 - `t3.ui/keybindings@^1.0.0` — under `t3.ui/keybindings`: the panel's actions
   register as a `surface`-scope command set (Refresh files `mod+r`, Focus
   file search `mod+f`, Open file in…, Toggle rendered markdown) bound through

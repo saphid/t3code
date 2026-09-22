@@ -7,6 +7,7 @@ import {
   FILES_THEME_VARS,
   FILES_VIEW_COMMANDS,
   themeVarOverrides,
+  watchThemeVars,
 } from "./viewModel.ts";
 
 NodeTest.describe("themeVarOverrides", () => {
@@ -164,5 +165,235 @@ NodeTest.describe("fileOpenNotification", () => {
     NodeAssert.equal(input?.severity, "error");
     NodeAssert.equal("anchor" in input, false);
     NodeAssert.equal("threadId" in input, false);
+  });
+});
+
+NodeTest.describe("watchThemeVars — no stale overrides", () => {
+  const tick = () => new Promise((resolve) => setImmediate(resolve));
+  const viewContext = { resource: { environmentId: "env-1", threadId: "thread-1" } };
+
+  function deferred() {
+    let resolve, reject;
+    const promise = new Promise((res, rej) => ((resolve = res), (reject = rej)));
+    return { promise, resolve, reject };
+  }
+
+  /** Async iterable the test drives frame-by-frame. */
+  function controllableStream() {
+    const queue = [];
+    let waiter;
+    const pump = () => {
+      if (!waiter || !queue.length) return;
+      const item = queue.shift();
+      const { resolve, reject } = waiter;
+      waiter = undefined;
+      if (item.error !== undefined) reject(item.error);
+      else resolve(item);
+    };
+    return {
+      iterable: {
+        [Symbol.asyncIterator]() {
+          return {
+            next() {
+              const item = queue.shift();
+              if (item !== undefined)
+                return item.error !== undefined
+                  ? Promise.reject(item.error)
+                  : Promise.resolve(item);
+              return new Promise((resolve, reject) => {
+                waiter = { resolve, reject };
+              });
+            },
+            return() {
+              return Promise.resolve({ done: true, value: undefined });
+            },
+          };
+        },
+      },
+      push: (frame) => (queue.push({ done: false, value: frame }), pump()),
+      end: () => (queue.push({ done: true, value: undefined }), pump()),
+      fail: (error) => (queue.push({ error }), pump()),
+    };
+  }
+
+  function themeClient({ read, stream }) {
+    return {
+      invokeApi: (request) => {
+        NodeAssert.equal(request.method, "getTokens");
+        return read(request);
+      },
+      subscribeApi: (request) => {
+        NodeAssert.equal(request.name, "subscribeState");
+        return stream;
+      },
+    };
+  }
+
+  NodeTest.it("clears theme overrides when a refresh read is denied", async () => {
+    const stream = controllableStream();
+    const applied = [];
+    let call = 0;
+    const client = themeClient({
+      read: () => {
+        call += 1;
+        return call === 1
+          ? Promise.resolve({ tokens: { text: "#111" }, cssVars: {} })
+          : Promise.reject(new Error("grant revoked"));
+      },
+      stream: stream.iterable,
+    });
+    const done = watchThemeVars({
+      client,
+      context: viewContext,
+      signal: new AbortController().signal,
+      apply: (vars) => applied.push(vars),
+    });
+    await tick();
+    NodeAssert.deepEqual(applied.at(-1), themeVarOverrides({ text: "#111" }, {}));
+    stream.push({ type: "data", value: {} });
+    await tick();
+    NodeAssert.equal(applied.at(-1), null);
+    stream.end();
+    await done;
+  });
+
+  NodeTest.it("clears theme overrides when the state stream closes", async () => {
+    const stream = controllableStream();
+    const applied = [];
+    const client = themeClient({
+      read: () => Promise.resolve({ tokens: { text: "#111" }, cssVars: {} }),
+      stream: stream.iterable,
+    });
+    const done = watchThemeVars({
+      client,
+      context: viewContext,
+      signal: new AbortController().signal,
+      apply: (vars) => applied.push(vars),
+    });
+    await tick();
+    NodeAssert.deepEqual(applied.at(-1), themeVarOverrides({ text: "#111" }, {}));
+    stream.push({ type: "closed", value: {} });
+    await done;
+    NodeAssert.equal(applied.at(-1), null);
+  });
+
+  NodeTest.it("clears theme overrides when the state stream errors", async () => {
+    const stream = controllableStream();
+    const applied = [];
+    const client = themeClient({
+      read: () => Promise.resolve({ tokens: { text: "#111" }, cssVars: {} }),
+      stream: stream.iterable,
+    });
+    const done = watchThemeVars({
+      client,
+      context: viewContext,
+      signal: new AbortController().signal,
+      apply: (vars) => applied.push(vars),
+    });
+    await tick();
+    stream.fail(new Error("provider gone"));
+    await done;
+    NodeAssert.equal(applied.at(-1), null);
+  });
+
+  NodeTest.it("clears theme overrides when the state stream completes", async () => {
+    const stream = controllableStream();
+    const applied = [];
+    const client = themeClient({
+      read: () => Promise.resolve({ tokens: { text: "#111" }, cssVars: {} }),
+      stream: stream.iterable,
+    });
+    const done = watchThemeVars({
+      client,
+      context: viewContext,
+      signal: new AbortController().signal,
+      apply: (vars) => applied.push(vars),
+    });
+    await tick();
+    NodeAssert.deepEqual(applied.at(-1), themeVarOverrides({ text: "#111" }, {}));
+    stream.end();
+    await done;
+    NodeAssert.equal(applied.at(-1), null);
+  });
+
+  NodeTest.it("a late read response cannot restore stale overrides after stream loss", async () => {
+    const stream = controllableStream();
+    const read = deferred();
+    const applied = [];
+    const client = themeClient({ read: () => read.promise, stream: stream.iterable });
+    const done = watchThemeVars({
+      client,
+      context: viewContext,
+      signal: new AbortController().signal,
+      apply: (vars) => applied.push(vars),
+    });
+    stream.push({ type: "closed", value: {} });
+    await done;
+    read.resolve({ tokens: { text: "#111" }, cssVars: {} });
+    await tick();
+    NodeAssert.ok(applied.length >= 2);
+    NodeAssert.ok(applied.every((vars) => vars === null));
+  });
+
+  NodeTest.it("a failed refresh invalidates an older in-flight read", async () => {
+    const stream = controllableStream();
+    const stale = deferred();
+    const applied = [];
+    let call = 0;
+    const client = themeClient({
+      read: () => {
+        call += 1;
+        return call === 1 ? stale.promise : Promise.reject(new Error("denied"));
+      },
+      stream: stream.iterable,
+    });
+    const done = watchThemeVars({
+      client,
+      context: viewContext,
+      signal: new AbortController().signal,
+      apply: (vars) => applied.push(vars),
+    });
+    // Second read (stream frame) fails while the first is still in flight;
+    // the older response must not resurrect stale tokens.
+    stream.push({ type: "data", value: {} });
+    await tick();
+    NodeAssert.equal(applied.at(-1), null);
+    stale.resolve({ tokens: { text: "#111" }, cssVars: {} });
+    await tick();
+    NodeAssert.ok(applied.every((vars) => vars === null));
+    stream.end();
+    await done;
+  });
+
+  NodeTest.it("an older read's late rejection does not clear a newer applied map", async () => {
+    const stream = controllableStream();
+    const stale = deferred();
+    const applied = [];
+    let call = 0;
+    const client = themeClient({
+      read: () => {
+        call += 1;
+        return call === 1
+          ? stale.promise
+          : Promise.resolve({ tokens: { text: "#abcdef" }, cssVars: {} });
+      },
+      stream: stream.iterable,
+    });
+    const done = watchThemeVars({
+      client,
+      context: viewContext,
+      signal: new AbortController().signal,
+      apply: (vars) => applied.push(vars),
+    });
+    // The frame's read (call 2) resolves while the initial read pends, then
+    // the superseded read rejects — the applied map must stand.
+    stream.push({ type: "data", value: {} });
+    await tick();
+    NodeAssert.deepEqual(applied.at(-1), themeVarOverrides({ text: "#abcdef" }, {}));
+    stale.reject(new Error("late denial"));
+    await tick();
+    NodeAssert.deepEqual(applied.at(-1), themeVarOverrides({ text: "#abcdef" }, {}));
+    stream.end();
+    await done;
   });
 });
