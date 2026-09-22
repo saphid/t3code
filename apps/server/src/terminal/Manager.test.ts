@@ -657,6 +657,156 @@ it("suppresses fragments cut by line eviction inside a control sequence", () => 
   expect(history.sanitizedValue()).toBe("x".repeat(8));
 });
 
+it("recognizes BEL and C1 ST as string terminators even right after an ESC", () => {
+  // r13 finding: an ESC inside a string re-arms the ST check, but BEL and
+  // C1 ST still terminate the sequence at their own position — the r12
+  // boundary tracker missed that and discarded valid retained output.
+  for (const terminator of ["\x07", "\x9c", "\x1b\\"]) {
+    const sequence = `\x1b]10;?a\x1b${terminator}`;
+    const history = new TerminalManager.BoundedTerminalHistory(5_000, "", sequence.length - 1 + 4);
+    history.append(sequence + "KEEP");
+    expect(history.value(), JSON.stringify(terminator)).toBe("KEEP");
+    expect(history.sanitizedValue()).toBe("KEEP");
+    expect(history.sanitizedTail(8_192, 8_192).contents).toBe("KEEP");
+    expect(history.appendedUnitLength - history.value().length).toBe(sequence.length);
+  }
+  // Same cut through the line-eviction path: the newline inside the OSC
+  // counts as a line break, so line trimming lands mid-string too.
+  const byLine = new TerminalManager.BoundedTerminalHistory(1, "", 8_192);
+  byLine.append("pad\n\x1b]10;?a\nb\x1b\x07KEEP");
+  expect(byLine.value()).toBe("KEEP");
+});
+
+it("retains ordinary output after a boundary-aligned sequence ends", () => {
+  // Cascade case: the r12 stale-state failure mode dropped everything
+  // retained until another terminator, and subsequent trims kept
+  // discarding ordinary output that arrived after the real terminator.
+  const history = new TerminalManager.BoundedTerminalHistory(5_000, "", 11);
+  history.append("\x1b]10;?\x1b\x07KEEP");
+  expect(history.value()).toBe("KEEP");
+  history.append("MORE!");
+  expect(history.value()).toBe("KEEPMORE!");
+  history.append("zzz\nend\n");
+  expect(history.value()).toBe("RE!zzz\nend\n");
+  expect(history.sanitizedValue()).toBe("RE!zzz\nend\n");
+  expect(history.sanitizedTail(8_192, 8_192).contents).toBe("RE!zzz\nend\n");
+});
+
+it("drops a retroactively-ended escape only through its true end", () => {
+  // findEscapeSequenceEndIndex quirk: intermediates scan speculatively, and
+  // a non-final byte ends the sequence at `start + 1` — the intermediates
+  // and the deciding byte are ordinary text and must be retained.
+  const boundaryInside = new TerminalManager.BoundedTerminalHistory(5_000, "", 4);
+  boundaryInside.append("\x1b))\x01abc");
+  // Evicted "\x1b))" leaves the sequence open; the retained "\x01" ends it
+  // before the retained head — nothing is dropped.
+  expect(boundaryInside.value()).toBe("\x01abc");
+  const boundaryAtEsc = new TerminalManager.BoundedTerminalHistory(5_000, "", 6);
+  boundaryAtEsc.append("\x1b))\x01abc");
+  // Evicted "\x1b": the sequence is "ESC)" — only the first intermediate is
+  // dropped; the second ")" and the rest are text.
+  expect(boundaryAtEsc.value()).toBe(")\x01abc");
+});
+
+// The sanitizer's own parse as a span oracle: every sequence's extent per
+// sanitizeTerminalHistoryChunk's grammar, using its actual helpers.
+function sequenceSpans(text: string): Array<readonly [number, number]> {
+  const spans: Array<readonly [number, number]> = [];
+  let index = 0;
+  while (index < text.length) {
+    const codePoint = text.charCodeAt(index);
+    let end: number | null = null;
+    if (codePoint === 0x1b) {
+      const next = text.charCodeAt(index + 1);
+      if (Number.isNaN(next)) end = null;
+      else if (next === 0x5b) {
+        let cursor = index + 2;
+        while (cursor < text.length && !TerminalManager.isCsiFinalByte(text.charCodeAt(cursor)))
+          cursor += 1;
+        end = cursor < text.length ? cursor + 1 : null;
+      } else if (next === 0x5d || next === 0x50 || next === 0x5e || next === 0x5f) {
+        end = TerminalManager.findStringTerminatorIndex(text, index + 2);
+      } else {
+        end = TerminalManager.findEscapeSequenceEndIndex(text, index + 1);
+      }
+    } else if (codePoint === 0x9b) {
+      let cursor = index + 1;
+      while (cursor < text.length && !TerminalManager.isCsiFinalByte(text.charCodeAt(cursor)))
+        cursor += 1;
+      end = cursor < text.length ? cursor + 1 : null;
+    } else if (
+      codePoint === 0x9d ||
+      codePoint === 0x90 ||
+      codePoint === 0x9e ||
+      codePoint === 0x9f
+    ) {
+      end = TerminalManager.findStringTerminatorIndex(text, index + 1);
+    }
+    if (
+      end !== null ||
+      codePoint === 0x1b ||
+      codePoint === 0x9b ||
+      codePoint === 0x9d ||
+      codePoint === 0x90 ||
+      codePoint === 0x9e ||
+      codePoint === 0x9f
+    ) {
+      // An unterminated sequence runs to the end of the input, like the
+      // sanitizer's pendingControlSequence.
+      const spanEnd = end ?? text.length;
+      spans.push([index, spanEnd]);
+      index = spanEnd;
+      continue;
+    }
+    index += 1;
+  }
+  return spans;
+}
+
+it("boundary tracking drops exactly what the sanitizer grammar marks as sequence", () => {
+  const texts = [
+    "plain text only",
+    "a\x1b[31mb",
+    "a\x1b[6nb",
+    "a\x9b6nb",
+    "unterminated\x1b[12",
+    "x\x1b]10;?y\x07z",
+    "x\x1b]10;?y\x1b\\z",
+    "x\x1b]10;?y\x9cz",
+    "x\x1bP+q544e\x1b\\z",
+    "x\x9d10;?y\x07z",
+    "x\x1b]a\x1bb\x07z",
+    "x\x1b]a\x1b\x07z",
+    "x\x1b]a\x1b\x9cz",
+    "x\x1b]a\x1b\x1b\\z",
+    "x\x1b]never ends",
+    "x\x1b]ends in esc\x1b",
+    "a\x1bZb",
+    "a\x1b)0b",
+    "a\x1b))\x01b",
+    "a\x1b))\x9b6nb",
+    "a\x1b[6nb\x1b]x\x07c\x1bZd\x1b",
+    "x\n\x1b[6\nnY",
+  ];
+  for (const text of texts) {
+    const spans = sequenceSpans(text);
+    for (let cut = 0; cut <= text.length; cut += 1) {
+      const inside = spans.find(([start, end]) => start < cut && cut < end);
+      const suffix = text.slice(cut);
+      const mid = TerminalManager.scanTerminalSequenceState(text.slice(0, cut), "none");
+      const actualDrop =
+        mid.state === "none"
+          ? 0
+          : (TerminalManager.scanTerminalSequenceState(suffix, mid.state).endIndex ??
+            suffix.length);
+      const expectedDrop = inside === undefined ? 0 : inside[1] - cut;
+      expect(actualDrop, `${JSON.stringify(text)} cut=${cut} spans=${JSON.stringify(spans)}`).toBe(
+        expectedDrop,
+      );
+    }
+  }
+});
+
 it.layer(
   Layer.merge(NodeServices.layer, ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer))),
   { excludeTestServices: true },

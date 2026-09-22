@@ -880,6 +880,11 @@ export function scanTerminalSequenceState(
 ): { state: SequenceParseState; endIndex: number | null } {
   const openAtEntry = state !== "none";
   let endIndex: number | null = null;
+  // Index of the first byte after ESC in the current escape sequence —
+  // findEscapeSequenceEndIndex's `start + 1` fallback ends a non-final
+  // escape there, making the scanned intermediates ordinary text. -1 when
+  // that byte was already evicted (entry state was escapeIntermediates).
+  let escapeStart = -1;
   let index = 0;
   while (index < data.length) {
     const codePoint = data.charCodeAt(index);
@@ -888,19 +893,41 @@ export function scanTerminalSequenceState(
       if (codePoint === 0x5b) state = "csi";
       else if (codePoint === 0x5d || codePoint === 0x50 || codePoint === 0x5e || codePoint === 0x5f)
         state = "string";
-      else if (isEscapeIntermediateByte(codePoint)) state = "escapeIntermediates";
-      else state = "none";
+      else if (isEscapeIntermediateByte(codePoint)) {
+        state = "escapeIntermediates";
+        escapeStart = index;
+      } else state = "none";
     } else if (state === "escapeIntermediates") {
-      if (!isEscapeIntermediateByte(codePoint)) state = "none";
+      if (isEscapeIntermediateByte(codePoint)) {
+        index += 1;
+        continue;
+      }
+      if (isEscapeFinalByte(codePoint)) {
+        state = "none";
+        index += 1;
+        if (openAtEntry && endIndex === null) endIndex = index;
+        continue;
+      }
+      // A non-final byte ends the escape retroactively at `escapeStart`
+      // (`start + 1` in the sanitizer); this byte is not part of it.
+      state = "none";
+      if (openAtEntry && endIndex === null) endIndex = escapeStart < 0 ? 0 : escapeStart + 1;
+      continue;
     } else if (state === "csi") {
       if (isCsiFinalByte(codePoint)) state = "none";
     } else if (state === "string") {
       if (codePoint === 0x07 || codePoint === 0x9c) state = "none";
       else if (codePoint === 0x1b) state = "stringEscape";
     } else if (state === "stringEscape") {
-      // ESC inside a string terminates only paired with "\"; another ESC
-      // re-arms the check, anything else is ordinary string content.
-      state = codePoint === 0x5c ? "none" : codePoint === 0x1b ? "stringEscape" : "string";
+      // BEL and C1 ST terminate the string even right after an ESC —
+      // findStringTerminatorIndex treats them as terminators at their own
+      // position; only "\ pairs with the ESC, and another ESC re-arms.
+      state =
+        codePoint === 0x5c || codePoint === 0x07 || codePoint === 0x9c
+          ? "none"
+          : codePoint === 0x1b
+            ? "stringEscape"
+            : "string";
     } else if (codePoint === 0x1b) {
       state = "escape";
     } else if (codePoint === 0x9b) {
@@ -1052,6 +1079,12 @@ export class BoundedTerminalHistory {
       if (end === null) {
         // The whole chunk is still inside the evicted sequence.
         this.discardChunk();
+        continue;
+      }
+      if (end === 0) {
+        // A non-final byte closed an escape sequence retroactively, before
+        // the retained head — the origin is already at a boundary.
+        this.evictedSequenceState = "none";
         continue;
       }
       const dropped = first.data.slice(0, end);
@@ -1321,7 +1354,7 @@ export type TerminalOutputObservationEvent =
       readonly snapshot: TerminalOutputSnapshot;
     };
 
-function isCsiFinalByte(codePoint: number): boolean {
+export function isCsiFinalByte(codePoint: number): boolean {
   return codePoint >= 0x40 && codePoint <= 0x7e;
 }
 
@@ -1375,7 +1408,7 @@ function stripStringTerminator(value: string): string {
   return value;
 }
 
-function findStringTerminatorIndex(input: string, start: number): number | null {
+export function findStringTerminatorIndex(input: string, start: number): number | null {
   for (let index = start; index < input.length; index += 1) {
     const codePoint = input.charCodeAt(index);
     if (codePoint === 0x07 || codePoint === 0x9c) {
@@ -1388,15 +1421,15 @@ function findStringTerminatorIndex(input: string, start: number): number | null 
   return null;
 }
 
-function isEscapeIntermediateByte(codePoint: number): boolean {
+export function isEscapeIntermediateByte(codePoint: number): boolean {
   return codePoint >= 0x20 && codePoint <= 0x2f;
 }
 
-function isEscapeFinalByte(codePoint: number): boolean {
+export function isEscapeFinalByte(codePoint: number): boolean {
   return codePoint >= 0x30 && codePoint <= 0x7e;
 }
 
-function findEscapeSequenceEndIndex(input: string, start: number): number | null {
+export function findEscapeSequenceEndIndex(input: string, start: number): number | null {
   let cursor = start;
   while (cursor < input.length && isEscapeIntermediateByte(input.charCodeAt(cursor))) {
     cursor += 1;
