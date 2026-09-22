@@ -1,3 +1,6 @@
+import * as NodeFSP from "node:fs/promises";
+import * as NodeURL from "node:url";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -7,11 +10,15 @@ import {
   type TerminalMetadataStreamEvent,
   type TerminalOpenInput,
   type TerminalRestartInput,
+  AuthTerminalOperateScope,
+  extensionWorkspaceRevision,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ServerSettingsError,
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
+import type { HostApiInvocationMetadata } from "@t3tools/extension-runtime";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Data from "effect/Data";
 import * as Clock from "effect/Clock";
@@ -34,6 +41,10 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { expect } from "vite-plus/test";
 
+import { TerminalVtAttachment } from "../../../../packages/first-party-extensions/terminal/vtAttachment.ts";
+import { GhosttyTerminalCore } from "../../../../packages/first-party-extensions/terminal/ghostty/core.ts";
+import { loadGhosttyRuntime } from "../../../../packages/first-party-extensions/terminal/ghostty/runtime.ts";
+import { createTerminalOutputEventsApiProvider } from "../extensions/terminalOutputEventsApi.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
@@ -318,6 +329,72 @@ const createManager = (
 
 const withHostPlatform = (platform: NodeJS.Platform) =>
   Layer.succeed(HostProcessPlatform, platform);
+
+// Cross-layer harness: the real Manager, the real output-events provider,
+// the real attachment, and the vendored Ghostty WASM — the same path the
+// shipped extension drives, so host sanitization cannot be simulated away.
+const TERMINAL_VT_ASSETS_DIR = NodeURL.fileURLToPath(
+  new URL("../../../../packages/first-party-extensions/terminal/assets/", import.meta.url),
+);
+
+const TERMINAL_VT_THEME = {
+  foreground: { r: 229, g: 231, b: 235 },
+  background: { r: 10, g: 10, b: 12 },
+  cursor: { r: 229, g: 231, b: 235 },
+};
+
+const outputEventsContext = {
+  resource: {
+    namespace: "test.extension",
+    id: "surface",
+    environmentId: "env",
+    projectId: "project",
+    threadId: "thread-1",
+  },
+  client: "test",
+  workspaceRevision: extensionWorkspaceRevision(process.cwd(), null),
+} as const;
+
+const outputEventsMetadata: HostApiInvocationMetadata = {
+  callId: "call",
+  rootCallerId: "root",
+  callerId: "caller",
+  providerId: "t3.host-terminal-output-events",
+  providerGeneration: 1,
+  callerGenerations: [],
+  principal: {
+    kind: "environment-session",
+    id: "session",
+    environmentId: "env",
+    scopes: [AuthTerminalOperateScope],
+  },
+};
+
+const outputEventsProvider = (manager: ManagerFixture["manager"]) =>
+  createTerminalOutputEventsApiProvider({
+    environmentId: "env",
+    projects: {
+      getById: (input: { projectId: ProjectId }) =>
+        Effect.succeed(
+          Option.some({
+            projectId: input.projectId,
+            workspaceRoot: process.cwd(),
+            deletedAt: null,
+          }),
+        ),
+    },
+    threads: {
+      getById: () =>
+        Effect.succeed(
+          Option.some({
+            projectId: ProjectId.make("project"),
+            worktreePath: null,
+            deletedAt: null,
+          }),
+        ),
+    },
+    terminal: manager,
+  });
 
 // Apply the existing line policy, then find the longest code-point-aligned byte tail.
 function retainedHistory(text: string, maxLines: number, maxBytes = Infinity): string {
@@ -712,6 +789,270 @@ it.layer(
       expect(snapshot.snapshot.contents).toBe("after\n");
     }),
   );
+
+  it.effect("retains raw output so evicted-byte provenance stays absolute (r10 P2-1)", () =>
+    Effect.gen(function* () {
+      // The sanitizer removes the answered CSI 6n from display text but the
+      // retained window — and therefore contentsUnitStart — must count the
+      // raw delivered stream. With a 5-line cap the eviction burst drops the
+      // first line: raw origin moves to 7 (the sanitized view would report
+      // 3, which is exactly the coordinate confusion the r10 finding
+      // exploited).
+      const { manager, ptyAdapter } = yield* createManager(5);
+      yield* manager.open(openInput());
+      ptyAdapter.processes[0]!.emitData("\x1b[6n");
+      ptyAdapter.processes[0]!.emitData("\x1bZ\n");
+      // Attach-path history is the sanitized boundary: the answered query
+      // is gone from the replay text while the raw window keeps it.
+      const attach = yield* manager.open(openInput());
+      expect(attach.history).toBe("\x1bZ\n");
+
+      ptyAdapter.processes[0]!.emitData("x\x1bZ\n" + "z\n".repeat(4));
+
+      const events: TerminalManager.TerminalOutputObservationEvent[] = [];
+      const unsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => events.push(event),
+      );
+      yield* Effect.sync(unsubscribe);
+      const snapshot = events.find((event) => event.type === "snapshot");
+      if (!snapshot || snapshot.type !== "snapshot") return assert.fail("missing snapshot");
+      expect(snapshot.contentsUnitStart).toBe(7);
+      expect(snapshot.clearGeneration).toBe(0);
+      expect(snapshot.snapshot.truncated).toBe(false);
+      expect(snapshot.snapshot.contents).toBe("x\x1bZ\n" + "z\n".repeat(4));
+    }),
+  );
+
+  it.effect(
+    "keeps an incomplete control inside retained contents across the subscription boundary (r10 P2-2)",
+    () =>
+      Effect.gen(function* () {
+        // The subscription lands between the two halves of the bracketed-
+        // paste setter. The prefix is retained inside the window rather than
+        // held outside it, so the snapshot's coverage claim includes it and
+        // the live stream continues the sequence.
+        const { manager, ptyAdapter } = yield* createManager();
+        yield* manager.open(openInput());
+        ptyAdapter.processes[0]!.emitData("\x1b[?2004");
+
+        const events: TerminalManager.TerminalOutputObservationEvent[] = [];
+        const unsubscribe = yield* manager.subscribeOutput(
+          { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+          (event) => events.push(event),
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+        const snapshot = events.find((event) => event.type === "snapshot");
+        if (!snapshot || snapshot.type !== "snapshot") return assert.fail("missing snapshot");
+        expect(snapshot.contentsUnitStart).toBe(0);
+        expect(snapshot.clearGeneration).toBe(0);
+        expect(snapshot.snapshot.truncated).toBe(false);
+        expect(snapshot.snapshot.contents).toBe("\x1b[?2004");
+
+        ptyAdapter.processes[0]!.emitData("h");
+        yield* waitFor(
+          Effect.sync(() => events.some((event) => event.type === "output" && event.data === "h")),
+        );
+      }),
+  );
+
+  it.effect("resets the clear generation for the next incarnation", () =>
+    Effect.gen(function* () {
+      // clearGeneration is scoped to the stream epoch: a restart opens a new
+      // incarnation whose retained window starts empty at generation 0.
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      ptyAdapter.processes[0]!.emitData("before\n");
+      yield* manager.clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+
+      const before: TerminalManager.TerminalOutputObservationEvent[] = [];
+      const unsubBefore = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => before.push(event),
+      );
+      yield* Effect.sync(unsubBefore);
+      const epochOne = before.find((event) => event.type === "snapshot");
+      if (!epochOne || epochOne.type !== "snapshot") return assert.fail("missing snapshot");
+      expect(epochOne.clearGeneration).toBe(1);
+
+      yield* manager.restart(restartInput());
+
+      const events: TerminalManager.TerminalOutputObservationEvent[] = [];
+      const unsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => events.push(event),
+      );
+      yield* Effect.sync(unsubscribe);
+      const snapshot = events.find((event) => event.type === "snapshot");
+      if (!snapshot || snapshot.type !== "snapshot") return assert.fail("missing snapshot");
+      expect(snapshot.sourceEpoch).not.toBe(epochOne.sourceEpoch);
+      expect(snapshot.clearGeneration).toBe(0);
+      expect(snapshot.contentsUnitStart).toBe(0);
+      expect(snapshot.snapshot.contents).toBe("");
+    }),
+  );
+
+  const loadVtRuntime = Effect.promise(async () => {
+    const [vt, writePty] = await Promise.all([
+      NodeFSP.readFile(new URL("ghostty-vt.wasm", `file://${TERMINAL_VT_ASSETS_DIR}`)),
+      NodeFSP.readFile(new URL("ghostty-write-pty.wasm", `file://${TERMINAL_VT_ASSETS_DIR}`)),
+    ]);
+    return loadGhosttyRuntime({ vt, writePty });
+  });
+
+  type WireItem = {
+    readonly type: string;
+    readonly value: Parameters<TerminalVtAttachment["applyFrame"]>[1];
+  };
+
+  const nextFrame = (iterator: AsyncIterator<unknown>) =>
+    Effect.promise(() => iterator.next() as Promise<IteratorResult<WireItem>>);
+
+  for (const mountInGap of [false, true]) {
+    it.effect(
+      `cross-layer: an evicted query's reply cannot transfer to a retained lookalike (r10 P2-1, mount ${mountInGap ? "in gap" : "after snapshot"})`,
+      () =>
+        Effect.gen(function* () {
+          // The r10 trace end to end: real Manager history + sanitizer →
+          // real output-events provider → real attachment → vendored Ghostty
+          // WASM. Under sanitized-window provenance the resnapshot claimed
+          // unitStart 3 and the evicted CSI 6n's claim was transferred onto
+          // the retained ESC Z; raw-window provenance reports unitStart 7
+          // and the claim dies with its bytes.
+          const { manager, ptyAdapter } = yield* createManager(5);
+          yield* manager.open(openInput());
+          const provider = outputEventsProvider(manager);
+          const runtime = yield* loadVtRuntime;
+          const attachment = new TerminalVtAttachment(DEFAULT_TERMINAL_ID);
+          const firstWrites: string[] = [];
+          const first = yield* Effect.promise(() =>
+            GhosttyTerminalCore.create(runtime, 80, 24, 8, 16, TERMINAL_VT_THEME, (data) =>
+              firstWrites.push(data),
+            ),
+          );
+          attachment.attach(first);
+
+          const subscribe = (abort: AbortController) =>
+            provider.subscribe!(
+              "subscribe",
+              { terminalId: DEFAULT_TERMINAL_ID },
+              outputEventsContext,
+              abort.signal,
+              outputEventsMetadata,
+            )[Symbol.asyncIterator]();
+
+          const abort1 = new AbortController();
+          const stream1 = subscribe(abort1);
+          let wireSequence = 0;
+          const apply = (item: WireItem) =>
+            attachment.applyFrame({ streamId: "s", sequence: ++wireSequence }, item.value);
+          let frame = yield* nextFrame(stream1);
+          apply(frame.value!);
+          ptyAdapter.processes[0]!.emitData("\x1b[6n");
+          frame = yield* nextFrame(stream1);
+          apply(frame.value!);
+          yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
+          expect(firstWrites).toHaveLength(1);
+          expect(firstWrites[0]).toMatch(/\[\d+;\d+R/);
+          attachment.detach();
+          first.dispose();
+
+          // Detached but subscribed: the DA query is delivered as an
+          // unanswered run at absolute position 4 of the stream window.
+          ptyAdapter.processes[0]!.emitData("\x1bZ\n");
+          frame = yield* nextFrame(stream1);
+          apply(frame.value!);
+          abort1.abort();
+
+          // Disconnected: the burst evicts the line holding the answered
+          // query. The retained tail keeps a lookalike ESC Z.
+          ptyAdapter.processes[0]!.emitData("x\x1bZ\n" + "z\n".repeat(4));
+
+          attachment.beginStream();
+          wireSequence = 0;
+          const abort2 = new AbortController();
+          const stream2 = subscribe(abort2);
+          yield* Effect.addFinalizer(() => Effect.sync(() => abort2.abort()));
+          const secondWrites: string[] = [];
+          const second = yield* Effect.promise(() =>
+            GhosttyTerminalCore.create(runtime, 80, 24, 8, 16, TERMINAL_VT_THEME, (data) =>
+              secondWrites.push(data),
+            ),
+          );
+          if (mountInGap) attachment.attach(second);
+          frame = yield* nextFrame(stream2);
+          expect(frame.value!.value).toMatchObject({
+            kind: "snapshot",
+            contentsUnitStart: 7,
+            clearGeneration: 0,
+            contents: "x\x1bZ\n" + "z\n".repeat(4),
+          });
+          apply(frame.value!);
+          if (!mountInGap) attachment.attach(second);
+          yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
+          yield* Effect.addFinalizer(() => Effect.sync(() => second.dispose()));
+
+          // The retained lookalike query is replay-suppressed and the
+          // evicted claim is dead: no DA reply may leave either parser.
+          expect(secondWrites).toEqual([]);
+          expect(attachment.state.degraded).toBe(true);
+        }),
+    );
+  }
+
+  for (const sinkBeforeSnapshot of [true, false]) {
+    it.effect(
+      `cross-layer: a mode setter split across the subscription boundary keeps parser coverage (r10 P2-2, sink ${sinkBeforeSnapshot ? "before" : "after"} snapshot)`,
+      () =>
+        Effect.gen(function* () {
+          // "ESC[?2004" is emitted before the subscription exists; "h"
+          // completes it live. The snapshot must carry the raw prefix —
+          // coverage includes it — and paste encoding must stay bracketed.
+          const { manager, ptyAdapter } = yield* createManager();
+          yield* manager.open(openInput());
+          const provider = outputEventsProvider(manager);
+          const runtime = yield* loadVtRuntime;
+          const attachment = new TerminalVtAttachment(DEFAULT_TERMINAL_ID);
+          const writes: string[] = [];
+          const core = yield* Effect.promise(() =>
+            GhosttyTerminalCore.create(runtime, 80, 24, 8, 16, TERMINAL_VT_THEME, (data) =>
+              writes.push(data),
+            ),
+          );
+          yield* Effect.addFinalizer(() => Effect.sync(() => core.dispose()));
+
+          ptyAdapter.processes[0]!.emitData("\x1b[?2004");
+          if (sinkBeforeSnapshot) attachment.attach(core);
+
+          const abort = new AbortController();
+          yield* Effect.addFinalizer(() => Effect.sync(() => abort.abort()));
+          const stream = provider.subscribe!(
+            "subscribe",
+            { terminalId: DEFAULT_TERMINAL_ID },
+            outputEventsContext,
+            abort.signal,
+            outputEventsMetadata,
+          )[Symbol.asyncIterator]();
+          let wireSequence = 0;
+          const snapshot = yield* nextFrame(stream);
+          expect(snapshot.value!.value).toMatchObject({
+            kind: "snapshot",
+            contentsUnitStart: 0,
+            clearGeneration: 0,
+            contents: "\x1b[?2004",
+          });
+          attachment.applyFrame({ streamId: "s", sequence: ++wireSequence }, snapshot.value!.value);
+          if (!sinkBeforeSnapshot) attachment.attach(core);
+
+          ptyAdapter.processes[0]!.emitData("h");
+          const live = yield* nextFrame(stream);
+          attachment.applyFrame({ streamId: "s", sequence: ++wireSequence }, live.value!.value);
+          expect(live.value!.value).toMatchObject({ kind: "output", data: "h" });
+          expect(core.encodePaste("a\nb")).toBe("\x1b[200~a\nb\x1b[201~");
+          expect(attachment.state.degraded).toBe(false);
+        }),
+    );
+  }
 
   it.effect("terminates an old observation on reincarnation without accepting old identity", () =>
     Effect.gen(function* () {

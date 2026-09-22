@@ -84,6 +84,14 @@ inside snapshot/history bytes are treated as already-rendered history
 and stay suppressed (the documented drop: only live output the
 attachment saw go undelivered earns a reply).
 
+The coordinates are the raw delivered stream end to end: the host
+retains exactly the bytes the process emitted — stripped query classes
+and incomplete trailing controls included — so `contentsUnitStart`,
+`retainedByteLength`, pending-reply positions and live `output` chunks
+all count the same units and sanitization can never shift them. The
+sanitizer still runs, but only at display/replay boundaries (the native
+attach snapshot, `readOutput`), never between delivery and retention.
+
 Parser fidelity likewise needs host evidence, not observation history:
 the replay base is faithful only when a snapshot reports
 `clearGeneration === 0`, `contentsUnitStart === 0` and `truncated ===

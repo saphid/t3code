@@ -286,6 +286,14 @@ export type TerminalOutputEventsSnapshot = {
   readonly terminalId: string;
   readonly streamEpoch: string;
   readonly status: "starting" | "running" | "exited" | "error";
+  /**
+   * The retained tail of the raw output stream — exactly the bytes the
+   * process emitted, including unanswered terminal queries and a
+   * possibly incomplete trailing control sequence. Hosts may sanitize
+   * display copies of history, but this channel's contents and
+   * coordinates are always raw so `contentsUnitStart` and live output
+   * positions share one coordinate system.
+   */
   readonly contents: string;
   readonly retainedByteLength: number;
   readonly truncated: boolean;
@@ -303,11 +311,13 @@ export type TerminalOutputEventsSnapshot = {
   readonly clearGeneration: number;
   /**
    * Absolute UTF-16 unit offset of `contents[0]` inside the current
-   * retained-history window — appended units since the last clear minus
-   * `contents.length`. Line eviction, byte eviction and tail truncation
-   * all move this forward; comparing it against the position recorded
-   * for a pending reply is the authoritative origin evidence for whether
-   * that reply's bytes still exist, independent of what the text says.
+   * retained-history window — raw appended units since the last clear
+   * minus `contents.length`, counting every unit the process emitted
+   * (including bytes a display sanitizer would strip). Line eviction,
+   * byte eviction and tail truncation all move this forward; comparing
+   * it against the position recorded for a pending reply is the
+   * authoritative origin evidence for whether that reply's bytes still
+   * exist, independent of what the text says.
    */
   readonly contentsUnitStart: number;
   readonly boundarySequence: number;

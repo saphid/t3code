@@ -294,7 +294,6 @@ interface TerminalSessionState {
   status: TerminalSessionStatus;
   pid: number | null;
   history: BoundedTerminalHistory;
-  pendingHistoryControlSequence: string;
   pendingProcessEvents: Array<PendingProcessEvent>;
   pendingProcessEventIndex: number;
   processEventDrainRunning: boolean;
@@ -396,7 +395,12 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
     worktreePath: session.worktreePath,
     status: session.status,
     pid: session.pid,
-    history: session.history.value(),
+    // The attach path replays retained history into a fresh terminal
+    // parser, so it receives the sanitized form: retained history itself
+    // is raw now (the output-events contract needs raw units for exact
+    // provenance), and this boundary keeps stripping queries that a
+    // replay would re-answer.
+    history: session.history.sanitizedValue(),
     exitCode: session.exitCode,
     exitSignal: session.exitSignal,
     label: terminalWireLabel(session),
@@ -1021,6 +1025,45 @@ export class BoundedTerminalHistory {
 
   get appendedUnitLength(): number {
     return this.totalUnits;
+  }
+
+  /**
+   * Retained output in the form display/replay consumers expect: the
+   * sanitizer runs over the raw chunks in order — per-chunk calls with
+   * the pending carry are exactly the input shape it was written for —
+   * and the tail is taken from the sanitized result without flattening
+   * this history into one string.
+   */
+  sanitizedTail(
+    maxBytes: number,
+    maxUnits: number,
+  ): {
+    readonly contents: string;
+    readonly retainedByteLength: number;
+    readonly truncated: boolean;
+  } {
+    const scratch = new BoundedTerminalHistory(
+      Number.MAX_SAFE_INTEGER,
+      "",
+      Number.MAX_SAFE_INTEGER,
+    );
+    let pending = "";
+    for (let index = this.start; index < this.chunks.length; index += 1) {
+      const chunk = this.chunks[index];
+      if (!chunk) continue;
+      const result = sanitizeTerminalHistoryChunk(pending, chunk.data);
+      pending = result.pendingControlSequence;
+      scratch.append(result.visibleText);
+    }
+    return scratch.tail(maxBytes, maxUnits);
+  }
+
+  /**
+   * The full retained contents sanitized for display/replay consumers.
+   * Only for callers that already flatten history (the attach snapshot).
+   */
+  sanitizedValue(): string {
+    return sanitizeTerminalHistoryChunk("", this.value()).visibleText;
   }
 
   clear(): void {
@@ -2188,14 +2231,15 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         }
 
         if (nextEvent.type === "output") {
-          const sanitized = sanitizeTerminalHistoryChunk(
-            session.pendingHistoryControlSequence,
-            nextEvent.data,
-          );
-          session.pendingHistoryControlSequence = sanitized.pendingControlSequence;
-          if (sanitized.visibleText.length > 0) {
-            session.history.append(sanitized.visibleText);
-          }
+          // Retain the RAW output: the output-events contract's retained
+          // window is measured in delivered units, so a pending reply's
+          // position survives eviction arithmetic exactly. Sanitization
+          // stays a read-side concern for consumers that replay retained
+          // text into a parser (attach snapshot) or display it
+          // (readOutput) — it must not sit between delivery and retention,
+          // or the snapshot's coverage origin stops matching the bytes the
+          // stream actually carried.
+          session.history.append(nextEvent.data);
           const eventStamp = advanceEventSequence(session);
 
           return {
@@ -2203,7 +2247,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             threadId: session.threadId,
             terminalId: session.terminalId,
             sequence: eventStamp.sequence,
-            history: sanitized.visibleText.length > 0 ? session.history : null,
+            history: nextEvent.data.length > 0 ? session.history : null,
             data: nextEvent.data,
             sourceEpoch: session.observationEpoch,
           } as const;
@@ -2216,7 +2260,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         session.hasRunningSubprocess = false;
         session.childCommandLabel = null;
         session.status = "exited";
-        session.pendingHistoryControlSequence = "";
         session.pendingProcessEvents = [];
         session.pendingProcessEventIndex = 0;
         session.processEventDrainRunning = false;
@@ -2306,7 +2349,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       session.hasRunningSubprocess = false;
       session.childCommandLabel = null;
       session.status = "exited";
-      session.pendingHistoryControlSequence = "";
       session.pendingProcessEvents = [];
       session.pendingProcessEventIndex = 0;
       session.processEventDrainRunning = false;
@@ -2762,7 +2804,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         status: "starting",
         pid: null,
         history,
-        pendingHistoryControlSequence: "",
         pendingProcessEvents: [],
         pendingProcessEventIndex: 0,
         processEventDrainRunning: false,
@@ -2825,7 +2866,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       liveSession.worktreePath = nextWorktreePath;
       liveSession.runtimeEnv = nextRuntimeEnv;
       liveSession.history.clear();
-      liveSession.pendingHistoryControlSequence = "";
       liveSession.pendingProcessEvents = [];
       liveSession.pendingProcessEventIndex = 0;
       liveSession.processEventDrainRunning = false;
@@ -2834,7 +2874,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       liveSession.runtimeEnv = nextRuntimeEnv;
       liveSession.worktreePath = nextWorktreePath;
       liveSession.history.clear();
-      liveSession.pendingHistoryControlSequence = "";
       liveSession.pendingProcessEvents = [];
       liveSession.pendingProcessEventIndex = 0;
       liveSession.processEventDrainRunning = false;
@@ -2955,7 +2994,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       Effect.map((session) => {
         if (Option.isNone(session)) return null;
         const current = session.value;
-        const tail = current.history.tail(8_192, 8_192);
+        // readOutput serves retained output as display text — the
+        // sanitized tail of the raw retained window, preserving the
+        // pre-raw-retention contract for this API.
+        const tail = current.history.sanitizedTail(8_192, 8_192);
         return {
           threadId: current.threadId,
           terminalId: current.terminalId,
@@ -3271,7 +3313,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         const session = yield* requireSession(input.threadId, terminalId);
         session.history.clear();
         session.epochClearCount += 1;
-        session.pendingHistoryControlSequence = "";
         session.pendingProcessEvents = [];
         session.pendingProcessEventIndex = 0;
         session.processEventDrainRunning = false;
@@ -3318,7 +3359,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           status: "starting",
           pid: null,
           history: new BoundedTerminalHistory(historyLineLimit, "", historyByteLimit),
-          pendingHistoryControlSequence: "",
           pendingProcessEvents: [],
           pendingProcessEventIndex: 0,
           processEventDrainRunning: false,
@@ -3356,7 +3396,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       const rows = input.rows ?? session.rows;
 
       session.history.clear();
-      session.pendingHistoryControlSequence = "";
       session.pendingProcessEvents = [];
       session.pendingProcessEventIndex = 0;
       session.processEventDrainRunning = false;
