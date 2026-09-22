@@ -65,26 +65,32 @@ already parsed were answered once and replay with the PTY writer detached
 not re-sent. Live output buffered while detached was never parsed — each
 contiguous run of it replays _with_ the writer attached so its queries
 get exactly one reply, at the cursor position those bytes actually
-produce. Runs carry their position in the replay stream — identical
-queries recur, so equal text is never treated as proof a byte survived.
-A resnapshot keeps a claim only where the retention boundary itself
-proves its position: `boundarySequence` equal to the last received event
-pins contents to the end of our stream (`endsWith`), and an untruncated
-snapshot in an eviction-free epoch pins it to the start (`startsWith`)
-— but only while the snapshot's `clearGeneration` matches, since a
-history clear inside a subscription gap does not end the epoch and an
-untruncated post-clear tail means "all current retained bytes", not
-"same history origin". Anything else — a truncated resnapshot, a bumped
-generation, an unanchored post-clear stream, a hole left by our own
-buffer bound — is an explicit drop rather than a migration to a
-coincidental copy. Runs are fenced to their stream epoch
-in both directions: a pending reply belongs to the process that asked and
-is discarded at incarnation end (identity-changed/close/exit), and replay
-holds claims unreleased while the epoch is unproven — a mount inside the
-beginStream→snapshot gap answers nothing until a same-epoch snapshot
-re-proves the claim. Queries inside snapshot/history bytes are treated as
-already-rendered history and stay suppressed (the documented drop: only
-live output the attachment saw go undelivered earns a reply).
+produce. Provenance is positional, never textual: the host reports each
+snapshot's `contentsUnitStart` — the absolute UTF-16 offset of the tail
+inside the retained-history window (`streamEpoch` + `clearGeneration`)
+— and every run's absolute position is known from the stream's own
+recorded start, so line eviction, byte eviction and tail truncation are
+the same arithmetic. A run whose absolute position precedes the new
+contents is provably evicted — dropped, never migrated onto a later
+identical query — and a surviving run is still verified byte-for-byte at
+its computed position. A same-epoch `clearGeneration` bump is a missed
+clear: the old window's claims die with it. Runs are fenced to their
+stream epoch in both directions: a pending reply belongs to the process
+that asked and is discarded at incarnation end
+(identity-changed/close/exit), and replay holds claims unreleased while
+the epoch is unproven — a mount inside the beginStream→snapshot gap
+answers nothing until a same-epoch snapshot re-proves the claim. Queries
+inside snapshot/history bytes are treated as already-rendered history
+and stay suppressed (the documented drop: only live output the
+attachment saw go undelivered earns a reply).
+
+Parser fidelity likewise needs host evidence, not observation history:
+the replay base is faithful only when a snapshot reports
+`clearGeneration === 0`, `contentsUnitStart === 0` and `truncated ===
+false` — the retained window provably covers every byte since the
+process started. An attachment whose first snapshot arrives after a
+clear (`clearGeneration > 0`), or after any retention eviction, mounts
+degraded instead of claiming modes it cannot reconstruct.
 
 Sequencing uses two fences: the broker's per-subscription frame sequence and
 the session's native `eventSequence` watermark, which must strictly increase

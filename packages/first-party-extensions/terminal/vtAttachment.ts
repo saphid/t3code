@@ -86,21 +86,13 @@ export class TerminalVtAttachment {
   #base: string | null = null;
   /**
    * Whether `#base` + `#buffered` reconstructs full parser state — i.e. the
-   * base was seeded by a non-truncated snapshot carrying every byte since
-   * process start. A history clear or a dropped pre-sink overflow makes the
+   * base was seeded by a snapshot proven to carry every byte since process
+   * start (`clearGeneration === 0 && contentsUnitStart === 0`). A history
+   * clear, any retention eviction, or a dropped pre-sink overflow makes the
    * replay base unfaithful; a remount still replays it and flags degraded
    * instead of pretending the modes are known.
    */
   #replayFaithful = true;
-  /**
-   * Epoch in which a history clear was observed. The server reports
-   * `truncated:false` on post-clear snapshots (nothing was dropped by
-   * retention — it was explicitly cleared), but the retained bytes no longer
-   * contain the mode-establishing output, so a replayed snapshot in that
-   * epoch is NOT a faithful parser resync. Only a new epoch (a fresh
-   * process incarnation) re-proves mode state.
-   */
-  #clearedEpoch: string | null = null;
   /**
    * Renderer start failure message, or null when the surface is healthy.
    * Sticky across frames: output/snapshot frames keep feeding the bounded
@@ -132,29 +124,31 @@ export class TerminalVtAttachment {
   #unansweredEpoch: string | null = null;
   /**
    * Code units evicted from the front of `#buffered` since `#base` was
-   * set. While nonzero the compressed stream (base + buffered) is NOT a
-   * contiguous slice of the epoch stream, so snapshot reconciliation
-   * cannot prove where our bytes sit and pending claims are dropped.
+   * set. The hole sits at stream position `base.length`: a run at
+   * `start >= base.length` occupies absolute window position
+   * `#receivedUnitStart + start + hole`, one inside the base
+   * `#receivedUnitStart + start`.
    */
   #bufferedHole = 0;
   /**
-   * Whether the start of the received stream is anchored: `#base` came
-   * from a snapshot's contents, so our stream begins at a known retention
-   * boundary and can only ever move forward. Post-clear streams
-   * (`#base === ""` after a reset) start mid-window — bytes the server
-   * emitted before our resubscribe sit inside the next snapshot ahead of
-   * our first byte — so position-0 provenance is unprovable there.
+   * Absolute UTF-16 unit offset of `#base`'s first unit inside the
+   * retained-history window — the snapshot's `contentsUnitStart`, or 0
+   * after an observed reset (the post-clear stream restarts at the new
+   * window's origin). Claims translate through it into window positions,
+   * so line eviction, byte eviction and tail truncation are all just
+   * arithmetic — never text matching. null before the first snapshot
+   * (no claims can exist then: deliveries require an epoch).
    */
-  #receivedAnchored = false;
+  #receivedUnitStart: number | null = null;
   /**
    * Identity of the retained-history window the received stream belongs
-   * to — the last snapshot's epoch + `clearGeneration`. A history clear
-   * does NOT end the epoch, so a clear inside a subscription gap is
-   * otherwise invisible: the next snapshot's `truncated:false` only
-   * means "all CURRENT retained bytes", not "same history origin". Same
-   * epoch with a different generation means the old window's bytes are
-   * gone. null when the stream's window is unknown — no snapshot yet,
-   * or an observed reset restarted the stream mid-window.
+   * to — the last snapshot's or observed reset's epoch +
+   * `clearGeneration`. A history clear does NOT end the epoch, so a
+   * clear inside a subscription gap is otherwise invisible: the next
+   * snapshot's `truncated:false` only means "all CURRENT retained
+   * bytes", not "same history origin". Same epoch with a different
+   * generation means the old window's bytes are gone. null only before
+   * the first snapshot.
    */
   #baseWindow: { readonly epoch: string; readonly generation: number } | null = null;
   #pending: PendingChunkGroup | null = null;
@@ -175,14 +169,6 @@ export class TerminalVtAttachment {
    * outer fence cannot see. `closed` frames carry no native sequence.
    */
   #nativeWatermark = -1;
-  /**
-   * Native sequence of the last event we consumed, persisted across
-   * `beginStream` (which must reset the per-subscription watermark for
-   * replay fencing). It marks the epoch-stream position where our
-   * received stream ends — the anchor that makes a resnapshot's contents
-   * provable when its boundary equals this sequence.
-   */
-  #receivedEndSequence = -1;
 
   constructor(terminalId: string, onChange?: () => void) {
     this.terminalId = terminalId;
@@ -252,53 +238,40 @@ export class TerminalVtAttachment {
   }
 
   /**
-   * A snapshot re-bases the stream. Equal text is never proof that bytes
-   * survived — an evicted query and a newer identical query look the same
-   * — so claims are only kept where the retention boundary itself proves
-   * their position, and dropped otherwise (explicit drop: nothing remains
-   * to answer, and migrating a claim would send an unsolicited reply).
-   *
-   * Two anchors are provable:
-   * - `boundarySequence === priorReceivedEnd`: no newer events exist, so
-   *   contents must end at our last received byte. `endsWith` then pins
-   *   both ends — contents IS our received suffix, truncation included.
-   * - `!truncated` with an anchored stream in the same clear generation:
-   *   an untruncated snapshot covers every retained byte, retention only
-   *   drops at the far larger buffer cap, and an unchanged generation
-   *   proves no clear moved the window's start — so contents position 0
-   *   is provably our stream's own start. `startsWith` then verifies the
-   *   server agrees byte-for-byte.
-   * Everything else — a truncated resnapshot, an unanchored post-clear
-   *   stream, a hole from our own eviction — leaves run positions
-   *   unprovable: drop the claims.
+   * A snapshot re-bases the stream. Claims survive only by authoritative
+   * position: the host reports `contentsUnitStart` — the absolute UTF-16
+   * offset of contents[0] inside the retained window (epoch +
+   * clearGeneration) — and every run's absolute position is known from
+   * the stream's own recorded start. Line eviction, byte eviction and
+   * tail truncation are all the same arithmetic then; equal text is
+   * never consulted. A run whose absolute position precedes the new
+   * contents start is provably evicted — drop it, never migrate it onto
+   * a later identical query. A run inside the window is still verified
+   * byte-for-byte at its computed position; any disagreement drops it.
+   * Without a known stream start (never happens once deliveries exist)
+   * or a window that moved backwards (host corruption), drop all.
    */
   #reconcileUnanswered(
-    received: string,
     contents: string,
-    boundarySequence: number,
-    priorReceivedEnd: number,
-    truncated: boolean,
-    priorAnchored: boolean,
+    contentsUnitStart: number,
+    priorUnitStart: number | null,
+    priorBaseLength: number,
     priorHole: number,
   ) {
     if (this.#unanswered.length === 0) return;
-    let drop = -1;
-    if (priorHole === 0) {
-      if (boundarySequence === priorReceivedEnd && received.endsWith(contents)) {
-        drop = received.length - contents.length;
-      } else if (!truncated && priorAnchored && contents.startsWith(received)) {
-        drop = 0;
-      }
-    }
-    if (drop < 0) {
+    if (priorUnitStart === null || contentsUnitStart < priorUnitStart) {
       this.#unanswered = [];
       return;
     }
+    const drop = contentsUnitStart - priorUnitStart;
     this.#unanswered = this.#unanswered.flatMap((run) => {
-      const end = run.start + run.data.length;
-      if (end <= drop) return [];
-      const start = Math.max(run.start, drop);
-      return [{ start: start - drop, data: run.data.slice(start - run.start) }];
+      const start = run.start + (run.start >= priorBaseLength ? priorHole : 0) - drop;
+      if (start + run.data.length <= 0) return [];
+      // Part of the run was evicted — the surviving tail provably sits at
+      // contents[0], still position-bound, never re-identified by content.
+      const data = start < 0 ? run.data.slice(-start) : run.data;
+      const at = Math.max(start, 0);
+      return contents.startsWith(data, at) ? [{ start: at, data }] : [];
     });
   }
 
@@ -490,8 +463,8 @@ export class TerminalVtAttachment {
     }
     // Evicted bytes are gone — any unanswered queries among them are lost
     // with the bytes (already flagged degraded); keep the runs honest.
-    // The stream also stops being a contiguous epoch slice, which makes
-    // the next snapshot's retention boundary unprovable for the survivors.
+    // The hole is folded into absolute positions at reconcile, so claims
+    // after it stay provable while the host retains their bytes.
     this.#bufferedHole += evicted;
     this.#mapRunsAfterCut(this.#base?.length ?? 0, evicted);
     // Replay needs bytes we no longer hold. A live surface still shows
@@ -530,7 +503,9 @@ export class TerminalVtAttachment {
         !Number.isSafeInteger(value.boundarySequence) ||
         value.boundarySequence < 0 ||
         !Number.isSafeInteger(value.clearGeneration) ||
-        value.clearGeneration < 0
+        value.clearGeneration < 0 ||
+        !Number.isSafeInteger(value.contentsUnitStart) ||
+        value.contentsUnitStart < 0
       ) {
         this.#fail("Output snapshot boundary is invalid.");
         return;
@@ -540,16 +515,14 @@ export class TerminalVtAttachment {
       // reconcile below evaluates where OUR bytes sat, not the new
       // snapshot's. `#epoch` is unusable here (beginStream nulls it), so
       // the window identity travels with the stream itself.
-      const received = (this.#base ?? "") + this.#buffered.join("");
-      const priorReceivedEnd = this.#receivedEndSequence;
-      const priorAnchored = this.#receivedAnchored;
+      const priorUnitStart = this.#receivedUnitStart;
+      const priorBaseLength = this.#base?.length ?? 0;
       const priorHole = this.#bufferedHole;
       const priorWindow = this.#baseWindow;
       this.#epoch = value.streamEpoch;
       this.#nativeWatermark = value.boundarySequence;
-      this.#receivedEndSequence = value.boundarySequence;
       this.#base = value.contents;
-      this.#receivedAnchored = true;
+      this.#receivedUnitStart = value.contentsUnitStart;
       this.#buffered = [];
       this.#bufferedLength = 0;
       this.#bufferedHole = 0;
@@ -562,40 +535,39 @@ export class TerminalVtAttachment {
       // Same-epoch history reset missed while detached: a clear does not
       // end the epoch, so only the snapshot's clear generation proves the
       // retained window still shares our stream's origin. A mismatch
-      // means the old bytes are gone — claims die with them, and the
-      // post-clear tail no longer contains mode-establishing output, so
-      // the epoch counts as cleared for fidelity too.
+      // means the old bytes are gone — claims die with them.
       const missedClear =
         priorWindow !== null &&
         priorWindow.epoch === value.streamEpoch &&
         priorWindow.generation !== value.clearGeneration;
-      if (missedClear) this.#clearedEpoch = value.streamEpoch;
       if (
         this.#unanswered.length > 0 &&
         (this.#unansweredEpoch !== value.streamEpoch || missedClear)
       ) {
         this.#clearUnanswered();
       } else {
-        // The snapshot's retained contents may extend past the bytes we
-        // last received — the server kept accepting output while the
-        // subscription was closed. Claims keep their positions only where
-        // the retention boundary provably anchors them; anything else is
-        // an explicit drop rather than a guess against identical bytes
-        // elsewhere.
+        // Claims keep their positions only where the snapshot's
+        // authoritative contents start maps them into retained bytes —
+        // anything else is an explicit drop rather than a guess against
+        // identical bytes elsewhere.
         this.#reconcileUnanswered(
-          received,
           value.contents,
-          value.boundarySequence,
-          priorReceivedEnd,
-          value.truncated,
-          priorAnchored,
+          value.contentsUnitStart,
+          priorUnitStart,
+          priorBaseLength,
           priorHole,
         );
       }
-      // A snapshot only restores fidelity when the epoch's retained bytes
-      // cover process start — an untruncated snapshot in a post-clear epoch
-      // is still missing the mode-establishing output.
-      this.#replayFaithful = !value.truncated && value.streamEpoch !== this.#clearedEpoch;
+      // Parser fidelity needs retained-coverage evidence, not client
+      // observation history: only an epoch with zero clears whose
+      // retained window still starts at unit 0 provably contains every
+      // byte the process emitted. Anything else — a missed clear, any
+      // line/byte eviction, a truncated tail — is degraded.
+      this.#replayFaithful =
+        !missedClear &&
+        !value.truncated &&
+        value.clearGeneration === 0 &&
+        value.contentsUnitStart === 0;
       const unfaithful = !this.#replayFaithful;
       if (this.#sink) {
         // Re-base the live parser; unanswered runs inside the new
@@ -612,9 +584,11 @@ export class TerminalVtAttachment {
             ? this.#sinkFailure
             : value.truncated
               ? "Watching live output — earlier history was truncated, so terminal state may be incomplete."
-              : unfaithful
+              : value.clearGeneration > 0
                 ? "Watching live output — history was cleared, so terminal modes may be incomplete."
-                : "Watching live output.",
+                : unfaithful
+                  ? "Watching live output — earlier output exceeded retention, so terminal state may be incomplete."
+                  : "Watching live output.",
         degraded: unfaithful && !ended,
         exitCode: null,
         ended,
@@ -655,16 +629,22 @@ export class TerminalVtAttachment {
         this.#fail("Output chunk group is discontinuous.");
         return;
       }
+      if (!Number.isSafeInteger(value.clearGeneration) || value.clearGeneration < 0) {
+        this.#fail("Output reset window is invalid.");
+        return;
+      }
       if (value.sequence <= this.#nativeWatermark) {
         this.#fail("Output event sequence is not monotonic.");
         return;
       }
       this.#nativeWatermark = value.sequence;
-      this.#receivedEndSequence = value.sequence;
       this.#pending = null;
       this.#base = "";
-      this.#receivedAnchored = false;
-      this.#baseWindow = null;
+      // The reset frame names the new window directly: the post-clear
+      // stream restarts anchored at the window origin, so bytes we
+      // receive from here carry absolute positions again.
+      this.#receivedUnitStart = 0;
+      this.#baseWindow = { epoch: value.streamEpoch, generation: value.clearGeneration };
       this.#buffered = [];
       this.#bufferedLength = 0;
       this.#bufferedHole = 0;
@@ -678,7 +658,6 @@ export class TerminalVtAttachment {
       // its fidelity claim. With no surface the replay base is all that
       // exists, and it no longer contains the mode-establishing bytes.
       this.#replayFaithful = false;
-      this.#clearedEpoch = this.#epoch;
       if (this.#sink) {
         this.#sink.clearScreen();
       }
@@ -708,7 +687,6 @@ export class TerminalVtAttachment {
         return;
       }
       this.#nativeWatermark = value.sequence;
-      this.#receivedEndSequence = value.sequence;
       // The process is gone — its pending queries died with it.
       this.#clearUnanswered();
       this.#emit({
@@ -750,7 +728,6 @@ export class TerminalVtAttachment {
       const data = this.#pending.parts.join("");
       this.#pending = null;
       this.#nativeWatermark = value.sequence;
-      this.#receivedEndSequence = value.sequence;
       this.#deliver(data);
       return;
     }
@@ -773,7 +750,6 @@ export class TerminalVtAttachment {
       return;
     }
     this.#nativeWatermark = value.sequence;
-    this.#receivedEndSequence = value.sequence;
     this.#deliver(value.data);
   }
 }

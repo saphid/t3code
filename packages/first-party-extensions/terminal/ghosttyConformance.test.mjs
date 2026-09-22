@@ -277,6 +277,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       retainedByteLength: 0,
       truncated: false,
       clearGeneration: 0,
+      contentsUnitStart: 0,
       boundarySequence: 7,
     };
     attachment.applyFrame({ streamId: "s", sequence: 1 }, snap);
@@ -324,6 +325,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       retainedByteLength: 0,
       truncated: false,
       clearGeneration: 0,
+      contentsUnitStart: 0,
       boundarySequence: 7,
     };
     attachment.applyFrame({ streamId: "s", sequence: 1 }, snap);
@@ -364,7 +366,12 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       // no longer a suffix of the replay stream, but their reply is
       // still owed.
       const attachment = new TerminalVtAttachment("term-1");
-      const snap = (contents, boundarySequence, retainedByteLength = contents.length) => ({
+      const snap = (
+        contents,
+        boundarySequence,
+        retainedByteLength = contents.length,
+        contentsUnitStart = 0,
+      ) => ({
         kind: "snapshot",
         terminalId: "term-1",
         streamEpoch: "epoch-1",
@@ -373,6 +380,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
         retainedByteLength,
         truncated: false,
         clearGeneration: 0,
+        contentsUnitStart,
         boundarySequence,
       });
       const output = (sequence, data) => ({
@@ -416,7 +424,12 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       // resubscribe snapshot AND more live bytes after it form two
       // disjoint ranges of the replay stream — both must answer.
       const attachment = new TerminalVtAttachment("term-1");
-      const snap = (contents, boundarySequence, retainedByteLength = contents.length) => ({
+      const snap = (
+        contents,
+        boundarySequence,
+        retainedByteLength = contents.length,
+        contentsUnitStart = 0,
+      ) => ({
         kind: "snapshot",
         terminalId: "term-1",
         streamEpoch: "epoch-1",
@@ -425,6 +438,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
         retainedByteLength,
         truncated: false,
         clearGeneration: 0,
+        contentsUnitStart,
         boundarySequence,
       });
       const output = (sequence, data) => ({
@@ -468,7 +482,12 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       // answers at the wrong cursor position; position tracking answers
       // the bytes that were actually received live.
       const attachment = new TerminalVtAttachment("term-1");
-      const snap = (contents, boundarySequence, retainedByteLength = contents.length) => ({
+      const snap = (
+        contents,
+        boundarySequence,
+        retainedByteLength = contents.length,
+        contentsUnitStart = 0,
+      ) => ({
         kind: "snapshot",
         terminalId: "term-1",
         streamEpoch: "epoch-1",
@@ -477,6 +496,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
         retainedByteLength,
         truncated: false,
         clearGeneration: 0,
+        contentsUnitStart,
         boundarySequence,
       });
       const output = (sequence, data) => ({
@@ -517,7 +537,12 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       // Same collision, plus a second live DSR after the snapshot: the
       // replay owes TWO replies at distinct cursor positions.
       const attachment = new TerminalVtAttachment("term-1");
-      const snap = (contents, boundarySequence, retainedByteLength = contents.length) => ({
+      const snap = (
+        contents,
+        boundarySequence,
+        retainedByteLength = contents.length,
+        contentsUnitStart = 0,
+      ) => ({
         kind: "snapshot",
         terminalId: "term-1",
         streamEpoch: "epoch-1",
@@ -526,6 +551,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
         retainedByteLength,
         truncated: false,
         clearGeneration: 0,
+        contentsUnitStart,
         boundarySequence,
       });
       const output = (sequence, data) => ({
@@ -566,7 +592,13 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       // the coincidental copy (which is snapshot history and stays
       // suppressed). Expected: no replies at all.
       const attachment = new TerminalVtAttachment("term-1");
-      const snap = (contents, boundarySequence, truncated, retainedByteLength) => ({
+      const snap = (
+        contents,
+        boundarySequence,
+        truncated,
+        retainedByteLength,
+        contentsUnitStart = 0,
+      ) => ({
         kind: "snapshot",
         terminalId: "term-1",
         streamEpoch: "epoch-1",
@@ -575,6 +607,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
         retainedByteLength,
         truncated,
         clearGeneration: 0,
+        contentsUnitStart,
         boundarySequence,
       });
       const output = (sequence, data) => ({
@@ -599,7 +632,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       // 8192 bytes emitted while disconnected: the original query is fully
       // evicted, and the retained tail ends with a DIFFERENT ESC[6n.
       const contents = `${"x".repeat(8180)}\x1b[Hlater\x1b[6n`;
-      attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap(contents, 2, true, 8196));
+      attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap(contents, 2, true, 8196, 4));
       const { core, writes } = await makeCore();
       attachment.attach(core);
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -616,7 +649,12 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       // received byte, so a contents suffix match pins both ends — here
       // the server evicted our leading output but the query survived.
       const attachment = new TerminalVtAttachment("term-1");
-      const snap = (contents, boundarySequence, retainedByteLength = contents.length) => ({
+      const snap = (
+        contents,
+        boundarySequence,
+        retainedByteLength = contents.length,
+        contentsUnitStart = 0,
+      ) => ({
         kind: "snapshot",
         terminalId: "term-1",
         streamEpoch: "epoch-1",
@@ -625,6 +663,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
         retainedByteLength,
         truncated: false,
         clearGeneration: 0,
+        contentsUnitStart,
         boundarySequence,
       });
       const output = (sequence, data) => ({
@@ -650,7 +689,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       // Same boundary — nothing newer. Retained contents are just the
       // surviving tail: the DSR itself, its position proven by the pinned
       // end of the stream.
-      attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap("\x1b[6n", 2, 4));
+      attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap("\x1b[6n", 2, 4, 4));
       const { core, writes } = await makeCore();
       attachment.attach(core);
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -676,6 +715,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
         retainedByteLength: contents.length,
         truncated: false,
         clearGeneration: 0,
+        contentsUnitStart: 0,
         boundarySequence,
       });
       const output = (sequence, data) => ({
@@ -720,7 +760,12 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       // mount must not release it. The reply lands once, when the
       // same-epoch snapshot proves the claim.
       const attachment = new TerminalVtAttachment("term-1");
-      const snap = (contents, boundarySequence, retainedByteLength = contents.length) => ({
+      const snap = (
+        contents,
+        boundarySequence,
+        retainedByteLength = contents.length,
+        contentsUnitStart = 0,
+      ) => ({
         kind: "snapshot",
         terminalId: "term-1",
         streamEpoch: "epoch-1",
@@ -729,6 +774,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
         retainedByteLength,
         truncated: false,
         clearGeneration: 0,
+        contentsUnitStart,
         boundarySequence,
       });
       const output = (sequence, data) => ({
@@ -777,7 +823,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       // window changed: the old claim drops rather than answering the
       // new generation's coincidentally identical query.
       const attachment = new TerminalVtAttachment("term-1");
-      const snap = (contents, boundarySequence, clearGeneration) => ({
+      const snap = (contents, boundarySequence, clearGeneration, contentsUnitStart = 0) => ({
         kind: "snapshot",
         terminalId: "term-1",
         streamEpoch: "epoch-1",
@@ -786,6 +832,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
         retainedByteLength: contents.length,
         truncated: false,
         clearGeneration,
+        contentsUnitStart,
         boundarySequence,
       });
       const output = (sequence, data) => ({
@@ -829,7 +876,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       // then discards it — the coincidentally identical post-clear query
       // never earns the old reply.
       const attachment = new TerminalVtAttachment("term-1");
-      const snap = (contents, boundarySequence, clearGeneration) => ({
+      const snap = (contents, boundarySequence, clearGeneration, contentsUnitStart = 0) => ({
         kind: "snapshot",
         terminalId: "term-1",
         streamEpoch: "epoch-1",
@@ -838,6 +885,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
         retainedByteLength: contents.length,
         truncated: false,
         clearGeneration,
+        contentsUnitStart,
         boundarySequence,
       });
       const output = (sequence, data) => ({
@@ -888,6 +936,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       retainedByteLength: contents.length,
       truncated: false,
       clearGeneration: 0,
+      contentsUnitStart: 0,
       boundarySequence,
     });
     const output = (sequence, data) => ({
@@ -937,6 +986,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
         retainedByteLength: 4,
         truncated: false,
         clearGeneration: 0,
+        contentsUnitStart: 0,
         boundarySequence: 7,
       };
       attachment.applyFrame({ streamId: "s", sequence: 1 }, snap);
@@ -944,6 +994,374 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       attachment.attach(core);
       await new Promise((resolve) => setTimeout(resolve, 0));
       NodeAssert.equal(writes.length, 0);
+      core.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "default line retention cannot migrate an evicted query's claim — mount after snapshot (P2)",
+    async () => {
+      // Astra r8 P2-1: the host's 5000-line retention evicts the original
+      // query line while the retained tail still fits under the 8 KiB
+      // snapshot cap — truncated:false, clearGeneration:0, yet the window
+      // moved forward 5 units (contentsUnitStart). The pending reply must
+      // drop by position, not migrate onto the newer identical query.
+      const attachment = new TerminalVtAttachment("term-1");
+      const snap = (contents, boundarySequence, contentsUnitStart = 0) => ({
+        kind: "snapshot",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        status: "running",
+        contents,
+        retainedByteLength: contents.length,
+        truncated: false,
+        clearGeneration: 0,
+        contentsUnitStart,
+        boundarySequence,
+      });
+      const output = (sequence, data) => ({
+        kind: "output",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        sequence,
+        chunkIndex: 0,
+        chunkCount: 1,
+        data,
+      });
+      const closed = {
+        kind: "closed",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        reason: "overflow",
+      };
+      attachment.applyFrame({ streamId: "s", sequence: 1 }, snap("", 0));
+      attachment.applyFrame({ streamId: "s", sequence: 2 }, output(1, "\x1b[6n\n"));
+      attachment.applyFrame({ streamId: "s", sequence: 3 }, closed);
+      attachment.beginStream();
+      // While disconnected: a NEW ESC[6n plus 5000 LFs arrive (seq 2).
+      // Line retention evicts the original query line entirely — the
+      // retained tail starts at window unit 5, still under the byte cap.
+      attachment.applyFrame(
+        { streamId: "s2", sequence: 1 },
+        snap("\x1b[6n" + "\n".repeat(5000), 2, 5),
+      );
+      const { core, writes } = await makeCore();
+      attachment.attach(core);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      NodeAssert.deepEqual(writes, []);
+      core.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "default line retention cannot migrate an evicted query's claim — mount in the gap (P2)",
+    async () => {
+      // Same r8 line-eviction repro, opposite mount order: the renderer
+      // attaches inside the beginStream→snapshot gap; the epoch fence
+      // holds the claim, then the resnapshot's contentsUnitStart=5 proves
+      // the query's absolute position is gone — the claim drops.
+      const attachment = new TerminalVtAttachment("term-1");
+      const snap = (contents, boundarySequence, contentsUnitStart = 0) => ({
+        kind: "snapshot",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        status: "running",
+        contents,
+        retainedByteLength: contents.length,
+        truncated: false,
+        clearGeneration: 0,
+        contentsUnitStart,
+        boundarySequence,
+      });
+      const output = (sequence, data) => ({
+        kind: "output",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        sequence,
+        chunkIndex: 0,
+        chunkCount: 1,
+        data,
+      });
+      const closed = {
+        kind: "closed",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        reason: "overflow",
+      };
+      attachment.applyFrame({ streamId: "s", sequence: 1 }, snap("", 0));
+      attachment.applyFrame({ streamId: "s", sequence: 2 }, output(1, "\x1b[6n\n"));
+      attachment.applyFrame({ streamId: "s", sequence: 3 }, closed);
+      attachment.beginStream();
+      const { core, writes } = await makeCore();
+      attachment.attach(core);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      NodeAssert.deepEqual(writes, []);
+      attachment.applyFrame(
+        { streamId: "s2", sequence: 1 },
+        snap("\x1b[6n" + "\n".repeat(5000), 2, 5),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      NodeAssert.deepEqual(writes, []);
+      core.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "a first attach after a host history clear is degraded — sink before snapshot (P2)",
+    async () => {
+      // Astra r8 P2-2: a fresh attachment's FIRST snapshot already shows
+      // clearGeneration 1 — the process negotiated modes before history
+      // was cleared, and no retained byte covers them. truncated:false
+      // is not coverage evidence: fidelity must stay unclaimed.
+      const attachment = new TerminalVtAttachment("term-1");
+      const snap = (contents, boundarySequence, clearGeneration, contentsUnitStart = 0) => ({
+        kind: "snapshot",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        status: "running",
+        contents,
+        retainedByteLength: contents.length,
+        truncated: false,
+        clearGeneration,
+        contentsUnitStart,
+        boundarySequence,
+      });
+      const { core } = await makeCore();
+      attachment.attach(core);
+      attachment.beginStream();
+      attachment.applyFrame({ streamId: "s", sequence: 1 }, snap("prompt", 3, 1));
+      NodeAssert.equal(attachment.state.degraded, true);
+      NodeAssert.match(attachment.state.statusText, /history was cleared/);
+      core.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "a first attach after a host history clear is degraded — snapshot before sink (P2)",
+    async () => {
+      // Opposite ordering: the post-clear snapshot lands first, then the
+      // renderer mounts. The attach emit must still flag degraded.
+      const attachment = new TerminalVtAttachment("term-1");
+      const snap = {
+        kind: "snapshot",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        status: "running",
+        contents: "prompt",
+        retainedByteLength: 6,
+        truncated: false,
+        clearGeneration: 1,
+        contentsUnitStart: 0,
+        boundarySequence: 3,
+      };
+      attachment.beginStream();
+      attachment.applyFrame({ streamId: "s", sequence: 1 }, snap);
+      const { core } = await makeCore();
+      attachment.attach(core);
+      NodeAssert.equal(attachment.state.degraded, true);
+      core.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "a query surviving line eviction still answers at its absolute position (P2)",
+    async () => {
+      // Matrix row — evicted-lines with surviving bytes: the retained
+      // window moved forward past other output, but the query itself is
+      // still retained at its proven position. The claim answers.
+      const attachment = new TerminalVtAttachment("term-1");
+      const snap = (contents, boundarySequence, contentsUnitStart = 0) => ({
+        kind: "snapshot",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        status: "running",
+        contents,
+        retainedByteLength: contents.length,
+        truncated: false,
+        clearGeneration: 0,
+        contentsUnitStart,
+        boundarySequence,
+      });
+      const output = (sequence, data) => ({
+        kind: "output",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        sequence,
+        chunkIndex: 0,
+        chunkCount: 1,
+        data,
+      });
+      const closed = {
+        kind: "closed",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        reason: "overflow",
+      };
+      attachment.applyFrame({ streamId: "s", sequence: 1 }, snap("", 0));
+      attachment.applyFrame({ streamId: "s", sequence: 2 }, output(1, "noise\n"));
+      attachment.applyFrame({ streamId: "s", sequence: 3 }, output(2, "\x1b[6n\n"));
+      attachment.applyFrame({ streamId: "s", sequence: 4 }, closed);
+      attachment.beginStream();
+      // Line retention dropped "noise\n" (6 units) but kept the query
+      // line and a newer line — window starts at unit 6.
+      attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap("\x1b[6n\nlast\n", 3, 6));
+      const { core, writes } = await makeCore();
+      attachment.attach(core);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      NodeAssert.deepEqual(writes, ["\x1b[1;1R"]);
+      core.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "a query surviving byte-tail truncation still answers at its absolute position (P2)",
+    async () => {
+      // Matrix row — evicted-bytes with surviving bytes: the resnapshot's
+      // 8 KiB tail starts mid-window (truncated:true), but the claim's
+      // absolute position is inside it.
+      const attachment = new TerminalVtAttachment("term-1");
+      const snap = (
+        contents,
+        boundarySequence,
+        truncated,
+        retainedByteLength,
+        contentsUnitStart = 0,
+      ) => ({
+        kind: "snapshot",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        status: "running",
+        contents,
+        retainedByteLength,
+        truncated,
+        clearGeneration: 0,
+        contentsUnitStart,
+        boundarySequence,
+      });
+      const output = (sequence, data) => ({
+        kind: "output",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        sequence,
+        chunkIndex: 0,
+        chunkCount: 1,
+        data,
+      });
+      const closed = {
+        kind: "closed",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        reason: "overflow",
+      };
+      attachment.applyFrame({ streamId: "s", sequence: 1 }, snap("", 0, false, 0));
+      attachment.applyFrame({ streamId: "s", sequence: 2 }, output(1, "x".repeat(8000)));
+      attachment.applyFrame({ streamId: "s", sequence: 3 }, output(2, "x".repeat(1000)));
+      attachment.applyFrame({ streamId: "s", sequence: 4 }, output(3, "\x1b[6n"));
+      attachment.applyFrame({ streamId: "s", sequence: 5 }, closed);
+      attachment.beginStream();
+      // 9004 units appended; byte retention cut the tail to the last
+      // 64 units — contents start at absolute unit 8940, the query sits
+      // at contents position 60 (the retained tail IS the stream's own
+      // trailing bytes).
+      attachment.applyFrame(
+        { streamId: "s2", sequence: 1 },
+        snap(`${"x".repeat(60)}\x1b[6n`, 3, true, 9004, 8940),
+      );
+      const { core, writes } = await makeCore();
+      attachment.attach(core);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      NodeAssert.deepEqual(writes, ["\x1b[1;61R"]);
+      core.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "a post-clear claim re-anchored by the reset frame survives a resnapshot (P2)",
+    async () => {
+      // Matrix row — observed clear: the reset frame names the new
+      // window ({epoch, generation:1}) and re-anchors the stream at unit
+      // 0, so a query delivered after the clear keeps absolute positions
+      // and survives a same-window resnapshot.
+      const attachment = new TerminalVtAttachment("term-1");
+      const snap = (contents, boundarySequence, clearGeneration, contentsUnitStart = 0) => ({
+        kind: "snapshot",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        status: "running",
+        contents,
+        retainedByteLength: contents.length,
+        truncated: false,
+        clearGeneration,
+        contentsUnitStart,
+        boundarySequence,
+      });
+      const output = (sequence, data) => ({
+        kind: "output",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        sequence,
+        chunkIndex: 0,
+        chunkCount: 1,
+        data,
+      });
+      const reset = {
+        kind: "reset",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        sequence: 2,
+        clearGeneration: 1,
+        reason: "history-cleared",
+      };
+      const closed = {
+        kind: "closed",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        reason: "overflow",
+      };
+      attachment.applyFrame({ streamId: "s", sequence: 1 }, snap("", 0, 0));
+      attachment.applyFrame({ streamId: "s", sequence: 2 }, reset);
+      // A NEW query arrives post-clear, still while detached.
+      attachment.applyFrame({ streamId: "s", sequence: 3 }, output(3, "\x1b[6n"));
+      attachment.applyFrame({ streamId: "s", sequence: 4 }, closed);
+      attachment.beginStream();
+      // Same window (generation 1), contents grew — claim at absolute
+      // unit 0 survives provably.
+      attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap("\x1b[6nmore", 4, 1, 0));
+      const { core, writes } = await makeCore();
+      attachment.attach(core);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      NodeAssert.deepEqual(writes, ["\x1b[1;1R"]);
+      core.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "a first snapshot with an evicted head is degraded even without truncation (P2)",
+    async () => {
+      // Matrix row — fidelity under evicted-lines: contentsUnitStart > 0
+      // proves retained bytes were dropped ahead of the tail even though
+      // truncated:false and clearGeneration:0 — the parser cannot be
+      // proven to have seen every byte since process start.
+      const attachment = new TerminalVtAttachment("term-1");
+      const snap = {
+        kind: "snapshot",
+        terminalId: "term-1",
+        streamEpoch: "epoch-1",
+        status: "running",
+        contents: "tail",
+        retainedByteLength: 128,
+        truncated: false,
+        clearGeneration: 0,
+        contentsUnitStart: 124,
+        boundarySequence: 5,
+      };
+      attachment.beginStream();
+      attachment.applyFrame({ streamId: "s", sequence: 1 }, snap);
+      NodeAssert.equal(attachment.state.degraded, true);
+      NodeAssert.match(attachment.state.statusText, /exceeded retention/);
+      const { core } = await makeCore();
+      attachment.attach(core);
+      NodeAssert.equal(attachment.state.degraded, true);
       core.dispose();
     },
   );

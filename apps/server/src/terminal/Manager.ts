@@ -303,6 +303,11 @@ interface TerminalSessionState {
   updatedAt: string;
   eventSequence: number;
   observationEpoch: string;
+  // History clears observed inside the current observation epoch. Reset
+  // with the epoch in startSession so a snapshot can distinguish "this
+  // incarnation's retained bytes were cleared" from restarts, which
+  // clear the history object before the epoch changes.
+  epochClearCount: number;
   cols: number;
   rows: number;
   process: PtyAdapter.PtyProcess | null;
@@ -854,12 +859,12 @@ export class BoundedTerminalHistory {
   private start = 0;
   private byteLength = 0;
   private lineBreaks = 0;
-  // Bumped on every clear() so an output snapshot can identify which
-  // retained-history window its tail was cut from — a clear inside a
-  // subscription gap does not end the observation epoch, so without a
-  // generation the post-clear tail is indistinguishable from the
-  // pre-clear stream's continuation.
-  private clearCount = 0;
+  // Cumulative UTF-16 units appended since the last clear() — the
+  // absolute position space of the retained window. Line eviction and
+  // byte eviction both drop front units without otherwise marking the
+  // tail, so a snapshot needs totalUnits to name where its contents
+  // start: contentsUnitStart = totalUnits - contents.length.
+  private totalUnits = 0;
   // Reading the old string's tail on each append can force chunk concatenation.
   private lastCodeUnit: number | undefined;
   private cachedValue: string | null = "";
@@ -896,6 +901,7 @@ export class BoundedTerminalHistory {
       previous.data += text[0];
       previous.byteLength += 1;
       this.byteLength += 1;
+      this.totalUnits += 1;
       this.lastCodeUnit = firstCode;
       offset = 1;
       this.trim();
@@ -936,6 +942,7 @@ export class BoundedTerminalHistory {
     }
     this.byteLength += byteLength;
     this.lineBreaks += lineBreaks;
+    this.totalUnits += data.length;
     this.lastCodeUnit = data.charCodeAt(data.length - 1);
     this.cachedValue = null;
   }
@@ -1012,16 +1019,16 @@ export class BoundedTerminalHistory {
     }
   }
 
-  get clearGeneration(): number {
-    return this.clearCount;
+  get appendedUnitLength(): number {
+    return this.totalUnits;
   }
 
   clear(): void {
-    this.clearCount += 1;
     this.chunks = [];
     this.start = 0;
     this.byteLength = 0;
     this.lineBreaks = 0;
+    this.totalUnits = 0;
     this.lastCodeUnit = undefined;
     this.cachedValue = "";
   }
@@ -1121,6 +1128,7 @@ export type TerminalOutputObservationEvent =
       readonly threadId: string;
       readonly terminalId: string;
       readonly sequence: number;
+      readonly clearGeneration: number;
     }
   | {
       readonly type: "exited";
@@ -1146,6 +1154,7 @@ export type TerminalOutputObservationEvent =
       readonly terminalId: string;
       readonly sequence: number;
       readonly clearGeneration: number;
+      readonly contentsUnitStart: number;
       readonly snapshot: TerminalOutputSnapshot;
     };
 
@@ -2376,6 +2385,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   ) {
     const previousEpoch = session.observationEpoch;
     session.observationEpoch = NodeCrypto.randomUUID();
+    session.epochClearCount = 0;
     yield* publishOutputEvent({
       type: "closed",
       sourceEpoch: previousEpoch,
@@ -2761,6 +2771,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         updatedAt: yield* nowIso,
         eventSequence: 0,
         observationEpoch: NodeCrypto.randomUUID(),
+        epochClearCount: 0,
         cols,
         rows,
         process: null,
@@ -3003,7 +3014,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             threadId: session.threadId,
             terminalId: session.terminalId,
             sequence: initialSequence,
-            clearGeneration: session.history.clearGeneration,
+            clearGeneration: session.epochClearCount,
+            contentsUnitStart: session.history.appendedUnitLength - tail.contents.length,
             snapshot: {
               threadId: session.threadId,
               terminalId: session.terminalId,
@@ -3258,6 +3270,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         const terminalId = input.terminalId;
         const session = yield* requireSession(input.threadId, terminalId);
         session.history.clear();
+        session.epochClearCount += 1;
         session.pendingHistoryControlSequence = "";
         session.pendingProcessEvents = [];
         session.pendingProcessEventIndex = 0;
@@ -3280,6 +3293,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           threadId: input.threadId,
           terminalId,
           sequence: observation.sequence,
+          clearGeneration: session.epochClearCount,
         });
       }),
     );
@@ -3313,6 +3327,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           updatedAt: yield* nowIso,
           eventSequence: 0,
           observationEpoch: NodeCrypto.randomUUID(),
+          epochClearCount: 0,
           cols,
           rows,
           process: null,

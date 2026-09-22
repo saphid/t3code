@@ -58,6 +58,7 @@ function snapshot(overrides = {}) {
     retainedByteLength: 8,
     truncated: false,
     clearGeneration: 0,
+    contentsUnitStart: 0,
     boundarySequence: 7,
     ...overrides,
   };
@@ -148,6 +149,7 @@ NodeTest.describe("TerminalVtAttachment — snapshot + attach", () => {
       terminalId: "term-1",
       streamEpoch: EPOCH,
       sequence: 20,
+      clearGeneration: 1,
       reason: "history-cleared",
     };
     vt.applyFrame(frame(2, reset), reset);
@@ -170,6 +172,7 @@ NodeTest.describe("TerminalVtAttachment — snapshot + attach", () => {
         terminalId: "term-1",
         streamEpoch: EPOCH,
         sequence: 20,
+        clearGeneration: 1,
         reason: "history-cleared",
       };
       vt.applyFrame(frame(2, reset), reset);
@@ -199,6 +202,7 @@ NodeTest.describe("TerminalVtAttachment — snapshot + attach", () => {
         terminalId: "term-1",
         streamEpoch: EPOCH,
         sequence: 20,
+        clearGeneration: 1,
         reason: "history-cleared",
       };
       vt.applyFrame(frame(2, reset), reset);
@@ -220,6 +224,7 @@ NodeTest.describe("TerminalVtAttachment — snapshot + attach", () => {
         terminalId: "term-1",
         streamEpoch: EPOCH,
         sequence: 20,
+        clearGeneration: 1,
         reason: "history-cleared",
       };
       vt.applyFrame(frame(2, reset), reset);
@@ -253,6 +258,7 @@ NodeTest.describe("TerminalVtAttachment — snapshot + attach", () => {
         terminalId: "term-1",
         streamEpoch: EPOCH,
         sequence: 20,
+        clearGeneration: 1,
         reason: "history-cleared",
       };
       vt.applyFrame(frame(2, reset), reset);
@@ -260,7 +266,11 @@ NodeTest.describe("TerminalVtAttachment — snapshot + attach", () => {
       // Resubscribe (same epoch): the snapshot claims truncated:false but
       // its contents start after the clear — still degraded.
       vt.beginStream();
-      const snap2 = snapshot({ contents: "post-clear", boundarySequence: 30 });
+      const snap2 = snapshot({
+        contents: "post-clear",
+        boundarySequence: 30,
+        clearGeneration: 1,
+      });
       vt.applyFrame(frame(1, snap2), snap2);
       NodeAssert.equal(vt.state.degraded, true);
       NodeAssert.match(vt.state.statusText, /history was cleared/);
@@ -438,6 +448,7 @@ NodeTest.describe("TerminalVtAttachment — failure paths", () => {
       terminalId: "term-1",
       streamEpoch: EPOCH,
       sequence: 8,
+      clearGeneration: 1,
       reason: "history-cleared",
     };
     vt.applyFrame(frame(2, reset), reset);

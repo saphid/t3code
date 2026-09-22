@@ -51,13 +51,13 @@ var __t3Client = (() => {
     }
   });
 
-  // packages/first-party-extensions/terminal/generated-client.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/generated-client.ts
   var generated_client_exports = {};
   __export(generated_client_exports, {
     default: () => generated_client_default
   });
 
-  // packages/extension-sdk/dist/contracts.js
+  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/contracts.js
   var API_VERSION = 1;
   var MAX_PAYLOAD_BYTES = 64 * 1024;
   function assertId(value) {
@@ -145,7 +145,7 @@ var __t3Client = (() => {
     return manifest;
   }
 
-  // packages/extension-sdk/dist/capabilities.js
+  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/capabilities.js
   function defineApi(definition) {
     return { definition: validateApiDefinition(definition) };
   }
@@ -238,7 +238,7 @@ var __t3Client = (() => {
     return api;
   }
 
-  // packages/extension-sdk/dist/orchestration.js
+  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/orchestration.js
   var ORCHESTRATION_STATUS = "t3.orchestration/status";
   var ORCHESTRATION_CONTROL = "t3.orchestration/control";
   var ORCHESTRATION_READ = "t3.orchestration/read";
@@ -464,7 +464,7 @@ var __t3Client = (() => {
   }
   var ORCHESTRATION_CONTROL_API = orchestrationControlApi.definition;
 
-  // packages/extension-sdk/dist/textEdits.js
+  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/textEdits.js
   var WORKSPACE_READ_TEXT_EDITS = "t3.workspace/text-edits";
   var WORKSPACE_READ_TEXT_GRANT = "t3.workspace/read-text";
   var WORKSPACE_WRITE_TEXT = "t3.workspace/write-text";
@@ -657,7 +657,7 @@ var __t3Client = (() => {
     ]
   });
 
-  // packages/extension-sdk/dist/catalogue.js
+  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/catalogue.js
   var BROWSER_LOCAL_SERVERS = "t3.browser/local-servers";
   var BROWSER_READ_LOCAL_SERVERS = "t3.browser/read-local-servers";
   var browserLocalServersApi = defineStreamApi({
@@ -1095,6 +1095,7 @@ var __t3Client = (() => {
           "retainedByteLength",
           "truncated",
           "clearGeneration",
+          "contentsUnitStart",
           "boundarySequence"
         ],
         properties: {
@@ -1106,6 +1107,11 @@ var __t3Client = (() => {
           retainedByteLength: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
           truncated: { type: "boolean" },
           clearGeneration: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+          contentsUnitStart: {
+            type: "integer",
+            minimum: 0,
+            maximum: Number.MAX_SAFE_INTEGER
+          },
           boundarySequence: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER }
         }
       },
@@ -1134,12 +1140,13 @@ var __t3Client = (() => {
       {
         type: "object",
         additionalProperties: false,
-        required: ["kind", "terminalId", "streamEpoch", "sequence", "reason"],
+        required: ["kind", "terminalId", "streamEpoch", "sequence", "clearGeneration", "reason"],
         properties: {
           kind: { const: "reset" },
           terminalId: { type: "string", minLength: 1, maxLength: 128 },
           streamEpoch: { type: "string", minLength: 1, maxLength: 128 },
           sequence: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+          clearGeneration: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
           reason: { const: "history-cleared" }
         }
       },
@@ -4045,7 +4052,7 @@ var __t3Client = (() => {
   var TERMINAL_OUTPUT_EVENTS_API = terminalOutputEventsApi.definition;
   var TERMINAL_CONTROL_API = terminalControlApi.definition;
 
-  // packages/extension-sdk/dist/environment.js
+  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/environment.js
   var ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
   var ENVIRONMENT_ASSET_MEDIA_TYPES = [
     "application/wasm",
@@ -4183,7 +4190,7 @@ var __t3Client = (() => {
     return { ...pkg, manifest };
   }
 
-  // packages/extension-sdk/dist/authoring.js
+  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/authoring.js
   var statePreview = (state2) => {
     const encoded = JSON.stringify(state2);
     return encoded.length > 200 ? encoded.slice(0, 200) + "\u2026" : encoded;
@@ -4280,7 +4287,7 @@ var __t3Client = (() => {
     return { id: api.definition.id, versionRange };
   }
 
-  // packages/shared/src/projectScripts.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/shared/src/projectScripts.ts
   function projectScriptRuntimeEnv(input) {
     const env = {
       T3CODE_PROJECT_ROOT: input.project.cwd
@@ -4294,10 +4301,10 @@ var __t3Client = (() => {
     return env;
   }
 
-  // packages/first-party-extensions/terminal/extension.tsx
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/extension.tsx
   var import_react = __toESM(require_react(), 1);
 
-  // packages/first-party-extensions/terminal/ghostty/runtime.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/runtime.ts
   var textDecoder = new TextDecoder();
   var GhosttyRuntime = class _GhosttyRuntime {
     memory;
@@ -4483,15 +4490,15 @@ var __t3Client = (() => {
     return promise;
   }
 
-  // packages/first-party-extensions/terminal/ghostty/platform.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/platform.ts
   function isMacPlatform(platform) {
     return /mac|iphone|ipad|ipod/i.test(platform);
   }
 
-  // packages/first-party-extensions/terminal/ghostty/selection.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/selection.ts
   var SELECTION_MULTI_CLICK_INTERVAL_MS = 500;
 
-  // packages/first-party-extensions/terminal/ghostty/terminal-links.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/terminal-links.ts
   var URL_PATTERN = /https?:\/\/[^\s"'`<>]+/giu;
   var FILE_PATH_PATTERN = /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
   var TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
@@ -4580,7 +4587,7 @@ var __t3Client = (() => {
     };
   }
 
-  // packages/first-party-extensions/terminal/ghostty/keyCodes.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/keyCodes.ts
   var ghosttyKeyboardCodes = [
     "Unidentified",
     "Backquote",
@@ -4820,7 +4827,7 @@ var __t3Client = (() => {
     return event.key.codePointAt(0) ?? 0;
   }
 
-  // packages/first-party-extensions/terminal/ghostty/core.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/core.ts
   var GHOSTTY_SUCCESS = 0;
   var GHOSTTY_OUT_OF_SPACE = -3;
   var MAX_SCROLLBACK_ROWS = 1e4;
@@ -5817,7 +5824,7 @@ var __t3Client = (() => {
     return sameColor(left, right);
   }
 
-  // packages/first-party-extensions/terminal/ghostty/renderer.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/renderer.ts
   var DEFAULT_SELECTION_BACKGROUND = "rgba(72, 122, 191, 0.35)";
   function cssColor(color) {
     return `rgb(${color.r}, ${color.g}, ${color.b})`;
@@ -6002,7 +6009,7 @@ var __t3Client = (() => {
     }
   }
 
-  // packages/first-party-extensions/terminal/ghostty/monospaceFonts.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/monospaceFonts.ts
   function quoteFontFamilyName(name) {
     const bare = name.trim();
     if (bare.length === 0) return "";
@@ -6045,7 +6052,7 @@ var __t3Client = (() => {
     }
   }
 
-  // packages/first-party-extensions/terminal/ghostty/surface.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/surface.ts
   var DEFAULT_TERMINAL_FONT_SIZE = 12;
   var MIN_TERMINAL_FONT_SIZE = 6;
   var MAX_TERMINAL_FONT_SIZE = 32;
@@ -7501,7 +7508,7 @@ var __t3Client = (() => {
     }
   };
 
-  // packages/first-party-extensions/terminal/ghostty/surfaceKeys.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/surfaceKeys.ts
   var TERMINAL_WORD_BACKWARD = "\x1Bb";
   var TERMINAL_WORD_FORWARD = "\x1Bf";
   var TERMINAL_LINE_START = "";
@@ -7564,7 +7571,7 @@ var __t3Client = (() => {
     return null;
   }
 
-  // packages/first-party-extensions/terminal/terminalTheme.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/terminalTheme.ts
   function parseTerminalColor(value, fallback) {
     if (typeof document === "undefined") return fallback;
     const canvas = document.createElement("canvas");
@@ -7653,7 +7660,7 @@ var __t3Client = (() => {
     };
   }
 
-  // packages/shared/src/terminalLabels.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/shared/src/terminalLabels.ts
   function getTerminalLabel(terminalId) {
     const numericSuffix = /^term(?:inal)?-(\d+)$/i.exec(terminalId)?.[1];
     if (numericSuffix) {
@@ -7677,7 +7684,7 @@ var __t3Client = (() => {
     return `term-${nextIndex}`;
   }
 
-  // packages/first-party-extensions/terminal/inputQueue.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/inputQueue.ts
   var TERMINAL_INPUT_SERIALIZED_BUDGET = 48 * 1024;
   var TERMINAL_INPUT_PENDING_BUDGET = 256 * 1024;
   var TERMINAL_INPUT_WRITE_TIMEOUT_MS = 3e4;
@@ -7876,7 +7883,7 @@ var __t3Client = (() => {
     }
   };
 
-  // packages/first-party-extensions/terminal/viewModel.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/viewModel.ts
   var TERMINAL_BUFFER_MAX_BYTES = 512 * 1024;
   var OVERFLOW_RESUBSCRIBE_WINDOW_MS = 1e4;
   var OVERFLOW_RESUBSCRIBE_MAX = 3;
@@ -7939,17 +7946,18 @@ var __t3Client = (() => {
     const sequence = frame.sequence;
     const base = { ...current, sequence };
     if (value.kind === "snapshot") {
-      if (frame.sequence < 0 || !Number.isSafeInteger(value.boundarySequence))
+      if (frame.sequence < 0 || !Number.isSafeInteger(value.boundarySequence) || !Number.isSafeInteger(value.contentsUnitStart))
         return fail("Output snapshot boundary is invalid.");
       const contents3 = tailByBytes(value.contents, TERMINAL_BUFFER_MAX_BYTES);
       const ended = value.status === "exited" || value.status === "error";
+      const omitted = value.truncated || value.contentsUnitStart > 0;
       return {
         buffer: {
           contents: contents3,
           retainedBytes: utf8Bytes(contents3),
-          truncated: value.truncated,
+          truncated: omitted,
           status: ended ? "exited" : "live",
-          statusText: ended ? `Terminal is ${value.status}.` : value.truncated ? "Watching live output. Older retained history was omitted." : "Watching live output.",
+          statusText: ended ? `Terminal is ${value.status}.` : omitted ? "Watching live output. Older retained history was omitted." : "Watching live output.",
           exitCode: null,
           epoch: value.streamEpoch,
           sequence,
@@ -8463,7 +8471,7 @@ var __t3Client = (() => {
     }
   };
 
-  // packages/first-party-extensions/terminal/vtAttachment.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/vtAttachment.ts
   var MAX_OUTPUT_CHUNK_DATA_LENGTH = 8192;
   var MAX_OUTPUT_CHUNKS = 64;
   var MAX_PRE_SINK_OUTPUT_LENGTH = 512 * 1024;
@@ -8483,21 +8491,13 @@ var __t3Client = (() => {
     #base = null;
     /**
      * Whether `#base` + `#buffered` reconstructs full parser state — i.e. the
-     * base was seeded by a non-truncated snapshot carrying every byte since
-     * process start. A history clear or a dropped pre-sink overflow makes the
+     * base was seeded by a snapshot proven to carry every byte since process
+     * start (`clearGeneration === 0 && contentsUnitStart === 0`). A history
+     * clear, any retention eviction, or a dropped pre-sink overflow makes the
      * replay base unfaithful; a remount still replays it and flags degraded
      * instead of pretending the modes are known.
      */
     #replayFaithful = true;
-    /**
-     * Epoch in which a history clear was observed. The server reports
-     * `truncated:false` on post-clear snapshots (nothing was dropped by
-     * retention — it was explicitly cleared), but the retained bytes no longer
-     * contain the mode-establishing output, so a replayed snapshot in that
-     * epoch is NOT a faithful parser resync. Only a new epoch (a fresh
-     * process incarnation) re-proves mode state.
-     */
-    #clearedEpoch = null;
     /**
      * Renderer start failure message, or null when the surface is healthy.
      * Sticky across frames: output/snapshot frames keep feeding the bounded
@@ -8529,29 +8529,31 @@ var __t3Client = (() => {
     #unansweredEpoch = null;
     /**
      * Code units evicted from the front of `#buffered` since `#base` was
-     * set. While nonzero the compressed stream (base + buffered) is NOT a
-     * contiguous slice of the epoch stream, so snapshot reconciliation
-     * cannot prove where our bytes sit and pending claims are dropped.
+     * set. The hole sits at stream position `base.length`: a run at
+     * `start >= base.length` occupies absolute window position
+     * `#receivedUnitStart + start + hole`, one inside the base
+     * `#receivedUnitStart + start`.
      */
     #bufferedHole = 0;
     /**
-     * Whether the start of the received stream is anchored: `#base` came
-     * from a snapshot's contents, so our stream begins at a known retention
-     * boundary and can only ever move forward. Post-clear streams
-     * (`#base === ""` after a reset) start mid-window — bytes the server
-     * emitted before our resubscribe sit inside the next snapshot ahead of
-     * our first byte — so position-0 provenance is unprovable there.
+     * Absolute UTF-16 unit offset of `#base`'s first unit inside the
+     * retained-history window — the snapshot's `contentsUnitStart`, or 0
+     * after an observed reset (the post-clear stream restarts at the new
+     * window's origin). Claims translate through it into window positions,
+     * so line eviction, byte eviction and tail truncation are all just
+     * arithmetic — never text matching. null before the first snapshot
+     * (no claims can exist then: deliveries require an epoch).
      */
-    #receivedAnchored = false;
+    #receivedUnitStart = null;
     /**
      * Identity of the retained-history window the received stream belongs
-     * to — the last snapshot's epoch + `clearGeneration`. A history clear
-     * does NOT end the epoch, so a clear inside a subscription gap is
-     * otherwise invisible: the next snapshot's `truncated:false` only
-     * means "all CURRENT retained bytes", not "same history origin". Same
-     * epoch with a different generation means the old window's bytes are
-     * gone. null when the stream's window is unknown — no snapshot yet,
-     * or an observed reset restarted the stream mid-window.
+     * to — the last snapshot's or observed reset's epoch +
+     * `clearGeneration`. A history clear does NOT end the epoch, so a
+     * clear inside a subscription gap is otherwise invisible: the next
+     * snapshot's `truncated:false` only means "all CURRENT retained
+     * bytes", not "same history origin". Same epoch with a different
+     * generation means the old window's bytes are gone. null only before
+     * the first snapshot.
      */
     #baseWindow = null;
     #pending = null;
@@ -8572,14 +8574,6 @@ var __t3Client = (() => {
      * outer fence cannot see. `closed` frames carry no native sequence.
      */
     #nativeWatermark = -1;
-    /**
-     * Native sequence of the last event we consumed, persisted across
-     * `beginStream` (which must reset the per-subscription watermark for
-     * replay fencing). It marks the epoch-stream position where our
-     * received stream ends — the anchor that makes a resnapshot's contents
-     * provable when its boundary equals this sequence.
-     */
-    #receivedEndSequence = -1;
     constructor(terminalId, onChange) {
       this.terminalId = terminalId;
       this.#onChange = onChange;
@@ -8626,45 +8620,32 @@ var __t3Client = (() => {
       if (releasable) this.#clearUnanswered();
     }
     /**
-     * A snapshot re-bases the stream. Equal text is never proof that bytes
-     * survived — an evicted query and a newer identical query look the same
-     * — so claims are only kept where the retention boundary itself proves
-     * their position, and dropped otherwise (explicit drop: nothing remains
-     * to answer, and migrating a claim would send an unsolicited reply).
-     *
-     * Two anchors are provable:
-     * - `boundarySequence === priorReceivedEnd`: no newer events exist, so
-     *   contents must end at our last received byte. `endsWith` then pins
-     *   both ends — contents IS our received suffix, truncation included.
-     * - `!truncated` with an anchored stream in the same clear generation:
-     *   an untruncated snapshot covers every retained byte, retention only
-     *   drops at the far larger buffer cap, and an unchanged generation
-     *   proves no clear moved the window's start — so contents position 0
-     *   is provably our stream's own start. `startsWith` then verifies the
-     *   server agrees byte-for-byte.
-     * Everything else — a truncated resnapshot, an unanchored post-clear
-     *   stream, a hole from our own eviction — leaves run positions
-     *   unprovable: drop the claims.
+     * A snapshot re-bases the stream. Claims survive only by authoritative
+     * position: the host reports `contentsUnitStart` — the absolute UTF-16
+     * offset of contents[0] inside the retained window (epoch +
+     * clearGeneration) — and every run's absolute position is known from
+     * the stream's own recorded start. Line eviction, byte eviction and
+     * tail truncation are all the same arithmetic then; equal text is
+     * never consulted. A run whose absolute position precedes the new
+     * contents start is provably evicted — drop it, never migrate it onto
+     * a later identical query. A run inside the window is still verified
+     * byte-for-byte at its computed position; any disagreement drops it.
+     * Without a known stream start (never happens once deliveries exist)
+     * or a window that moved backwards (host corruption), drop all.
      */
-    #reconcileUnanswered(received, contents2, boundarySequence, priorReceivedEnd, truncated, priorAnchored, priorHole) {
+    #reconcileUnanswered(contents2, contentsUnitStart, priorUnitStart, priorBaseLength, priorHole) {
       if (this.#unanswered.length === 0) return;
-      let drop = -1;
-      if (priorHole === 0) {
-        if (boundarySequence === priorReceivedEnd && received.endsWith(contents2)) {
-          drop = received.length - contents2.length;
-        } else if (!truncated && priorAnchored && contents2.startsWith(received)) {
-          drop = 0;
-        }
-      }
-      if (drop < 0) {
+      if (priorUnitStart === null || contentsUnitStart < priorUnitStart) {
         this.#unanswered = [];
         return;
       }
+      const drop = contentsUnitStart - priorUnitStart;
       this.#unanswered = this.#unanswered.flatMap((run) => {
-        const end = run.start + run.data.length;
-        if (end <= drop) return [];
-        const start = Math.max(run.start, drop);
-        return [{ start: start - drop, data: run.data.slice(start - run.start) }];
+        const start = run.start + (run.start >= priorBaseLength ? priorHole : 0) - drop;
+        if (start + run.data.length <= 0) return [];
+        const data = start < 0 ? run.data.slice(-start) : run.data;
+        const at = Math.max(start, 0);
+        return contents2.startsWith(data, at) ? [{ start: at, data }] : [];
       });
     }
     /**
@@ -8846,41 +8827,36 @@ var __t3Client = (() => {
       }
       this.#sequence = frame.sequence;
       if (value.kind === "snapshot") {
-        if (!Number.isSafeInteger(value.boundarySequence) || value.boundarySequence < 0 || !Number.isSafeInteger(value.clearGeneration) || value.clearGeneration < 0) {
+        if (!Number.isSafeInteger(value.boundarySequence) || value.boundarySequence < 0 || !Number.isSafeInteger(value.clearGeneration) || value.clearGeneration < 0 || !Number.isSafeInteger(value.contentsUnitStart) || value.contentsUnitStart < 0) {
           this.#fail("Output snapshot boundary is invalid.");
           return;
         }
         this.#pending = null;
-        const received = (this.#base ?? "") + this.#buffered.join("");
-        const priorReceivedEnd = this.#receivedEndSequence;
-        const priorAnchored = this.#receivedAnchored;
+        const priorUnitStart = this.#receivedUnitStart;
+        const priorBaseLength = this.#base?.length ?? 0;
         const priorHole = this.#bufferedHole;
         const priorWindow = this.#baseWindow;
         this.#epoch = value.streamEpoch;
         this.#nativeWatermark = value.boundarySequence;
-        this.#receivedEndSequence = value.boundarySequence;
         this.#base = value.contents;
-        this.#receivedAnchored = true;
+        this.#receivedUnitStart = value.contentsUnitStart;
         this.#buffered = [];
         this.#bufferedLength = 0;
         this.#bufferedHole = 0;
         this.#baseWindow = { epoch: value.streamEpoch, generation: value.clearGeneration };
         const missedClear = priorWindow !== null && priorWindow.epoch === value.streamEpoch && priorWindow.generation !== value.clearGeneration;
-        if (missedClear) this.#clearedEpoch = value.streamEpoch;
         if (this.#unanswered.length > 0 && (this.#unansweredEpoch !== value.streamEpoch || missedClear)) {
           this.#clearUnanswered();
         } else {
           this.#reconcileUnanswered(
-            received,
             value.contents,
-            value.boundarySequence,
-            priorReceivedEnd,
-            value.truncated,
-            priorAnchored,
+            value.contentsUnitStart,
+            priorUnitStart,
+            priorBaseLength,
             priorHole
           );
         }
-        this.#replayFaithful = !value.truncated && value.streamEpoch !== this.#clearedEpoch;
+        this.#replayFaithful = !missedClear && !value.truncated && value.clearGeneration === 0 && value.contentsUnitStart === 0;
         const unfaithful = !this.#replayFaithful;
         if (this.#sink) {
           this.#replayInto(this.#sink, value.contents, true);
@@ -8889,7 +8865,7 @@ var __t3Client = (() => {
         const running = this.#runningStatus();
         this.#emit({
           status: ended ? "exited" : running.status,
-          statusText: ended ? `Terminal is ${value.status}.` : this.#sinkFailure !== null ? this.#sinkFailure : value.truncated ? "Watching live output \u2014 earlier history was truncated, so terminal state may be incomplete." : unfaithful ? "Watching live output \u2014 history was cleared, so terminal modes may be incomplete." : "Watching live output.",
+          statusText: ended ? `Terminal is ${value.status}.` : this.#sinkFailure !== null ? this.#sinkFailure : value.truncated ? "Watching live output \u2014 earlier history was truncated, so terminal state may be incomplete." : value.clearGeneration > 0 ? "Watching live output \u2014 history was cleared, so terminal modes may be incomplete." : unfaithful ? "Watching live output \u2014 earlier output exceeded retention, so terminal state may be incomplete." : "Watching live output.",
           degraded: unfaithful && !ended,
           exitCode: null,
           ended
@@ -8921,22 +8897,24 @@ var __t3Client = (() => {
           this.#fail("Output chunk group is discontinuous.");
           return;
         }
+        if (!Number.isSafeInteger(value.clearGeneration) || value.clearGeneration < 0) {
+          this.#fail("Output reset window is invalid.");
+          return;
+        }
         if (value.sequence <= this.#nativeWatermark) {
           this.#fail("Output event sequence is not monotonic.");
           return;
         }
         this.#nativeWatermark = value.sequence;
-        this.#receivedEndSequence = value.sequence;
         this.#pending = null;
         this.#base = "";
-        this.#receivedAnchored = false;
-        this.#baseWindow = null;
+        this.#receivedUnitStart = 0;
+        this.#baseWindow = { epoch: value.streamEpoch, generation: value.clearGeneration };
         this.#buffered = [];
         this.#bufferedLength = 0;
         this.#bufferedHole = 0;
         this.#clearUnanswered();
         this.#replayFaithful = false;
-        this.#clearedEpoch = this.#epoch;
         if (this.#sink) {
           this.#sink.clearScreen();
         }
@@ -8960,7 +8938,6 @@ var __t3Client = (() => {
           return;
         }
         this.#nativeWatermark = value.sequence;
-        this.#receivedEndSequence = value.sequence;
         this.#clearUnanswered();
         this.#emit({
           status: "exited",
@@ -8985,7 +8962,6 @@ var __t3Client = (() => {
         const data = this.#pending.parts.join("");
         this.#pending = null;
         this.#nativeWatermark = value.sequence;
-        this.#receivedEndSequence = value.sequence;
         this.#deliver(data);
         return;
       }
@@ -9006,7 +8982,6 @@ var __t3Client = (() => {
         return;
       }
       this.#nativeWatermark = value.sequence;
-      this.#receivedEndSequence = value.sequence;
       this.#deliver(value.data);
     }
   };
@@ -9046,7 +9021,7 @@ var __t3Client = (() => {
     }
   }
 
-  // packages/first-party-extensions/terminal/extension.tsx
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/extension.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
   var manifestId = "t3.terminal";
   var GHOSTTY_VT_ASSET = "assets/ghostty-vt.wasm";
@@ -9837,10 +9812,10 @@ var __t3Client = (() => {
     ]
   });
 
-  // packages/first-party-extensions/terminal/extension.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/extension.ts
   var extension_default2 = extension_default;
 
-  // packages/first-party-extensions/terminal/generated-client.ts
+  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/generated-client.ts
   var generated_client_default = extension_default2.client;
   return __toCommonJS(generated_client_exports);
 })();

@@ -43,6 +43,7 @@ const snapshot: TerminalOutputObservationEvent = {
   terminalId: "term-1",
   sequence: 0,
   clearGeneration: 0,
+  contentsUnitStart: 0,
   snapshot: {
     threadId: "thread",
     terminalId: "term-1",
@@ -130,6 +131,43 @@ async function iteratorOf(fixtureValue: ReturnType<typeof fixture>) {
   expect((await iterator.next()).value).toMatchObject({ type: "snapshot" });
   return iterator;
 }
+
+it("carries retained-window provenance on snapshot and reset frames", async () => {
+  const f = fixture({
+    onSubscribe: (callback) =>
+      Effect.sync(() =>
+        callback({
+          ...snapshot,
+          clearGeneration: 1,
+          contentsUnitStart: 42,
+        }),
+      ),
+  });
+  const stream = f.provider.subscribe!(
+    "subscribe",
+    { terminalId: "term-1" },
+    context,
+    new AbortController().signal,
+    metadata,
+  );
+  const iterator = stream[Symbol.asyncIterator]();
+  expect((await iterator.next()).value).toMatchObject({
+    type: "snapshot",
+    value: { clearGeneration: 1, contentsUnitStart: 42 },
+  });
+  f.emit({
+    type: "cleared",
+    sourceEpoch: "epoch-1",
+    threadId: "thread",
+    terminalId: "term-1",
+    sequence: 7,
+    clearGeneration: 2,
+  });
+  expect((await iterator.next()).value).toMatchObject({
+    type: "reset",
+    value: { kind: "reset", clearGeneration: 2 },
+  });
+});
 
 it("releases native queue groups after consumption", async () => {
   const f = fixture();

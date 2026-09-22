@@ -38,6 +38,7 @@ const snapshotValue = (overrides = {}) => ({
   retainedByteLength: 12,
   truncated: false,
   clearGeneration: 0,
+  contentsUnitStart: 0,
   boundarySequence: 0,
   ...overrides,
 });
@@ -176,6 +177,7 @@ NodeTest.describe("terminal view model — output stream", () => {
       terminalId: "term-1",
       streamEpoch: "epoch-1",
       sequence: 8,
+      clearGeneration: 1,
       reason: "history-cleared",
     });
     NodeAssert.equal(buffer.contents, "");

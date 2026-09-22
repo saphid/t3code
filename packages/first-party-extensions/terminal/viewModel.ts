@@ -212,19 +212,27 @@ export function applyOutputEvent(
   const base = { ...current, sequence };
 
   if (value.kind === "snapshot") {
-    if (frame.sequence < 0 || !Number.isSafeInteger(value.boundarySequence))
+    if (
+      frame.sequence < 0 ||
+      !Number.isSafeInteger(value.boundarySequence) ||
+      !Number.isSafeInteger(value.contentsUnitStart)
+    )
       return fail("Output snapshot boundary is invalid.");
     const contents = tailByBytes(value.contents, TERMINAL_BUFFER_MAX_BYTES);
     const ended = value.status === "exited" || value.status === "error";
+    // contentsUnitStart > 0 means the host dropped retained bytes ahead of
+    // the tail (line or byte eviction) even when the tail itself isn't
+    // truncated — the display is missing earlier output either way.
+    const omitted = value.truncated || value.contentsUnitStart > 0;
     return {
       buffer: {
         contents,
         retainedBytes: utf8Bytes(contents),
-        truncated: value.truncated,
+        truncated: omitted,
         status: ended ? "exited" : "live",
         statusText: ended
           ? `Terminal is ${value.status}.`
-          : value.truncated
+          : omitted
             ? "Watching live output. Older retained history was omitted."
             : "Watching live output.",
         exitCode: null,

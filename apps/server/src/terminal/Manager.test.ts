@@ -629,6 +629,90 @@ it.layer(
     }),
   );
 
+  it.effect("reports the absolute retained-window origin across line eviction", () =>
+    Effect.gen(function* () {
+      // 5-line limit: a burst of short lines evicts the head while the
+      // retained tail still fits under the snapshot byte cap, so the
+      // snapshot arrives untruncated — only contentsUnitStart reveals
+      // that units were dropped from the front of the window.
+      const { manager, ptyAdapter } = yield* createManager(5);
+      yield* manager.open(openInput());
+      const drained = yield* Deferred.make<void>();
+      const drainUnsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => {
+          if (event.type === "output" && event.data.endsWith("last\n"))
+            Deferred.doneUnsafe(drained, Effect.void);
+        },
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(drainUnsubscribe));
+      ptyAdapter.processes[0]!.emitData("q\n" + "x\n".repeat(10) + "last\n");
+      yield* Deferred.await(drained);
+
+      const events: TerminalManager.TerminalOutputObservationEvent[] = [];
+      const unsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => events.push(event),
+      );
+      yield* Effect.sync(unsubscribe);
+      const snapshot = events.find((event) => event.type === "snapshot");
+      if (!snapshot || snapshot.type !== "snapshot") return assert.fail("missing snapshot");
+      // totalUnits = 2 + 20 + 5 = 27; retained tail = last 5 lines.
+      const expected = 27 - snapshot.snapshot.contents.length;
+      expect(snapshot.contentsUnitStart).toBe(expected);
+      expect(snapshot.contentsUnitStart).toBeGreaterThan(0);
+      expect(snapshot.clearGeneration).toBe(0);
+      expect(snapshot.snapshot.truncated).toBe(false);
+      expect(snapshot.snapshot.contents.startsWith("q")).toBe(false);
+    }),
+  );
+
+  it.effect("a history clear restarts the retained window at unit origin 0", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5);
+      yield* manager.open(openInput());
+      const cleared = yield* Deferred.make<void>();
+      const events: TerminalManager.TerminalOutputObservationEvent[] = [];
+      const unsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => {
+          events.push(event);
+          if (event.type === "cleared") Deferred.doneUnsafe(cleared, Effect.void);
+        },
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      ptyAdapter.processes[0]!.emitData("before\n");
+      yield* manager.clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+      yield* Deferred.await(cleared);
+      const clearedEvent = events.find((event) => event.type === "cleared");
+      expect(clearedEvent).toMatchObject({ type: "cleared", clearGeneration: 1 });
+
+      const drained = yield* Deferred.make<void>();
+      const drainUnsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => {
+          if (event.type === "output" && event.data.endsWith("after\n"))
+            Deferred.doneUnsafe(drained, Effect.void);
+        },
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(drainUnsubscribe));
+      ptyAdapter.processes[0]!.emitData("after\n");
+      yield* Deferred.await(drained);
+
+      const post: TerminalManager.TerminalOutputObservationEvent[] = [];
+      const postUnsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => post.push(event),
+      );
+      yield* Effect.sync(postUnsubscribe);
+      const snapshot = post.find((event) => event.type === "snapshot");
+      if (!snapshot || snapshot.type !== "snapshot") return assert.fail("missing snapshot");
+      expect(snapshot.contentsUnitStart).toBe(0);
+      expect(snapshot.clearGeneration).toBe(1);
+      expect(snapshot.snapshot.contents).toBe("after\n");
+    }),
+  );
+
   it.effect("terminates an old observation on reincarnation without accepting old identity", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();

@@ -10,6 +10,7 @@ const snapshot = (extra = {}) => ({
   retainedByteLength: 6,
   truncated: false,
   clearGeneration: 0,
+  contentsUnitStart: 0,
   boundarySequence: 10,
   ...extra,
 });
