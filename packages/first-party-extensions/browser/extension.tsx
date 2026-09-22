@@ -7,11 +7,15 @@ import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import {
   browserSessionsApi,
   filePresentationApi,
+  uiKeybindingsApi,
+  uiNotificationsApi,
+  uiPanelsApi,
+  uiThemeApi,
   type BrowserSession,
   type BrowserSessionReceipt,
   type BrowserSessionStreamValue,
 } from "@t3tools/extension-sdk/catalogue";
-import type { Json } from "@t3tools/extension-sdk/contracts";
+import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useEffect, useRef, useState } from "react";
@@ -24,6 +28,14 @@ import {
   removeHistoryUrl,
   sanitizeHistoryEntries,
 } from "./historyStore.js";
+import {
+  BROWSER_GLOBAL_COMMANDS,
+  BROWSER_VIEW_COMMANDS,
+  focusAddressInput,
+  notifyToggleFailure,
+  togglePanelSurface,
+  watchThemeVars,
+} from "./uiContracts.js";
 import {
   canGoBack,
   canGoForward,
@@ -41,6 +53,81 @@ import {
 } from "./viewModel.js";
 
 const manifestId = "t3.browser";
+
+// Every theme-backed value chains a `--t3-browser-*` hop (published on the
+// view root from `t3.ui/theme` tokens) ahead of the legacy host vars. When
+// the contract is unavailable the hop never resolves and the legacy chain
+// renders — the honest degraded path.
+const muted = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
+const border = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
+const buttonStyle = {
+  font: "inherit",
+  fontSize: 12,
+  padding: "2px 8px",
+  border,
+  borderRadius: 5,
+  background: "transparent",
+  color: "inherit",
+} as const;
+
+/**
+ * `t3.ui/theme` consumer. `getTokens` resolves the host's *effective* theme —
+ * the provider's projection already folds the stored preference, live session
+ * overlays, and external previews into the painted state — and each
+ * `subscribeState` frame re-reads the tokens, so the panel tracks exactly
+ * what the host paints without interpreting overlay semantics itself. The map
+ * lands on the view root as `--t3-browser-*` custom properties; the contract
+ * lifecycle lives in `watchThemeVars`, which clears the map on a failed read
+ * or a closed/lost subscription so an obsolete palette never poses as
+ * current — every style then falls back to its legacy `var()` chain.
+ */
+function useThemeVars(
+  host: ClientHost,
+  session: ViewSession,
+  visible: boolean,
+): Record<string, string> | null {
+  const [vars, setVars] = useState<Record<string, string> | null>(null);
+  useEffect(() => {
+    if (!visible) return;
+    const controller = new AbortController();
+    watchThemeVars(
+      bindApi(uiThemeApi, host, session.context),
+      bindStreamApi(uiThemeApi, host, session.context),
+      AbortSignal.any([controller.signal, session.signal]),
+      setVars,
+    );
+    return () => controller.abort();
+  }, [host, session, visible]);
+  return vars;
+}
+
+/**
+ * `t3.ui/panels` behind the staged `toggle` command: dispatch supplies the
+ * active thread's context (or the registration's own when no thread is
+ * active — no thread means nothing to toggle). A failed hop toasts through
+ * `t3.ui/notifications` when that grant exists, mirroring the native
+ * `preview.toggle` "desktop-only" notice; without it the press is silent.
+ */
+function runGlobalBrowserCommand(
+  host: ClientHost,
+  call: { readonly commandId: string; readonly context: ViewContext },
+): void {
+  if (call.commandId !== "toggle") return;
+  const threadId = call.context.resource.threadId;
+  if (!threadId) return;
+  void togglePanelSurface(
+    bindApi(uiPanelsApi, host, call.context),
+    threadId,
+    AbortSignal.timeout(10_000),
+  ).catch((error: unknown) => {
+    void notifyToggleFailure(
+      bindApi(uiNotificationsApi, host, call.context),
+      threadId,
+      error,
+      AbortSignal.timeout(5_000),
+    ).catch(() => {});
+  });
+}
 
 /** Session identity held by this panel — tabId + serverEpoch fence the lease. */
 interface HeldSession {
@@ -111,6 +198,8 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const heldRef = useRef(held);
   const historyRef = useRef(history);
   const lastRevision = useRef(-1);
+  const addressRef = useRef<HTMLInputElement | null>(null);
+  const themeVars = useThemeVars(host, session, visible);
   useEffect(() => {
     heldRef.current = held;
   }, [held]);
@@ -327,6 +416,43 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     );
   };
 
+  // `t3.ui/keybindings` — view-local commands register under this view's own
+  // thread context (a staged installation context can never deep-equal it)
+  // and bind to this session, so arbitration's focused-view tier reaches the
+  // handler. Registration is idempotent across sibling views on the same
+  // context; a denied grant or absent seam leaves the chords unclaimed.
+  const runViewCommand = useRef<(commandId: string) => void>(() => {});
+  useEffect(() => {
+    runViewCommand.current = (commandId) => {
+      if (commandId === "reload") {
+        if (held) command("reload");
+        else commit(reload(state));
+      } else if (commandId === "focusAddress") {
+        focusAddressInput(addressRef.current);
+      }
+    };
+  });
+  useEffect(() => {
+    if (!visible) return;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    void bindApi(uiKeybindingsApi, host, session.context)
+      .invoke("registerCommands", { commands: BROWSER_VIEW_COMMANDS }, signal)
+      .then(
+        ({ commandSetToken }) => {
+          if (signal.aborted) return;
+          try {
+            session.bindCommands(commandSetToken, (call) => runViewCommand.current(call.commandId));
+          } catch {
+            // A stale token or a host without the binding seam leaves this
+            // view without claimed shortcuts — the chords fall through.
+          }
+        },
+        () => {},
+      );
+    return () => controller.abort();
+  }, [host, session, visible]);
+
   const leaseState = surfaceLease?.state;
   const surfaceNotice = surfaceDenial
     ? `Native presentation is unavailable — ${surfaceDenial.reason}${
@@ -338,17 +464,6 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         ? `This client cannot composite a native browser surface (${leaseState.presentation.reason}). The session is still open — view it from the desktop app.`
         : null;
 
-  const muted = "var(--muted-foreground, #667085)";
-  const buttonStyle = {
-    font: "inherit",
-    fontSize: 12,
-    padding: "2px 8px",
-    border: "1px solid var(--border, #dfe3e8)",
-    borderRadius: 5,
-    background: "transparent",
-    color: "inherit",
-  } as const;
-
   return (
     <section
       aria-label="Browser"
@@ -357,10 +472,11 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         display: "flex",
         flexDirection: "column",
         minHeight: 0,
-        color: "var(--foreground, #20252d)",
-        background: "var(--background, #fff)",
+        color: "var(--t3-browser-text, var(--foreground, #20252d))",
+        background: "var(--t3-browser-canvas, var(--background, #fff))",
         fontFamily: "var(--font-sans, system-ui, sans-serif)",
         fontSize: 13,
+        ...themeVars,
       }}
     >
       <header
@@ -368,7 +484,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           display: "flex",
           gap: 6,
           padding: 8,
-          borderBottom: "1px solid var(--border, #dfe3e8)",
+          borderBottom: border,
           flexShrink: 0,
           alignItems: "center",
         }}
@@ -404,6 +520,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           type="text"
           aria-label="Address"
           placeholder="Search or enter address"
+          ref={addressRef}
           value={address}
           onChange={(event) => setAddress(event.target.value)}
           onKeyDown={(event) => {
@@ -440,7 +557,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                 padding: 12,
                 fontSize: 12,
                 color: muted,
-                background: "var(--background, #fff)",
+                background: "var(--t3-browser-canvas, var(--background, #fff))",
               }}
             >
               {surfaceNotice}
@@ -520,7 +637,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                       textDecoration: "underline",
                       color:
                         state.history.length - 1 - position === state.index
-                          ? "var(--foreground, #20252d)"
+                          ? "var(--t3-browser-text, var(--foreground, #20252d))"
                           : muted,
                     }}
                   >
@@ -536,12 +653,18 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   );
 }
 
-export default defineExtension({
+const authored = defineExtension({
   id: manifestId,
   version: "0.1.0",
   provides: [filePresentationApi.definition],
   serverEntry: "server.ts",
-  requires: [requireApi(browserSessionsApi)],
+  requires: [
+    requireApi(browserSessionsApi),
+    requireApi(uiThemeApi),
+    requireApi(uiKeybindingsApi),
+    requireApi(uiPanelsApi),
+    requireApi(uiNotificationsApi),
+  ],
   surfaces: [
     {
       name: "view",
@@ -549,6 +672,10 @@ export default defineExtension({
       scope: "thread",
       placements: ["side-panel"],
       clients: ["web", "desktop"],
+      // Stays empty: this field gates mounting on host services reached
+      // through `session.invoke` — `t3.ui/*` are brokered APIs (bindApi,
+      // opportunistic under grants) and `t3.browser/surface` rides
+      // `host.browserSurface`, so no required service belongs here.
       capabilities: [],
       stateVersion: 1,
       validateRestore: restoreState,
@@ -558,3 +685,22 @@ export default defineExtension({
     },
   ],
 });
+
+const client = authored.client;
+
+export default {
+  ...authored,
+  ...(client === undefined
+    ? {}
+    : {
+        client(host: ClientHost) {
+          // Factory-time staging: only this path's `t3.extensions`-scoped
+          // context makes `scope:"global"` + `activation` legal, and the host
+          // flushes the set once a client-provider connection is live.
+          host.registerGlobalCommands?.(BROWSER_GLOBAL_COMMANDS, (call) =>
+            runGlobalBrowserCommand(host, call),
+          );
+          return client(host);
+        },
+      }),
+};
