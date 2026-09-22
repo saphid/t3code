@@ -55,7 +55,26 @@ This is a read-oriented panel. It consumes `t3.vcs/read` plus the
 - turn-mode expansion is disabled on purpose: checkpoint commits are
   root commits, so `getFileContents`'s merge-base path cannot expand
   turn sources — the panel says so instead of issuing requests that
-  cannot resolve.
+  cannot resolve,
+- `t3.ui/*` adoption: theme values resolve through
+  `t3.ui/theme.getTokens` + `subscribeState` (stored preference,
+  session overlay, and external previews all re-resolve the panel's
+  `var(--x, token)` fallbacks; a missing grant keeps the static
+  values), the `mod+d` toggle stages through
+  `ClientHost.registerGlobalCommands` and the mounted view binds via
+  `session.bindCommands` so host arbitration (focused view →
+  thread-matched binding → installation handler → cold activation)
+  owns precedence, and the toggle itself runs through
+  `t3.ui/panels` (`listSurfaces` → open/activate/close, matching the
+  native `diff.toggle`). Panel access gates availability: the view
+  runs a grant-enforced `listSurfaces` read before registering
+  (denied or unreachable panels access means the command is never
+  offered), and a dispatch that finds the capability denied or
+  revoked withdraws the command set so the palette stops offering
+  it. `t3.ui/notify` is used only to report
+  command-dispatch failures and access loss — a rejected toggle has
+  no in-panel affordance, so an error toast is the honest channel;
+  status rows stay inline, matching the native panel.
 
 Deferred slices: split view + Pierre renderer features (react-dom is
 bundler-banned), diff-line comments (`t3.messages/enrichment`),
