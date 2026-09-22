@@ -1,4 +1,5 @@
 export default function (__t3Host) {
+"use strict";
 var __t3Client = (() => {
   var __create = Object.create;
   var __defProp = Object.defineProperty;
@@ -38,6 +39,7 @@ var __t3Client = (() => {
   // host-react:react
   var require_react = __commonJS({
     "host-react:react"(exports, module) {
+      "use strict";
       module.exports = __t3Host.React;
     }
   });
@@ -45,9 +47,25 @@ var __t3Client = (() => {
   // host-react:react/jsx-runtime
   var require_jsx_runtime = __commonJS({
     "host-react:react/jsx-runtime"(exports) {
+      "use strict";
       var R = __t3Host.React;
       exports.Fragment = R.Fragment;
-      exports.jsx = exports.jsxs = exports.jsxDEV = (type, props, key) => R.createElement(type, key === void 0 ? props : { ...props, key });
+      var mark = (n) => {
+        if (n && typeof n === "object" && n._store) n._store.validated = 1;
+      };
+      var el = (type, props, key, isStatic) => {
+        const c = props == null ? void 0 : props.children;
+        if (Array.isArray(c)) {
+          if (isStatic) {
+            for (const x of c) mark(x);
+            Object.freeze(c);
+          }
+        } else mark(c);
+        return R.createElement(type, key === void 0 ? props : { ...props, key });
+      };
+      exports.jsx = (t, p, k) => el(t, p, k, false);
+      exports.jsxs = (t, p, k) => el(t, p, k, true);
+      exports.jsxDEV = (t, p, k, s) => el(t, p, k, s === true);
     }
   });
 
@@ -57,7 +75,7 @@ var __t3Client = (() => {
     default: () => generated_client_default
   });
 
-  // ../../extension-sdk/dist/contracts.js
+  // node_modules/@t3tools/extension-sdk/dist/contracts.js
   var API_VERSION = 1;
   var MAX_PAYLOAD_BYTES = 64 * 1024;
   function assertId(value) {
@@ -147,7 +165,7 @@ var __t3Client = (() => {
     return manifest;
   }
 
-  // ../../extension-sdk/dist/capabilities.js
+  // node_modules/@t3tools/extension-sdk/dist/capabilities.js
   function defineApi(definition) {
     return { definition: validateApiDefinition(definition) };
   }
@@ -240,7 +258,7 @@ var __t3Client = (() => {
     return api;
   }
 
-  // ../../extension-sdk/dist/orchestration.js
+  // node_modules/@t3tools/extension-sdk/dist/orchestration.js
   var ORCHESTRATION_STATUS = "t3.orchestration/status";
   var ORCHESTRATION_CONTROL = "t3.orchestration/control";
   var ORCHESTRATION_READ = "t3.orchestration/read";
@@ -466,7 +484,7 @@ var __t3Client = (() => {
   }
   var ORCHESTRATION_CONTROL_API = orchestrationControlApi.definition;
 
-  // ../../extension-sdk/dist/textEdits.js
+  // node_modules/@t3tools/extension-sdk/dist/textEdits.js
   var WORKSPACE_READ_TEXT_EDITS = "t3.workspace/text-edits";
   var WORKSPACE_READ_TEXT_GRANT = "t3.workspace/read-text";
   var WORKSPACE_WRITE_TEXT = "t3.workspace/write-text";
@@ -659,7 +677,7 @@ var __t3Client = (() => {
     ]
   });
 
-  // ../../extension-sdk/dist/workspaceResources.js
+  // node_modules/@t3tools/extension-sdk/dist/workspaceResources.js
   var WORKSPACE_RESOURCES = "t3.workspace/resources";
   var WORKSPACE_RESOURCE_CHUNK_UNITS = 8192;
   var WORKSPACE_RESOURCE_MAX_CHUNKS = 2048;
@@ -899,7 +917,7 @@ var __t3Client = (() => {
   });
   var WORKSPACE_RESOURCES_API = workspaceResourcesApi.definition;
 
-  // ../../extension-sdk/dist/clientProviders.js
+  // node_modules/@t3tools/extension-sdk/dist/clientProviders.js
   var targetSchema = {
     type: "object",
     additionalProperties: false,
@@ -1461,7 +1479,7 @@ var __t3Client = (() => {
     CLIENT_TERMINAL_APPEARANCE_API
   ].map((definition) => [definition.id, definition]));
 
-  // ../../extension-sdk/dist/catalogue.js
+  // node_modules/@t3tools/extension-sdk/dist/catalogue.js
   var BROWSER_LOCAL_SERVERS = "t3.browser/local-servers";
   var BROWSER_READ_LOCAL_SERVERS = "t3.browser/read-local-servers";
   var browserLocalServersApi = defineStreamApi({
@@ -1947,6 +1965,8 @@ var __t3Client = (() => {
           "contents",
           "retainedByteLength",
           "truncated",
+          "clearGeneration",
+          "contentsUnitStart",
           "boundarySequence"
         ],
         properties: {
@@ -1957,6 +1977,12 @@ var __t3Client = (() => {
           contents: { type: "string", maxLength: 8192 },
           retainedByteLength: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
           truncated: { type: "boolean" },
+          clearGeneration: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+          contentsUnitStart: {
+            type: "integer",
+            minimum: 0,
+            maximum: Number.MAX_SAFE_INTEGER
+          },
           boundarySequence: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER }
         }
       },
@@ -1985,12 +2011,13 @@ var __t3Client = (() => {
       {
         type: "object",
         additionalProperties: false,
-        required: ["kind", "terminalId", "streamEpoch", "sequence", "reason"],
+        required: ["kind", "terminalId", "streamEpoch", "sequence", "clearGeneration", "reason"],
         properties: {
           kind: { const: "reset" },
           terminalId: { type: "string", minLength: 1, maxLength: 128 },
           streamEpoch: { type: "string", minLength: 1, maxLength: 128 },
           sequence: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+          clearGeneration: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
           reason: { const: "history-cleared" }
         }
       },
@@ -6157,7 +6184,7 @@ var __t3Client = (() => {
   var TERMINAL_OUTPUT_EVENTS_API = terminalOutputEventsApi.definition;
   var TERMINAL_CONTROL_API = terminalControlApi.definition;
 
-  // ../../extension-sdk/dist/environment.js
+  // node_modules/@t3tools/extension-sdk/dist/environment.js
   var ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
   var ENVIRONMENT_ASSET_MEDIA_TYPES = [
     "application/wasm",
@@ -6295,7 +6322,7 @@ var __t3Client = (() => {
     return { ...pkg, manifest };
   }
 
-  // ../../extension-sdk/dist/authoring.js
+  // node_modules/@t3tools/extension-sdk/dist/authoring.js
   var statePreview = (state2) => {
     const encoded = JSON.stringify(state2);
     return encoded.length > 200 ? encoded.slice(0, 200) + "\u2026" : encoded;
@@ -6631,7 +6658,7 @@ var __t3Client = (() => {
     })().catch(markDead);
   }
 
-  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/constants.js
+  // node_modules/@pierre/diffs/dist/constants.js
   var DIFFS_DEVELOPMENT_BUILD = (() => {
     try {
       return true;
@@ -6660,7 +6687,7 @@ var __t3Client = (() => {
     fromEnd: 0
   });
 
-  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/cleanLastNewline.js
+  // node_modules/@pierre/diffs/dist/utils/cleanLastNewline.js
   function cleanLastNewline(contents2) {
     let end = contents2.length;
     if (contents2.charCodeAt(end - 1) === 10) {
@@ -6670,7 +6697,7 @@ var __t3Client = (() => {
     return contents2.slice(0, end);
   }
 
-  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/detachString.js
+  // node_modules/@pierre/diffs/dist/utils/detachString.js
   var stringDetachEncoder = new TextEncoder();
   var stringDetachDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
   var SURROGATE_CODE_UNIT_PATTERN = /[\uD800-\uDFFF]/;
@@ -6688,7 +6715,7 @@ var __t3Client = (() => {
     return stringDetachDecoder.decode(stringDetachBuffer.subarray(0, written));
   }
 
-  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/realignChangeContent.js
+  // node_modules/@pierre/diffs/dist/utils/realignChangeContent.js
   var MAX_ALIGNMENT_COMPARISONS = 4096;
   var MIN_IMPROVEMENT_PER_PAIR = 0.5;
   function realignChangeContentBySimilarity(diff) {
@@ -6807,7 +6834,7 @@ var __t3Client = (() => {
     return (prefix + suffix) / maxLength;
   }
 
-  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/parsePatchFiles.js
+  // node_modules/@pierre/diffs/dist/utils/parsePatchFiles.js
   function processPatch(data, cacheKeyPrefix, throwOnError) {
     try {
       return _processPatch(data, cacheKeyPrefix, throwOnError);

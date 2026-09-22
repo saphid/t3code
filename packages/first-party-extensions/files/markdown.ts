@@ -52,6 +52,14 @@ export type MarkdownBlock =
     }
   | { readonly type: "rule" };
 
+/**
+ * Nesting past this depth stops recursing and degrades to literal text —
+ * adversarial input like `[a](x [b](y …))` or `>>>>…` cannot overflow the
+ * stack. Sixty-four levels is far beyond anything hand-written markdown
+ * produces.
+ */
+const MAX_NESTING_DEPTH = 64;
+
 const ESCAPABLE = /[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/;
 
 /**
@@ -152,7 +160,8 @@ const AUTOLINK_EMAIL = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
  * and raw HTML degrade to literal text — nothing is ever re-parsed as markup
  * the caller did not write as markdown.
  */
-export function parseInlines(text: string): MarkdownInline[] {
+export function parseInlines(text: string, depth = 0): MarkdownInline[] {
+  if (depth >= MAX_NESTING_DEPTH) return text === "" ? [] : [{ type: "text", text }];
   const nodes: MarkdownInline[] = [];
   let buffer = "";
   const flush = () => {
@@ -226,7 +235,7 @@ export function parseInlines(text: string): MarkdownInline[] {
         const href = splitLinkTarget(text.slice(close + 2, end)).href;
         nodes.push({
           type: "link",
-          children: parseInlines(text.slice(i + 1, close)),
+          children: parseInlines(text.slice(i + 1, close), depth + 1),
           href,
           safe: isSafeLinkHref(href),
         });
@@ -272,7 +281,10 @@ export function parseInlines(text: string): MarkdownInline[] {
       const close = text.indexOf("~~", i + 2);
       if (close > i + 2) {
         flush();
-        nodes.push({ type: "delete", children: parseInlines(text.slice(i + 2, close)) });
+        nodes.push({
+          type: "delete",
+          children: parseInlines(text.slice(i + 2, close), depth + 1),
+        });
         i = close + 2;
         continue;
       }
@@ -286,7 +298,10 @@ export function parseInlines(text: string): MarkdownInline[] {
         const close = text.indexOf(ch + ch, i + 2);
         if (close > i + 2) {
           flush();
-          nodes.push({ type: "strong", children: parseInlines(text.slice(i + 2, close)) });
+          nodes.push({
+            type: "strong",
+            children: parseInlines(text.slice(i + 2, close), depth + 1),
+          });
           i = close + 2;
           continue;
         }
@@ -300,7 +315,7 @@ export function parseInlines(text: string): MarkdownInline[] {
         (ch === "*" || !(i > 0 && /\w/.test(text[i - 1])) || !/\w/.test(text[close + 1] ?? ""))
       ) {
         flush();
-        nodes.push({ type: "em", children: parseInlines(text.slice(i + 1, close)) });
+        nodes.push({ type: "em", children: parseInlines(text.slice(i + 1, close), depth + 1) });
         i = close + 1;
         continue;
       }
@@ -361,6 +376,7 @@ interface ParsedItem {
 function parseList(
   lines: readonly string[],
   at: number,
+  depth: number,
 ): { readonly block: MarkdownBlock; readonly next: number } {
   const first = LIST_RE.exec(lines[at])!;
   const baseIndent = first[1].length;
@@ -447,14 +463,18 @@ function parseList(
   }
   const parsed: ParsedItem[] = items.map((item) => ({
     ...(item.task === undefined ? {} : { task: item.task }),
-    children: parseMarkdown(item.lines.join("\n")),
+    children: parseMarkdown(item.lines.join("\n"), depth + 1),
   }));
   return { block: { type: "list", ordered, items: parsed }, next: i };
 }
 
 /** The package-owned markdown block parser the preview renders. */
-export function parseMarkdown(source: string): MarkdownBlock[] {
+export function parseMarkdown(source: string, depth = 0): MarkdownBlock[] {
   const lines = source.replace(/\r\n?/g, "\n").split("\n");
+  if (depth >= MAX_NESTING_DEPTH) {
+    const rest = lines.join("\n").trim();
+    return rest === "" ? [] : [{ type: "paragraph", children: [{ type: "text", text: rest }] }];
+  }
   const blocks: MarkdownBlock[] = [];
   let i = 0;
   while (i < lines.length) {
@@ -513,11 +533,11 @@ export function parseMarkdown(source: string): MarkdownBlock[] {
         }
         break;
       }
-      blocks.push({ type: "quote", children: parseMarkdown(inner.join("\n")) });
+      blocks.push({ type: "quote", children: parseMarkdown(inner.join("\n"), depth + 1) });
       continue;
     }
     if (LIST_RE.test(line) && LIST_RE.exec(line)![4].trim() !== "") {
-      const { block, next } = parseList(lines, i);
+      const { block, next } = parseList(lines, i, depth);
       blocks.push(block);
       i = next;
       continue;

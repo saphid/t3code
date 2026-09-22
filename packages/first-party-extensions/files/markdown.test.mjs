@@ -102,6 +102,17 @@ NodeTest.describe("parseMarkdown blocks", () => {
   NodeTest.it("keeps paragraphs apart at blank lines", () => {
     NodeAssert.deepEqual(kinds(parseMarkdown("one\n\n two")), ["paragraph", "paragraph"]);
   });
+
+  NodeTest.it("bounds quote recursion with the same depth cap", () => {
+    const blocks = parseMarkdown("> ".repeat(200) + "deep");
+    let depth = 0;
+    let node = blocks[0];
+    while (node !== undefined && node.type === "quote") {
+      depth += 1;
+      node = node.children[0];
+    }
+    NodeAssert.ok(depth <= 64, `quote depth ${depth} exceeds the cap`);
+  });
 });
 
 NodeTest.describe("parseInlines", () => {
@@ -155,6 +166,55 @@ NodeTest.describe("parseInlines", () => {
     const hard = parseInlines("one  \ntwo");
     NodeAssert.ok(hard.some((node) => node.type === "break"));
   });
+
+  NodeTest.it("bounds nesting depth and degrades to literal text past the cap", () => {
+    // ~200 nested links in link text — recursion must stop at the depth
+    // cap, leaving the unread remainder as literal text.
+    let source = "end";
+    for (let i = 0; i < 200; i += 1) source = `[l ${source}](https://a.b)`;
+    const parsed = parseInlines(source);
+    let depth = 0;
+    let node = parsed[0];
+    while (node !== undefined && node.type === "link") {
+      depth += 1;
+      node = node.children.find((child) => child.type === "link");
+    }
+    NodeAssert.ok(depth <= 64, `link nesting depth ${depth} exceeds the cap`);
+    NodeAssert.ok(inlineText(parsed).includes("end"), "innermost text survives as literal");
+  });
+
+  NodeTest.it("bounds recursion on malformed input, not only well-formed nesting", () => {
+    const maxDepth = (nodes, depth = 0) =>
+      nodes.reduce(
+        (max, n) => Math.max(max, n.children ? maxDepth(n.children, depth + 1) : depth),
+        depth,
+      );
+
+    // Mis-nested link text/targets still drive real recursion — each level
+    // strips one `[x `…`](u)` pair — so the cap must land here too.
+    const misnested = "[x ".repeat(200) + "y" + "](u)".repeat(200);
+    NodeAssert.equal(maxDepth(parseInlines(misnested)), 64);
+
+    // Unclosed delimiters and marker soup degrade to literal text.
+    for (const source of [
+      "[".repeat(400) + "x" + "]".repeat(400),
+      "![".repeat(400) + "x" + "]".repeat(400),
+      "*a ".repeat(400),
+      "~~".repeat(400),
+    ]) {
+      NodeAssert.ok(maxDepth(parseInlines(source)) <= 64);
+    }
+
+    // Malformed inline content inside a deep quote hits the same block cap.
+    const quote = parseMarkdown("> ".repeat(300) + "[unclosed" + "![".repeat(100));
+    let quoteDepth = 0;
+    let node = quote[0];
+    while (node !== undefined && node.type === "quote") {
+      quoteDepth += 1;
+      node = node.children[0];
+    }
+    NodeAssert.ok(quoteDepth <= 64, `malformed quote depth ${quoteDepth} exceeds the cap`);
+  });
 });
 
 NodeTest.describe("markdown safety — no raw-HTML surface", () => {
@@ -181,6 +241,11 @@ NodeTest.describe("markdown safety — no raw-HTML surface", () => {
       "[click](jAvAsCrIpT:alert(1))",
       "[click](data:text/html;base64,PHNjcmlwdD4=)",
       "[click](  javascript:alert(1)  )",
+      // Entity smuggling: the parser never decodes `&#…;` — the raw
+      // destination fails the scheme allowlist outright.
+      "[click](java&#115;cript:alert)",
+      "[click](java&#x73;cript:alert)",
+      "[click](javascript&#58;alert)",
     ]) {
       const blocks = parseMarkdown(source);
       const links = [];
@@ -191,6 +256,7 @@ NodeTest.describe("markdown safety — no raw-HTML surface", () => {
         }
       };
       walk(blocks[0].children);
+      NodeAssert.equal(links.length, 1, `${source} must parse as one link node`);
       for (const link of links) NodeAssert.equal(link.safe, false, link.href);
     }
   });

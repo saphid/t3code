@@ -1,4 +1,5 @@
 export default function (__t3Host) {
+"use strict";
 var __t3Client = (() => {
   var __create = Object.create;
   var __defProp = Object.defineProperty;
@@ -38,6 +39,7 @@ var __t3Client = (() => {
   // host-react:react
   var require_react = __commonJS({
     "host-react:react"(exports, module) {
+      "use strict";
       module.exports = __t3Host.React;
     }
   });
@@ -45,19 +47,35 @@ var __t3Client = (() => {
   // host-react:react/jsx-runtime
   var require_jsx_runtime = __commonJS({
     "host-react:react/jsx-runtime"(exports) {
+      "use strict";
       var R = __t3Host.React;
       exports.Fragment = R.Fragment;
-      exports.jsx = exports.jsxs = exports.jsxDEV = (type, props, key) => R.createElement(type, key === void 0 ? props : { ...props, key });
+      var mark = (n) => {
+        if (n && typeof n === "object" && n._store) n._store.validated = 1;
+      };
+      var el = (type, props, key, isStatic) => {
+        const c = props == null ? void 0 : props.children;
+        if (Array.isArray(c)) {
+          if (isStatic) {
+            for (const x of c) mark(x);
+            Object.freeze(c);
+          }
+        } else mark(c);
+        return R.createElement(type, key === void 0 ? props : { ...props, key });
+      };
+      exports.jsx = (t, p, k) => el(t, p, k, false);
+      exports.jsxs = (t, p, k) => el(t, p, k, true);
+      exports.jsxDEV = (t, p, k, s) => el(t, p, k, s === true);
     }
   });
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/generated-client.ts
+  // generated-client.ts
   var generated_client_exports = {};
   __export(generated_client_exports, {
     default: () => generated_client_default
   });
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/contracts.js
+  // node_modules/@t3tools/extension-sdk/dist/contracts.js
   var API_VERSION = 1;
   var MAX_PAYLOAD_BYTES = 64 * 1024;
   function assertId(value) {
@@ -147,7 +165,7 @@ var __t3Client = (() => {
     return manifest;
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/capabilities.js
+  // node_modules/@t3tools/extension-sdk/dist/capabilities.js
   function defineApi(definition) {
     return { definition: validateApiDefinition(definition) };
   }
@@ -240,7 +258,7 @@ var __t3Client = (() => {
     return api;
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/orchestration.js
+  // node_modules/@t3tools/extension-sdk/dist/orchestration.js
   var ORCHESTRATION_STATUS = "t3.orchestration/status";
   var ORCHESTRATION_CONTROL = "t3.orchestration/control";
   var ORCHESTRATION_READ = "t3.orchestration/read";
@@ -466,7 +484,7 @@ var __t3Client = (() => {
   }
   var ORCHESTRATION_CONTROL_API = orchestrationControlApi.definition;
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/textEdits.js
+  // node_modules/@t3tools/extension-sdk/dist/textEdits.js
   var WORKSPACE_READ_TEXT_EDITS = "t3.workspace/text-edits";
   var WORKSPACE_READ_TEXT_GRANT = "t3.workspace/read-text";
   var WORKSPACE_WRITE_TEXT = "t3.workspace/write-text";
@@ -659,7 +677,7 @@ var __t3Client = (() => {
     ]
   });
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/workspaceResources.js
+  // node_modules/@t3tools/extension-sdk/dist/workspaceResources.js
   var WORKSPACE_RESOURCES = "t3.workspace/resources";
   var WORKSPACE_RESOURCE_CHUNK_UNITS = 8192;
   var WORKSPACE_RESOURCE_MAX_CHUNKS = 2048;
@@ -899,7 +917,7 @@ var __t3Client = (() => {
   });
   var WORKSPACE_RESOURCES_API = workspaceResourcesApi.definition;
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/clientProviders.js
+  // node_modules/@t3tools/extension-sdk/dist/clientProviders.js
   var targetSchema = {
     type: "object",
     additionalProperties: false,
@@ -1461,7 +1479,7 @@ var __t3Client = (() => {
     CLIENT_TERMINAL_APPEARANCE_API
   ].map((definition) => [definition.id, definition]));
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/catalogue.js
+  // node_modules/@t3tools/extension-sdk/dist/catalogue.js
   var BROWSER_LOCAL_SERVERS = "t3.browser/local-servers";
   var BROWSER_READ_LOCAL_SERVERS = "t3.browser/read-local-servers";
   var browserLocalServersApi = defineStreamApi({
@@ -6166,7 +6184,7 @@ var __t3Client = (() => {
   var TERMINAL_OUTPUT_EVENTS_API = terminalOutputEventsApi.definition;
   var TERMINAL_CONTROL_API = terminalControlApi.definition;
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/environment.js
+  // node_modules/@t3tools/extension-sdk/dist/environment.js
   var ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
   var ENVIRONMENT_ASSET_MEDIA_TYPES = [
     "application/wasm",
@@ -6304,7 +6322,7 @@ var __t3Client = (() => {
     return { ...pkg, manifest };
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/authoring.js
+  // node_modules/@t3tools/extension-sdk/dist/authoring.js
   var statePreview = (state2) => {
     const encoded = JSON.stringify(state2);
     return encoded.length > 200 ? encoded.slice(0, 200) + "\u2026" : encoded;
@@ -6402,7 +6420,7 @@ var __t3Client = (() => {
     return { id: api.definition.id, versionRange };
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/shared/src/projectScripts.ts
+  // node_modules/@t3tools/shared/src/projectScripts.ts
   function projectScriptRuntimeEnv(input) {
     const env = {
       T3CODE_PROJECT_ROOT: input.project.cwd
@@ -6416,10 +6434,10 @@ var __t3Client = (() => {
     return env;
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/extension.tsx
+  // extension.tsx
   var import_react = __toESM(require_react(), 1);
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/runtime.ts
+  // ghostty/runtime.ts
   var textDecoder = new TextDecoder();
   var GhosttyRuntime = class _GhosttyRuntime {
     memory;
@@ -6605,15 +6623,15 @@ var __t3Client = (() => {
     return promise;
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/platform.ts
+  // ghostty/platform.ts
   function isMacPlatform(platform) {
     return /mac|iphone|ipad|ipod/i.test(platform);
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/selection.ts
+  // ghostty/selection.ts
   var SELECTION_MULTI_CLICK_INTERVAL_MS = 500;
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/terminal-links.ts
+  // ghostty/terminal-links.ts
   var URL_PATTERN = /https?:\/\/[^\s"'`<>]+/giu;
   var FILE_PATH_PATTERN = /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
   var TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
@@ -6702,7 +6720,7 @@ var __t3Client = (() => {
     };
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/keyCodes.ts
+  // ghostty/keyCodes.ts
   var ghosttyKeyboardCodes = [
     "Unidentified",
     "Backquote",
@@ -6942,7 +6960,7 @@ var __t3Client = (() => {
     return event.key.codePointAt(0) ?? 0;
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/core.ts
+  // ghostty/core.ts
   var GHOSTTY_SUCCESS = 0;
   var GHOSTTY_OUT_OF_SPACE = -3;
   var MAX_SCROLLBACK_ROWS = 1e4;
@@ -7939,7 +7957,7 @@ var __t3Client = (() => {
     return sameColor(left, right);
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/renderer.ts
+  // ghostty/renderer.ts
   var DEFAULT_SELECTION_BACKGROUND = "rgba(72, 122, 191, 0.35)";
   function cssColor(color) {
     return `rgb(${color.r}, ${color.g}, ${color.b})`;
@@ -8124,7 +8142,7 @@ var __t3Client = (() => {
     }
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/monospaceFonts.ts
+  // ghostty/monospaceFonts.ts
   function quoteFontFamilyName(name) {
     const bare = name.trim();
     if (bare.length === 0) return "";
@@ -8167,7 +8185,7 @@ var __t3Client = (() => {
     }
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/surface.ts
+  // ghostty/surface.ts
   var DEFAULT_TERMINAL_FONT_SIZE = 12;
   var MIN_TERMINAL_FONT_SIZE = 6;
   var MAX_TERMINAL_FONT_SIZE = 32;
@@ -9623,7 +9641,7 @@ var __t3Client = (() => {
     }
   };
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/ghostty/surfaceKeys.ts
+  // ghostty/surfaceKeys.ts
   var TERMINAL_WORD_BACKWARD = "\x1Bb";
   var TERMINAL_WORD_FORWARD = "\x1Bf";
   var TERMINAL_LINE_START = "";
@@ -9686,7 +9704,7 @@ var __t3Client = (() => {
     return null;
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/terminalTheme.ts
+  // terminalTheme.ts
   function parseTerminalColor(value, fallback) {
     if (typeof document === "undefined") return fallback;
     const canvas = document.createElement("canvas");
@@ -9816,7 +9834,7 @@ var __t3Client = (() => {
     };
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/shared/src/terminalLabels.ts
+  // node_modules/@t3tools/shared/src/terminalLabels.ts
   function getTerminalLabel(terminalId) {
     const numericSuffix = /^term(?:inal)?-(\d+)$/i.exec(terminalId)?.[1];
     if (numericSuffix) {
@@ -9840,7 +9858,7 @@ var __t3Client = (() => {
     return `term-${nextIndex}`;
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/inputQueue.ts
+  // inputQueue.ts
   var TERMINAL_INPUT_SERIALIZED_BUDGET = 48 * 1024;
   var TERMINAL_INPUT_PENDING_BUDGET = 256 * 1024;
   var TERMINAL_INPUT_WRITE_TIMEOUT_MS = 3e4;
@@ -10039,7 +10057,7 @@ var __t3Client = (() => {
     }
   };
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/viewModel.ts
+  // viewModel.ts
   var TERMINAL_BUFFER_MAX_BYTES = 512 * 1024;
   var OVERFLOW_RESUBSCRIBE_WINDOW_MS = 1e4;
   var OVERFLOW_RESUBSCRIBE_MAX = 3;
@@ -10831,7 +10849,7 @@ var __t3Client = (() => {
     })();
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/vtAttachment.ts
+  // vtAttachment.ts
   var MAX_OUTPUT_CHUNK_DATA_LENGTH = 8192;
   var MAX_OUTPUT_CHUNKS = 64;
   var MAX_PRE_SINK_OUTPUT_LENGTH = 512 * 1024;
@@ -11381,7 +11399,7 @@ var __t3Client = (() => {
     }
   }
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/extension.tsx
+  // extension.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
   var manifestId = "t3.terminal";
   var GHOSTTY_VT_ASSET = "assets/ghostty-vt.wasm";
@@ -12321,10 +12339,10 @@ var __t3Client = (() => {
     }
   };
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/extension.ts
+  // extension.ts
   var extension_default2 = extension_default;
 
-  // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/generated-client.ts
+  // generated-client.ts
   var generated_client_default = extension_default2.client;
   return __toCommonJS(generated_client_exports);
 })();
