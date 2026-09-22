@@ -1423,6 +1423,17 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     ...displayedUserMessage.elementContexts,
     ...elementContextState.contexts,
   ];
+  // Parsed context entries carry no stable id; header/body repeat when the same
+  // element is picked twice, so the key needs the entry position.
+  const elementContextChips: ReactNode[] = [];
+  for (const [index, context] of elementContexts.entries()) {
+    elementContextChips.push(
+      <UserMessageElementContextChip
+        key={`${context.header}:${context.body}:${index}`}
+        context={context}
+      />,
+    );
+  }
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const revertTurnCount = row.revertTurnCount;
@@ -1567,15 +1578,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             ))}
           </div>
         ) : null}
-        {elementContexts.length > 0 ? (
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            {elementContexts.map((context) => (
-              <UserMessageElementContextChip
-                key={`${context.header}:${context.body}`}
-                context={context}
-              />
-            ))}
-          </div>
+        {elementContextChips.length > 0 ? (
+          <div className="mb-2 flex flex-wrap gap-1.5">{elementContextChips}</div>
         ) : null}
         <CollapsibleUserMessageBody
           text={readableContextPrompt(elementContextState.promptText)}
@@ -2615,7 +2619,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
     if (hasEmbeddedInlineLabels) {
       let cursor = 0;
 
-      for (const context of props.terminalContexts) {
+      for (const [index, context] of props.terminalContexts.entries()) {
         const label = formatInlineTerminalContextLabel(context.header);
         const matchIndex = props.text.indexOf(label, cursor);
         if (matchIndex === -1) {
@@ -2632,7 +2636,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
         }
         inlineNodes.push(
           <UserMessageTerminalContextInlineLabel
-            key={`user-terminal-context-inline:${context.header}`}
+            key={`user-terminal-context-inline:${context.header}:${index}`}
             context={context}
           />,
         );
@@ -2657,15 +2661,18 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       }
     }
 
-    for (const context of props.terminalContexts) {
+    for (const [index, context] of props.terminalContexts.entries()) {
       inlineNodes.push(
         <UserMessageTerminalContextInlineLabel
-          key={`user-terminal-context-inline:${context.header}`}
+          key={`user-terminal-context-inline:${context.header}:${index}`}
           context={context}
         />,
       );
       inlineNodes.push(
-        <span key={`user-terminal-context-inline-space:${context.header}`} aria-hidden="true">
+        <span
+          key={`user-terminal-context-inline-space:${context.header}:${index}`}
+          aria-hidden="true"
+        >
           {" "}
         </span>,
       );
