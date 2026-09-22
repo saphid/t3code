@@ -1055,14 +1055,6 @@ export class BoundedTerminalHistory {
   }
 
   /**
-   * Units of `data` that complete the sequence opened by evicted bytes —
-   * null when the whole string is still inside it.
-   */
-  private sequenceContinuationEnd(data: string): number | null {
-    return scanTerminalSequenceState(data, this.evictedSequenceState).endIndex;
-  }
-
-  /**
    * Front eviction can land inside a control sequence, leaving a dangling
    * fragment at the retained head. The fragment is useless to every
    * consumer — a stripped query's tail becomes visible junk, and even a
@@ -1070,24 +1062,41 @@ export class BoundedTerminalHistory {
    * end: the retained origin is then always a sequence boundary. The
    * drops flow through the same bookkeeping, so `appendedUnitLength`
    * provenance and `contentsUnitStart` stay exact.
+   *
+   * The sequence end is proven over the complete retained window before
+   * anything is dropped: an escape ends retroactively at its first byte
+   * on a non-final byte, so intermediates-only chunks are ordinary text
+   * until a later chunk decides — a chunk-local drop would discard them
+   * irreversibly.
    */
   private alignSequenceBoundary(): void {
-    while (this.evictedSequenceState !== "none") {
+    if (this.evictedSequenceState === "none") return;
+    let state: SequenceParseState = this.evictedSequenceState;
+    let dropUnits = 0;
+    let closed = false;
+    for (let i = this.start; i < this.chunks.length; i += 1) {
+      const data = this.chunks[i]!.data;
+      const scan = scanTerminalSequenceState(data, state);
+      state = scan.state;
+      if (scan.endIndex !== null) {
+        // 0 means the sequence ended retroactively before this chunk —
+        // every retained unit is ordinary text.
+        dropUnits = scan.endIndex === 0 ? 0 : dropUnits + scan.endIndex;
+        closed = true;
+        break;
+      }
+      dropUnits += data.length;
+    }
+    let remaining = dropUnits;
+    while (remaining > 0) {
       const first = this.chunks[this.start];
-      if (!first) return;
-      const end = this.sequenceContinuationEnd(first.data);
-      if (end === null) {
-        // The whole chunk is still inside the evicted sequence.
+      if (!first) break;
+      if (first.data.length <= remaining) {
         this.discardChunk();
+        remaining -= first.data.length;
         continue;
       }
-      if (end === 0) {
-        // A non-final byte closed an escape sequence retroactively, before
-        // the retained head — the origin is already at a boundary.
-        this.evictedSequenceState = "none";
-        continue;
-      }
-      const dropped = first.data.slice(0, end);
+      const dropped = first.data.slice(0, remaining);
       let lineBreaks = 0;
       for (
         let newline = dropped.indexOf("\n");
@@ -1096,8 +1105,10 @@ export class BoundedTerminalHistory {
       ) {
         lineBreaks += 1;
       }
-      this.trimChunk(end, Buffer.byteLength(dropped), lineBreaks);
+      this.trimChunk(remaining, Buffer.byteLength(dropped), lineBreaks);
+      remaining = 0;
     }
+    if (closed) this.evictedSequenceState = "none";
   }
 
   private discardChunk(): void {

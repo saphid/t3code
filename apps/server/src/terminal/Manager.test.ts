@@ -708,6 +708,44 @@ it("drops a retroactively-ended escape only through its true end", () => {
   expect(boundaryAtEsc.value()).toBe(")\x01abc");
 });
 
+it("decides an intermediates run over the whole retained window, not per chunk", () => {
+  // r14 finding: a non-final byte ends an escape retroactively at its
+  // first byte, so intermediates-only chunks are ordinary text — but a
+  // chunk-local drop discarded them before the deciding byte in a later
+  // chunk was ever scanned. MAX_HISTORY_CHUNK_LENGTH is 16384, so this
+  // input splits the intermediates across chunks.
+  const input = `\x1b${")".repeat(16_384)}\x01KEEP`;
+  const history = new TerminalManager.BoundedTerminalHistory(5_000, "", 16_384);
+  history.append(input);
+  // The escape is "ESC)" (ends at unit 2); evicting 6 units leaves pure
+  // text — nothing may be dropped past the real sequence end.
+  expect(history.value()).toBe(input.slice(6));
+  expect(history.value().length).toBe(16_384);
+  expect(history.sanitizedValue()).toBe(input.slice(6));
+  const tail = history.sanitizedTail(8_192, 8_192);
+  expect(tail.contents).toBe(input.slice(input.length - 8_192));
+  expect(history.appendedUnitLength - tail.contents.length).toBe(8_198);
+});
+
+it("drops an intermediates run through a final byte even across chunks", () => {
+  // Near-boundary variant: same shape, but the run ends with a real final
+  // byte — then the intermediates ARE sequence content and the drop must
+  // reach the true end in a later chunk.
+  const input = `\x1b${")".repeat(16_384)}XKEEP`;
+  const history = new TerminalManager.BoundedTerminalHistory(5_000, "", 16_384);
+  history.append(input);
+  expect(history.value()).toBe("KEEP");
+  expect(history.sanitizedValue()).toBe("KEEP");
+  expect(history.sanitizedTail(8_192, 8_192).contents).toBe("KEEP");
+  expect(history.appendedUnitLength - history.value().length).toBe(input.length - 4);
+  // And the decision still holds after a later eviction: four more
+  // intermediates leave the window, and the remaining ones stay text.
+  const boundary = new TerminalManager.BoundedTerminalHistory(5_000, "", 16_384);
+  boundary.append(`\x1b${")".repeat(16_384)}\x01KEEP`);
+  boundary.append("tail");
+  expect(boundary.value()).toBe(`${")".repeat(16_375)}\x01KEEPtail`);
+});
+
 // The sanitizer's own parse as a span oracle: every sequence's extent per
 // sanitizeTerminalHistoryChunk's grammar, using its actual helpers.
 function sequenceSpans(text: string): Array<readonly [number, number]> {
