@@ -396,24 +396,34 @@ const outputEventsProvider = (manager: ManagerFixture["manager"]) =>
     terminal: manager,
   });
 
-// Apply the existing line policy, then find the longest code-point-aligned byte tail.
+// Apply the existing line policy, then find the longest code-point-aligned
+// byte tail — then advance the cut through any control sequence it lands
+// inside, matching the history's sequence-aware eviction boundary.
 function retainedHistory(text: string, maxLines: number, maxBytes = Infinity): string {
   const terminated = text.endsWith("\n");
   const lines = text.split("\n");
   if (terminated) lines.pop();
   const retained = lines.slice(Math.max(0, lines.length - maxLines)).join("\n");
-  const capped = terminated ? `${retained}\n` : retained;
-  if (Buffer.byteLength(capped) <= maxBytes) return capped;
-  const points = Array.from(capped);
-  let start = points.length;
-  let bytes = 0;
-  while (start > 0) {
-    const next = Buffer.byteLength(points[start - 1]!);
-    if (bytes + next > maxBytes) break;
-    bytes += next;
-    start -= 1;
+  let capped = terminated ? `${retained}\n` : retained;
+  if (Buffer.byteLength(capped) > maxBytes) {
+    const points = Array.from(capped);
+    let start = points.length;
+    let bytes = 0;
+    while (start > 0) {
+      const next = Buffer.byteLength(points[start - 1]!);
+      if (bytes + next > maxBytes) break;
+      bytes += next;
+      start -= 1;
+    }
+    capped = points.slice(start).join("");
   }
-  return points.slice(start).join("");
+  // The dropped prefix determines the sequence state at the cut; a retained
+  // head continuing an evicted sequence is dropped through its end.
+  const dropped = text.slice(0, text.length - capped.length);
+  const state = TerminalManager.scanTerminalSequenceState(dropped, "none").state;
+  if (state === "none") return capped;
+  const { endIndex } = TerminalManager.scanTerminalSequenceState(capped, state);
+  return endIndex === null ? "" : capped.slice(endIndex);
 }
 
 it("preserves line and byte limits across arbitrary chunks, Unicode, ANSI sequences, and clear", () => {
@@ -560,6 +570,91 @@ it("preserves retained lines as older storage is compacted", () => {
       expect(history.value()).toBe(expected);
     }
   }
+});
+
+it("suppresses a stripped query fragment at every eviction offset inside the sequence", () => {
+  // r11 finding: byte eviction that lands inside a control sequence left a
+  // dangling fragment ("6n…") whose prefix was evicted; both read-side
+  // sanitizers then surfaced it as visible text. The retained origin must
+  // advance through the sequence end, for every split point and every
+  // append framing of the query.
+  const query = "\x1b[6n";
+  const maxBytes = 8;
+  for (let offset = 0; offset <= query.length; offset += 1) {
+    const tail = "x".repeat(maxBytes + offset - query.length);
+    for (let split = 0; split <= query.length; split += 1) {
+      const history = new TerminalManager.BoundedTerminalHistory(5_000, "", maxBytes);
+      history.append(query.slice(0, split));
+      history.append(query.slice(split) + tail);
+      // The retained raw window starts at a sequence boundary: when the cut
+      // lands inside the query the fragment is dropped, and even offset 0
+      // retains the whole query rather than a suffix of it.
+      expect(history.value(), `offset=${offset} split=${split}`).toBe(
+        offset === 0 ? query + tail : tail,
+      );
+      expect(history.sanitizedValue(), `sanitized offset=${offset} split=${split}`).toBe(tail);
+      expect(history.sanitizedTail(8_192, 8_192).contents).toBe(tail);
+      // Raw origins stay exact: the retained window starts past the query
+      // (or at 0 when nothing was evicted), never inside it.
+      expect(history.appendedUnitLength - history.value().length).toBe(
+        offset === 0 ? 0 : query.length,
+      );
+    }
+  }
+});
+
+it("suppresses fragments of every stripped sequence class at the eviction boundary", () => {
+  const cases: Array<[name: string, sequence: string, terminatorTail: string]> = [
+    ["C1 CSI", "\x9b6n", "6n"],
+    ["OSC BEL", "\x1b]10;?\x07", "?\x07"],
+    ["OSC ST", "\x1b]10;?ab\x1b\\", "b\x1b\\"],
+    ["DCS ST", "\x1bP+q544e\x1b\\", "e\x1b\\"],
+    ["escape intermediates", "\x1b)0", ")0"],
+  ];
+  for (const [name, sequence, terminatorTail] of cases) {
+    // The byte cut lands inside `sequence` immediately before
+    // `terminatorTail`; the retained fragment must be dropped whole.
+    const head = sequence.slice(0, sequence.length - terminatorTail.length);
+    const tail = "x".repeat(16);
+    const history = new TerminalManager.BoundedTerminalHistory(
+      5_000,
+      "",
+      terminatorTail.length + tail.length,
+    );
+    history.append(head + terminatorTail + tail);
+    expect(history.value(), name).toBe(tail);
+    expect(history.sanitizedValue(), name).toBe(tail);
+    expect(history.sanitizedTail(8_192, 8_192).contents, name).toBe(tail);
+  }
+});
+
+it("drops a retained window that is still inside an unterminated sequence", () => {
+  // An unterminated OSC at the retained head has no visible content; when
+  // the stream later terminates it, retention resumes after the terminator.
+  const history = new TerminalManager.BoundedTerminalHistory(5_000, "", 8);
+  history.append("\x1b]10;?" + "a".repeat(16));
+  expect(history.value()).toBe("");
+  history.append("bc\x07done\n");
+  expect(history.value()).toBe("done\n");
+  expect(history.sanitizedValue()).toBe("done\n");
+});
+
+it("drops a dangling fragment of a non-stripped sequence rather than leaking it as text", () => {
+  // Even a sequence the sanitizer keeps (SGR) cannot be reconstructed once
+  // its start is evicted — the fragment is dropped instead of surfacing.
+  const history = new TerminalManager.BoundedTerminalHistory(5_000, "", 8);
+  history.append("\x1b[31m" + "x".repeat(4));
+  expect(history.value()).toBe("x".repeat(4));
+  expect(history.sanitizedValue()).toBe("x".repeat(4));
+});
+
+it("suppresses fragments cut by line eviction inside a control sequence", () => {
+  // A newline inside a CSI counts as a line break; dropping that line can
+  // land the retained origin inside the sequence just like byte eviction.
+  const history = new TerminalManager.BoundedTerminalHistory(1, "", 8_192);
+  history.append("prompt$ \x1b[6\nn" + "x".repeat(8));
+  expect(history.value()).toBe("x".repeat(8));
+  expect(history.sanitizedValue()).toBe("x".repeat(8));
 });
 
 it.layer(

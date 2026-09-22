@@ -856,6 +856,69 @@ interface TerminalHistoryChunk {
   lineBreaks: number;
 }
 
+export type SequenceParseState =
+  | "none"
+  | "escape"
+  | "escapeIntermediates"
+  | "csi"
+  | "string"
+  | "stringEscape";
+
+/**
+ * Advance a control-sequence parser over `data` from `state`, mirroring
+ * sanitizeTerminalHistoryChunk's grammar exactly: ESC introduces a
+ * sequence classified by its next byte (then intermediates until a final
+ * byte), CSI ends at a final byte, and string sequences (OSC/DCS/PM/APC)
+ * end at BEL or ST. `endIndex` is the index past the end of the sequence
+ * open at entry — null when `data` ends still inside it. Front eviction
+ * uses the state to learn where a cut lands, and `endIndex` to learn how
+ * far a dangling fragment continues into the retained window.
+ */
+export function scanTerminalSequenceState(
+  data: string,
+  state: SequenceParseState,
+): { state: SequenceParseState; endIndex: number | null } {
+  const openAtEntry = state !== "none";
+  let endIndex: number | null = null;
+  let index = 0;
+  while (index < data.length) {
+    const codePoint = data.charCodeAt(index);
+    if (state === "escape") {
+      // The byte right after ESC classifies the sequence.
+      if (codePoint === 0x5b) state = "csi";
+      else if (codePoint === 0x5d || codePoint === 0x50 || codePoint === 0x5e || codePoint === 0x5f)
+        state = "string";
+      else if (isEscapeIntermediateByte(codePoint)) state = "escapeIntermediates";
+      else state = "none";
+    } else if (state === "escapeIntermediates") {
+      if (!isEscapeIntermediateByte(codePoint)) state = "none";
+    } else if (state === "csi") {
+      if (isCsiFinalByte(codePoint)) state = "none";
+    } else if (state === "string") {
+      if (codePoint === 0x07 || codePoint === 0x9c) state = "none";
+      else if (codePoint === 0x1b) state = "stringEscape";
+    } else if (state === "stringEscape") {
+      // ESC inside a string terminates only paired with "\"; another ESC
+      // re-arms the check, anything else is ordinary string content.
+      state = codePoint === 0x5c ? "none" : codePoint === 0x1b ? "stringEscape" : "string";
+    } else if (codePoint === 0x1b) {
+      state = "escape";
+    } else if (codePoint === 0x9b) {
+      state = "csi";
+    } else if (
+      codePoint === 0x9d ||
+      codePoint === 0x90 ||
+      codePoint === 0x9e ||
+      codePoint === 0x9f
+    ) {
+      state = "string";
+    }
+    index += 1;
+    if (openAtEntry && state === "none" && endIndex === null) endIndex = index;
+  }
+  return { state, endIndex };
+}
+
 export class BoundedTerminalHistory {
   private readonly maxLines: number;
   private readonly maxBytes: number;
@@ -869,6 +932,12 @@ export class BoundedTerminalHistory {
   // tail, so a snapshot needs totalUnits to name where its contents
   // start: contentsUnitStart = totalUnits - contents.length.
   private totalUnits = 0;
+  // Set when the most recent front eviction cut through a control
+  // sequence: the evicted bytes ended inside one, so the retained head
+  // is a dangling fragment tail (e.g. "6n…" after "ESC[" is evicted).
+  // The fragment must be dropped too — sanitizing or replaying it would
+  // surface query bytes as visible text.
+  private evictedSequenceState: SequenceParseState = "none";
   // Reading the old string's tail on each append can force chunk concatenation.
   private lastCodeUnit: number | undefined;
   private cachedValue: string | null = "";
@@ -951,8 +1020,56 @@ export class BoundedTerminalHistory {
     this.cachedValue = null;
   }
 
+  /**
+   * Track the sequence state at the end of text dropped from the front.
+   */
+  private trackEvicted(data: string): void {
+    this.evictedSequenceState = scanTerminalSequenceState(data, this.evictedSequenceState).state;
+  }
+
+  /**
+   * Units of `data` that complete the sequence opened by evicted bytes —
+   * null when the whole string is still inside it.
+   */
+  private sequenceContinuationEnd(data: string): number | null {
+    return scanTerminalSequenceState(data, this.evictedSequenceState).endIndex;
+  }
+
+  /**
+   * Front eviction can land inside a control sequence, leaving a dangling
+   * fragment at the retained head. The fragment is useless to every
+   * consumer — a stripped query's tail becomes visible junk, and even a
+   * kept sequence cannot be reconstructed — so keep dropping through its
+   * end: the retained origin is then always a sequence boundary. The
+   * drops flow through the same bookkeeping, so `appendedUnitLength`
+   * provenance and `contentsUnitStart` stay exact.
+   */
+  private alignSequenceBoundary(): void {
+    while (this.evictedSequenceState !== "none") {
+      const first = this.chunks[this.start];
+      if (!first) return;
+      const end = this.sequenceContinuationEnd(first.data);
+      if (end === null) {
+        // The whole chunk is still inside the evicted sequence.
+        this.discardChunk();
+        continue;
+      }
+      const dropped = first.data.slice(0, end);
+      let lineBreaks = 0;
+      for (
+        let newline = dropped.indexOf("\n");
+        newline !== -1;
+        newline = dropped.indexOf("\n", newline + 1)
+      ) {
+        lineBreaks += 1;
+      }
+      this.trimChunk(end, Buffer.byteLength(dropped), lineBreaks);
+    }
+  }
+
   private discardChunk(): void {
     const first = this.chunks[this.start]!;
+    this.trackEvicted(first.data);
     this.byteLength -= first.byteLength;
     this.lineBreaks -= first.lineBreaks;
     this.chunks[this.start++] = undefined;
@@ -964,6 +1081,7 @@ export class BoundedTerminalHistory {
       this.discardChunk();
       return;
     }
+    this.trackEvicted(first.data.slice(0, offset));
     first.data = first.data.slice(offset);
     first.byteLength -= byteLength;
     first.lineBreaks -= lineBreaks;
@@ -1013,6 +1131,7 @@ export class BoundedTerminalHistory {
       }
       this.trimChunk(offset, bytes, lineBreaks);
     }
+    this.alignSequenceBoundary();
     if (
       this.start === this.chunks.length ||
       (this.start > 2_048 && this.start * 2 >= this.chunks.length)
@@ -1072,6 +1191,7 @@ export class BoundedTerminalHistory {
     this.byteLength = 0;
     this.lineBreaks = 0;
     this.totalUnits = 0;
+    this.evictedSequenceState = "none";
     this.lastCodeUnit = undefined;
     this.cachedValue = "";
   }
