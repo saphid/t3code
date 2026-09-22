@@ -1,4 +1,5 @@
 import type { GhosttyColor, GhosttyTheme } from "./ghostty/core.ts";
+import type { GhosttyTerminalFont } from "./ghostty/surface.ts";
 
 function parseTerminalColor(value: string, fallback: GhosttyColor): GhosttyColor {
   if (typeof document === "undefined") return fallback;
@@ -151,5 +152,26 @@ export function terminalThemeFromApp(mountElement?: HTMLElement | null): Ghostty
       isDark ? { r: 180, g: 203, b: 255 } : { r: 38, g: 56, b: 78 },
     ),
     selectionBackground: terminalSelection,
+  };
+}
+
+/**
+ * Published `--t3-terminal-font-*` overrides → surface font request, for
+ * both `options.font` at creation and live `setFont` updates. The
+ * appearance contract publishes literals (a family string, `Npx`); a var()
+ * token stream cannot resolve here — fonts have no legacy variable to fall
+ * through to — so unresolvable values are skipped and the surface keeps its
+ * packaged defaults. An empty map (feed cleared) yields `{}`, which resets
+ * the surface to those same defaults. Family/size only: the surface has no
+ * line-height or ligature options, so those published vars intentionally
+ * reach only the DOM fallback path.
+ */
+export function terminalFontFromVars(vars: Record<string, string> | null): GhosttyTerminalFont {
+  if (vars === null) return {};
+  const family = vars["--t3-terminal-font-family"]?.trim();
+  const sizeMatch = /^\s*([0-9]*\.?[0-9]+)px\s*$/.exec(vars["--t3-terminal-font-size"] ?? "");
+  return {
+    family: family === undefined || family === "" || family.startsWith("var(") ? undefined : family,
+    size: sizeMatch === null ? undefined : Number.parseFloat(sizeMatch[1] ?? ""),
   };
 }

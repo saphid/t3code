@@ -949,9 +949,10 @@ export const TERMINAL_FOCUS_WHEN = `extension.${TERMINAL_SURFACE_ID}.focus`;
  * `defaultKey`s mirror the native terminal chords; the host always resolves
  * user and native rules first, so a displaced default is honest metadata
  * `listConflicts` reports rather than a stolen chord. Split chords stay
- * unregistered — the panel has no split layout to dispatch them to — and the
- * Ghostty-level editing intercepts (clear, word-nav, delete) remain deferred
- * with VT rendering.
+ * unregistered — the panel has no split layout to dispatch them to. The
+ * Ghostty-level editing intercepts (clear, word-nav, delete) exist locally
+ * on the VT surface via `handleBeforeKey`; what remains absent is adopting
+ * them as configurable commands through `t3.ui/keybindings`.
  */
 export const TERMINAL_VIEW_COMMANDS: readonly GlobalCommandDescriptor[] = [
   {

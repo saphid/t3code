@@ -22,7 +22,7 @@ import {
   terminalDeleteShortcutData,
   terminalNavigationShortcutData,
 } from "./ghostty/surfaceKeys.ts";
-import { terminalThemeFromApp } from "./terminalTheme.ts";
+import { terminalFontFromVars, terminalThemeFromApp } from "./terminalTheme.ts";
 import { TerminalVtAttachment, pumpTerminalOutput } from "./vtAttachment.ts";
 import {
   EMPTY_OUTPUT_BUFFER,
@@ -392,6 +392,11 @@ function TerminalPane(props: {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const surfaceRef = useRef<GhosttyTerminalSurface | null>(null);
   const shownRef = useRef(active && visible);
+  // Latest published appearance vars, for the async surface create — its
+  // continuation resumes after this commit's effects, so it reads the ref
+  // rather than closing over a stale prop.
+  const appearanceVarsRef = useRef(appearanceVars);
+  appearanceVarsRef.current = appearanceVars;
 
   // Epoch changes and lifecycle ends make queued input stale for the new
   // process incarnation — the panel drops it the moment the stream says so.
@@ -441,6 +446,7 @@ function TerminalPane(props: {
         runtime: assets.runtime,
         symbolsFontUrl: assets.symbolsFontUrl,
         theme: terminalThemeFromApp(mount),
+        font: terminalFontFromVars(appearanceVarsRef.current),
         get visible() {
           return shownRef.current;
         },
@@ -517,10 +523,14 @@ function TerminalPane(props: {
   // The contract layers republish `--t3-terminal-*` on the view root; the
   // surface re-reads them through terminalThemeFromApp whenever either feed
   // publishes or clears, so a theme change reaches the canvas without a
-  // remount.
+  // remount. Font follows the same single pipeline: the published map is
+  // the whole request — a cleared feed yields `{}` and setFont resets the
+  // surface to its packaged defaults. A rejected font load just keeps the
+  // current metrics, so the promise is swallowed.
   useEffect(() => {
     const mount = mountRef.current;
     if (mount !== null) surfaceRef.current?.setTheme(terminalThemeFromApp(mount));
+    void surfaceRef.current?.setFont(terminalFontFromVars(appearanceVars)).catch(() => {});
   }, [themeVars, appearanceVars]);
 
   const state = attachment.state;

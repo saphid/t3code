@@ -36,9 +36,11 @@ a capable host.
 `t3.ui/notifications` is deliberately not adopted: the native terminal only
 toasts on link-preview failure, and this panel has no link-activation path —
 its inline status rows match native usage. Split chords
-(`terminal.split`/`splitVertical`) and the Ghostty-level editing intercepts
-(clear, word-nav, delete) stay deferred — the panel has no split layout and
-no editing intercepts to bind them to.
+(`terminal.split`/`splitVertical`) stay deferred — the panel has no split
+layout to bind them to. The Ghostty-level editing intercepts (clear,
+word-nav, delete) are implemented locally on the VT surface via
+`handleBeforeKey`; what remains absent is adopting them as configurable
+commands through `t3.ui/keybindings`.
 
 ## Rendering: real Ghostty VT (format 4)
 

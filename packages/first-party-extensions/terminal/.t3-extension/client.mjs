@@ -9806,6 +9806,15 @@ var __t3Client = (() => {
       selectionBackground: terminalSelection
     };
   }
+  function terminalFontFromVars(vars) {
+    if (vars === null) return {};
+    const family = vars["--t3-terminal-font-family"]?.trim();
+    const sizeMatch = /^\s*([0-9]*\.?[0-9]+)px\s*$/.exec(vars["--t3-terminal-font-size"] ?? "");
+    return {
+      family: family === void 0 || family === "" || family.startsWith("var(") ? void 0 : family,
+      size: sizeMatch === null ? void 0 : Number.parseFloat(sizeMatch[1] ?? "")
+    };
+  }
 
   // ../../../../../private/tmp/t3-terminal-vt/packages/shared/src/terminalLabels.ts
   function getTerminalLabel(terminalId) {
@@ -11599,6 +11608,8 @@ var __t3Client = (() => {
     const mountRef = (0, import_react.useRef)(null);
     const surfaceRef = (0, import_react.useRef)(null);
     const shownRef = (0, import_react.useRef)(active && visible);
+    const appearanceVarsRef = (0, import_react.useRef)(appearanceVars);
+    appearanceVarsRef.current = appearanceVars;
     (0, import_react.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
@@ -11638,6 +11649,7 @@ var __t3Client = (() => {
           runtime: assets.runtime,
           symbolsFontUrl: assets.symbolsFontUrl,
           theme: terminalThemeFromApp(mount),
+          font: terminalFontFromVars(appearanceVarsRef.current),
           get visible() {
             return shownRef.current;
           },
@@ -11699,6 +11711,8 @@ var __t3Client = (() => {
     (0, import_react.useEffect)(() => {
       const mount = mountRef.current;
       if (mount !== null) surfaceRef.current?.setTheme(terminalThemeFromApp(mount));
+      void surfaceRef.current?.setFont(terminalFontFromVars(appearanceVars)).catch(() => {
+      });
     }, [themeVars, appearanceVars]);
     const state2 = attachment.state;
     const muted = "var(--muted-foreground, #667085)";
