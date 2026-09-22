@@ -11645,11 +11645,12 @@ var __t3Client = (() => {
         surface?.setTheme(terminalThemeFromApp(mount));
       });
       void (async () => {
+        const createdFont = terminalFontFromVars(appearanceVarsRef.current);
         const options = {
           runtime: assets.runtime,
           symbolsFontUrl: assets.symbolsFontUrl,
           theme: terminalThemeFromApp(mount),
-          font: terminalFontFromVars(appearanceVarsRef.current),
+          font: createdFont,
           get visible() {
             return shownRef.current;
           },
@@ -11681,6 +11682,11 @@ var __t3Client = (() => {
         }
         surface.setVisible(shownRef.current);
         surface.setTheme(terminalThemeFromApp(mount));
+        const latestFont = terminalFontFromVars(appearanceVarsRef.current);
+        if (latestFont.family !== createdFont.family || latestFont.size !== createdFont.size) {
+          void surface.setFont(latestFont).catch(() => {
+          });
+        }
         surfaceRef.current = surface;
         try {
           attachment.attach(surface);

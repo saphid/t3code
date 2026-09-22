@@ -53,10 +53,17 @@ await build({
           contents: `export class GhosttyTerminalSurface {
             static async create(mount, options) {
               globalThis.__vtPaneContracts.options.push(options);
+              if (globalThis.__vtPaneContracts.delay)
+                await new Promise((resolve) => {
+                  globalThis.__vtPaneContracts.release = resolve;
+                });
               return new this();
             }
             setTheme(theme) { globalThis.__vtPaneContracts.themes.push(theme); }
-            async setFont(font) { globalThis.__vtPaneContracts.fonts.push(font); }
+            async setFont(font) {
+              globalThis.__vtPaneContracts.fonts.push(font);
+              if (font.family === "Reject Mono") throw new Error("load rejection");
+            }
             setVisible() {}
             focus() {}
             write() {}
@@ -119,6 +126,15 @@ const panel = {
 };
 const assets = { kind: "ready", runtime: {}, symbolsFontUrl: "fixture-font" };
 
+function resetRecorded() {
+  recorded.options.length = 0;
+  recorded.themes.length = 0;
+  recorded.fonts.length = 0;
+  recorded.input.length = 0;
+  recorded.delay = false;
+  recorded.release = undefined;
+}
+
 const first = {
   appearance: "dark",
   theme: { background: "#123456", foreground: "#abcdef" },
@@ -175,6 +191,106 @@ test("published font vars reach the surface: create, update, reset", async () =>
     controller.abort();
   });
   rmSync(bundleDir, { recursive: true, force: true });
+});
+
+// A publication that lands while `GhosttyTerminalSurface.create` is still
+// pending must reconcile onto the new surface — the update effect sees
+// surfaceRef null and its setFont is skipped, so the create continuation
+// re-reads the latest vars after the await resolves.
+test("republish during pending async create lands on the new surface", async () => {
+  resetRecorded();
+  recorded.delay = true;
+  let renderer;
+  await act(async () => {
+    renderer = create(React.createElement(TerminalPane, props), {
+      createNodeMock: () => ({}),
+    });
+  });
+  // Create is still pending; the republish's setFont is skipped.
+  await act(async () => {
+    renderer.update(
+      React.createElement(TerminalPane, {
+        ...props,
+        appearanceVars: terminalAppearanceVars(second),
+      }),
+    );
+  });
+  assert.equal(recorded.fonts.length, 0);
+  await act(async () => {
+    recorded.release();
+  });
+  // The new surface was created with the pre-republish font, then
+  // reconciled to the latest publication.
+  assert.deepEqual(recorded.options[0].font, { family: "First Mono", size: 18 });
+  assert.deepEqual(recorded.fonts.at(-1), { family: "Second Mono", size: 24 });
+  await act(async () => {
+    renderer.unmount();
+  });
+});
+
+test("clear during pending async create resets the new surface", async () => {
+  resetRecorded();
+  recorded.delay = true;
+  let renderer;
+  await act(async () => {
+    renderer = create(React.createElement(TerminalPane, props), {
+      createNodeMock: () => ({}),
+    });
+  });
+  await act(async () => {
+    renderer.update(React.createElement(TerminalPane, { ...props, appearanceVars: null }));
+  });
+  assert.equal(recorded.fonts.length, 0);
+  await act(async () => {
+    recorded.release();
+  });
+  assert.deepEqual(recorded.options[0].font, { family: "First Mono", size: 18 });
+  assert.deepEqual(recorded.fonts.at(-1), {});
+  await act(async () => {
+    renderer.unmount();
+  });
+});
+
+// A rejected setFont keeps current metrics and must not wedge the
+// reconciliation — the next publication still reaches the surface.
+test("a rejected setFont does not wedge later updates", async () => {
+  resetRecorded();
+  recorded.delay = true;
+  const rejected = {
+    ...first,
+    font: { family: "Reject Mono", size: 20 },
+  };
+  let renderer;
+  await act(async () => {
+    renderer = create(React.createElement(TerminalPane, props), {
+      createNodeMock: () => ({}),
+    });
+  });
+  await act(async () => {
+    renderer.update(
+      React.createElement(TerminalPane, {
+        ...props,
+        appearanceVars: terminalAppearanceVars(rejected),
+      }),
+    );
+  });
+  await act(async () => {
+    recorded.release();
+  });
+  // The reconciling setFont rejected — swallowed like the settled path.
+  assert.deepEqual(recorded.fonts.at(-1), { family: "Reject Mono", size: 20 });
+  await act(async () => {
+    renderer.update(
+      React.createElement(TerminalPane, {
+        ...props,
+        appearanceVars: terminalAppearanceVars(second),
+      }),
+    );
+  });
+  assert.deepEqual(recorded.fonts.at(-1), { family: "Second Mono", size: 24 });
+  await act(async () => {
+    renderer.unmount();
+  });
 });
 
 test("local Ghostty editing intercepts exist: Ctrl+L writes FF to the PTY", () => {

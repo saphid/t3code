@@ -392,9 +392,10 @@ function TerminalPane(props: {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const surfaceRef = useRef<GhosttyTerminalSurface | null>(null);
   const shownRef = useRef(active && visible);
-  // Latest published appearance vars, for the async surface create — its
-  // continuation resumes after this commit's effects, so it reads the ref
-  // rather than closing over a stale prop.
+  // Latest published appearance vars. The async create bakes them into
+  // options.font and, once the surface exists, reconciles any publication
+  // that landed while the create was pending (its setFont was skipped
+  // because surfaceRef was still null).
   const appearanceVarsRef = useRef(appearanceVars);
   appearanceVarsRef.current = appearanceVars;
 
@@ -442,11 +443,12 @@ function TerminalPane(props: {
       surface?.setTheme(terminalThemeFromApp(mount));
     });
     void (async () => {
+      const createdFont = terminalFontFromVars(appearanceVarsRef.current);
       const options: GhosttyTerminalSurfaceOptions = {
         runtime: assets.runtime,
         symbolsFontUrl: assets.symbolsFontUrl,
         theme: terminalThemeFromApp(mount),
-        font: terminalFontFromVars(appearanceVarsRef.current),
+        font: createdFont,
         get visible() {
           return shownRef.current;
         },
@@ -487,6 +489,15 @@ function TerminalPane(props: {
       // The theme observer is not installed yet; re-read in case the app
       // toggled light/dark while the surface was loading.
       surface.setTheme(terminalThemeFromApp(mount));
+      // Appearance publications during the pending create ran the update
+      // effect with surfaceRef still null, so their setFont calls were
+      // skipped — reconcile the latest vars onto the new surface. Skip the
+      // call when nothing changed (a same-value setFont still pays a font
+      // load and re-measure).
+      const latestFont = terminalFontFromVars(appearanceVarsRef.current);
+      if (latestFont.family !== createdFont.family || latestFont.size !== createdFont.size) {
+        void surface.setFont(latestFont).catch(() => {});
+      }
       surfaceRef.current = surface;
       try {
         attachment.attach(surface);
