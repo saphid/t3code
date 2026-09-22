@@ -650,31 +650,56 @@ NodeTest.test("emitted-label rewriter edits only generated positions", async (t)
   );
 
   // A string key the build cannot explain fails the build — generated
-  // metadata must never be half-rewritten.
+  // metadata must never be half-rewritten. Provenance is positional: the
+  // wrapper statement sits under its own banner and binds a
+  // `require_*`/`init_*` name to a prologue helper call.
   NodeAssert.throws(
     () =>
-      rewriteEmittedLabels(helper + `__commonJS({ "unexplained/key.cjs"() {} });\n`, inputs, dir),
+      rewriteEmittedLabels(
+        helper +
+          `// ${label}\nvar require_dep = __commonJS({ ${JSON.stringify(label)}(exports, module) {}, "unexplained/key.cjs"(exports) {} });\n`,
+        inputs,
+        dir,
+      ),
     /not a bundled input/,
   );
 
-  // A user declaration shadowing the helper name makes the call user code:
-  // its keys are data, never validated or rewritten.
-  const shadowed =
+  // A helper-shaped call outside the wrapper position is user code — a
+  // bare statement, a differently named var, a nested function — its keys
+  // are data, never validated or rewritten. This holds even when the key
+  // matches a bundled input label.
+  const unproven =
     helper +
+    `// ${label}\nvar require_dep = __commonJS({ ${JSON.stringify(label)}(exports, module) {} });\n` +
     `{ function __commonJS(x) { return x; } __commonJS({ ${JSON.stringify(label)}() {} }); }\n` +
-    `const f = function __esm() { return __esm({ ${JSON.stringify(label)}() {} }); };\n`;
-  const shadowedOut = rewriteEmittedLabels(shadowed, inputs, dir);
+    `const f = function __esm() { return __esm({ ${JSON.stringify(label)}() {} }); };\n` +
+    `var mine = __commonJS({ "never-validated/key.cjs"() {} });\n` +
+    `var __esm = (x) => Object.keys(x)[0];\n` +
+    `var v = __esm({ "also-not-validated.cjs"() {} });\n`;
+  const unprovenOut = rewriteEmittedLabels(unproven, inputs, dir);
+  NodeAssert.ok(
+    unprovenOut.includes("never-validated/key.cjs"),
+    "non-wrapper helper call was validated",
+  );
+  NodeAssert.ok(
+    unprovenOut.includes("also-not-validated.cjs"),
+    "user var __esm call was validated",
+  );
   NodeAssert.equal(
-    shadowedOut.split(label).length - 1,
+    unprovenOut.split(label).length - 1,
     2,
-    "shadowed helper calls had label-shaped keys rewritten",
+    "unproven helper calls had label-shaped keys rewritten",
   );
 
-  // fileName metadata only rewrites inside a generated jsxDEV call — not a
-  // user object's method, and not any other argument position.
+  // fileName metadata only rewrites inside a generated jsxDEV call — a
+  // bare import pinned to the react/jsx-dev-runtime specifier — not a
+  // user object's method, an arbitrary imported member, or any other
+  // argument position.
   const jsx =
-    `import runtime from "jsx-dev-runtime";\n` +
+    `import runtime from "react/jsx-dev-runtime";\n` +
+    `import fakeRuntime from "some-dep";\n` +
     `runtime.jsxDEV(a, b, c, d, { fileName: ${JSON.stringify(label)}, lineNumber: 1 });\n` +
+    `fakeRuntime.jsxDEV(a, b, c, d, { fileName: ${JSON.stringify(label)}, lineNumber: 1 });\n` +
     `userObj.jsxDEV(a, b, c, d, { fileName: ${JSON.stringify(label)}, lineNumber: 1 });\n` +
     `runtime.jsxDEV(a, b, c, { fileName: ${JSON.stringify(label)}, lineNumber: 1 }, self);\n`;
   const jsxOut = rewriteEmittedLabels(jsx, inputs, dir);
@@ -684,38 +709,176 @@ NodeTest.test("emitted-label rewriter edits only generated positions", async (t)
   );
   NodeAssert.equal(
     jsxOut.split(label).length - 1,
-    2,
+    3,
     "non-generated fileName positions were rewritten",
   );
 
-  // In IIFE output the jsx namespace is a bundler `var` initialized through
-  // __toESM — fileName rewrites there, but not through a look-alike var.
+  // In IIFE output the jsx namespace is a bundler `var` initialized by a
+  // prologue __toESM over the require_* of the dev-runtime module — the
+  // fileName rewrites there, but not through a look-alike var nor through
+  // a namespace whose require_ wraps any other module.
   const wrapped =
+    `var __commonJS = (cb, mod) => () => cb[Object.keys(cb)[0]]();\n` +
     `var __toESM = (x, m) => x;\n` +
-    `var import_jsx_dev_runtime = __toESM(require_x());\n` +
-    `var notRuntime = userFactory();\n` +
+    `// host-react:react/jsx-dev-runtime\n` +
+    `var require_dev = __commonJS({ "host-react:react/jsx-dev-runtime"(e, m) {} });\n` +
+    `// ${label}\n` +
+    `var require_other = __commonJS({ ${JSON.stringify(label)}(e, m) {} });\n` +
+    `// component.tsx\n` +
+    `var import_jsx_dev_runtime = __toESM(require_dev());\n` +
+    `var notRuntime = __toESM(require_other());\n` +
+    `var userNs = userFactory();\n` +
     `import_jsx_dev_runtime.jsxDEV(a, b, c, d, { fileName: ${JSON.stringify(label)}, lineNumber: 1 });\n` +
-    `notRuntime.jsxDEV(a, b, c, d, { fileName: ${JSON.stringify(label)}, lineNumber: 1 });\n`;
-  const wrappedOut = rewriteEmittedLabels(wrapped, inputs, dir);
+    `notRuntime.jsxDEV(a, b, c, d, { fileName: ${JSON.stringify(label)}, lineNumber: 1 });\n` +
+    `userNs.jsxDEV(a, b, c, d, { fileName: ${JSON.stringify(label)}, lineNumber: 1 });\n`;
+  const wrappedOut = rewriteEmittedLabels(
+    wrapped,
+    [...inputs, "host-react:react/jsx-dev-runtime"],
+    dir,
+  );
   NodeAssert.ok(
     wrappedOut.includes(`d, { fileName: ${JSON.stringify(canon)}, lineNumber: 1 })`),
     "bundler-namespace jsxDEV fileName kept raw label",
   );
   NodeAssert.equal(
     wrappedOut.split(label).length - 1,
-    1,
-    "user-namespace jsxDEV fileName was rewritten",
+    2,
+    "non-runtime-namespace jsxDEV fileName was rewritten",
   );
 
   // Plugin-namespace inputs (host-react:…) are valid helper-map keys but
   // not filesystem labels — accepted, never rewritten.
   const namespaced = rewriteEmittedLabels(
-    helper + `__commonJS({ "host-react:react/jsx-dev-runtime"(exports) {} });\n`,
+    helper +
+      `// host-react:react/jsx-dev-runtime\n` +
+      `var require_dev = __commonJS({ "host-react:react/jsx-dev-runtime"(exports) {} });\n`,
     [...inputs, "host-react:react/jsx-dev-runtime"],
     dir,
   );
   NodeAssert.ok(namespaced.includes('"host-react:react/jsx-dev-runtime"'));
+
+  // Metafile keys keep every input spelling, including `<…>` pseudo-inputs
+  // and filenames that begin with an angle bracket.
+  const angle = rewriteEmittedLabels(`// <stdin>\nvar x = 1;\n`, ["<stdin>", "<local.cjs"], dir);
+  NodeAssert.ok(angle.includes("// <stdin>"), "pseudo-input banner was rewritten");
 });
+
+NodeTest.test(
+  "production CLI leaves user-authored helper and jsxDEV shapes untouched",
+  async () => {
+    // Round-5 provenance negatives, end to end through `t3-extension
+    // build`: user code that resembles generated metadata is data, not a
+    // label position. `dep` exports a jsxDEV-shaped function and lives
+    // outside the package root so its own label canonicalizes — the user
+    // copies must not follow it.
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-bundler-"));
+    const dep = NodePath.join(root, "dep");
+    await NodeFSP.mkdir(dep, { recursive: true });
+    await NodeFSP.writeFile(
+      NodePath.join(dep, "package.json"),
+      JSON.stringify({ name: "dep", main: "index.cjs" }),
+    );
+    await NodeFSP.writeFile(
+      NodePath.join(dep, "index.cjs"),
+      "// @ts-nocheck\nexports.jsxDEV = (a, b, c, d, source) => source.fileName;\nexports.value = 42;\n",
+    );
+    const dir = NodePath.join(root, "proj");
+    await NodeFSP.mkdir(NodePath.join(dir, "node_modules", "@types"), { recursive: true });
+    await NodeFSP.symlink(dep, NodePath.join(dir, "node_modules", "dep"));
+    await NodeFSP.symlink(
+      NodePath.join(sdk, "node_modules", "react"),
+      NodePath.join(dir, "node_modules", "react"),
+    );
+    await NodeFSP.symlink(
+      NodePath.join(sdk, "node_modules", "@types", "react"),
+      NodePath.join(dir, "node_modules", "@types", "react"),
+    );
+    await NodeFSP.writeFile(NodePath.join(dir, "<local.cjs"), "module.exports = 'angle';\n");
+    await NodeFSP.writeFile(
+      NodePath.join(dir, "tsconfig.json"),
+      tsconfig("react-jsxdev").replace(
+        '"strict": true',
+        '"strict": true, "checkJs": false, "allowJs": true',
+      ),
+    );
+    await NodeFSP.writeFile(
+      NodePath.join(dir, "extension.ts"),
+      `export default {
+  package: {
+    format: 2,
+    manifest: { id: "test.spoof", apiVersion: 1, version: "1.0.0", surfaces: [] },
+    serverEntry: "server.mjs",
+    tools: [],
+    dependencies: [],
+    provides: [],
+    requires: [],
+  },
+  serverEntry: "server.ts",
+};
+`,
+    );
+    // Every shape the round-4 review proved reachable: a user var bound to
+    // a helper name whose map keys match (and don't match) bundled inputs,
+    // the same inside a nested function, a dep-exported jsxDEV member, a
+    // filename that opens with `<`, and a hand-authored call into the real
+    // dev runtime — the documented mimicry boundary, asserted as treated
+    // as generated.
+    await NodeFSP.writeFile(
+      NodePath.join(dir, "server.ts"),
+      `// @ts-nocheck
+import dep from "dep";
+import angled from "./<local.cjs";
+import { jsxDEV } from "react/jsx-dev-runtime";
+var __esm = (x) => Object.keys(x)[0];
+function nested() {
+  var __commonJS = (x) => x;
+  return Object.keys(__commonJS({ "../dep/index.cjs": () => dep.value, "never-a-module.cjs": () => 2 }));
+}
+export default {
+  tools: [],
+  angled,
+  matched: __esm({ "../dep/index.cjs": () => dep.value }),
+  unmatched: __esm({ "customer-record": () => dep.value }),
+  nested: nested(),
+  imported: dep.jsxDEV(null, null, null, null, { fileName: "../dep/index.cjs", lineNumber: 7 }),
+  handAuthored: jsxDEV("b", {}, null, false, { fileName: "../dep/index.cjs", lineNumber: 1 }, undefined),
+};
+`,
+    );
+    build(dir, root);
+    const server = (await readBundle(dir, "server.mjs")).toString("utf8");
+    // The generated wrapper for `dep` still canonicalizes.
+    NodeAssert.ok(
+      server.includes('"node_modules/dep/index.cjs"('),
+      "generated dep wrapper key was not canonicalized",
+    );
+    // The hand-authored call into the real dev runtime is emitted through
+    // the same namespace the transform uses — the documented mimicry
+    // boundary — so its fileName canonicalizes too.
+    NodeAssert.ok(
+      server.includes('fileName: "node_modules/dep/index.cjs"'),
+      "hand-authored real-runtime fileName not canonicalized (boundary)",
+    );
+    const mod = await import(
+      NodeURL.pathToFileURL(NodePath.join(dir, ".t3-extension", "server.mjs")).href +
+        "?t=" +
+        Date.now()
+    );
+    NodeAssert.equal(mod.default.matched, "../dep/index.cjs", "user map key was rewritten");
+    NodeAssert.equal(mod.default.unmatched, "customer-record", "unknown user key was rewritten");
+    NodeAssert.deepEqual(
+      mod.default.nested,
+      ["../dep/index.cjs", "never-a-module.cjs"],
+      "nested user helper map was validated or rewritten",
+    );
+    NodeAssert.equal(
+      mod.default.imported,
+      "../dep/index.cjs",
+      "dep-exported jsxDEV fileName was rewritten",
+    );
+    NodeAssert.equal(mod.default.angled, "angle", "<-named file failed to bundle");
+  },
+);
 
 NodeTest.test("canonicalization preserves manifest semantics and never degrades", async (t) => {
   // Round-3 regression pair: a staged rebuild dropped an inherited

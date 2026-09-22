@@ -9,22 +9,39 @@
 //
 // The emitted JavaScript is the authoritative compile: it is never
 // re-bundled. Labels are rewritten in place by parsing the output with a
-// real parser and touching only syntactically generated positions:
-// string keys of the object argument to a `__commonJS`/`__esm`
-// helper call whose callee resolves to the bundler's own `var` helper
-// (so a user shadowing the name keeps their data), the `fileName` literal
-// of the source-metadata argument at position 4 of a `jsxDEV` call, and
-// `//` line comments whose whole text is an emitted label. A label-shaped
-// value anywhere else — user strings, ordinary {fileName, lineNumber}
-// records, template contents — is unreachable by construction.
+// real parser and touching only positions whose generated provenance is
+// structural, not merely name-shaped:
 //
-// A string key inside a generated helper map that is not a bundled input
-// label means the emitted output contains generated metadata this file
-// cannot explain; that throws rather than shipping a half-rewritten
-// bundle. A dep file with no usable package identity (no named
-// package.json, no node_modules/ suffix) or a canonical name claimed by
-// two different modules keeps its location-dependent label — a documented
-// limit, not a silent rewrite.
+// - Module wrapper maps: `var require_*/init_* = __commonJS({…})` /
+//   `__esm({…})` statements in the bundle body's top-level statement
+//   list, where the callee resolves to a `var` in the prologue — the
+//   contiguous run of `var` declarations before the body's first
+//   freestanding line comment. esbuild emits its helpers there wholesale;
+//   user statements only ever appear after the first module banner or
+//   inside module bodies, so a user `var __esm = …` can never occupy a
+//   prologue slot. `__glob` maps are keyed by pattern-relative lookup
+//   names, not module labels.
+// - JSX dev metadata: `fileName` in the argument-4 source object of a
+//   `jsxDEV` call, only when the callee's namespace object is a top-level
+//   `var` initialized by a prologue `__toESM`/`__toCommonJS` over the
+//   `require_*` of a module whose metafile key is the jsx-dev-runtime —
+//   or a bare `jsxDEV` imported from the pinned `react/jsx-dev-runtime`
+//   specifier. A dependency that merely exports a `jsxDEV` member is not
+//   that module.
+// - `//` line comments at line start whose whole text is an emitted
+//   label, or whose ` in <label>` suffix follows a call-shaped prefix —
+//   esbuild's banner and glob-synthetic comment forms.
+//
+// A string key inside a proven helper map that is not a bundled input
+// label (nor a ` in <label>` synthetic name) means emitted metadata this
+// file cannot explain; that throws rather than shipping a half-rewritten
+// bundle. The throw is unreachable for programs that do not deliberately
+// mimic esbuild's emitted shapes — and mimicry exact down to the
+// `require_*`/`init_*` name, prologue binding, and top-level position is
+// indistinguishable from generated code by construction. A dep file with
+// no usable package identity (no named package.json, no node_modules/
+// suffix) or a canonical name claimed by two different modules keeps its
+// location-dependent label — a documented limit, not a silent rewrite.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { parse as parseJavaScript } from "acorn";
@@ -92,6 +109,9 @@ const FUNCTION_LIKE = new Set([
 // `__glob`'s own map is keyed by pattern-relative specifiers — lookup
 // names, not module labels — so it is not a label position.
 const MAP_HELPERS = new Set(["__commonJS", "__esm", "__commonJSMin", "__esmMin"]);
+const NS_HELPERS = new Set(["__toESM", "__toCommonJS"]);
+// Generated module-wrapper declarators always carry these prefixes.
+const WRAPPER_NAME = /^(?:require|init)_/;
 const SCOPES = new Set([
   ...FUNCTION_LIKE,
   "Program",
@@ -147,45 +167,51 @@ const collectHoisted = (node, found) => {
     if (FUNCTION_LIKE.has(child.type)) continue;
     if (child.type === "VariableDeclaration" && child.kind === "var") {
       for (const declarator of child.declarations)
-        for (const name of patternIds(declarator.id)) found.set(name, declarator);
+        for (const name of patternIds(declarator.id)) found.set(name, { kind: "var", declarator });
     } else if (child.type === "FunctionDeclaration" && child.id) {
-      found.set(child.id.name, "function");
+      found.set(child.id.name, { kind: "function" });
     }
     collectHoisted(child, found);
   }
 };
-// Names bound directly at this scope level. A binding is reported as the
-// VariableDeclarator when it is a `var` (its init shape distinguishes the
-// bundler's helpers), "param", "import", or "lexical" otherwise.
+// Names bound directly at this scope level. Import bindings record their
+// declaration's source specifier so callers can pin provenance to the
+// exact module an import came from.
 const scopeBindings = (node) => {
   const found = new Map();
-  const addPattern = (pattern, kind) => patternIds(pattern).forEach((n) => found.set(n, kind));
+  const addPattern = (pattern, kind) => patternIds(pattern).forEach((n) => found.set(n, { kind }));
   const lexicalStatements = (statements) => {
     for (const statement of statements) {
       if (statement.type === "VariableDeclaration") {
         if (statement.kind === "var")
           for (const declarator of statement.declarations)
-            for (const name of patternIds(declarator.id)) found.set(name, declarator);
+            for (const name of patternIds(declarator.id))
+              found.set(name, { kind: "var", declarator });
         else for (const declarator of statement.declarations) addPattern(declarator.id, "lexical");
       } else if (statement.type === "FunctionDeclaration" && statement.id) {
-        found.set(statement.id.name, "function");
+        found.set(statement.id.name, { kind: "function" });
       } else if (statement.type === "ClassDeclaration" && statement.id) {
-        found.set(statement.id.name, "lexical");
+        found.set(statement.id.name, { kind: "lexical" });
       } else if (statement.type === "ImportDeclaration") {
-        for (const specifier of statement.specifiers) found.set(specifier.local.name, "import");
+        for (const specifier of statement.specifiers)
+          found.set(specifier.local.name, {
+            kind: "import",
+            source: statement.source.value,
+          });
       }
     }
   };
   if (FUNCTION_LIKE.has(node.type)) {
     for (const param of node.params) addPattern(param, "param");
     // A named function expression binds its own name inside its body.
-    if (node.type !== "FunctionDeclaration" && node.id) found.set(node.id.name, "function");
+    if (node.type !== "FunctionDeclaration" && node.id)
+      found.set(node.id.name, { kind: "function" });
     if (node.body.type === "BlockStatement") collectHoisted(node.body, found);
     return found;
   }
   // A named class expression binds its own name inside its body.
   if (node.type === "ClassExpression") {
-    if (node.id) found.set(node.id.name, "lexical");
+    if (node.id) found.set(node.id.name, { kind: "lexical" });
     return found;
   }
   if (node.type === "Program" || node.type === "BlockStatement" || node.type === "StaticBlock") {
@@ -194,6 +220,10 @@ const scopeBindings = (node) => {
   }
   if (node.type === "CatchClause") {
     if (node.param) addPattern(node.param, "param");
+    return found;
+  }
+  if (node.type === "SwitchStatement") {
+    for (const kase of node.cases) lexicalStatements(kase.consequent);
     return found;
   }
   if (
@@ -206,16 +236,10 @@ const scopeBindings = (node) => {
       for (const declarator of decl.declarations) addPattern(declarator.id, "lexical");
     return found;
   }
-  if (node.type === "SwitchStatement") {
-    for (const kase of node.cases) lexicalStatements(kase.consequent);
-    return found;
-  }
   return found;
 };
 // The nearest binding for `name` visible from a position, walking scopes
-// outward. `var` bindings surface their declarator so the caller can check
-// whether the bundler's `var __commonJS = <function>` shape is what the
-// name resolves to; everything else is user-authored or an import.
+// outward.
 const bindingOf = (name, ancestors, scopes) => {
   for (let i = ancestors.length - 1; i >= 0; i--) {
     const scope = scopes.get(ancestors[i]);
@@ -224,12 +248,6 @@ const bindingOf = (name, ancestors, scopes) => {
   }
   return undefined;
 };
-const isHelperBinding = (binding) =>
-  typeof binding === "object" &&
-  binding !== null &&
-  binding.type === "VariableDeclarator" &&
-  binding.init !== null &&
-  FUNCTION_LIKE.has(binding.init.type);
 // `(0, x.jsxDEV)` arrives as a SequenceExpression; peel grouping and comma
 // layers down to the real callee.
 const unwrapCallee = (expr) => {
@@ -240,19 +258,46 @@ const unwrapCallee = (expr) => {
     else return expr;
   }
 };
+// The statement list of a node's body, for nodes whose `.body` is either
+// an array (Program, blocks, static blocks) or a BlockStatement.
+const statementList = (node) =>
+  Array.isArray(node.body)
+    ? node.body
+    : node.body && node.body.type === "BlockStatement"
+      ? node.body.body
+      : null;
+// The deepest statement-list node containing `pos` in a gap between its
+// statements — i.e. the list a freestanding comment belongs to.
+const enclosingList = (root, pos) => {
+  let result = null;
+  const visit = (node) => {
+    const list = statementList(node);
+    if (
+      list !== null &&
+      node.start <= pos &&
+      pos <= node.end &&
+      !list.some((s) => s.start <= pos && pos <= s.end)
+    )
+      result = node;
+    for (const child of childNodes(node)) visit(child);
+  };
+  visit(root);
+  return result;
+};
+
 // Rewrite the generated label positions in emitted bundle text. `inputs`
 // is metafile.inputs — the exact spellings esbuild stamped, including
-// plugin-namespace keys like `host-react:react` which are already
-// location-independent. Returns the rewritten text; throws when a
-// generated position carries a label this build cannot account for.
+// plugin-namespace keys like `host-react:react` and pseudo-inputs like
+// `<stdin>`; they are all valid map keys, but only labels that resolve
+// outside the extension directory are eligible for canonicalization.
+// Returns the rewritten text; throws when a proven-generated position
+// carries a label this build cannot account for.
 export const rewriteEmittedLabels = (text, inputs, dir) => {
-  const labels = new Set();
+  const labels = new Set(inputs);
   const wanted = new Map(); // emitted outside label -> canonical label
   const claimants = new Map(); // canonical label -> how many inputs want it
   const insideKeys = new Set();
   for (const key of inputs) {
-    if (key.startsWith("<")) continue; // pseudo-inputs emit no labels
-    labels.add(key);
     const abs = NodePath.resolve(dir, key);
     if (insideRel(dir, abs) === null) {
       const canon = canonicalLabel(abs);
@@ -267,6 +312,15 @@ export const rewriteEmittedLabels = (text, inputs, dir) => {
   const finals = new Map();
   for (const [label, canon] of wanted)
     if (claimants.get(canon) === 1 && !insideKeys.has(canon)) finals.set(label, canon);
+  // Module keys pinned as this build's JSX dev runtime — the host-react
+  // plugin namespace or a real react package's file.
+  const devRuntimeKeys = new Set(
+    [...labels].filter(
+      (key) =>
+        key === "host-react:react/jsx-dev-runtime" ||
+        /(^|\/)react\/jsx-dev-runtime\.[cm]?[jt]s$/.test(key),
+    ),
+  );
   const comments = [];
   let ast;
   try {
@@ -292,91 +346,255 @@ export const rewriteEmittedLabels = (text, inputs, dir) => {
       replacement: quote + escapeLabel(value, quote) + quote,
     });
   };
+  // ` in <label>` suffix of a glob-synthetic name, tried from the right so
+  // a label containing " in " still resolves. Returns the label or null.
+  const syntheticSuffix = (value) => {
+    let at = value.length;
+    while (at > 0) {
+      at = value.lastIndexOf(" in ", at - 1);
+      if (at === -1) return null;
+      const candidate = value.slice(at + 4);
+      if (labels.has(candidate) && /^[\w$]+\([\s\S]*\)$/.test(value.slice(0, at))) return candidate;
+    }
+    return null;
+  };
+  // The bundle body: the statement list that holds the module banner
+  // comments. The first line comment at line start whose text is an
+  // emitted label (or glob-synthetic name) identifies it; with no banner
+  // there are no module labels and no prologue to trust.
+  let bundleBody = null;
+  for (const comment of comments) {
+    if (comment.type !== "Line") continue;
+    const body = comment.value.trim();
+    if (!labels.has(body) && syntheticSuffix(body) === null) continue;
+    const before = text.slice(text.lastIndexOf("\n", comment.start - 1) + 1, comment.start);
+    if (before.trim() !== "") continue; // a trailing comment, not a banner
+    bundleBody = enclosingList(ast, comment.start);
+    break;
+  }
+  // Prologue + module-wrapper tables for the bundle body. The prologue is
+  // the leading run of `var` declarations, ending at the first
+  // freestanding line comment (the first module banner) or the first
+  // non-var statement — the only slot esbuild fills with its own helpers.
+  // Wrapper calls are recorded as init CallExpression -> {declarator,
+  // gap}: a generated `var require_*/init_* = <helper>({…})` statement
+  // always sits directly under the banner comment naming its module.
+  const prologueDecls = new Set();
+  const wrapperCalls = new Map();
+  if (bundleBody !== null) {
+    const list = statementList(bundleBody);
+    let prevEnd = bundleBody.start;
+    let prologueOpen = true;
+    // The last freestanding comment seen, carried across consecutive `var`
+    // statements: a generated module's banner precedes its wrapper var,
+    // but a bare `var globRequire_x;` declaration can sit between them, so
+    // the effective banner of a wrapper statement is its own gap comment
+    // or the one the preceding var run inherited.
+    let carriedBanner = null;
+    for (const stmt of list) {
+      const gap = comments.filter(
+        (c) => c.type === "Line" && prevEnd < c.start && c.start < stmt.start,
+      );
+      const isVar = stmt.type === "VariableDeclaration" && stmt.kind === "var";
+      const isDirective = stmt.type === "ExpressionStatement" && stmt.expression.type === "Literal";
+      if (!isDirective) {
+        if (!isVar || gap.length > 0) prologueOpen = false;
+        if (isVar) {
+          const banner = gap.length > 0 ? gap[gap.length - 1] : carriedBanner;
+          for (const declarator of stmt.declarations) {
+            if (declarator.init !== null && declarator.init.type === "CallExpression")
+              wrapperCalls.set(declarator.init, { declarator, banner });
+            if (
+              prologueOpen &&
+              gap.length === 0 &&
+              declarator.id.type === "Identifier" &&
+              declarator.init !== null &&
+              FUNCTION_LIKE.has(declarator.init.type) &&
+              (MAP_HELPERS.has(declarator.id.name) || NS_HELPERS.has(declarator.id.name))
+            )
+              prologueDecls.add(declarator);
+          }
+        }
+        carriedBanner = gap.length > 0 ? gap[gap.length - 1] : isVar ? carriedBanner : null;
+        prevEnd = stmt.end;
+      }
+    }
+  }
+  // The banner a wrapper statement sits under: its own gap comment, or the
+  // one a run of bare `var` declarations shares. Generated wrappers are
+  // emitted as `// <label>\nvar require_x = __commonJS({"<label>"…})`, so
+  // the banner text must be one of the map's own keys.
+  const wrapperBannerOk = (entry, keySet) =>
+    entry.banner !== null && keySet.has(entry.banner.value.trim());
   const scopes = new Map();
   const walk = (node, ancestors) => {
     if (SCOPES.has(node.type)) scopes.set(node, scopeBindings(node));
     if (node.type === "CallExpression") {
       const callee = unwrapCallee(node.callee);
-      // A generated helper call iff the callee resolves to a `var` bound to
-      // a function — the bundler's helper. A user declaration of the same
-      // name in any enclosing scope means the call is user code and stays
-      // untouched.
-      const helper =
-        callee.type === "Identifier" &&
-        MAP_HELPERS.has(callee.name) &&
-        isHelperBinding(bindingOf(callee.name, ancestors, scopes))
-          ? callee.name
-          : null;
-      if (helper !== null) {
+      if (callee.type === "Identifier" && MAP_HELPERS.has(callee.name)) {
+        // Generated module wrapper iff the call is the init of a
+        // bundle-body `var require_*/init_*` declarator directly under a
+        // banner naming one of its keys, AND its callee resolves to the
+        // prologue declaration — positional facts a user declaration or
+        // call cannot occupy.
+        const binding = bindingOf(callee.name, ancestors, scopes);
+        const entry = wrapperCalls.get(node);
         const map = node.arguments[0];
-        if (map && map.type === "ObjectExpression") {
+        const keySet = new Set(
+          map !== undefined && map.type === "ObjectExpression"
+            ? map.properties
+                .filter(
+                  (p) =>
+                    p.type === "Property" &&
+                    !p.computed &&
+                    p.key.type === "Literal" &&
+                    typeof p.key.value === "string",
+                )
+                .map((p) => p.key.value)
+            : [],
+        );
+        const proven =
+          entry !== undefined &&
+          entry.declarator.id.type === "Identifier" &&
+          WRAPPER_NAME.test(entry.declarator.id.name) &&
+          wrapperBannerOk(entry, keySet) &&
+          binding !== undefined &&
+          binding.kind === "var" &&
+          prologueDecls.has(binding.declarator);
+        if (proven) {
           for (const property of map.properties) {
             if (property.type !== "Property" || property.computed) continue;
             const key = property.key;
             if (key.type !== "Literal" || typeof key.value !== "string") continue;
             const value = key.value;
-            if (!labels.has(value)) {
-              // Glob expansion gives wrapper entries synthetic names —
-              // `<kind>("<pattern>") in <importer label>` — where the label
-              // position is the importer suffix. A label may itself contain
-              // " in ", so try every split from the right.
-              let at = value.length;
-              let suffix = null;
-              while (at > 0) {
-                at = value.lastIndexOf(" in ", at - 1);
-                if (at === -1) break;
-                const candidate = value.slice(at + 4);
-                if (labels.has(candidate)) {
-                  suffix = candidate;
-                  break;
-                }
-              }
-              if (suffix === null)
-                throw new Error(
-                  "t3-extension: generated module map key is not a bundled input: " +
-                    JSON.stringify(value),
-                );
-              const target = finals.get(suffix);
-              if (target !== undefined)
-                editLiteral(key, value.slice(0, value.length - suffix.length) + target);
+            // A glob-synthetic name (`require("<pattern>") in <label>`)
+            // is itself a bundled input — canonicalize the importer label
+            // inside it, not the whole key.
+            const suffix = syntheticSuffix(value);
+            const suffixTarget = suffix === null ? undefined : finals.get(suffix);
+            if (suffixTarget !== undefined) {
+              editLiteral(key, value.slice(0, value.length - suffix.length) + suffixTarget);
               continue;
             }
-            const target = finals.get(value);
-            if (target !== undefined) editLiteral(key, target);
+            if (labels.has(value)) {
+              const target = finals.get(value);
+              if (target !== undefined) editLiteral(key, target);
+              continue;
+            }
+            if (suffix === null)
+              throw new Error(
+                "t3-extension: generated module map key is not a bundled input: " +
+                  JSON.stringify(value),
+              );
           }
         }
       } else {
         // jsxDEV(type, props, key, isStatic, source, self): `source` —
         // argument position 4 — is the generated metadata object carrying
-        // fileName. Bare `jsxDEV` is accepted only when the name is an
-        // import or unbound, never a user's own function/var/param. The
-        // member form requires the object to be the bundler's module
-        // namespace — an import binding, or a `var` initialized by the
-        // bundler's own __toESM/__toCommonJS wrapper — never a user object.
-        const bare =
-          callee.type === "Identifier" &&
-          callee.name === "jsxDEV" &&
-          ["import", undefined].includes(bindingOf(callee.name, ancestors, scopes));
-        const objectBinding =
+        // fileName. Provenance requires the callee to be the dev-runtime
+        // module's namespace: a bare `jsxDEV` or member object imported
+        // from the pinned react/jsx-dev-runtime specifier, or a
+        // bundle-body `var` initialized by a prologue __toESM/__toCommonJS
+        // over a require_* whose banner and wrapper map both pin the
+        // dev-runtime module.
+        let proven = false;
+        if (callee.type === "Identifier" && callee.name === "jsxDEV") {
+          const binding = bindingOf(callee.name, ancestors, scopes);
+          proven =
+            binding !== undefined &&
+            binding.kind === "import" &&
+            binding.source === "react/jsx-dev-runtime";
+        } else if (
           callee.type === "MemberExpression" &&
           !callee.computed &&
           callee.property.type === "Identifier" &&
           callee.property.name === "jsxDEV" &&
           callee.object.type === "Identifier"
-            ? bindingOf(callee.object.name, ancestors, scopes)
-            : null;
-        const member =
-          objectBinding === "import" ||
-          (typeof objectBinding === "object" &&
-            objectBinding !== null &&
-            objectBinding.init !== null &&
-            objectBinding.init.type === "CallExpression" &&
-            unwrapCallee(objectBinding.init.callee).type === "Identifier" &&
-            ["__toESM", "__toCommonJS"].includes(unwrapCallee(objectBinding.init.callee).name) &&
-            isHelperBinding(
-              bindingOf(unwrapCallee(objectBinding.init.callee).name, ancestors, scopes),
-            ));
-        if (member || bare) {
+        ) {
+          const objectBinding = bindingOf(callee.object.name, ancestors, scopes);
+          if (
+            objectBinding !== undefined &&
+            objectBinding.kind === "import" &&
+            objectBinding.source === "react/jsx-dev-runtime"
+          ) {
+            proven = true;
+          } else {
+            const objectDecl =
+              objectBinding !== undefined && objectBinding.kind === "var"
+                ? objectBinding.declarator
+                : undefined;
+            const nsEntry =
+              objectDecl !== undefined && objectDecl.init !== null
+                ? wrapperCalls.get(objectDecl.init)
+                : undefined;
+            const nsCall = nsEntry !== undefined ? objectDecl.init : undefined;
+            const nsCallee = nsCall === undefined ? null : unwrapCallee(nsCall.callee);
+            if (
+              nsCallee !== null &&
+              nsCallee.type === "Identifier" &&
+              NS_HELPERS.has(nsCallee.name)
+            ) {
+              const nsHelperBinding = bindingOf(nsCallee.name, ancestors, scopes);
+              const inner = nsCall.arguments[0];
+              const innerCallee =
+                inner !== undefined && inner.type === "CallExpression"
+                  ? unwrapCallee(inner.callee)
+                  : null;
+              const innerBinding =
+                innerCallee !== null && innerCallee.type === "Identifier"
+                  ? bindingOf(innerCallee.name, ancestors, scopes)
+                  : undefined;
+              const requireDecl =
+                innerBinding !== undefined && innerBinding.kind === "var"
+                  ? innerBinding.declarator
+                  : undefined;
+              const requireEntry =
+                requireDecl !== undefined && requireDecl.init !== null
+                  ? wrapperCalls.get(requireDecl.init)
+                  : undefined;
+              const wrapperCall = requireEntry !== undefined ? requireDecl.init : undefined;
+              const wrapperCallee =
+                wrapperCall === undefined ? null : unwrapCallee(wrapperCall.callee);
+              const wrapperBinding =
+                wrapperCallee !== null && wrapperCallee.type === "Identifier"
+                  ? bindingOf(wrapperCallee.name, ancestors, scopes)
+                  : undefined;
+              const wrapperMap =
+                wrapperCall !== undefined && wrapperCall.arguments[0]?.type === "ObjectExpression"
+                  ? wrapperCall.arguments[0]
+                  : null;
+              const wrapperKeySet = new Set(
+                wrapperMap === null
+                  ? []
+                  : wrapperMap.properties
+                      .filter(
+                        (p) =>
+                          p.type === "Property" &&
+                          !p.computed &&
+                          p.key.type === "Literal" &&
+                          typeof p.key.value === "string",
+                      )
+                      .map((p) => p.key.value),
+              );
+              proven =
+                nsHelperBinding !== undefined &&
+                nsHelperBinding.kind === "var" &&
+                prologueDecls.has(nsHelperBinding.declarator) &&
+                requireDecl !== undefined &&
+                requireDecl.id.type === "Identifier" &&
+                WRAPPER_NAME.test(requireDecl.id.name) &&
+                wrapperBannerOk(requireEntry, wrapperKeySet) &&
+                wrapperBinding !== undefined &&
+                wrapperBinding.kind === "var" &&
+                wrapperCallee !== null &&
+                MAP_HELPERS.has(wrapperCallee.name) &&
+                prologueDecls.has(wrapperBinding.declarator) &&
+                wrapperKeySet.size > 0 &&
+                [...wrapperKeySet].every((k) => devRuntimeKeys.has(k));
+            }
+          }
+        }
+        if (proven) {
           const source = node.arguments[4];
           if (source && source.type === "ObjectExpression") {
             for (const property of source.properties) {
@@ -403,25 +621,22 @@ export const rewriteEmittedLabels = (text, inputs, dir) => {
   walk(ast, []);
   for (const comment of comments) {
     if (comment.type !== "Line") continue;
+    // Banners sit at line start; a comment after code on the same line is
+    // not a generated banner.
+    const before = text.slice(text.lastIndexOf("\n", comment.start - 1) + 1, comment.start);
+    if (before.trim() !== "") continue;
     const body = comment.value.trim();
-    let target = finals.get(body);
+    const target = finals.get(body);
     if (target !== undefined) {
       edits.push({ start: comment.start, end: comment.end, replacement: "// " + target });
       continue;
     }
-    // Glob-expansion modules get a synthetic banner: `// <kind>("pat") in
-    // <label>` — the label position is the suffix.
-    let at = body.length;
-    while (at > 0) {
-      at = body.lastIndexOf(" in ", at - 1);
-      if (at === -1) break;
-      const candidate = body.slice(at + 4);
-      target = finals.get(candidate);
+    const suffix = syntheticSuffix(body);
+    if (suffix !== null) {
+      const target = finals.get(suffix);
       if (target !== undefined) {
-        const start =
-          comment.start + 2 + (comment.value.length - comment.value.trimStart().length) + at + 4;
-        edits.push({ start, end: start + candidate.length, replacement: target });
-        break;
+        const start = comment.end - suffix.length;
+        edits.push({ start, end: comment.end, replacement: target });
       }
     }
   }
