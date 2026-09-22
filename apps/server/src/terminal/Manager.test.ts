@@ -781,6 +781,47 @@ it("locates a retroactive escape end in window coordinates across chunks", () =>
   expect(midWindow.appendedUnitLength - midWindow.value().length).toBe(16_387);
 });
 
+it("carries the retroactive endpoint across a storage seam inside the window", () => {
+  // r16: the boundary scan walks chunks without joining; the escape's
+  // retroactive end must survive intermediates that cross the 16 KiB
+  // storage seam, with the deciding byte in a later chunk.
+  const input = "p".repeat(100) + "\x1b" + ")".repeat(16_384) + "\x01KEEP";
+  const history = new TerminalManager.BoundedTerminalHistory(5_000, "", 16_389);
+  history.append(input);
+  // Evicted "p"×100 + ESC leaves entry state "escape": the first
+  // intermediate sits at window offset 0, so the escape ends
+  // retroactively at window offset 1 — proven only when chunk 2's \x01
+  // is scanned after 16_283 intermediates in chunk 1.
+  expect(history.value()).toBe(input.slice(102));
+  expect(history.value().length).toBe(16_388);
+  expect(history.appendedUnitLength - history.value().length).toBe(102);
+  expect(history.sanitizedValue()).toBe(input.slice(102));
+
+  // Same seam, but the first intermediate was evicted too: the endpoint
+  // is before the window and nothing is dropped.
+  const evictedStart = new TerminalManager.BoundedTerminalHistory(5_000, "", 16_387);
+  evictedStart.append("p".repeat(100) + "\x1b))" + ")".repeat(16_382) + "\x01KEEP");
+  expect(evictedStart.value()).toBe(")".repeat(16_382) + "\x01KEEP");
+  expect(evictedStart.value().length).toBe(16_387);
+});
+
+it("never joins the retained window while aligning a sequence boundary", () => {
+  // r16 performance contract: boundary alignment scans chunks in place —
+  // value() must not be called from the append/trim path at all.
+  const history = new TerminalManager.BoundedTerminalHistory(5_000, "", 8 * 1024);
+  let valueCalls = 0;
+  const value = history.value.bind(history);
+  history.value = () => {
+    valueCalls += 1;
+    return value();
+  };
+  for (let index = 0; index < 64; index += 1) {
+    history.append("\x1b[31m" + "x".repeat(508));
+  }
+  expect(valueCalls).toBe(0);
+  expect(history.value().length).toBeLessThanOrEqual(8 * 1024);
+});
+
 // The sanitizer's own parse as a span oracle: every sequence's extent per
 // sanitizeTerminalHistoryChunk's grammar, using its actual helpers.
 function sequenceSpans(text: string): Array<readonly [number, number]> {

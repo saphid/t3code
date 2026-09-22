@@ -877,6 +877,7 @@ export type SequenceParseState =
 export function scanTerminalSequenceState(
   data: string,
   state: SequenceParseState,
+  stopAtEndIndex = false,
 ): { state: SequenceParseState; endIndex: number | null } {
   const openAtEntry = state !== "none";
   let endIndex: number | null = null;
@@ -905,13 +906,19 @@ export function scanTerminalSequenceState(
       if (isEscapeFinalByte(codePoint)) {
         state = "none";
         index += 1;
-        if (openAtEntry && endIndex === null) endIndex = index;
+        if (openAtEntry && endIndex === null) {
+          endIndex = index;
+          if (stopAtEndIndex) return { state, endIndex };
+        }
         continue;
       }
       // A non-final byte ends the escape retroactively at `escapeStart`
       // (`start + 1` in the sanitizer); this byte is not part of it.
       state = "none";
-      if (openAtEntry && endIndex === null) endIndex = escapeStart < 0 ? 0 : escapeStart + 1;
+      if (openAtEntry && endIndex === null) {
+        endIndex = escapeStart < 0 ? 0 : escapeStart + 1;
+        if (stopAtEndIndex) return { state, endIndex };
+      }
       continue;
     } else if (state === "csi") {
       if (isCsiFinalByte(codePoint)) state = "none";
@@ -941,7 +948,10 @@ export function scanTerminalSequenceState(
       state = "string";
     }
     index += 1;
-    if (openAtEntry && state === "none" && endIndex === null) endIndex = index;
+    if (openAtEntry && state === "none" && endIndex === null) {
+      endIndex = index;
+      if (stopAtEndIndex) return { state, endIndex };
+    }
   }
   return { state, endIndex };
 }
@@ -1067,21 +1077,40 @@ export class BoundedTerminalHistory {
    * anything is dropped: an escape ends retroactively at its first byte
    * on a non-final byte, so intermediates-only regions are ordinary text
    * until a later byte decides — and where that first byte sat decides
-   * whether the endpoint lands inside or before the window. Only a
-   * single window-global scan places it correctly.
+   * whether the endpoint lands inside or before the window. The scan
+   * walks chunks in order without joining them — `escapeEnd` carries the
+   * retroactive endpoint across seams — so the cost is the open
+   * sequence's extent, not the whole window.
    */
   private alignSequenceBoundary(): void {
     if (this.evictedSequenceState === "none") return;
-    const scan = scanTerminalSequenceState(this.value(), this.evictedSequenceState);
-    // value() cached the pre-drop window; the drops below must not see it.
-    this.cachedValue = null;
-    if (scan.endIndex === 0) {
-      // The sequence ended retroactively before the window — every
-      // retained unit is ordinary text.
+    let state = this.evictedSequenceState;
+    // Window offset where an open escapeIntermediates sequence would
+    // retroactively end — the first byte after ESC, plus one. 0 when
+    // that byte was evicted (entry state was already escapeIntermediates);
+    // an entry "escape" means the next scanned byte is that first byte.
+    let escapeEnd = state === "escapeIntermediates" ? 0 : -1;
+    let endIndex: number | null = null;
+    let offset = 0;
+    for (let index = this.start; index < this.chunks.length; index += 1) {
+      const data = this.chunks[index]!.data;
+      if (state === "escape") escapeEnd = offset + 1;
+      const scan = scanTerminalSequenceState(data, state, true);
+      state = scan.state;
+      if (scan.endIndex !== null) {
+        // A chunk-local 0 is the retroactive endpoint: escapeEnd places
+        // it in window coordinates — 0 means before the window, so the
+        // whole window is ordinary text and nothing is dropped.
+        endIndex = scan.endIndex === 0 ? escapeEnd : offset + scan.endIndex;
+        break;
+      }
+      offset += data.length;
+    }
+    if (endIndex === 0) {
       this.evictedSequenceState = "none";
       return;
     }
-    let remaining = scan.endIndex ?? Number.MAX_SAFE_INTEGER;
+    let remaining = endIndex ?? Number.MAX_SAFE_INTEGER;
     while (remaining > 0) {
       const first = this.chunks[this.start];
       if (!first) break;
@@ -1102,7 +1131,7 @@ export class BoundedTerminalHistory {
       this.trimChunk(remaining, Buffer.byteLength(dropped), lineBreaks);
       remaining = 0;
     }
-    if (scan.endIndex !== null) this.evictedSequenceState = "none";
+    if (endIndex !== null) this.evictedSequenceState = "none";
   }
 
   private discardChunk(): void {
