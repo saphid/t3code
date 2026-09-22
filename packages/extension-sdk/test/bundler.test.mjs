@@ -515,7 +515,13 @@ NodeTest.test("canonicalization leaves path-shaped user data byte-for-byte intac
     await NodeFSP.realpath(NodePath.join(depDir, "node_modules", "fixture-dep", "index.cjs")),
   );
   NodeAssert.ok(depLabel.startsWith(".."), "fixture does not exercise the leak shape");
+  // An escaped spelling that decodes to the same path — string contents
+  // are user data even when they equal a generated label's decode. The
+  // source text must hold a real \x69 escape, so interpolate directly.
+  const mixedLabel = depLabel.replace("index.cjs", "\\x69ndex.cjs");
+  const template = `before\nfileName: "${depLabel}", lineNumber: 17\n// ${depLabel}\nafter`;
   const source = `import dep from "fixture-dep";
+function user__esm(value: object) { return value; }
 export default {
   tools: [],
   depValue: dep.value,
@@ -524,6 +530,19 @@ export default {
 // ${depLabel}
 after\`,
   labelKeyed: { ${JSON.stringify(depLabel)}() { return 7; } },
+  // Ordinary records shaped like JSX fileName metadata are not labels.
+  record: { fileName: ${JSON.stringify(depLabel)}, lineNumber: 17 },
+  prefixRecord: { fileName: ${JSON.stringify(depLabel)}, lineNumberExtra: 23 },
+  // A user identifier ending in a generated-suffix name is not a wrapper.
+  adjacent: user__esm({ ${JSON.stringify(depLabel)}() { return 8; } }),
+  // The same label inside metadata-shaped template text is still data.
+  template: \`${template}\`,
+  // Regex literals — including ones following control-flow parens — are
+  // not string positions the rewriter may touch.
+  regex: /__esm\\(\\{/.source,
+  regexAfterParen: ("x".length ? ${JSON.stringify(depLabel)} : "") && /\\.\\./.test(".."),
+  regexLabelBody: ${JSON.stringify(depLabel)}.length ? /\\.\\.\\/shared-deps/.source : "",
+  mixed: "${mixedLabel}",
 };
 `;
   await NodeFSP.writeFile(NodePath.join(dir, "server.ts"), source);
@@ -549,6 +568,38 @@ after\`,
     built.labelKeyed[depLabel](),
     7,
     "user object method named like a dep path was renamed",
+  );
+  NodeAssert.deepEqual(
+    built.record,
+    { fileName: depLabel, lineNumber: 17 },
+    "ordinary fileName/lineNumber record was rewritten",
+  );
+  NodeAssert.deepEqual(
+    built.prefixRecord,
+    { fileName: depLabel, lineNumberExtra: 23 },
+    "ordinary fileName/lineNumberExtra record was rewritten",
+  );
+  NodeAssert.equal(
+    built.adjacent[depLabel](),
+    8,
+    "label-shaped key inside a __esm-suffixed user call was rewritten",
+  );
+  NodeAssert.equal(built.template, template, "metadata-shaped template text was rewritten");
+  NodeAssert.equal(built.regex, "__esm\\(\\{", "regex literal source was rewritten");
+  NodeAssert.equal(
+    built.regexAfterParen,
+    true,
+    "regex literal after a control-flow paren was corrupted",
+  );
+  NodeAssert.equal(
+    built.regexLabelBody,
+    "\\.\\.\\/shared-deps",
+    "regex literal following a label-shaped operand was corrupted",
+  );
+  NodeAssert.equal(
+    built.mixed,
+    depLabel,
+    "escaped spelling of a dep path in user data was rewritten",
   );
   // The generated metadata for the same module is still canonical.
   const server = (await readBundle(dir, "server.mjs")).toString("utf8");

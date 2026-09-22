@@ -12,32 +12,46 @@ const sdk = NodePath.resolve(NodeURL.fileURLToPath(new URL("..", import.meta.url
 const require = NodeModule.createRequire(import.meta.url);
 const [command, target = "."] = process.argv.slice(2);
 const sha = (bytes) => NodeCrypto.createHash("sha256").update(bytes).digest("hex");
-// esbuild stamps each bundled module's resolved path — relative to the
-// process working directory — into `//` banner comments, CommonJS wrapper
-// keys ("../../dep/index.js"(exports, module){…}), synthetic glob-expansion
+// esbuild stamps each bundled module's resolved path — relative to
+// absWorkingDir — into `//` banner comments, CommonJS wrapper keys
+// ("../../dep/index.js"(exports, module){…}), synthetic glob-expansion
 // module names (`require("<pattern>") in <importer>`), and jsxdev fileName
 // metadata, so emitted bytes (and every receipt hash) used to depend on
 // where the build ran and where the checkout lived. Resolution stays
 // native (realpath'd): preserveSymlinks made labels pretty but stopped
 // finding dependencies installed beside a linked package's real target
-// and bundled two spellings of one module as separate singletons. Instead
-// the builds pin absWorkingDir to the realpath'd package directory, then
-// each dep label is rewritten to its canonical form — node_modules/<name>/
-// plus the path inside the package, read from the nearest enclosing
-// package.json — so the emitted identity is the package's own name,
-// identical whether the module was reached through a store link, a
-// workspace symlink, or a real install. The emitted text is scanned
-// lexically: only `//` comments outside string/template literals (esbuild
-// strips source comments, so surviving ones are module banners), string
-// literals in generated label positions — `"<name>"(…) {` method keys and
-// the `fileName: "…", lineNumber:` signature inside jsxDEV calls — are
-// candidates, each decoded from JavaScript escapes before matching and
-// re-encoded afterward, so path-shaped user data and escaped filenames
-// like café.cjs both behave. A dep file with no named package above it
-// falls back to the path suffix starting at its last node_modules/
-// segment; one outside both (a file: link to a bare directory) keeps its
-// emitted label — that residue is location-dependent, and deliberately so
-// rather than guessed at.
+// and bundled two spellings of one module as separate singletons.
+//
+// Finding the generated labels inside emitted JavaScript is a losing
+// game — string-shaped user data is indistinguishable from string-shaped
+// metadata — so the build is staged instead. A first plain bundle run
+// reports every input through metafile and a passive onResolve recorder.
+// A second run then repeats the build inside a staging directory: the
+// package's own files are hardlinked at their usual relative positions,
+// every out-of-package input is hardlinked under a random per-build
+// directory that reproduces its real absolute path (preserving each
+// package's package.json, node_modules ancestry, and directory
+// neighbourhood verbatim), and package-level bare imports are routed by
+// symlinks in the staging root's node_modules. Every resolution in the
+// staged build is native — nothing a plugin returns can lose module
+// type, tsconfig, or sideEffects context — yet every label esbuild
+// emits for an outside input contains the unguessable token, so the
+// rewrite substitutes whole known labels without ever classifying
+// emitted text. A dep file with no named package above it falls back
+// to the path suffix starting at its last node_modules/ segment; one
+// outside both (a file: link to a bare directory) keeps a location-
+// dependent label, deliberately rather than guessed at. Any mismatch
+// between the staged run's inputs and the plain run's makes the packer
+// keep the plain output — wrong labels never ship.
+const packageRoot = (file) => {
+  let cursor = NodePath.dirname(file);
+  while (true) {
+    if (NodeFS.existsSync(NodePath.join(cursor, "package.json"))) return cursor;
+    const parent = NodePath.dirname(cursor);
+    if (parent === cursor) return null;
+    cursor = parent;
+  }
+};
 const packageLabel = (file) => {
   let cursor = NodePath.dirname(file);
   while (true) {
@@ -53,54 +67,17 @@ const packageLabel = (file) => {
     cursor = parent;
   }
 };
-// Decode the raw contents of a JavaScript string literal — the text between
-// its quotes, escapes intact — into the value it denotes. Emitted labels are
-// ASCII-escaped (café.cjs arrives as caf\xE9.cjs), so matching raw metafile
-// spellings would miss them.
-const decodeJsString = (raw) => {
-  let out = "";
-  for (let i = 0; i < raw.length; i++) {
-    if (raw[i] !== "\\") {
-      out += raw[i];
-      continue;
-    }
-    const e = raw[++i];
-    if (e === undefined) break;
-    if (e === "n") out += "\n";
-    else if (e === "r") out += "\r";
-    else if (e === "t") out += "\t";
-    else if (e === "b") out += "\b";
-    else if (e === "f") out += "\f";
-    else if (e === "v") out += "\v";
-    else if (e === "0") out += "\0";
-    else if (e === "x") {
-      out += String.fromCharCode(parseInt(raw.slice(i + 1, i + 3), 16));
-      i += 2;
-    } else if (e === "u") {
-      if (raw[i + 1] === "{") {
-        const end = raw.indexOf("}", i + 2);
-        if (end === -1) {
-          out += "\\u";
-          continue;
-        }
-        out += String.fromCodePoint(parseInt(raw.slice(i + 2, end), 16));
-        i = end;
-      } else {
-        out += String.fromCharCode(parseInt(raw.slice(i + 1, i + 5), 16));
-        i += 4;
-      }
-    } else if (e === "\n") {
-      // Line continuation — contributes nothing.
-    } else if (e === "\r") {
-      if (raw[i + 1] === "\n") i++;
-    } else out += e; // \\ \' \" \` \$ \/ and other passthrough escapes
-  }
-  return out;
-};
-// Re-encode a canonical label into a string literal, keeping the quote
-// character esbuild chose (it picks ' when the name contains ") and
-// escaping non-ASCII the way it does: \xNN, \uNNNN, \u{NNNNN}.
-const encodeJsString = (value, quote) => {
+const canonicalLabel = (file) =>
+  packageLabel(file) ??
+  (() => {
+    const path = file.split(NodePath.sep).join("/");
+    const at = path.lastIndexOf("node_modules/");
+    return at === -1 ? null : path.slice(at);
+  })();
+// Escape a label for a string literal, keeping the quote character esbuild
+// chose (it picks ' when the name contains ") and escaping non-ASCII the
+// way it does: \xNN, \uNNNN, \u{NNNNN}.
+const escapeLabel = (value, quote) => {
   let out = "";
   for (const ch of value) {
     const cp = ch.codePointAt(0);
@@ -118,244 +95,364 @@ const encodeJsString = (value, quote) => {
           ? "\\u" + cp.toString(16).toUpperCase().padStart(4, "0")
           : "\\u{" + cp.toString(16) + "}";
   }
-  return quote + out + quote;
+  return out;
 };
-// Glob-expansion modules get a synthetic `require("<pattern>") in
-// <importer>` (or `import(...)`) name that is not itself a metafile input;
-// only its trailing importer path is.
-const syntheticName = (value) => {
-  const match = /^(?:require|import)\((['"`])/.exec(value);
-  if (!match) return null;
-  const quote = match[1];
-  let i = match[0].length;
-  while (i < value.length && value[i] !== quote) {
-    if (value[i] === "\\") i++;
-    i++;
-  }
-  if (value.slice(i + 1, i + 6) !== ") in ") return null;
-  return { head: value.slice(0, i + 1) + ") in ", importer: value.slice(i + 6) };
+// A path inside dir as a relative string, or null when it escapes.
+const insideRel = (dir, file) => {
+  const rel = NodePath.relative(dir, file);
+  return rel !== ".." && !rel.startsWith(".." + NodePath.sep) && !NodePath.isAbsolute(rel)
+    ? rel
+    : null;
 };
-const IDENT_START = /[$_A-Za-z]/;
-const IDENT_CHAR = /[$_0-9A-Za-z]/;
-const isSpace = (c) => /\s/.test(c);
-// Keywords after which a "/" starts a regex rather than division.
-const EXPRESSION_KEYWORDS = new Set([
-  "await",
-  "case",
-  "delete",
-  "do",
-  "else",
-  "in",
-  "instanceof",
-  "new",
-  "of",
-  "return",
-  "throw",
-  "typeof",
-  "void",
-  "yield",
-]);
-const canonicalModuleIds = (text, metafile, dir) => {
-  const emitted = Object.keys(metafile.inputs);
-  const labels = new Map();
-  const claimants = new Map();
-  for (const input of emitted) {
-    // Only dep inputs — paths that escape the package root — get labels;
-    // the extension's own files keep their source spelling.
-    if (!input.startsWith("..")) continue;
-    const label =
-      packageLabel(NodePath.resolve(dir, input)) ??
-      (() => {
-        const at = input.lastIndexOf("node_modules/");
-        return at > 0 ? input.slice(at) : null;
-      })();
-    if (label === null) continue;
-    labels.set(input, label);
-    claimants.set(label, (claimants.get(label) ?? 0) + 1);
-  }
-  for (const [input, label] of labels) {
-    // Two different real modules claiming one canonical label would merge
-    // in the emitted wrapper map; likewise a label that already belongs to
-    // another input. Ambiguous groups keep their emitted labels.
-    if (claimants.get(label) > 1 || emitted.includes(label)) labels.delete(input);
-  }
-  // A decoded generated name's canonical form: the module's own label, or
-  // a glob synthetic name whose importer is a known module.
-  const canonicalFor = (decoded) => {
-    const direct = labels.get(decoded);
-    if (direct !== undefined) return direct;
-    const synthetic = syntheticName(decoded);
-    if (synthetic) {
-      const importer = labels.get(synthetic.importer);
-      if (importer !== undefined) return synthetic.head + importer;
-    }
+// "a/b/c.js" for "/a/b/c.js" (and "a\b\c.js" for "C:\a\b\c.js").
+const stripRoot = (abs) => abs.slice(NodePath.parse(abs).root.length);
+const isBareSpecifier = (spec) =>
+  !spec.startsWith(".") &&
+  !spec.startsWith("/") &&
+  !spec.startsWith("#") &&
+  !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(spec);
+const specifierPackage = (spec) =>
+  spec.startsWith("@") ? spec.split("/").slice(0, 2).join("/") : spec.split("/")[0];
+// Passive recorder: resolve exactly as a plain build would (delegating to
+// esbuild's own resolver from the real importer path) and remember each
+// edge, then return undefined so native resolution proceeds unchanged.
+const recordResolutions = (edges) => ({
+  name: "t3-record-resolutions",
+  setup(api) {
+    const inner = {};
+    api.onResolve({ filter: /.*/ }, async (args) => {
+      if (args.pluginData === inner) return undefined;
+      const resolved = await api
+        .resolve(args.path, {
+          kind: args.kind,
+          importer: args.importer || undefined,
+          namespace: args.namespace,
+          resolveDir: args.importer ? NodePath.dirname(args.importer) : args.resolveDir,
+          pluginData: inner,
+          with: args.with,
+        })
+        .catch(() => null);
+      edges.push({
+        importer: args.importer,
+        spec: args.path,
+        path:
+          resolved !== null &&
+          resolved.errors.length === 0 &&
+          !resolved.external &&
+          resolved.namespace === "file" &&
+          resolved.path !== ""
+            ? resolved.path
+            : null,
+      });
+      return undefined;
+    });
+  },
+});
+// Re-run the build inside a staging directory where every out-of-package
+// input sits under "<stage>/<token>/<its real absolute path>". Package
+// files keep their relative positions so their emitted labels are
+// unchanged, while every outside label carries the token. Returns the
+// emitted text with token labels rewritten to canonical ones, or null
+// when the staged module graph differs from the plain build's.
+const buildStaged = (dir, inputs, edges) => {
+  const tmp = NodeFS.mkdtempSync(NodePath.join(dir, ".t3stage-"));
+  const fail = () => {
+    NodeFS.rmSync(tmp, { recursive: true, force: true });
     return null;
   };
-  // Lex the emitted bundle once. Label sites are only reached outside
-  // string/template contents: `//` comments (esbuild strips source
-  // comments — survivors are module banners) and string literals in
-  // generated label positions.
-  const out = [];
-  const stack = [{ template: false, braces: 0 }];
-  const top = () => stack[stack.length - 1];
-  const triviaEnd = (pos) => {
-    while (pos < text.length) {
-      if (isSpace(text[pos])) {
-        pos++;
-      } else if (text[pos] === "/" && text[pos + 1] === "/") {
-        const eol = text.indexOf("\n", pos);
-        pos = eol === -1 ? text.length : eol;
-      } else if (text[pos] === "/" && text[pos + 1] === "*") {
-        const end = text.indexOf("*/", pos + 2);
-        pos = end === -1 ? text.length : end + 2;
-      } else break;
+  try {
+    const token = ".t3canon-" + NodeCrypto.randomBytes(6).toString("hex");
+    const outside = new Set();
+    for (const key of Object.keys(inputs)) {
+      if (key.startsWith("<") || (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(key) && !/^[a-zA-Z]:/.test(key)))
+        continue;
+      const abs = NodePath.resolve(dir, key);
+      if (insideRel(dir, abs) === null) outside.add(abs);
     }
-    return pos;
-  };
-  let previous = "operator"; // whether "/" may begin a regex literal
-  let fileNameKey = false; // previous tokens were `fileName` `:`
-  let i = 0;
-  while (i < text.length) {
-    const c = text[i];
-    if (top().template) {
-      if (c === "\\") {
-        out.push(text.slice(i, i + 2));
-        i += 2;
-      } else if (c === "`") {
-        out.push("`");
-        i++;
-        stack.pop();
-        previous = "value";
-      } else if (c === "$" && text[i + 1] === "{") {
-        out.push("${");
-        i += 2;
-        stack.push({ template: false, braces: 0 });
-        previous = "operator";
-      } else {
-        let j = i;
-        while (
-          j < text.length &&
-          text[j] !== "`" &&
-          text[j] !== "\\" &&
-          !(text[j] === "$" && text[j + 1] === "{")
-        )
-          j++;
-        out.push(text.slice(i, j));
-        i = j;
+    if (outside.size === 0) return fail();
+    // An importer at <stage>/<tail> whose specifier climbs past the
+    // staging root probes directories between the stage and tmp. One pad
+    // directory per escape level keeps those probes inside our sandbox so
+    // a symlink can redirect them to the mirrored target.
+    const mirrorRelOf = (real) => {
+      const rel = insideRel(dir, real);
+      return rel === null ? token + "/" + stripRoot(real).split(NodePath.sep).join("/") : rel;
+    };
+    let pads = 0;
+    const escapes = [];
+    for (const edge of edges) {
+      if (
+        edge.path === null ||
+        edge.importer === "" ||
+        edge.spec.startsWith("/") ||
+        /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(edge.spec)
+      )
+        continue;
+      const importerDir = NodePath.dirname(mirrorRelOf(edge.importer));
+      const probe = NodePath.normalize(NodePath.join(importerDir, edge.spec));
+      const segs = probe.split(NodePath.sep);
+      let climb = 0;
+      while (segs[climb] === "..") climb++;
+      if (climb === 0) continue;
+      pads = Math.max(pads, climb);
+      escapes.push({ edge, climb });
+    }
+    if (pads > 16) return fail();
+    let stage = tmp;
+    for (let i = 0; i < pads; i++) stage = NodePath.join(stage, "pad");
+    stage = NodePath.join(stage, "root");
+    const depRoot = NodePath.join(stage, token);
+    const mirrorAbsOf = (real) => NodePath.join(stage, mirrorRelOf(real));
+    const byMirror = new Map();
+    const link = (from, to) => {
+      if (NodeFS.existsSync(to)) return to;
+      NodeFS.mkdirSync(NodePath.dirname(to), { recursive: true });
+      try {
+        NodeFS.linkSync(from, to);
+      } catch {
+        NodeFS.copyFileSync(from, to);
       }
-      continue;
-    }
-    if (isSpace(c)) {
-      out.push(c);
-      i++;
-      continue;
-    }
-    if (c === "/" && text[i + 1] === "/") {
-      const eol = text.indexOf("\n", i);
-      const end = eol === -1 ? text.length : eol;
-      const canonical = canonicalFor(text.slice(i + 2, end).trim());
-      out.push(canonical === null ? text.slice(i, end) : "// " + canonical);
-      i = end;
-      continue;
-    }
-    if (c === "/" && text[i + 1] === "*") {
-      const end = text.indexOf("*/", i + 2);
-      const close = end === -1 ? text.length : end + 2;
-      out.push(text.slice(i, close));
-      i = close;
-      continue;
-    }
-    if (c === '"' || c === "'") {
-      let j = i + 1;
-      while (j < text.length && text[j] !== c) {
-        if (text[j] === "\\") j++;
-        j++;
+      byMirror.set(to, from);
+      return to;
+    };
+    // Every bundled file plus every package.json that could govern it.
+    for (const key of Object.keys(inputs)) {
+      if (key.startsWith("<") || (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(key) && !/^[a-zA-Z]:/.test(key)))
+        continue;
+      const abs = NodePath.resolve(dir, key);
+      try {
+        if (!NodeFS.statSync(abs).isFile()) continue; // e.g. the stdin pseudo-file
+      } catch {
+        continue;
       }
-      const raw = text.slice(i + 1, j);
-      // Generated label sites: the first member of a __commonJS/__esm/
-      // __glob helper object is the module's factory method key, and
-      // `fileName: "…", lineNumber:` is the jsxDEV source-metadata object.
-      // A string literal anywhere else — including path-shaped user data —
-      // passes through untouched.
-      let labelSite = /__(?:commonJS|esm|glob)\(\s*\{\s*$/.test(text.slice(Math.max(0, i - 96), i));
-      if (!labelSite && fileNameKey) {
-        const after = triviaEnd(j + 1);
-        labelSite = text[after] === "," && text.startsWith("lineNumber", triviaEnd(after + 1));
+      link(abs, mirrorAbsOf(abs));
+      let cursor = NodePath.dirname(abs);
+      const stop = insideRel(dir, abs) === null ? NodePath.parse(abs).root : dir;
+      while (true) {
+        const manifest = NodePath.join(cursor, "package.json");
+        if (NodeFS.existsSync(manifest)) link(manifest, mirrorAbsOf(manifest));
+        if (cursor === stop || cursor === NodePath.dirname(cursor)) break;
+        cursor = NodePath.dirname(cursor);
       }
-      const canonical = labelSite ? canonicalFor(decodeJsString(raw)) : null;
-      out.push(canonical === null ? text.slice(i, j + 1) : encodeJsString(canonical, c));
-      i = j + 1;
-      previous = "value";
-      fileNameKey = false;
-      continue;
     }
-    if (c === "`") {
-      out.push("`");
-      i++;
-      stack.push({ template: true });
-      previous = "operator";
-      fileNameKey = false;
-      continue;
+    // Package files still need the extension's own package.json (or the
+    // nearest one above it) for module typing at the staging root.
+    if (!NodeFS.existsSync(NodePath.join(stage, "package.json"))) {
+      const root = packageRoot(NodePath.join(dir, "extension.ts"));
+      if (root !== null && NodeFS.existsSync(NodePath.join(root, "package.json")))
+        link(NodePath.join(root, "package.json"), NodePath.join(stage, "package.json"));
     }
-    if (IDENT_START.test(c)) {
-      let j = i + 1;
-      while (j < text.length && IDENT_CHAR.test(text[j])) j++;
-      const word = text.slice(i, j);
-      fileNameKey = word === "fileName" && text[triviaEnd(j)] === ":";
-      previous = EXPRESSION_KEYWORDS.has(word) ? "operator" : "value";
-      out.push(word);
-      i = j;
-      continue;
-    }
-    if (/[0-9]/.test(c) || (c === "." && /[0-9]/.test(text[i + 1] ?? ""))) {
-      let j = i + 1;
-      while (j < text.length && /[0-9A-Za-z._]/.test(text[j])) j++;
-      out.push(text.slice(i, j));
-      i = j;
-      previous = "value";
-      fileNameKey = false;
-      continue;
-    }
-    if (c === "/" && previous !== "value") {
-      // Regex literal — scan to the unescaped closing '/', honoring classes.
-      let j = i + 1;
-      while (j < text.length && text[j] !== "/" && text[j] !== "\n") {
-        if (text[j] === "\\") {
-          j++;
-        } else if (text[j] === "[") {
-          while (j < text.length && text[j] !== "]" && text[j] !== "\n") {
-            if (text[j] === "\\") j++;
-            j++;
-          }
+    // Bare imports resolve through a node_modules entry in some ancestor
+    // directory. Reproduce each used entry as a symlink to the mirrored
+    // package root: at the staging root for imports made from package
+    // files, and at the mirrored ancestor for dep-internal imports — so
+    // hoisted, nested, and symlinked layouts keep their real precedence.
+    const linkEntry = (entryDir, spec, target) => {
+      const linkPath = NodePath.join(entryDir, "node_modules", ...spec.split("/"));
+      // Mirrored real content already resolves faithfully; only a
+      // conflicting symlink would redirect the import elsewhere.
+      if (NodeFS.existsSync(linkPath))
+        return (
+          !NodeFS.lstatSync(linkPath).isSymbolicLink() || NodeFS.realpathSync(linkPath) === target
+        );
+      NodeFS.mkdirSync(NodePath.dirname(linkPath), { recursive: true });
+      try {
+        NodeFS.symlinkSync(target, linkPath, "dir");
+      } catch {
+        return false;
+      }
+      return true;
+    };
+    for (const edge of edges) {
+      if (edge.path === null || edge.importer === "" || !isBareSpecifier(edge.spec)) continue;
+      const target = mirrorAbsOf(packageRoot(edge.path) ?? NodePath.dirname(edge.path));
+      const spec = specifierPackage(edge.spec);
+      if (insideRel(dir, edge.importer) !== null) {
+        // A package file's bare import walks stage/node_modules first.
+        // Anything that resolved inside the package is already there; a
+        // name taken by real package content keeps its mirrored files.
+        if (insideRel(dir, edge.path) !== null) continue;
+        if (!linkEntry(stage, spec, target)) return fail();
+        continue;
+      }
+      // A dep's import walked the importer's real ancestors; mirror the
+      // entry at the first ancestor that had it — the same position the
+      // staged walk reaches it.
+      let cursor = NodePath.dirname(edge.importer);
+      while (true) {
+        if (NodeFS.existsSync(NodePath.join(cursor, "node_modules", ...spec.split("/")))) {
+          if (!linkEntry(mirrorAbsOf(cursor), spec, target)) return fail();
+          break;
         }
-        j++;
+        if (cursor === NodePath.dirname(cursor)) break;
+        cursor = NodePath.dirname(cursor);
       }
-      j++;
-      while (j < text.length && /[a-z]/i.test(text[j])) j++;
-      out.push(text.slice(i, j));
-      i = j;
-      previous = "value";
-      fileNameKey = false;
+    }
+    // Relative specifiers that climb out of the staging root would
+    // resolve real files on disk; park a symlink at each probed location
+    // so the same import lands on the mirror (and its label keeps the
+    // token) instead.
+    for (const { edge } of escapes) {
+      const probe = NodePath.resolve(NodePath.dirname(mirrorAbsOf(edge.importer)), edge.spec);
+      if (insideRel(tmp, probe) === null) continue;
+      const realProbe = NodePath.resolve(NodePath.dirname(edge.importer), edge.spec);
+      let from = mirrorAbsOf(edge.path);
+      let to = probe;
+      if (NodePath.basename(probe) !== NodePath.basename(edge.path)) {
+        if (NodeFS.existsSync(realProbe) && NodeFS.statSync(realProbe).isDirectory()) {
+          from = mirrorAbsOf(realProbe);
+        } else {
+          to = probe + NodePath.extname(edge.path);
+        }
+      }
+      if (NodeFS.existsSync(to)) {
+        if (NodeFS.realpathSync(to) !== from) return fail();
+        continue;
+      }
+      NodeFS.mkdirSync(NodePath.dirname(to), { recursive: true });
+      try {
+        NodeFS.symlinkSync(from, to, "dir");
+      } catch {
+        return fail();
+      }
+    }
+    return { tmp, stage, token, depRoot, byMirror, outside };
+  } catch (error) {
+    NodeFS.rmSync(tmp, { recursive: true, force: true });
+    throw error;
+  }
+};
+// esbuild emits each input's label as its path relative to absWorkingDir,
+// verbatim in comments and string-escaped inside generated string labels
+// (café.cjs arrives as caf\xE9.cjs). Every outside input's emitted label
+// carries the staging token, so a token-anchored scan rewrites exactly
+// the generated spellings — raw, "…"-escaped, and '…'-escaped — and
+// nothing else. Two different real modules claiming one canonical label
+// (or a label already used by a package file) keep their location-
+// dependent spelling rather than collapsing into one emitted name.
+const rewriteEmittedLabels = (text, metafile, dir, staged) => {
+  const needle = staged.token + "/";
+  const entries = new Map(); // emitted tail -> real path
+  const claimants = new Map(); // canonical label -> number of inputs wanting it
+  const realKeys = new Set();
+  for (const key of Object.keys(metafile.inputs)) {
+    if (key.startsWith(needle)) {
+      const real = staged.byMirror.get(NodePath.join(staged.stage, key));
+      if (real === undefined) return null;
+      entries.set(key.slice(needle.length), real);
+      claimants.set(key.slice(needle.length), (claimants.get(key.slice(needle.length)) ?? 0) + 1);
       continue;
     }
-    if (c === "{") {
-      top().braces++;
-      previous = "operator";
-    } else if (c === "}") {
-      if (top().braces === 0) {
-        if (stack.length > 1) stack.pop();
-      } else top().braces--;
-      previous = "value";
-    } else if (c === ")" || c === "]") {
-      previous = "value";
-    } else {
-      previous = "operator";
-    }
-    fileNameKey = fileNameKey && c === ":";
-    out.push(c);
-    i++;
+    realKeys.add(key);
   }
-  return out.join("");
+  if (entries.size === 0) return null;
+  const finals = new Map();
+  const seen = new Map();
+  for (const [tail, real] of entries) {
+    const canon = canonicalLabel(real);
+    if (canon !== null) claimants.set(canon, (claimants.get(canon) ?? 0) + 1);
+    seen.set(tail, canon);
+  }
+  for (const [tail, real] of entries) {
+    const canon = seen.get(tail);
+    finals.set(
+      tail,
+      canon === null || claimants.get(canon) > 1 || realKeys.has(canon)
+        ? NodePath.relative(dir, real).split(NodePath.sep).join("/")
+        : canon,
+    );
+  }
+  const variants = [];
+  for (const [tail] of entries) {
+    const emitted = needle + tail;
+    const final = finals.get(tail);
+    for (const spelling of new Set([emitted, escapeLabel(emitted, '"'), escapeLabel(emitted, "'")]))
+      variants.push({ spelling, final });
+  }
+  variants.sort((a, b) => b.spelling.length - a.spelling.length);
+  let out = "";
+  let i = 0;
+  while (true) {
+    const at = text.indexOf(needle, i);
+    if (at === -1) break;
+    let match = null;
+    for (const variant of variants) {
+      if (text.startsWith(variant.spelling, at)) {
+        match = variant;
+        break;
+      }
+    }
+    if (match === null) return null; // a token esbuild never gave us
+    const end = at + match.spelling.length;
+    const quote = text[end];
+    out +=
+      text.slice(i, at) +
+      (quote === '"' || quote === "'" ? escapeLabel(match.final, quote) : match.final);
+    i = end;
+  }
+  return out + text.slice(i);
+};
+// Bundle once to learn the module graph, then again inside a staging
+// directory whose labels are self-identifying. Falls back to the plain
+// emitted text whenever the staged build cannot be proven equivalent.
+const buildCanonical = async (dir, options) => {
+  const edges = [];
+  const first = await build({
+    ...options,
+    absWorkingDir: dir,
+    stdin: options.stdin ? { ...options.stdin, resolveDir: dir } : undefined,
+    write: false,
+    metafile: true,
+    plugins: [...(options.plugins ?? []), recordResolutions(edges)],
+  });
+  const original = first.outputFiles[0].text;
+  try {
+    const staged = buildStaged(dir, first.metafile.inputs, edges);
+    if (staged === null) return original;
+    try {
+      const second = await build({
+        ...options,
+        absWorkingDir: staged.stage,
+        stdin: options.stdin ? { ...options.stdin, resolveDir: staged.stage } : undefined,
+        write: false,
+        metafile: true,
+      });
+      // The staged module graph must be exactly the plain one: every
+      // input is either a package file at its usual relative key or an
+      // outside file under the token directory.
+      const expected = new Set();
+      for (const key of Object.keys(first.metafile.inputs)) {
+        if (
+          key.startsWith("<") ||
+          (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(key) && !/^[a-zA-Z]:/.test(key))
+        ) {
+          expected.add(key);
+          continue;
+        }
+        const abs = NodePath.resolve(dir, key);
+        expected.add(
+          insideRel(dir, abs) === null
+            ? staged.token + "/" + stripRoot(abs).split(NodePath.sep).join("/")
+            : key,
+        );
+      }
+      const actual = Object.keys(second.metafile.inputs);
+      if (actual.length !== expected.size || actual.some((key) => !expected.has(key)))
+        return original;
+      const rewritten = rewriteEmittedLabels(
+        second.outputFiles[0].text,
+        second.metafile,
+        dir,
+        staged,
+      );
+      if (rewritten === null || rewritten.includes(staged.token)) return original;
+      return rewritten;
+    } finally {
+      NodeFS.rmSync(staged.tmp, { recursive: true, force: true });
+    }
+  } catch {
+    return original;
+  }
 };
 async function check(dir) {
   const pkg = validateEnvironmentPackage(
@@ -505,25 +602,19 @@ async function main() {
     if (typecheck.status !== 0)
       throw new Error("Declared entry typecheck failed (exit " + typecheck.status + ")");
     await NodeFSP.rm(config);
-    const bundle = async (contents, platform) => {
-      const result = await build({
-        absWorkingDir: dir,
+    const bundle = async (contents, platform) =>
+      buildCanonical(dir, {
         tsconfig: NodePath.join(dir, "tsconfig.json"),
         stdin: { contents, resolveDir: dir, sourcefile: "generated-entry.ts", loader: "ts" },
         bundle: true,
-        write: false,
-        metafile: true,
         platform,
         format: "esm",
         target: platform === "browser" ? "es2022" : "node24",
         logLevel: "silent",
       });
-      return canonicalModuleIds(result.outputFiles[0].text, result.metafile, dir);
-    };
     if (pkg.clientEntry) {
       // Evaluate dependency modules inside each factory so imported hooks share the host identity.
-      const client = await build({
-        absWorkingDir: dir,
+      const client = await buildCanonical(dir, {
         tsconfig: NodePath.join(dir, "tsconfig.json"),
         stdin: {
           contents: 'import extension from "./extension.ts"; export default extension.client;',
@@ -532,8 +623,6 @@ async function main() {
           loader: "ts",
         },
         bundle: true,
-        write: false,
-        metafile: true,
         platform: "browser",
         format: "iife",
         globalName: "__t3Client",
@@ -588,7 +677,7 @@ async function main() {
       await NodeFSP.writeFile(
         NodePath.join(temp, pkg.clientEntry),
         "export default function (__t3Host) {\n" +
-          canonicalModuleIds(client.outputFiles[0].text, client.metafile, dir) +
+          client +
           "\nreturn __t3Client.default(__t3Host);\n}\n",
       );
     }
