@@ -14,7 +14,8 @@ const [command, target = "."] = process.argv.slice(2);
 const sha = (bytes) => NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 // esbuild stamps each bundled module's resolved path — relative to the
 // process working directory — into `//` banner comments, CommonJS wrapper
-// keys ("../../dep/index.js"(exports, module){…}), and jsxdev fileName
+// keys ("../../dep/index.js"(exports, module){…}), synthetic glob-expansion
+// module names (`require("<pattern>") in <importer>`), and jsxdev fileName
 // metadata, so emitted bytes (and every receipt hash) used to depend on
 // where the build ran and where the checkout lived. Resolution stays
 // native (realpath'd): preserveSymlinks made labels pretty but stopped
@@ -25,15 +26,18 @@ const sha = (bytes) => NodeCrypto.createHash("sha256").update(bytes).digest("hex
 // plus the path inside the package, read from the nearest enclosing
 // package.json — so the emitted identity is the package's own name,
 // identical whether the module was reached through a store link, a
-// workspace symlink, or a real install. Rewrites only fire on exact
-// quoted labels, full-line `// <label>` comments, and the importer path
-// inside a glob-expansion module's synthetic `require("<pattern>") in
-// <path>` name — all paths reported by the metafile — so source text that
-// merely resembles a path is never touched. A dep file with no named
-// package above it falls back to the path suffix starting at its last
-// node_modules/ segment; one outside both (a file: link to a bare
-// directory) keeps its emitted label — that residue is location-dependent,
-// and deliberately so rather than guessed at.
+// workspace symlink, or a real install. The emitted text is scanned
+// lexically: only `//` comments outside string/template literals (esbuild
+// strips source comments, so surviving ones are module banners), string
+// literals in generated label positions — `"<name>"(…) {` method keys and
+// the `fileName: "…", lineNumber:` signature inside jsxDEV calls — are
+// candidates, each decoded from JavaScript escapes before matching and
+// re-encoded afterward, so path-shaped user data and escaped filenames
+// like café.cjs both behave. A dep file with no named package above it
+// falls back to the path suffix starting at its last node_modules/
+// segment; one outside both (a file: link to a bare directory) keeps its
+// emitted label — that residue is location-dependent, and deliberately so
+// rather than guessed at.
 const packageLabel = (file) => {
   let cursor = NodePath.dirname(file);
   while (true) {
@@ -49,6 +53,108 @@ const packageLabel = (file) => {
     cursor = parent;
   }
 };
+// Decode the raw contents of a JavaScript string literal — the text between
+// its quotes, escapes intact — into the value it denotes. Emitted labels are
+// ASCII-escaped (café.cjs arrives as caf\xE9.cjs), so matching raw metafile
+// spellings would miss them.
+const decodeJsString = (raw) => {
+  let out = "";
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] !== "\\") {
+      out += raw[i];
+      continue;
+    }
+    const e = raw[++i];
+    if (e === undefined) break;
+    if (e === "n") out += "\n";
+    else if (e === "r") out += "\r";
+    else if (e === "t") out += "\t";
+    else if (e === "b") out += "\b";
+    else if (e === "f") out += "\f";
+    else if (e === "v") out += "\v";
+    else if (e === "0") out += "\0";
+    else if (e === "x") {
+      out += String.fromCharCode(parseInt(raw.slice(i + 1, i + 3), 16));
+      i += 2;
+    } else if (e === "u") {
+      if (raw[i + 1] === "{") {
+        const end = raw.indexOf("}", i + 2);
+        if (end === -1) {
+          out += "\\u";
+          continue;
+        }
+        out += String.fromCodePoint(parseInt(raw.slice(i + 2, end), 16));
+        i = end;
+      } else {
+        out += String.fromCharCode(parseInt(raw.slice(i + 1, i + 5), 16));
+        i += 4;
+      }
+    } else if (e === "\n") {
+      // Line continuation — contributes nothing.
+    } else if (e === "\r") {
+      if (raw[i + 1] === "\n") i++;
+    } else out += e; // \\ \' \" \` \$ \/ and other passthrough escapes
+  }
+  return out;
+};
+// Re-encode a canonical label into a string literal, keeping the quote
+// character esbuild chose (it picks ' when the name contains ") and
+// escaping non-ASCII the way it does: \xNN, \uNNNN, \u{NNNNN}.
+const encodeJsString = (value, quote) => {
+  let out = "";
+  for (const ch of value) {
+    const cp = ch.codePointAt(0);
+    if (ch === "\\" || ch === quote) out += "\\" + ch;
+    else if (ch === "\n") out += "\\n";
+    else if (ch === "\r") out += "\\r";
+    else if (ch === "\t") out += "\\t";
+    else if (cp < 0x20 || cp === 0x7f)
+      out += "\\x" + cp.toString(16).toUpperCase().padStart(2, "0");
+    else if (cp < 0x80) out += ch;
+    else if (cp <= 0xff) out += "\\x" + cp.toString(16).toUpperCase().padStart(2, "0");
+    else
+      out +=
+        cp <= 0xffff
+          ? "\\u" + cp.toString(16).toUpperCase().padStart(4, "0")
+          : "\\u{" + cp.toString(16) + "}";
+  }
+  return quote + out + quote;
+};
+// Glob-expansion modules get a synthetic `require("<pattern>") in
+// <importer>` (or `import(...)`) name that is not itself a metafile input;
+// only its trailing importer path is.
+const syntheticName = (value) => {
+  const match = /^(?:require|import)\((['"`])/.exec(value);
+  if (!match) return null;
+  const quote = match[1];
+  let i = match[0].length;
+  while (i < value.length && value[i] !== quote) {
+    if (value[i] === "\\") i++;
+    i++;
+  }
+  if (value.slice(i + 1, i + 6) !== ") in ") return null;
+  return { head: value.slice(0, i + 1) + ") in ", importer: value.slice(i + 6) };
+};
+const IDENT_START = /[$_A-Za-z]/;
+const IDENT_CHAR = /[$_0-9A-Za-z]/;
+const isSpace = (c) => /\s/.test(c);
+// Keywords after which a "/" starts a regex rather than division.
+const EXPRESSION_KEYWORDS = new Set([
+  "await",
+  "case",
+  "delete",
+  "do",
+  "else",
+  "in",
+  "instanceof",
+  "new",
+  "of",
+  "return",
+  "throw",
+  "typeof",
+  "void",
+  "yield",
+]);
 const canonicalModuleIds = (text, metafile, dir) => {
   const emitted = Object.keys(metafile.inputs);
   const labels = new Map();
@@ -71,27 +177,185 @@ const canonicalModuleIds = (text, metafile, dir) => {
     // Two different real modules claiming one canonical label would merge
     // in the emitted wrapper map; likewise a label that already belongs to
     // another input. Ambiguous groups keep their emitted labels.
-    if (claimants.get(label) > 1 || emitted.includes(label)) continue;
-    text = text.split(`"${input}"`).join(`"${label}"`);
-    text = text
-      .split("\n")
-      .map((line) =>
-        line.trimStart() === "// " + input ? line.replace("// " + input, "// " + label) : line,
-      )
-      .join("\n");
-    // Glob-expansion modules get a synthetic `require("<pattern>") in
-    // <importer>` name that is not itself an input; its trailing importer
-    // path is. It emits single-quoted, so the quoted-label pass above
-    // never sees it.
-    text = text.replace(
-      new RegExp(
-        `((?:require|import)\\("[^"]*"\\) in )${input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
-        "g",
-      ),
-      () => `$1${label}`,
-    );
+    if (claimants.get(label) > 1 || emitted.includes(label)) labels.delete(input);
   }
-  return text;
+  // A decoded generated name's canonical form: the module's own label, or
+  // a glob synthetic name whose importer is a known module.
+  const canonicalFor = (decoded) => {
+    const direct = labels.get(decoded);
+    if (direct !== undefined) return direct;
+    const synthetic = syntheticName(decoded);
+    if (synthetic) {
+      const importer = labels.get(synthetic.importer);
+      if (importer !== undefined) return synthetic.head + importer;
+    }
+    return null;
+  };
+  // Lex the emitted bundle once. Label sites are only reached outside
+  // string/template contents: `//` comments (esbuild strips source
+  // comments — survivors are module banners) and string literals in
+  // generated label positions.
+  const out = [];
+  const stack = [{ template: false, braces: 0 }];
+  const top = () => stack[stack.length - 1];
+  const triviaEnd = (pos) => {
+    while (pos < text.length) {
+      if (isSpace(text[pos])) {
+        pos++;
+      } else if (text[pos] === "/" && text[pos + 1] === "/") {
+        const eol = text.indexOf("\n", pos);
+        pos = eol === -1 ? text.length : eol;
+      } else if (text[pos] === "/" && text[pos + 1] === "*") {
+        const end = text.indexOf("*/", pos + 2);
+        pos = end === -1 ? text.length : end + 2;
+      } else break;
+    }
+    return pos;
+  };
+  let previous = "operator"; // whether "/" may begin a regex literal
+  let fileNameKey = false; // previous tokens were `fileName` `:`
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (top().template) {
+      if (c === "\\") {
+        out.push(text.slice(i, i + 2));
+        i += 2;
+      } else if (c === "`") {
+        out.push("`");
+        i++;
+        stack.pop();
+        previous = "value";
+      } else if (c === "$" && text[i + 1] === "{") {
+        out.push("${");
+        i += 2;
+        stack.push({ template: false, braces: 0 });
+        previous = "operator";
+      } else {
+        let j = i;
+        while (
+          j < text.length &&
+          text[j] !== "`" &&
+          text[j] !== "\\" &&
+          !(text[j] === "$" && text[j + 1] === "{")
+        )
+          j++;
+        out.push(text.slice(i, j));
+        i = j;
+      }
+      continue;
+    }
+    if (isSpace(c)) {
+      out.push(c);
+      i++;
+      continue;
+    }
+    if (c === "/" && text[i + 1] === "/") {
+      const eol = text.indexOf("\n", i);
+      const end = eol === -1 ? text.length : eol;
+      const canonical = canonicalFor(text.slice(i + 2, end).trim());
+      out.push(canonical === null ? text.slice(i, end) : "// " + canonical);
+      i = end;
+      continue;
+    }
+    if (c === "/" && text[i + 1] === "*") {
+      const end = text.indexOf("*/", i + 2);
+      const close = end === -1 ? text.length : end + 2;
+      out.push(text.slice(i, close));
+      i = close;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < text.length && text[j] !== c) {
+        if (text[j] === "\\") j++;
+        j++;
+      }
+      const raw = text.slice(i + 1, j);
+      // Generated label sites: the first member of a __commonJS/__esm/
+      // __glob helper object is the module's factory method key, and
+      // `fileName: "…", lineNumber:` is the jsxDEV source-metadata object.
+      // A string literal anywhere else — including path-shaped user data —
+      // passes through untouched.
+      let labelSite = /__(?:commonJS|esm|glob)\(\s*\{\s*$/.test(text.slice(Math.max(0, i - 96), i));
+      if (!labelSite && fileNameKey) {
+        const after = triviaEnd(j + 1);
+        labelSite = text[after] === "," && text.startsWith("lineNumber", triviaEnd(after + 1));
+      }
+      const canonical = labelSite ? canonicalFor(decodeJsString(raw)) : null;
+      out.push(canonical === null ? text.slice(i, j + 1) : encodeJsString(canonical, c));
+      i = j + 1;
+      previous = "value";
+      fileNameKey = false;
+      continue;
+    }
+    if (c === "`") {
+      out.push("`");
+      i++;
+      stack.push({ template: true });
+      previous = "operator";
+      fileNameKey = false;
+      continue;
+    }
+    if (IDENT_START.test(c)) {
+      let j = i + 1;
+      while (j < text.length && IDENT_CHAR.test(text[j])) j++;
+      const word = text.slice(i, j);
+      fileNameKey = word === "fileName" && text[triviaEnd(j)] === ":";
+      previous = EXPRESSION_KEYWORDS.has(word) ? "operator" : "value";
+      out.push(word);
+      i = j;
+      continue;
+    }
+    if (/[0-9]/.test(c) || (c === "." && /[0-9]/.test(text[i + 1] ?? ""))) {
+      let j = i + 1;
+      while (j < text.length && /[0-9A-Za-z._]/.test(text[j])) j++;
+      out.push(text.slice(i, j));
+      i = j;
+      previous = "value";
+      fileNameKey = false;
+      continue;
+    }
+    if (c === "/" && previous !== "value") {
+      // Regex literal — scan to the unescaped closing '/', honoring classes.
+      let j = i + 1;
+      while (j < text.length && text[j] !== "/" && text[j] !== "\n") {
+        if (text[j] === "\\") {
+          j++;
+        } else if (text[j] === "[") {
+          while (j < text.length && text[j] !== "]" && text[j] !== "\n") {
+            if (text[j] === "\\") j++;
+            j++;
+          }
+        }
+        j++;
+      }
+      j++;
+      while (j < text.length && /[a-z]/i.test(text[j])) j++;
+      out.push(text.slice(i, j));
+      i = j;
+      previous = "value";
+      fileNameKey = false;
+      continue;
+    }
+    if (c === "{") {
+      top().braces++;
+      previous = "operator";
+    } else if (c === "}") {
+      if (top().braces === 0) {
+        if (stack.length > 1) stack.pop();
+      } else top().braces--;
+      previous = "value";
+    } else if (c === ")" || c === "]") {
+      previous = "value";
+    } else {
+      previous = "operator";
+    }
+    fileNameKey = fileNameKey && c === ":";
+    out.push(c);
+    i++;
+  }
+  return out.join("");
 };
 async function check(dir) {
   const pkg = validateEnvironmentPackage(

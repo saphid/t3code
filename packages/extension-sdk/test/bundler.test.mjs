@@ -33,11 +33,13 @@ const tsconfig = (jsx) =>
 // Component names and list tags vary per variant because dev React dedupes
 // the missing-key warning per reconciled parent fiber name — "ul" in the
 // prod pass would suppress the dev pass's warning if both used it.
-const component = (suffix, list) => `export function StaticList${suffix}() {
+const component = (suffix, list) => `import DepView from "jsx-dep";
+export function StaticList${suffix}() {
   return (
     <${list}>
       <li>static one</li>
       <li>static two</li>
+      <DepView />
     </${list}>
   );
 }
@@ -104,6 +106,7 @@ import glob from "glob-dep";
 import singleA from "alias-a";
 import singleB from "alias-b";
 import realPkg from "real-pkg";
+import uni from "uni-dep";
 const text = \`before
 // server.ts
 after\`;
@@ -113,7 +116,11 @@ export default {
   text,
   values: [left, right],
   interop: inner,
-  globbed: glob("a"),
+  globbed: glob.feature("a"),
+  plugged: glob.plugin("b"),
+  quoted: glob.feature('qu"ote'),
+  loadFault: glob.feature,
+  uni,
   singleA,
   singleB,
   transitive: realPkg,
@@ -131,13 +138,19 @@ export default {
 //   into different sibling files — content-equal modules that must not merge.
 // - inner-dep: "type": "module" package whose .js entry default-imports a
 //   transpiled-looking .cjs — native interop must yield module.exports.
-// - glob-dep: dynamic require glob — expanded files never reach onResolve.
+// - glob-dep: two dynamic require globs in one importer — expanded files
+//   never reach onResolve — plus non-ASCII and quote-containing filenames
+//   whose emitted keys arrive JavaScript-escaped.
 // - single: one physical package the fixture links under two names — the
 //   bundle must wire both spellings to one instance, not two copies.
 // - real-pkg: package whose own dependency (transitive-dep) exists ONLY
 //   beside its real target — reachable by realpath, invisible from the
 //   symlink spelling.
 // - transitive-dep: pulled in solely through real-pkg's sibling lookup.
+// - uni-dep: a package whose entry filename is non-ASCII — esbuild emits
+//   its label ASCII-escaped, so matching must decode first.
+// - jsx-dep: a package whose entry is .tsx — jsxdev emits its escaped path
+//   as fileName metadata inside each jsxDEV call.
 async function writeSharedDeps(dir) {
   const w = async (pkg, files) => {
     await NodeFSP.mkdir(pkg, { recursive: true });
@@ -197,9 +210,15 @@ async function writeSharedDeps(dir) {
         main: "index.cjs",
         types: "index.d.ts",
       }),
-      "index.cjs": 'module.exports = (name) => require("./features/" + name + ".cjs");\n',
+      "index.cjs":
+        'exports.feature = (name) => require("./features/" + name + ".cjs");\n' +
+        'exports.plugin = (name) => require("./plugins/" + name + ".cjs");\n',
       "features/a.cjs": 'module.exports = "loaded";\n',
-      "index.d.ts": "declare const load: (name: string) => unknown;\nexport default load;\n",
+      "features/fail-é.cjs": 'throw new Error("glob-fault");\n',
+      'features/qu"ote.cjs': 'module.exports = "quoted";\n',
+      "plugins/b.cjs": 'module.exports = "plugged";\n',
+      "index.d.ts":
+        "declare const load: { feature: (name: string) => unknown; plugin: (name: string) => unknown };\nexport default load;\n",
     }),
     // One physical package the fixture links under two spellings.
     w(NodePath.join(modules, "single"), {
@@ -235,6 +254,28 @@ async function writeSharedDeps(dir) {
       }),
       "index.cjs": 'module.exports = "transitive-loaded";\n',
     }),
+    w(NodePath.join(modules, "uni-dep"), {
+      "package.json": JSON.stringify({
+        name: "uni-dep",
+        version: "1.0.0",
+        type: "commonjs",
+        main: "café.cjs",
+        types: "index.d.ts",
+      }),
+      "café.cjs": 'module.exports = "café";\n',
+      "index.d.ts": "declare const v: string;\nexport default v;\n",
+    }),
+    w(NodePath.join(modules, "jsx-dep"), {
+      "package.json": JSON.stringify({
+        name: "jsx-dep",
+        version: "1.0.0",
+        type: "module",
+        main: "view.tsx",
+        types: "view.d.ts",
+      }),
+      "view.tsx": "export default function DepView() {\n  return <b>dep</b>;\n}\n",
+      "view.d.ts": "declare const v: () => null;\nexport default v;\n",
+    }),
   ]);
 }
 
@@ -263,6 +304,8 @@ async function writeFixture(dir, jsx = "react-jsx", depDir) {
     ["alias-a", "single"],
     ["alias-b", "single"],
     ["real-pkg", "real-pkg"],
+    ["uni-dep", "uni-dep"],
+    ["jsx-dep", "jsx-dep"],
   ])
     await NodeFSP.symlink(
       NodePath.join(depDir, "node_modules", target),
@@ -318,6 +361,7 @@ NodeTest.test("bundler output is deterministic across build cwd and checkout pat
       );
     }
     const server = firstBytes.server.toString("utf8");
+    const client = firstBytes.client.toString("utf8");
     // The CommonJS wrapper key is the node_modules spelling, never the
     // depth-dependent relative path the module resolved from — including
     // glob-expanded files, which never reach an onResolve hook.
@@ -333,6 +377,54 @@ NodeTest.test("bundler output is deterministic across build cwd and checkout pat
       server.includes('"node_modules/transitive-dep/index.cjs"'),
       `transitive dep beside a linked package's real target lost its canonical key: ${jsx}`,
     );
+    // Escaped and quote-bearing filenames canonicalize too: esbuild emits
+    // café.cjs as caf\xE9.cjs and qu"ote.cjs in single quotes — the emitted
+    // spelling asserts the decoded name is canonical.
+    NodeAssert.ok(
+      server.includes('"node_modules/uni-dep/caf\\xE9.cjs"('),
+      `escaped dep key not canonicalized: ${jsx}`,
+    );
+    NodeAssert.ok(
+      server.includes('"node_modules/glob-dep/features/fail-\\xE9.cjs"('),
+      `escaped glob-expanded key not canonicalized: ${jsx}`,
+    );
+    NodeAssert.ok(
+      server.includes("'node_modules/glob-dep/features/qu\"ote.cjs'("),
+      `quote-bearing dep key not canonicalized: ${jsx}`,
+    );
+    // Each glob-expansion synthetic name keeps its own require pattern with
+    // a canonical importer — distinct labels, no literal "$1" interpolation
+    // bug.
+    NodeAssert.ok(
+      server.includes("'require(\"./features/**/*.cjs\") in node_modules/glob-dep/index.cjs'("),
+      `features glob synthetic name not canonical: ${jsx}`,
+    );
+    NodeAssert.ok(
+      server.includes("'require(\"./plugins/**/*.cjs\") in node_modules/glob-dep/index.cjs'("),
+      `plugins glob synthetic name not canonical: ${jsx}`,
+    );
+    NodeAssert.ok(
+      server.includes('// require("./plugins/**/*.cjs") in node_modules/glob-dep/index.cjs'),
+      `glob synthetic banner not canonical: ${jsx}`,
+    );
+    NodeAssert.ok(!server.includes("$1"), `literal "$1" in output: ${jsx}`);
+    // No generated method key retains a checkout-relative spelling.
+    NodeAssert.ok(
+      !/^[\t ]*["'][^"'\n]*\.\.[^"'\n]*["']\s*\(/m.test(server),
+      `checkout-relative wrapper key survived: ${jsx}`,
+    );
+    if (jsx === "react-jsxdev") {
+      // jsxdev emits dep source paths as fileName metadata — canonical there
+      // too, not just in comments and keys.
+      NodeAssert.ok(
+        client.includes('fileName: "node_modules/jsx-dep/view.tsx"'),
+        `jsxdep fileName not canonicalized: ${jsx}`,
+      );
+      NodeAssert.ok(
+        !/fileName:\s*["']\.{2}/.test(client),
+        `checkout-relative fileName survived: ${jsx}`,
+      );
+    }
     // The built server module imports with everything intact.
     const built = (
       await import(
@@ -354,6 +446,27 @@ NodeTest.test("bundler output is deterministic across build cwd and checkout pat
       `package-type interop changed (${jsx})`,
     );
     NodeAssert.equal(built.globbed, "loaded", `glob-expanded dep not wired (${jsx})`);
+    NodeAssert.equal(built.plugged, "plugged", `second glob pattern not wired (${jsx})`);
+    NodeAssert.equal(built.quoted, "quoted", `quote-named glob file not wired (${jsx})`);
+    NodeAssert.equal(built.uni, "café", `non-ASCII dep entry not wired (${jsx})`);
+    // A lazily required dep that throws: the runtime stack's function label
+    // is the canonical module name, not the checkout-relative source path.
+    // (The executing bundle's own file:// URL is expected and unrelated.)
+    let fault = null;
+    try {
+      built.loadFault("fail-é");
+    } catch (error) {
+      fault = error;
+    }
+    NodeAssert.ok(fault, `throwing dep did not throw (${jsx})`);
+    NodeAssert.ok(
+      fault.stack.includes("at node_modules/glob-dep/features/fail-é.cjs"),
+      `stack label not canonical (${jsx}): ${fault.stack}`,
+    );
+    NodeAssert.ok(
+      !fault.stack.includes("shared-deps") && !/at \.{2}/.test(fault.stack),
+      `checkout-relative label leaked into stack (${jsx}): ${fault.stack}`,
+    );
     // Two spellings of one physical package share a single module instance —
     // preserveSymlinks bundled them as separate singletons.
     NodeAssert.equal(
@@ -382,6 +495,67 @@ NodeTest.test("bundler output is deterministic across build cwd and checkout pat
           );
     }
   }
+});
+
+NodeTest.test("canonicalization leaves path-shaped user data byte-for-byte intact", async (t) => {
+  // The external dependency-relative path a bundled module is labeled
+  // with can also legitimately appear in extension data — as a string
+  // literal, inside a template, even as an object method name. Only
+  // generated metadata positions may be rewritten.
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-bundler-"));
+  t.after(() => NodeFSP.rm(root, { recursive: true, force: true }));
+  const depDir = NodePath.join(root, "shared-deps");
+  await writeSharedDeps(depDir);
+  const dir = NodePath.join(root, "data-probe");
+  await writeFixture(dir, "react-jsx", depDir);
+  // The emitted label spelling for fixture-dep's entry in this checkout —
+  // an escaping path like ../shared-deps/node_modules/fixture-dep/index.cjs.
+  const depLabel = NodePath.relative(
+    dir,
+    await NodeFSP.realpath(NodePath.join(depDir, "node_modules", "fixture-dep", "index.cjs")),
+  );
+  NodeAssert.ok(depLabel.startsWith(".."), "fixture does not exercise the leak shape");
+  const source = `import dep from "fixture-dep";
+export default {
+  tools: [],
+  depValue: dep.value,
+  pathLiteral: ${JSON.stringify(depLabel)},
+  bannerLiteral: \`before
+// ${depLabel}
+after\`,
+  labelKeyed: { ${JSON.stringify(depLabel)}() { return 7; } },
+};
+`;
+  await NodeFSP.writeFile(NodePath.join(dir, "server.ts"), source);
+  build(dir, root);
+  const built = (
+    await import(
+      NodeURL.pathToFileURL(NodePath.join(dir, ".t3-extension/server.mjs")).href +
+        "?t=" +
+        Date.now()
+    )
+  ).default;
+  NodeAssert.equal(
+    built.pathLiteral,
+    depLabel,
+    "dependency-relative path string literal was rewritten",
+  );
+  NodeAssert.equal(
+    built.bannerLiteral,
+    `before\n// ${depLabel}\nafter`,
+    "banner-shaped line inside a template literal was rewritten",
+  );
+  NodeAssert.equal(
+    built.labelKeyed[depLabel](),
+    7,
+    "user object method named like a dep path was renamed",
+  );
+  // The generated metadata for the same module is still canonical.
+  const server = (await readBundle(dir, "server.mjs")).toString("utf8");
+  NodeAssert.ok(
+    server.includes('"node_modules/fixture-dep/index.cjs"'),
+    "dep wrapper key lost its canonical label",
+  );
 });
 
 NodeTest.test(
