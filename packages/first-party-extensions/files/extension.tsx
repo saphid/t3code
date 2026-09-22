@@ -2,6 +2,9 @@ import {
   filePresentationApi,
   resourcesLeaseApi,
   textEditsApi,
+  uiKeybindingsApi,
+  uiNotificationsApi,
+  uiThemeApi,
   workspaceChangesApi,
   workspaceResourcesApi,
   workspaceSearchApi,
@@ -45,6 +48,8 @@ import {
   describeSearch,
   editorSavePending,
   fileOpenFailed,
+  FILES_VIEW_COMMANDS,
+  fileOpenNotification,
   isMarkdownPath,
   leasePreviewMode,
   mediaLeaseAssetFailed,
@@ -59,6 +64,7 @@ import {
   parentPath,
   presentationPath,
   previewKind,
+  watchThemeVars,
   toggleExpanded,
   visibleRows,
   type ContentSearchResults,
@@ -74,6 +80,11 @@ const manifestId = "t3.files";
 const PREVIEW_ASSET_PATH = "assets/preview.png";
 const SEARCH_LIMIT = 100;
 const SEARCH_DEBOUNCE_MS = 150;
+
+// Every theme-backed value chains a `--t3-files-*` hop (published on the view
+// root from `t3.ui/theme` tokens) ahead of the legacy host vars. When the
+// contract is unavailable the hop never resolves and the legacy chain renders.
+// `font-*` vars are not theme roles and keep their plain host references.
 
 function restoreState(value: unknown): value is { readonly relativePath: string } | null {
   if (value === null) return true;
@@ -346,6 +357,155 @@ function useMediaLease(
   return { state: lease, mode, url: mediaLeaseUrl(lease), notifyAssetFailed };
 }
 
+/**
+ * `t3.ui/theme` consumer. `getTokens` resolves the host's *effective* theme —
+ * the provider's projection already folds the stored preference, live session
+ * overlays, and external previews into the painted state — and each
+ * `subscribeState` frame re-reads the tokens, so the panel tracks exactly
+ * what the host paints without interpreting overlay semantics itself. The map
+ * lands on the view root as `--t3-files-*` custom properties; a denied
+ * read or a dead stream clears it and every style falls back to its legacy
+ * `var()` chain — the honest degraded path.
+ */
+function useThemeVars(
+  host: ClientHost,
+  session: ViewSession,
+  visible: boolean,
+): Record<string, string> | null {
+  const [vars, setVars] = useState<Record<string, string> | null>(null);
+  useEffect(() => {
+    if (!visible) return;
+    const controller = new AbortController();
+    void watchThemeVars({
+      client: host,
+      context: session.context,
+      signal: AbortSignal.any([controller.signal, session.signal]),
+      apply: setVars,
+    });
+    return () => controller.abort();
+  }, [host, session, visible]);
+  return vars;
+}
+
+/**
+ * Live views holding each command-set token. The host dedupes identical
+ * registrations onto one token, so sibling Files views in the same context
+ * share theirs — the token must outlive every view that holds it.
+ */
+const commandSetUsers = new Map<string, number>();
+
+function acquireCommandSet(commandSetToken: string) {
+  commandSetUsers.set(commandSetToken, (commandSetUsers.get(commandSetToken) ?? 0) + 1);
+}
+
+/**
+ * Drops one view's hold on a command set, unregistering once the last holder
+ * is gone. The release runs on its own signal — at view disposal the
+ * session's signal is already aborted, and a stranded registration
+ * accumulates in the host registry and replays on every reconnect.
+ */
+function releaseCommandSet(host: ClientHost, session: ViewSession, commandSetToken: string) {
+  const remaining = (commandSetUsers.get(commandSetToken) ?? 0) - 1;
+  if (remaining > 0) {
+    commandSetUsers.set(commandSetToken, remaining);
+    return;
+  }
+  commandSetUsers.delete(commandSetToken);
+  void bindApi(uiKeybindingsApi, host, session.context)
+    .invoke("unregisterCommands", { commandSetToken }, new AbortController().signal)
+    .catch(() => {});
+}
+
+/**
+ * `t3.ui/keybindings` consumer (F1 #10). The panel's actions register as a
+ * `surface`-scope command set and bind through `session.bindCommands`, so
+ * dispatch runs the host's arbitration — focused-view binding first, with
+ * user rules and native defaults outranking the plugin `defaultKey`s.
+ * Registration or binding failure (ungranted grant, provider-less host) just
+ * leaves the toolbar buttons as the only trigger — commands never gate the
+ * panel.
+ *
+ * Registration and binding are separate effects: `bindCommands` throws
+ * "View is inactive" on a hidden view, and a registration that resolves
+ * while hidden must not lose the shortcuts for the session's lifetime. A
+ * bound set survives hide/show (its unbind rides view disposal), so the
+ * binding effect binds once per token on the first visible frame and
+ * retries on each subsequent one until it lands.
+ */
+function useFilesCommands(
+  host: ClientHost,
+  session: ViewSession,
+  visible: boolean,
+  actions: {
+    readonly refresh: () => void;
+    readonly focusSearch: () => void;
+    readonly openIn: () => void;
+    readonly toggleMarkdown: () => void;
+  },
+) {
+  const actionsRef = useRef(actions);
+  actionsRef.current = actions;
+  const [commandSet, setCommandSet] = useState<{
+    readonly session: ViewSession;
+    readonly token: string;
+    readonly ids: ReadonlySet<string>;
+  } | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    void bindApi(uiKeybindingsApi, host, session.context)
+      .invoke("registerCommands", { commands: FILES_VIEW_COMMANDS }, signal)
+      .then((result) => {
+        const ids = new Set(
+          result.results
+            .filter((entry) => entry.status === "registered")
+            .map((entry) => entry.commandId),
+        );
+        // Count the hold before the liveness check: the token may already be
+        // shared with a live sibling view, and a release that skipped the
+        // count would unregister the set out from under it.
+        acquireCommandSet(result.commandSetToken);
+        // Registration can land after the view died or the session changed —
+        // the token is still real, so release this hold rather than
+        // orphaning it. (A registration committed *after* abort rejects
+        // before this handler and stays registered until environment
+        // teardown — bounded, and the registry dedupes it back into use if
+        // the view returns.)
+        if (signal.aborted || ids.size === 0) {
+          releaseCommandSet(host, session, result.commandSetToken);
+          return;
+        }
+        setCommandSet({ session, token: result.commandSetToken, ids });
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [host, session]);
+  useEffect(() => {
+    if (commandSet === null || commandSet.session !== session) return;
+    session.onDispose(() => releaseCommandSet(host, session, commandSet.token));
+  }, [host, session, commandSet]);
+  const boundTokenRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      !visible ||
+      commandSet === null ||
+      commandSet.session !== session ||
+      boundTokenRef.current === commandSet.token
+    )
+      return;
+    try {
+      session.bindCommands(commandSet.token, ({ commandId }) => {
+        if (!commandSet.ids.has(commandId)) return;
+        actionsRef.current[commandId as keyof typeof actions]?.();
+      });
+      boundTokenRef.current = commandSet.token;
+    } catch {
+      // Inactive view or a host without a binding seam — the next visible
+      // frame retries; the toolbar buttons carry the actions meanwhile.
+    }
+  }, [session, visible, commandSet]);
+}
+
 const HEADING_SIZE: readonly number[] = [0, 22, 18, 16, 14, 13, 12];
 
 /**
@@ -366,7 +526,7 @@ const linkButtonStyle = {
   background: "none",
   font: "inherit",
   cursor: "pointer",
-  color: "var(--primary, #175cd3)",
+  color: "var(--t3-files-message-action, var(--primary, #175cd3))",
   textDecoration: "underline",
 } as const;
 
@@ -409,7 +569,7 @@ function MarkdownInlineNode(props: {
           style={{
             fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace)",
             fontSize: "0.92em",
-            background: "var(--muted, #f2f4f7)",
+            background: "var(--t3-files-muted, var(--muted, #f2f4f7))",
             borderRadius: 4,
             padding: "0 3px",
           }}
@@ -482,7 +642,9 @@ function MarkdownInlineNode(props: {
     }
     case "image":
       return (
-        <span style={{ color: "var(--muted-foreground, #667085)" }}>
+        <span
+          style={{ color: "var(--t3-files-muted-foreground, var(--muted-foreground, #667085))" }}
+        >
           [image: {node.alt || node.src}]
         </span>
       );
@@ -538,7 +700,7 @@ function MarkdownBlockNode(props: {
           {block.info !== "" && (
             <figcaption
               style={{
-                color: "var(--muted-foreground, #667085)",
+                color: "var(--t3-files-muted-foreground, var(--muted-foreground, #667085))",
                 fontSize: 11,
                 marginBottom: 2,
               }}
@@ -551,7 +713,7 @@ function MarkdownBlockNode(props: {
               margin: 0,
               padding: 10,
               overflow: "auto",
-              background: "var(--muted, #f2f4f7)",
+              background: "var(--t3-files-muted, var(--muted, #f2f4f7))",
               borderRadius: 6,
               fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace)",
               fontSize: 12,
@@ -567,8 +729,8 @@ function MarkdownBlockNode(props: {
           style={{
             margin: "0 0 10px",
             paddingLeft: 12,
-            borderLeft: "3px solid var(--border, #dfe3e8)",
-            color: "var(--muted-foreground, #667085)",
+            borderLeft: "3px solid var(--t3-files-border, var(--border, #dfe3e8))",
+            color: "var(--t3-files-muted-foreground, var(--muted-foreground, #667085))",
           }}
         >
           <MarkdownBlocks blocks={block.children} links={props.links} />
@@ -599,7 +761,11 @@ function MarkdownBlockNode(props: {
     case "rule":
       return (
         <hr
-          style={{ border: 0, borderTop: "1px solid var(--border, #dfe3e8)", margin: "14px 0" }}
+          style={{
+            border: 0,
+            borderTop: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
+            margin: "14px 0",
+          }}
         />
       );
   }
@@ -631,7 +797,13 @@ function RenderedMarkdown(props: {
       >
         <MarkdownBlocks blocks={props.blocks} links={props.links} />
       </article>
-      <footer style={{ color: "var(--muted-foreground, #667085)", fontSize: 11, marginTop: 12 }}>
+      <footer
+        style={{
+          color: "var(--t3-files-muted-foreground, var(--muted-foreground, #667085))",
+          fontSize: 11,
+          marginTop: 12,
+        }}
+      >
         Rendered preview — markdown subset (raw HTML, tables and images are not rendered; task lists
         are read-only)
       </footer>
@@ -706,7 +878,7 @@ function FileBreadcrumbBar(props: {
       window.removeEventListener("resize", dismiss);
     };
   }, [menuOpen]);
-  const muted = "var(--muted-foreground, #667085)";
+  const muted = "var(--t3-files-muted-foreground, var(--muted-foreground, #667085))";
   return (
     // The menu must live outside the scrolling nav — anything inside an
     // `overflow-x` container is clipped to its box.
@@ -714,7 +886,7 @@ function FileBreadcrumbBar(props: {
       ref={wrapRef}
       style={{
         position: "relative",
-        borderTop: "1px solid var(--border, #dfe3e8)",
+        borderTop: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
         flexShrink: 0,
       }}
       onKeyDown={(event) => {
@@ -733,7 +905,7 @@ function FileBreadcrumbBar(props: {
           overflowX: "auto",
           whiteSpace: "nowrap",
           fontSize: 12,
-          color: "var(--foreground, #20252d)",
+          color: "var(--t3-files-text, var(--foreground, #20252d))",
         }}
       >
         {crumbs.map((crumb, index) => {
@@ -770,7 +942,10 @@ function FileBreadcrumbBar(props: {
                   }}
                   style={{
                     border: "none",
-                    background: openCrumb?.crumb === crumb.path ? "var(--accent, #e8eef7)" : "none",
+                    background:
+                      openCrumb?.crumb === crumb.path
+                        ? "var(--t3-files-accent-surface, var(--accent, #e8eef7))"
+                        : "none",
                     font: "inherit",
                     color: "inherit",
                     padding: "1px 4px",
@@ -854,7 +1029,7 @@ function CrumbMenu(props: {
     el.style.maxWidth = `${Math.max(180, Math.min(320, vw - left - 4))}px`;
     el.style.maxHeight = `${Math.max(80, Math.min(260, vh - top - 4))}px`;
   });
-  const muted = "var(--muted-foreground, #667085)";
+  const muted = "var(--t3-files-muted-foreground, var(--muted-foreground, #667085))";
   const itemStyle = {
     display: "block",
     width: "100%",
@@ -866,7 +1041,7 @@ function CrumbMenu(props: {
     borderRadius: 4,
     cursor: "pointer",
     background: "none",
-    color: "var(--foreground, #20252d)",
+    color: "var(--t3-files-text, var(--foreground, #20252d))",
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
@@ -900,9 +1075,9 @@ function CrumbMenu(props: {
           maxHeight: 260,
           overflow: "auto",
           padding: 4,
-          border: "1px solid var(--border, #dfe3e8)",
+          border: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
           borderRadius: 6,
-          background: "var(--background, #fff)",
+          background: "var(--t3-files-canvas, var(--background, #fff))",
           boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)",
         }}
       >
@@ -927,7 +1102,10 @@ function CrumbMenu(props: {
             }
             style={{
               ...itemStyle,
-              background: child.path === selected ? "var(--accent, #e8eef7)" : "none",
+              background:
+                child.path === selected
+                  ? "var(--t3-files-accent-surface, var(--accent, #e8eef7))"
+                  : "none",
             }}
           >
             {child.kind === "directory" ? `${child.label}/` : child.label}
@@ -954,6 +1132,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     host,
     session,
   );
+  const themeVars = useThemeVars(host, session, visible);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const [query, setQuery] = useState("");
   const [searchMode, setSearchMode] = useState<"names" | "contents">("names");
@@ -987,6 +1166,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const readOnlyRef = useRef<HTMLPreElement | null>(null);
   const treeListRef = useRef<HTMLUListElement | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
   const selectedKind: PreviewKind = selected ? previewKind(selected) : "text";
   const editor = useFileEditor(host, session, selected, selectedKind, revision, visible);
   const media = useMediaLease(host, session, selected, selectedKind, revision, visible);
@@ -1124,16 +1304,43 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   // reports it (or the named failure) verbatim. Requires stays without the
   // self-provided API: files provides t3.file/presentation, and a
   // self-requirement would trip the resolver's cyclic-dependency check.
+  // Native parity: a failed open toasts (the native panel raises a thread
+  // toast on preview-open failure) while resolving/resolved stay inline.
+  // When `t3.ui/notifications` is unavailable the inline row stands as the
+  // degraded surface — the failure is never dropped silently.
+  const failFileOpen = (path: string, state: FileOpenState) => {
+    // Inline first — the failure surface never depends on the notification
+    // grant being granted or the invoke landing.
+    setFileOpen({ path, state });
+    const input = fileOpenNotification(state, session.context.resource.threadId);
+    if (input === null) return;
+    const signal = session.signal;
+    void bindApi(uiNotificationsApi, host, session.context)
+      .invoke("notify", input, signal)
+      .then(
+        () => {
+          // The toast carries the failure — drop the inline row, but only
+          // if it still shows this same failure. A newer state for the path
+          // (a retry's resolving/resolved) wins over a stale clear, and a
+          // late rejection simply leaves the row standing.
+          if (!signal.aborted)
+            setFileOpen((current) =>
+              current?.path === path && current.state === state
+                ? { path, state: { status: "idle" } }
+                : current,
+            );
+        },
+        () => {},
+      );
+  };
+
   const openInPresentation = () => {
     if (selected === null) return;
     const path = presentationPath(selected);
     if (path === null) {
-      setFileOpen({
-        path: selected,
-        state: {
-          status: "unavailable",
-          message: `${selected} cannot be opened — not a workspace-relative path`,
-        },
+      failFileOpen(selected, {
+        status: "unavailable",
+        message: `${selected} cannot be opened — not a workspace-relative path`,
       });
       return;
     }
@@ -1151,11 +1358,24 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
             });
         },
         (error) => {
-          if (!signal.aborted) setFileOpen({ path, state: fileOpenFailed(error) });
+          if (!signal.aborted) failFileOpen(path, fileOpenFailed(error));
         },
       )
       .finally(() => controller.abort());
   };
+
+  // F1 #10: the panel's commands register through `t3.ui/keybindings` so the
+  // host arbitrates them — user rules and native defaults outrank the plugin
+  // `defaultKey`s, and a focused view's binding is what dispatch reaches.
+  useFilesCommands(host, session, visible, {
+    refresh,
+    focusSearch: () => searchRef.current?.focus(),
+    openIn: openInPresentation,
+    toggleMarkdown: () => {
+      if (selected !== null && isMarkdownPath(selected) && selectedKind === "text")
+        setRenderMarkdown((value) => !value);
+    },
+  });
 
   const editorSurface = editor.surface?.path === selected ? editor.surface : null;
   // F1 #22: rendered markdown draws from the buffer the surface already read —
@@ -1297,7 +1517,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     handledRevealRef.current = reveal;
   }, [revealRequest, selected, selectedKind, markdownBlocks, editorSurface, currentRead]);
 
-  const muted = "var(--muted-foreground, #667085)";
+  const muted = "var(--t3-files-muted-foreground, var(--muted-foreground, #667085))";
   return (
     <section
       aria-label="Files"
@@ -1306,10 +1526,11 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
         display: "flex",
         flexDirection: "column",
         minHeight: 0,
-        color: "var(--foreground, #20252d)",
-        background: "var(--background, #fff)",
+        color: "var(--t3-files-text, var(--foreground, #20252d))",
+        background: "var(--t3-files-canvas, var(--background, #fff))",
         fontFamily: "var(--font-sans, system-ui, sans-serif)",
         fontSize: 13,
+        ...(themeVars ?? {}),
       }}
     >
       <header
@@ -1317,7 +1538,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           display: "flex",
           gap: 6,
           padding: 8,
-          borderBottom: "1px solid var(--border, #dfe3e8)",
+          borderBottom: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
           flexShrink: 0,
         }}
       >
@@ -1333,6 +1554,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           <option value="contents">File contents</option>
         </select>
         <input
+          ref={searchRef}
           type="search"
           aria-label="Search workspace files"
           placeholder={searchMode === "contents" ? "Search file contents" : "Search files"}
@@ -1394,9 +1616,11 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                       border: "1px solid transparent",
                       borderRadius: 5,
                       cursor: "pointer",
-                      color: "var(--foreground, #20252d)",
+                      color: "var(--t3-files-text, var(--foreground, #20252d))",
                       background:
-                        match.path === selected ? "var(--accent, #e8eef7)" : "transparent",
+                        match.path === selected
+                          ? "var(--t3-files-accent-surface, var(--accent, #e8eef7))"
+                          : "transparent",
                     }}
                   >
                     <span
@@ -1428,7 +1652,10 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                         segment.match ? (
                           <mark
                             key={segmentKey}
-                            style={{ background: "var(--accent, #e8eef7)", color: "inherit" }}
+                            style={{
+                              background: "var(--t3-files-accent-surface, var(--accent, #e8eef7))",
+                              color: "inherit",
+                            }}
                           >
                             {segment.text}
                           </mark>
@@ -1475,9 +1702,11 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                       border: "1px solid transparent",
                       borderRadius: 5,
                       cursor: "pointer",
-                      color: "var(--foreground, #20252d)",
+                      color: "var(--t3-files-text, var(--foreground, #20252d))",
                       background:
-                        entry.path === selected ? "var(--accent, #e8eef7)" : "transparent",
+                        entry.path === selected
+                          ? "var(--t3-files-accent-surface, var(--accent, #e8eef7))"
+                          : "transparent",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
@@ -1512,9 +1741,11 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                     border: "1px solid transparent",
                     borderRadius: 5,
                     cursor: "pointer",
-                    color: "var(--foreground, #20252d)",
+                    color: "var(--t3-files-text, var(--foreground, #20252d))",
                     background:
-                      row.entry.path === selected ? "var(--accent, #e8eef7)" : "transparent",
+                      row.entry.path === selected
+                        ? "var(--t3-files-accent-surface, var(--accent, #e8eef7))"
+                        : "transparent",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                     whiteSpace: "nowrap",
@@ -1577,7 +1808,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
             gap: 8,
             alignItems: "center",
             padding: "4px 10px",
-            borderTop: "1px solid var(--border, #dfe3e8)",
+            borderTop: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
             flexShrink: 0,
           }}
         >
@@ -1605,7 +1836,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
             flexDirection: "column",
             flex: 1,
             minHeight: 0,
-            borderTop: "1px solid var(--border, #dfe3e8)",
+            borderTop: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
           }}
         >
           {markdownBlocks !== null ? (
@@ -1642,9 +1873,9 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                 gap: 6,
                 alignItems: "center",
                 padding: "6px 10px",
-                borderTop: "1px solid var(--border, #dfe3e8)",
+                borderTop: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
                 fontSize: 11,
-                color: "var(--foreground, #20252d)",
+                color: "var(--t3-files-text, var(--foreground, #20252d))",
               }}
             >
               File changed on disk — your edits are kept.
@@ -1664,9 +1895,9 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                 gap: 6,
                 alignItems: "center",
                 padding: "6px 10px",
-                borderTop: "1px solid var(--border, #dfe3e8)",
+                borderTop: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
                 fontSize: 11,
-                color: "var(--foreground, #20252d)",
+                color: "var(--t3-files-text, var(--foreground, #20252d))",
               }}
             >
               {describeSaveState(editorSurface.saveState)}
@@ -1688,7 +1919,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               flexDirection: "column",
               flex: 1,
               minHeight: 0,
-              borderTop: "1px solid var(--border, #dfe3e8)",
+              borderTop: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
             }}
           >
             <RenderedMarkdown blocks={markdownBlocks} links={linkActions} />
@@ -1702,7 +1933,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               flex: 1,
               margin: 0,
               padding: 12,
-              borderTop: "1px solid var(--border, #dfe3e8)",
+              borderTop: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
               fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace)",
               fontSize: 12,
             }}
@@ -1716,7 +1947,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           style={{
             margin: 0,
             padding: 12,
-            borderTop: "1px solid var(--border, #dfe3e8)",
+            borderTop: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
             display: "flex",
             flexDirection: "column",
             gap: 8,
@@ -1751,7 +1982,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           style={{
             margin: 0,
             padding: 12,
-            borderTop: "1px solid var(--border, #dfe3e8)",
+            borderTop: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
             display: "grid",
             gap: 8,
             justifyItems: "start",
@@ -1786,6 +2017,9 @@ export default defineExtension({
     requireApi(textEditsApi),
     requireApi(workspaceResourcesApi),
     requireApi(resourcesLeaseApi),
+    requireApi(uiThemeApi),
+    requireApi(uiKeybindingsApi),
+    requireApi(uiNotificationsApi),
   ],
   surfaces: [
     {
