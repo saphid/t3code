@@ -35,15 +35,47 @@ function normalizeComputedColor(value: string | null | undefined, fallback: stri
   return value ?? fallback;
 }
 
+/**
+ * Resolves a custom property that may be a `var(--name, fallback)` token
+ * stream — getPropertyValue never substitutes var() references, and the
+ * contract publishes `--t3-terminal-*` overrides in exactly that shape. Each
+ * hop is looked up on the same computed style (custom properties inherit
+ * onto the mount) with a depth cap; an unresolvable chain falls back rather
+ * than feeding the canvas a token stream.
+ */
 function readThemeColor(styles: CSSStyleDeclaration, variable: string, fallback: string): string {
-  return normalizeComputedColor(styles.getPropertyValue(variable), fallback);
+  let value = styles.getPropertyValue(variable).trim();
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (!value.startsWith("var(") || !value.endsWith(")")) break;
+    const inner = value.slice(4, -1);
+    // Split at the first top-level comma: var(--name, fallback).
+    let split = -1;
+    let nested = 0;
+    for (let i = 0; i < inner.length; i += 1) {
+      const char = inner[i];
+      if (char === "(") nested += 1;
+      else if (char === ")") nested -= 1;
+      else if (char === "," && nested === 0) {
+        split = i;
+        break;
+      }
+    }
+    const name = (split === -1 ? inner : inner.slice(0, split)).trim();
+    const next = styles.getPropertyValue(name).trim();
+    value = next !== "" ? next : split === -1 ? "" : inner.slice(split + 1).trim();
+    if (value === "") return fallback;
+  }
+  return normalizeComputedColor(value, fallback);
 }
 
 /**
- * Package-local theme path (design D5): the host's `--terminal-*` CSS
- * variables inherit into extension DOM, so the surface reads them from its
- * own mount and falls back to the document colors. `t3.ui/theme` is the
- * contract upgrade once P13 ships (B1).
+ * Theme path (design D5 + t3.ui adoption): the host's `--terminal-*` CSS
+ * variables and the contract-published `--t3-terminal-*` overrides both
+ * inherit into extension DOM, so the surface reads them from its own mount
+ * — contract vars first, legacy vars next, document colors last. The
+ * `--t3-terminal-color-scheme` bridge on the mount feeds the dark-mode
+ * fallback decision. When the contract feed dies its properties clear and
+ * the legacy chain governs again — the degraded path is automatic.
  */
 export function terminalThemeFromApp(mountElement?: HTMLElement | null): GhosttyTheme {
   if (typeof document === "undefined") {
@@ -75,13 +107,21 @@ export function terminalThemeFromApp(mountElement?: HTMLElement | null): Ghostty
   );
   const terminalBackground = readThemeColor(
     themeStyles,
-    "--terminal-background",
-    readThemeColor(rootThemeStyles, "--terminal-background", background),
+    "--t3-terminal-background",
+    readThemeColor(
+      themeStyles,
+      "--terminal-background",
+      readThemeColor(rootThemeStyles, "--terminal-background", background),
+    ),
   );
   const terminalForeground = readThemeColor(
     themeStyles,
-    "--terminal-foreground",
-    readThemeColor(rootThemeStyles, "--terminal-foreground", foreground),
+    "--t3-terminal-foreground",
+    readThemeColor(
+      themeStyles,
+      "--terminal-foreground",
+      readThemeColor(rootThemeStyles, "--terminal-foreground", foreground),
+    ),
   );
   const terminalCursor = readThemeColor(
     themeStyles,
@@ -90,8 +130,12 @@ export function terminalThemeFromApp(mountElement?: HTMLElement | null): Ghostty
   );
   const terminalSelection = readThemeColor(
     themeStyles,
-    "--terminal-selection-background",
-    isDark ? "rgba(180, 203, 255, 0.25)" : "rgba(37, 63, 99, 0.2)",
+    "--t3-terminal-selection",
+    readThemeColor(
+      themeStyles,
+      "--terminal-selection-background",
+      isDark ? "rgba(180, 203, 255, 0.25)" : "rgba(37, 63, 99, 0.2)",
+    ),
   );
   return {
     background: parseTerminalColor(

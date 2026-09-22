@@ -9,6 +9,36 @@ Interactive terminal plugin driven entirely by public contracts:
   restart, close; all gated behind the distinct `t3.terminal/operate` grant
 - `t3.terminal/output-events` `subscribe` — snapshot → chunked output →
   reset/exit/closed lifecycle frames
+- `t3.ui/theme@^1.0.0` (`t3.ui/theme.read` grant) — `getTokens` resolves the
+  host's effective theme (stored preference, session overlay, or painted
+  preview, folded by the provider) and `subscribeState` re-reads it on every
+  transition; `subscribeTerminalAppearance` carries the real terminal colors
+  and font. Both republish as `--t3-terminal-*` custom properties ahead of
+  the legacy `var()` fallbacks; a denied read or a dead stream clears the
+  overrides so nothing contract-derived outlives its feed. On the VT pane
+  the same properties feed `terminalThemeFromApp` → `surface.setTheme`, so
+  the canvas and the chrome share one theme pipeline.
+- `t3.ui/keybindings@^1.0.0` — per-view `toggle`/`new`/`close` commands
+  (default keys mirror the native `mod+j`/`mod+n`/`mod+w` chords; the host's
+  user/native precedence decides who claims them), plus a staged
+  installation-scoped `toggle` with a bottom-dock `activation` fallback for
+  cold open (`t3.ui/keybindings.global` + `t3.ui/panels` grants). All actions
+  are bound per view through `ViewSession.bindCommands` and stay panel-local.
+- `t3.ui/panels@^1.0.0` — the dispatched `toggle` closes the hosting surface
+  via `closeSurface`; failures surface on the panel status row.
+
+All seven APIs are mandatory requirements — invocation authority only exists
+for declared contracts, so a host without the `t3.ui/*` providers resolves
+this package `missing-api` rather than mounting a half-contracted panel. The
+degraded paths above cover denied grants, failing calls, and dead streams on
+a capable host.
+
+`t3.ui/notifications` is deliberately not adopted: the native terminal only
+toasts on link-preview failure, and this panel has no link-activation path —
+its inline status rows match native usage. Split chords
+(`terminal.split`/`splitVertical`) and the Ghostty-level editing intercepts
+(clear, word-nav, delete) stay deferred — the panel has no split layout and
+no editing intercepts to bind them to.
 
 ## Rendering: real Ghostty VT (format 4)
 
@@ -23,7 +53,8 @@ packaged as digest-verified extension assets:
 The host delivers verified bytes via `host.readAsset`; `ghostty/runtime.ts`
 instantiates one shared runtime and each surface allocates its own terminal
 handle. A host without asset support still works: the panel falls back to a
-bounded `<pre>` text view.
+bounded `<pre>` text view that honors the same `--t3-terminal-*`
+contract variables and `::selection` styling.
 
 Vendoring deviations from `apps/web/src/terminal/ghostty/` (all mechanical,
 none change VT semantics): imports repointed to package-local helpers;

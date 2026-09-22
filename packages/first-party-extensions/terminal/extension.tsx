@@ -3,6 +3,9 @@ import {
   terminalOutputApi,
   terminalOutputEventsApi,
   terminalSessionsApi,
+  uiKeybindingsApi,
+  uiPanelsApi,
+  uiThemeApi,
   type TerminalOutputEventsValue,
 } from "@t3tools/extension-sdk/catalogue";
 import { defineExtension, requireApi } from "@t3tools/extension-sdk/authoring";
@@ -23,13 +26,20 @@ import { terminalThemeFromApp } from "./terminalTheme.ts";
 import { TerminalVtAttachment, pumpTerminalOutput } from "./vtAttachment.ts";
 import {
   EMPTY_OUTPUT_BUFFER,
+  EMPTY_OVERFLOW_STREAK,
+  TERMINAL_GLOBAL_COMMANDS,
+  TERMINAL_SURFACE_ID,
   TerminalPanel,
   applyOutputEvent,
+  dispatchTerminalCommand,
   isResumableOutputClose,
   noteOutputFrameForStreak,
-  EMPTY_OVERFLOW_STREAK,
+  registerPanelCommands,
+  watchTerminalAppearanceVars,
+  watchThemeVars,
   workspaceLaunchFromRevision,
   type OutputBuffer,
+  type TerminalCommandActions,
   type TerminalControlOps,
   type TerminalPanelSnapshot,
 } from "./viewModel.ts";
@@ -191,6 +201,138 @@ function useSessionsStream(
 }
 
 /* ------------------------------------------------------------------ */
+/* t3.ui/* consumption — theme vars, appearance, panel commands        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `t3.ui/theme` consumer. `getTokens` resolves the host's *effective* theme —
+ * the provider's projection already folds the stored preference, live session
+ * overlays, and external previews into the painted state — and each
+ * `subscribeState` frame re-reads the tokens, so the panel tracks exactly
+ * what the host paints without interpreting overlay semantics itself. The map
+ * lands on the view root as `--t3-terminal-*` custom properties; a denied
+ * read or a dead stream clears it and every style falls back to its legacy
+ * `var()` chain — the honest degraded path.
+ */
+function useThemeVars(
+  host: ClientHost,
+  session: ViewSession,
+  visible: boolean,
+): Record<string, string> | null {
+  const [vars, setVars] = useState<Record<string, string> | null>(null);
+  useEffect(() => {
+    if (!visible) return;
+    const controller = new AbortController();
+    void watchThemeVars({
+      client: host,
+      context: session.context,
+      signal: AbortSignal.any([controller.signal, session.signal]),
+      apply: setVars,
+    });
+    return () => controller.abort();
+  }, [host, session, visible]);
+  return vars;
+}
+
+/**
+ * `subscribeTerminalAppearance` consumer — the host's real terminal colors
+ * and font. The stream opens with a snapshot frame, so no separate
+ * `getTerminalAppearance` call is needed; when it dies the map clears back
+ * to the token layer (or the legacy chain) governing. On the VT pane the
+ * published `--t3-terminal-*` properties are what `terminalThemeFromApp`
+ * resolves into the Ghostty theme — one pipeline from contract to surface,
+ * no second interpreter.
+ */
+function useTerminalAppearanceVars(
+  host: ClientHost,
+  session: ViewSession,
+  visible: boolean,
+): Record<string, string> | null {
+  const [vars, setVars] = useState<Record<string, string> | null>(null);
+  useEffect(() => {
+    if (!visible) return;
+    const controller = new AbortController();
+    void watchTerminalAppearanceVars({
+      client: host,
+      context: session.context,
+      signal: AbortSignal.any([controller.signal, session.signal]),
+      apply: setVars,
+    });
+    return () => controller.abort();
+  }, [host, session, visible]);
+  return vars;
+}
+
+/** `t3.ui/panels` closeSurface against this view's own surface+thread. */
+function closeOwnSurface(host: ClientHost, session: ViewSession): Promise<void> {
+  const threadId = session.context.resource.threadId;
+  if (threadId === undefined) return Promise.resolve();
+  return bindApi(uiPanelsApi, host, session.context)
+    .invoke("closeSurface", { surfaceId: TERMINAL_SURFACE_ID, threadId }, session.signal)
+    .then(
+      () => undefined,
+      () => {
+        throw new Error("The host could not close this panel.");
+      },
+    );
+}
+
+/**
+ * `t3.ui/keybindings` consumer: registers the view's command set (toggle/new/
+ * close) and binds the dispatch handler for the focused-view and thread
+ * arbitration tiers. Every action stays panel-local — `new`/`close` drive the
+ * tab model (close keeps the inline confirm), `toggle` dismisses the hosting
+ * surface through `t3.ui/panels`. A denied or failing registration leaves
+ * the toolbar buttons as the only path — nothing else changes.
+ */
+function usePanelCommands(
+  host: ClientHost,
+  session: ViewSession,
+  panel: TerminalPanel,
+  visible: boolean,
+) {
+  useEffect(() => {
+    // bindCommands throws on a hidden view ("View is inactive") — registration
+    // waits for visibility and unwinds when it drops.
+    if (!visible) return;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    let release: (() => void) | null = null;
+    const actions: TerminalCommandActions = {
+      newTerminal: () => void panel.openTerminal(),
+      closeTerminal: () => {
+        const activeId = panel.snapshot.activeTerminalId;
+        if (activeId !== null) panel.requestAction(activeId, "close");
+      },
+      toggleSurface: () =>
+        void closeOwnSurface(host, session).catch((error: unknown) =>
+          panel.notePanelError(error instanceof Error ? error.message : "Panel action failed"),
+        ),
+    };
+    void registerPanelCommands({
+      client: host,
+      context: session.context,
+      signal,
+      bindCommands: (token, handler) => session.bindCommands(token, handler),
+      onCommand: (commandId) => void dispatchTerminalCommand(commandId, actions),
+    }).then(
+      (registration) => {
+        if (registration === null) return;
+        if (signal.aborted) registration.release();
+        else release = registration.release;
+      },
+      () => {
+        // Denied or unavailable registration: no panel commands.
+      },
+    );
+    return () => {
+      controller.abort();
+      release?.();
+    };
+  }, [host, session, panel, visible]);
+}
+
+/* ------------------------------------------------------------------ */
 /* VT pane: Ghostty surface + output stream + input queue wiring       */
 /* ------------------------------------------------------------------ */
 
@@ -235,8 +377,11 @@ function TerminalPane(props: {
   readonly active: boolean;
   readonly visible: boolean;
   readonly assets: GhosttyAssets;
+  readonly themeVars: Record<string, string> | null;
+  readonly appearanceVars: Record<string, string> | null;
 }) {
-  const { host, session, panel, terminalId, active, visible, assets } = props;
+  const { host, session, panel, terminalId, active, visible, assets, themeVars, appearanceVars } =
+    props;
   const [, bump] = useReducer((value: number) => value + 1, 0);
   const [attachment] = useState(
     () =>
@@ -369,6 +514,15 @@ function TerminalPane(props: {
     if (active && visible) surfaceRef.current?.focus();
   }, [active, visible]);
 
+  // The contract layers republish `--t3-terminal-*` on the view root; the
+  // surface re-reads them through terminalThemeFromApp whenever either feed
+  // publishes or clears, so a theme change reaches the canvas without a
+  // remount.
+  useEffect(() => {
+    const mount = mountRef.current;
+    if (mount !== null) surfaceRef.current?.setTheme(terminalThemeFromApp(mount));
+  }, [themeVars, appearanceVars]);
+
   const state = attachment.state;
   const muted = "var(--muted-foreground, #667085)";
   return (
@@ -398,12 +552,21 @@ function TerminalPane(props: {
       <div
         ref={mountRef}
         aria-label="Terminal output"
+        data-t3-terminal-output
         style={{
           position: "relative",
           flex: 1,
           minHeight: 0,
           overflow: "hidden",
-          background: "var(--terminal-background, transparent)",
+          // Real properties carrying the contract chains — they resolve
+          // var() references at use time, which is exactly what
+          // terminalThemeFromApp needs (getPropertyValue on a custom
+          // property would return the unresolved token stream).
+          background: "var(--t3-terminal-background, var(--terminal-background, transparent))",
+          color: "var(--t3-terminal-foreground, var(--terminal-foreground, inherit))",
+          // Bridges the published --t3-terminal-color-scheme into the real
+          // property terminalThemeFromApp reads for its dark fallback.
+          colorScheme: "var(--t3-terminal-color-scheme, normal)",
         }}
       />
     </div>
@@ -527,7 +690,7 @@ function useFitResize(
 
 const control = {
   padding: "4px 8px",
-  border: "1px solid var(--border, #dfe3e8)",
+  border: "1px solid var(--t3-terminal-border, var(--border, #dfe3e8))",
   borderRadius: 5,
   background: "transparent",
   color: "inherit",
@@ -580,6 +743,9 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
   useEffect(() => session.onVisibility(setVisible), [session]);
   useEffect(() => () => panel.dispose(), [panel]);
   useSessionsStream(host, session, panel, visible);
+  usePanelCommands(host, session, panel, visible);
+  const themeVars = useThemeVars(host, session, visible);
+  const appearanceVars = useTerminalAppearanceVars(host, session, visible);
   const assets = useGhosttyAssets(host, session);
   const snapshot: TerminalPanelSnapshot = panel.snapshot;
   const activeId = snapshot.activeTerminalId;
@@ -599,7 +765,8 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
     setInput("");
   };
 
-  const muted = "var(--muted-foreground, #667085)";
+  const muted = "var(--t3-terminal-muted, var(--muted-foreground, #667085))";
+  const border = "1px solid var(--t3-terminal-border, var(--border, #dfe3e8))";
   return (
     <section
       aria-label="Terminal"
@@ -608,18 +775,26 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
         display: "flex",
         flexDirection: "column",
         minHeight: 0,
-        color: "var(--foreground, #20252d)",
-        background: "var(--background, #fff)",
+        color: "var(--t3-terminal-text, var(--foreground, #20252d))",
+        background: "var(--t3-terminal-canvas, var(--background, #fff))",
         fontFamily: "var(--font-sans, system-ui, sans-serif)",
         fontSize: 13,
+        // Contract-derived custom properties inherit to every descendant —
+        // the chrome's var() chains, the fallback <pre>, and the mount div
+        // terminalThemeFromApp resolves into the Ghostty theme.
+        ...themeVars,
+        ...appearanceVars,
       }}
     >
+      <style>
+        {"[data-t3-terminal-output]::selection{background:var(--t3-terminal-selection,Highlight)}"}
+      </style>
       <header
         style={{
           display: "flex",
           gap: 6,
           padding: 8,
-          borderBottom: "1px solid var(--border, #dfe3e8)",
+          borderBottom: border,
           flexShrink: 0,
           alignItems: "center",
         }}
@@ -672,7 +847,10 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
                 color: "inherit",
-                background: tab.terminalId === activeId ? "var(--accent, #e8eef7)" : "transparent",
+                background:
+                  tab.terminalId === activeId
+                    ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))"
+                    : "transparent",
               }}
             >
               {tab.label}
@@ -772,7 +950,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
             padding: "6px 10px",
             fontSize: 11,
             color: muted,
-            borderTop: "1px solid var(--border, #dfe3e8)",
+            borderTop: border,
             flexShrink: 0,
           }}
         >
@@ -813,6 +991,8 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
             active={tab.terminalId === activeId}
             visible={visible}
             assets={assets}
+            themeVars={themeVars}
+            appearanceVars={appearanceVars}
           />
         ))}
       {textFallback && activeId !== null && activeTab !== null && (
@@ -822,7 +1002,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
             flexDirection: "column",
             flex: 1,
             minHeight: 0,
-            borderTop: "1px solid var(--border, #dfe3e8)",
+            borderTop: border,
           }}
         >
           <output
@@ -835,6 +1015,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
           <pre
             ref={outputRef}
             aria-label="Terminal output"
+            data-t3-terminal-output
             style={{
               flex: 1,
               minHeight: 0,
@@ -843,10 +1024,14 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
               overflow: "auto",
               whiteSpace: "pre-wrap",
               overflowWrap: "anywhere",
-              color: "var(--terminal-foreground, inherit)",
-              background: "var(--terminal-background, transparent)",
-              fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace)",
-              fontSize: 12,
+              color: "var(--t3-terminal-foreground, var(--terminal-foreground, inherit))",
+              background: "var(--t3-terminal-background, var(--terminal-background, transparent))",
+              fontFamily:
+                "var(--t3-terminal-font-family, var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace))",
+              fontSize: "var(--t3-terminal-font-size, 12px)",
+              lineHeight: "var(--t3-terminal-line-height, normal)",
+              fontVariantLigatures: "var(--t3-terminal-ligatures, normal)",
+              colorScheme: "var(--t3-terminal-color-scheme, normal)",
             }}
           >
             {output?.contents ?? ""}
@@ -856,7 +1041,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
               display: "flex",
               gap: 6,
               padding: 8,
-              borderTop: "1px solid var(--border, #dfe3e8)",
+              borderTop: border,
               flexShrink: 0,
             }}
           >
@@ -868,7 +1053,13 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
               onKeyDown={(event) => {
                 if (event.key === "Enter") send();
               }}
-              style={{ ...control, flex: 1, minWidth: 0, cursor: "text" }}
+              style={{
+                ...control,
+                flex: 1,
+                minWidth: 0,
+                cursor: "text",
+                background: "var(--t3-terminal-input, var(--input, transparent))",
+              }}
             />
             <button type="button" onClick={send} style={control}>
               Send
@@ -876,11 +1067,19 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
           </div>
         </div>
       )}
+      <output
+        aria-label="Slice notice"
+        style={{ padding: "6px 10px", color: muted, fontSize: 11, flexShrink: 0 }}
+      >
+        Ghostty VT rendering over the public control contract; theme, terminal appearance, and panel
+        keybindings follow the host's t3.ui/* providers. Link activation is reported inline — there
+        is no transient-toast path, so t3.ui/notifications is not adopted.
+      </output>
     </section>
   );
 }
 
-export default defineExtension({
+const authored = defineExtension({
   id: manifestId,
   version: "0.3.0",
   requires: [
@@ -888,6 +1087,14 @@ export default defineExtension({
     requireApi(terminalOutputApi),
     requireApi(terminalOutputEventsApi),
     requireApi(terminalControlApi),
+    // Mandatory requirements — the broker only authorizes invocations for
+    // declared APIs, so the t3.ui/* contracts must be declared even though
+    // the panel degrades per-call. A host without these providers resolves
+    // the package missing-api rather than mounting it; the degraded paths
+    // cover denied or failing calls and dead streams on a capable host.
+    requireApi(uiThemeApi),
+    requireApi(uiKeybindingsApi),
+    requireApi(uiPanelsApi),
   ],
   assets: [
     { path: GHOSTTY_VT_ASSET, mediaType: "application/wasm" },
@@ -913,3 +1120,21 @@ export default defineExtension({
     },
   ],
 });
+
+const clientFactory = authored.client;
+
+export default {
+  ...authored,
+  ...(clientFactory === undefined
+    ? {}
+    : {
+        client(host: ClientHost) {
+          // Installation-tier command set: the toggle's cold-open activation
+          // fallback. Staged at factory time; the host flushes it once the
+          // installation commits and a client-provider connection is live.
+          // Absent on hosts without the seam — the view set still works.
+          host.registerGlobalCommands?.(TERMINAL_GLOBAL_COMMANDS);
+          return clientFactory(host);
+        },
+      }),
+};

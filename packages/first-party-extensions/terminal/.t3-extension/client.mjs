@@ -129,6 +129,8 @@ var __t3Client = (() => {
       if (!Array.isArray(surface.capabilities))
         throw new Error("Invalid capabilities");
       surface.capabilities.forEach(assertId);
+      if (surface.claimsTerminalFocus !== void 0 && typeof surface.claimsTerminalFocus !== "boolean")
+        throw new Error("Invalid terminal focus claim");
     }
     for (const descriptors of [manifest.composerContexts ?? [], manifest.messageDecorations ?? []]) {
       if (!Array.isArray(descriptors) || descriptors.length > 16)
@@ -657,6 +659,808 @@ var __t3Client = (() => {
     ]
   });
 
+  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/workspaceResources.js
+  var WORKSPACE_RESOURCES = "t3.workspace/resources";
+  var WORKSPACE_RESOURCE_CHUNK_UNITS = 8192;
+  var WORKSPACE_RESOURCE_MAX_CHUNKS = 2048;
+  var WORKSPACE_RESOURCE_MAX_BYTES = 8 * 1024 * 1024;
+  var WORKSPACE_RESOURCE_REASONS = [
+    "not-found",
+    "not-regular-file",
+    "binary",
+    "invalid-utf8",
+    "oversized",
+    "outside-workspace",
+    "unsafe-path",
+    "changed-during-read",
+    "aborted",
+    "io-error",
+    "unknown-upload",
+    "upload-limit",
+    "upload-incomplete",
+    "digest-mismatch"
+  ];
+  var resourcePath = { type: "string", minLength: 1, maxLength: 512 };
+  var resourceDigest = {
+    type: "string",
+    minLength: 64,
+    maxLength: 64,
+    pattern: "^[0-9a-f]{64}$"
+  };
+  var resourceReason = { enum: WORKSPACE_RESOURCE_REASONS };
+  var uploadId = { type: "string", minLength: 1, maxLength: 128 };
+  var resourceByteLength = {
+    type: "integer",
+    minimum: 0,
+    maximum: WORKSPACE_RESOURCE_MAX_BYTES
+  };
+  var resourceChunkCount = {
+    type: "integer",
+    minimum: 0,
+    maximum: WORKSPACE_RESOURCE_MAX_CHUNKS
+  };
+  var saveUnavailableOutput = {
+    type: "object",
+    additionalProperties: false,
+    required: ["kind", "reason"],
+    properties: {
+      kind: { const: "unavailable" },
+      relativePath: resourcePath,
+      reason: resourceReason
+    }
+  };
+  var workspaceResourcesApi = defineStreamApi({
+    id: WORKSPACE_RESOURCES,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "save.begin",
+        effect: "write",
+        requiredGrants: [WORKSPACE_WRITE_TEXT],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["relativePath", "expectedRevision", "byteLength", "chunkCount", "sha256"],
+          properties: {
+            relativePath: resourcePath,
+            expectedRevision: resourceDigest,
+            byteLength: resourceByteLength,
+            chunkCount: resourceChunkCount,
+            sha256: resourceDigest
+          }
+        },
+        outputSchema: {
+          type: "object",
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "uploadId"],
+              properties: { kind: { const: "session" }, uploadId }
+            },
+            saveUnavailableOutput
+          ]
+        }
+      },
+      {
+        name: "save.chunk",
+        effect: "write",
+        requiredGrants: [WORKSPACE_WRITE_TEXT],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["uploadId", "chunkIndex", "data"],
+          properties: {
+            uploadId,
+            chunkIndex: {
+              type: "integer",
+              minimum: 0,
+              maximum: WORKSPACE_RESOURCE_MAX_CHUNKS - 1
+            },
+            data: { type: "string", maxLength: WORKSPACE_RESOURCE_CHUNK_UNITS }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "received"],
+              properties: {
+                kind: { const: "accepted" },
+                received: resourceChunkCount
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "reason"],
+              properties: { kind: { const: "unavailable" }, reason: resourceReason }
+            }
+          ]
+        }
+      },
+      {
+        name: "save.commit",
+        effect: "write",
+        requiredGrants: [WORKSPACE_WRITE_TEXT],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["uploadId"],
+          properties: { uploadId }
+        },
+        outputSchema: {
+          type: "object",
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "relativePath", "revision"],
+              properties: {
+                kind: { const: "saved" },
+                relativePath: resourcePath,
+                revision: resourceDigest
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "relativePath"],
+              properties: { kind: { const: "conflict" }, relativePath: resourcePath }
+            },
+            saveUnavailableOutput
+          ]
+        }
+      },
+      {
+        name: "save.abort",
+        effect: "write",
+        requiredGrants: [WORKSPACE_WRITE_TEXT],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["uploadId"],
+          properties: { uploadId }
+        },
+        outputSchema: { type: "object", additionalProperties: false, properties: {} }
+      }
+    ],
+    streams: [
+      {
+        name: "read",
+        requiredGrants: [WORKSPACE_RESOURCES],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["relativePath"],
+          properties: {
+            relativePath: resourcePath,
+            maxBytes: { type: "integer", minimum: 1, maximum: WORKSPACE_RESOURCE_MAX_BYTES }
+          }
+        },
+        eventSchema: {
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: [
+                "kind",
+                "relativePath",
+                "byteLength",
+                "deliveredByteLength",
+                "chunkCount",
+                "truncated"
+              ],
+              properties: {
+                kind: { const: "manifest" },
+                relativePath: resourcePath,
+                byteLength: { type: "integer", minimum: 0 },
+                deliveredByteLength: resourceByteLength,
+                chunkCount: resourceChunkCount,
+                truncated: { type: "boolean" }
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "chunkIndex", "data"],
+              properties: {
+                kind: { const: "chunk" },
+                chunkIndex: {
+                  type: "integer",
+                  minimum: 0,
+                  maximum: WORKSPACE_RESOURCE_MAX_CHUNKS - 1
+                },
+                data: { type: "string", maxLength: WORKSPACE_RESOURCE_CHUNK_UNITS }
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "sha256"],
+              properties: { kind: { const: "complete" }, sha256: resourceDigest }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "relativePath", "reason"],
+              properties: {
+                kind: { const: "unavailable" },
+                relativePath: resourcePath,
+                reason: resourceReason
+              }
+            }
+          ]
+        }
+      }
+    ]
+  });
+  var WORKSPACE_RESOURCES_API = workspaceResourcesApi.definition;
+
+  // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/clientProviders.js
+  var targetSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["kind"],
+    properties: {
+      kind: { enum: ["self", "connection"] },
+      connectionId: { type: "string", minLength: 1, maxLength: 160 }
+    }
+  };
+  var withTarget = (properties, required = []) => ({
+    type: "object",
+    additionalProperties: false,
+    required: ["target", ...required],
+    properties: { target: targetSchema, ...properties }
+  });
+  var okOutput = {
+    type: "object",
+    additionalProperties: false,
+    required: ["applied"],
+    properties: { applied: { type: "boolean" } }
+  };
+  var themeAppearance = { enum: ["light", "dark"] };
+  var themeHalvesSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      light: { type: "string", maxLength: 160 },
+      dark: { type: "string", maxLength: 160 }
+    }
+  };
+  var themeProviderStateSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "theme",
+      "resolvedTheme",
+      "systemDark",
+      "followSystem",
+      "appearanceMode",
+      "themeHalves",
+      "effectiveTheme",
+      "sessionOverlay"
+    ],
+    properties: {
+      theme: { type: "string", maxLength: 160 },
+      resolvedTheme: themeAppearance,
+      systemDark: { type: "boolean" },
+      followSystem: { type: "boolean" },
+      appearanceMode: { enum: ["light", "dark", "system"] },
+      themeHalves: { anyOf: [themeHalvesSchema, { type: "null" }] },
+      effectiveTheme: {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind"],
+        properties: {
+          kind: { enum: ["stored", "session-overlay", "external-preview"] },
+          theme: { type: "string", maxLength: 160 },
+          writer: { type: "string", maxLength: 160 },
+          tokens: {
+            type: "object",
+            additionalProperties: { type: "string", maxLength: 400 }
+          }
+        }
+      },
+      sessionOverlay: {
+        anyOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["theme", "writer"],
+            properties: {
+              theme: { type: "string", maxLength: 160 },
+              appearanceMode: { enum: ["light", "dark", "system"] },
+              themeHalves: themeHalvesSchema,
+              writer: { type: "string", minLength: 1, maxLength: 160 }
+            }
+          },
+          { type: "null" }
+        ]
+      }
+    }
+  };
+  var themeTokensOutput = {
+    type: "object",
+    additionalProperties: false,
+    required: ["tokens", "cssVars"],
+    properties: {
+      tokens: { type: "object", additionalProperties: { type: "string", maxLength: 400 } },
+      cssVars: { type: "object", additionalProperties: { type: "string", maxLength: 80 } }
+    }
+  };
+  var terminalAppearanceSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["theme", "font", "appearance"],
+    properties: {
+      theme: {
+        type: "object",
+        additionalProperties: false,
+        required: ["background", "foreground", "cursor"],
+        properties: {
+          background: { type: "string", maxLength: 400 },
+          foreground: { type: "string", maxLength: 400 },
+          cursor: { type: "string", maxLength: 400 },
+          selectionBackground: { type: "string", maxLength: 400 }
+        }
+      },
+      font: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          family: { type: "string", maxLength: 400 },
+          size: { type: "number", minimum: 1, maximum: 128 },
+          lineHeight: { type: "number", minimum: 0.1, maximum: 10 },
+          ligatures: { type: "boolean" }
+        }
+      },
+      appearance: themeAppearance
+    }
+  };
+  var CLIENT_THEME_API = validateApiDefinition({
+    id: "t3.client/theme",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getState",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({}),
+        outputSchema: themeProviderStateSchema
+      },
+      {
+        name: "resolveTokens",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({ appearance: themeAppearance }),
+        outputSchema: themeTokensOutput
+      },
+      {
+        name: "applyPreference",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          writer: { type: "string", minLength: 1, maxLength: 160 },
+          preference: {
+            type: "object",
+            additionalProperties: false,
+            required: ["mode"],
+            properties: {
+              theme: { type: "string", minLength: 1, maxLength: 160 },
+              appearanceMode: { enum: ["light", "dark", "system"] },
+              themeHalves: themeHalvesSchema,
+              mode: { enum: ["persist", "session"] },
+              clear: { type: "boolean" }
+            }
+          }
+        }, ["writer", "preference"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: {
+            applied: { type: "boolean" },
+            reason: { type: "string", maxLength: 200 },
+            propagatedTo: { enum: ["storage-origin", "connection"] }
+          }
+        }
+      }
+    ],
+    streams: [
+      {
+        name: "watchState",
+        inputSchema: withTarget({}),
+        eventSchema: themeProviderStateSchema,
+        requiredGrants: []
+      }
+    ]
+  });
+  var notificationActionSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["id", "label"],
+    properties: {
+      id: { type: "string", minLength: 1, maxLength: 80 },
+      label: { type: "string", minLength: 1, maxLength: 80 },
+      variant: { enum: ["default", "primary", "destructive"] }
+    }
+  };
+  var notificationBodySchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["notificationId", "severity", "title"],
+    properties: {
+      notificationId: { type: "string", minLength: 1, maxLength: 160 },
+      severity: { enum: ["info", "success", "warning", "error", "loading"] },
+      title: { type: "string", minLength: 1, maxLength: 200 },
+      body: { type: "string", maxLength: 2e3 },
+      threadId: { type: "string", maxLength: 128 },
+      projectId: { type: "string", maxLength: 128 },
+      anchor: { enum: ["global", "thread"] },
+      dismissible: { type: "boolean" },
+      durationMs: { type: "integer", minimum: 0, maximum: 6e4 },
+      actions: {
+        type: "array",
+        maxItems: 3,
+        items: notificationActionSchema
+      }
+    }
+  };
+  var CLIENT_NOTIFICATIONS_API = validateApiDefinition({
+    id: "t3.client/notifications",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "notify",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({ notification: notificationBodySchema }, ["notification"]),
+        outputSchema: okOutput
+      },
+      {
+        name: "update",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          notificationId: { type: "string", minLength: 1, maxLength: 160 },
+          patch: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              severity: { enum: ["info", "success", "warning", "error", "loading"] },
+              title: { type: "string", minLength: 1, maxLength: 200 },
+              body: { type: "string", maxLength: 2e3 },
+              dismissible: { type: "boolean" }
+            }
+          }
+        }, ["notificationId", "patch"]),
+        outputSchema: okOutput
+      },
+      {
+        name: "dismiss",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({ notificationId: { type: "string", minLength: 1, maxLength: 160 } }, ["notificationId"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["dismissed"],
+          properties: { dismissed: { type: "boolean" } }
+        }
+      }
+    ]
+  });
+  var commandDescriptorSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["id", "title", "scope"],
+    properties: {
+      id: { type: "string", minLength: 1, maxLength: 80 },
+      title: { type: "string", minLength: 1, maxLength: 200 },
+      description: { type: "string", maxLength: 1e3 },
+      defaultKey: { type: "string", minLength: 1, maxLength: 64 },
+      when: { type: "string", minLength: 1, maxLength: 256 },
+      scope: { enum: ["surface", "thread", "global"] },
+      activation: {
+        type: "object",
+        additionalProperties: false,
+        required: ["surfaceId", "placement"],
+        properties: {
+          surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+          placement: { enum: ["side-panel", "bottom-dock"] }
+        }
+      }
+    }
+  };
+  var commandResultSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["commandId", "status"],
+    properties: {
+      commandId: { type: "string", minLength: 1, maxLength: 80 },
+      status: { enum: ["registered", "rejected"] },
+      reason: { type: "string", maxLength: 400 }
+    }
+  };
+  var CLIENT_KEYBINDINGS_API = validateApiDefinition({
+    id: "t3.client/keybindings",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "registerCommands",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          installationScoped: { type: "boolean" },
+          commands: {
+            type: "array",
+            minItems: 1,
+            maxItems: 64,
+            items: commandDescriptorSchema
+          }
+        }, ["commands"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["commandSetToken", "results"],
+          properties: {
+            commandSetToken: { type: "string", minLength: 1, maxLength: 160 },
+            results: { type: "array", maxItems: 64, items: commandResultSchema }
+          }
+        }
+      },
+      {
+        name: "unregisterCommands",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({ commandSetToken: { type: "string", minLength: 1, maxLength: 160 } }, ["commandSetToken"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["unregistered"],
+          properties: { unregistered: { type: "boolean" } }
+        }
+      },
+      {
+        name: "listConflicts",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({}),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["conflicts"],
+          properties: {
+            conflicts: {
+              type: "array",
+              maxItems: 256,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["command", "key", "winner", "loser"],
+                properties: {
+                  command: { type: "string", maxLength: 256 },
+                  key: { type: "string", maxLength: 64 },
+                  winner: { enum: ["user", "native", "plugin"] },
+                  loser: { type: "string", maxLength: 256 }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  });
+  var panelThreadInput = {
+    threadId: { type: "string", minLength: 1, maxLength: 128 }
+  };
+  var CLIENT_PANELS_API = validateApiDefinition({
+    id: "t3.client/panels",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "openSurface",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget(
+          {
+            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+            title: { type: "string", minLength: 1, maxLength: 200 },
+            placement: { enum: ["side-panel", "bottom-dock"] },
+            ...panelThreadInput
+          },
+          // Optional fields mirror the public contract: the client fills them
+          // from the surface's own declared metadata when omitted.
+          ["surfaceId", "threadId"]
+        ),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaceId"],
+          properties: { surfaceId: { type: "string", maxLength: 160 } }
+        }
+      },
+      {
+        name: "activateSurface",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+          ...panelThreadInput
+        }, ["surfaceId", "threadId"]),
+        outputSchema: okOutput
+      },
+      {
+        name: "closeSurface",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+          ...panelThreadInput
+        }, ["surfaceId", "threadId"]),
+        outputSchema: okOutput
+      },
+      {
+        name: "listSurfaces",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({ ...panelThreadInput }, ["threadId"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaces"],
+          properties: {
+            surfaces: {
+              type: "array",
+              maxItems: 64,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["id", "title", "placement", "active"],
+                properties: {
+                  id: { type: "string", maxLength: 160 },
+                  title: { type: "string", maxLength: 200 },
+                  placement: { enum: ["side-panel", "bottom-dock"] },
+                  active: { type: "boolean" }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        name: "hideDock",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({ ...panelThreadInput }, ["threadId"]),
+        outputSchema: okOutput
+      },
+      {
+        name: "showDock",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({ ...panelThreadInput }, ["threadId"]),
+        outputSchema: okOutput
+      }
+    ]
+  });
+  var composerRefSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["path"],
+    properties: {
+      path: { type: "string", minLength: 1, maxLength: 512 },
+      startLine: { type: "integer", minimum: 1, maximum: 1e6 },
+      endLine: { type: "integer", minimum: 1, maximum: 1e6 },
+      excerpt: { type: "string", maxLength: 512 }
+    }
+  };
+  var CLIENT_COMPOSER_API = validateApiDefinition({
+    id: "t3.client/composer",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "insertContext",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          threadId: { type: "string", minLength: 1, maxLength: 128 },
+          refs: { type: "array", minItems: 1, maxItems: 8, items: composerRefSchema }
+        }, ["threadId", "refs"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["inserted", "target"],
+          properties: {
+            inserted: { type: "integer", minimum: 0, maximum: 8 },
+            target: { type: "string", minLength: 1, maxLength: 256 }
+          }
+        }
+      },
+      {
+        name: "getDraftState",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({ threadId: { type: "string", minLength: 1, maxLength: 128 } }, [
+          "threadId"
+        ]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["draft"],
+          properties: {
+            draft: {
+              type: ["object", "null"],
+              properties: {
+                prompt: { type: "string", maxLength: 1e4 },
+                promptTruncated: { type: "boolean" },
+                contextCounts: { type: "object" }
+              }
+            }
+          }
+        }
+      },
+      {
+        name: "attachAnnotation",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          threadId: { type: "string", minLength: 1, maxLength: 128 },
+          annotation: {
+            type: "object",
+            additionalProperties: false,
+            required: ["filePath", "startLine", "endLine", "body"],
+            properties: {
+              filePath: { type: "string", minLength: 1, maxLength: 512 },
+              startLine: { type: "integer", minimum: 1, maximum: 1e6 },
+              endLine: { type: "integer", minimum: 1, maximum: 1e6 },
+              body: { type: "string", minLength: 1, maxLength: 4096 },
+              excerpt: { type: "string", maxLength: 4096 }
+            }
+          }
+        }, ["threadId", "annotation"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["annotationId"],
+          properties: { annotationId: { type: "string", minLength: 1, maxLength: 256 } }
+        }
+      }
+    ]
+  });
+  var CLIENT_TERMINAL_APPEARANCE_API = validateApiDefinition({
+    id: "t3.client/terminal-appearance",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getAppearance",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({}),
+        outputSchema: terminalAppearanceSchema
+      }
+    ],
+    streams: [
+      {
+        name: "watchAppearance",
+        inputSchema: withTarget({}),
+        eventSchema: terminalAppearanceSchema,
+        requiredGrants: []
+      }
+    ]
+  });
+  var CLIENT_PROVIDER_APIS = new Map([
+    CLIENT_THEME_API,
+    CLIENT_NOTIFICATIONS_API,
+    CLIENT_KEYBINDINGS_API,
+    CLIENT_PANELS_API,
+    CLIENT_COMPOSER_API,
+    CLIENT_TERMINAL_APPEARANCE_API
+  ].map((definition) => [definition.id, definition]));
+
   // ../../../../../private/tmp/t3-terminal-vt/packages/extension-sdk/dist/catalogue.js
   var BROWSER_LOCAL_SERVERS = "t3.browser/local-servers";
   var BROWSER_READ_LOCAL_SERVERS = "t3.browser/read-local-servers";
@@ -701,6 +1505,55 @@ var __t3Client = (() => {
               properties: { kind: { const: "closed" }, reason: { const: "source-unavailable" } }
             }
           ]
+        }
+      }
+    ]
+  });
+  var PROVIDERS_STATUS = "t3.providers/status";
+  var PROVIDERS_READ = "t3.providers/read";
+  var PROVIDER_STATUS_DISPLAY_NAME_MAX_LENGTH = 200;
+  var PROVIDER_STATUS_ENTRY_SCHEMA = {
+    type: "object",
+    additionalProperties: false,
+    required: ["instanceId", "driver", "enabled", "installed", "status", "availability", "checkedAt"],
+    properties: {
+      instanceId: { type: "string", minLength: 1, maxLength: 160 },
+      driver: { type: "string", minLength: 1, maxLength: 64 },
+      displayName: {
+        type: "string",
+        minLength: 1,
+        maxLength: PROVIDER_STATUS_DISPLAY_NAME_MAX_LENGTH
+      },
+      enabled: { type: "boolean" },
+      installed: { type: "boolean" },
+      status: { enum: ["ready", "warning", "error", "disabled"] },
+      availability: { enum: ["available", "unavailable"] },
+      checkedAt: { type: "string", minLength: 1, maxLength: 40 },
+      supportsConversationRollback: { type: "boolean" },
+      supportsTextGeneration: { type: "boolean" },
+      requiresNewThreadForModelChange: { type: "boolean" },
+      showInteractionModeToggle: { type: "boolean" },
+      reportsContextWindow: { type: "boolean" }
+    }
+  };
+  var providersStatusApi = defineStreamApi({
+    id: PROVIDERS_STATUS,
+    version: "1.0.0",
+    methods: [],
+    streams: [
+      {
+        name: "subscribe",
+        requiredGrants: [PROVIDERS_READ],
+        inputSchema: { type: "object", additionalProperties: false, properties: {} },
+        eventSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["kind", "scope", "providers"],
+          properties: {
+            kind: { const: "snapshot" },
+            scope: { const: "environment" },
+            providers: { type: "array", maxItems: 64, items: PROVIDER_STATUS_ENTRY_SCHEMA }
+          }
         }
       }
     ]
@@ -2281,7 +3134,6 @@ var __t3Client = (() => {
   var VCS_REPOSITORY_API = vcsRepositoryApi.definition;
   var VCS_REPOSITORY_API_V1 = vcsRepositoryApiV1.definition;
   var RESOURCES_LEASE = "t3.resources/lease";
-  var WORKSPACE_RESOURCES = "t3.workspace/resources";
   var BROWSER_SESSIONS = "t3.browser/sessions";
   var BROWSER_SURFACE_COMMANDS = ["attach", "present", "release"];
   var RESOURCE_LEASE_KIND_GRANTS = {
@@ -3416,6 +4268,752 @@ var __t3Client = (() => {
     ]
   });
   var PRS_READ_API = prsReadApi.definition;
+  var VCS_ACTIONS = "t3.vcs/actions";
+  var vcsActionKindSchema = {
+    enum: ["commit", "push", "create_pr", "commit_push", "commit_push_pr"]
+  };
+  var vcsActionPhaseSchema = { enum: ["branch", "commit", "push", "pr"] };
+  var vcsActionMessageSourceSchema = { enum: ["caller", "generated", "not_applicable"] };
+  var vcsActionContentSourceSchema = {
+    enum: ["caller", "generated", "existing", "not_applicable"]
+  };
+  var vcsActionResultSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["action", "branch", "commit", "push", "pr", "toast"],
+    properties: {
+      action: vcsActionKindSchema,
+      branch: {
+        type: "object",
+        additionalProperties: false,
+        required: ["status"],
+        properties: {
+          status: { enum: ["created", "skipped_not_requested"] },
+          name: { type: "string", minLength: 1, maxLength: 4096 }
+        }
+      },
+      commit: {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "messageSource"],
+        properties: {
+          status: { enum: ["created", "skipped_no_changes", "skipped_not_requested"] },
+          commitSha: { type: "string", minLength: 1, maxLength: 128 },
+          subject: { type: "string", minLength: 1, maxLength: 4096 },
+          messageSource: vcsActionMessageSourceSchema
+        }
+      },
+      push: {
+        type: "object",
+        additionalProperties: false,
+        required: ["status"],
+        properties: {
+          status: { enum: ["pushed", "skipped_not_requested", "skipped_up_to_date"] },
+          branch: { type: "string", minLength: 1, maxLength: 4096 },
+          upstreamBranch: { type: "string", minLength: 1, maxLength: 4096 },
+          setUpstream: { type: "boolean" }
+        }
+      },
+      pr: {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "contentSource"],
+        properties: {
+          status: { enum: ["created", "opened_existing", "skipped_not_requested"] },
+          url: { type: "string", minLength: 1, maxLength: 4096 },
+          number: { type: "integer", minimum: 1 },
+          baseBranch: { type: "string", minLength: 1, maxLength: 4096 },
+          headBranch: { type: "string", minLength: 1, maxLength: 4096 },
+          title: { type: "string", minLength: 1, maxLength: 2048 },
+          contentSource: vcsActionContentSourceSchema
+        }
+      },
+      toast: {
+        type: "object",
+        additionalProperties: false,
+        required: ["title", "cta"],
+        properties: {
+          title: { type: "string", minLength: 1, maxLength: 512 },
+          description: { type: "string", minLength: 1, maxLength: 1024 },
+          cta: {
+            oneOf: [
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind"],
+                properties: { kind: { const: "none" } }
+              },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind", "label", "url"],
+                properties: {
+                  kind: { const: "open_pr" },
+                  label: { type: "string", minLength: 1, maxLength: 256 },
+                  url: { type: "string", maxLength: 4096 }
+                }
+              },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind", "label", "action"],
+                properties: {
+                  kind: { const: "run_action" },
+                  label: { type: "string", minLength: 1, maxLength: 256 },
+                  action: {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["kind"],
+                    properties: { kind: vcsActionKindSchema }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  };
+  var vcsActionEventBase = {
+    action: vcsActionKindSchema
+  };
+  var vcsActionProgressEventSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "phases"],
+        properties: {
+          kind: { const: "action_started" },
+          ...vcsActionEventBase,
+          phases: { type: "array", maxItems: 4, items: vcsActionPhaseSchema }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "phase", "label"],
+        properties: {
+          kind: { const: "phase_started" },
+          ...vcsActionEventBase,
+          phase: vcsActionPhaseSchema,
+          label: { type: "string", minLength: 1, maxLength: 1024 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "hookName"],
+        properties: {
+          kind: { const: "hook_started" },
+          ...vcsActionEventBase,
+          hookName: { type: "string", minLength: 1, maxLength: 512 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "hookName", "stream", "text"],
+        properties: {
+          kind: { const: "hook_output" },
+          ...vcsActionEventBase,
+          hookName: { type: ["string", "null"], minLength: 1, maxLength: 512 },
+          stream: { enum: ["stdout", "stderr"] },
+          // Native bounds hook lines at 500 chars; keep slack for future raises.
+          text: { type: "string", minLength: 1, maxLength: 4096 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "hookName", "exitCode", "durationMs"],
+        properties: {
+          kind: { const: "hook_finished" },
+          ...vcsActionEventBase,
+          hookName: { type: "string", minLength: 1, maxLength: 512 },
+          exitCode: { type: ["integer", "null"] },
+          durationMs: { type: ["integer", "null"], minimum: 0 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "result"],
+        properties: {
+          kind: { const: "action_finished" },
+          ...vcsActionEventBase,
+          result: vcsActionResultSchema
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "phase", "message"],
+        properties: {
+          kind: { const: "action_failed" },
+          ...vcsActionEventBase,
+          phase: { type: ["string", "null"], enum: ["branch", "commit", "push", "pr", null] },
+          message: { type: "string", minLength: 1, maxLength: 4096 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "reason"],
+        properties: {
+          kind: { const: "closed" },
+          reason: { enum: ["overflow", "authorization-revoked"] }
+        }
+      }
+    ]
+  };
+  var vcsActionResolvedPullRequestSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["number", "title", "url", "baseBranch", "headBranch", "state"],
+    properties: {
+      number: { type: "integer", minimum: 1 },
+      title: { type: "string", minLength: 1, maxLength: 2048 },
+      url: { type: "string", maxLength: 4096 },
+      baseBranch: { type: "string", minLength: 1, maxLength: 4096 },
+      headBranch: { type: "string", minLength: 1, maxLength: 4096 },
+      state: { enum: ["open", "closed", "merged"] }
+    }
+  };
+  var vcsActionReferenceInputSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["reference"],
+    properties: {
+      reference: { type: "string", minLength: 1, maxLength: 2048 }
+    }
+  };
+  var vcsActionsOperationsSupportSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "actions.run",
+      "actions.resolvePullRequest",
+      "actions.preparePullRequestThread",
+      "actions.publishRepository",
+      "actions.actionProgress"
+    ],
+    properties: {
+      "actions.run": { type: "boolean" },
+      "actions.resolvePullRequest": { type: "boolean" },
+      "actions.preparePullRequestThread": { type: "boolean" },
+      "actions.publishRepository": { type: "boolean" },
+      "actions.actionProgress": { type: "boolean" }
+    }
+  };
+  var vcsActionsCapabilitiesResultSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["detected", "kind", "detail", "driver", "operations"],
+    properties: {
+      detected: { type: "boolean" },
+      kind: { type: ["string", "null"], enum: ["git", "jj", "unknown", null] },
+      detail: { type: ["string", "null"], maxLength: 512 },
+      driver: vcsDriverCapabilitiesSchema,
+      operations: vcsActionsOperationsSupportSchema
+    }
+  };
+  var vcsActionsApi = defineStreamApi({
+    id: VCS_ACTIONS,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [VCS_READ],
+        inputSchema: prsEmptyInputSchema,
+        outputSchema: vcsActionsCapabilitiesResultSchema
+      },
+      {
+        name: "run",
+        effect: "write",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["action"],
+          properties: {
+            action: vcsActionKindSchema,
+            commitMessage: { type: "string", maxLength: 1e4 },
+            featureBranch: { type: "boolean" },
+            paths: {
+              type: "array",
+              minItems: 1,
+              maxItems: 100,
+              items: { type: "string", minLength: 1, maxLength: 512 }
+            }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["actionId"],
+          properties: { actionId: { type: "string", minLength: 1, maxLength: 128 } }
+        }
+      },
+      {
+        name: "resolvePullRequest",
+        // Read-shaped but Operate-gated: it shells the provider CLI, matching
+        // the native RPC's Operate scope (design: `t3.vcs/mutate`).
+        effect: "read",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: vcsActionReferenceInputSchema,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["pullRequest"],
+          properties: { pullRequest: vcsActionResolvedPullRequestSchema }
+        }
+      },
+      {
+        name: "preparePullRequestThread",
+        effect: "write",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["reference", "mode"],
+          properties: {
+            reference: { type: "string", minLength: 1, maxLength: 2048 },
+            mode: { enum: ["local", "worktree"] }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["pullRequest", "branch", "worktreePath", "isOnPullRequestHead"],
+          properties: {
+            pullRequest: vcsActionResolvedPullRequestSchema,
+            branch: { type: "string", minLength: 1, maxLength: 4096 },
+            worktreePath: { type: ["string", "null"], minLength: 1, maxLength: 32768 },
+            isOnPullRequestHead: { type: "boolean" }
+          }
+        }
+      },
+      {
+        name: "publishRepository",
+        // Declared `t3.vcs/mutate`; the adapter additionally requires every
+        // caller in the chain to hold `t3.prs/write` (P-a conjunctive under
+        // G3 — a comment-only grant must never reach pushCurrentBranch).
+        effect: "write",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["provider", "repository", "visibility"],
+          properties: {
+            provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+            repository: { type: "string", minLength: 1, maxLength: 512 },
+            visibility: { enum: ["private", "public"] },
+            remoteName: { type: "string", minLength: 1, maxLength: 256 },
+            protocol: { enum: ["auto", "ssh", "https"] }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "remoteName", "remoteUrl", "branch", "status"],
+          properties: {
+            repository: {
+              type: "object",
+              additionalProperties: false,
+              required: ["provider", "nameWithOwner", "url", "sshUrl"],
+              properties: {
+                provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+                nameWithOwner: { type: "string", minLength: 1, maxLength: 512 },
+                url: { type: "string", minLength: 1, maxLength: 4096 },
+                sshUrl: { type: "string", minLength: 1, maxLength: 4096 }
+              }
+            },
+            remoteName: { type: "string", minLength: 1, maxLength: 256 },
+            remoteUrl: { type: "string", minLength: 1, maxLength: 4096 },
+            branch: { type: "string", minLength: 1, maxLength: 4096 },
+            upstreamBranch: { type: "string", minLength: 1, maxLength: 4096 },
+            status: { enum: ["pushed", "remote_added"] }
+          }
+        }
+      }
+    ],
+    streams: [
+      {
+        name: "actionProgress",
+        requiredGrants: [VCS_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["actionId"],
+          properties: { actionId: { type: "string", minLength: 1, maxLength: 128 } }
+        },
+        eventSchema: vcsActionProgressEventSchema
+      }
+    ]
+  });
+  var VCS_ACTIONS_API = vcsActionsApi.definition;
+  var PRS_WRITE = "t3.prs/write";
+  var prsWriteBodySchema = { type: "string", minLength: 1, maxLength: 65536 };
+  var prsWriteOperationsSupportSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "prs.runAction",
+      "prs.update",
+      "prs.comment",
+      "prs.updateComment",
+      "prs.submitReview",
+      "prs.replyToThread",
+      "prs.setThreadResolution",
+      "prs.setReaction",
+      "prs.requestReviewers",
+      "prs.setLabels"
+    ],
+    properties: {
+      "prs.runAction": { type: "boolean" },
+      "prs.update": { type: "boolean" },
+      "prs.comment": { type: "boolean" },
+      "prs.updateComment": { type: "boolean" },
+      "prs.submitReview": { type: "boolean" },
+      "prs.replyToThread": { type: "boolean" },
+      "prs.setThreadResolution": { type: "boolean" },
+      "prs.setReaction": { type: "boolean" },
+      "prs.requestReviewers": { type: "boolean" },
+      "prs.setLabels": { type: "boolean" }
+    }
+  };
+  var prsWriteActionKindSchema = {
+    enum: [
+      "merge",
+      "ready",
+      "draft",
+      "close",
+      "reopen",
+      "update-branch",
+      "enable-auto-merge",
+      "disable-auto-merge",
+      "revert",
+      "approve-workflows"
+    ]
+  };
+  var prsWriteMergeMethodSchema = { enum: ["merge", "squash", "rebase"] };
+  var prsWriteVerdictSchema = { enum: ["comment", "approve", "request-changes"] };
+  var prsWriteCapabilitiesResultSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "hosted",
+      "reason",
+      "detail",
+      "operations",
+      "actions",
+      "mergeMethods",
+      "updateMethods",
+      "verdicts"
+    ],
+    properties: {
+      hosted: { type: "boolean" },
+      reason: {
+        enum: ["cli-missing", "cli-unauthenticated", "provider-unsupported", null]
+      },
+      detail: { type: ["string", "null"], maxLength: 1024 },
+      operations: prsWriteOperationsSupportSchema,
+      actions: { type: "array", maxItems: 16, items: prsWriteActionKindSchema },
+      mergeMethods: { type: "array", maxItems: 8, items: prsWriteMergeMethodSchema },
+      updateMethods: {
+        type: "array",
+        maxItems: 4,
+        items: { enum: ["merge", "rebase"] }
+      },
+      verdicts: { type: "array", maxItems: 8, items: prsWriteVerdictSchema }
+    }
+  };
+  var prsWriteActionInputSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["repository", "number", "action"],
+    properties: {
+      host: prsHostField,
+      repository: prsRepositoryField,
+      number: { type: "integer", minimum: 1 },
+      action: prsWriteActionKindSchema,
+      mergeMethod: prsWriteMergeMethodSchema,
+      updateMethod: { enum: ["merge", "rebase"] },
+      stackNumber: { type: "integer", minimum: 1 },
+      expectedStackHeads: {
+        type: "array",
+        maxItems: 100,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["number", "headSha"],
+          properties: {
+            number: { type: "integer", minimum: 1 },
+            headSha: { type: "string", minLength: 1, maxLength: 128 }
+          }
+        }
+      }
+    }
+  };
+  var prsWriteReviewCommentDraftSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["path", "position", "body"],
+    properties: {
+      path: { type: "string", minLength: 1, maxLength: 1024 },
+      oldPath: { type: "string", minLength: 1, maxLength: 1024 },
+      position: {
+        oneOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "newLine"],
+            properties: {
+              kind: { const: "added" },
+              newLine: { type: "integer", minimum: 1 }
+            }
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "oldLine"],
+            properties: {
+              kind: { const: "deleted" },
+              oldLine: { type: "integer", minimum: 1 }
+            }
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "oldLine", "newLine", "side"],
+            properties: {
+              kind: { const: "context" },
+              oldLine: { type: "integer", minimum: 1 },
+              newLine: { type: "integer", minimum: 1 },
+              side: { enum: ["left", "right"] }
+            }
+          }
+        ]
+      },
+      body: prsWriteBodySchema
+    }
+  };
+  var prsWriteApi = defineApi({
+    id: PRS_WRITE,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: prsEmptyInputSchema,
+        outputSchema: prsWriteCapabilitiesResultSchema
+      },
+      {
+        name: "runAction",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: prsWriteActionInputSchema,
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "update",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            title: { type: "string", minLength: 1, maxLength: 1024 },
+            body: { type: "string", maxLength: 65536 }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "comment",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "body"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            body: prsWriteBodySchema
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "updateComment",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "commentId", "kind", "body"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            commentId: { type: "string", minLength: 1, maxLength: 512 },
+            kind: { enum: ["issue-comment", "review-comment"] },
+            body: prsWriteBodySchema
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "submitReview",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "verdict", "body", "comments"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            verdict: { enum: ["comment", "approve", "request-changes"] },
+            body: { type: "string", maxLength: 65536 },
+            comments: { type: "array", maxItems: 100, items: prsWriteReviewCommentDraftSchema }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "replyToThread",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "threadId", "body"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            threadId: { type: "string", minLength: 1, maxLength: 512 },
+            body: prsWriteBodySchema
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "setThreadResolution",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "threadId", "resolved"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            threadId: { type: "string", minLength: 1, maxLength: 512 },
+            resolved: { type: "boolean" }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "setReaction",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "content", "reacted"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            subjectId: { type: "string", minLength: 1, maxLength: 512 },
+            content: {
+              enum: [
+                "thumbs-up",
+                "thumbs-down",
+                "laugh",
+                "hooray",
+                "confused",
+                "heart",
+                "rocket",
+                "eyes"
+              ]
+            },
+            reacted: { type: "boolean" }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "requestReviewers",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "reviewers", "requested"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            reviewers: {
+              type: "array",
+              minItems: 1,
+              maxItems: 25,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["id", "kind"],
+                properties: {
+                  id: { type: "string", minLength: 1, maxLength: 512 },
+                  kind: { enum: ["user", "team"] }
+                }
+              }
+            },
+            requested: { type: "boolean" }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "setLabels",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "labels", "applied"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            labels: {
+              type: "array",
+              minItems: 1,
+              maxItems: 25,
+              items: { type: "string", minLength: 1, maxLength: 512 }
+            },
+            applied: { type: "boolean" }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      }
+    ]
+  });
+  var PRS_WRITE_API = prsWriteApi.definition;
   var BROWSER_OPERATE = "t3.browser/operate";
   var BROWSER_SESSION_COMMANDS = [
     "back",
@@ -3996,6 +5594,515 @@ var __t3Client = (() => {
   });
   var COMPOSER_CONTEXT_API = composerContextApi.definition;
   var MESSAGES_ENRICHMENT_API = messagesEnrichmentApi.definition;
+  var UI_THEME = "t3.ui/theme";
+  var UI_THEME_READ = "t3.ui/theme.read";
+  var UI_THEME_WRITE = "t3.ui/theme.write";
+  var UI_KEYBINDINGS = "t3.ui/keybindings";
+  var UI_NOTIFY = "t3.ui/notify";
+  var UI_PANELS = "t3.ui/panels";
+  var uiClientTargetSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["connectionId", "providers", "connectedAt"],
+    properties: {
+      connectionId: { type: "string", minLength: 1, maxLength: 160 },
+      announcedOrigin: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          surface: { type: "string", maxLength: 80 },
+          appVersion: { type: "string", maxLength: 80 },
+          os: { type: "string", maxLength: 120 },
+          deviceType: { type: "string", maxLength: 80 },
+          connectionMethod: { type: "string", maxLength: 40 }
+        }
+      },
+      providers: {
+        type: "array",
+        maxItems: 16,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "version"],
+          properties: {
+            id: { type: "string", maxLength: 80 },
+            version: { type: "string", maxLength: 40 }
+          }
+        }
+      },
+      connectedAt: { type: "string", maxLength: 80 }
+    }
+  };
+  var uiCapabilitiesOutput = (operations) => ({
+    type: "object",
+    additionalProperties: false,
+    required: ["adapter", "operations", "clients"],
+    properties: {
+      adapter: { type: "string", maxLength: 64 },
+      operations: {
+        type: "object",
+        additionalProperties: false,
+        required: [...operations],
+        properties: Object.fromEntries(operations.map((name) => [name, { type: "boolean" }]))
+      },
+      clients: { type: "array", maxItems: 64, items: uiClientTargetSchema }
+    }
+  });
+  var uiThemeApi = defineApi({
+    id: UI_THEME,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput([
+          "getState",
+          "getTokens",
+          "setPreference",
+          "subscribeState",
+          "getTerminalAppearance",
+          "subscribeTerminalAppearance"
+        ])
+      },
+      {
+        name: "getState",
+        effect: "read",
+        requiredGrants: [UI_THEME_READ],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: themeProviderStateSchema
+      },
+      {
+        name: "getTokens",
+        effect: "read",
+        requiredGrants: [UI_THEME_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: { appearance: { enum: ["light", "dark"] } }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["tokens", "cssVars"],
+          properties: {
+            tokens: { type: "object", additionalProperties: { type: "string", maxLength: 400 } },
+            cssVars: { type: "object", additionalProperties: { type: "string", maxLength: 80 } }
+          }
+        }
+      },
+      {
+        name: "setPreference",
+        effect: "write",
+        requiredGrants: [UI_THEME_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["mode"],
+          properties: {
+            theme: { type: "string", minLength: 1, maxLength: 160 },
+            appearanceMode: { enum: ["light", "dark", "system"] },
+            themeHalves: themeHalvesSchema,
+            mode: { enum: ["persist", "session"] },
+            clear: { type: "boolean" }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: {
+            applied: { type: "boolean" },
+            reason: { type: "string", maxLength: 200 },
+            propagatedTo: { enum: ["storage-origin", "connection"] }
+          }
+        }
+      },
+      {
+        name: "getTerminalAppearance",
+        effect: "read",
+        requiredGrants: [UI_THEME_READ],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: terminalAppearanceSchema
+      }
+    ],
+    streams: [
+      {
+        name: "subscribeState",
+        inputSchema: composerEmptyInputSchema,
+        eventSchema: themeProviderStateSchema,
+        requiredGrants: [UI_THEME_READ]
+      },
+      {
+        name: "subscribeTerminalAppearance",
+        inputSchema: composerEmptyInputSchema,
+        eventSchema: terminalAppearanceSchema,
+        requiredGrants: [UI_THEME_READ]
+      }
+    ]
+  });
+  var uiKeybindingsApi = defineApi({
+    id: UI_KEYBINDINGS,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput([
+          "registerCommands",
+          "unregisterCommands",
+          "listConflicts"
+        ])
+      },
+      {
+        name: "registerCommands",
+        effect: "write",
+        requiredGrants: [UI_KEYBINDINGS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["commands"],
+          properties: {
+            commands: {
+              type: "array",
+              minItems: 1,
+              maxItems: 64,
+              items: commandDescriptorSchema
+            }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["commandSetToken", "results"],
+          properties: {
+            commandSetToken: { type: "string", minLength: 1, maxLength: 160 },
+            results: { type: "array", maxItems: 64, items: commandResultSchema }
+          }
+        }
+      },
+      {
+        name: "unregisterCommands",
+        effect: "write",
+        requiredGrants: [UI_KEYBINDINGS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["commandSetToken"],
+          properties: {
+            commandSetToken: { type: "string", minLength: 1, maxLength: 160 }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["unregistered"],
+          properties: { unregistered: { type: "boolean" } }
+        }
+      },
+      {
+        name: "listConflicts",
+        effect: "read",
+        requiredGrants: [UI_KEYBINDINGS],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["conflicts"],
+          properties: {
+            conflicts: {
+              type: "array",
+              maxItems: 256,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["command", "key", "winner", "loser"],
+                properties: {
+                  command: { type: "string", maxLength: 256 },
+                  key: { type: "string", maxLength: 64 },
+                  winner: { enum: ["user", "native", "plugin"] },
+                  loser: { type: "string", maxLength: 256 }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  });
+  var uiNotificationActionSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["id", "label"],
+    properties: {
+      id: { type: "string", minLength: 1, maxLength: 80 },
+      label: { type: "string", minLength: 1, maxLength: 80 },
+      variant: { enum: ["default", "primary", "destructive"] }
+    }
+  };
+  var uiNotificationsApi = defineApi({
+    id: "t3.ui/notifications",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput(["notify", "update", "dismiss", "awaitAction"])
+      },
+      {
+        name: "notify",
+        effect: "write",
+        requiredGrants: [UI_NOTIFY],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["severity", "title"],
+          properties: {
+            severity: { enum: ["info", "success", "warning", "error", "loading"] },
+            title: { type: "string", minLength: 1, maxLength: 200 },
+            body: { type: "string", maxLength: 2e3 },
+            threadId: { type: "string", maxLength: 128 },
+            projectId: { type: "string", maxLength: 128 },
+            anchor: { enum: ["global", "thread"] },
+            dismissible: { type: "boolean" },
+            durationMs: { type: "integer", minimum: 0, maximum: 6e4 },
+            actions: { type: "array", maxItems: 3, items: uiNotificationActionSchema }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["notificationId"],
+          properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } }
+        }
+      },
+      {
+        name: "update",
+        effect: "write",
+        requiredGrants: [UI_NOTIFY],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["notificationId"],
+          properties: {
+            notificationId: { type: "string", minLength: 1, maxLength: 160 },
+            severity: { enum: ["info", "success", "warning", "error", "loading"] },
+            title: { type: "string", minLength: 1, maxLength: 200 },
+            body: { type: "string", maxLength: 2e3 },
+            dismissible: { type: "boolean" }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: { applied: { type: "boolean" } }
+        }
+      },
+      {
+        name: "dismiss",
+        effect: "write",
+        requiredGrants: [UI_NOTIFY],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["notificationId"],
+          properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["dismissed"],
+          properties: { dismissed: { type: "boolean" } }
+        }
+      },
+      {
+        name: "awaitAction",
+        effect: "read",
+        requiredGrants: [UI_NOTIFY],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["notificationId"],
+          properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } }
+        },
+        outputSchema: {
+          anyOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["actionId"],
+              properties: { actionId: { type: "string", minLength: 1, maxLength: 80 } }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["dismissed"],
+              properties: { dismissed: { const: true } }
+            }
+          ]
+        }
+      }
+    ]
+  });
+  var uiPanelsApi = defineApi({
+    id: "t3.ui/panels",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput([
+          "openSurface",
+          "activateSurface",
+          "closeSurface",
+          "listSurfaces",
+          "hideDock",
+          "showDock"
+        ])
+      },
+      {
+        name: "openSurface",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaceId"],
+          properties: {
+            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+            title: { type: "string", minLength: 1, maxLength: 200 },
+            placement: { enum: ["side-panel", "bottom-dock"] },
+            threadId: { type: "string", maxLength: 128 }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaceId"],
+          properties: { surfaceId: { type: "string", maxLength: 160 } }
+        }
+      },
+      {
+        name: "activateSurface",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaceId"],
+          properties: {
+            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+            threadId: { type: "string", maxLength: 128 }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: { applied: { type: "boolean" } }
+        }
+      },
+      {
+        name: "closeSurface",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaceId"],
+          properties: {
+            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+            threadId: { type: "string", maxLength: 128 }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: { applied: { type: "boolean" } }
+        }
+      },
+      {
+        name: "listSurfaces",
+        effect: "read",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["threadId"],
+          properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaces"],
+          properties: {
+            surfaces: {
+              type: "array",
+              maxItems: 64,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["id", "title", "placement", "active"],
+                properties: {
+                  id: { type: "string", maxLength: 160 },
+                  title: { type: "string", maxLength: 200 },
+                  placement: { enum: ["side-panel", "bottom-dock"] },
+                  active: { type: "boolean" }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        name: "hideDock",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["threadId"],
+          properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: { applied: { type: "boolean" } }
+        }
+      },
+      {
+        name: "showDock",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["threadId"],
+          properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: { applied: { type: "boolean" } }
+        }
+      }
+    ]
+  });
+  var UI_THEME_API = uiThemeApi.definition;
+  var UI_KEYBINDINGS_API = uiKeybindingsApi.definition;
+  var UI_NOTIFICATIONS_API = uiNotificationsApi.definition;
+  var UI_PANELS_API = uiPanelsApi.definition;
   var orchestrationStatusApi = defineOrchestrationStatusApi(vcsDiffPreviewStreamEventSchema);
   var ORCHESTRATION_STATUS_API = orchestrationStatusApi.definition;
   var GENERIC_API_CATALOGUE = [
@@ -4022,11 +6129,18 @@ var __t3Client = (() => {
     vcsRepositoryApi.definition,
     vcsRepositoryApiV1.definition,
     vcsDiffApiV1.definition,
+    vcsActionsApi.definition,
     resourcesLeaseApi.definition,
     resourcesLeaseApiV1.definition,
+    workspaceResourcesApi.definition,
     prsReadApi.definition,
+    prsWriteApi.definition,
     composerContextApi.definition,
-    messagesEnrichmentApi.definition
+    messagesEnrichmentApi.definition,
+    uiThemeApi.definition,
+    uiKeybindingsApi.definition,
+    uiNotificationsApi.definition,
+    uiPanelsApi.definition
   ];
   function canonical(value) {
     if (Array.isArray(value))
@@ -4242,13 +6356,14 @@ var __t3Client = (() => {
       id: source.id,
       version: source.version,
       apiVersion: 1,
-      surfaces: surfaces.map(({ name, title, scope, placements, clients, capabilities, stateVersion }) => ({
+      surfaces: surfaces.map(({ name, title, scope, placements, clients, capabilities, claimsTerminalFocus, stateVersion }) => ({
         id: source.id + "/" + name,
         title,
         scope,
         placements: placements ?? ["side-panel"],
         clients: clients ?? ["web", "desktop"],
         capabilities: capabilities ?? [],
+        ...claimsTerminalFocus === true ? { claimsTerminalFocus: true } : {},
         stateVersion: stateVersion ?? 1
       }))
     };
@@ -7598,7 +9713,27 @@ var __t3Client = (() => {
     return value ?? fallback;
   }
   function readThemeColor(styles, variable, fallback) {
-    return normalizeComputedColor(styles.getPropertyValue(variable), fallback);
+    let value = styles.getPropertyValue(variable).trim();
+    for (let depth = 0; depth < 4; depth += 1) {
+      if (!value.startsWith("var(") || !value.endsWith(")")) break;
+      const inner = value.slice(4, -1);
+      let split = -1;
+      let nested = 0;
+      for (let i = 0; i < inner.length; i += 1) {
+        const char = inner[i];
+        if (char === "(") nested += 1;
+        else if (char === ")") nested -= 1;
+        else if (char === "," && nested === 0) {
+          split = i;
+          break;
+        }
+      }
+      const name = (split === -1 ? inner : inner.slice(0, split)).trim();
+      const next = styles.getPropertyValue(name).trim();
+      value = next !== "" ? next : split === -1 ? "" : inner.slice(split + 1).trim();
+      if (value === "") return fallback;
+    }
+    return normalizeComputedColor(value, fallback);
   }
   function terminalThemeFromApp(mountElement) {
     if (typeof document === "undefined") {
@@ -7625,13 +9760,21 @@ var __t3Client = (() => {
     );
     const terminalBackground = readThemeColor(
       themeStyles,
-      "--terminal-background",
-      readThemeColor(rootThemeStyles, "--terminal-background", background)
+      "--t3-terminal-background",
+      readThemeColor(
+        themeStyles,
+        "--terminal-background",
+        readThemeColor(rootThemeStyles, "--terminal-background", background)
+      )
     );
     const terminalForeground = readThemeColor(
       themeStyles,
-      "--terminal-foreground",
-      readThemeColor(rootThemeStyles, "--terminal-foreground", foreground)
+      "--t3-terminal-foreground",
+      readThemeColor(
+        themeStyles,
+        "--terminal-foreground",
+        readThemeColor(rootThemeStyles, "--terminal-foreground", foreground)
+      )
     );
     const terminalCursor = readThemeColor(
       themeStyles,
@@ -7640,8 +9783,12 @@ var __t3Client = (() => {
     );
     const terminalSelection = readThemeColor(
       themeStyles,
-      "--terminal-selection-background",
-      isDark ? "rgba(180, 203, 255, 0.25)" : "rgba(37, 63, 99, 0.2)"
+      "--t3-terminal-selection",
+      readThemeColor(
+        themeStyles,
+        "--terminal-selection-background",
+        isDark ? "rgba(180, 203, 255, 0.25)" : "rgba(37, 63, 99, 0.2)"
+      )
     );
     return {
       background: parseTerminalColor(
@@ -8255,6 +10402,15 @@ var __t3Client = (() => {
       this.#panelError = message;
       this.#emit();
     }
+    /**
+     * A failed panel-level op outside the session stream — e.g. a dispatched
+     * keybinding command whose `t3.ui/panels` call the host rejected. The next
+     * stream transition overwrites it; it must not masquerade as stream state.
+     */
+    notePanelError(message) {
+      this.#panelError = message;
+      this.#emit();
+    }
     /** Open a fresh terminal; the client picks the id (#15). */
     async openTerminal() {
       const launch = this.#launch;
@@ -8470,6 +10626,201 @@ var __t3Client = (() => {
       for (const tab of this.#tabs.values()) tab.input.dispose();
     }
   };
+  var TERMINAL_SURFACE_ID = "t3.terminal/view";
+  var TERMINAL_FOCUS_WHEN = `extension.${TERMINAL_SURFACE_ID}.focus`;
+  var TERMINAL_VIEW_COMMANDS = [
+    {
+      id: "toggle",
+      title: "Toggle terminal",
+      description: "Close this terminal panel.",
+      scope: "global",
+      defaultKey: "mod+j"
+    },
+    {
+      id: "new",
+      title: "New terminal",
+      scope: "surface",
+      defaultKey: "mod+n",
+      when: TERMINAL_FOCUS_WHEN
+    },
+    {
+      id: "close",
+      title: "Close terminal",
+      scope: "surface",
+      defaultKey: "mod+w",
+      when: TERMINAL_FOCUS_WHEN
+    }
+  ];
+  var TERMINAL_GLOBAL_COMMANDS = [
+    {
+      id: "toggle",
+      title: "Toggle terminal",
+      description: "Open the terminal panel, or close it when a terminal view answers.",
+      scope: "global",
+      defaultKey: "mod+j",
+      activation: { surfaceId: TERMINAL_SURFACE_ID, placement: "bottom-dock" }
+    }
+  ];
+  function dispatchTerminalCommand(commandId, actions) {
+    switch (commandId) {
+      case "toggle":
+        actions.toggleSurface();
+        return true;
+      case "new":
+        actions.newTerminal();
+        return true;
+      case "close":
+        actions.closeTerminal();
+        return true;
+      default:
+        return false;
+    }
+  }
+  async function registerPanelCommands(options) {
+    const api = bindApi(uiKeybindingsApi, options.client, options.context);
+    const response = await api.invoke(
+      "registerCommands",
+      { commands: TERMINAL_VIEW_COMMANDS },
+      options.signal
+    );
+    const release = () => {
+      void api.invoke(
+        "unregisterCommands",
+        { commandSetToken: response.commandSetToken },
+        AbortSignal.timeout(5e3)
+      ).catch(() => {
+      });
+    };
+    if (options.signal.aborted) {
+      release();
+      return null;
+    }
+    const registered = new Set(
+      response.results.filter((result) => result.status === "registered").map((result) => result.commandId)
+    );
+    try {
+      options.bindCommands(response.commandSetToken, ({ commandId }) => {
+        if (registered.has(commandId)) options.onCommand(commandId);
+      });
+    } catch (error) {
+      release();
+      throw error;
+    }
+    return { commandSetToken: response.commandSetToken, results: response.results, release };
+  }
+  var TERMINAL_THEME_VARS = {
+    canvas: "--t3-terminal-canvas",
+    text: "--t3-terminal-text",
+    textMuted: "--t3-terminal-muted",
+    border: "--t3-terminal-border",
+    input: "--t3-terminal-input",
+    accentSurface: "--t3-terminal-accent-surface",
+    terminalBackground: "--t3-terminal-background",
+    terminalForeground: "--t3-terminal-foreground",
+    terminalSelection: "--t3-terminal-selection"
+  };
+  function themeVarOverrides(tokens, cssVars) {
+    const overrides = {};
+    for (const [role, property] of Object.entries(TERMINAL_THEME_VARS)) {
+      const value = tokens[role];
+      if (value === void 0) continue;
+      const contractVar = cssVars[role];
+      overrides[property] = contractVar ? `var(${contractVar}, ${value})` : value;
+    }
+    return overrides;
+  }
+  function terminalAppearanceVars(appearance) {
+    const vars = {
+      "--t3-terminal-background": appearance.theme.background,
+      "--t3-terminal-foreground": appearance.theme.foreground,
+      "--t3-terminal-color-scheme": appearance.appearance
+    };
+    if (appearance.theme.selectionBackground !== void 0)
+      vars["--t3-terminal-selection"] = appearance.theme.selectionBackground;
+    if (appearance.font.family !== void 0)
+      vars["--t3-terminal-font-family"] = appearance.font.family;
+    if (appearance.font.size !== void 0)
+      vars["--t3-terminal-font-size"] = `${appearance.font.size}px`;
+    if (appearance.font.lineHeight !== void 0)
+      vars["--t3-terminal-line-height"] = String(appearance.font.lineHeight);
+    if (appearance.font.ligatures !== void 0)
+      vars["--t3-terminal-ligatures"] = appearance.font.ligatures ? "normal" : "none";
+    return vars;
+  }
+  function asTerminalAppearance(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const candidate = value;
+    const theme = candidate.theme;
+    if (!theme || typeof theme !== "object" || Array.isArray(theme)) return null;
+    const colors = theme;
+    if (typeof colors.background !== "string" || typeof colors.foreground !== "string" || typeof colors.cursor !== "string" || colors.selectionBackground !== void 0 && typeof colors.selectionBackground !== "string")
+      return null;
+    const font = candidate.font;
+    if (!font || typeof font !== "object" || Array.isArray(font)) return null;
+    const fontFields = font;
+    if (fontFields.family !== void 0 && typeof fontFields.family !== "string" || fontFields.size !== void 0 && (typeof fontFields.size !== "number" || !Number.isFinite(fontFields.size)) || fontFields.lineHeight !== void 0 && (typeof fontFields.lineHeight !== "number" || !Number.isFinite(fontFields.lineHeight)) || fontFields.ligatures !== void 0 && typeof fontFields.ligatures !== "boolean")
+      return null;
+    if (candidate.appearance !== "light" && candidate.appearance !== "dark") return null;
+    return value;
+  }
+  function watchThemeVars(options) {
+    const api = bindApi(uiThemeApi, options.client, options.context);
+    const streams = bindStreamApi(uiThemeApi, options.client, options.context);
+    if (!options.signal.aborted) options.apply(null);
+    let generation = 0;
+    const invalidate = () => {
+      generation += 1;
+      if (!options.signal.aborted) options.apply(null);
+    };
+    const refresh = () => {
+      const at = ++generation;
+      void api.invoke("getTokens", {}, options.signal).then(
+        (value) => {
+          if (!options.signal.aborted && at === generation)
+            options.apply(themeVarOverrides(value.tokens, value.cssVars));
+        },
+        // A superseded rejection carries no fresh information — only the
+        // newest read's failure may invalidate the published map.
+        () => {
+          if (at === generation) invalidate();
+        }
+      );
+    };
+    refresh();
+    return (async () => {
+      try {
+        for await (const frame of streams.subscribe("subscribeState", {}, options.signal)) {
+          if (options.signal.aborted) return;
+          if (frame.type === "closed") break;
+          refresh();
+        }
+        invalidate();
+      } catch {
+        invalidate();
+      }
+    })();
+  }
+  function watchTerminalAppearanceVars(options) {
+    const streams = bindStreamApi(uiThemeApi, options.client, options.context);
+    if (!options.signal.aborted) options.apply(null);
+    return (async () => {
+      try {
+        for await (const frame of streams.subscribe(
+          "subscribeTerminalAppearance",
+          {},
+          options.signal
+        )) {
+          if (options.signal.aborted) return;
+          if (frame.type === "closed") break;
+          const appearance = asTerminalAppearance(frame.value);
+          options.apply(appearance === null ? null : terminalAppearanceVars(appearance));
+        }
+        if (!options.signal.aborted) options.apply(null);
+      } catch {
+        if (!options.signal.aborted) options.apply(null);
+      }
+    })();
+  }
 
   // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/vtAttachment.ts
   var MAX_OUTPUT_CHUNK_DATA_LENGTH = 8192;
@@ -9134,6 +11485,83 @@ var __t3Client = (() => {
       return () => controller.abort();
     }, [host, session, panel, visible]);
   }
+  function useThemeVars(host, session, visible) {
+    const [vars, setVars] = (0, import_react.useState)(null);
+    (0, import_react.useEffect)(() => {
+      if (!visible) return;
+      const controller = new AbortController();
+      void watchThemeVars({
+        client: host,
+        context: session.context,
+        signal: AbortSignal.any([controller.signal, session.signal]),
+        apply: setVars
+      });
+      return () => controller.abort();
+    }, [host, session, visible]);
+    return vars;
+  }
+  function useTerminalAppearanceVars(host, session, visible) {
+    const [vars, setVars] = (0, import_react.useState)(null);
+    (0, import_react.useEffect)(() => {
+      if (!visible) return;
+      const controller = new AbortController();
+      void watchTerminalAppearanceVars({
+        client: host,
+        context: session.context,
+        signal: AbortSignal.any([controller.signal, session.signal]),
+        apply: setVars
+      });
+      return () => controller.abort();
+    }, [host, session, visible]);
+    return vars;
+  }
+  function closeOwnSurface(host, session) {
+    const threadId = session.context.resource.threadId;
+    if (threadId === void 0) return Promise.resolve();
+    return bindApi(uiPanelsApi, host, session.context).invoke("closeSurface", { surfaceId: TERMINAL_SURFACE_ID, threadId }, session.signal).then(
+      () => void 0,
+      () => {
+        throw new Error("The host could not close this panel.");
+      }
+    );
+  }
+  function usePanelCommands(host, session, panel, visible) {
+    (0, import_react.useEffect)(() => {
+      if (!visible) return;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      let release = null;
+      const actions = {
+        newTerminal: () => void panel.openTerminal(),
+        closeTerminal: () => {
+          const activeId = panel.snapshot.activeTerminalId;
+          if (activeId !== null) panel.requestAction(activeId, "close");
+        },
+        toggleSurface: () => void closeOwnSurface(host, session).catch(
+          (error) => panel.notePanelError(error instanceof Error ? error.message : "Panel action failed")
+        )
+      };
+      void registerPanelCommands({
+        client: host,
+        context: session.context,
+        signal,
+        bindCommands: (token, handler) => session.bindCommands(token, handler),
+        onCommand: (commandId) => void dispatchTerminalCommand(commandId, actions)
+      }).then(
+        (registration) => {
+          if (registration === null) return;
+          if (signal.aborted) registration.release();
+          else release = registration.release;
+        },
+        () => {
+        }
+      );
+      return () => {
+        controller.abort();
+        release?.();
+      };
+    }, [host, session, panel, visible]);
+  }
   function writeSystemMessage(surface, message) {
     surface.write(`\r
 [terminal] ${message}\r
@@ -9161,7 +11589,7 @@ var __t3Client = (() => {
     return false;
   }
   function TerminalPane(props) {
-    const { host, session, panel, terminalId, active, visible, assets } = props;
+    const { host, session, panel, terminalId, active, visible, assets, themeVars, appearanceVars } = props;
     const [, bump] = (0, import_react.useReducer)((value) => value + 1, 0);
     const [attachment] = (0, import_react.useState)(
       () => new TerminalVtAttachment(terminalId, () => {
@@ -9268,6 +11696,10 @@ var __t3Client = (() => {
       surfaceRef.current?.setVisible(active && visible);
       if (active && visible) surfaceRef.current?.focus();
     }, [active, visible]);
+    (0, import_react.useEffect)(() => {
+      const mount = mountRef.current;
+      if (mount !== null) surfaceRef.current?.setTheme(terminalThemeFromApp(mount));
+    }, [themeVars, appearanceVars]);
     const state2 = attachment.state;
     const muted = "var(--muted-foreground, #667085)";
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
@@ -9305,12 +11737,21 @@ var __t3Client = (() => {
             {
               ref: mountRef,
               "aria-label": "Terminal output",
+              "data-t3-terminal-output": true,
               style: {
                 position: "relative",
                 flex: 1,
                 minHeight: 0,
                 overflow: "hidden",
-                background: "var(--terminal-background, transparent)"
+                // Real properties carrying the contract chains — they resolve
+                // var() references at use time, which is exactly what
+                // terminalThemeFromApp needs (getPropertyValue on a custom
+                // property would return the unresolved token stream).
+                background: "var(--t3-terminal-background, var(--terminal-background, transparent))",
+                color: "var(--t3-terminal-foreground, var(--terminal-foreground, inherit))",
+                // Bridges the published --t3-terminal-color-scheme into the real
+                // property terminalThemeFromApp reads for its dark fallback.
+                colorScheme: "var(--t3-terminal-color-scheme, normal)"
               }
             }
           )
@@ -9414,7 +11855,7 @@ var __t3Client = (() => {
   }
   var control = {
     padding: "4px 8px",
-    border: "1px solid var(--border, #dfe3e8)",
+    border: "1px solid var(--t3-terminal-border, var(--border, #dfe3e8))",
     borderRadius: 5,
     background: "transparent",
     color: "inherit",
@@ -9458,6 +11899,9 @@ var __t3Client = (() => {
     (0, import_react.useEffect)(() => session.onVisibility(setVisible), [session]);
     (0, import_react.useEffect)(() => () => panel.dispose(), [panel]);
     useSessionsStream(host, session, panel, visible);
+    usePanelCommands(host, session, panel, visible);
+    const themeVars = useThemeVars(host, session, visible);
+    const appearanceVars = useTerminalAppearanceVars(host, session, visible);
     const assets = useGhosttyAssets(host, session);
     const snapshot = panel.snapshot;
     const activeId = snapshot.activeTerminalId;
@@ -9475,7 +11919,8 @@ var __t3Client = (() => {
       panel.sendInput(activeId, input + "\r");
       setInput("");
     };
-    const muted = "var(--muted-foreground, #667085)";
+    const muted = "var(--t3-terminal-muted, var(--muted-foreground, #667085))";
+    const border = "1px solid var(--t3-terminal-border, var(--border, #dfe3e8))";
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "section",
       {
@@ -9485,12 +11930,18 @@ var __t3Client = (() => {
           display: "flex",
           flexDirection: "column",
           minHeight: 0,
-          color: "var(--foreground, #20252d)",
-          background: "var(--background, #fff)",
+          color: "var(--t3-terminal-text, var(--foreground, #20252d))",
+          background: "var(--t3-terminal-canvas, var(--background, #fff))",
           fontFamily: "var(--font-sans, system-ui, sans-serif)",
-          fontSize: 13
+          fontSize: 13,
+          // Contract-derived custom properties inherit to every descendant —
+          // the chrome's var() chains, the fallback <pre>, and the mount div
+          // terminalThemeFromApp resolves into the Ghostty theme.
+          ...themeVars,
+          ...appearanceVars
         },
         children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("style", { children: "[data-t3-terminal-output]::selection{background:var(--t3-terminal-selection,Highlight)}" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
             "header",
             {
@@ -9498,7 +11949,7 @@ var __t3Client = (() => {
                 display: "flex",
                 gap: 6,
                 padding: 8,
-                borderBottom: "1px solid var(--border, #dfe3e8)",
+                borderBottom: border,
                 flexShrink: 0,
                 alignItems: "center"
               },
@@ -9551,7 +12002,7 @@ var __t3Client = (() => {
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
                       color: "inherit",
-                      background: tab.terminalId === activeId ? "var(--accent, #e8eef7)" : "transparent"
+                      background: tab.terminalId === activeId ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))" : "transparent"
                     },
                     children: tab.label
                   }
@@ -9648,7 +12099,7 @@ var __t3Client = (() => {
                 padding: "6px 10px",
                 fontSize: 11,
                 color: muted,
-                borderTop: "1px solid var(--border, #dfe3e8)",
+                borderTop: border,
                 flexShrink: 0
               },
               children: [
@@ -9694,7 +12145,9 @@ var __t3Client = (() => {
               terminalId: tab.terminalId,
               active: tab.terminalId === activeId,
               visible,
-              assets
+              assets,
+              themeVars,
+              appearanceVars
             },
             tab.terminalId
           )),
@@ -9706,7 +12159,7 @@ var __t3Client = (() => {
                 flexDirection: "column",
                 flex: 1,
                 minHeight: 0,
-                borderTop: "1px solid var(--border, #dfe3e8)"
+                borderTop: border
               },
               children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
@@ -9727,6 +12180,7 @@ var __t3Client = (() => {
                   {
                     ref: outputRef,
                     "aria-label": "Terminal output",
+                    "data-t3-terminal-output": true,
                     style: {
                       flex: 1,
                       minHeight: 0,
@@ -9735,10 +12189,13 @@ var __t3Client = (() => {
                       overflow: "auto",
                       whiteSpace: "pre-wrap",
                       overflowWrap: "anywhere",
-                      color: "var(--terminal-foreground, inherit)",
-                      background: "var(--terminal-background, transparent)",
-                      fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace)",
-                      fontSize: 12
+                      color: "var(--t3-terminal-foreground, var(--terminal-foreground, inherit))",
+                      background: "var(--t3-terminal-background, var(--terminal-background, transparent))",
+                      fontFamily: "var(--t3-terminal-font-family, var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace))",
+                      fontSize: "var(--t3-terminal-font-size, 12px)",
+                      lineHeight: "var(--t3-terminal-line-height, normal)",
+                      fontVariantLigatures: "var(--t3-terminal-ligatures, normal)",
+                      colorScheme: "var(--t3-terminal-color-scheme, normal)"
                     },
                     children: output?.contents ?? ""
                   }
@@ -9750,7 +12207,7 @@ var __t3Client = (() => {
                       display: "flex",
                       gap: 6,
                       padding: 8,
-                      borderTop: "1px solid var(--border, #dfe3e8)",
+                      borderTop: border,
                       flexShrink: 0
                     },
                     children: [
@@ -9764,7 +12221,13 @@ var __t3Client = (() => {
                           onKeyDown: (event) => {
                             if (event.key === "Enter") send();
                           },
-                          style: { ...control, flex: 1, minWidth: 0, cursor: "text" }
+                          style: {
+                            ...control,
+                            flex: 1,
+                            minWidth: 0,
+                            cursor: "text",
+                            background: "var(--t3-terminal-input, var(--input, transparent))"
+                          }
                         }
                       ),
                       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", onClick: send, style: control, children: "Send" })
@@ -9773,19 +12236,35 @@ var __t3Client = (() => {
                 )
               ]
             }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "output",
+            {
+              "aria-label": "Slice notice",
+              style: { padding: "6px 10px", color: muted, fontSize: 11, flexShrink: 0 },
+              children: "Ghostty VT rendering over the public control contract; theme, terminal appearance, and panel keybindings follow the host's t3.ui/* providers. Link activation is reported inline \u2014 there is no transient-toast path, so t3.ui/notifications is not adopted."
+            }
           )
         ]
       }
     );
   }
-  var extension_default = defineExtension({
+  var authored = defineExtension({
     id: manifestId,
     version: "0.3.0",
     requires: [
       requireApi(terminalSessionsApi),
       requireApi(terminalOutputApi),
       requireApi(terminalOutputEventsApi),
-      requireApi(terminalControlApi)
+      requireApi(terminalControlApi),
+      // Mandatory requirements — the broker only authorizes invocations for
+      // declared APIs, so the t3.ui/* contracts must be declared even though
+      // the panel degrades per-call. A host without these providers resolves
+      // the package missing-api rather than mounting it; the degraded paths
+      // cover denied or failing calls and dead streams on a capable host.
+      requireApi(uiThemeApi),
+      requireApi(uiKeybindingsApi),
+      requireApi(uiPanelsApi)
     ],
     assets: [
       { path: GHOSTTY_VT_ASSET, mediaType: "application/wasm" },
@@ -9811,6 +12290,16 @@ var __t3Client = (() => {
       }
     ]
   });
+  var clientFactory = authored.client;
+  var extension_default = {
+    ...authored,
+    ...clientFactory === void 0 ? {} : {
+      client(host) {
+        host.registerGlobalCommands?.(TERMINAL_GLOBAL_COMMANDS);
+        return clientFactory(host);
+      }
+    }
+  };
 
   // ../../../../../private/tmp/t3-terminal-vt/packages/first-party-extensions/terminal/extension.ts
   var extension_default2 = extension_default;
