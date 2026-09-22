@@ -461,7 +461,10 @@ interface FrameCaptureSession {
 
 /**
  * A JPEG frame delivered to remote `t3.browser/frames` viewers. `seq` is the
- * capture-session sequence shared by every viewer of this tab.
+ * capture-session sequence shared by every viewer of this tab. `geometryKey`
+ * is the capture-time geometry stamp (`generation:cssWxcssH@zoom`) — the hub
+ * maps it onto `geometrySeq` so a frame can never be painted against geometry
+ * read after its pixels were captured.
  */
 export interface RemoteLiveFrame {
   readonly tabId: string;
@@ -470,6 +473,7 @@ export interface RemoteLiveFrame {
   readonly width: number;
   readonly height: number;
   readonly engineGeneration: string;
+  readonly geometryKey: string;
 }
 
 type RemoteFrameListener = (frame: RemoteLiveFrame) => Effect.Effect<void>;
@@ -496,31 +500,59 @@ export interface RemoteFrameConfigInfo {
 }
 
 /**
- * Per-(tab, lease) held-input bookkeeping for `t3.browser/frames` remote
- * input. Mutated only inside `lane`, which also joins lease cleanup behind
- * the lease's own queued sends.
+ * Geometry stamp shared by frame captures and config reads (design §3.6):
+ * `generation:cssWxcssH@zoom`. The hub maps distinct keys onto its own
+ * monotonic `geometrySeq`; identical keys always mean identical geometry.
  */
-interface RemoteInputLeaseState {
+export const remoteFrameGeometryKey = (
+  engineGeneration: string,
+  viewportCss: { readonly width: number; readonly height: number },
+  zoomFactor: number,
+): string => `${engineGeneration}:${viewportCss.width}x${viewportCss.height}@${zoomFactor}`;
+
+/**
+ * Who last claimed a held input item or the guest-global focus state.
+ * `lease:<leaseId>` owns remote-input presses; `action:<token>` owns agent
+ * action presses. Ownership transfers on re-press (latest presser) and only
+ * the owner may send the matching release.
+ */
+type InputStateOwner = { readonly kind: "action" | "lease"; readonly id: string };
+
+/**
+ * Shared per-guest held-input ledger (design §3.7): every key/button pressed
+ * against this webContents generation, by any lane, records its owner BEFORE
+ * the CDP send — an applied-but-rejected send still owes cleanup. Mutated
+ * only inside `lane`, which serializes lease dispatches and deferred cleanup
+ * for the guest. Bound to `generation` (`String(wc.id)`): a replaced guest
+ * gets a fresh ledger and cleanup can never resolve into it.
+ */
+interface RemoteGuestInputLedger {
+  readonly generation: string;
   readonly lane: Semaphore.Semaphore;
-  /** Latest CSS viewport the hub asserted with a packet or a config read. */
-  viewportCss: { readonly width: number; readonly height: number } | null;
-  readonly heldButtons: Set<"left" | "middle" | "right">;
-  /** code -> the `keyUp` CDP params that release this held key. */
-  readonly heldKeys: Map<string, Record<string, unknown>>;
+  /** code -> the `keyUp` CDP params + owner that release this held key. */
+  readonly keys: Map<
+    string,
+    { readonly keyUp: Record<string, unknown>; readonly owner: InputStateOwner }
+  >;
+  readonly buttons: Map<string, InputStateOwner>;
   /** Currently-held CDP modifier bitmask, mirrored onto mouse/wheel events. */
   heldModifiers: number;
   lastPointer: { readonly x: number; readonly y: number } | null;
+  /** Latest CSS viewport the hub asserted with a packet or a config read. */
+  viewportCss: { readonly width: number; readonly height: number } | null;
+}
+
+/**
+ * Per-(tab, lease) bookkeeping for `t3.browser/frames` remote input. The
+ * lease pins its `ledger` at bind: cleanup runs against that exact guest
+ * generation, never a replacement.
+ */
+interface RemoteInputLeaseState {
+  readonly ledger: RemoteGuestInputLedger;
   /** Whether this lease performed the focus grab below. */
   focusClaimed: boolean;
   previouslyFocusedId: number | null;
 }
-
-/**
- * Who last claimed the guest-global input state (focus emulation + renderer
- * focus). Action cleanup and lease cleanup unwind that state only while they
- * still own the record, so neither tears down the other's claim.
- */
-type InputStateOwner = { readonly kind: "action" | "lease"; readonly id: string };
 
 interface PictureInPictureSession {
   readonly window: BrowserWindow;
@@ -722,6 +754,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const remoteFrameListenersRef = yield* Ref.make<ReadonlySet<RemoteFrameListener>>(new Set());
   const remoteInputStatesRef = yield* SynchronizedRef.make<
     ReadonlyMap<string, RemoteInputLeaseState>
+  >(new Map());
+  const remoteGuestInputLedgersRef = yield* SynchronizedRef.make<
+    ReadonlyMap<string, RemoteGuestInputLedger>
   >(new Map());
   const inputStateOwnerRef = yield* Ref.make<ReadonlyMap<string, InputStateOwner>>(new Map());
   const pickSessionsRef = yield* Ref.make<ReadonlyMap<string, PickSession>>(new Map());
@@ -2887,6 +2922,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       (captureSession?.consumers.has("remote-live") ?? false);
     if (!captureSession || !ownsCaptureLoop || captureSession.scope === null) return;
     const wc = yield* requireWebContents(tabId);
+    // Geometry is captured BEFORE the pixels so the frame's stamp can never
+    // describe geometry read after capture — a resize mid-capture produces a
+    // frame stamped with the old geometry, which the hub fences against.
+    const remoteLiveCapture = captureSession.consumers.has("remote-live");
+    const viewportAtCapture = remoteLiveCapture
+      ? yield* readRemoteViewport(tabId, wc).pipe(
+          Effect.map(Option.some),
+          Effect.catch((error) =>
+            Effect.logWarning("Remote frame geometry read failed; frame drops.", {
+              tabId,
+              error,
+            }).pipe(Effect.as(Option.none<{ width: number; height: number }>())),
+          ),
+        )
+      : Option.none<{ width: number; height: number }>();
+    if (remoteLiveCapture && Option.isNone(viewportAtCapture)) return;
     const image = yield* attemptPromise(
       {
         operation: "frameCapture.capturePage",
@@ -2953,9 +3004,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     // only advances when every active consumer received this capture, so the
     // next tick retries the same bytes.
     let delivered = true;
-    if (remoteLive) {
+    // A remote-live consumer that joined mid-capture lacks a geometry stamp;
+    // leave the dedup marker behind so the next tick retries with geometry.
+    if (remoteLive && Option.isNone(viewportAtCapture)) {
+      delivered = false;
+    }
+    if (remoteLive && Option.isSome(viewportAtCapture)) {
       deliveries.push(
         Effect.gen(function* () {
+          const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
           const remoteFrame: RemoteLiveFrame = {
             tabId,
             seq: frameSeq,
@@ -2963,6 +3020,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             width: size.width,
             height: size.height,
             engineGeneration: String(wc.id),
+            geometryKey: remoteFrameGeometryKey(
+              String(wc.id),
+              Option.getOrThrow(viewportAtCapture),
+              tab?.zoomFactor ?? 1,
+            ),
           };
           const listeners = yield* Ref.get(remoteFrameListenersRef);
           yield* Effect.forEach(
@@ -4058,8 +4120,25 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     // state: an exiting action skips the emulation disable and focus restore
     // when a remote input lease has since claimed the guest (and vice versa).
     const ownerToken = yield* cryptoService.randomUUIDv4.pipe(Effect.orDie);
+    // The press registers its held key in the guest's shared input ledger as
+    // an `action` owner, so a remote-input lease re-pressing the same key
+    // takes ownership and this cleanup can never release the lease's press.
+    const heldKey =
+      keySequence.keyDown.code.length > 0 ? keySequence.keyDown.code : keySequence.keyDown.key;
+    let actionLedger: RemoteGuestInputLedger | null = null;
     const releaseInput = Effect.gen(function* () {
-      if (keyDownAttempted) {
+      if (keyDownAttempted && heldKey.length > 0 && actionLedger) {
+        yield* actionLedger.lane.withPermits(1)(
+          Effect.gen(function* () {
+            const entry = actionLedger!.keys.get(heldKey);
+            if (entry?.owner.kind === "action" && entry.owner.id === ownerToken) {
+              actionLedger!.keys.delete(heldKey);
+              actionLedger!.heldModifiers = ledgerModifiers(actionLedger!);
+              yield* sendCleanup("Input.dispatchKeyEvent", keySequence.keyUp).pipe(Effect.ignore);
+            }
+          }),
+        );
+      } else if (keyDownAttempted) {
         yield* sendCleanup("Input.dispatchKeyEvent", keySequence.keyUp).pipe(Effect.ignore);
       }
       const owner = (yield* Ref.get(inputStateOwnerRef)).get(tabId);
@@ -4107,6 +4186,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       yield* send("Emulation.setFocusEmulationEnabled", { enabled: true });
       yield* expectAgentInput(tabId, keySequence.signal);
       keyDownAttempted = true;
+      if (heldKey.length > 0) {
+        actionLedger = yield* remoteGuestLedgerFor(tabId, String(wc.id));
+        yield* actionLedger.lane.withPermits(1)(
+          Effect.sync(() => {
+            actionLedger!.keys.set(heldKey, {
+              keyUp: keySequence.keyUp,
+              owner: { kind: "action", id: ownerToken },
+            });
+          }),
+        );
+      }
       yield* send("Input.dispatchKeyEvent", keySequence.keyDown);
     }).pipe(Effect.ensuring(releaseInput));
   });
@@ -4443,6 +4533,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   const captureFrameJpeg = Effect.fn("PreviewManager.captureFrameJpeg")(function* (tabId: string) {
     const wc = yield* requireWebContents(tabId);
+    const viewportCss = yield* readRemoteViewport(tabId, wc);
     const image = yield* capturePageWithRetry(
       { operation: "remoteFrames.capturePage", tabId, webContentsId: wc.id },
       tabId,
@@ -4464,11 +4555,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       { operation: "remoteFrames.encodeFrame", tabId, webContentsId: wc.id },
       () => image.toJPEG(PICTURE_IN_PICTURE_JPEG_QUALITY),
     );
+    const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+    const zoomFactor = tab?.zoomFactor ?? DEFAULT_ZOOM_FACTOR;
+    const engineGeneration = String(wc.id);
     return {
       jpeg,
       width: size.width,
       height: size.height,
-      engineGeneration: String(wc.id),
+      engineGeneration,
+      viewportCss,
+      geometryKey: remoteFrameGeometryKey(engineGeneration, viewportCss, zoomFactor),
     } as const;
   });
 
@@ -4492,31 +4588,88 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   const remoteInputLeaseKey = (tabId: string, leaseId: string): string => `${tabId} ${leaseId}`;
 
-  const requireRemoteInputLease = Effect.fn("PreviewManager.requireRemoteInputLease")(function* (
+  /**
+   * The shared held-input ledger for one guest generation. The ledger binds
+   * to `String(wc.id)`: when the guest is replaced the old ledger is dropped —
+   * its held entries die with the destroyed webContents — and a fresh ledger
+   * starts against the new guest.
+   */
+  const remoteGuestLedgerFor = Effect.fn("PreviewManager.remoteGuestLedgerFor")(function* (
     tabId: string,
-    leaseId: string,
+    generation: string,
   ) {
-    return yield* SynchronizedRef.modifyEffect(remoteInputStatesRef, (states) => {
-      const existing = states.get(remoteInputLeaseKey(tabId, leaseId));
-      if (existing) return Effect.succeed([existing, states] as const);
+    return yield* SynchronizedRef.modifyEffect(remoteGuestInputLedgersRef, (ledgers) => {
+      const existing = ledgers.get(tabId);
+      if (existing && existing.generation === generation) {
+        return Effect.succeed([existing, ledgers] as const);
+      }
       return Effect.map(Semaphore.make(1), (lane) => {
-        const created: RemoteInputLeaseState = {
+        const created: RemoteGuestInputLedger = {
+          generation,
           lane,
-          viewportCss: null,
-          heldButtons: new Set(),
-          heldKeys: new Map(),
+          keys: new Map(),
+          buttons: new Map(),
           heldModifiers: 0,
           lastPointer: null,
-          focusClaimed: false,
-          previouslyFocusedId: null,
+          viewportCss: null,
         };
         return [
           created,
-          replaceMap(states, (copy) => {
-            copy.set(remoteInputLeaseKey(tabId, leaseId), created);
+          replaceMap(ledgers, (copy) => {
+            copy.set(tabId, created);
           }),
         ] as const;
       });
+    });
+  });
+
+  /**
+   * Resolve (or create) the lease's input state, fenced to the guest
+   * generation the hub bound at socket attach. A packet naming a dead
+   * generation fails here — it can never reach the replacement guest.
+   */
+  const requireRemoteInputLease = Effect.fn("PreviewManager.requireRemoteInputLease")(function* (
+    tabId: string,
+    leaseId: string,
+    engineGeneration: string,
+  ) {
+    const existing = (yield* SynchronizedRef.get(remoteInputStatesRef)).get(
+      remoteInputLeaseKey(tabId, leaseId),
+    );
+    if (existing) {
+      if (existing.ledger.generation !== engineGeneration) {
+        return yield* new PreviewOperationError({
+          operation: "remoteFrames.inputLease",
+          tabId,
+          cause: new Error("Input lease does not match the bound guest generation."),
+        });
+      }
+      return existing;
+    }
+    const wc = yield* requireWebContents(tabId);
+    if (String(wc.id) !== engineGeneration) {
+      return yield* new PreviewOperationError({
+        operation: "remoteFrames.inputLease",
+        tabId,
+        webContentsId: wc.id,
+        cause: new Error("Bound guest generation was replaced."),
+      });
+    }
+    const ledger = yield* remoteGuestLedgerFor(tabId, engineGeneration);
+    return yield* SynchronizedRef.modify(remoteInputStatesRef, (states) => {
+      const current = states.get(remoteInputLeaseKey(tabId, leaseId));
+      if (current) return [current, states] as const;
+      const created: RemoteInputLeaseState = {
+        ledger,
+        focusClaimed: false,
+        previouslyFocusedId: null,
+      };
+      return [
+        created,
+        replaceMap(states, (copy) => {
+          copy.set(remoteInputLeaseKey(tabId, leaseId), created);
+        }),
+      ] as const;
     });
   });
 
@@ -4533,10 +4686,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     ["ShiftRight", 8],
   ]);
 
+  /** Recompute the CDP modifier bitmask from every key currently held. */
+  const ledgerModifiers = (ledger: RemoteGuestInputLedger): number => {
+    let bits = 0;
+    for (const heldKey of ledger.keys.keys()) {
+      bits |= REMOTE_INPUT_MODIFIER_CODES.get(heldKey) ?? 0;
+    }
+    return bits;
+  };
+
   /**
-   * One validated remote-input event, run inside the lease's ordered lane.
-   * This is the human lane: it bumps the control epoch and dispatches
+   * One validated remote-input event, run inside the guest ledger's ordered
+   * lane. This is the human lane: it bumps the control epoch and dispatches
    * directly on the control debugger, never queuing behind agent actions.
+   * Held ownership is recorded BEFORE each press send — an applied-but-
+   * rejected send still owes cleanup — and releases only send when the
+   * lease still owns the ledger entry.
    */
   const dispatchRemoteInputSerialized = Effect.fn("PreviewManager.dispatchRemoteInput")(function* (
     tabId: string,
@@ -4545,14 +4710,26 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     event: BrowserFrameInputEvent,
     viewportCss: { readonly width: number; readonly height: number } | null,
   ) {
+    const ledger = state.ledger;
     const wc = yield* requireWebContents(tabId);
+    // Re-fence inside the lane: a packet admitted before a guest replacement
+    // must fail here rather than dispatch into the new webContents.
+    if (String(wc.id) !== ledger.generation) {
+      return yield* new PreviewOperationError({
+        operation: "remoteFrames.dispatch",
+        tabId,
+        webContentsId: wc.id,
+        cause: new Error("Bound guest generation was replaced."),
+      });
+    }
+    const owner: InputStateOwner = { kind: "lease", id: leaseId };
     const control = yield* ensureControlSession(wc);
     const send = (method: string, params: Record<string, unknown>) =>
       attemptPromise({ operation: `remoteInput.${method}`, tabId, webContentsId: wc.id }, () =>
         control.debugger.sendCommand(method, params),
       );
-    const viewport = viewportCss ?? state.viewportCss ?? (yield* readRemoteViewport(tabId, wc));
-    state.viewportCss = viewport;
+    const viewport = viewportCss ?? ledger.viewportCss ?? (yield* readRemoteViewport(tabId, wc));
+    ledger.viewportCss = viewport;
     const toCssPoint = (x: number, y: number) => ({
       x: Math.min(Math.max(Math.round(x * viewport.width), 0), viewport.width),
       y: Math.min(Math.max(Math.round(y * viewport.height), 0), viewport.height),
@@ -4597,36 +4774,54 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     switch (event.type) {
       case "pointer": {
         const point = toCssPoint(event.x, event.y);
-        state.lastPointer = point;
+        ledger.lastPointer = point;
         if (event.phase === "move") {
           yield* send("Input.dispatchMouseEvent", {
             type: "mouseMoved",
             ...point,
-            modifiers: state.heldModifiers,
+            modifiers: ledger.heldModifiers,
           });
           return;
         }
         const button = event.button ?? "left";
+        if (event.phase === "down") {
+          // Latest presser owns the held button — recorded before the send so
+          // an applied-but-rejected dispatch still owes cleanup.
+          ledger.buttons.set(button, owner);
+          yield* send("Input.dispatchMouseEvent", {
+            type: "mousePressed",
+            ...point,
+            button,
+            clickCount: 1,
+            modifiers: ledger.heldModifiers,
+          });
+          return;
+        }
+        const held = ledger.buttons.get(button);
+        if (!held || held.kind !== "lease" || held.id !== leaseId) {
+          // Not held by this lease — the up must not release another lane's
+          // physical press, and a stray release is not dispatched.
+          return;
+        }
+        ledger.buttons.delete(button);
         yield* send("Input.dispatchMouseEvent", {
-          type: event.phase === "down" ? "mousePressed" : "mouseReleased",
+          type: "mouseReleased",
           ...point,
           button,
           clickCount: 1,
-          modifiers: state.heldModifiers,
+          modifiers: ledger.heldModifiers,
         });
-        if (event.phase === "down") state.heldButtons.add(button);
-        else state.heldButtons.delete(button);
         return;
       }
       case "wheel": {
         const point = toCssPoint(event.x, event.y);
-        state.lastPointer = point;
+        ledger.lastPointer = point;
         yield* send("Input.dispatchMouseEvent", {
           type: "mouseWheel",
           ...point,
           deltaX: event.deltaX,
           deltaY: event.deltaY,
-          modifiers: state.heldModifiers,
+          modifiers: ledger.heldModifiers,
         });
         return;
       }
@@ -4639,20 +4834,24 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         // key the resolver could not infer (e.g. non-US layouts).
         const code = sequence.keyDown.code.length > 0 ? sequence.keyDown.code : event.code;
         const heldKey = code.length > 0 ? code : event.code;
-        const modifierBit = REMOTE_INPUT_MODIFIER_CODES.get(heldKey);
         if (event.phase === "down") {
           const keyDown = { ...sequence.keyDown, code };
-          yield* send("Input.dispatchKeyEvent", keyDown);
           if (heldKey.length > 0) {
-            state.heldKeys.set(heldKey, { ...sequence.keyUp, code });
-            if (modifierBit !== undefined) state.heldModifiers |= modifierBit;
+            ledger.keys.set(heldKey, { keyUp: { ...sequence.keyUp, code }, owner });
+            ledger.heldModifiers = ledgerModifiers(ledger);
           }
-        } else {
-          const release = state.heldKeys.get(heldKey) ?? { ...sequence.keyUp, code };
-          yield* send("Input.dispatchKeyEvent", release);
-          state.heldKeys.delete(heldKey);
-          if (modifierBit !== undefined) state.heldModifiers &= ~modifierBit;
+          yield* send("Input.dispatchKeyEvent", keyDown);
+          return;
         }
+        const entry = ledger.keys.get(heldKey);
+        if (!entry || entry.owner.kind !== "lease" || entry.owner.id !== leaseId) {
+          // Not held by this lease — the up must not release another lane's
+          // physical press, and a stray release is not dispatched.
+          return;
+        }
+        ledger.keys.delete(heldKey);
+        ledger.heldModifiers = ledgerModifiers(ledger);
+        yield* send("Input.dispatchKeyEvent", entry.keyUp);
         return;
       }
       case "text": {
@@ -4667,17 +4866,99 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const dispatchRemoteInput = Effect.fn("PreviewManager.dispatchRemoteInputEntry")(function* (
     tabId: string,
     leaseId: string,
+    engineGeneration: string,
     event: BrowserFrameInputEvent,
     viewportCss: { readonly width: number; readonly height: number } | null,
   ) {
-    const state = yield* requireRemoteInputLease(tabId, leaseId);
-    yield* state.lane.withPermits(1)(
+    const state = yield* requireRemoteInputLease(tabId, leaseId, engineGeneration);
+    yield* state.ledger.lane.withPermits(1)(
       dispatchRemoteInputSerialized(tabId, leaseId, state, event, viewportCss),
     );
   });
 
   /**
-   * Lease cleanup: releases everything the lease holds, on the lease's own
+   * Held-state release shared by lease cleanup and geometry reset. Runs on
+   * the guest ledger's lane so releases join behind that lane's queued
+   * dispatches, targets the ledger's OWN generation (`webContents.fromId`),
+   * never the live tab lookup — a replaced guest gets nothing, its entries
+   * are just dropped.
+   */
+  const releaseLeaseHeldState = Effect.fn("PreviewManager.releaseLeaseHeldState")(function* (
+    tabId: string,
+    leaseId: string,
+    ledger: RemoteGuestInputLedger,
+    options?: { readonly releaseFocus?: boolean; readonly previouslyFocusedId?: number | null },
+  ) {
+    const releaseFocus = options?.releaseFocus ?? false;
+    const previouslyFocusedId = options?.previouslyFocusedId ?? null;
+    yield* ledger.lane
+      .withPermits(1)(
+        Effect.gen(function* () {
+          const generationId = Number(ledger.generation);
+          const wc = Number.isFinite(generationId) ? webContents.fromId(generationId) : undefined;
+          const live = wc !== undefined && !wc.isDestroyed();
+          const control = live
+            ? (yield* SynchronizedRef.get(controlSessionsRef)).get(wc.id)
+            : undefined;
+          const sendCleanup = (method: string, params: Record<string, unknown>) =>
+            live && control
+              ? attemptPromise(
+                  {
+                    operation: `remoteInput.cleanup.${method}`,
+                    tabId,
+                    webContentsId: wc.id,
+                  },
+                  () => control.debugger.sendCommand(method, params),
+                ).pipe(Effect.ignore)
+              : Effect.void;
+          for (const [button, buttonOwner] of Array.from(ledger.buttons.entries())) {
+            if (buttonOwner.kind !== "lease" || buttonOwner.id !== leaseId) continue;
+            ledger.buttons.delete(button);
+            yield* sendCleanup("Input.dispatchMouseEvent", {
+              type: "mouseReleased",
+              x: ledger.lastPointer?.x ?? 0,
+              y: ledger.lastPointer?.y ?? 0,
+              button,
+              clickCount: 1,
+            });
+          }
+          for (const [heldKey, entry] of Array.from(ledger.keys.entries())) {
+            if (entry.owner.kind !== "lease" || entry.owner.id !== leaseId) continue;
+            ledger.keys.delete(heldKey);
+            yield* sendCleanup("Input.dispatchKeyEvent", entry.keyUp);
+          }
+          ledger.heldModifiers = ledgerModifiers(ledger);
+          if (releaseFocus) {
+            const owner = (yield* Ref.get(inputStateOwnerRef)).get(tabId);
+            if (owner?.kind === "lease" && owner.id === leaseId) {
+              yield* sendCleanup("Emulation.setFocusEmulationEnabled", { enabled: false });
+              if (previouslyFocusedId !== null) {
+                const previous = webContents.fromId(previouslyFocusedId);
+                if (previous && !previous.isDestroyed()) {
+                  yield* attempt(
+                    {
+                      operation: "remoteInput.restoreFocusedWebContents",
+                      tabId,
+                      webContentsId: previous.id,
+                    },
+                    () => previous.focus(),
+                  ).pipe(Effect.ignore);
+                }
+              }
+              yield* Ref.update(inputStateOwnerRef, (owners) =>
+                replaceMap(owners, (copy) => {
+                  copy.delete(tabId);
+                }),
+              );
+            }
+          }
+        }),
+      )
+      .pipe(Effect.ignore);
+  });
+
+  /**
+   * Lease cleanup: releases everything the lease holds, on the guest ledger's
    * lane so a `keyUp` can never dispatch ahead of a still-queued `keyDown`.
    * Runs on every lease end path — socket close, supersession, fence
    * mismatch, revocation, expiry.
@@ -4697,62 +4978,26 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       ] as const;
     });
     if (!state) return;
-    yield* state.lane
-      .withPermits(1)(
-        Effect.gen(function* () {
-          const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
-          const wc = tab?.webContentsId != null ? webContents.fromId(tab.webContentsId) : undefined;
-          const control = wc
-            ? (yield* SynchronizedRef.get(controlSessionsRef)).get(wc.id)
-            : undefined;
-          const sendCleanup = (method: string, params: Record<string, unknown>) =>
-            wc && control
-              ? attemptPromise(
-                  {
-                    operation: `remoteInput.cleanup.${method}`,
-                    tabId,
-                    webContentsId: wc.id,
-                  },
-                  () => control.debugger.sendCommand(method, params),
-                ).pipe(Effect.ignore)
-              : Effect.void;
-          for (const button of state.heldButtons) {
-            yield* sendCleanup("Input.dispatchMouseEvent", {
-              type: "mouseReleased",
-              x: state.lastPointer?.x ?? 0,
-              y: state.lastPointer?.y ?? 0,
-              button,
-              clickCount: 1,
-            });
-          }
-          for (const keyUp of state.heldKeys.values()) {
-            yield* sendCleanup("Input.dispatchKeyEvent", keyUp);
-          }
-          const owner = (yield* Ref.get(inputStateOwnerRef)).get(tabId);
-          if (state.focusClaimed && owner?.kind === "lease" && owner.id === leaseId) {
-            yield* sendCleanup("Emulation.setFocusEmulationEnabled", { enabled: false });
-            if (state.previouslyFocusedId !== null) {
-              const previous = webContents.fromId(state.previouslyFocusedId);
-              if (previous && !previous.isDestroyed()) {
-                yield* attempt(
-                  {
-                    operation: "remoteInput.restoreFocusedWebContents",
-                    tabId,
-                    webContentsId: previous.id,
-                  },
-                  () => previous.focus(),
-                ).pipe(Effect.ignore);
-              }
-            }
-            yield* Ref.update(inputStateOwnerRef, (owners) =>
-              replaceMap(owners, (copy) => {
-                copy.delete(tabId);
-              }),
-            );
-          }
-        }),
-      )
-      .pipe(Effect.ignore);
+    yield* releaseLeaseHeldState(tabId, leaseId, state.ledger, {
+      releaseFocus: state.focusClaimed,
+      previouslyFocusedId: state.previouslyFocusedId,
+    });
+  });
+
+  /**
+   * Ordered held-state release WITHOUT ending the lease: used when the
+   * session geometry changes (design §3.7) so stale up events cannot strand
+   * keys/buttons across the geometry bump. Focus is left claimed.
+   */
+  const releaseRemoteInputHeld = Effect.fn("PreviewManager.releaseRemoteInputHeld")(function* (
+    tabId: string,
+  ) {
+    const states = yield* SynchronizedRef.get(remoteInputStatesRef);
+    yield* Effect.forEach(
+      Array.from(states.entries()).filter(([key]) => key.startsWith(`${tabId} `)),
+      ([key, state]) => releaseLeaseHeldState(tabId, key.slice(tabId.length + 1), state.ledger),
+      { discard: true },
+    );
   });
 
   const releaseAllRemoteInput = Effect.fn("PreviewManager.releaseAllRemoteInput")(function* (
@@ -4763,6 +5008,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       Array.from(states.keys()).filter((key) => key.startsWith(`${tabId} `)),
       (key) => releaseRemoteInput(tabId, key.slice(tabId.length + 1)),
       { discard: true },
+    );
+    yield* SynchronizedRef.update(remoteGuestInputLedgersRef, (ledgers) =>
+      replaceMap(ledgers, (copy) => {
+        copy.delete(tabId);
+      }),
     );
   });
 
@@ -4839,6 +5089,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       subscribe(recordingFrameListenersRef, listener),
     subscribeRemoteFrames: (listener: RemoteFrameListener) =>
       subscribe(remoteFrameListenersRef, listener),
+    releaseRemoteInputHeld,
     subscribeStateChanges: (listener: Listener) => subscribe(listenersRef, listener),
     remoteFrameSessions,
     remoteFrameConfig,
@@ -5268,6 +5519,8 @@ export class PreviewManager extends Context.Service<
         readonly width: number;
         readonly height: number;
         readonly engineGeneration: string;
+        readonly viewportCss: { readonly width: number; readonly height: number };
+        readonly geometryKey: string;
       },
       PreviewManagerError
     >;
@@ -5276,10 +5529,17 @@ export class PreviewManager extends Context.Service<
     readonly dispatchRemoteInput: (
       tabId: string,
       leaseId: string,
+      engineGeneration: string,
       event: BrowserFrameInputEvent,
       viewportCss: { readonly width: number; readonly height: number } | null,
     ) => Effect.Effect<void, PreviewManagerError>;
     readonly releaseRemoteInput: (tabId: string, leaseId: string) => Effect.Effect<void>;
+    /**
+     * Ordered held-state release across every remote-input lease on the tab,
+     * keeping the leases alive. Called on a geometry bump before the new
+     * geometry is advertised (design §3.7).
+     */
+    readonly releaseRemoteInputHeld: (tabId: string) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/preview/Manager/PreviewManager") {}
 
@@ -5378,6 +5638,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     stopRemoteCapture: operations.stopRemoteCapture,
     dispatchRemoteInput: operations.dispatchRemoteInput,
     releaseRemoteInput: operations.releaseRemoteInput,
+    releaseRemoteInputHeld: operations.releaseRemoteInputHeld,
   });
 }).pipe(Effect.withSpan("PreviewManager.make"));
 

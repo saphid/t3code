@@ -4,14 +4,18 @@
  *
  * Serves JPEG/MJPEG frames and a JSON input socket for the preview tabs this
  * Electron host owns, mirroring the device-hub shape: bound to 127.0.0.1 on
- * an ephemeral port, no auth of its own — the only caller is the app's own
- * `BrowserFrameProxy`, which injects the verified session tuple and lease
- * binding as `x-t3-*` URL params. Everything else about authority (lease
- * minting, revocation, principal binding) lives server-side.
+ * an ephemeral port and authenticated with a per-boot shared `secret` — the
+ * only caller is the app's own `BrowserFrameProxy`, which receives the
+ * `{origin, secret}` pair through host registration and injects the verified
+ * session tuple and lease binding as `x-t3-*` URL params. Everything else
+ * about authority (lease minting, revocation, principal binding) lives
+ * server-side; the secret is what makes loopback non-authoritative-by-
+ * omission rather than non-authoritative-by-accident.
  *
  * Actions never cross this surface: input packets map onto CDP `Input.*`
  * through the Manager's human lane only.
  */
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 
@@ -37,6 +41,7 @@ const GEOMETRY_POLL_MS = 1_000;
 const INPUT_CLOSE_CODE = 4000;
 
 const SESSION_PATH = /^\/sessions$/;
+const HEALTH_PATH = /^\/health$/;
 const SESSION_LEAF_PATH = /^\/sessions\/([^/]+)\/(stream\.mjpeg|snapshot|config)$/;
 const SESSION_INPUT_PATH = /^\/sessions\/([^/]+)\/input$/;
 
@@ -48,7 +53,7 @@ interface AssertedSession {
 
 interface HubGeometry {
   seq: number;
-  /** `engineGeneration:cssWxcssH`; a change bumps `seq`. */
+  /** Capture/config-derived `generation:cssWxcssH@zoom`; a change bumps `seq`. */
   key: string;
 }
 
@@ -56,6 +61,8 @@ interface SessionActivity {
   viewers: number;
   input: HubInputSocket | null;
   geometry: HubGeometry | null;
+  /** Latest capture-loop frame — seeds newly attached viewers (F9). */
+  latestFrame: PreviewManager.RemoteLiveFrame | null;
   lastFrame: { readonly width: number; readonly height: number; readonly seq: number } | null;
   /** Latest config-derived css viewport, asserted to input dispatch. */
   viewportCss: { readonly width: number; readonly height: number } | null;
@@ -65,7 +72,7 @@ interface HubInputSocket {
   readonly runtimeTabId: string;
   readonly leaseId: string;
   readonly expiresAt: number;
-  readonly engineGeneration: string | null;
+  readonly engineGeneration: string;
   readonly socket: WebSocket;
   state: "bound" | "live" | "closing" | "ended";
   lastSeq: number;
@@ -87,6 +94,12 @@ export class BrowserFrameHub extends Context.Service<
   {
     /** Loopback origin like `http://127.0.0.1:49300`. */
     readonly origin: string;
+    /**
+     * Per-boot shared secret the proxy presents as `x-t3-hub-auth`. It is
+     * delivered to the server broker inside host registration, which the
+     * broker stores but never exposes to viewers.
+     */
+    readonly secret: string;
   }
 >()("@t3tools/desktop/preview/FrameHub/BrowserFrameHub") {}
 
@@ -162,6 +175,24 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const secret = randomBytes(32).toString("hex");
+  const secretDigest = createHash("sha256").update(secret).digest();
+  /** Constant-time check via a digest so header length never leaks the secret. */
+  const authorized = (req: IncomingMessage): boolean => {
+    const presented = req.headers["x-t3-hub-auth"];
+    let value = Array.isArray(presented) ? presented[0] : presented;
+    // Node's WebSocket cannot set upgrade headers, so the proxy's input
+    // socket authenticates via query — loopback only, same threat class.
+    if (typeof value !== "string" || value.length === 0) {
+      value =
+        req.url !== undefined
+          ? (new URL(req.url, "http://127.0.0.1").searchParams.get("x-t3-hub-auth") ?? undefined)
+          : undefined;
+    }
+    if (typeof value !== "string" || value.length === 0) return false;
+    return timingSafeEqual(createHash("sha256").update(value).digest(), secretDigest);
+  };
+
   const activities = new Map<string, SessionActivity>();
   const activityFor = (runtimeTabId: string): SessionActivity => {
     const existing = activities.get(runtimeTabId);
@@ -170,6 +201,7 @@ const make = Effect.gen(function* () {
       viewers: 0,
       input: null,
       geometry: null,
+      latestFrame: null,
       lastFrame: null,
       viewportCss: null,
     };
@@ -182,165 +214,13 @@ const make = Effect.gen(function* () {
     try {
       socket.socket.send(JSON.stringify(notice));
     } catch {
-      // A dead socket is handled by its close path.
+      // A dead socket is handled by its own close path.
     }
   };
 
   const rejectPacket = (socket: HubInputSocket, seq: number, reason: string): void => {
     socket.rejected += 1;
     sendNotice(socket, { type: "rejected", seq, reason });
-  };
-
-  /**
-   * Recompute the session's geometry sequence from authoritative config.
-   * Bumps `geometrySeq` when the guest viewport or engine generation changed
-   * and pushes the notice onto the bound input socket — `<img>`-path senders
-   * never see part headers, so the socket is their only geometry source.
-   */
-  const refreshGeometry = (runtimeTabId: string): Promise<number | null> =>
-    runPromise(manager.remoteFrameConfig(runtimeTabId))
-      .then((config) => {
-        const activity = activities.get(runtimeTabId);
-        if (!activity) return null;
-        activity.viewportCss = config.viewportCss;
-        const key = `${config.engineGeneration}:${config.viewportCss.width}x${config.viewportCss.height}`;
-        if (activity.geometry === null || activity.geometry.key !== key) {
-          const seq = (activity.geometry?.seq ?? -1) + 1;
-          activity.geometry = { seq, key };
-          const input = activity.input;
-          if (input && (input.state === "bound" || input.state === "live")) {
-            sendNotice(input, { type: "geometry", geometrySeq: seq });
-          }
-        }
-        return activity.geometry.seq;
-      })
-      .catch(() => null);
-
-  // Geometry changes are infrequent (guest resize, engine swap) but must be
-  // fenced promptly: while anything watches or controls a session, poll its
-  // authoritative geometry once a second.
-  const geometryPoller = startGeometryPoller(activities, refreshGeometry);
-
-  // One Manager subscription fans frames out to every connected stream. The
-  // seq stamped on each part is capture-scoped, so viewers see identical
-  // sequences and gaps mean capture-side drops.
-  const streamListeners = new Map<string, Set<(frame: PreviewManager.RemoteLiveFrame) => void>>();
-  yield* manager.subscribeRemoteFrames((frame) =>
-    Effect.sync(() => {
-      const activity = activities.get(frame.tabId);
-      if (activity) {
-        activity.lastFrame = { width: frame.width, height: frame.height, seq: frame.seq };
-      }
-      const listeners = streamListeners.get(frame.tabId);
-      if (!listeners) return;
-      for (const listener of listeners) {
-        try {
-          listener(frame);
-        } catch {
-          // A failing stream is cleaned up by its own close path.
-        }
-      }
-    }),
-  );
-
-  const writeFramePart = (res: ServerResponse, frame: PreviewManager.RemoteLiveFrame): boolean =>
-    res.write(
-      Buffer.concat([
-        Buffer.from(
-          `--${MJPEG_BOUNDARY}\r\n` +
-            `Content-Type: image/jpeg\r\n` +
-            `Content-Length: ${frame.jpeg.byteLength}\r\n` +
-            `X-Frame-Seq: ${frame.seq}\r\n` +
-            `X-Engine-Generation: ${frame.engineGeneration}\r\n` +
-            `X-Session-Key: ${encodeURIComponent(frame.tabId)}\r\n` +
-            `X-Geometry-Seq: ${activities.get(frame.tabId)?.geometry?.seq ?? 0}\r\n` +
-            `X-Frame-Width: ${frame.width}\r\n` +
-            `X-Frame-Height: ${frame.height}\r\n\r\n`,
-          "utf8",
-        ),
-        frame.jpeg,
-        Buffer.from("\r\n", "utf8"),
-      ]),
-    );
-
-  const handleStream = (
-    req: IncomingMessage,
-    res: ServerResponse,
-    asserted: AssertedSession,
-    engineGeneration: string | null,
-    expiresAt: number | null,
-  ): void => {
-    const { runtimeTabId } = asserted;
-    void runPromise(
-      Effect.gen(function* () {
-        const config = yield* manager.remoteFrameConfig(runtimeTabId);
-        if (engineGeneration !== null && config.engineGeneration !== engineGeneration) {
-          return "engine-generation-mismatch" as const;
-        }
-        yield* manager.startRemoteCapture(runtimeTabId);
-        return null;
-      }),
-    )
-      .then((mismatch) => {
-        if (mismatch !== null) {
-          writeJson(res, 409, { error: mismatch });
-          return;
-        }
-        return refreshGeometry(runtimeTabId).then(() => {
-          if (res.destroyed || res.closed) return;
-          const activity = activityFor(runtimeTabId);
-          activity.viewers += 1;
-          let pending: PreviewManager.RemoteLiveFrame | null = null;
-          let backpressured = false;
-          const listener = (frame: PreviewManager.RemoteLiveFrame): void => {
-            // Latest-wins under backpressure: keep only the newest unwritten
-            // frame rather than buffering a queue behind a slow client.
-            if (backpressured) {
-              pending = frame;
-              return;
-            }
-            if (!writeFramePart(res, frame)) {
-              backpressured = true;
-            }
-          };
-          res.on("drain", () => {
-            backpressured = false;
-            if (pending === null) return;
-            const frame = pending;
-            pending = null;
-            if (!writeFramePart(res, frame)) backpressured = true;
-          });
-          const listeners = streamListeners.get(runtimeTabId) ?? new Set();
-          listeners.add(listener);
-          streamListeners.set(runtimeTabId, listeners);
-          let expiryTimer: NodeJS.Timeout | null = null;
-          if (expiresAt !== null) {
-            expiryTimer = setTimeout(() => res.end(), Math.max(0, expiresAt - Date.now()));
-            expiryTimer.unref();
-          }
-          res.writeHead(200, {
-            "content-type": `multipart/x-mixed-replace; boundary=${MJPEG_BOUNDARY}`,
-            "cache-control": "no-store, no-transform",
-            "x-accel-buffering": "no",
-          });
-          const cleanup = (): void => {
-            if (expiryTimer !== null) clearTimeout(expiryTimer);
-            listeners.delete(listener);
-            activity.viewers = Math.max(0, activity.viewers - 1);
-            if (activity.viewers === 0) {
-              runFork(manager.stopRemoteCapture(runtimeTabId).pipe(Effect.ignore));
-            }
-          };
-          res.on("close", cleanup);
-          res.on("error", cleanup);
-        });
-      })
-      .catch((error: unknown) => {
-        writeJson(res, 404, {
-          error: "session-not-found",
-          message: error instanceof Error ? error.message : "Session is not streamable.",
-        });
-      });
   };
 
   const tryClose = (ws: WebSocket, reason: string): void => {
@@ -359,7 +239,8 @@ const make = Effect.gen(function* () {
         tryClose(socket.socket, reason);
       }
       clearTimeout(socket.expiryTimer);
-      // Held-input cleanup joins the lease's own lane behind queued sends.
+      // Held-input cleanup joins the guest ledger's lane behind queued sends
+      // and targets the lease's bound generation, never a replacement guest.
       yield* manager.releaseRemoteInput(socket.runtimeTabId, socket.leaseId);
       socket.state = "ended";
       const activity = activities.get(socket.runtimeTabId);
@@ -377,12 +258,260 @@ const make = Effect.gen(function* () {
       }
     });
 
+  /**
+   * Observe a geometry key (from a frame stamp or a config read) and advance
+   * the session's `geometrySeq` when it changed. Ordering matters: on a
+   * geometry bump the held-input release runs BEFORE the `geometry` notice
+   * is advertised, so no stale up event can strand a key across the bump; on
+   * an engine-generation change the input socket ends instead.
+   */
+  const observeGeometryKey = (runtimeTabId: string, key: string): Promise<number | null> => {
+    const activity = activities.get(runtimeTabId);
+    if (!activity) return Promise.resolve(null);
+    if (activity.geometry !== null && activity.geometry.key === key) {
+      return Promise.resolve(activity.geometry.seq);
+    }
+    const generation = key.slice(0, key.indexOf(":"));
+    const input = activity.input;
+    const inputLive = input !== null && (input.state === "bound" || input.state === "live");
+    if (inputLive && input.engineGeneration !== generation) {
+      // Guest replacement ends the socket outright — a geometry notice cannot
+      // rebase a lease bound to a dead engine generation.
+      return runPromise(endSocket(input, "replaced")).then(() => activity.geometry?.seq ?? null);
+    }
+    const seq = (activity.geometry?.seq ?? -1) + 1;
+    activity.geometry = { seq, key };
+    if (inputLive) {
+      return runPromise(manager.releaseRemoteInputHeld(runtimeTabId).pipe(Effect.ignore)).then(
+        () => {
+          sendNotice(input, { type: "geometry", geometrySeq: seq });
+          return seq;
+        },
+      );
+    }
+    return Promise.resolve(seq);
+  };
+
+  /**
+   * Recompute the session's geometry sequence from authoritative config —
+   * the polling path for sessions whose input socket needs geometry without
+   * an attached frame stream. Frame stamps drive the same `observeGeometryKey`
+   * path so both stay consistent.
+   */
+  const refreshGeometry = (runtimeTabId: string): Promise<number | null> =>
+    runPromise(manager.remoteFrameConfig(runtimeTabId))
+      .then((config) => {
+        const activity = activities.get(runtimeTabId);
+        if (!activity) return null;
+        activity.viewportCss = config.viewportCss;
+        return observeGeometryKey(
+          runtimeTabId,
+          PreviewManager.remoteFrameGeometryKey(
+            config.engineGeneration,
+            config.viewportCss,
+            config.zoomFactor,
+          ),
+        );
+      })
+      .catch(() => null);
+
+  // Geometry changes are infrequent (guest resize, engine swap) but must be
+  // fenced promptly: while anything watches or controls a session, poll its
+  // authoritative geometry once a second.
+  const geometryPoller = startGeometryPoller(activities, refreshGeometry);
+
+  // One Manager subscription fans frames out to every connected stream. The
+  // seq stamped on each part is capture-scoped, so viewers see identical
+  // sequences and gaps mean capture-side drops.
+  const streamListeners = new Map<string, Set<(frame: PreviewManager.RemoteLiveFrame) => void>>();
+  yield* manager.subscribeRemoteFrames((frame) =>
+    Effect.sync(() => {
+      const activity = activities.get(frame.tabId);
+      if (activity) {
+        activity.latestFrame = frame;
+        activity.lastFrame = { width: frame.width, height: frame.height, seq: frame.seq };
+      }
+      // Frame geometry stamps drive geometrySeq; the notice (and any held
+      // release) is handled inside observeGeometryKey.
+      void observeGeometryKey(frame.tabId, frame.geometryKey);
+      const listeners = streamListeners.get(frame.tabId);
+      if (!listeners) return;
+      for (const listener of listeners) {
+        try {
+          listener(frame);
+        } catch {
+          // A failing stream is cleaned up by its own close path.
+        }
+      }
+    }),
+  );
+
+  const writeFramePart = (
+    res: ServerResponse,
+    frame: PreviewManager.RemoteLiveFrame,
+    geometrySeq: number,
+  ): boolean =>
+    res.write(
+      Buffer.concat([
+        Buffer.from(
+          `--${MJPEG_BOUNDARY}\r\n` +
+            `Content-Type: image/jpeg\r\n` +
+            `Content-Length: ${frame.jpeg.byteLength}\r\n` +
+            `X-Frame-Seq: ${frame.seq}\r\n` +
+            `X-Engine-Generation: ${frame.engineGeneration}\r\n` +
+            `X-Session-Key: ${encodeURIComponent(frame.tabId)}\r\n` +
+            `X-Geometry-Seq: ${geometrySeq}\r\n` +
+            `X-Frame-Width: ${frame.width}\r\n` +
+            `X-Frame-Height: ${frame.height}\r\n\r\n`,
+          "utf8",
+        ),
+        frame.jpeg,
+        Buffer.from("\r\n", "utf8"),
+      ]),
+    );
+
+  const handleStream = (
+    req: IncomingMessage,
+    res: ServerResponse,
+    asserted: AssertedSession,
+    engineGeneration: string | null,
+    expiresAt: number | null,
+  ): void => {
+    const { runtimeTabId } = asserted;
+    const activity = activityFor(runtimeTabId);
+    const geometrySeqFor = (frame: PreviewManager.RemoteLiveFrame): number => {
+      const geometry = activities.get(frame.tabId)?.geometry;
+      return geometry?.key === frame.geometryKey ? geometry.seq : (geometry?.seq ?? 0);
+    };
+    let pending: PreviewManager.RemoteLiveFrame | null = null;
+    let backpressured = false;
+    const listener = (frame: PreviewManager.RemoteLiveFrame): void => {
+      // Latest-wins under backpressure: keep only the newest unwritten
+      // frame rather than buffering a queue behind a slow client.
+      if (backpressured) {
+        pending = frame;
+        return;
+      }
+      if (!writeFramePart(res, frame, geometrySeqFor(frame))) {
+        backpressured = true;
+      }
+    };
+    // One idempotent teardown for the whole response lifetime, attached
+    // BEFORE any async work: `close` and `error` can both fire, and a client
+    // that disconnects during startup still owes the viewer decrement and —
+    // when it was the last — the capture stop.
+    let counted = false;
+    let cleanedUp = false;
+    let expiryTimer: NodeJS.Timeout | null = null;
+    const cleanup = (): void => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      if (expiryTimer !== null) clearTimeout(expiryTimer);
+      streamListeners.get(runtimeTabId)?.delete(listener);
+      pending = null;
+      if (!counted) return;
+      counted = false;
+      activity.viewers = Math.max(0, activity.viewers - 1);
+      if (activity.viewers === 0) {
+        activity.latestFrame = null;
+        runFork(manager.stopRemoteCapture(runtimeTabId).pipe(Effect.ignore));
+      }
+    };
+    res.on("close", cleanup);
+    res.on("error", cleanup);
+    res.on("drain", () => {
+      backpressured = false;
+      if (pending === null) return;
+      const frame = pending;
+      pending = null;
+      if (!writeFramePart(res, frame, geometrySeqFor(frame))) backpressured = true;
+    });
+
+    void runPromise(
+      Effect.gen(function* () {
+        const config = yield* manager.remoteFrameConfig(runtimeTabId);
+        if (engineGeneration !== null && config.engineGeneration !== engineGeneration) {
+          return "engine-generation-mismatch" as const;
+        }
+        if (res.destroyed || res.closed) return "client-gone" as const;
+        // Register the listener and count the viewer BEFORE starting capture:
+        // the initial frame must reach this subscriber even when its bytes
+        // dedupe against the capture session's lastDeliveredFrame.
+        yield* Effect.sync(() => {
+          const listeners = streamListeners.get(runtimeTabId) ?? new Set();
+          listeners.add(listener);
+          streamListeners.set(runtimeTabId, listeners);
+          activity.viewers += 1;
+          counted = true;
+        });
+        yield* manager.startRemoteCapture(runtimeTabId);
+        return null;
+      }),
+    )
+      .then((mismatch) => {
+        if (mismatch === "engine-generation-mismatch") {
+          writeJson(res, 409, { error: mismatch });
+          return;
+        }
+        if (mismatch !== null || res.destroyed || res.closed || cleanedUp) {
+          // The client died during startup (or never started): the attached
+          // cleanup already ran or will run on the pending close.
+          cleanup();
+          return;
+        }
+        return refreshGeometry(runtimeTabId).then(() => {
+          if (res.destroyed || res.closed || cleanedUp) return;
+          if (expiresAt !== null) {
+            expiryTimer = setTimeout(() => res.end(), Math.max(0, expiresAt - Date.now()));
+            expiryTimer.unref();
+          }
+          res.writeHead(200, {
+            "content-type": `multipart/x-mixed-replace; boundary=${MJPEG_BOUNDARY}`,
+            "cache-control": "no-store, no-transform",
+            "x-accel-buffering": "no",
+          });
+          // Seed the new viewer immediately: unchanged content is deduped
+          // capture-side, so without a seed a joiner waits for the next edit.
+          const seed = activity.latestFrame;
+          if (seed !== null) {
+            listener(seed);
+          } else {
+            void runPromise(manager.captureFrameJpeg(runtimeTabId))
+              .then((frame) => {
+                if (res.destroyed || res.closed || cleanedUp) return;
+                const seeded: PreviewManager.RemoteLiveFrame = {
+                  tabId: runtimeTabId,
+                  seq: activities.get(runtimeTabId)?.lastFrame?.seq ?? 0,
+                  jpeg: frame.jpeg,
+                  width: frame.width,
+                  height: frame.height,
+                  engineGeneration: frame.engineGeneration,
+                  geometryKey: frame.geometryKey,
+                };
+                void observeGeometryKey(runtimeTabId, seeded.geometryKey).then(() =>
+                  listener(seeded),
+                );
+              })
+              .catch(() => {
+                // No seed — the capture loop delivers the first frame.
+              });
+          }
+        });
+      })
+      .catch((error: unknown) => {
+        writeJson(res, 404, {
+          error: "session-not-found",
+          message: error instanceof Error ? error.message : "Session is not streamable.",
+        });
+      });
+  };
+
   const bindInputSocket = (
     ws: WebSocket,
     asserted: AssertedSession,
     leaseId: string,
     expiresAt: number,
-    engineGeneration: string | null,
+    engineGeneration: string,
   ): void => {
     const { runtimeTabId } = asserted;
     const activity = activityFor(runtimeTabId);
@@ -460,20 +589,28 @@ const make = Effect.gen(function* () {
       socket.tokens -= 1;
       socket.state = "live";
       runFork(
-        manager.dispatchRemoteInput(runtimeTabId, leaseId, packet.event, activity.viewportCss).pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("Remote input dispatch failed.", {
-              leaseId,
-              error,
-            }).pipe(
-              Effect.andThen(
-                Effect.sync(() => {
-                  socket.dispatchFailures += 1;
-                }),
+        manager
+          .dispatchRemoteInput(
+            runtimeTabId,
+            leaseId,
+            socket.engineGeneration,
+            packet.event,
+            activity.viewportCss,
+          )
+          .pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("Remote input dispatch failed.", {
+                leaseId,
+                error,
+              }).pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    socket.dispatchFailures += 1;
+                  }),
+                ),
               ),
             ),
           ),
-        ),
       );
     });
     ws.on("close", () => runFork(endSocket(socket, "closing")));
@@ -486,12 +623,16 @@ const make = Effect.gen(function* () {
     head: Buffer,
     wss: WebSocketServer,
   ): void => {
-    const url = new URL(req.url ?? "/", "http://127.0.0.1");
-    const match = SESSION_INPUT_PATH.exec(url.pathname);
     const reject = (): void => {
       socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
       socket.destroy();
     };
+    if (!authorized(req)) {
+      reject();
+      return;
+    }
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    const match = SESSION_INPUT_PATH.exec(url.pathname);
     if (!match) {
       socket.destroy();
       return;
@@ -540,10 +681,19 @@ const make = Effect.gen(function* () {
   };
 
   const handleRequest = (req: IncomingMessage, res: ServerResponse): void => {
+    if (!authorized(req)) {
+      writeJson(res, 403, { error: "unauthorized" });
+      return;
+    }
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const pathname = url.pathname;
     if (req.method !== "GET") {
       writeJson(res, 405, { error: "method-not-allowed" });
+      return;
+    }
+
+    if (HEALTH_PATH.test(pathname)) {
+      writeJson(res, 200, { service: "t3.browser-frame-hub" });
       return;
     }
 
@@ -610,7 +760,7 @@ const make = Effect.gen(function* () {
     if (leaf[2] === "snapshot") {
       void runPromise(manager.captureFrameJpeg(asserted.runtimeTabId))
         .then(async (frame) => {
-          const geometrySeq = await refreshGeometry(asserted.runtimeTabId);
+          const geometrySeq = await observeGeometryKey(asserted.runtimeTabId, frame.geometryKey);
           res.writeHead(200, {
             "content-type": "image/jpeg",
             "content-length": frame.jpeg.byteLength,
@@ -637,7 +787,16 @@ const make = Effect.gen(function* () {
           writeJson(res, 409, { error: "engine-generation-mismatch" });
           return;
         }
-        const geometrySeq = await refreshGeometry(asserted.runtimeTabId);
+        const activity = activityFor(asserted.runtimeTabId);
+        activity.viewportCss = config.viewportCss;
+        const geometrySeq = await observeGeometryKey(
+          asserted.runtimeTabId,
+          PreviewManager.remoteFrameGeometryKey(
+            config.engineGeneration,
+            config.viewportCss,
+            config.zoomFactor,
+          ),
+        );
         writeJson(res, 200, {
           ...asserted.tuple,
           engineGeneration: config.engineGeneration,
@@ -696,7 +855,7 @@ const make = Effect.gen(function* () {
 
   const address = server.address();
   const port = typeof address === "object" && address !== null ? address.port : 0;
-  return BrowserFrameHub.of({ origin: `http://127.0.0.1:${port}` });
+  return BrowserFrameHub.of({ origin: `http://127.0.0.1:${port}`, secret });
 }).pipe(Effect.withSpan("BrowserFrameHub.make"));
 
 export const layer = Layer.effect(BrowserFrameHub, make);

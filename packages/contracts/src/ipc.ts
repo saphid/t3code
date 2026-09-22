@@ -1411,11 +1411,13 @@ export interface DesktopPreviewBridge {
   };
   frames: {
     /**
-     * Loopback origin of the browser-frame hub this desktop serves
-     * (`t3.browser/frames`), e.g. `http://127.0.0.1:49152`. `null` when the
-     * hub is unavailable.
+     * Loopback endpoint of the browser-frame hub this desktop serves
+     * (`t3.browser/frames`): canonical origin plus the shared secret that
+     * authorizes the proxy-to-hub hop. `null` when the hub is unavailable.
+     * The secret is forwarded to the server inside the automation-host
+     * registration; it is never exposed to viewers.
      */
-    hubOrigin: () => Promise<string | null>;
+    hubEndpoint: () => Promise<{ readonly origin: string; readonly secret: string } | null>;
   };
   recording: {
     startScreencast: (tabId: string) => Promise<void>;

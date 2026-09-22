@@ -22,6 +22,7 @@ import {
   BROWSER_FRAMES,
   BROWSER_SURFACE,
   browserFramesApi,
+  resourcesLeaseApi,
   type BrowserFramesViewState,
   type BrowserSurfaceAcquireResult,
   type BrowserSurfaceDenial,
@@ -29,6 +30,7 @@ import {
   type BrowserSurfaceRect,
   type BrowserSurfaceSessionRef,
 } from "./catalogue.js";
+import { validateContext } from "./contracts.js";
 
 export type RestoreFieldType = "boolean" | "number" | "string";
 export interface RestoreStateSchema {
@@ -652,6 +654,33 @@ export function useRemoteBrowserFrames(
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
     const api = bindApi(browserFramesApi, host, session.context);
+    const leases = bindApi(resourcesLeaseApi, host, session.context);
+    // The frames mints require held-presentation evidence: a `browser-surface`
+    // claim minted through `t3.resources/lease` for this exact session tuple.
+    // Minted per call so a renewal never presents an expired claim.
+    const mintSurfaceLease = async (): Promise<string | null> => {
+      try {
+        const context = validateContext(session.context);
+        const threadId = context.resource.threadId;
+        if (!threadId) return null;
+        const mint = await leases.invoke(
+          "createPresentationUrl",
+          {
+            resource: {
+              _tag: "browser-surface",
+              threadId,
+              tabId: target.tabId,
+              serverEpoch: target.serverEpoch,
+              allowedCommands: ["attach", "present", "release"],
+            },
+          },
+          signal,
+        );
+        return mint.url;
+      } catch {
+        return null;
+      }
+    };
     let detach: () => void = () => {};
     let inputLeaseId: string | null = null;
     void (async () => {
@@ -680,11 +709,14 @@ export function useRemoteBrowserFrames(
         signal,
         openStream: async () => {
           try {
+            const surfaceLease = await mintSurfaceLease();
+            if (surfaceLease === null) return null;
             const descriptor = await api.invoke(
               "openStream",
               {
                 tabId: target.tabId,
                 serverEpoch: target.serverEpoch,
+                surfaceLease,
                 expectedEngineGeneration: sessionRef.current?.engineGeneration ?? null,
               },
               signal,
@@ -696,11 +728,14 @@ export function useRemoteBrowserFrames(
         },
         openInput: async () => {
           try {
+            const surfaceLease = await mintSurfaceLease();
+            if (surfaceLease === null) return null;
             const lease = await api.invoke(
               "openInput",
               {
                 tabId: target.tabId,
                 serverEpoch: target.serverEpoch,
+                surfaceLease,
                 expectedEngineGeneration: sessionRef.current?.engineGeneration ?? null,
               },
               signal,

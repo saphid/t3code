@@ -287,34 +287,41 @@ export function PreviewAutomationHosts() {
 }
 
 /**
- * Resolves the loopback frame-hub origin before mounting the host so the
+ * Resolves the loopback frame-hub endpoint before mounting the host so the
  * broker sees exactly one registration carrying `frameHub` — re-registering
- * to add it later would churn the automation request stream.
+ * to add it later would churn the automation request stream. The endpoint
+ * carries the hub's shared secret; it travels inside the registration to the
+ * server and is never forwarded to viewers.
  */
 function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId }) {
   const { environmentId } = props;
-  const [frameHubOrigin, setFrameHubOrigin] = useState<string | null | undefined>(undefined);
+  const [frameHub, setFrameHub] = useState<
+    { readonly origin: string; readonly secret: string } | null | undefined
+  >(undefined);
   useEffect(() => {
     let cancelled = false;
-    void previewBridge?.frames
-      .hubOrigin()
-      .then((origin) => !cancelled && setFrameHubOrigin(origin))
-      .catch(() => !cancelled && setFrameHubOrigin(null));
+    if (previewBridge?.frames === undefined) {
+      // No desktop bridge — the host registers without frame capability.
+      setFrameHub(null);
+      return;
+    }
+    void previewBridge.frames
+      .hubEndpoint()
+      .then((endpoint) => !cancelled && setFrameHub(endpoint))
+      .catch(() => !cancelled && setFrameHub(null));
     return () => {
       cancelled = true;
     };
   }, []);
-  if (frameHubOrigin === undefined) return null;
-  return (
-    <PreviewAutomationHostInner environmentId={environmentId} frameHubOrigin={frameHubOrigin} />
-  );
+  if (frameHub === undefined) return null;
+  return <PreviewAutomationHostInner environmentId={environmentId} frameHub={frameHub} />;
 }
 
 function PreviewAutomationHostInner(props: {
   readonly environmentId: EnvironmentId;
-  readonly frameHubOrigin: string | null;
+  readonly frameHub: { readonly origin: string; readonly secret: string } | null;
 }) {
-  const { environmentId, frameHubOrigin } = props;
+  const { environmentId, frameHub } = props;
   const registry = useContext(RegistryContext);
   const [automationClientId] = useState(createPreviewAutomationClientId);
   const initialAutomationHost = useMemo<PreviewAutomationHostState>(
@@ -322,9 +329,9 @@ function PreviewAutomationHostInner(props: {
       clientId: automationClientId,
       environmentId,
       supportedOperations: [...PREVIEW_AUTOMATION_OPERATIONS],
-      ...(frameHubOrigin === null ? {} : { frameHub: { origin: frameHubOrigin } }),
+      ...(frameHub === null ? {} : { frameHub }),
     }),
-    [automationClientId, environmentId, frameHubOrigin],
+    [automationClientId, environmentId, frameHub],
   );
   const automationRequestsAtom = previewEnvironment.automationRequests({
     environmentId,

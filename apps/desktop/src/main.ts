@@ -155,7 +155,7 @@ const desktopServerExposureLayer = DesktopServerExposure.layer.pipe(
 const desktopPreviewLayer = PreviewManager.layer.pipe(
   // Merged rather than provided so the IPC handlers can reach the import
   // service alongside the manager; both sit on the same BrowserSession. The
-  // frame hub is merged for the same reason — `preview.frames.hubOrigin`
+  // frame hub is merged for the same reason — `preview.frames.hubEndpoint`
   // reaches it through the IPC handler context. It provides the manager
   // internally; layer memoization keeps it the same instance.
   Layer.provideMerge(BrowserImport.layer.pipe(Layer.provide(LinuxBrowserSecret.layer))),

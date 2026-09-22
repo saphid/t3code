@@ -27,6 +27,12 @@ export interface DesktopPreviewOverlay {
   loading: boolean;
   zoomFactor: number;
   pictureInPicture: boolean;
+  /**
+   * A remote `t3.browser/frames` viewer is attached. Counts as compositor
+   * activity: the guest must keep painting even while the local panel is
+   * inactive so the hub's captures stay live.
+   */
+  remoteLive: boolean;
   colorScheme: DesktopPreviewColorScheme;
   audioMuted: boolean;
   audible: boolean;
@@ -400,6 +406,7 @@ function isPreviewStateEqual(
       previous.loading === next.loading &&
       previous.zoomFactor === next.zoomFactor &&
       previous.pictureInPicture === next.pictureInPicture &&
+      previous.remoteLive === next.remoteLive &&
       previous.colorScheme === next.colorScheme &&
       previous.audioMuted === next.audioMuted &&
       previous.audible === next.audible &&

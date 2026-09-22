@@ -381,15 +381,17 @@ export const copyArtifactToClipboard = DesktopIpc.makeIpcMethod({
 /**
  * Registered separately from `methods`: it carries `BrowserFrameHub` in its
  * context rather than `PreviewManager`, so it does not unify with the shared
- * loop in `DesktopIpcHandlers`.
+ * loop in `DesktopIpcHandlers`. Returns the loopback origin AND the hub
+ * secret — the renderer forwards both inside the automation-host
+ * registration; the broker stores the secret server-side only.
  */
-export const frameHubOrigin = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.PREVIEW_FRAME_HUB_ORIGIN_CHANNEL,
+export const frameHubEndpoint = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_FRAME_HUB_CHANNEL,
   payload: Schema.Void,
-  result: Schema.NullOr(Schema.String),
-  handler: Effect.fn("desktop.ipc.preview.frameHubOrigin")(function* () {
+  result: Schema.NullOr(Schema.Struct({ origin: Schema.String, secret: Schema.String })),
+  handler: Effect.fn("desktop.ipc.preview.frameHubEndpoint")(function* () {
     const hub = yield* BrowserFrameHub.BrowserFrameHub;
-    return hub.origin;
+    return { origin: hub.origin, secret: hub.secret };
   }),
 });
 

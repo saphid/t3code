@@ -19,6 +19,9 @@ import {
 } from "./baseSchemas.ts";
 import { PreviewTabId } from "./preview.ts";
 
+/** The authenticated server-side proxy route root; the hub lives behind it. */
+export const BROWSER_FRAMES_ROUTE_PREFIX = "/api/browser-frames";
+
 export const BROWSER_FRAME_TICKET_TTL_MS = 5 * 60 * 1000;
 export const BROWSER_FRAME_INPUT_PACKET_MAX_BYTES = 8 * 1024;
 /** Per-lease sustained input rate; bursts above are rejected as `rate-limited`. */
@@ -101,6 +104,7 @@ export const BrowserFrameInputRejectReason = Schema.Literals([
   "stale-geometry",
   "expired",
   "rate-limited",
+  "backpressured",
   "oversized",
   "replay",
   "closing",

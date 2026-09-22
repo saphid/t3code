@@ -31,10 +31,12 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 
@@ -51,8 +53,45 @@ export interface BrowserFrameHubEndpoint {
   readonly clientId: string;
   readonly connectionId: string;
   readonly environmentId: string;
+  /** Canonical loopback origin (`http://127.0.0.1:<port>`). Never carries path/query/auth. */
   readonly origin: string;
+  /**
+   * Proxy-to-hub bearer credential minted by the host at hub startup. Never
+   * exposed to viewers: it leaves the broker only inside the authenticated
+   * `/api/browser-frames` upstream hop.
+   */
+  readonly secret: string;
 }
+
+/** Lifecycle notice for a host connection that advertised a frame hub. */
+export interface FrameHubConnectionEvent {
+  readonly type: "disconnected" | "replaced";
+  readonly clientId: string;
+  readonly connectionId: string;
+}
+
+/**
+ * Canonicalize a hub registration origin. The hub binds loopback only, so the
+ * proxy's upstream is safe iff the stored origin is an http(s) loopback origin
+ * with no path, query, fragment, or userinfo. Returns `null` for anything else.
+ */
+export const canonicalizeFrameHubOrigin = (origin: string): string | null => {
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  if (url.username !== "" || url.password !== "") return null;
+  if (url.search !== "" || url.hash !== "") return null;
+  if (url.pathname !== "/" && url.pathname !== "") return null;
+  const host = url.hostname.toLowerCase();
+  const loopback =
+    host === "127.0.0.1" || host === "::1" || host === "[::1]" || host === "localhost";
+  if (!loopback) return null;
+  return url.origin;
+};
 
 export class PreviewAutomationBroker extends Context.Service<
   PreviewAutomationBroker,
@@ -67,6 +106,12 @@ export class PreviewAutomationBroker extends Context.Service<
      * against; entries disappear with their connection.
      */
     readonly frameHubs: Effect.Effect<ReadonlyArray<BrowserFrameHubEndpoint>>;
+    /**
+     * Fires when a connection that advertised a frame hub goes away (disconnect
+     * or replacement). The browser-frames proxy subscribes to terminate active
+     * streams bound to that connection.
+     */
+    readonly frameHubEvents: Stream.Stream<FrameHubConnectionEvent>;
     readonly respond: (
       response: PreviewAutomationResponse,
     ) => Effect.Effect<void, PreviewAutomationError>;
@@ -83,7 +128,7 @@ interface ClientConnection {
   readonly supportedOperations: ReadonlySet<PreviewAutomationOperation>;
   readonly focused: boolean;
   readonly focusOrder: number;
-  readonly frameHubOrigin?: string;
+  readonly frameHub?: { readonly origin: string; readonly secret: string };
   readonly queue: Queue.Queue<PreviewAutomationStreamEvent>;
 }
 
@@ -347,15 +392,65 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     yield* Queue.shutdown(queue);
   });
 
+  const hubEvents = yield* PubSub.unbounded<FrameHubConnectionEvent>();
+
+  /**
+   * Prove a registered `frameHub` is the desktop hub, not an arbitrary local
+   * service an operate-authorized host pointed at. The hub answers `/health`
+   * only with its own secret, so a forged registration that can't drive the
+   * probe never becomes an upstream target. The probe provides its own client
+   * so it stays off `acquireConnection` callers and the broker layer's
+   * requirements.
+   */
+  const probeFrameHub = Effect.fn("PreviewAutomationBroker.probeFrameHub")(function* (endpoint: {
+    readonly origin: string;
+    readonly secret: string;
+  }) {
+    const httpClient = yield* HttpClient.HttpClient;
+    return yield* httpClient
+      .execute(
+        HttpClientRequest.get(`${endpoint.origin}/health`, {
+          headers: { "x-t3-hub-auth": endpoint.secret },
+        }),
+      )
+      .pipe(
+        Effect.flatMap((response) =>
+          response.status === 200
+            ? response.json.pipe(
+                Effect.map(
+                  (body) =>
+                    typeof body === "object" &&
+                    body !== null &&
+                    (body as { service?: unknown }).service === "t3.browser-frame-hub",
+                ),
+              )
+            : Effect.succeed(false),
+        ),
+        Effect.timeout(2_000),
+        Effect.catch(() => Effect.succeed(false)),
+      );
+  });
+
   const disconnect = Effect.fn("PreviewAutomationBroker.disconnect")(function* (
     clientId: string,
     queue: ClientConnection["queue"],
   ) {
-    const disconnected = yield* SynchronizedRef.modify(state, (current) => {
+    const [removedConnection, disconnected] = yield* SynchronizedRef.modify(state, (current) => {
+      const connection = current.clients.get(clientId);
       const removed = removeConnectionFromState(current, clientId, queue);
-      return [removed.disconnected, removed.state] as const;
+      return [
+        [connection?.queue === queue ? connection : undefined, removed.disconnected],
+        removed.state,
+      ] as const;
     });
     yield* closeConnection(queue, disconnected);
+    if (removedConnection?.frameHub !== undefined) {
+      yield* PubSub.publish<FrameHubConnectionEvent>(hubEvents, {
+        type: "disconnected",
+        clientId,
+        connectionId: removedConnection.connectionId,
+      });
+    }
   });
 
   const acquireConnection = Effect.fn("PreviewAutomationBroker.acquireConnection")(function* (
@@ -365,6 +460,23 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     const queue = yield* Queue.unbounded<PreviewAutomationStreamEvent>();
     const connectionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
     yield* Queue.offer(queue, { type: "connected", connectionId });
+    // The registration metadata is self-asserted. Only a canonical loopback
+    // origin that answers the authenticated `/health` probe becomes an
+    // upstream target — anything else registers without frame capability.
+    const advertised = host.frameHub;
+    const frameHub =
+      advertised === undefined
+        ? undefined
+        : yield* (() => {
+            const origin = canonicalizeFrameHubOrigin(advertised.origin);
+            if (origin === null) return Effect.succeed(undefined);
+            return probeFrameHub({ origin, secret: advertised.secret }).pipe(
+              Effect.map((healthy) =>
+                healthy ? { origin, secret: advertised.secret } : undefined,
+              ),
+              Effect.provide(FetchHttpClient.layer),
+            );
+          })();
     const connection: ClientConnection = {
       clientId,
       connectionId,
@@ -372,7 +484,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       supportedOperations: new Set(host.supportedOperations ?? PREVIEW_AUTOMATION_V1_OPERATIONS),
       focused: false,
       focusOrder: 0,
-      ...(host.frameHub?.origin !== undefined ? { frameHubOrigin: host.frameHub.origin } : {}),
+      ...(frameHub !== undefined ? { frameHub } : {}),
       queue,
     };
     const registration = yield* SynchronizedRef.modify(state, (current) => {
@@ -395,6 +507,13 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     });
     if (registration.previousConnection) {
       yield* closeConnection(registration.previousConnection.queue, registration.disconnected);
+      if (registration.previousConnection.frameHub !== undefined) {
+        yield* PubSub.publish<FrameHubConnectionEvent>(hubEvents, {
+          type: "replaced",
+          clientId,
+          connectionId: registration.previousConnection.connectionId,
+        });
+      }
     }
     return registration.registeredConnection;
   });
@@ -626,21 +745,29 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   ).pipe(
     Effect.map((current) =>
       Array.from(current.clients.values()).flatMap((connection) =>
-        connection.frameHubOrigin === undefined
+        connection.frameHub === undefined
           ? []
           : [
               {
                 clientId: connection.clientId,
                 connectionId: connection.connectionId,
                 environmentId: connection.environmentId,
-                origin: connection.frameHubOrigin,
+                origin: connection.frameHub.origin,
+                secret: connection.frameHub.secret,
               },
             ],
       ),
     ),
   );
 
-  return PreviewAutomationBroker.of({ connect, focusHost, frameHubs, respond, invoke });
+  return PreviewAutomationBroker.of({
+    connect,
+    focusHost,
+    frameHubs,
+    frameHubEvents: Stream.fromPubSub(hubEvents),
+    respond,
+    invoke,
+  });
 }).pipe(Effect.withSpan("PreviewAutomationBroker.make"));
 
 export const layer = Layer.effect(PreviewAutomationBroker, make);

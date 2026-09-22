@@ -19,6 +19,7 @@ import * as Stream from "effect/Stream";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AuthAccessStreamError,
+  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   type AuthAccessStreamEvent,
   type AuthEnvironmentScope,
@@ -68,6 +69,7 @@ import {
   AssetWorkspaceContextResolutionError,
   RpcClientId,
   BrowserFramesError,
+  type BrowserFramesOpenInputResult,
   EnvironmentAuthorizationError,
   ThreadId,
   type TerminalAttachStreamEvent,
@@ -484,6 +486,9 @@ const makeWsRpcLayer = (
   clientOrigin: OrchestrationClientOrigin,
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  // One id per ws connection: leases minted on this connection are
+  // authority-separated from other connections sharing the session.
+  wsConnectionId: string,
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -2792,9 +2797,22 @@ const makeWsRpcLayer = (
                   message: "No connected engine host serves browser frames.",
                 });
               }
-              return yield* browserFrameLeases.issueInputLease({
-                principal: currentSession.subject,
-                scopes: currentSession.scopes,
+              if (candidates.length > 1) {
+                return yield* new BrowserFramesError({
+                  reason: "engine-unavailable",
+                  message: "More than one engine host serves this environment; refusing to bind.",
+                });
+              }
+              const host = candidates[0]!;
+              const minted = yield* browserFrameLeases.issueInputLease({
+                authority: {
+                  kind: "session",
+                  sessionId: currentSession.sessionId,
+                  subject: currentSession.subject,
+                  connectionId: wsConnectionId,
+                  grants: [AuthOrchestrationOperateScope],
+                },
+                authorityExpiresAt: currentSession.credentialExpiresAt?.epochMilliseconds,
                 session: {
                   environmentId: input.environmentId,
                   threadId: input.threadId,
@@ -2802,7 +2820,23 @@ const makeWsRpcLayer = (
                   tabId: input.tabId,
                 },
                 engineGeneration: input.engineGeneration ?? null,
-                hostClientId: candidates.length === 1 ? (candidates[0]?.clientId ?? null) : null,
+                hostClientId: host.clientId,
+                hostConnectionId: host.connectionId,
+              });
+              return yield* Option.match(minted, {
+                onNone: () =>
+                  Effect.fail(
+                    new BrowserFramesError({
+                      reason: "unauthorized",
+                      message: "The named lease is not owned by this connection for this session.",
+                    }),
+                  ),
+                onSome: (issued) =>
+                  Effect.succeed({
+                    leaseId: issued.leaseId,
+                    inputTicket: issued.inputTicket,
+                    expiresAt: issued.expiresAt,
+                  } satisfies BrowserFramesOpenInputResult),
               });
             }),
             { "rpc.aggregate": "browser-frames" },
@@ -2815,8 +2849,12 @@ const makeWsRpcLayer = (
                 Option.match({
                   onNone: () => Effect.void,
                   onSome: (lease) =>
-                    lease.principal === currentSession.subject &&
-                    lease.session.environmentId === input.environmentId
+                    // Ownership is the full authority binding plus the
+                    // resolved tuple — a same-session connection or another
+                    // environment's lease cannot be closed from here.
+                    lease.session.environmentId === input.environmentId &&
+                    BrowserFrameLeases.browserFrameAuthorityKey(lease.authority) ===
+                      `sess:${currentSession.sessionId}:${wsConnectionId}`
                       ? browserFrameLeases.revokeLease(input.leaseId).pipe(Effect.asVoid)
                       : Effect.void,
                 }),
@@ -3126,6 +3164,9 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         );
         const clientOrigin = readClientConnectionOrigin(request);
         const clientAnalyticsProps = readClientAnalyticsProps(request);
+        const crypto = yield* Crypto.Crypto;
+        const wsConnectionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+        const browserFrameLeases = yield* BrowserFrameLeases.BrowserFrameLeases;
         yield* sessions.recordClientConnection(session.sessionId, clientOrigin);
         yield* analytics.record("client.connected", clientAnalyticsProps);
         const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
@@ -3137,6 +3178,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               clientOrigin,
               clientAnalyticsProps,
               previewAutomationBroker,
+              wsConnectionId,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
@@ -3174,7 +3216,21 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         return yield* Effect.acquireUseRelease(
           sessions.markConnected(session.sessionId),
           () => rpcWebSocketHttpEffect,
-          () => sessions.markDisconnected(session.sessionId),
+          // Viewer root disconnect terminates everything this connection
+          // minted — leases and bound input sockets die with the ws
+          // connection, not just at ticket expiry.
+          () =>
+            sessions
+              .markDisconnected(session.sessionId)
+              .pipe(
+                Effect.andThen(
+                  browserFrameLeases.revokeWhere(
+                    (record) =>
+                      record.authority.kind === "session" &&
+                      record.authority.connectionId === wsConnectionId,
+                  ),
+                ),
+              ),
         );
       }).pipe(
         Effect.catchTags({

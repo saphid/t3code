@@ -4231,6 +4231,122 @@ describe("PreviewManager", () => {
       }),
     ),
   );
+
+  effectIt.effect("fences remote input by lease ownership and guest generation", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents({ id: 42 });
+        Object.assign(preview.webContents, { focus: vi.fn() });
+        fromId.mockReturnValue(preview.webContents);
+        const remoteTabId = '["env-a","thread-a","epoch-1","tab-1"]';
+        yield* manager.createTab(remoteTabId);
+        yield* manager.registerWebview(remoteTabId, 42);
+        const sendCommand = (
+          preview.webContents as { debugger: { sendCommand: ReturnType<typeof vi.fn> } }
+        ).debugger.sendCommand;
+        const keyEvents = (type: "down" | "up") =>
+          sendCommand.mock.calls.filter((call) => {
+            const params = call[1] as { type?: string } | undefined;
+            return (
+              call[0] === "Input.dispatchKeyEvent" &&
+              (type === "up" ? params?.type === "keyUp" : params?.type !== "keyUp")
+            );
+          });
+
+        // lease-a presses Shift; the keyDown reaches the guest.
+        yield* manager.dispatchRemoteInput(
+          remoteTabId,
+          "lease-a",
+          "42",
+          { type: "key", phase: "down", key: "Shift", code: "ShiftLeft" },
+          { width: 100, height: 100 },
+        );
+        expect(keyEvents("down")).toHaveLength(1);
+
+        // lease-b's keyUp must not release lease-a's physical press.
+        yield* manager.dispatchRemoteInput(
+          remoteTabId,
+          "lease-b",
+          "42",
+          { type: "key", phase: "up", key: "Shift", code: "ShiftLeft" },
+          { width: 100, height: 100 },
+        );
+        expect(keyEvents("up")).toHaveLength(0);
+
+        // The owning lease's keyUp releases it.
+        yield* manager.dispatchRemoteInput(
+          remoteTabId,
+          "lease-a",
+          "42",
+          { type: "key", phase: "up", key: "Shift", code: "ShiftLeft" },
+          { width: 100, height: 100 },
+        );
+        expect(keyEvents("up")).toHaveLength(1);
+
+        // A packet naming a dead guest generation never reaches the guest.
+        const staleExit = yield* Effect.exit(
+          manager.dispatchRemoteInput(
+            remoteTabId,
+            "lease-c",
+            "999",
+            { type: "key", phase: "down", key: "a", code: "KeyA" },
+            { width: 100, height: 100 },
+          ),
+        );
+        expect(Exit.isFailure(staleExit)).toBe(true);
+      }),
+    ),
+  );
+
+  effectIt.effect("releaseRemoteInput releases only the releasing lease's held input", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents({ id: 42 });
+        Object.assign(preview.webContents, { focus: vi.fn() });
+        fromId.mockReturnValue(preview.webContents);
+        const remoteTabId = '["env-a","thread-a","epoch-1","tab-1"]';
+        yield* manager.createTab(remoteTabId);
+        yield* manager.registerWebview(remoteTabId, 42);
+        const sendCommand = (
+          preview.webContents as { debugger: { sendCommand: ReturnType<typeof vi.fn> } }
+        ).debugger.sendCommand;
+        const viewport = { width: 100, height: 100 };
+        const keyUps = () =>
+          sendCommand.mock.calls.filter(
+            (call) =>
+              call[0] === "Input.dispatchKeyEvent" &&
+              (call[1] as { type?: string } | undefined)?.type === "keyUp",
+          );
+
+        yield* manager.dispatchRemoteInput(
+          remoteTabId,
+          "lease-a",
+          "42",
+          { type: "key", phase: "down", key: "Shift", code: "ShiftLeft" },
+          viewport,
+        );
+        yield* manager.dispatchRemoteInput(
+          remoteTabId,
+          "lease-b",
+          "42",
+          { type: "key", phase: "down", key: "Control", code: "ControlLeft" },
+          viewport,
+        );
+
+        // Releasing a lease with nothing held sends nothing.
+        yield* manager.releaseRemoteInput(remoteTabId, "lease-c");
+        expect(keyUps()).toHaveLength(0);
+
+        // lease-a's release emits exactly its own held key.
+        yield* manager.releaseRemoteInput(remoteTabId, "lease-a");
+        expect(keyUps()).toHaveLength(1);
+
+        // lease-b's held key is still held until its own release.
+        yield* manager.releaseRemoteInput(remoteTabId, "lease-b");
+        expect(keyUps()).toHaveLength(2);
+      }),
+    ),
+  );
 });
 
 describe("PreviewOperationError", () => {

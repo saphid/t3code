@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => ({
   addImage: vi.fn(),
   toggleAnnotation: null as (() => void) | null,
   pictureInPicture: false,
+  remoteLive: false,
   showEmptyState: false,
   loading: false,
   recordVisitForThread: vi.fn(),

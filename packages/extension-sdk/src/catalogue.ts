@@ -4903,11 +4903,17 @@ const browserFrameSessionIdentity = {
 const browserFrameTarget = {
   type: "object",
   additionalProperties: false,
-  required: ["tabId", "serverEpoch"],
+  required: ["tabId", "serverEpoch", "surfaceLease"],
   properties: {
     tabId: browserSessionTabId,
     serverEpoch: browserSessionEpoch,
     expectedEngineGeneration: { type: ["string", "null"], minLength: 1, maxLength: 128 },
+    /**
+     * Held-presentation evidence: a `browser-surface` claim token minted
+     * through `t3.resources/lease` `createPresentationUrl` for this exact
+     * session tuple. Minting a frame ticket without one is denied.
+     */
+    surfaceLease: { type: "string", minLength: 1, maxLength: 4096 },
   },
 } as const;
 const browserFrameStreamDescriptor = {
@@ -4955,6 +4961,7 @@ export const browserFramesApi: TypedApi<{
       readonly tabId: string;
       readonly serverEpoch: string;
       readonly expectedEngineGeneration?: string | null;
+      readonly surfaceLease: string;
     };
     output: BrowserFrameStreamDescriptor;
   };
@@ -4963,6 +4970,7 @@ export const browserFramesApi: TypedApi<{
       readonly tabId: string;
       readonly serverEpoch: string;
       readonly expectedEngineGeneration?: string | null;
+      readonly surfaceLease: string;
     };
     output: BrowserFrameInputLease;
   };
@@ -4977,6 +4985,7 @@ export const browserFramesApi: TypedApi<{
       readonly tabId: string;
       readonly serverEpoch: string;
       readonly expectedEngineGeneration?: string | null;
+      readonly surfaceLease: string;
     };
     output: BrowserFrameStreamDescriptor;
   };
@@ -4985,6 +4994,7 @@ export const browserFramesApi: TypedApi<{
       readonly tabId: string;
       readonly serverEpoch: string;
       readonly expectedEngineGeneration?: string | null;
+      readonly surfaceLease: string;
     };
     output: BrowserFrameInputLease;
   };

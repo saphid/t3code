@@ -9,6 +9,7 @@ import {
   browserFramesApi,
   browserSessionsApi,
   filePresentationApi,
+  resourcesLeaseApi,
   type BrowserSession,
   type BrowserSessionReceipt,
   type BrowserSessionStreamValue,
@@ -574,7 +575,11 @@ export default defineExtension({
   version: "0.1.0",
   provides: [filePresentationApi.definition],
   serverEntry: "server.ts",
-  requires: [requireApi(browserSessionsApi), requireApi(browserFramesApi)],
+  requires: [
+    requireApi(browserSessionsApi),
+    requireApi(browserFramesApi),
+    requireApi(resourcesLeaseApi),
+  ],
   surfaces: [
     {
       name: "view",

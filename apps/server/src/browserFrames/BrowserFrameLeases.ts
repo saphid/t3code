@@ -6,68 +6,183 @@
  * leases are the only way a client reaches the hub's input socket — an input
  * connection is minted, never asserted.
  *
+ * Every record carries the verified authority it was minted under: an
+ * extension caller chain (root session, caller/root installation ids, caller
+ * generations, and the resolved view context used for grant revalidation) or
+ * an app session (ws-RPC mints). The proxy re-checks that authority at
+ * redeem; revocation sources (session removal, catalogue changes, closeInput,
+ * supersession) publish on `invalidations` so already-open channels are
+ * terminated, not just future verifies denied.
+ *
  * Records live in memory: the hub independently enforces lease expiry and
  * session-boundary cleanup, so a server restart simply forces re-minting.
+ * Expired records are pruned on every mutation and by `sweep`.
  */
-import { BROWSER_FRAME_TICKET_TTL_MS, type BrowserFrameSessionTuple } from "@t3tools/contracts";
+import {
+  BROWSER_FRAME_TICKET_TTL_MS,
+  type AuthSessionId,
+  type BrowserFrameSessionTuple,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
+import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
+
+/** Caller-chain snapshot captured at mint — mirrors `HostApiInvocationMetadata.callerGenerations`. */
+export interface BrowserFrameCallerGeneration {
+  readonly pluginId: string;
+  readonly contentHash: string;
+  readonly installationGeneration: number;
+}
+
+/**
+ * Verified authority behind a minted record. `sessionId` is the root
+ * connection's session for extension callers and the authenticating session
+ * itself for ws-RPC mints — session removal sweeps both.
+ */
+export type BrowserFrameAuthority =
+  | {
+      readonly kind: "extension";
+      /**
+       * Root principal behind the invoke. For `environment-session` principals
+       * `principalId` is the authenticated session id — the same value session
+       * revocation events sweep on.
+       */
+      readonly principalKind: "environment-session" | "provider-session" | "host";
+      readonly principalId: string;
+      readonly subject?: string;
+      readonly rootCallerId: string;
+      readonly callerId: string;
+      readonly callerGenerations: ReadonlyArray<BrowserFrameCallerGeneration>;
+      /** The caller's resolved view context — replayed for grant revalidation. */
+      readonly context: unknown;
+      /** Grants the mint checked; revalidation re-checks each. */
+      readonly grants: ReadonlyArray<string>;
+    }
+  | {
+      readonly kind: "session";
+      readonly sessionId: AuthSessionId;
+      readonly subject: string;
+      /** Per-connection id minted by the ws layer — separates connections sharing a session. */
+      readonly connectionId: string;
+      /** Environment scopes the redeem must still hold. */
+      readonly grants: ReadonlyArray<string>;
+    };
+
+/**
+ * Identity used to group "the same caller" for lease renewal. Two slots,
+ * installations, or connections sharing a principal get distinct keys so one
+ * cannot renew or close another's lease.
+ */
+export const browserFrameAuthorityKey = (authority: BrowserFrameAuthority): string =>
+  authority.kind === "session"
+    ? `sess:${authority.sessionId}:${authority.connectionId}`
+    : `ext:${authority.principalId}:${authority.rootCallerId}:${authority.callerId}`;
+
+export type BrowserFrameLeaseInvalidation =
+  | { readonly type: "lease"; readonly leaseId: string }
+  | { readonly type: "authority"; readonly authorityKey: string }
+  | { readonly type: "session"; readonly sessionId: AuthSessionId };
 
 export interface BrowserFrameTicketRecord {
   readonly ticket: string;
   readonly kind: "stream" | "input";
   readonly leaseId?: string;
-  readonly principal: string;
-  readonly scopes: ReadonlyArray<string>;
+  /** Monotonic per lease; the hub refuses a bind from an older ticket. */
+  readonly ticketSeq: number;
+  readonly authority: BrowserFrameAuthority;
   readonly session: BrowserFrameSessionTuple;
   readonly engineGeneration: string | null;
   readonly hostClientId: string | null;
+  readonly hostConnectionId: string | null;
   readonly expiresAt: number;
   readonly superseded: boolean;
 }
 
 export interface BrowserFrameInputLeaseState {
   readonly leaseId: string;
-  readonly principal: string;
+  readonly authority: BrowserFrameAuthority;
   readonly session: BrowserFrameSessionTuple;
   readonly engineGeneration: string | null;
   readonly hostClientId: string | null;
+  readonly hostConnectionId: string | null;
+  /** Monotonic ticket counter — older input tickets never seize the socket. */
+  readonly ticketCounter: number;
   readonly expiresAt: number;
   readonly revoked: boolean;
 }
 
 export interface IssueBrowserFrameTicketInput {
-  readonly principal: string;
-  readonly scopes: ReadonlyArray<string>;
+  readonly authority: BrowserFrameAuthority;
+  /** Hard cap on the minted credential's life (claim expiry, credential expiry). */
+  readonly authorityExpiresAt?: number | undefined;
   readonly session: BrowserFrameSessionTuple;
   readonly engineGeneration?: string | null;
   readonly hostClientId?: string | null;
+  readonly hostConnectionId?: string | null;
+  /** Present on renewal: must name a live lease this authority owns. */
+  readonly leaseId?: string;
 }
 
 export interface IssuedInputLease {
   readonly leaseId: string;
   readonly inputTicket: string;
+  readonly ticketSeq: number;
   readonly expiresAt: number;
-  /** Lease closed by this mint because a different principal claimed the session. */
-  readonly supersededLeaseId: string | null;
 }
 
 interface LeasesState {
   readonly tickets: ReadonlyMap<string, BrowserFrameTicketRecord>;
   readonly leases: ReadonlyMap<string, BrowserFrameInputLeaseState>;
-  /** sessionKey -> leaseId; at most one live input lease per session tuple. */
-  readonly leaseBySession: ReadonlyMap<string, string>;
+  /** `${authorityKey}|${sessionKey}` -> leaseId; one live lease per caller+tuple. */
+  readonly leaseByHolder: ReadonlyMap<string, string>;
 }
 
 const sessionKey = (session: BrowserFrameSessionTuple): string =>
   JSON.stringify([session.environmentId, session.threadId, session.serverEpoch, session.tabId]);
 
+const holderKey = (authority: BrowserFrameAuthority, session: BrowserFrameSessionTuple): string =>
+  `${browserFrameAuthorityKey(authority)}|${sessionKey(session)}`;
+
+/** Whether this authority's continued validity rides on the given session. */
+export const authorityRidesOnSession = (
+  authority: BrowserFrameAuthority,
+  sessionId: AuthSessionId,
+): boolean =>
+  authority.kind === "session"
+    ? authority.sessionId === sessionId
+    : authority.principalKind === "environment-session" && authority.principalId === sessionId;
+
 const isLive = (expiresAt: number, now: number): boolean => expiresAt > now;
+
+/** Drop expired/superseded records so the maps stay bounded between mints. */
+const prune = (state: LeasesState, now: number): LeasesState => {
+  let tickets = new Map(state.tickets);
+  let leases = new Map(state.leases);
+  let leaseByHolder = new Map(state.leaseByHolder);
+  let changed = false;
+  for (const [ticket, record] of state.tickets) {
+    if (record.superseded || !isLive(record.expiresAt, now)) {
+      tickets.delete(ticket);
+      changed = true;
+    }
+  }
+  for (const [leaseId, lease] of state.leases) {
+    if (lease.revoked || !isLive(lease.expiresAt, now)) {
+      leases.delete(leaseId);
+      if (leaseByHolder.get(holderKey(lease.authority, lease.session)) === leaseId) {
+        leaseByHolder.delete(holderKey(lease.authority, lease.session));
+      }
+      changed = true;
+    }
+  }
+  return changed ? { tickets, leases, leaseByHolder } : state;
+};
 
 export class BrowserFrameLeases extends Context.Service<
   BrowserFrameLeases,
@@ -76,13 +191,16 @@ export class BrowserFrameLeases extends Context.Service<
       input: IssueBrowserFrameTicketInput,
     ) => Effect.Effect<{ readonly ticket: string; readonly expiresAt: number }>;
     /**
-     * Mint (or renew) the session's input lease. A second mint by the same
-     * principal renews `expiresAt` and returns a fresh ticket bound to the
-     * same lease; a mint by a different principal supersedes the live lease.
+     * Mint a fresh input lease for this authority+tuple, or renew a live
+     * lease when `leaseId` names one this authority owns. Renewal extends
+     * `expiresAt` (still capped by the presented authority deadline) and
+     * mints a ticket with a higher `ticketSeq`, so replaying an older ticket
+     * can never seize a socket bound by a newer one. Expired or revoked
+     * leases cannot revive — renewal then mints a new lease id.
      */
     readonly issueInputLease: (
       input: IssueBrowserFrameTicketInput,
-    ) => Effect.Effect<IssuedInputLease>;
+    ) => Effect.Effect<Option.Option<IssuedInputLease>>;
     /** Verify a ticket: exists, unexpired, and its lease (if any) is live. */
     readonly verify: (ticket: string) => Effect.Effect<Option.Option<BrowserFrameTicketRecord>>;
     readonly resolveLease: (
@@ -90,6 +208,25 @@ export class BrowserFrameLeases extends Context.Service<
     ) => Effect.Effect<Option.Option<BrowserFrameInputLeaseState>>;
     /** Revoke a lease and every ticket bound to it. Returns whether it existed. */
     readonly revokeLease: (leaseId: string) => Effect.Effect<boolean>;
+    /** Revoke every record whose authority rides on the removed session. */
+    readonly revokeSession: (sessionId: AuthSessionId) => Effect.Effect<void>;
+    /** Revoke every record whose authority fails `match` (catalogue sweeps). */
+    readonly revokeWhere: (
+      match: (record: BrowserFrameTicketRecord | BrowserFrameInputLeaseState) => boolean,
+    ) => Effect.Effect<void>;
+    /** Snapshot of live records for authority sweepers. */
+    readonly records: Effect.Effect<{
+      readonly tickets: ReadonlyArray<BrowserFrameTicketRecord>;
+      readonly leases: ReadonlyArray<BrowserFrameInputLeaseState>;
+    }>;
+    /** Drop expired records immediately; returns how many were collected. */
+    readonly sweep: () => Effect.Effect<number>;
+    /**
+     * Push channel for active-channel termination: lease revocation,
+     * supersession, and authority/session sweeps emit here so the proxy can
+     * end already-open streams and sockets.
+     */
+    readonly invalidations: Stream.Stream<BrowserFrameLeaseInvalidation>;
   }
 >()("t3/browserFrames/BrowserFrameLeases") {}
 
@@ -97,32 +234,41 @@ const make = Effect.gen(function* () {
   const state = yield* SynchronizedRef.make<LeasesState>({
     tickets: new Map(),
     leases: new Map(),
-    leaseBySession: new Map(),
+    leaseByHolder: new Map(),
   });
   const crypto = yield* Crypto.Crypto;
+  const pubsub = yield* Effect.acquireRelease(
+    PubSub.sliding<BrowserFrameLeaseInvalidation>({ capacity: 256 }),
+    PubSub.shutdown,
+  );
   const currentMillis = Clock.currentTimeMillis;
   const randomUUID = crypto.randomUUIDv4.pipe(Effect.orDie);
+
+  const capExpiry = (input: IssueBrowserFrameTicketInput, now: number): number =>
+    Math.min(now + BROWSER_FRAME_TICKET_TTL_MS, input.authorityExpiresAt ?? Infinity);
 
   const issueStreamTicket: BrowserFrameLeases["Service"]["issueStreamTicket"] = Effect.fn(
     "BrowserFrameLeases.issueStreamTicket",
   )(function* (input) {
     const now = yield* currentMillis;
-    const expiresAt = now + BROWSER_FRAME_TICKET_TTL_MS;
+    const expiresAt = capExpiry(input, now);
     const ticket = `bfv1.st.${yield* randomUUID}`;
     yield* SynchronizedRef.update(state, (current) => {
-      const tickets = new Map(current.tickets);
+      const pruned = prune(current, now);
+      const tickets = new Map(pruned.tickets);
       tickets.set(ticket, {
         ticket,
         kind: "stream",
-        principal: input.principal,
-        scopes: input.scopes,
+        ticketSeq: 0,
+        authority: input.authority,
         session: input.session,
         engineGeneration: input.engineGeneration ?? null,
         hostClientId: input.hostClientId ?? null,
+        hostConnectionId: input.hostConnectionId ?? null,
         expiresAt,
         superseded: false,
       });
-      return { ...current, tickets };
+      return { ...pruned, tickets };
     });
     return { ticket, expiresAt };
   });
@@ -131,60 +277,91 @@ const make = Effect.gen(function* () {
     "BrowserFrameLeases.issueInputLease",
   )(function* (input) {
     const now = yield* currentMillis;
-    const expiresAt = now + BROWSER_FRAME_TICKET_TTL_MS;
+    const expiresAt = capExpiry(input, now);
     const inputTicket = `bfv1.in.${yield* randomUUID}`;
     const newLeaseId = `bfli.${yield* randomUUID}`;
-    const key = sessionKey(input.session);
     const minted = yield* SynchronizedRef.modify(state, (current) => {
-      const previousLeaseId = current.leaseBySession.get(key);
-      const previous = previousLeaseId ? current.leases.get(previousLeaseId) : undefined;
-      const renew =
-        previous !== undefined &&
-        !previous.revoked &&
-        isLive(previous.expiresAt, now) &&
-        previous.principal === input.principal;
-      const leaseId = renew ? previous.leaseId : newLeaseId;
-      const leases = new Map(current.leases);
-      const tickets = new Map(current.tickets);
-      const leaseBySession = new Map(current.leaseBySession);
-      let supersededLeaseId: string | null = null;
-      if (!renew && previous && isLive(previous.expiresAt, now) && !previous.revoked) {
-        // A different principal claims the session: the previous lease is
-        // dead from this mint on, so its tickets stop verifying immediately
-        // and the hub's own supersession closes the socket on the new bind.
-        leases.set(previous.leaseId, { ...previous, revoked: true });
-        for (const [ticket, record] of tickets) {
-          if (record.leaseId === previous.leaseId) {
-            tickets.set(ticket, { ...record, superseded: true });
-          }
-        }
-        supersededLeaseId = previous.leaseId;
+      const pruned = prune(current, now);
+      // Explicit renewal: the caller names its live lease and must own it.
+      if (input.leaseId !== undefined) {
+        const existing = pruned.leases.get(input.leaseId);
+        const owned =
+          existing !== undefined &&
+          !existing.revoked &&
+          isLive(existing.expiresAt, now) &&
+          browserFrameAuthorityKey(existing.authority) ===
+            browserFrameAuthorityKey(input.authority) &&
+          sessionKey(existing.session) === sessionKey(input.session);
+        if (!owned) return [Option.none<IssuedInputLease>(), pruned] as const;
+        const ticketSeq = existing.ticketCounter + 1;
+        const leases = new Map(pruned.leases);
+        leases.set(existing.leaseId, {
+          ...existing,
+          ticketCounter: ticketSeq,
+          expiresAt,
+          hostClientId: input.hostClientId ?? existing.hostClientId,
+          hostConnectionId: input.hostConnectionId ?? existing.hostConnectionId,
+          engineGeneration: input.engineGeneration ?? existing.engineGeneration,
+        });
+        const tickets = new Map(pruned.tickets);
+        tickets.set(inputTicket, {
+          ticket: inputTicket,
+          kind: "input",
+          leaseId: existing.leaseId,
+          ticketSeq,
+          authority: input.authority,
+          session: input.session,
+          engineGeneration: input.engineGeneration ?? null,
+          hostClientId: input.hostClientId ?? null,
+          hostConnectionId: input.hostConnectionId ?? null,
+          expiresAt,
+          superseded: false,
+        });
+        return [
+          Option.some({ leaseId: existing.leaseId, inputTicket, ticketSeq, expiresAt }),
+          { ...pruned, tickets, leases },
+        ] as const;
       }
+      // Fresh mint: one live lease per (authority, session tuple). A prior
+      // live lease from the same holder is renewed; a different holder's
+      // lease is untouched — socket exclusivity is the hub's bind-time job.
+      const key = holderKey(input.authority, input.session);
+      const previousLeaseId = pruned.leaseByHolder.get(key);
+      const previous = previousLeaseId ? pruned.leases.get(previousLeaseId) : undefined;
+      const renew = previous !== undefined && !previous.revoked && isLive(previous.expiresAt, now);
+      const leaseId = renew ? previous.leaseId : newLeaseId;
+      const ticketSeq = renew ? previous.ticketCounter + 1 : 1;
+      const leases = new Map(pruned.leases);
+      const tickets = new Map(pruned.tickets);
+      const leaseByHolder = new Map(pruned.leaseByHolder);
       leases.set(leaseId, {
         leaseId,
-        principal: input.principal,
+        authority: input.authority,
         session: input.session,
         engineGeneration: input.engineGeneration ?? null,
         hostClientId: input.hostClientId ?? null,
+        hostConnectionId: input.hostConnectionId ?? null,
+        ticketCounter: ticketSeq,
         expiresAt,
         revoked: false,
       });
-      leaseBySession.set(key, leaseId);
+      leaseByHolder.set(key, leaseId);
       tickets.set(inputTicket, {
         ticket: inputTicket,
         kind: "input",
         leaseId,
-        principal: input.principal,
-        scopes: input.scopes,
+        ticketSeq,
+        authority: input.authority,
         session: input.session,
         engineGeneration: input.engineGeneration ?? null,
         hostClientId: input.hostClientId ?? null,
+        hostConnectionId: input.hostConnectionId ?? null,
         expiresAt,
         superseded: false,
       });
       return [
-        { leaseId, inputTicket, expiresAt, supersededLeaseId },
-        { tickets, leases, leaseBySession },
+        Option.some({ leaseId, inputTicket, ticketSeq, expiresAt }),
+        { tickets, leases, leaseByHolder },
       ] as const;
     });
     return minted;
@@ -194,17 +371,18 @@ const make = Effect.gen(function* () {
     function* (ticket) {
       const now = yield* currentMillis;
       const result = yield* SynchronizedRef.modify(state, (current) => {
-        const record = current.tickets.get(ticket);
+        const pruned = prune(current, now);
+        const record = pruned.tickets.get(ticket);
         if (!record || record.superseded || !isLive(record.expiresAt, now)) {
-          return [Option.none<BrowserFrameTicketRecord>(), current] as const;
+          return [Option.none<BrowserFrameTicketRecord>(), pruned] as const;
         }
         if (record.leaseId !== undefined) {
-          const lease = current.leases.get(record.leaseId);
+          const lease = pruned.leases.get(record.leaseId);
           if (!lease || lease.revoked || !isLive(lease.expiresAt, now)) {
-            return [Option.none<BrowserFrameTicketRecord>(), current] as const;
+            return [Option.none<BrowserFrameTicketRecord>(), pruned] as const;
           }
         }
-        return [Option.some(record), current] as const;
+        return [Option.some(record), pruned] as const;
       });
       return result;
     },
@@ -222,25 +400,100 @@ const make = Effect.gen(function* () {
     return Option.some(lease);
   });
 
+  const publish = (event: BrowserFrameLeaseInvalidation) =>
+    PubSub.publish(pubsub, event).pipe(Effect.asVoid);
+
   const revokeLease: BrowserFrameLeases["Service"]["revokeLease"] = Effect.fn(
     "BrowserFrameLeases.revokeLease",
   )(function* (leaseId) {
-    return yield* SynchronizedRef.modify(state, (current) => {
+    const revoked = yield* SynchronizedRef.modify(state, (current) => {
       const lease = current.leases.get(leaseId);
-      if (!lease) return [false, current] as const;
+      if (!lease || lease.revoked) return [false, current] as const;
       const leases = new Map(current.leases);
       leases.set(leaseId, { ...lease, revoked: true });
       const tickets = new Map(current.tickets);
       for (const [ticket, record] of tickets) {
         if (record.leaseId === leaseId) tickets.set(ticket, { ...record, superseded: true });
       }
-      const leaseBySession = new Map(current.leaseBySession);
-      if (leaseBySession.get(sessionKey(lease.session)) === leaseId) {
-        leaseBySession.delete(sessionKey(lease.session));
+      const leaseByHolder = new Map(current.leaseByHolder);
+      if (leaseByHolder.get(holderKey(lease.authority, lease.session)) === leaseId) {
+        leaseByHolder.delete(holderKey(lease.authority, lease.session));
       }
-      return [true, { tickets, leases, leaseBySession }] as const;
+      return [true, { tickets, leases, leaseByHolder }] as const;
     });
+    if (revoked) yield* publish({ type: "lease", leaseId });
+    return revoked;
   });
+
+  const revokeWhere: BrowserFrameLeases["Service"]["revokeWhere"] = Effect.fn(
+    "BrowserFrameLeases.revokeWhere",
+  )(function* (match) {
+    const now = yield* currentMillis;
+    const events = yield* SynchronizedRef.modify(state, (current) => {
+      const pruned = prune(current, now);
+      const deadLeases: Array<BrowserFrameInputLeaseState> = [];
+      const deadAuthorityKeys = new Set<string>();
+      const leases = new Map(pruned.leases);
+      const leaseByHolder = new Map(pruned.leaseByHolder);
+      const tickets = new Map(pruned.tickets);
+      for (const lease of pruned.leases.values()) {
+        if (!lease.revoked && match(lease)) {
+          leases.set(lease.leaseId, { ...lease, revoked: true });
+          deadLeases.push(lease);
+          deadAuthorityKeys.add(browserFrameAuthorityKey(lease.authority));
+          if (leaseByHolder.get(holderKey(lease.authority, lease.session)) === lease.leaseId) {
+            leaseByHolder.delete(holderKey(lease.authority, lease.session));
+          }
+        }
+      }
+      for (const [ticket, record] of pruned.tickets) {
+        if (!record.superseded && match(record)) {
+          tickets.set(ticket, { ...record, superseded: true });
+          deadAuthorityKeys.add(browserFrameAuthorityKey(record.authority));
+        }
+      }
+      const events: Array<BrowserFrameLeaseInvalidation> = [
+        ...deadLeases.map((lease) => ({ type: "lease", leaseId: lease.leaseId }) as const),
+        ...[...deadAuthorityKeys].map(
+          (authorityKey) => ({ type: "authority", authorityKey }) as const,
+        ),
+      ];
+      return [events, { tickets, leases, leaseByHolder }] as const;
+    });
+    for (const event of events) yield* publish(event);
+  });
+
+  const revokeSession: BrowserFrameLeases["Service"]["revokeSession"] = Effect.fn(
+    "BrowserFrameLeases.revokeSession",
+  )(function* (sessionId) {
+    yield* revokeWhere((record) => authorityRidesOnSession(record.authority, sessionId));
+    yield* publish({ type: "session", sessionId });
+  });
+
+  const records: BrowserFrameLeases["Service"]["records"] = Effect.gen(function* () {
+    const now = yield* currentMillis;
+    const current = yield* SynchronizedRef.get(state);
+    return {
+      tickets: [...current.tickets.values()].filter(
+        (record) => !record.superseded && isLive(record.expiresAt, now),
+      ),
+      leases: [...current.leases.values()].filter(
+        (lease) => !lease.revoked && isLive(lease.expiresAt, now),
+      ),
+    };
+  });
+
+  const sweep: BrowserFrameLeases["Service"]["sweep"] = Effect.fn("BrowserFrameLeases.sweep")(
+    function* () {
+      const now = yield* currentMillis;
+      return yield* SynchronizedRef.modify(state, (current) => {
+        const next = prune(current, now);
+        const removed =
+          current.tickets.size + current.leases.size - next.tickets.size - next.leases.size;
+        return [removed, next] as const;
+      });
+    },
+  );
 
   return BrowserFrameLeases.of({
     issueStreamTicket,
@@ -248,6 +501,11 @@ const make = Effect.gen(function* () {
     verify,
     resolveLease,
     revokeLease,
+    revokeSession,
+    revokeWhere,
+    records,
+    sweep,
+    invalidations: Stream.fromPubSub(pubsub),
   });
 }).pipe(Effect.withSpan("BrowserFrameLeases.make"));
 

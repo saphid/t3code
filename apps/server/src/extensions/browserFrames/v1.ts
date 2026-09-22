@@ -37,8 +37,14 @@ import { ProjectionProjectRepository } from "../../persistence/Services/Projecti
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
-import { BrowserFrameLeases } from "../../browserFrames/BrowserFrameLeases.ts";
-import { BROWSER_FRAMES_ROUTE_PREFIX } from "../../browserFrames/BrowserFrameProxy.ts";
+import {
+  BrowserFrameLeases,
+  browserFrameAuthorityKey,
+  type BrowserFrameAuthority,
+} from "../../browserFrames/BrowserFrameLeases.ts";
+import { BROWSER_FRAMES_ROUTE_PREFIX } from "@t3tools/contracts";
+import { ASSET_ROUTE_PREFIX, verifyBrowserSurfaceClaims } from "../../assets/AssetAccess.ts";
+import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import { makeExtensionScopeResolver } from "../scope.ts";
 
 const OPERATION = "browser.frames";
@@ -61,9 +67,23 @@ const decodeTargetInput = Schema.decodeUnknownEffect(
   Schema.Struct({
     tabId: PreviewTabId,
     serverEpoch: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+    surfaceLease: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
     expectedEngineGeneration: Schema.optional(
       Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
     ),
+  }),
+  { onExcessProperty: "error" },
+);
+const decodeInputTargetInput = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    tabId: PreviewTabId,
+    serverEpoch: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+    surfaceLease: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
+    expectedEngineGeneration: Schema.optional(
+      Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+    ),
+    /** Present on renewal: must name a live lease owned by this authority+tuple. */
+    leaseId: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
   }),
   { onExcessProperty: "error" },
 );
@@ -71,6 +91,20 @@ const decodeLeaseInput = Schema.decodeUnknownEffect(
   Schema.Struct({ leaseId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)) }),
   { onExcessProperty: "error" },
 );
+
+/**
+ * The client presents the value `resourcesLease.createPresentationUrl`
+ * returned (`/api/assets/<token>/browser-surface`) or the bare signed token.
+ * `verifyBrowserSurfaceClaims` enforces signature+tuple either way; this only
+ * extracts the token segment.
+ */
+const surfaceTokenFromLease = (value: string): string => {
+  const trimmed = value.trim();
+  const prefixed = `${ASSET_ROUTE_PREFIX}/`;
+  const body = trimmed.startsWith(prefixed) ? trimmed.slice(prefixed.length) : trimmed;
+  const slash = body.indexOf("/");
+  return slash === -1 ? body : body.slice(0, slash);
+};
 
 const sessionPath = (tabId: string, leaf: string) =>
   `${BROWSER_FRAMES_ROUTE_PREFIX}/sessions/${encodeURIComponent(tabId)}/${leaf}`;
@@ -80,6 +114,19 @@ export function createBrowserFramesApiProvider(
     readonly preview: Pick<PreviewManager.PreviewManager["Service"], "listDetails">;
     readonly leases: BrowserFrameLeases["Service"];
     readonly broker: Pick<PreviewAutomationBroker["Service"], "frameHubs">;
+    /**
+     * Verify a held `browser-surface` claim against the minted tuple. Services
+     * are provided by the factory — the provider body runs without a layer.
+     */
+    readonly verifySurfaceClaims: (
+      token: string,
+      expected: {
+        readonly environmentId: string;
+        readonly threadId: string;
+        readonly tabId: string;
+        readonly serverEpoch: string;
+      },
+    ) => Effect.Effect<{ readonly expiresAt: number } | null>;
   },
 ): HostApiProvider {
   const resolve = makeExtensionScopeResolver(dependencies);
@@ -139,9 +186,30 @@ export function createBrowserFramesApiProvider(
         } satisfies BrowserFramesCapabilities;
       }
 
+      /**
+       * The verified authority this mint binds to: the root principal (for
+       * `environment-session` roots, `principalId` is the session id), the
+       * caller chain and its installation generations, the resolved view
+       * context, and the grants the broker already enforced for this method.
+       */
+      const authority: BrowserFrameAuthority = {
+        kind: "extension",
+        principalKind: principal.kind,
+        principalId: principal.id,
+        ...(principal.subject !== undefined ? { subject: principal.subject } : {}),
+        rootCallerId: metadata.rootCallerId,
+        callerId: metadata.callerId,
+        callerGenerations: metadata.callerGenerations,
+        context: scope.context,
+        grants:
+          browserFramesApi.definition.methods?.find((entry) => entry.name === method)
+            ?.requiredGrants ?? [],
+      };
+
       const requireSession = Effect.fn("BrowserFrames.requireSession")(function* (target: {
         readonly tabId: string;
         readonly serverEpoch: string;
+        readonly surfaceLease: string;
       }) {
         const listed = yield* dependencies.preview
           .listDetails({ threadId })
@@ -161,6 +229,23 @@ export function createBrowserFramesApiProvider(
             "no live browser session matches tabId.",
           );
         }
+        // The mint requires a held presentation claim for exactly this session
+        // tuple — watching without presentation authority is not enough.
+        const claims = yield* dependencies
+          .verifySurfaceClaims(surfaceTokenFromLease(target.surfaceLease), {
+            environmentId: dependencies.environmentId,
+            threadId,
+            tabId: target.tabId,
+            serverEpoch: target.serverEpoch,
+          })
+          .pipe(Effect.mapError(operationError(operation)));
+        if (claims === null) {
+          return yield* named(
+            operation,
+            "BrowserSurfaceClaimDenied",
+            "no live browser-surface presentation lease covers this session.",
+          );
+        }
         const hubs = (yield* dependencies.broker.frameHubs.pipe(
           Effect.mapError(operationError(operation)),
         )).filter((hub) => hub.environmentId === dependencies.environmentId);
@@ -171,7 +256,19 @@ export function createBrowserFramesApiProvider(
             "no connected engine host serves browser frames.",
           );
         }
-        return { hostClientId: hubs.length === 1 ? (hubs[0]?.clientId ?? null) : null };
+        if (hubs.length > 1) {
+          return yield* named(
+            operation,
+            "BrowserEngineAmbiguous",
+            "more than one engine host serves this environment; refusing to bind.",
+          );
+        }
+        const host = hubs[0]!;
+        return {
+          hostClientId: host.clientId,
+          hostConnectionId: host.connectionId,
+          claimExpiresAt: claims.expiresAt,
+        };
       });
 
       if (method === "openStream") {
@@ -184,10 +281,10 @@ export function createBrowserFramesApiProvider(
             ),
           ),
         );
-        const { hostClientId } = yield* requireSession(target);
+        const { hostClientId, hostConnectionId, claimExpiresAt } = yield* requireSession(target);
         const issued = yield* dependencies.leases.issueStreamTicket({
-          principal: principal.id,
-          scopes: principal.scopes,
+          authority,
+          authorityExpiresAt: claimExpiresAt,
           session: {
             environmentId: EnvironmentId.make(dependencies.environmentId),
             threadId,
@@ -196,6 +293,7 @@ export function createBrowserFramesApiProvider(
           },
           engineGeneration: target.expectedEngineGeneration ?? null,
           hostClientId,
+          hostConnectionId,
         });
         return {
           session: {
@@ -217,7 +315,7 @@ export function createBrowserFramesApiProvider(
       }
 
       if (method === "openInput") {
-        const target = yield* decodeTargetInput(input).pipe(
+        const target = yield* decodeInputTargetInput(input).pipe(
           Effect.mapError(() =>
             named(
               operation,
@@ -226,10 +324,10 @@ export function createBrowserFramesApiProvider(
             ),
           ),
         );
-        const { hostClientId } = yield* requireSession(target);
+        const { hostClientId, hostConnectionId, claimExpiresAt } = yield* requireSession(target);
         const issued = yield* dependencies.leases.issueInputLease({
-          principal: principal.id,
-          scopes: principal.scopes,
+          authority,
+          authorityExpiresAt: claimExpiresAt,
           session: {
             environmentId: EnvironmentId.make(dependencies.environmentId),
             threadId,
@@ -238,11 +336,20 @@ export function createBrowserFramesApiProvider(
           },
           engineGeneration: target.expectedEngineGeneration ?? null,
           hostClientId,
+          hostConnectionId,
+          ...(target.leaseId !== undefined ? { leaseId: target.leaseId } : {}),
         });
+        if (Option.isNone(issued)) {
+          return yield* named(
+            operation,
+            "BrowserInputLeaseDenied",
+            "the named lease is not a live lease owned by this caller for this session.",
+          );
+        }
         return {
-          leaseId: issued.leaseId,
-          inputTicket: issued.inputTicket,
-          expiresAt: issued.expiresAt,
+          leaseId: issued.value.leaseId,
+          inputTicket: issued.value.inputTicket,
+          expiresAt: issued.value.expiresAt,
           paths: { input: sessionPath(target.tabId, INPUT_PATHS.input) },
         } satisfies BrowserFrameInputLease;
       }
@@ -258,7 +365,12 @@ export function createBrowserFramesApiProvider(
           ),
         );
         const lease = yield* dependencies.leases.resolveLease(decoded.leaseId);
-        if (Option.isSome(lease) && lease.value.principal === principal.id) {
+        if (
+          Option.isSome(lease) &&
+          browserFrameAuthorityKey(lease.value.authority) === browserFrameAuthorityKey(authority) &&
+          lease.value.session.environmentId === dependencies.environmentId &&
+          lease.value.session.threadId === threadId
+        ) {
           yield* dependencies.leases.revokeLease(decoded.leaseId);
           return { closed: true };
         }
@@ -279,6 +391,7 @@ export function createBrowserFramesApiProvider(
 
 export const makeBrowserFramesApiProvider = Effect.fn("BrowserFramesApi.make")(function* () {
   const environment = yield* ServerEnvironment;
+  const secretStore = yield* ServerSecretStore.ServerSecretStore;
   return createBrowserFramesApiProvider({
     environmentId: yield* environment.getEnvironmentId,
     projects: yield* ProjectionProjectRepository,
@@ -286,5 +399,9 @@ export const makeBrowserFramesApiProvider = Effect.fn("BrowserFramesApi.make")(f
     preview: yield* PreviewManager.PreviewManager,
     leases: yield* BrowserFrameLeases,
     broker: yield* PreviewAutomationBroker,
+    verifySurfaceClaims: (token, expected) =>
+      verifyBrowserSurfaceClaims(token, expected).pipe(
+        Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
+      ),
   });
 });

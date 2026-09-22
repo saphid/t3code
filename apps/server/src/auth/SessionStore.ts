@@ -50,6 +50,13 @@ export interface VerifiedSession {
   readonly method: ServerAuthSessionMethod;
   readonly client: AuthClientMetadata;
   readonly expiresAt?: DateTime.DateTime;
+  /**
+   * Deadline of the presented credential itself, capped by the underlying
+   * session: a `wsTicket` dies at `claims.exp` even when the session row
+   * outlives it. Consumers that hand authority to a third party (the
+   * browser-frame hub) must bound it by this, not by the session expiry.
+   */
+  readonly credentialExpiresAt?: DateTime.DateTime;
   readonly subject: string;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
@@ -789,6 +796,8 @@ export const make = Effect.gen(function* () {
         method: claims.method,
         client: toClientMetadata(row.value.client),
         expiresAt: expiresAt.value,
+        // A session credential's own deadline is the verified claim expiry.
+        credentialExpiresAt: expiresAt.value,
         subject: claims.sub,
         scopes: claims.scopes,
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
@@ -924,6 +933,12 @@ export const make = Effect.gen(function* () {
       method: row.value.method,
       client: toClientMetadata(row.value.client),
       expiresAt: row.value.expiresAt,
+      // The presented credential dies at the earlier of its own `exp` claim
+      // and the session row deadline — never the row alone.
+      credentialExpiresAt:
+        expiresAt.value.epochMilliseconds <= row.value.expiresAt.epochMilliseconds
+          ? expiresAt.value
+          : row.value.expiresAt,
       subject: row.value.subject,
       scopes: row.value.scopes,
     } satisfies VerifiedSession;

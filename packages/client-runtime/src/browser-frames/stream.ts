@@ -413,7 +413,6 @@ export function createBrowserFrameClient(
   const notePart = (part: MjpegPart): boolean => {
     const seq = Number(part.headers["x-frame-seq"]);
     const engine = part.headers["x-engine-generation"];
-    const geometry = Number(part.headers["x-geometry-seq"]);
     // A generation or session change mid-stream means the engine was
     // replaced: the hub ends the response, and reconnect must re-read
     // config first.
@@ -431,14 +430,25 @@ export function createBrowserFrameClient(
       }
       if (lastFrameSeq === null || seq > lastFrameSeq) lastFrameSeq = seq;
     }
-    if (Number.isFinite(geometry) && geometry !== geometrySeq) {
-      geometrySeq = geometry;
-      if (config !== null) {
-        config = { ...config, geometrySeq: geometry };
-        events.onConfig(config);
-      }
-    }
+    // Geometry is NOT committed here: `geometrySeq` only advances when this
+    // part is actually painted (see drainPendingPart). Committing on receipt
+    // would let input packets name geometry whose pixels the user never saw.
     return true;
+  };
+
+  /**
+   * Paint commits geometry atomically with the pixels: `geometrySeq` (what
+   * input packets assert) becomes the painted part's stamp only after
+   * `drawImage` ran. A queued-but-superseded part cannot advance it.
+   */
+  const commitPaintedGeometry = (part: MjpegPart): void => {
+    const painted = Number(part.headers["x-geometry-seq"]);
+    if (!Number.isFinite(painted) || painted === geometrySeq) return;
+    geometrySeq = painted;
+    if (config !== null) {
+      config = { ...config, geometrySeq: painted };
+      events.onConfig(config);
+    }
   };
 
   const drainPendingPart = async (isCurrent: () => boolean) => {
@@ -456,6 +466,7 @@ export function createBrowserFrameClient(
           const width = Number(part.headers["x-frame-width"]) || bitmap.width;
           const height = Number(part.headers["x-frame-height"]) || bitmap.height;
           paint(bitmap, width, height);
+          if (!stopped) commitPaintedGeometry(part);
         }
       } finally {
         bitmap.close();
@@ -476,6 +487,11 @@ export function createBrowserFrameClient(
     lastFrameSeq = null;
     const isCurrent = () =>
       !stopped && generation === sessionGeneration && controller === streamController;
+    // Retry decisions fence on the stream's lifetime generation, not the
+    // controller identity: the EOF path clears `controller` before deciding
+    // whether to reconnect, and an already-cleared controller must not
+    // disable its own retry.
+    const alive = () => !stopped && generation === sessionGeneration;
     let retryDetail: string | undefined;
     try {
       const response = await fetch(httpUrl("stream.mjpeg"), {
@@ -494,9 +510,11 @@ export function createBrowserFrameClient(
           if (!notePart(part)) {
             // Engine generation moved mid-stream: the response is stale.
             await reader.cancel().catch(() => {});
-            if (isCurrent()) {
+            if (alive()) {
+              controller = null;
+              streamController.abort();
               void fetchConfig().then((next) => {
-                if (next !== null && isCurrent()) scheduleRetry("stream", startStream);
+                if (next !== null && alive()) scheduleRetry("stream", startStream);
               });
             }
             return;
@@ -511,14 +529,14 @@ export function createBrowserFrameClient(
       if (!isCurrent()) return;
       retryDetail = (cause as Error).message;
     }
-    if (isCurrent()) {
+    if (alive()) {
       controller = null;
       streamController.abort();
       // End-of-body: the bound engine or epoch moved on. Re-read config so the
       // next attempt fences against the live generation, then reconnect.
       connecting(retryDetail);
       void fetchConfig().then(() => {
-        if (isCurrent()) scheduleRetry("stream", startStream);
+        if (alive()) scheduleRetry("stream", startStream);
       });
     }
   };
@@ -604,17 +622,16 @@ export function createBrowserFrameClient(
       switch (notice.type) {
         case "bound":
           inputBound = true;
-          if (typeof notice.geometrySeq === "number") geometrySeq = notice.geometrySeq;
           if (typeof notice.expiresAt === "number") scheduleInputRenewal(notice.expiresAt);
           events.onInputConnected(true);
           break;
         case "geometry":
-          if (typeof notice.geometrySeq === "number") {
-            geometrySeq = notice.geometrySeq;
-            if (config !== null) {
-              config = { ...config, geometrySeq: notice.geometrySeq };
-              events.onConfig(config);
-            }
+          // The notice reports the hub's newest geometry for display, but the
+          // packet seq stays paint-committed: `geometrySeq` advances only when
+          // a frame stamped with it has actually been drawn.
+          if (typeof notice.geometrySeq === "number" && config !== null) {
+            config = { ...config, geometrySeq: notice.geometrySeq };
+            events.onConfig(config);
           }
           break;
         case "rejected":
@@ -636,7 +653,10 @@ export function createBrowserFrameClient(
   };
 
   const wantInput = () => {
-    if (inputWanted || stopped) return;
+    // The `<img>` path is read-only: it cannot observe part headers, so no
+    // paint barrier can prove which geometry the user is looking at. Input
+    // only exists on the canvas path where paint commits geometry.
+    if (inputWanted || stopped || !useCanvasPath) return;
     inputWanted = true;
     void connectInput();
   };
@@ -644,6 +664,9 @@ export function createBrowserFrameClient(
   const sendPacket = (event: unknown) => {
     const socket = inputSocket;
     if (socket === null || socket.readyState !== WebSocket.OPEN || !inputBound) return;
+    // First-paint barrier: until a frame has actually been drawn, `geometrySeq`
+    // is only config-asserted and must not authorize input.
+    if (!firstFrame) return;
     inputSeq += 1;
     socket.send(JSON.stringify({ seq: inputSeq, geometrySeq, event }));
   };

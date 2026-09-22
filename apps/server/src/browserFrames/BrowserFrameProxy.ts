@@ -14,16 +14,36 @@
  * instead. Input upgrades require an input lease — authority is minted, never
  * asserted. Tickets are stripped before upstream forwarding; the proxy
  * re-asserts the verified session tuple and lease binding on the upstream
- * request so the hub never trusts client-supplied identity fields.
+ * request and authenticates the hop with the hub's own secret, so the hub
+ * never trusts client-supplied identity fields.
+ *
+ * Redeem re-validates the record's authority (session still live, caller
+ * installations still enabled with unchanged content, grants and project
+ * scope still held), and the route layer subscribes lease invalidations,
+ * session removals, catalogue changes, and host disconnects into active
+ * channel termination — a bound socket dies with its authority, not just
+ * future verifies.
  *
  * Actions do not ride this surface — `/sessions` metadata, frames, and the
  * input socket only.
  */
-import { AuthOrchestrationReadScope, type BrowserFrameSessionTuple } from "@t3tools/contracts";
+import {
+  AuthOrchestrationReadScope,
+  BROWSER_FRAMES_ROUTE_PREFIX,
+  type AuthEnvironmentScope,
+  type AuthSessionId,
+  type BrowserFrameSessionTuple,
+  type ProjectId,
+} from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import {
+  FetchHttpClient,
   HttpClient,
   HttpClientRequest,
   HttpRouter,
@@ -34,22 +54,35 @@ import * as Socket from "effect/unstable/socket/Socket";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import { SessionStore } from "../auth/SessionStore.ts";
 import {
   failEnvironmentAuthInvalid,
   failEnvironmentInternal,
   failEnvironmentScopeRequired,
 } from "../auth/http.ts";
+import { EnvironmentExtensions } from "../extensions/EnvironmentExtensions.ts";
+import { ExtensionCatalogueChanges } from "../extensions/catalogueChanges.ts";
 import {
+  canonicalizeFrameHubOrigin,
   PreviewAutomationBroker,
   type BrowserFrameHubEndpoint,
 } from "../mcp/PreviewAutomationBroker.ts";
-import { BrowserFrameLeases } from "./BrowserFrameLeases.ts";
+import {
+  authorityRidesOnSession,
+  BrowserFrameLeases,
+  browserFrameAuthorityKey,
+  type BrowserFrameAuthority,
+  type BrowserFrameTicketRecord,
+} from "./BrowserFrameLeases.ts";
 
-export const BROWSER_FRAMES_ROUTE_PREFIX = "/api/browser-frames";
+export { BROWSER_FRAMES_ROUTE_PREFIX };
 
 const SESSION_PATH = /^\/sessions$/;
 const SESSION_GET_PATH = /^\/sessions\/[^/]+\/(stream\.mjpeg|snapshot|config)$/;
 const SESSION_INPUT_PATH = /^\/sessions\/([^/]+)\/input$/;
+
+/** Stream deadline when the credential mode carries no expiry of its own. */
+const DEFAULT_STREAM_AUTHORITY_TTL_MS = 5 * 60 * 1000;
 
 /** Hop-by-hop and credential headers that must not cross the proxy. */
 const DROPPED_REQUEST_HEADERS = new Set([
@@ -65,6 +98,7 @@ const DROPPED_REQUEST_HEADERS = new Set([
   "dpop",
   "content-length",
   "accept-encoding",
+  "x-t3-hub-auth",
   "x-t3-session",
   "x-t3-engine-generation",
   "x-t3-input-lease",
@@ -96,31 +130,42 @@ const encodeRuntimeTabId = Schema.encodeSync(
   Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String, Schema.String, Schema.String])),
 );
 
-const isLoopbackOrigin = (origin: string): boolean => {
-  try {
-    const url = new URL(origin);
-    return (
-      (url.protocol === "http:" || url.protocol === "https:") &&
-      (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]")
-    );
-  } catch {
-    return false;
-  }
-};
-
-/** Resolve the engine host that serves this session's frame hub. */
-const resolveFrameHub = (
-  endpoints: ReadonlyArray<BrowserFrameHubEndpoint>,
-  session: BrowserFrameSessionTuple,
-  hostId: string | null,
-): BrowserFrameHubEndpoint | undefined => {
-  const candidates = endpoints.filter(
-    (endpoint) =>
-      endpoint.environmentId === session.environmentId && isLoopbackOrigin(endpoint.origin),
+/**
+ * `/sessions` for a ticket-bound caller returns only the bound tuple's row —
+ * a tab-A ticket must not enumerate other threads or environments.
+ */
+const proxySessionsScoped = Effect.fn("BrowserFrameProxy.proxySessionsScoped")(function* (
+  request: HttpServerRequest.HttpServerRequest,
+  upstreamUrl: string,
+  hubOrigin: string,
+  injected: Record<string, string>,
+  bound: BrowserFrameSessionTuple,
+) {
+  const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
+  const upstreamRequest = HttpClientRequest.make("GET")(upstreamUrl).pipe(
+    HttpClientRequest.setHeaders(forwardHeaders(request, hubOrigin, injected)),
   );
-  if (hostId !== null) return candidates.find((endpoint) => endpoint.clientId === hostId);
-  return candidates.length === 1 ? candidates[0] : undefined;
-};
+  const response = yield* httpClient
+    .execute(upstreamRequest)
+    .pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }));
+  if (response.status < 200 || response.status >= 300) {
+    return HttpServerResponse.text("Bad Gateway", { status: 502 });
+  }
+  const body: unknown = yield* response.json;
+  const rows = Array.isArray(body) ? body : [];
+  const filtered = rows.filter(
+    (row) =>
+      typeof row === "object" &&
+      row !== null &&
+      (row as { environmentId?: unknown }).environmentId === bound.environmentId &&
+      (row as { threadId?: unknown }).threadId === bound.threadId &&
+      (row as { serverEpoch?: unknown }).serverEpoch === bound.serverEpoch &&
+      (row as { tabId?: unknown }).tabId === bound.tabId,
+  );
+  return yield* HttpServerResponse.json(filtered, {
+    headers: { "cache-control": "no-store" },
+  });
+});
 
 const authenticateSessionRead = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
@@ -186,12 +231,20 @@ const proxyHttp = Effect.fn("BrowserFrameProxy.proxyHttp")(function* (
   upstreamUrl: string,
   hubOrigin: string,
   injected: Record<string, string>,
+  interrupt: Effect.Effect<unknown>,
 ) {
   const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
   const upstreamRequest = HttpClientRequest.make("GET")(upstreamUrl).pipe(
     HttpClientRequest.setHeaders(forwardHeaders(request, hubOrigin, injected)),
   );
-  const response = yield* httpClient.execute(upstreamRequest);
+  // Redirects are never followed upstream: a 3xx to a non-hub target would
+  // smuggle the hub secret to an arbitrary origin.
+  const response = yield* httpClient
+    .execute(upstreamRequest)
+    .pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }));
+  if (response.status >= 300 && response.status < 400) {
+    return HttpServerResponse.text("Bad Gateway", { status: 502 });
+  }
   const headers: Record<string, string> = {};
   for (const [name, value] of Object.entries(response.headers)) {
     if (name === "content-encoding" || name === "transfer-encoding" || name === "connection") {
@@ -201,7 +254,7 @@ const proxyHttp = Effect.fn("BrowserFrameProxy.proxyHttp")(function* (
   }
   // Long-lived MJPEG responses must not be buffered by compression or cached.
   headers["cache-control"] = "no-store, no-transform";
-  return HttpServerResponse.stream(response.stream, {
+  return HttpServerResponse.stream(response.stream.pipe(Stream.interruptWhen(interrupt)), {
     status: response.status,
     headers,
     ...(headers["content-type"] ? { contentType: headers["content-type"] } : {}),
@@ -212,6 +265,7 @@ const proxyHttp = Effect.fn("BrowserFrameProxy.proxyHttp")(function* (
 const proxyWebSocket = Effect.fn("BrowserFrameProxy.proxyWebSocket")(function* (
   request: HttpServerRequest.HttpServerRequest,
   upstreamUrl: string,
+  interrupt: Effect.Effect<unknown>,
 ) {
   const client = yield* request.upgrade;
   const upstream = yield* Socket.makeWebSocket(upstreamUrl, {
@@ -223,9 +277,13 @@ const proxyWebSocket = Effect.fn("BrowserFrameProxy.proxyWebSocket")(function* (
       const writeToUpstream = yield* upstream.writer;
       // Whichever side closes first ends the other via scope teardown: a close
       // fails that side's run loop with a SocketError, which loses the race.
+      // The interrupt effect is the third racer: lease invalidation ends both.
       return yield* Effect.raceFirst(
-        upstream.runRaw((data) => writeToClient(data)),
-        client.runRaw((data) => writeToUpstream(data)),
+        Effect.raceFirst(
+          upstream.runRaw((data) => writeToClient(data)),
+          client.runRaw((data) => writeToUpstream(data)),
+        ),
+        interrupt,
       );
     }),
   ).pipe(Effect.catchCause(() => Effect.void));
@@ -244,7 +302,7 @@ const upstreamParams = (
     upstream.append(name, value);
   }
   // The proxy re-asserts the verified tuple and lease binding: the hub treats
-  // these as server-asserted identity on a loopback hop clients cannot reach.
+  // these as server-asserted identity on the authenticated loopback hop.
   upstream.set(
     "x-t3-session",
     encodeRuntimeTabId([
@@ -265,117 +323,297 @@ const upstreamParams = (
   return upstream.toString();
 };
 
-const handler = Effect.gen(function* () {
-  const request = yield* HttpServerRequest.HttpServerRequest;
-  const url = HttpServerRequest.toURL(request);
-  if (Option.isNone(url)) {
-    return HttpServerResponse.text("Bad Request", { status: 400 });
-  }
-  const hubPath = url.value.pathname.slice(BROWSER_FRAMES_ROUTE_PREFIX.length) || "/";
-  const params = url.value.searchParams;
-  const upgrade = isWebSocketUpgrade(request);
-  const inputMatch = SESSION_INPUT_PATH.exec(hubPath);
-  const getAllowed =
-    request.method === "GET" && (SESSION_PATH.test(hubPath) || SESSION_GET_PATH.test(hubPath));
-
-  if (upgrade) {
-    if (inputMatch === null) {
-      return HttpServerResponse.text("Not Found", { status: 404 });
+/**
+ * Replay the mint-time authority checks against live state. Session-backed
+ * records revalidate their session; extension records additionally re-resolve
+ * the caller chain — every captured installation must still be enabled with
+ * unchanged content, and the leaf must still hold the minted grants and
+ * project scope. `EnvironmentExtensions` is not ambient to route handlers, so
+ * the service is captured at layer construction and closed over.
+ */
+const makeAuthorityStillValid = (extensions: EnvironmentExtensions["Service"]) =>
+  Effect.fn("BrowserFrameProxy.authorityStillValid")(function* (authority: BrowserFrameAuthority) {
+    const sessions = yield* SessionStore;
+    const sessionId =
+      authority.kind === "session"
+        ? authority.sessionId
+        : authority.principalKind === "environment-session"
+          ? (authority.principalId as AuthSessionId)
+          : undefined;
+    if (sessionId !== undefined) {
+      const current = yield* sessions.revalidate(sessionId).pipe(Effect.option);
+      if (Option.isNone(current)) return false;
+      if (authority.subject !== undefined && current.value.subject !== authority.subject) {
+        return false;
+      }
+      if (
+        authority.kind === "session" &&
+        !authority.grants.every((scope) =>
+          current.value.scopes.includes(scope as AuthEnvironmentScope),
+        )
+      ) {
+        return false;
+      }
     }
-  } else if (!getAllowed) {
-    return SESSION_PATH.test(hubPath) || SESSION_GET_PATH.test(hubPath) || inputMatch !== null
-      ? HttpServerResponse.text("Method Not Allowed", { status: 405 })
-      : HttpServerResponse.text("Not Found", { status: 404 });
-  }
+    if (authority.kind !== "extension") return true;
+    const installations = yield* extensions.list.pipe(Effect.option);
+    if (Option.isNone(installations)) return false;
+    const projectId =
+      typeof authority.context === "object" && authority.context !== null
+        ? (authority.context as { resource?: { projectId?: ProjectId } }).resource?.projectId
+        : undefined;
+    for (const caller of authority.callerGenerations) {
+      const entry = installations.value.find((item) => item.id === caller.pluginId);
+      if (!entry || !entry.enabled || entry.contentHash !== caller.contentHash) return false;
+    }
+    const leaf = installations.value.find((item) => item.id === authority.callerId);
+    if (!leaf || !leaf.enabled) return false;
+    if (!authority.grants.every((grant) => leaf.grants.capabilities.includes(grant))) return false;
+    if (projectId !== undefined && !leaf.grants.projectIds.includes(projectId)) return false;
+    return true;
+  });
 
+/**
+ * An interrupt handle for one bound channel: completes when the record's
+ * lease is revoked/superseded, its authority dies, or its engine-host
+ * connection goes away. Subscriptions open before the channel so a queued
+ * invalidation cannot be missed.
+ */
+const channelInterrupt = Effect.fn("BrowserFrameProxy.channelInterrupt")(function* (
+  record: BrowserFrameTicketRecord,
+) {
+  const fired = yield* Deferred.make<void>();
   const leases = yield* BrowserFrameLeases;
   const broker = yield* PreviewAutomationBroker;
-
-  if (upgrade && inputMatch !== null) {
-    // Input is lease-gated: a minted ticket is the only credential, and it is
-    // verified before the upgrade is accepted.
-    const tabId = inputMatch[1];
-    const ticket = params.get("inputTicket");
-    const record =
-      ticket === null || tabId === undefined ? Option.none() : yield* leases.verify(ticket);
-    if (
-      tabId === undefined ||
-      Option.isNone(record) ||
-      record.value.kind !== "input" ||
-      record.value.session.tabId !== decodeURIComponent(tabId)
-    ) {
-      return HttpServerResponse.text("Unauthorized", { status: 401 });
-    }
-    const session = record.value.session;
-    const endpoints = yield* broker.frameHubs;
-    const hub = resolveFrameHub(
-      endpoints,
-      session,
-      params.get("hostId") ?? record.value.hostClientId,
+  const matches = (leaseId: string | undefined) =>
+    record.leaseId !== undefined && leaseId === record.leaseId;
+  const authorityKey = browserFrameAuthorityKey(record.authority);
+  yield* Effect.forkScoped(
+    Stream.runForEach(leases.invalidations, (event) => {
+      const hit =
+        (event.type === "lease" && matches(event.leaseId)) ||
+        (event.type === "authority" && event.authorityKey === authorityKey) ||
+        (event.type === "session" && authorityRidesOnSession(record.authority, event.sessionId));
+      return hit ? Deferred.succeed(fired, undefined) : Effect.void;
+    }),
+  );
+  if (record.hostConnectionId !== null) {
+    yield* Effect.forkScoped(
+      Stream.runForEach(broker.frameHubEvents, (event) =>
+        event.connectionId === record.hostConnectionId
+          ? Deferred.succeed(fired, undefined)
+          : Effect.void,
+      ),
     );
-    if (!hub) {
-      return HttpServerResponse.text("Browser frame hub is not running", { status: 503 });
-    }
-    const search = upstreamParams(params, session, record.value.engineGeneration, {
-      ...(record.value.leaseId !== undefined ? { leaseId: record.value.leaseId } : {}),
-      expiresAt: record.value.expiresAt,
-    });
-    const upstream = `${hub.origin.replace(/^http/, "ws")}${hubPath}?${search}`;
-    return yield* proxyWebSocket(request, upstream);
   }
-
-  // GET routes: a frameTicket authorizes extension viewers; otherwise the
-  // request must carry an environment session at read scope.
-  const frameTicket = params.get("frameTicket");
-  let sessionTuple: Option.Option<BrowserFrameSessionTuple>;
-  let engineGeneration: string | null = null;
-  let ticketHostClientId: string | null = null;
-  let credentialExpiresAt: number | undefined;
-  if (frameTicket !== null) {
-    const record = yield* leases.verify(frameTicket);
-    if (Option.isNone(record) || record.value.kind !== "stream") {
-      return HttpServerResponse.text("Unauthorized", { status: 401 });
-    }
-    sessionTuple = Option.some(record.value.session);
-    engineGeneration = record.value.engineGeneration;
-    ticketHostClientId = record.value.hostClientId;
-    credentialExpiresAt = record.value.expiresAt;
-  } else {
-    const sessionAuth = yield* authenticateSessionRead;
-    const pathTabId = SESSION_GET_PATH.test(hubPath)
-      ? decodeURIComponent(hubPath.split("/")[2] ?? "")
-      : null;
-    sessionTuple = tupleFromQuery(params, pathTabId);
-    engineGeneration = params.get("engineGeneration");
-    credentialExpiresAt = sessionAuth.expiresAt?.epochMilliseconds;
-  }
-  if (Option.isNone(sessionTuple)) {
-    return HttpServerResponse.text("Missing session identity", { status: 400 });
-  }
-  const session = sessionTuple.value;
-  const endpoints = yield* broker.frameHubs;
-  const hub = resolveFrameHub(endpoints, session, params.get("hostId") ?? ticketHostClientId);
-  if (!hub) {
-    return HttpServerResponse.text("Browser frame hub is not running", { status: 503 });
-  }
-  const search = upstreamParams(params, session, engineGeneration, {
-    ...(credentialExpiresAt !== undefined ? { expiresAt: credentialExpiresAt } : {}),
-  });
-  const injected: Record<string, string> = {
-    "x-t3-session": encodeRuntimeTabId([
-      session.environmentId,
-      session.threadId,
-      session.serverEpoch,
-      session.tabId,
-    ]),
-  };
-  if (engineGeneration !== null) injected["x-t3-engine-generation"] = engineGeneration;
-  const upstreamUrl = `${hub.origin}${hubPath}${search ? `?${search}` : ""}`;
-  return yield* proxyHttp(request, upstreamUrl, hub.origin, injected);
+  return Deferred.await(fired);
 });
 
-export const browserFrameProxyRouteLayer = HttpRouter.add(
-  "*",
-  `${BROWSER_FRAMES_ROUTE_PREFIX}/*`,
-  handler,
+const makeHandler = (
+  authorityStillValid: (
+    authority: BrowserFrameAuthority,
+  ) => Effect.Effect<boolean, never, SessionStore>,
+) =>
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = HttpServerRequest.toURL(request);
+    if (Option.isNone(url)) {
+      return HttpServerResponse.text("Bad Request", { status: 400 });
+    }
+    const hubPath = url.value.pathname.slice(BROWSER_FRAMES_ROUTE_PREFIX.length) || "/";
+    const params = url.value.searchParams;
+    const upgrade = isWebSocketUpgrade(request);
+    const inputMatch = SESSION_INPUT_PATH.exec(hubPath);
+    const getAllowed =
+      request.method === "GET" && (SESSION_PATH.test(hubPath) || SESSION_GET_PATH.test(hubPath));
+
+    if (upgrade) {
+      if (inputMatch === null) {
+        return HttpServerResponse.text("Not Found", { status: 404 });
+      }
+    } else if (!getAllowed) {
+      return SESSION_PATH.test(hubPath) || SESSION_GET_PATH.test(hubPath) || inputMatch !== null
+        ? HttpServerResponse.text("Method Not Allowed", { status: 405 })
+        : HttpServerResponse.text("Not Found", { status: 404 });
+    }
+
+    const leases = yield* BrowserFrameLeases;
+    const broker = yield* PreviewAutomationBroker;
+
+    if (upgrade && inputMatch !== null) {
+      // Input is lease-gated: a minted ticket is the only credential, and it is
+      // verified — with its authority — before the upgrade is accepted.
+      const tabId = inputMatch[1];
+      const ticket = params.get("inputTicket");
+      const record =
+        ticket === null || tabId === undefined ? Option.none() : yield* leases.verify(ticket);
+      if (
+        tabId === undefined ||
+        Option.isNone(record) ||
+        record.value.kind !== "input" ||
+        record.value.session.tabId !== decodeURIComponent(tabId)
+      ) {
+        return HttpServerResponse.text("Unauthorized", { status: 401 });
+      }
+      if (!(yield* authorityStillValid(record.value.authority))) {
+        return HttpServerResponse.text("Unauthorized", { status: 401 });
+      }
+      const session = record.value.session;
+      const endpoints = yield* broker.frameHubs;
+      const hub =
+        record.value.hostClientId === null
+          ? undefined
+          : endpoints.find(
+              (endpoint) =>
+                endpoint.clientId === record.value.hostClientId &&
+                canonicalizeFrameHubOrigin(endpoint.origin) === endpoint.origin,
+            );
+      if (!hub || hub.connectionId !== record.value.hostConnectionId) {
+        return HttpServerResponse.text("Browser frame hub is not running", { status: 503 });
+      }
+      const search = upstreamParams(params, session, record.value.engineGeneration, {
+        ...(record.value.leaseId !== undefined ? { leaseId: record.value.leaseId } : {}),
+        expiresAt: record.value.expiresAt,
+      });
+      // Node's WebSocket cannot set upgrade headers — the hub secret rides the
+      // query, which the hub accepts only on this loopback hop.
+      const upstream = `${hub.origin.replace(/^http/, "ws")}${hubPath}?${search}&x-t3-hub-auth=${encodeURIComponent(hub.secret)}`;
+      const interrupt = yield* channelInterrupt(record.value);
+      return yield* proxyWebSocket(request, upstream, interrupt);
+    }
+
+    // GET routes: a frameTicket authorizes extension viewers; otherwise the
+    // request must carry an environment session at read scope.
+    const frameTicket = params.get("frameTicket");
+    let sessionTuple: Option.Option<BrowserFrameSessionTuple>;
+    let engineGeneration: string | null = null;
+    let boundHostClientId: string | null = null;
+    let boundHostConnectionId: string | null = null;
+    let credentialExpiresAt: number | undefined;
+    let ticketRecord: BrowserFrameTicketRecord | undefined;
+    if (frameTicket !== null) {
+      const record = yield* leases.verify(frameTicket);
+      if (Option.isNone(record) || record.value.kind !== "stream") {
+        return HttpServerResponse.text("Unauthorized", { status: 401 });
+      }
+      if (!(yield* authorityStillValid(record.value.authority))) {
+        return HttpServerResponse.text("Unauthorized", { status: 401 });
+      }
+      ticketRecord = record.value;
+      sessionTuple = Option.some(record.value.session);
+      engineGeneration = record.value.engineGeneration;
+      boundHostClientId = record.value.hostClientId;
+      boundHostConnectionId = record.value.hostConnectionId;
+      credentialExpiresAt = record.value.expiresAt;
+    } else {
+      const sessionAuth = yield* authenticateSessionRead;
+      const pathTabId = SESSION_GET_PATH.test(hubPath)
+        ? decodeURIComponent(hubPath.split("/")[2] ?? "")
+        : null;
+      sessionTuple = tupleFromQuery(params, pathTabId);
+      engineGeneration = params.get("engineGeneration");
+      // Effective credential deadline: the wsTicket claim expiry when present,
+      // capped by the session row; a finite floor even for credential modes
+      // that carry no expiry of their own.
+      credentialExpiresAt =
+        sessionAuth.credentialExpiresAt?.epochMilliseconds ??
+        sessionAuth.expiresAt?.epochMilliseconds ??
+        (yield* Clock.currentTimeMillis) + DEFAULT_STREAM_AUTHORITY_TTL_MS;
+    }
+    if (Option.isNone(sessionTuple)) {
+      return HttpServerResponse.text("Missing session identity", { status: 400 });
+    }
+    const session = sessionTuple.value;
+    const endpoints = yield* broker.frameHubs;
+    const candidates = endpoints.filter(
+      (endpoint) =>
+        endpoint.environmentId === session.environmentId &&
+        canonicalizeFrameHubOrigin(endpoint.origin) === endpoint.origin,
+    );
+    let hub: BrowserFrameHubEndpoint | undefined;
+    if (boundHostClientId !== null) {
+      // Ticket-bound: the mint's host binding is authoritative; a query hostId
+      // can never redirect the upstream.
+      hub = candidates.find((endpoint) => endpoint.clientId === boundHostClientId);
+    } else {
+      // Session-credential requests may name a hub, or take the sole candidate.
+      const requested = params.get("hostId");
+      hub =
+        requested !== null
+          ? candidates.find((endpoint) => endpoint.clientId === requested)
+          : candidates.length === 1
+            ? candidates[0]
+            : undefined;
+    }
+    if (!hub || (boundHostConnectionId !== null && hub.connectionId !== boundHostConnectionId)) {
+      return HttpServerResponse.text("Browser frame hub is not running", { status: 503 });
+    }
+    const search = upstreamParams(params, session, engineGeneration, {
+      ...(credentialExpiresAt !== undefined ? { expiresAt: credentialExpiresAt } : {}),
+    });
+    const injected: Record<string, string> = {
+      "x-t3-hub-auth": hub.secret,
+      "x-t3-session": encodeRuntimeTabId([
+        session.environmentId,
+        session.threadId,
+        session.serverEpoch,
+        session.tabId,
+      ]),
+    };
+    if (engineGeneration !== null) injected["x-t3-engine-generation"] = engineGeneration;
+    const upstreamUrl = `${hub.origin}${hubPath}${search ? `?${search}` : ""}`;
+    if (ticketRecord !== undefined && SESSION_PATH.test(hubPath)) {
+      return yield* proxySessionsScoped(request, upstreamUrl, hub.origin, injected, session);
+    }
+    const interrupt =
+      ticketRecord !== undefined ? yield* channelInterrupt(ticketRecord) : Effect.never;
+    return yield* proxyHttp(request, upstreamUrl, hub.origin, injected, interrupt);
+  });
+
+const invalidationWatchers = Effect.gen(function* () {
+  const leases = yield* BrowserFrameLeases;
+  const sessions = yield* SessionStore;
+  const extensions = yield* EnvironmentExtensions;
+  const catalogueChanges = yield* ExtensionCatalogueChanges;
+
+  // Session removal sweeps every record riding on it — the invalidation
+  // events then reach open channels via channelInterrupt.
+  const watched = yield* sessions.watchChanges();
+  yield* Stream.runForEach(watched, (change) =>
+    change.type === "clientRemoved" ? leases.revokeSession(change.sessionId) : Effect.void,
+  ).pipe(Effect.forkScoped);
+
+  // Catalogue churn (uninstall, grant change, replacement) re-validates
+  // every extension authority; revoked callers lose live channels, not just
+  // future mints.
+  yield* Stream.runForEach(catalogueChanges.changes, () =>
+    Effect.gen(function* () {
+      const installations = yield* extensions.list.pipe(Effect.option);
+      if (Option.isNone(installations)) return;
+      yield* leases.revokeWhere((record) => {
+        const authority = record.authority;
+        if (authority.kind !== "extension") return false;
+        const stale = authority.callerGenerations.some((caller) => {
+          const entry = installations.value.find((item) => item.id === caller.pluginId);
+          return !entry || !entry.enabled || entry.contentHash !== caller.contentHash;
+        });
+        if (stale) return true;
+        const leaf = installations.value.find((item) => item.id === authority.callerId);
+        if (!leaf || !leaf.enabled) return true;
+        return !authority.grants.every((grant) => leaf.grants.capabilities.includes(grant));
+      });
+    }),
+  ).pipe(Effect.forkScoped);
+});
+
+export const browserFrameProxyRouteLayer = Layer.unwrap(
+  Effect.gen(function* () {
+    const extensions = yield* EnvironmentExtensions;
+    yield* invalidationWatchers;
+    return HttpRouter.add(
+      "*",
+      `${BROWSER_FRAMES_ROUTE_PREFIX}/*`,
+      makeHandler(makeAuthorityStillValid(extensions)),
+    );
+  }),
 );

@@ -232,14 +232,15 @@ export default defineConfig(() => {
             // same list, so the two sides cannot drift. `/ws` is the app's own
             // socket — Vite's HMR socket is matched separately and exactly
             // (path "/" plus a vite-hmr subprotocol), so the two upgrade
-            // handlers don't collide.
+            // handlers don't collide. `/api` also upgrades: the browser-frames
+            // input socket lives at `/api/browser-frames/.../input`.
             proxy: Object.fromEntries(
               DEV_PROXIED_PATH_PREFIXES.map((prefix) => [
                 prefix,
                 {
                   target: devProxyTarget,
                   changeOrigin: true,
-                  ...(prefix === "/ws" ? { ws: true } : {}),
+                  ...(prefix === "/ws" || prefix === "/api" ? { ws: true } : {}),
                 },
               ]),
             ),
