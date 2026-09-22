@@ -42,6 +42,8 @@ import {
   scriptWriteData,
   setQuestionCustomAnswer,
   terminalBusy,
+  themeVarOverrides,
+  trackThemeVars,
   toggleQuestionOption,
   userInputOptionValue,
   workspaceFromRevision,
@@ -914,5 +916,165 @@ NodeTest.describe("verified diff reassembly", () => {
     });
     NodeAssert.equal(result.ok, false);
     NodeAssert.match(result.detail, /before the manifest/);
+  });
+});
+
+NodeTest.describe("themeVarOverrides", () => {
+  const cssVars = {
+    mutedForeground: "--app-theme-muted-foreground",
+    border: "--app-theme-border",
+    error: "--app-theme-error",
+    text: "--app-theme-text",
+    canvas: "--app-theme-canvas",
+  };
+
+  NodeTest.it("republishes contract tokens as panel-scoped vars", () => {
+    const overrides = themeVarOverrides(
+      {
+        mutedForeground: "#98a2b3",
+        border: "#eaecf0",
+        error: "#f04438",
+        text: "#101828",
+        canvas: "#ffffff",
+      },
+      cssVars,
+    );
+    NodeAssert.deepEqual(overrides, {
+      "--t3-agents-muted-foreground": "var(--app-theme-muted-foreground, #98a2b3)",
+      "--t3-agents-border": "var(--app-theme-border, #eaecf0)",
+      "--t3-agents-error": "var(--app-theme-error, #f04438)",
+      "--t3-agents-text": "var(--app-theme-text, #101828)",
+      "--t3-agents-canvas": "var(--app-theme-canvas, #ffffff)",
+    });
+  });
+
+  NodeTest.it("skips roles the host did not resolve rather than overriding them", () => {
+    const overrides = themeVarOverrides({ text: "#101828" }, cssVars);
+    NodeAssert.deepEqual(overrides, {
+      "--t3-agents-text": "var(--app-theme-text, #101828)",
+    });
+  });
+
+  NodeTest.it("falls back to the resolved value when no css var is advertised", () => {
+    const overrides = themeVarOverrides({ mutedForeground: "#98a2b3" }, {});
+    NodeAssert.deepEqual(overrides, {
+      "--t3-agents-muted-foreground": "#98a2b3",
+    });
+  });
+
+  NodeTest.it("ignores unrelated roles the contract does not publish to this panel", () => {
+    const overrides = themeVarOverrides(
+      { mutedForeground: "#98a2b3", terminalBackground: "#000000", chrome: "#111" },
+      { ...cssVars, terminalBackground: "--app-theme-terminal-background" },
+    );
+    NodeAssert.deepEqual(Object.keys(overrides), ["--t3-agents-muted-foreground"]);
+  });
+});
+
+NodeTest.describe("trackThemeVars", () => {
+  const flush = async () => {
+    for (let i = 0; i < 6; i += 1) await new Promise((resolve) => setImmediate(resolve));
+  };
+  const deferred = () => {
+    let resolve;
+    let reject;
+    const promise = new Promise((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  };
+  /** Frames, then an open stream that never ends (the healthy steady state). */
+  const openStream = async function* (frames) {
+    for (const frame of frames) yield frame;
+    await new Promise(() => {});
+  };
+  const endedStream = async function* (frames) {
+    for (const frame of frames) yield frame;
+  };
+  /** A stream whose first read rejects — the transport-failure shape. */
+  const failingStream = () => ({
+    [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(new Error("stream lost")) }),
+  });
+  const SNAPSHOT = { tokens: { text: "#101828" }, cssVars: { text: "--app-theme-text" } };
+  const TEXT_VAR = { "--t3-agents-text": "var(--app-theme-text, #101828)" };
+
+  NodeTest.it("clears retained overrides when a token read fails", async () => {
+    const emits = [];
+    let reads = 0;
+    trackThemeVars(
+      {
+        getTokens: () =>
+          ++reads === 1 ? Promise.resolve(SNAPSHOT) : Promise.reject(new Error("denied")),
+        subscribeState: () => openStream([{ type: "data", value: {} }]),
+      },
+      new AbortController().signal,
+      (vars) => emits.push(vars),
+    );
+    await flush();
+    NodeAssert.deepEqual(emits, [TEXT_VAR, null]);
+  });
+
+  NodeTest.it("clears retained overrides when the state stream closes", async () => {
+    const emits = [];
+    trackThemeVars(
+      {
+        getTokens: () => Promise.resolve(SNAPSHOT),
+        subscribeState: () => endedStream([{ type: "closed" }]),
+      },
+      new AbortController().signal,
+      (vars) => emits.push(vars),
+    );
+    await flush();
+    NodeAssert.deepEqual(emits, [TEXT_VAR, null]);
+  });
+
+  NodeTest.it("clears retained overrides when the state stream errors", async () => {
+    const emits = [];
+    trackThemeVars(
+      {
+        getTokens: () => Promise.resolve(SNAPSHOT),
+        subscribeState: failingStream,
+      },
+      new AbortController().signal,
+      (vars) => emits.push(vars),
+    );
+    await flush();
+    NodeAssert.deepEqual(emits, [TEXT_VAR, null]);
+  });
+
+  NodeTest.it("ignores a read that resolves after the stream is already lost", async () => {
+    const emits = [];
+    const read = deferred();
+    trackThemeVars(
+      {
+        getTokens: () => read.promise,
+        subscribeState: () => endedStream([{ type: "closed" }]),
+      },
+      new AbortController().signal,
+      (vars) => emits.push(vars),
+    );
+    await flush();
+    read.resolve(SNAPSHOT);
+    await flush();
+    NodeAssert.deepEqual(emits, [null]);
+  });
+
+  NodeTest.it("does not let an older failed read clear a newer result", async () => {
+    const emits = [];
+    const first = deferred();
+    let reads = 0;
+    trackThemeVars(
+      {
+        getTokens: () => (++reads === 1 ? first.promise : Promise.resolve(SNAPSHOT)),
+        subscribeState: () => openStream([{ type: "data", value: {} }]),
+      },
+      new AbortController().signal,
+      (vars) => emits.push(vars),
+    );
+    await flush();
+    first.reject(new Error("stale denial"));
+    await flush();
+    NodeAssert.deepEqual(emits, [TEXT_VAR]);
   });
 });
