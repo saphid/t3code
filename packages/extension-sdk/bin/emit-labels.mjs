@@ -24,12 +24,13 @@
 // - JSX dev metadata: `fileName` in the argument-4 source object of a
 //   `jsxDEV` call, only when the callee's namespace object is a top-level
 //   `var` initialized by a prologue `__toESM`/`__toCommonJS` over the
-//   `require_*` of a module whose metafile key is the runtime's resolved
-//   identity — `host-react:react/jsx-dev-runtime` or a
-//   `node_modules/react/jsx-dev-runtime.js` path — or a bare `jsxDEV`
-//   imported from the pinned `react/jsx-dev-runtime` specifier. A
-//   dependency that merely exports a `jsxDEV` member, or ships a
-//   colliding filename, is not that module.
+//   `require_*` of a module whose metafile key resolves to the same file
+//   `react/jsx-dev-runtime` selects from this package (or the controlled
+//   `host-react:react/jsx-dev-runtime` plugin namespace) — or a bare
+//   `jsxDEV` imported from the pinned `react/jsx-dev-runtime` specifier.
+//   A dependency that merely exports a `jsxDEV` member, or ships a file
+//   at a react-shaped path that is not the resolved runtime, is not that
+//   module.
 // - `//` line comments at line start whose whole text is an emitted
 //   label, or whose ` in <label>` suffix follows a call-shaped prefix —
 //   esbuild's banner and glob-synthetic comment forms.
@@ -45,6 +46,7 @@
 // suffix) or a canonical name claimed by two different modules keeps its
 // location-dependent label — a documented limit, not a silent rewrite.
 import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import { parse as parseJavaScript } from "acorn";
 
@@ -315,15 +317,29 @@ export const rewriteEmittedLabels = (text, inputs, dir) => {
   for (const [label, canon] of wanted)
     if (claimants.get(canon) === 1 && !insideKeys.has(canon)) finals.set(label, canon);
   // Module keys pinned as this build's JSX dev runtime — the host-react
-  // plugin namespace or the file `react/jsx-dev-runtime` actually resolves
-  // to: `jsx-dev-runtime.js` inside a `react` package directory. A
-  // look-alike filename inside an unrelated package is not the runtime.
+  // plugin namespace, or the input whose resolved file IS the one
+  // `react/jsx-dev-runtime` selects from this package. Path text — a
+  // react/-shaped directory or filename anywhere in the tree — proves
+  // nothing; only resolution identity does.
+  let devRuntimePath = null;
+  try {
+    devRuntimePath = NodeFS.realpathSync(
+      NodeModule.createRequire(NodePath.join(dir, "package.json")).resolve("react/jsx-dev-runtime"),
+    );
+  } catch {
+    // No react resolves under this package — only the host-react
+    // namespace can pin the runtime.
+  }
   const devRuntimeKeys = new Set(
-    [...labels].filter(
-      (key) =>
-        key === "host-react:react/jsx-dev-runtime" ||
-        /(^|\/)node_modules\/react\/jsx-dev-runtime\.js$/.test(key),
-    ),
+    [...labels].filter((key) => {
+      if (key === "host-react:react/jsx-dev-runtime") return true;
+      if (devRuntimePath === null) return false;
+      try {
+        return NodeFS.realpathSync(NodePath.resolve(dir, key)) === devRuntimePath;
+      } catch {
+        return false; // pseudo-inputs and non-file keys
+      }
+    }),
   );
   const comments = [];
   let ast;

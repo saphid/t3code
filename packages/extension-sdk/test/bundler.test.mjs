@@ -915,15 +915,18 @@ export default {
 NodeTest.test(
   "production CLI never trusts prologue-position user helpers or look-alike runtime paths",
   async (t) => {
-    // Round-6 provenance negatives, end to end. An ESM dep emitting a
+    // Round-6/7 provenance negatives, end to end. An ESM dep emitting a
     // top-level `var __esm` puts a user declaration where a no-helper
     // bundle's prologue would be: the module banner at byte zero must
     // still bound the prologue, so a later module's banner cannot promote
     // the user var into a trusted helper — neither its matching-key map
     // nor its unknown-key map is validated or rewritten. A dep whose file
-    // collides with the dev runtime's filename is not the runtime: only
-    // the resolved `node_modules/react/jsx-dev-runtime.js` (or the
-    // controlled host-react namespace) proves the jsxDEV provenance.
+    // collides with the dev runtime's path text — `react/jsx-dev-runtime.*`
+    // anywhere, including a nested `node_modules/react/` inside the dep —
+    // is not the runtime: only resolution identity (the file
+    // `react/jsx-dev-runtime` actually selects from this package, or the
+    // controlled host-react namespace) proves the jsxDEV provenance. The
+    // real runtime is installed alongside to make the separation explicit.
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-bundler-"));
     t.after(() => NodeFSP.rm(root, { recursive: true, force: true }));
     const w = async (p, s) => {
@@ -941,6 +944,7 @@ NodeTest.test(
     for (const [pkg, file] of [
       ["spoof-cjs", "react/jsx-dev-runtime.cjs"],
       ["spoof-js", "react/jsx-dev-runtime.js"],
+      ["nested-dep", "node_modules/react/jsx-dev-runtime.js"],
     ]) {
       await w(NodePath.join(root, pkg, "package.json"), JSON.stringify({ name: pkg, main: file }));
       await w(
@@ -950,14 +954,33 @@ NodeTest.test(
     }
     const dir = NodePath.join(root, "proj");
     await NodeFSP.mkdir(NodePath.join(dir, "node_modules"), { recursive: true });
-    for (const pkg of ["esm-dep", "spoof-cjs", "spoof-js"])
+    for (const pkg of ["esm-dep", "spoof-cjs", "spoof-js", "nested-dep"])
       await NodeFSP.symlink(NodePath.join(root, pkg), NodePath.join(dir, "node_modules", pkg));
+    // The real runtime is installed and resolvable — the nested look-alike
+    // file is a different file, proven by resolution, not by its path text.
+    await NodeFSP.symlink(
+      NodePath.join(sdk, "node_modules", "react"),
+      NodePath.join(dir, "node_modules", "react"),
+    );
     await w(
       NodePath.join(dir, "tsconfig.json"),
-      tsconfig("react-jsxdev").replace(
-        '"strict": true',
-        '"strict": true, "checkJs": false, "allowJs": true',
-      ),
+      JSON.stringify({
+        compilerOptions: {
+          target: "ES2022",
+          module: "NodeNext",
+          moduleResolution: "NodeNext",
+          strict: true,
+          noEmit: true,
+          skipLibCheck: true,
+          jsx: "react-jsxdev",
+          checkJs: false,
+          allowJs: true,
+          allowImportingTsExtensions: true,
+          paths: {
+            "ordinary-alias": ["../nested-dep/node_modules/react/jsx-dev-runtime.js"],
+          },
+        },
+      }),
     );
     await w(
       NodePath.join(dir, "extension.ts"),
@@ -981,6 +1004,9 @@ NodeTest.test(
 import { __esm } from "esm-dep";
 import { jsxDEV as spoofCjs } from "spoof-cjs";
 import { jsxDEV as spoofJs } from "spoof-js";
+import { jsxDEV as nested } from "nested-dep";
+import { jsxDEV as relative } from "../nested-dep/node_modules/react/jsx-dev-runtime.js";
+import { jsxDEV as alias } from "ordinary-alias";
 var init_user = __esm({ "server.ts": 1, "../esm-dep/index.js": 2 });
 export default {
   tools: [],
@@ -988,6 +1014,9 @@ export default {
   unmatched: __esm({ "customer-record": 3 }),
   cjs: spoofCjs(null, null, null, null, { fileName: "../spoof-cjs/react/jsx-dev-runtime.cjs", lineNumber: 7 }),
   js: spoofJs(null, null, null, null, { fileName: "../spoof-js/react/jsx-dev-runtime.js", lineNumber: 7 }),
+  nested: nested(null, null, null, null, { fileName: "../nested-dep/node_modules/react/jsx-dev-runtime.js", lineNumber: 7 }),
+  relative: relative(null, null, null, null, { fileName: "../nested-dep/node_modules/react/jsx-dev-runtime.js", lineNumber: 7 }),
+  alias: alias(null, null, null, null, { fileName: "../nested-dep/node_modules/react/jsx-dev-runtime.js", lineNumber: 7 }),
 };
 `,
     );
@@ -1017,6 +1046,12 @@ export default {
       "../spoof-js/react/jsx-dev-runtime.js",
       "colliding .js runtime filename was treated as the real runtime",
     );
+    for (const field of ["nested", "relative", "alias"])
+      NodeAssert.equal(
+        mod.default[field],
+        "../nested-dep/node_modules/react/jsx-dev-runtime.js",
+        `nested look-alike path (${field}) was treated as the real runtime`,
+      );
   },
 );
 
