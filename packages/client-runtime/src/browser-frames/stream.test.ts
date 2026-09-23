@@ -304,6 +304,114 @@ describe("createBrowserFrameClient input lane", () => {
     client.stop();
   });
 
+  it("blocks input until a replacement frame paints after a generation mismatch", async () => {
+    let configReads = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("stream.mjpeg")) {
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start: (controller) => streamControllers.push(controller),
+            }),
+            { status: 200 },
+          );
+        }
+        if (url.includes("/config")) {
+          configReads += 1;
+          return Response.json({
+            ...session,
+            engineGeneration: configReads === 1 ? "gen-1" : "gen-2",
+            viewport: { cssWidth: 100, cssHeight: 100 },
+            zoomFactor: 1,
+            geometrySeq: 0,
+          });
+        }
+        return new Response("{}", { status: 404 });
+      }),
+    );
+    const openInput = vi.fn(async () => ({
+      leaseId: "bfli.1",
+      inputTicket: "bfv1.in.t",
+      expiresAt: Date.now() + 60_000,
+    }));
+    const events = makeEvents();
+    const client = createBrowserFrameClient(
+      { access, session, openInput },
+      { canvas: fakeCanvas() },
+      events,
+    );
+    client.start();
+    client.sendPointer("down", 0.5, 0.5);
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const first = FakeWebSocket.instances[0]!;
+    await vi.waitFor(() => expect(first.readyState).toBe(FakeWebSocket.OPEN));
+    first.emit({ type: "bound", leaseId: "bfli.1", geometrySeq: 0 });
+    await vi.waitFor(() => expect(streamControllers).toHaveLength(1));
+    paintFrame(streamControllers[0]!);
+    await vi.waitFor(() => {
+      client.sendText("a");
+      expect(first.sent).toHaveLength(1);
+    });
+
+    // A gen-2 part mid-stream means the guest was replaced: first-paint
+    // eligibility and status must reset like end-of-body does.
+    const sessionKey = encodeURIComponent(
+      JSON.stringify([session.environmentId, session.threadId, session.serverEpoch, session.tabId]),
+    );
+    streamControllers[0]!.enqueue(
+      mjpegPart(
+        {
+          "X-Frame-Seq": "2",
+          "X-Engine-Generation": "gen-2",
+          "X-Session-Key": sessionKey,
+          "X-Geometry-Seq": "5",
+        },
+        encoder.encode("jpeg-gen2"),
+      ),
+    );
+    await vi.waitFor(() => expect(client.state().status).toBe("connecting"));
+
+    // The replacement input socket binds before any replacement paint — the
+    // old generation's first paint must not authorize a send.
+    await vi.waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(1), {
+      timeout: 5_000,
+      interval: 50,
+    });
+    const second = FakeWebSocket.instances[1]!;
+    await vi.waitFor(() => expect(second.readyState).toBe(FakeWebSocket.OPEN));
+    second.emit({ type: "bound", leaseId: "bfli.1", geometrySeq: 0 });
+    client.sendText("b");
+    expect(second.sent).toHaveLength(0);
+
+    // Only once the replacement stream paints does input flow again — and it
+    // carries the new generation's committed geometry.
+    await vi.waitFor(() => expect(streamControllers.length).toBeGreaterThan(1), {
+      timeout: 5_000,
+      interval: 50,
+    });
+    streamControllers[1]!.enqueue(
+      mjpegPart(
+        {
+          "X-Frame-Seq": "1",
+          "X-Engine-Generation": "gen-2",
+          "X-Session-Key": sessionKey,
+          "X-Geometry-Seq": "5",
+          "X-Frame-Width": "100",
+          "X-Frame-Height": "100",
+        },
+        encoder.encode("jpeg-gen2-painted"),
+      ),
+    );
+    await vi.waitFor(() => {
+      client.sendText("c");
+      expect(second.sent).toHaveLength(1);
+    });
+    expect(JSON.parse(second.sent[0]!)).toMatchObject({ seq: 1, geometrySeq: 5 });
+    client.stop();
+  });
+
   it("never opens the input socket on the read-only <img> path", async () => {
     vi.stubGlobal("createImageBitmap", undefined);
     const openInput = vi.fn(async () => ({

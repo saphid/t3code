@@ -564,7 +564,12 @@ export function createBrowserFrameClient(
             if (alive()) {
               controller = null;
               streamController.abort();
+              // Same boundary as end-of-body: the replaced guest's first-paint
+              // eligibility and queued pixels must not carry into the new
+              // generation — input waits for a replacement paint.
+              connecting();
               resetInput();
+              pendingPart = null;
               void fetchConfig(sessionGeneration).then((next) => {
                 if (next !== null && alive()) scheduleRetry("stream", startStream);
               });
