@@ -4586,6 +4586,44 @@ describe("PreviewManager", () => {
       ),
   );
 
+  effectIt.effect(
+    "config read completing after a guest replacement fails instead of publishing the superseded generation",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const entered = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const image = () => ({
+            toJPEG: () => Buffer.from("pixels"),
+            getSize: () => ({ width: 100, height: 100 }),
+          });
+          const old = makeTestPreviewWebContents(async () => image(), 42);
+          const fresh = makeTestPreviewWebContents(async () => image(), 43);
+          fromId.mockImplementation((id) => (id === 42 ? old : id === 43 ? fresh : null));
+          const remoteTabId = '["env-a","thread-a","epoch-1","tab-1"]';
+          yield* manager.createTab(remoteTabId);
+          yield* manager.registerWebview(remoteTabId, 42);
+          old.executeJavaScript = vi.fn(() =>
+            Effect.runPromise(
+              Deferred.succeed(entered, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.as({ width: 100, height: 100 }),
+              ),
+            ),
+          );
+          const read = yield* manager
+            .remoteFrameConfig(remoteTabId)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(entered);
+          yield* manager.registerWebview(remoteTabId, 43);
+          expect((yield* manager.remoteFrameConfig(remoteTabId)).engineGeneration).toBe("43");
+          yield* Deferred.succeed(release, undefined);
+          const outcome = yield* Fiber.await(read);
+          expect(Exit.isFailure(outcome)).toBe(true);
+        }),
+      ),
+  );
+
   effectIt.effect("stopping during initial capture leaves remoteLive false", () =>
     withManager((manager) =>
       Effect.gen(function* () {

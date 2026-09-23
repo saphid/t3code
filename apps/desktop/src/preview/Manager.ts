@@ -4549,6 +4549,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         Effect.map((value) => ({ width: value.width, height: value.height }) as const),
         Effect.option,
       );
+      // The viewport read can outlive the guest it describes: re-resolve so
+      // a session whose webContents was replaced mid-enumeration is not
+      // reported under the superseded generation.
+      const current = (yield* SynchronizedRef.get(tabsRef)).get(runtimeTabId);
+      if (wc.isDestroyed() || current?.webContentsId !== wc.id) continue;
       sessions.push({
         ...tuple,
         runtimeTabId,
@@ -4566,6 +4571,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const wc = yield* requireWebContents(tabId);
     const viewportCss = yield* readRemoteViewport(tabId, wc);
     const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+    // The awaited reads above can outlive the guest they describe: a
+    // replaced webContents makes the result obsolete — returning it would
+    // publish a superseded generation to the hub.
+    if (wc.isDestroyed() || tab?.webContentsId !== wc.id) {
+      return yield* new PreviewWebContentsNotFoundError({
+        tabId,
+        webContentsId: wc.id,
+      });
+    }
     return {
       engineGeneration: String(wc.id),
       zoomFactor: tab?.zoomFactor ?? DEFAULT_ZOOM_FACTOR,

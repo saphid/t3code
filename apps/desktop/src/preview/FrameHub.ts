@@ -96,6 +96,11 @@ interface SessionActivity {
   /** Latest config-derived css viewport, asserted to input dispatch. */
   viewportCss: { readonly width: number; readonly height: number } | null;
   /**
+   * Issued-read counter for config fetches: only the newest issued read may
+   * apply, so a stale completion cannot move advertised geometry backward.
+   */
+  configReadSeq: number;
+  /**
    * Per-lease token buckets retained across socket replacement so rebinding
    * cannot reset rate protection.
    */
@@ -252,6 +257,7 @@ const make = Effect.gen(function* () {
       latestFrame: null,
       lastFrame: null,
       viewportCss: null,
+      configReadSeq: 0,
       rateByLease: new Map(),
       lastTouchedAt: Date.now(),
     };
@@ -452,27 +458,56 @@ const make = Effect.gen(function* () {
   };
 
   /**
+   * Issue a config read that applies only while it is still the newest
+   * issued read for the session — a stale completion must not move the
+   * advertised geometry or the asserted dispatch viewport backward. The
+   * generation check, viewport assertion, and `observeGeometryKey` bump run
+   * in the same synchronous stretch so no newer read can interleave
+   * mid-apply. Resolves null when superseded; read failures reject.
+   */
+  const readConfigFenced = (
+    runtimeTabId: string,
+    activity: SessionActivity,
+    engineGeneration: string | null,
+  ): Promise<
+    | { readonly config: PreviewManager.RemoteFrameConfigInfo; readonly geometrySeq: number | null }
+    | "engine-generation-mismatch"
+    | null
+  > => {
+    const readSeq = (activity.configReadSeq += 1);
+    return runPromise(manager.remoteFrameConfig(runtimeTabId)).then((config) => {
+      if (engineGeneration !== null && config.engineGeneration !== engineGeneration) {
+        return "engine-generation-mismatch" as const;
+      }
+      const current = activities.get(runtimeTabId);
+      if (current !== activity || current.configReadSeq !== readSeq) return null;
+      activity.viewportCss = config.viewportCss;
+      return observeGeometryKey(
+        runtimeTabId,
+        PreviewManager.remoteFrameGeometryKey(
+          config.engineGeneration,
+          config.viewportCss,
+          config.zoomFactor,
+        ),
+      ).then((geometrySeq) => ({ config, geometrySeq }));
+    });
+  };
+
+  /**
    * Recompute the session's geometry sequence from authoritative config —
    * the polling path for sessions whose input socket needs geometry without
    * an attached frame stream. Frame stamps drive the same `observeGeometryKey`
    * path so both stay consistent.
    */
-  const refreshGeometry = (runtimeTabId: string): Promise<number | null> =>
-    runPromise(manager.remoteFrameConfig(runtimeTabId))
-      .then((config) => {
-        const activity = activities.get(runtimeTabId);
-        if (!activity) return null;
-        activity.viewportCss = config.viewportCss;
-        return observeGeometryKey(
-          runtimeTabId,
-          PreviewManager.remoteFrameGeometryKey(
-            config.engineGeneration,
-            config.viewportCss,
-            config.zoomFactor,
-          ),
-        );
-      })
+  const refreshGeometry = (runtimeTabId: string): Promise<number | null> => {
+    const activity = activities.get(runtimeTabId);
+    if (activity === undefined) return Promise.resolve(null);
+    return readConfigFenced(runtimeTabId, activity, null)
+      .then((result) =>
+        result === null || result === "engine-generation-mismatch" ? null : result.geometrySeq,
+      )
       .catch(() => null);
+  };
 
   // Geometry changes are infrequent (guest resize, engine swap) but must be
   // fenced promptly: while anything watches or controls a session, poll its
@@ -1108,40 +1143,44 @@ const make = Effect.gen(function* () {
         );
       return;
     }
-    // config
-    void runPromise(manager.remoteFrameConfig(asserted.runtimeTabId))
-      .then(async (config) => {
-        if (engineGeneration !== null && config.engineGeneration !== engineGeneration) {
-          writeJson(res, 409, { error: "engine-generation-mismatch" });
+    // config — the returned (viewport, geometrySeq) pair must describe one
+    // geometry, so the read applies only while it is still the newest issued
+    // read; a superseded completion retries rather than publishing stale
+    // geometry into the session's advertised state.
+    void (async () => {
+      const activity = activityFor(asserted.runtimeTabId);
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          const result = await readConfigFenced(asserted.runtimeTabId, activity, engineGeneration);
+          if (result === null) {
+            if (attempt === 2) writeJson(res, 409, { error: "config-superseded" });
+            continue;
+          }
+          if (result === "engine-generation-mismatch") {
+            writeJson(res, 409, { error: result });
+            return;
+          }
+          const { config, geometrySeq } = result;
+          writeJson(res, 200, {
+            ...asserted.tuple,
+            engineGeneration: config.engineGeneration,
+            viewport: {
+              cssWidth: config.viewportCss.width,
+              cssHeight: config.viewportCss.height,
+            },
+            zoomFactor: config.zoomFactor,
+            geometrySeq: geometrySeq ?? 0,
+          });
+          return;
+        } catch (error) {
+          writeJson(res, 404, {
+            error: "session-not-found",
+            message: error instanceof Error ? error.message : "Session is not configurable.",
+          });
           return;
         }
-        const activity = activityFor(asserted.runtimeTabId);
-        activity.viewportCss = config.viewportCss;
-        const geometrySeq = await observeGeometryKey(
-          asserted.runtimeTabId,
-          PreviewManager.remoteFrameGeometryKey(
-            config.engineGeneration,
-            config.viewportCss,
-            config.zoomFactor,
-          ),
-        );
-        writeJson(res, 200, {
-          ...asserted.tuple,
-          engineGeneration: config.engineGeneration,
-          viewport: {
-            cssWidth: config.viewportCss.width,
-            cssHeight: config.viewportCss.height,
-          },
-          zoomFactor: config.zoomFactor,
-          geometrySeq: geometrySeq ?? 0,
-        });
-      })
-      .catch((error: unknown) =>
-        writeJson(res, 404, {
-          error: "session-not-found",
-          message: error instanceof Error ? error.message : "Session is not configurable.",
-        }),
-      );
+      }
+    })();
   };
 
   const wss = new WebSocketServer({

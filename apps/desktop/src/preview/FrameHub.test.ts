@@ -927,6 +927,73 @@ describe("BrowserFrameHub", () => {
     );
   });
 
+  it("never lets an older config read move advertised geometry backward", async () => {
+    let calls = 0;
+    let releaseFirst: (() => void) | null = null;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const { layer: managerLayer } = makeManagerStub((manager) => {
+      manager.remoteFrameConfig = () => {
+        calls += 1;
+        if (calls === 1) {
+          return Effect.promise(async () => {
+            await firstGate;
+            return {
+              engineGeneration: "gen-1",
+              viewportCss: { width: 100, height: 100 },
+              zoomFactor: 1,
+            };
+          });
+        }
+        return Effect.succeed({
+          engineGeneration: "gen-1",
+          viewportCss: { width: 200, height: 100 },
+          zoomFactor: 1,
+        });
+      };
+    });
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const hub = yield* BrowserFrameHub;
+          yield* Effect.promise(async () => {
+            const configUrl =
+              `${hub.origin}/sessions/${encodeURIComponent(tuple.tabId)}/config?` +
+              new URLSearchParams({
+                "x-t3-hub-auth": hub.secret,
+                "x-t3-session": runtimeTabId,
+              });
+            const stale = fetch(configUrl);
+            await vi.waitFor(() => expect(calls).toBe(1));
+            const fresh = await fetch(configUrl);
+            // The newer read completes first and wins: seq 0 advertises
+            // 200x100.
+            expect((await fresh.json()).geometrySeq).toBe(0);
+
+            releaseFirst!();
+            const staleResponse = await stale;
+            // The superseded read re-issued behind the winner and answered
+            // with the settled pair — it never republished its stale
+            // geometry.
+            expect(staleResponse.status).toBe(200);
+            const staleConfig = (await staleResponse.json()) as {
+              viewport: { cssWidth: number };
+              geometrySeq: number;
+            };
+            expect(staleConfig.viewport.cssWidth).toBe(200);
+            expect(staleConfig.geometrySeq).toBe(0);
+
+            // Advertised geometry never regressed: had the stale read
+            // applied, its 100x100 key would have bumped the seq again.
+            const after = await fetch(configUrl);
+            expect((await after.json()).geometrySeq).toBe(0);
+          });
+        }),
+      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
+    );
+  });
+
   it("closes a fragmented oversized packet with 1009 before parsing", async () => {
     const { layer: managerLayer } = makeManagerStub();
     await Effect.runPromise(
