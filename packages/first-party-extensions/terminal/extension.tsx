@@ -45,6 +45,7 @@ import {
   TerminalPanel,
   applyOutputEvent,
   dispatchTerminalCommand,
+  isPendingOwnableTerminalChord,
   isResumableOutputClose,
   noteOutputFrameForStreak,
   registerPanelCommands,
@@ -457,9 +458,9 @@ function writeSystemMessage(surface: Pick<GhosttyTerminalSurface, "write">, mess
  * predates the focus context. Only the newest request's answer applies
  * (an older reply landing late can no longer overwrite it), and while
  * that answer is outstanding `conflictsPendingRef` is true so the
- * capture handler swallows owned chords instead of dispatching from the
- * stale list — nothing else will claim them, and the VT encoder must
- * not take their bytes to the PTY.
+ * capture handler swallows chords from its pending ownable set instead
+ * of dispatching from the stale list — nothing else will claim them, and
+ * the VT encoder must not take their bytes to the PTY.
  * A denied or unavailable call leaves null and the resolver falls back
  * to the static defaults.
  */
@@ -1154,17 +1155,26 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
         const chord = terminalChordFromEvent(event.nativeEvent, isMacPlatform(navigator.platform));
         const action = resolveTerminalChord(chord, conflictsRef.current);
         // While the current keymap answer is outstanding the previous list
-        // is stale for exactly this chord — the mount-time list predates
-        // the focus context, so a mod+w remapped to split would still
-        // dispatch the default close. Abstain from dispatching, but keep
-        // the chord intercepted: the host already resolved and yielded at
-        // window capture, so no later handler will claim the event — left
-        // un-prevented it reaches the VT surface, whose encoder sends the
-        // bytes to the PTY (mod+w → `w`, mod+d → EOT can exit a shell).
-        // Swallow owned chords until the answer lands; the next press then
+        // (or none at all) is stale for exactly this chord — the mount-time
+        // list predates the focus context, so a mod+w remapped to split
+        // would still dispatch the default close. Abstain from dispatching,
+        // but keep the chord intercepted: the host already resolved and
+        // yielded at window capture, so no later handler will claim the
+        // event — left un-prevented it reaches the VT surface, whose
+        // encoder sends the bytes to the PTY (mod+w → `w`, mod+j → LF
+        // submits the shell's line, mod+d → EOT can exit a shell). The
+        // pending set is what the panel could own once the answer lands,
+        // NOT what the stale resolver currently answers — mod+j remapped
+        // to a native split has no row yet and no static default, so the
+        // resolver answers null while the swallow must still hold. Swallow
+        // the set's chords until the answer lands; the next press then
         // dispatches the resolved command. Genuinely unowned chords
-        // (ordinary typing, host-only chords) still fall through untouched.
-        if (action !== null && conflictsPendingRef.current) {
+        // (ordinary typing, host-only chords, foreign remaps) still fall
+        // through untouched.
+        if (
+          conflictsPendingRef.current &&
+          isPendingOwnableTerminalChord(chord, conflictsRef.current)
+        ) {
           event.preventDefault();
           event.stopPropagation();
           return;

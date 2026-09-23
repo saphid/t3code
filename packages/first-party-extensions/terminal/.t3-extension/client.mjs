@@ -11046,6 +11046,11 @@ var __t3Client = (() => {
     ["mod+n", "new"],
     ["mod+w", "close"]
   ]);
+  var TERMINAL_REGISTERED_CHORDS = new Set(
+    TERMINAL_VIEW_COMMANDS.flatMap(
+      (command) => command.defaultKey === void 0 ? [] : [command.defaultKey]
+    )
+  );
   var NATIVE_TERMINAL_CHORD_COMMANDS = /* @__PURE__ */ new Map([
     ["terminal.split", "split"],
     ["terminal.splitVertical", "splitVertical"],
@@ -11068,6 +11073,11 @@ var __t3Client = (() => {
       }
     }
     return TERMINAL_DEFAULT_CHORDS.get(chord) ?? null;
+  }
+  function isPendingOwnableTerminalChord(chord, conflicts) {
+    if (chord === null) return false;
+    if (TERMINAL_REGISTERED_CHORDS.has(chord)) return true;
+    return conflicts !== null && conflicts.some((conflict) => conflict.key === chord);
   }
   function dispatchTerminalCommand(commandId, actions) {
     switch (commandId) {
@@ -12574,7 +12584,7 @@ var __t3Client = (() => {
           if (event.defaultPrevented) return;
           const chord = terminalChordFromEvent(event.nativeEvent, isMacPlatform(navigator.platform));
           const action = resolveTerminalChord(chord, conflictsRef.current);
-          if (action !== null && conflictsPendingRef.current) {
+          if (conflictsPendingRef.current && isPendingOwnableTerminalChord(chord, conflictsRef.current)) {
             event.preventDefault();
             event.stopPropagation();
             return;

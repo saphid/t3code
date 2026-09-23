@@ -1300,6 +1300,16 @@ export const TERMINAL_DEFAULT_CHORDS: ReadonlyMap<string, TerminalChordAction> =
 ]);
 
 /**
+ * Every chord the panel's registered commands claim by default — the
+ * pane-action chords above plus the `mod+j` toggle.
+ */
+const TERMINAL_REGISTERED_CHORDS: ReadonlySet<string> = new Set(
+  TERMINAL_VIEW_COMMANDS.flatMap((command) =>
+    command.defaultKey === undefined ? [] : [command.defaultKey],
+  ),
+);
+
+/**
  * Native focused-terminal commands the panel can honor chord-for-chord:
  * dispatching these through the panel's own actions reproduces exactly
  * what the native terminal would have done.
@@ -1368,6 +1378,26 @@ export function resolveTerminalChord(
     }
   }
   return TERMINAL_DEFAULT_CHORDS.get(chord) ?? null;
+}
+
+/**
+ * Chords the capture handler must keep intercepted while the current
+ * `listConflicts` answer is outstanding — judged independently of the stale
+ * resolver, which cannot see a remap until its row arrives: every chord the
+ * panel's registered commands claim by default (the mod+d family AND the
+ * mod+j toggle, whose remap row names a native terminal command the stale
+ * or absent list does not carry yet), plus every chord the last-known
+ * answer carried (a superseding refresh can drop a row without making its
+ * chord unowned). Truly unowned chords — ordinary typing, host-only chords,
+ * foreign remaps — still fall through.
+ */
+export function isPendingOwnableTerminalChord(
+  chord: string | null,
+  conflicts: readonly TerminalKeybindingConflict[] | null,
+): boolean {
+  if (chord === null) return false;
+  if (TERMINAL_REGISTERED_CHORDS.has(chord)) return true;
+  return conflicts !== null && conflicts.some((conflict) => conflict.key === chord);
 }
 
 /** Maps a dispatched command id to its panel action; false for unknown ids. */

@@ -768,6 +768,7 @@ import {
   TERMINAL_VIEW_COMMANDS,
   asTerminalAppearance,
   dispatchTerminalCommand,
+  isPendingOwnableTerminalChord,
   registerPanelCommands,
   resolveTerminalChord,
   terminalAppearanceVars,
@@ -1208,6 +1209,32 @@ NodeTest.describe("t3.ui/keybindings — focused-chord resolution (r2 item 4)", 
       resolveTerminalChord("mod+e", [conflict("mod+e", "other.plugin/action", "plugin")]),
       null,
     );
+  });
+
+  NodeTest.it("the pending ownable set ignores the stale resolver's answer", () => {
+    // r5 review finding: mod+j remapped to terminal.split resolves null
+    // against a stale or absent list (its row has not arrived and the
+    // static defaults do not carry the toggle chord), so gating the
+    // pending swallow on the resolver let Ctrl+J fall through to the VT
+    // encoder. The pending set stands on its own — registered default
+    // chords plus the last-known list's chords.
+    NodeAssert.equal(resolveTerminalChord("mod+j", null), null);
+    NodeAssert.equal(isPendingOwnableTerminalChord("mod+j", null), true);
+    NodeAssert.equal(isPendingOwnableTerminalChord("mod+d", null), true);
+    NodeAssert.equal(isPendingOwnableTerminalChord("mod+shift+d", []), true);
+    // A chord only the last-known answer carried stays intercepted through
+    // the pending window — a superseding refresh can drop its row without
+    // making the chord unowned.
+    NodeAssert.equal(
+      isPendingOwnableTerminalChord("mod+e", [conflict("mod+e", "terminal.split", "user")]),
+      true,
+    );
+    // Truly unowned chords fall through: no chord, ordinary keys,
+    // host-only chords, foreign remaps with no row.
+    NodeAssert.equal(isPendingOwnableTerminalChord(null, null), false);
+    NodeAssert.equal(isPendingOwnableTerminalChord("mod+t", null), false);
+    NodeAssert.equal(isPendingOwnableTerminalChord("mod+e", null), false);
+    NodeAssert.equal(isPendingOwnableTerminalChord("mod+e", []), false);
   });
 });
 
