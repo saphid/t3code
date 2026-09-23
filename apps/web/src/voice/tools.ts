@@ -92,6 +92,7 @@ import { environmentSession, readPreparedConnection } from "../state/session";
 import { serverEnvironment } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { buildThreadRouteParams } from "../threadRoutes";
+import { createDomVoiceControlHost } from "./ui/domControls";
 
 // ---------------------------------------------------------------------------
 // Constants (frozen contract bounds)
@@ -1336,7 +1337,9 @@ export function createVoiceToolExecutor(host: VoiceToolHost): VoiceToolExecutor 
         messageId: identifiers.messageId,
         dispatchSequence: result.sequence,
         run: postDispatchRunReadout(
+          preDispatch.projection.runs.at(-1)?.id,
           deriveRunReadout(preDispatch.projection),
+          readback.projection.runs.at(-1)?.id,
           deriveRunReadout(readback.projection),
         ),
       };
@@ -1674,18 +1677,22 @@ export function createVoiceToolExecutor(host: VoiceToolHost): VoiceToolExecutor 
 }
 
 /** Read-out of the run after a follow-up dispatch. A projection for the new
-    run can only appear after the dispatch is recorded, so a read-back whose
-    latest run is identical to the pre-dispatch state describes the PREVIOUS
-    run, not this one. Echoing it reported a stale terminal state (or an
-    inherited error) as the outcome of a follow-up the dispatch receipt had
-    accepted and that was in fact starting. Live in-flight states are reported
-    as observed; a stale terminal state is reported as the honest in-flight
-    `starting` instead, without the inherited lastError. */
+    run can only appear after the dispatch is recorded, so a read-back that
+    still shows the pre-dispatch run, unchanged, describes the PREVIOUS run,
+    not this one. Echoing its terminal state (or inherited error) would
+    misreport a follow-up the dispatch receipt accepted and that is in fact
+    starting; the honest in-flight `starting` is reported instead. Anything
+    else is observed as-is: a new run (even one that already finished or
+    repeated the same error), or the same run having progressed, as when a
+    steered follow-up lands on the active run and it then completes. */
 function postDispatchRunReadout(
+  preDispatchLatestRunId: RunId | undefined,
   preDispatch: VoiceThreadRunReadout,
+  readbackLatestRunId: RunId | undefined,
   readback: VoiceThreadRunReadout,
 ): VoiceThreadRunReadout {
   const describesPreviousRun =
+    readbackLatestRunId === preDispatchLatestRunId &&
     readback.status === preDispatch.status &&
     readback.lastError === preDispatch.lastError &&
     !isRunStatusRunning(readback.status) &&
@@ -1879,5 +1886,10 @@ export function createWebVoiceToolHost(): VoiceToolHost {
       }
       return createPreparedEnvironmentAccess(prepared);
     },
+
+    // UI control execution stays in this attached client: enumeration and
+    // activation read and click the live document of the window the voice
+    // session runs in, so remote sessions operate the real UI.
+    uiControls: createDomVoiceControlHost(),
   };
 }

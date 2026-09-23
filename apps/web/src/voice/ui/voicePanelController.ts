@@ -209,7 +209,7 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
     },
   });
 
-  const handleEvent = (event: VoiceLiveClientEvent) => {
+  const handleEvent = (event: VoiceLiveClientEvent, source: VoiceLiveClient) => {
     // History records the same event stream the panel displays, before the
     // disposed guard: close-time events still belong in the record.
     deps.history?.record(event);
@@ -226,6 +226,18 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
         break;
       case "state": {
         markActivity();
+        if ((event.state === "error" || event.state === "closed") && source === client) {
+          // A session that ended on its own (transport loss, server close)
+          // releases the microphone and its transport now. Only the current
+          // client may do this: a detached client (ended by end(), or by an
+          // earlier terminal event) must not stop a reconnect's new mic.
+          mic?.stop();
+          mic = undefined;
+          state.micMuted = false;
+          const ended = client;
+          client = undefined;
+          void ended?.close().catch(() => {});
+        }
         setPhase(clientPhaseToPanelPhase(event.state));
         break;
       }
@@ -362,7 +374,7 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
       const myClient = (deps.createClient ?? createVoiceLiveClient)(options);
       client = myClient;
       unsubscribeClient?.();
-      unsubscribeClient = myClient.onEvent(handleEvent);
+      unsubscribeClient = myClient.onEvent((event) => handleEvent(event, myClient));
       if (stale()) {
         // Invalidated between creation and start: run the existing close
         // lifecycle (session.close, session.closed, broker accounting).
@@ -420,6 +432,7 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
       return;
     }
     const currentClient = client;
+    client = undefined;
     const currentMic = mic;
     mic = undefined;
     currentMic?.stop();

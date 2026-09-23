@@ -164,6 +164,53 @@ describe("existing-thread follow-ups", () => {
     });
   });
 
+  it("reports a new run that repeats the previous failure as observed, not starting", async () => {
+    const error = "provider turn.start failed: model unavailable";
+    const staleProjection = projectionWithRuns([
+      runFixture({ status: "failed", completedAt: now }),
+    ]);
+    (staleProjection as unknown as { turnItems: unknown[] }).turnItems = [errorTurnItem(error)];
+    const repeatedProjection = projectionWithRuns([
+      runFixture({ status: "failed", completedAt: now }),
+      runFixture({ id: RunId.make("run-b"), ordinal: 2, status: "failed", completedAt: now }),
+    ]);
+    (repeatedProjection as unknown as { turnItems: unknown[] }).turnItems = [
+      errorTurnItem(error),
+      errorTurnItem(error, RunId.make("run-b")),
+    ];
+    const threadSnapshot = vi
+      .fn()
+      .mockImplementationOnce(async () => detailSnapshot(staleProjection))
+      .mockImplementationOnce(async () => detailSnapshot(repeatedProjection));
+    const { executor } = executorWith({ threadSnapshot });
+    const output = await executor.continueThread({
+      requestId: baseInput.requestId,
+      environmentId: envA,
+      threadId: ThreadId.make("existing-plan"),
+      task: "Please give me an update",
+    });
+    expect(output.run).toEqual({ status: "failed", lastError: error });
+  });
+
+  it("reports a steered run that completed before readback as completed", async () => {
+    const activeProjection = projectionWithRuns([runFixture({ status: "running" })]);
+    const completedProjection = projectionWithRuns([
+      runFixture({ status: "completed", completedAt: now }),
+    ]);
+    const threadSnapshot = vi
+      .fn()
+      .mockImplementationOnce(async () => detailSnapshot(activeProjection))
+      .mockImplementationOnce(async () => detailSnapshot(completedProjection));
+    const { executor } = executorWith({ threadSnapshot });
+    const output = await executor.continueThread({
+      requestId: baseInput.requestId,
+      environmentId: envA,
+      threadId: ThreadId.make("existing-plan"),
+      task: "Please give me an update",
+    });
+    expect(output.run).toEqual({ status: "completed", lastError: null });
+  });
+
   it("reports a follow-up that advanced the run to running as running", async () => {
     const staleProjection = projectionWithRuns([
       runFixture({ status: "failed", completedAt: now }),

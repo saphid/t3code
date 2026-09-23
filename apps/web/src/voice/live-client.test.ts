@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import type {
   VoiceBrokerSessionCreated,
   VoiceBrokerSessionRequest,
@@ -9,6 +9,7 @@ import { VoiceSessionId } from "@t3tools/contracts";
 
 import {
   createVoiceLiveClient,
+  VOICE_LIVE_CLOSE_GRACE_MS,
   type VoiceLiveClientEvent,
   type VoiceLiveRtcDataChannel,
   type VoiceLiveRtcPeerConnection,
@@ -709,6 +710,24 @@ describe("voice live client", () => {
     expect(harness.peerConnection.closed).toBe(true);
     const finalUsage = harness.events.filter((event) => event.type === "usage");
     expect(finalUsage.at(-1)).toMatchObject({ usage: { usage: { input_tokens: 9 } } });
+  });
+
+  it("tears down locally when session.closed never arrives", async () => {
+    const harness = makeClient();
+    await startToLive(harness);
+    vi.useFakeTimers();
+    try {
+      const closing = harness.client.close();
+      expect(harness.client.getState()).toBe("closing");
+      await vi.advanceTimersByTimeAsync(VOICE_LIVE_CLOSE_GRACE_MS);
+      await closing;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(harness.client.getState()).toBe("closed");
+    expect(harness.brokerState.closeRequests).toEqual(["live_sess_1"]);
+    expect(harness.peerConnection.closed).toBe(true);
   });
 
   it("closing after a server-side session.closed is idempotent and still reports usage", async () => {

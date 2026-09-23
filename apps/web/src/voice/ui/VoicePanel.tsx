@@ -202,16 +202,21 @@ export function VoicePanel() {
   }, [history]);
 
   // Broker environment lost mid-session (disconnect, capability flag or
-  // operate scope gone): end through the same close lifecycle (mic stop,
-  // session.close, broker close accounting) before the overlay hides, so the
-  // user sees a readable ended state instead of a silent vanish. Safe when
-  // nothing is live (end is a no-op then).
+  // operate scope gone), or the selection moved to another broker while the
+  // session stays bound to the one it minted on: end through the same close
+  // lifecycle (mic stop, session.close, broker close accounting) before the
+  // overlay hides or relabels, so the user sees a readable ended state
+  // instead of a silent vanish. Safe when nothing is live (end is a no-op).
   const selectionOk = selection.status === "ok";
+  const selectedBrokerId = selection.status === "ok" ? selection.environmentId : null;
+  const previousBrokerIdRef = useRef(selectedBrokerId);
   useEffect(() => {
-    if (!selectionOk) {
+    const previous = previousBrokerIdRef.current;
+    previousBrokerIdRef.current = selectedBrokerId;
+    if (selectedBrokerId === null || (previous !== null && previous !== selectedBrokerId)) {
       void controller.end();
     }
-  }, [selectionOk, controller]);
+  }, [selectedBrokerId, controller]);
 
   // Unmount cleanup: stop the microphone, close the live session through the
   // existing close lifecycle (broker close accounting included), and dispose

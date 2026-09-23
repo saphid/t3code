@@ -143,7 +143,8 @@ export interface VoiceLiveClient {
       with a VoiceToolError (frozen code) on mint or transport failure. */
   start(): Promise<{ readonly sessionId: VoiceSessionId }>;
   /** Sends `session.close` on the data channel, waits for `session.closed`
-      (or the channel dying), then closes broker accounting. Idempotent. */
+      (or the channel dying, or VOICE_LIVE_CLOSE_GRACE_MS), then closes broker
+      accounting. Idempotent. */
   close(): Promise<void>;
   onEvent(listener: (event: VoiceLiveClientEvent) => void): () => void;
   /** Mark-bus escape hatch for consumer-owned marks: T4 emits
@@ -230,6 +231,9 @@ const toFunctionCallItem = (value: unknown): LiveFunctionCallItem | undefined =>
 };
 
 import { allowsThreadCreation, isUiCommandPrefix } from "./command-policy";
+
+/** How long close() waits for `session.closed` before tearing down locally. */
+export const VOICE_LIVE_CLOSE_GRACE_MS = 5_000;
 
 export const createVoiceLiveClient = (options: VoiceLiveClientOptions): VoiceLiveClient => {
   const now = options.now ?? Date.now;
@@ -864,11 +868,21 @@ export const createVoiceLiveClient = (options: VoiceLiveClientOptions): VoiceLiv
         sent = false;
       }
       if (sent) {
+        // A stalled upstream must not keep the peer connection (and its
+        // billing) alive: tear down locally once the grace period elapses.
         await new Promise<void>((resolve) => {
-          closedWaiter = resolve;
+          const timeout = setTimeout(resolveClosedWaiter, VOICE_LIVE_CLOSE_GRACE_MS);
+          closedWaiter = () => {
+            clearTimeout(timeout);
+            resolve();
+          };
         });
       }
     }
+    // Release the local transport before broker accounting so a slow or
+    // unreachable broker cannot keep the media session open.
+    dataChannel?.close();
+    peerConnection?.close();
     if (sessionId !== undefined) {
       try {
         await options.broker.closeSession({ sessionId });
@@ -878,8 +892,6 @@ export const createVoiceLiveClient = (options: VoiceLiveClientOptions): VoiceLiv
         emit({ type: "error", error: toVoiceToolError(cause) });
       }
     }
-    dataChannel?.close();
-    peerConnection?.close();
     setSpeechSuppressed(false);
     setState("closed");
   };
