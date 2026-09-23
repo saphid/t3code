@@ -432,6 +432,50 @@ describe("voice panel controller", () => {
     expect(describeVoiceToolError(error)).toContain("peer connection failed");
   });
 
+  it("releases the mic and transport when a live session fails on its own", async () => {
+    const harness = makeHarness();
+    await harness.controller.connect();
+
+    harness.fakeClient.emit({ type: "state", state: "error" });
+
+    expect(harness.mic.stopped).toBe(true);
+    expect(harness.fakeClient.closed.value).toBe(true);
+    expect(harness.controller.getState().phase).toBe("error");
+  });
+
+  it("a detached client's late close does not stop a reconnect's new mic", async () => {
+    const harness = makeHarness();
+    await harness.controller.connect();
+    const oldClient = harness.fakeClient;
+    oldClient.emit({ type: "state", state: "error" });
+
+    const newMic = new FakeMic();
+    let releaseBroker: () => void = () => {};
+    const brokerGate = new Promise<void>((resolve) => {
+      releaseBroker = resolve;
+    });
+    const resolveBrokerPort = harness.deps.resolveBrokerPort;
+    Object.assign(harness.deps, {
+      captureMic: async () => newMic,
+      resolveBrokerPort: async () => {
+        await brokerGate;
+        return resolveBrokerPort();
+      },
+    });
+    const reconnecting = harness.controller.connect();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // The old client's asynchronous close settles while the reconnect is
+    // still resolving its broker.
+    oldClient.emit({ type: "state", state: "closed" });
+    expect(newMic.stopped).toBe(false);
+
+    releaseBroker();
+    await reconnecting;
+    expect(newMic.stopped).toBe(false);
+  });
+
   it("mutes and unmutes by toggling the mic track, without touching the session", async () => {
     const harness = makeHarness();
     await harness.controller.connect();
