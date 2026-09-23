@@ -77,6 +77,42 @@ function nonterminalRuns(projection: ProjectionStore.ProjectionRuntimeRecoverySt
   });
 }
 
+const isProjectionStoreReadError = Schema.is(ProjectionStore.ProjectionStoreReadError);
+
+/**
+ * True when a thread's persisted projection exists but this build cannot decode
+ * it, such as a value written by a newer build. Storage failures stay fatal.
+ */
+function isUndecodableProjection(error: unknown): boolean {
+  let current = error;
+  while (isProjectionStoreReadError(current)) {
+    current = current.cause;
+  }
+  return Schema.isSchemaError(current);
+}
+
+/**
+ * Reads a thread's recovery projection, or returns null after logging when the
+ * projection cannot be decoded. One unreadable thread must not stop the server
+ * from starting or shutting down.
+ */
+function readRecoveryProjectionOrSkip(
+  projections: ProjectionStore.ProjectionStoreV2["Service"],
+  threadId: ThreadId,
+  trigger: "startup" | "shutdown" | "prepare-shutdown",
+) {
+  return projections
+    .getRuntimeRecoveryProjection(threadId)
+    .pipe(
+      Effect.catchIf(isUndecodableProjection, (cause) =>
+        Effect.logWarning(
+          "orchestration V2 runtime recovery skipped a thread whose projection cannot be decoded",
+          { threadId, trigger, cause },
+        ).pipe(Effect.as(null)),
+      ),
+    );
+}
+
 function isBackgroundCapableTurnItemType(type: string): boolean {
   return type === "command_execution" || type === "dynamic_tool" || type === "subagent";
 }
@@ -721,7 +757,7 @@ export const make = Effect.gen(function* () {
       let closedRequests = 0;
       let retiredEffects = 0;
       for (const threadId of threadIds) {
-        const projection = yield* projections.getRuntimeRecoveryProjection(threadId).pipe(
+        const projection = yield* readRecoveryProjectionOrSkip(projections, threadId, trigger).pipe(
           Effect.mapError(
             (cause) =>
               new ProviderRuntimeRecoveryError({
@@ -731,6 +767,7 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
+        if (projection === null) continue;
         const enabled =
           continueAfterRestart !== null &&
           resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
@@ -763,7 +800,12 @@ export const make = Effect.gen(function* () {
     if (!enabled) return;
     const threadIds = yield* projections.getRecoveryThreadIds("runtime");
     for (const threadId of threadIds) {
-      const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
+      const projection = yield* readRecoveryProjectionOrSkip(
+        projections,
+        threadId,
+        "prepare-shutdown",
+      );
+      if (projection === null) continue;
       if (
         !resolveProjectSettings(enabled, projection.thread.projectId).settings
           .continueThreadsAfterServerUpdate
