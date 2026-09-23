@@ -1646,4 +1646,247 @@ describe("BrowserFrameHub", () => {
       ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
     );
   });
+
+  it("retains lease ordering and replay state across idle activity reclamation", async () => {
+    let releaseConfig: (() => void) | null = null;
+    const configGate = new Promise<void>((resolve) => {
+      releaseConfig = resolve;
+    });
+    let configCalls = 0;
+    const { stub, layer: managerLayer } = makeManagerStub((manager) => {
+      const config = {
+        engineGeneration: "gen-1",
+        viewportCss: { width: 100, height: 100 },
+        zoomFactor: 1,
+      };
+      manager.remoteFrameConfig = () => {
+        configCalls += 1;
+        return configCalls === 1
+          ? Effect.promise(() => configGate.then(() => config))
+          : Effect.succeed(config);
+      };
+    });
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const hub = yield* BrowserFrameHub;
+          yield* Effect.promise(async () => {
+            vi.useFakeTimers();
+            try {
+              // Long-lived lease: the lease deadline must outlive the idle
+              // window this test advances past.
+              const leaseParams = {
+                ...baseInputParams,
+                "x-t3-lease": "lease-a",
+                "x-t3-lease-expires": String(Date.now() + 600_000),
+              };
+              // Ticket 2's upgrade stalls inside its first config read.
+              const ws2Promise = openInput(hub.origin, hub.secret, {
+                ...leaseParams,
+                "x-t3-ticket-seq": "2",
+              });
+              for (let i = 0; i < 400 && configCalls === 0; i++) {
+                await vi.advanceTimersByTimeAsync(5);
+              }
+              expect(configCalls).toBe(1);
+              const ws2 = await ws2Promise;
+
+              // Ticket 3 upgrades, binds, admits input seq 50, and ends —
+              // all while ticket 2's upgrade read is still in flight.
+              const ws3 = await openInput(hub.origin, hub.secret, {
+                ...leaseParams,
+                "x-t3-ticket-seq": "3",
+              });
+              const bound3 = await waitNotice(ws3, "bound");
+              ws3.send(
+                JSON.stringify({
+                  seq: 50,
+                  geometrySeq: bound3.geometrySeq ?? 0,
+                  event: { type: "text", text: "fifty" },
+                }),
+              );
+              for (let i = 0; i < 200 && stub.dispatched.length === 0; i++) {
+                await vi.advanceTimersByTimeAsync(10);
+              }
+              expect(stub.dispatched).toHaveLength(1);
+              ws3.close();
+              await waitClosed(ws3);
+
+              // Idle GC reclaims the activity — frame caches, poller, and
+              // all — while ticket 2's upgrade is still parked in config.
+              await vi.advanceTimersByTimeAsync(61_000 + 2_000);
+
+              // Ticket 2's read finally completes: the retained lane orders
+              // it below accepted ticket 3 (shadow, not owner) and keeps the
+              // replay high-water — it must NOT mint a fresh highSeq of 0.
+              releaseConfig!();
+              const shadow = await waitNotice(ws2, "shadow");
+              expect(shadow.type).toBe("shadow");
+              expect(shadow.leaseId).toBe("lease-a");
+              expect(shadow.highSeq).toBe(50);
+              const buffered = noticeBuffers.get(ws2) ?? [];
+              expect(buffered.some((notice) => notice.type === "bound")).toBe(false);
+
+              // A replayed low seq is refused; a packet above the retained
+              // high-water still dispatches through the shared lane.
+              ws2.send(
+                JSON.stringify({
+                  seq: 1,
+                  geometrySeq: shadow.geometrySeq ?? 0,
+                  event: { type: "text", text: "replay" },
+                }),
+              );
+              const rejected = await waitNotice(ws2, "rejected");
+              expect(rejected.seq).toBe(1);
+              expect(rejected.reason).toBe("replay");
+              expect(stub.dispatched).toHaveLength(1);
+
+              ws2.send(
+                JSON.stringify({
+                  seq: 51,
+                  geometrySeq: shadow.geometrySeq ?? 0,
+                  event: { type: "text", text: "fifty-one" },
+                }),
+              );
+              for (let i = 0; i < 200 && stub.dispatched.length < 2; i++) {
+                await vi.advanceTimersByTimeAsync(10);
+              }
+              expect(stub.dispatched).toHaveLength(2);
+              ws2.terminate();
+            } finally {
+              vi.useRealTimers();
+            }
+          });
+        }),
+      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
+    );
+  });
+
+  it("rejects input sent before authoritative geometry is established", async () => {
+    let releaseConfig: (() => void) | null = null;
+    const configGate = new Promise<void>((resolve) => {
+      releaseConfig = resolve;
+    });
+    let configCalls = 0;
+    const { stub, layer: managerLayer } = makeManagerStub((manager) => {
+      const config = {
+        engineGeneration: "gen-1",
+        viewportCss: { width: 100, height: 100 },
+        zoomFactor: 1,
+      };
+      manager.remoteFrameConfig = () => {
+        configCalls += 1;
+        // Calls 1-2 (the upgrade fence and the pending bind read) resolve;
+        // the bound socket's geometry refresh stalls — the message handler
+        // is live while no geometry exists yet.
+        return configCalls >= 3
+          ? Effect.promise(() => configGate.then(() => config))
+          : Effect.succeed(config);
+      };
+    });
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const hub = yield* BrowserFrameHub;
+          yield* Effect.promise(async () => {
+            const ws = await openInput(hub.origin, hub.secret, baseInputParams);
+            // The upgrade and bind reads complete; the bind's geometry
+            // refresh is the third read and stalls.
+            await vi.waitFor(() => expect(configCalls).toBeGreaterThanOrEqual(3));
+
+            // A packet arriving before `bound` must not exploit the
+            // no-geometry window: the hub has no authoritative geometry seq
+            // or coordinate space to admit it against.
+            ws.send(
+              JSON.stringify({ seq: 1, geometrySeq: 0, event: { type: "text", text: "early" } }),
+            );
+            const rejected = await waitNotice(ws, "rejected");
+            expect(rejected.seq).toBe(1);
+            expect(rejected.reason).toBe("no-geometry");
+            expect(stub.dispatched).toHaveLength(0);
+
+            // Once the refresh lands the client learns the real seq and
+            // input flows.
+            releaseConfig!();
+            const bound = await waitNotice(ws, "bound");
+            ws.send(
+              JSON.stringify({
+                seq: 2,
+                geometrySeq: bound.geometrySeq ?? 0,
+                event: { type: "text", text: "after" },
+              }),
+            );
+            await vi.waitFor(() => expect(stub.dispatched).toHaveLength(1));
+            ws.terminate();
+          });
+        }),
+      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
+    );
+  });
+
+  it("input waits for the config-confirmed viewport of a frame-stamped geometry key", async () => {
+    let width = 100;
+    let configCalls = 0;
+    const { stub, layer: managerLayer } = makeManagerStub((manager) => {
+      manager.remoteFrameConfig = () => {
+        configCalls += 1;
+        return Effect.succeed({
+          engineGeneration: "gen-1",
+          viewportCss: { width, height: 100 },
+          zoomFactor: 1,
+        });
+      };
+    });
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const hub = yield* BrowserFrameHub;
+          yield* Effect.promise(async () => {
+            const ws = await openInput(hub.origin, hub.secret, baseInputParams);
+            const bound = await waitNotice(ws, "bound");
+            expect(bound.geometrySeq).toBe(0);
+            // The bind's own refresh advertises the established seq 0 —
+            // consume it so the next geometry notice is the frame's bump.
+            const initial = await waitNotice(ws, "geometry");
+            expect(initial.geometrySeq).toBe(0);
+
+            // A frame stamps a resized geometry before the next config
+            // refresh: the hub advances the advertised seq but does not yet
+            // know the new key's coordinate space.
+            width = 200;
+            stub.pushFrame(liveFrame("gen-1", 8, 200));
+            const geometry = await waitNotice(ws, "geometry");
+            expect(geometry.geometrySeq).toBe(1);
+
+            // Input authored against the new seq cannot convert coordinates
+            // — the admitted key's viewport is unconfirmed — so it rejects
+            // instead of dispatching with the stale 100x100 viewport.
+            ws.send(
+              JSON.stringify({ seq: 1, geometrySeq: 1, event: { type: "text", text: "resize" } }),
+            );
+            const rejected = await waitNotice(ws, "rejected");
+            expect(rejected.seq).toBe(1);
+            expect(rejected.reason).toBe("no-geometry");
+            expect(stub.dispatched).toHaveLength(0);
+
+            // The session's sweep reads config once a second; that read
+            // confirms the stamped key's coordinate space (same key, same
+            // seq — no new geometry notice is owed).
+            const readsBeforeSweep = configCalls;
+            await vi.waitFor(() => expect(configCalls).toBeGreaterThan(readsBeforeSweep), {
+              timeout: 3_000,
+            });
+            ws.send(
+              JSON.stringify({ seq: 2, geometrySeq: 1, event: { type: "text", text: "after" } }),
+            );
+            await vi.waitFor(() => expect(stub.dispatched).toHaveLength(1), { timeout: 3_000 });
+            // The dispatch converts against the viewport the admitted key
+            // was derived from — 200x100, never the superseded 100x100.
+            expect(stub.dispatched[0]!.viewportCss).toEqual({ width: 200, height: 100 });
+            ws.terminate();
+          });
+        }),
+      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
+    );
+  });
 });

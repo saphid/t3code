@@ -4813,6 +4813,139 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("input re-fences guest identity after the lane's own viewport await", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview42 = makeFaviconWebContents({ id: 42 });
+        const preview43 = makeFaviconWebContents({ id: 43 });
+        let enterViewportRead: (() => void) | null = null;
+        let releaseViewportRead: (() => void) | null = null;
+        const entered = new Promise<void>((resolve) => {
+          enterViewportRead = resolve;
+        });
+        const release = new Promise<void>((resolve) => {
+          releaseViewportRead = resolve;
+        });
+        Object.assign(preview42.webContents, {
+          focus: vi.fn(),
+          // The lane-entry geometry fence's own viewport read stalls: the
+          // guest is replaced while the fence is still mid-flight.
+          executeJavaScript: vi.fn(() => {
+            enterViewportRead!();
+            return release.then(() => ({ width: 100, height: 100 }));
+          }),
+        });
+        Object.assign(preview43.webContents, {
+          focus: vi.fn(),
+          executeJavaScript: vi.fn(async () => ({ width: 100, height: 100 })),
+        });
+        fromId.mockImplementation(((id: number) =>
+          id === 42 ? preview42.webContents : preview43.webContents) as never);
+        const remoteTabId = '["env-a","thread-a","epoch-1","tab-1"]';
+        yield* manager.createTab(remoteTabId);
+        yield* manager.registerWebview(remoteTabId, 42);
+        const sendCommand42 = (
+          preview42.webContents as { debugger: { sendCommand: ReturnType<typeof vi.fn> } }
+        ).debugger.sendCommand;
+        const geometryKey = PreviewManager.remoteFrameGeometryKey(
+          "42",
+          { width: 100, height: 100 },
+          1,
+        );
+        const dispatch = yield* manager
+          .dispatchRemoteInput(
+            remoteTabId,
+            "l",
+            "42",
+            { type: "pointer", phase: "down", x: 0.5, y: 0.5, button: "left" },
+            { width: 100, height: 100 },
+            geometryKey,
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => entered);
+        // The guest is swapped while the dispatch is parked inside the
+        // fence's own awaited read — every check it already passed describes
+        // the old webContents.
+        yield* manager.registerWebview(remoteTabId, 43);
+        releaseViewportRead!();
+        const outcome = yield* Fiber.await(dispatch);
+        expect(Exit.isFailure(outcome)).toBe(true);
+        // Nothing may focus or actuate into the replaced guest.
+        const focus42 = (preview42.webContents as unknown as { focus: ReturnType<typeof vi.fn> })
+          .focus;
+        expect(focus42).not.toHaveBeenCalled();
+        expect(
+          sendCommand42.mock.calls.filter(
+            (call) => call[0] === "Input.dispatchMouseEvent" || call[0] === "Page.bringToFront",
+          ),
+        ).toHaveLength(0);
+      }),
+    ),
+  );
+
+  effectIt.effect("input re-fences geometry after the focus-grab awaits", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents({ id: 42 });
+        let width = 100;
+        let enterBringToFront: (() => void) | null = null;
+        let releaseBringToFront: (() => void) | null = null;
+        const entered = new Promise<void>((resolve) => {
+          enterBringToFront = resolve;
+        });
+        const release = new Promise<void>((resolve) => {
+          releaseBringToFront = resolve;
+        });
+        Object.assign(preview.webContents, {
+          focus: vi.fn(),
+          executeJavaScript: vi.fn(async () => ({ width, height: 100 })),
+        });
+        fromId.mockReturnValue(preview.webContents);
+        const remoteTabId = '["env-a","thread-a","epoch-1","tab-1"]';
+        yield* manager.createTab(remoteTabId);
+        yield* manager.registerWebview(remoteTabId, 42);
+        const sendCommand = (
+          preview.webContents as { debugger: { sendCommand: ReturnType<typeof vi.fn> } }
+        ).debugger.sendCommand;
+        // The focus grab's CDP call stalls — a resize landing here sits
+        // between the lane-entry fence and the real actuation.
+        sendCommand.mockImplementation((method: string) => {
+          if (method !== "Page.bringToFront") return Promise.resolve(undefined);
+          enterBringToFront!();
+          return release;
+        });
+        const geometryKey = PreviewManager.remoteFrameGeometryKey(
+          "42",
+          { width: 100, height: 100 },
+          1,
+        );
+        const dispatch = yield* manager
+          .dispatchRemoteInput(
+            remoteTabId,
+            "l",
+            "42",
+            { type: "pointer", phase: "down", x: 0.5, y: 0.5, button: "left" },
+            { width: 100, height: 100 },
+            geometryKey,
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => entered);
+        width = 200;
+        releaseBringToFront!();
+        const outcome = yield* Fiber.await(dispatch);
+        expect(Exit.isFailure(outcome)).toBe(true);
+        // The press never actuated at the pre-resize midpoint.
+        expect(
+          sendCommand.mock.calls.filter(
+            (call) =>
+              call[0] === "Input.dispatchMouseEvent" &&
+              (call[1] as { type?: string } | undefined)?.type === "mousePressed",
+          ),
+        ).toHaveLength(0);
+      }),
+    ),
+  );
+
   effectIt.effect("stale remote capture starts and stops cannot kill a newer acquisition", () =>
     withManager((manager) =>
       Effect.gen(function* () {

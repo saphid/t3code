@@ -59,6 +59,14 @@ const INPUT_CLEANUP_DEADLINE_MS = 5_000;
 const INPUT_DISPATCH_QUEUE_MAX = 32;
 /** Idle sessions (no viewers, no input, no pending) are dropped after this. */
 const ACTIVITY_IDLE_MS = 60_000;
+/**
+ * Lease lanes outlive idle activity reclamation — tickets remain valid for
+ * minutes after the session's frame caches are dropped. The cap bounds the
+ * map under lease churn; eviction drops the earliest-expiring lanes first.
+ */
+const LEASE_LANE_CAP = 4096;
+/** Config-confirmed geometry-key → viewport memory, FIFO-bounded. */
+const GEOMETRY_VIEWPORT_CAP = 128;
 
 const SESSION_PATH = /^\/sessions$/;
 const HEALTH_PATH = /^\/health$/;
@@ -75,6 +83,14 @@ interface HubGeometry {
   seq: number;
   /** Capture/config-derived `generation:cssWxcssH@zoom`; a change bumps `seq`. */
   key: string;
+  /**
+   * The css viewport a config read DERIVED this key from — null when the key
+   * arrived only via frame stamps. Input dispatches against this viewport,
+   * never a newer config read's, so the admitted key and the coordinate
+   * space can never describe different viewports; null means the hub does
+   * not yet know this key's coordinate space and input must be rejected.
+   */
+  viewportCss: { readonly width: number; readonly height: number } | null;
 }
 
 interface SessionActivity {
@@ -101,21 +117,11 @@ interface SessionActivity {
   /** Latest capture-loop frame — seeds newly attached viewers (F9). */
   latestFrame: PreviewManager.RemoteLiveFrame | null;
   lastFrame: { readonly width: number; readonly height: number; readonly seq: number } | null;
-  /** Latest config-derived css viewport, asserted to input dispatch. */
-  viewportCss: { readonly width: number; readonly height: number } | null;
   /**
    * Issued-read counter for config fetches: only the newest issued read may
    * apply, so a stale completion cannot move advertised geometry backward.
    */
   configReadSeq: number;
-  /**
-   * Per-lease input lane state — rate tokens, the replay high-water mark,
-   * and the newest accepted ticket seq — retained across socket
-   * replacement so a rebind or same-lease shadow can reset none of them.
-   * `ticketSeq` is what keeps an already-superseded upgrade from seizing
-   * the slot after the newer socket it followed has ended.
-   */
-  leaseState: Map<string, { tokens: number; tokensAt: number; highSeq: number; ticketSeq: number }>;
   /** Last time the session had viewers, input, or pending work — idle GC. */
   lastTouchedAt: number;
   /**
@@ -275,9 +281,7 @@ const make = Effect.gen(function* () {
       geometry: null,
       latestFrame: null,
       lastFrame: null,
-      viewportCss: null,
       configReadSeq: 0,
-      leaseState: new Map(),
       lastTouchedAt: Date.now(),
       poller: setInterval(() => pollActivity(runtimeTabId), GEOMETRY_POLL_MS),
     };
@@ -286,19 +290,73 @@ const make = Effect.gen(function* () {
     return created;
   };
 
-  /** Per-lease lane record, created on first use and kept for the activity's life. */
-  const leaseBucket = (activity: SessionActivity, leaseId: string) => {
-    let bucket = activity.leaseState.get(leaseId);
-    if (bucket === undefined) {
-      bucket = {
-        tokens: BROWSER_FRAME_INPUT_MAX_EVENTS_PER_SECOND,
-        tokensAt: Date.now(),
-        highSeq: 0,
-        ticketSeq: 0,
-      };
-      activity.leaseState.set(leaseId, bucket);
+  /**
+   * Per-lease ordering/replay state — rate tokens, the replay high-water
+   * mark, the newest accepted ticket seq, and the lease deadline seen so
+   * far. This lives outside `SessionActivity` on purpose: idle GC drops an
+   * activity after a minute while its tickets stay valid far longer, and an
+   * already-upgraded socket whose config read outlives the sweep must still
+   * find the ordering its lease established. Entries die only with their
+   * lease — a lane cannot authorize a connection past its own expiry.
+   */
+  interface LeaseLane {
+    tokens: number;
+    tokensAt: number;
+    highSeq: number;
+    ticketSeq: number;
+    /** Latest deadline presented for this lease; renewals extend it. */
+    expiresAt: number;
+  }
+  const leaseLanes = new Map<string, LeaseLane>();
+  const laneKey = (runtimeTabId: string, leaseId: string): string => `${runtimeTabId}${leaseId}`;
+  const leaseLane = (runtimeTabId: string, leaseId: string, expiresAt: number): LeaseLane => {
+    const key = laneKey(runtimeTabId, leaseId);
+    const existing = leaseLanes.get(key);
+    if (existing !== undefined) {
+      if (expiresAt > existing.expiresAt) existing.expiresAt = expiresAt;
+      return existing;
     }
-    return bucket;
+    const lane: LeaseLane = {
+      tokens: BROWSER_FRAME_INPUT_MAX_EVENTS_PER_SECOND,
+      tokensAt: Date.now(),
+      highSeq: 0,
+      ticketSeq: 0,
+      expiresAt,
+    };
+    leaseLanes.set(key, lane);
+    if (leaseLanes.size > LEASE_LANE_CAP) {
+      const now = Date.now();
+      for (const [key, entry] of leaseLanes) {
+        if (entry.expiresAt <= now) leaseLanes.delete(key);
+      }
+      if (leaseLanes.size > LEASE_LANE_CAP) {
+        const byExpiry = [...leaseLanes.entries()].sort((a, b) => a[1].expiresAt - b[1].expiresAt);
+        for (const [key] of byExpiry) {
+          if (leaseLanes.size <= LEASE_LANE_CAP) break;
+          leaseLanes.delete(key);
+        }
+      }
+    }
+    return lane;
+  };
+
+  /**
+   * Geometry key → the css viewport a config read derived it from. The key
+   * embeds generation, viewport, and zoom, so the mapping is a pure
+   * function: a frame-stamped key the hub has seen confirmed keeps its
+   * coordinate space, and an unseen key gets none (input rejects until a
+   * config read establishes it).
+   */
+  const geometryViewports = new Map<string, { width: number; height: number }>();
+  const rememberGeometryViewport = (
+    key: string,
+    viewport: { width: number; height: number },
+  ): void => {
+    if (geometryViewports.has(key)) geometryViewports.delete(key);
+    geometryViewports.set(key, viewport);
+    if (geometryViewports.size > GEOMETRY_VIEWPORT_CAP) {
+      geometryViewports.delete(geometryViewports.keys().next().value!);
+    }
   };
 
   const sendNotice = (socket: HubInputSocket, notice: unknown): void => {
@@ -433,7 +491,8 @@ const make = Effect.gen(function* () {
         // A newer same-lease ticket accepted while this candidate awaited
         // its config read demotes this bind to a shadow — it dispatches
         // under the lease but never owns the slot.
-        const retainedTicketSeq = activity.leaseState.get(candidate.leaseId)?.ticketSeq ?? 0;
+        const retainedTicketSeq =
+          leaseLanes.get(laneKey(runtimeTabId, candidate.leaseId))?.ticketSeq ?? 0;
         bindInputSocket(
           candidate.ws,
           candidate.asserted,
@@ -456,10 +515,19 @@ const make = Effect.gen(function* () {
    * an engine-generation change the input socket ends instead, and the
    * cached seed frame is invalidated — it is the old guest's pixels.
    */
-  const observeGeometryKey = (runtimeTabId: string, key: string): Promise<number | null> => {
+  const observeGeometryKey = (
+    runtimeTabId: string,
+    key: string,
+    configViewport: { readonly width: number; readonly height: number } | null = null,
+  ): Promise<number | null> => {
     const activity = activities.get(runtimeTabId);
     if (!activity) return Promise.resolve(null);
     if (activity.geometry !== null && activity.geometry.key === key) {
+      // A config read can establish the coordinate space for a key frame
+      // stamps introduced earlier — same key, same viewport, no seq bump.
+      if (configViewport !== null && activity.geometry.viewportCss === null) {
+        activity.geometry = { ...activity.geometry, viewportCss: configViewport };
+      }
       return Promise.resolve(activity.geometry.seq);
     }
     const generation = key.slice(0, key.indexOf(":"));
@@ -468,7 +536,11 @@ const make = Effect.gen(function* () {
         ? activity.geometry.key.slice(0, activity.geometry.key.indexOf(":"))
         : null;
     const seq = (activity.geometry?.seq ?? -1) + 1;
-    activity.geometry = { seq, key };
+    activity.geometry = {
+      seq,
+      key,
+      viewportCss: configViewport ?? geometryViewports.get(key) ?? null,
+    };
     if (priorGeneration !== null && priorGeneration !== generation) {
       activity.latestFrame = null;
       activity.lastFrame = null;
@@ -521,15 +593,18 @@ const make = Effect.gen(function* () {
       }
       const current = activities.get(runtimeTabId);
       if (current !== activity || current.configReadSeq !== readSeq) return null;
-      activity.viewportCss = config.viewportCss;
-      return observeGeometryKey(
-        runtimeTabId,
-        PreviewManager.remoteFrameGeometryKey(
-          config.engineGeneration,
-          config.viewportCss,
-          config.zoomFactor,
-        ),
-      ).then((geometrySeq) => ({ config, geometrySeq }));
+      // Key and viewport commit atomically: the admitted geometry key always
+      // names the coordinate space its input converts against.
+      const key = PreviewManager.remoteFrameGeometryKey(
+        config.engineGeneration,
+        config.viewportCss,
+        config.zoomFactor,
+      );
+      rememberGeometryViewport(key, config.viewportCss);
+      return observeGeometryKey(runtimeTabId, key, config.viewportCss).then((geometrySeq) => ({
+        config,
+        geometrySeq,
+      }));
     });
   };
 
@@ -881,7 +956,7 @@ const make = Effect.gen(function* () {
         // The lease's retained replay high-water mark: a client whose socket
         // reconnects under the same lease resumes its seq numbering above
         // this rather than restarting at zero into replay rejections.
-        highSeq: activity.leaseState.get(leaseId)?.highSeq ?? 0,
+        highSeq: leaseLanes.get(laneKey(runtimeTabId, leaseId))?.highSeq ?? 0,
         ...(cleanupIncomplete ? { cleanupIncomplete: true } : {}),
       }),
     );
@@ -907,7 +982,7 @@ const make = Effect.gen(function* () {
       // The lane state is retained per lease across socket replacement, so
       // rebinding (or a shadow socket on the same lease) can reset neither
       // the rate bucket nor the replay high-water mark.
-      const bucket = leaseBucket(activity, leaseId);
+      const bucket = leaseLane(runtimeTabId, leaseId, socket.expiresAt);
       if (packet.seq <= bucket.highSeq) {
         rejectPacket(socket, packet.seq, "replay");
         return;
@@ -917,18 +992,28 @@ const make = Effect.gen(function* () {
       }
       socket.lastSeq = packet.seq;
       bucket.highSeq = packet.seq;
-      const geometrySeq = activity.geometry?.seq ?? 0;
+      // No geometry, no input: before the first authoritative geometry
+      // (or while a frame-stamped key still lacks a config-confirmed
+      // coordinate space) every packet is rejected — the nullable escape
+      // hatch does not exist on this path.
+      const geometry = activity.geometry;
+      if (geometry === null || geometry.viewportCss === null) {
+        rejectPacket(socket, packet.seq, "no-geometry");
+        return;
+      }
+      const geometrySeq = geometry.seq;
       if (packet.geometrySeq !== geometrySeq) {
         rejectPacket(socket, packet.seq, "stale-geometry");
         return;
       }
       // Geometry is frozen at admission: the queued packet dispatches with
-      // the viewport its coordinates were authored against, never whatever
-      // a later resize left in `activity.viewportCss`. The admitted geometry
-      // key rides along so the Manager can re-fence inside the guest lane —
-      // the hub's own re-check before enqueueing stops at the lane's edge.
-      const admittedViewport = activity.viewportCss;
-      const admittedGeometryKey = activity.geometry?.key ?? null;
+      // the viewport its coordinates were authored against — the one the
+      // admitted key was derived from, never a later config read's. The
+      // admitted geometry key rides along so the Manager can re-fence
+      // inside the guest lane — the hub's own re-check before enqueueing
+      // stops at the lane's edge.
+      const admittedViewport = geometry.viewportCss;
+      const admittedGeometryKey = geometry.key;
       bucket.tokens = Math.min(
         BROWSER_FRAME_INPUT_MAX_EVENTS_PER_SECOND,
         bucket.tokens +
@@ -955,7 +1040,11 @@ const make = Effect.gen(function* () {
           // A geometry bump while this packet queued makes its coordinates
           // meaningless — reject rather than actuate against the
           // replacement geometry.
-          if ((activity.geometry?.seq ?? 0) !== geometrySeq) {
+          if (
+            activity.geometry === null ||
+            activity.geometry.viewportCss === null ||
+            activity.geometry.seq !== geometrySeq
+          ) {
             rejectPacket(socket, packet.seq, "stale-geometry");
             return undefined;
           }
@@ -1048,7 +1137,7 @@ const make = Effect.gen(function* () {
           // remembers an accepted ticket even after its socket ended — an
           // older upgrade completing late must not inherit the freed slot.
           let newestSameLeaseSeq: number | null =
-            activity.leaseState.get(leaseId)?.ticketSeq ?? null;
+            leaseLanes.get(laneKey(asserted.runtimeTabId, leaseId))?.ticketSeq ?? null;
           for (const held of [incumbent, activity.pending] as const) {
             if (held !== null && held.leaseId === leaseId) {
               newestSameLeaseSeq =
@@ -1072,7 +1161,7 @@ const make = Effect.gen(function* () {
           // Accepted — retain the ticket seq for the lease's lifetime so a
           // later-ending socket cannot erase the ordering this upgrade
           // established.
-          const accepted = leaseBucket(activity, leaseId);
+          const accepted = leaseLane(asserted.runtimeTabId, leaseId, expiresAt);
           accepted.ticketSeq = Math.max(accepted.ticketSeq, ticketSeq);
           // Latest arrival wins the single pending slot: a parked candidate
           // is closed `superseded` when a newer upgrade lands.

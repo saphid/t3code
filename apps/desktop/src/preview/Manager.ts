@@ -4867,34 +4867,53 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       });
     }
     const wc = yield* requireWebContents(tabId);
-    // Re-fence inside the lane: a packet admitted before a guest replacement
-    // must fail here rather than dispatch into the new webContents.
-    if (String(wc.id) !== ledger.generation) {
-      return yield* new PreviewOperationError({
-        operation: "remoteFrames.dispatch",
-        tabId,
-        webContentsId: wc.id,
-        cause: new Error("Bound guest generation was replaced."),
+    /**
+     * The dispatch fences, re-runnable at any point in the lane: the tab
+     * must still resolve to THIS webContents and the admitted geometry key
+     * must still describe the guest's live viewport. Every await below —
+     * the admitted-geometry viewport read, the fallback viewport read, and
+     * the focus grabs — is a window for a guest swap or resize to land
+     * between an earlier check and the real actuation, so the fence runs
+     * again immediately before the input send, not just at lane entry.
+     */
+    const refence = Effect.fn("PreviewManager.dispatchRemoteInput.refence")(function* () {
+      const sameGuest = Effect.fn("PreviewManager.dispatchRemoteInput.sameGuest")(function* () {
+        const currentWc = yield* requireWebContents(tabId);
+        if (currentWc.id !== wc.id || String(wc.id) !== ledger.generation) {
+          return yield* new PreviewOperationError({
+            operation: "remoteFrames.dispatch",
+            tabId,
+            webContentsId: wc.id,
+            cause: new Error("Bound guest generation was replaced."),
+          });
+        }
       });
-    }
-    // The lane itself is a queue: the hub re-checks geometrySeq before
-    // enqueueing here, but a guest resize landing while the packet waits for
-    // the permit must not let it actuate with coordinates authored for the
-    // old viewport. Re-derive the live geometry and require the admitted key
-    // to still describe this guest before any side effect runs.
-    if (geometryKey !== null) {
-      const currentViewport = yield* readRemoteViewport(tabId, wc);
-      const currentZoom =
-        (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.zoomFactor ?? DEFAULT_ZOOM_FACTOR;
-      if (remoteFrameGeometryKey(ledger.generation, currentViewport, currentZoom) !== geometryKey) {
-        return yield* new PreviewOperationError({
-          operation: "remoteFrames.dispatch",
-          tabId,
-          webContentsId: wc.id,
-          cause: new Error("Bound geometry changed before dispatch."),
-        });
+      yield* sameGuest();
+      if (geometryKey !== null) {
+        const currentViewport = yield* readRemoteViewport(tabId, wc);
+        const currentZoom =
+          (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.zoomFactor ?? DEFAULT_ZOOM_FACTOR;
+        if (
+          remoteFrameGeometryKey(ledger.generation, currentViewport, currentZoom) !== geometryKey
+        ) {
+          return yield* new PreviewOperationError({
+            operation: "remoteFrames.dispatch",
+            tabId,
+            webContentsId: wc.id,
+            cause: new Error("Bound geometry changed before dispatch."),
+          });
+        }
       }
-    }
+      // The viewport read itself was an await — a guest swap landing inside
+      // it would otherwise pass both checks above and still actuate into the
+      // replaced webContents.
+      yield* sameGuest();
+    });
+    // Re-fence inside the lane: a packet admitted before a guest replacement
+    // must fail here rather than dispatch into the new webContents, and a
+    // resize landing while the packet waited for the permit must not let it
+    // actuate with coordinates authored for the old viewport.
+    yield* refence();
     const owner: InputStateOwner = { kind: "lease", id: leaseId };
     const control = yield* ensureControlSession(wc);
     const send = (method: string, params: Record<string, unknown>) =>
@@ -4947,6 +4966,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         );
       }
     }
+
+    // Every await since lane entry — the viewport reads and the focus grabs —
+    // let a guest swap or resize land between the first fence and this point.
+    // Revalidate immediately before actuation: coordinates and focus were
+    // claimed for the guest+geometry the packet was admitted against.
+    yield* refence();
 
     switch (event.type) {
       case "pointer": {
