@@ -4351,6 +4351,59 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("releaseRemoteInput accounts attempted and failed cleanup sends", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents({ id: 42 });
+        Object.assign(preview.webContents, { focus: vi.fn() });
+        fromId.mockReturnValue(preview.webContents);
+        const remoteTabId = '["env-a","thread-a","epoch-1","tab-1"]';
+        yield* manager.createTab(remoteTabId);
+        yield* manager.registerWebview(remoteTabId, 42);
+        const sendCommand = (
+          preview.webContents as { debugger: { sendCommand: ReturnType<typeof vi.fn> } }
+        ).debugger.sendCommand;
+        const viewport = { width: 100, height: 100 };
+
+        // lease-a holds Shift down; the down also claims focus emulation, so
+        // its release owes both the keyUp and the focus unwind — every send
+        // counted before it runs.
+        yield* manager.dispatchRemoteInput(
+          remoteTabId,
+          "lease-a",
+          "42",
+          { type: "key", phase: "down", key: "Shift", code: "ShiftLeft" },
+          viewport,
+        );
+        const clean = yield* manager.releaseRemoteInput(remoteTabId, "lease-a");
+        expect(clean).toEqual({ attempted: 2, failed: 0 });
+
+        // The state record is gone with the accounting: a repeat release has
+        // nothing left to send.
+        const again = yield* manager.releaseRemoteInput(remoteTabId, "lease-a");
+        expect(again).toEqual({ attempted: 0, failed: 0 });
+
+        // lease-b's keyUp send fails — the failure is counted, not silently
+        // absorbed, so the hub can flag cleanup-incomplete.
+        yield* manager.dispatchRemoteInput(
+          remoteTabId,
+          "lease-b",
+          "42",
+          { type: "key", phase: "down", key: "Control", code: "ControlLeft" },
+          viewport,
+        );
+        sendCommand.mockImplementation(async (method: string, args: { type?: string }) => {
+          if (method === "Input.dispatchKeyEvent" && args.type === "keyUp") {
+            throw new Error("guest gone");
+          }
+          return undefined;
+        });
+        const failed = yield* manager.releaseRemoteInput(remoteTabId, "lease-b");
+        expect(failed).toEqual({ attempted: 2, failed: 1 });
+      }),
+    ),
+  );
+
   effectIt.effect("an ambiguous down rejection still owes key release", () =>
     withManager((manager) =>
       Effect.gen(function* () {
