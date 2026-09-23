@@ -453,6 +453,7 @@ export interface AcpAdapterV2Options {
     readonly offer: (request: ProviderContinuationRequest) => Effect.Effect<void>;
   };
   readonly testHooks?: {
+    readonly afterPromptSettledWithBackgroundWork?: () => Effect.Effect<void>;
     readonly afterNativeResponseTransportClosed?: () => Effect.Effect<void>;
     readonly afterHardTeardownTransportDrained?: () => Effect.Effect<void>;
     readonly beforeNativeResponseAdmissionCheck?: (
@@ -6763,6 +6764,9 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                     ) {
                       context.promptSettled = true;
                       context.promptSettledStatus = status;
+                      yield* (
+                        options.testHooks?.afterPromptSettledWithBackgroundWork?.() ?? Effect.void
+                      );
                       return;
                     }
                     yield* finalizeTurn(context, status);
