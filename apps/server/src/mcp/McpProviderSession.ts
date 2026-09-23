@@ -1,17 +1,37 @@
 import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 
-import type { McpCapability } from "./McpInvocationContext.ts";
-
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly providerSessionId: string;
   readonly providerInstanceId: ProviderInstanceId;
-  readonly capabilities?: ReadonlyArray<McpCapability>;
   readonly endpoint: string;
   readonly authorizationHeader: string;
-  /** Whether the credential grants the preview (browser) toolkit; the pull request toolkit always is. */
-  readonly preview: boolean;
+  /** Capabilities the credential grants ("preview", "device"). */
+  readonly capabilities: ReadonlySet<string>;
+  /**
+   * Set when the session may drive devices. Adapters spread this into the
+   * provider subprocess environment so the `agent-device` CLI is on PATH and
+   * already pointed at the server's daemon; the agent never handles a token.
+   */
+  readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
+}
+
+/** Provider env with the device variables applied over `base`, or `base` untouched. */
+export function withAgentDeviceEnvironment(
+  base: NodeJS.ProcessEnv,
+  config: Pick<McpProviderSessionConfig, "agentDeviceEnvironment"> | undefined,
+): NodeJS.ProcessEnv {
+  const extra = config?.agentDeviceEnvironment;
+  if (!extra) return base;
+  const separator = extra.PATH_SEPARATOR ?? ":";
+  const basePath = base.PATH ?? base.Path;
+  const { PATH: shimDir, PATH_SEPARATOR: _separator, ...rest } = extra;
+  return {
+    ...base,
+    ...rest,
+    ...(shimDir ? { PATH: basePath ? `${shimDir}${separator}${basePath}` : shimDir } : {}),
+  };
 }
 
 const sessionsByThread = new Map<ThreadId, McpProviderSessionConfig>();
