@@ -12030,6 +12030,7 @@ var __t3Client = (() => {
   }
   function useTerminalChordConflicts(host, session, visible) {
     const conflictsRef = (0, import_react.useRef)(null);
+    const conflictsPendingRef = (0, import_react.useRef)(false);
     const refreshRef = (0, import_react.useRef)(() => {
     });
     (0, import_react.useEffect)(() => {
@@ -12038,15 +12039,19 @@ var __t3Client = (() => {
       const signal = AbortSignal.any([controller.signal, session.signal]);
       const api = bindApi(uiKeybindingsApi, host, session.context);
       let lastRefresh = -Infinity;
+      let generation = 0;
+      const apply = (request, conflicts) => {
+        if (signal.aborted || request !== generation) return;
+        conflictsPendingRef.current = false;
+        conflictsRef.current = conflicts;
+      };
       const invokeList = () => {
         lastRefresh = Date.now();
+        const request = ++generation;
+        conflictsPendingRef.current = true;
         void api.invoke("listConflicts", {}, signal).then(
-          (value) => {
-            if (!signal.aborted) conflictsRef.current = value.conflicts;
-          },
-          () => {
-            if (!signal.aborted) conflictsRef.current = null;
-          }
+          (value) => apply(request, value.conflicts),
+          () => apply(request, null)
         );
       };
       const refresh = () => {
@@ -12074,9 +12079,10 @@ var __t3Client = (() => {
         document.removeEventListener("focusin", onFocusIn);
         document.removeEventListener("focusout", onFocusOut);
         conflictsRef.current = null;
+        conflictsPendingRef.current = false;
       };
     }, [host, session, visible]);
-    return { conflictsRef, refreshChords: () => refreshRef.current() };
+    return { conflictsRef, conflictsPendingRef, refreshChords: () => refreshRef.current() };
   }
   function handleBeforeKey(event, panel, terminalId) {
     const navigationData = terminalNavigationShortcutData(event);
@@ -12523,7 +12529,11 @@ var __t3Client = (() => {
       [panel, host, session]
     );
     usePanelCommands(host, session, panel, visible, panelActions);
-    const { conflictsRef, refreshChords } = useTerminalChordConflicts(host, session, visible);
+    const { conflictsRef, conflictsPendingRef, refreshChords } = useTerminalChordConflicts(
+      host,
+      session,
+      visible
+    );
     const themeVars = useThemeVars(host, session, visible);
     const appearanceVars = useTerminalAppearanceVars(host, session, visible);
     const assets = useGhosttyAssets(host, session);
@@ -12562,10 +12572,9 @@ var __t3Client = (() => {
         "aria-label": "Terminal",
         onKeyDownCapture: (event) => {
           if (event.defaultPrevented) return;
-          const action = resolveTerminalChord(
-            terminalChordFromEvent(event.nativeEvent, isMacPlatform(navigator.platform)),
-            conflictsRef.current
-          );
+          const chord = terminalChordFromEvent(event.nativeEvent, isMacPlatform(navigator.platform));
+          if (chord !== null && conflictsPendingRef.current) return;
+          const action = resolveTerminalChord(chord, conflictsRef.current);
           if (action !== null && dispatchTerminalCommand(action, panelActions)) {
             event.preventDefault();
             event.stopPropagation();

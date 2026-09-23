@@ -591,3 +591,173 @@ NodeTest.describe("two full views sidebar switch (r4 finding 1)", () => {
     NodeAssert.equal(active.size, 0);
   });
 });
+
+NodeTest.describe("conflicts response generation (r4 finding 2)", () => {
+  NodeTest.test("a late older reply cannot overwrite the focused answer", async () => {
+    // The reviewer's FOCUS_RESPONSE_ORDER probe, without sleeps: the
+    // mount-time request and the unthrottled focused request are both
+    // outstanding, and the older mount reply resolves LAST. Pre-fix, every
+    // response applied unconditionally, so the stale pre-focus list
+    // overwrote the focused rows and mod+d flipped back to split.
+    const requests = [];
+    const deferredHost = {
+      invokeApi: () => new Promise((resolve, reject) => requests.push({ resolve, reject })),
+    };
+    const session = {
+      signal: new AbortController().signal,
+      context: { resource: { threadId: "t", environmentId: "e" } },
+    };
+    let chordState;
+    function ChordProbe() {
+      chordState = bundle.useTerminalChordConflicts(deferredHost, session, true);
+      return null;
+    }
+    let renderer;
+    await act(async () => {
+      renderer = create(React.createElement(ChordProbe), { createNodeMock: nodeMock });
+    });
+    try {
+      NodeAssert.equal(requests.length, 1); // the mount-time request
+      await act(async () => fireDocument("focusin"));
+      NodeAssert.equal(requests.length, 2); // + the unthrottled focus refresh
+      // While the focused answer is outstanding the surface abstains; the
+      // raw ref still holds the stale (here: null) answer.
+      NodeAssert.equal(chordState.conflictsPendingRef.current, true);
+      await act(async () =>
+        requests[1].resolve({
+          conflicts: [{ key: "mod+d", command: "terminal.close", winner: "user", loser: "split" }],
+        }),
+      );
+      NodeAssert.equal(chordState.conflictsPendingRef.current, false);
+      NodeAssert.equal(resolveTerminalChord("mod+d", chordState.conflictsRef.current), "close");
+      // The older mount reply lands last and must be dropped.
+      await act(async () => requests[0].resolve({ conflicts: [] }));
+      NodeAssert.equal(resolveTerminalChord("mod+d", chordState.conflictsRef.current), "close");
+      // A superseded request's rejection erases nothing either: only the
+      // newest request may reset the rows (a denied call falls back to
+      // the static defaults).
+      fireDocument("focusout");
+      await act(async () => fireDocument("focusin"));
+      NodeAssert.equal(requests.length, 3);
+      await act(async () => requests[1].reject(new Error("stale")));
+      NodeAssert.equal(resolveTerminalChord("mod+d", chordState.conflictsRef.current), "close");
+      await act(async () => requests[2].reject(new Error("current")));
+      NodeAssert.equal(chordState.conflictsRef.current, null);
+      NodeAssert.equal(resolveTerminalChord("mod+d", chordState.conflictsRef.current), "split");
+    } finally {
+      await act(async () => renderer.unmount());
+    }
+  });
+});
+
+NodeTest.describe("first key abstains while resolution pends (r4 finding 2)", () => {
+  NodeTest.test("no guessed dispatch before the focused conflicts answer lands", async () => {
+    // The reviewer's FIRST_KEY_ACTUAL_CAPTURE probe: the entire TerminalView
+    // with mod+w remapped to terminal.split. The mount reply (empty,
+    // pre-focus) resolved, the focused reply is outstanding, and the actual
+    // capture event fires. Pre-fix the handler resolved the chord from the
+    // stale list, dispatched the DEFAULT close, and opened the close
+    // confirmation for a chord the user had remapped to split.
+    Object.defineProperty(globalThis, "navigator", {
+      value: { platform: "MacIntel" },
+      configurable: true,
+    });
+    const keyRequests = [];
+    const active = new Map();
+    let counter = 0;
+    const host = {
+      readAsset: () => new Promise(() => {}),
+      invokeApi: (request) =>
+        request.method === "listConflicts"
+          ? new Promise((resolve) => keyRequests.push(resolve))
+          : Promise.resolve({ tokens: {}, cssVars: {} }),
+      subscribeApi: (request, signal) => ({
+        async *[Symbol.asyncIterator]() {
+          const id = ++counter;
+          active.set(id, request.input?.terminalId ?? request.name);
+          try {
+            await new Promise((resolve) =>
+              signal.aborted
+                ? resolve()
+                : signal.addEventListener("abort", resolve, { once: true }),
+            );
+          } finally {
+            active.delete(id);
+          }
+        },
+      }),
+    };
+    const session = {
+      signal: new AbortController().signal,
+      context: { resource: { threadId: "key", environmentId: "e" } },
+      visible: true,
+      save() {},
+      onVisibility: () => () => {},
+      bindCommands: () => () => {},
+      restoreState: { terminalIds: ["keypane"], activeTerminalId: "keypane" },
+    };
+    let renderer;
+    await act(async () => {
+      renderer = create(React.createElement(bundle.TerminalView, { host, session }), {
+        createNodeMock: nodeMock,
+      });
+    });
+    const confirmCloseButtons = () =>
+      renderer.root
+        .findAllByType("button")
+        .filter((node) => node.props["aria-label"] === "Confirm close keypane").length;
+    const pressModW = async () => {
+      let prevented = false;
+      let stopped = false;
+      await act(async () => {
+        renderer.root.findByType("section").props.onKeyDownCapture({
+          defaultPrevented: false,
+          nativeEvent: {
+            key: "w",
+            code: "KeyW",
+            metaKey: true,
+            ctrlKey: false,
+            altKey: false,
+            shiftKey: false,
+          },
+          preventDefault() {
+            prevented = true;
+          },
+          stopPropagation() {
+            stopped = true;
+          },
+        });
+      });
+      return { prevented, stopped };
+    };
+    try {
+      // The mount-time reply (pre-focus context, no rows) lands, then the
+      // surface takes focus and starts the authoritative refresh.
+      await act(async () => keyRequests[0]({ conflicts: [] }));
+      await act(async () => fireDocument("focusin"));
+      NodeAssert.equal(keyRequests.length, 2);
+      // First press while the focused answer is outstanding: no guessed
+      // close confirmation, and the event is left for host default
+      // handling rather than claimed by a stale default.
+      const guarded = await pressModW();
+      NodeAssert.deepEqual(guarded, { prevented: false, stopped: false });
+      NodeAssert.equal(confirmCloseButtons(), 0);
+      // Once the remap row lands, the same chord dispatches the RESOLVED
+      // command — split, not close.
+      await act(async () =>
+        keyRequests[1]({
+          conflicts: [{ key: "mod+w", command: "terminal.split", winner: "user", loser: "close" }],
+        }),
+      );
+      const resolved = await pressModW();
+      NodeAssert.equal(resolved.prevented, true);
+      NodeAssert.equal(resolved.stopped, true);
+      NodeAssert.equal(confirmCloseButtons(), 0);
+      // The post-dispatch refresh stayed inside the 1s throttle.
+      NodeAssert.equal(keyRequests.length, 2);
+    } finally {
+      await act(async () => renderer.unmount());
+    }
+    NodeAssert.equal(active.size, 0);
+  });
+});

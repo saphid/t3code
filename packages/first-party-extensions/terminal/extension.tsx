@@ -454,8 +454,12 @@ function writeSystemMessage(surface: Pick<GhosttyTerminalSurface, "write">, mess
  * Fetched on show and on focus changes (they toggle the when-context);
  * ordinary refreshes are throttled to one call per second, but the first
  * refresh after a focus edge is never throttled — the mount-time list
- * predates the focus context. A denied or unavailable call leaves null
- * and the resolver falls back to the static defaults.
+ * predates the focus context. Only the newest request's answer applies
+ * (an older reply landing late can no longer overwrite it), and while
+ * that answer is outstanding `conflictsPendingRef` is true so the
+ * capture handler abstains instead of dispatching from the stale list.
+ * A denied or unavailable call leaves null and the resolver falls back
+ * to the static defaults.
  */
 function useTerminalChordConflicts(
   host: ClientHost,
@@ -463,9 +467,11 @@ function useTerminalChordConflicts(
   visible: boolean,
 ): {
   readonly conflictsRef: RefObject<readonly TerminalKeybindingConflict[] | null>;
+  readonly conflictsPendingRef: RefObject<boolean>;
   readonly refreshChords: () => void;
 } {
   const conflictsRef = useRef<readonly TerminalKeybindingConflict[] | null>(null);
+  const conflictsPendingRef = useRef(false);
   const refreshRef = useRef<() => void>(() => {});
   useEffect(() => {
     if (!visible) return;
@@ -473,15 +479,23 @@ function useTerminalChordConflicts(
     const signal = AbortSignal.any([controller.signal, session.signal]);
     const api = bindApi(uiKeybindingsApi, host, session.context);
     let lastRefresh = -Infinity;
+    let generation = 0;
+    const apply = (request: number, conflicts: readonly TerminalKeybindingConflict[] | null) => {
+      // Only the newest request's answer applies: a mount-time reply
+      // landing after the focused refresh would overwrite the focused
+      // rows with the stale pre-focus list, and a superseded rejection
+      // would erase them.
+      if (signal.aborted || request !== generation) return;
+      conflictsPendingRef.current = false;
+      conflictsRef.current = conflicts;
+    };
     const invokeList = () => {
       lastRefresh = Date.now();
+      const request = ++generation;
+      conflictsPendingRef.current = true;
       void api.invoke("listConflicts", {}, signal).then(
-        (value) => {
-          if (!signal.aborted) conflictsRef.current = value.conflicts;
-        },
-        () => {
-          if (!signal.aborted) conflictsRef.current = null;
-        },
+        (value) => apply(request, value.conflicts),
+        () => apply(request, null),
       );
     };
     const refresh = () => {
@@ -513,9 +527,10 @@ function useTerminalChordConflicts(
       document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("focusout", onFocusOut);
       conflictsRef.current = null;
+      conflictsPendingRef.current = false;
     };
   }, [host, session, visible]);
-  return { conflictsRef, refreshChords: () => refreshRef.current() };
+  return { conflictsRef, conflictsPendingRef, refreshChords: () => refreshRef.current() };
 }
 
 /**
@@ -1079,7 +1094,11 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
   usePanelCommands(host, session, panel, visible, panelActions);
   // Pure ref state: the capture handler reads the keymap resolution
   // synchronously without re-rendering on every focus change.
-  const { conflictsRef, refreshChords } = useTerminalChordConflicts(host, session, visible);
+  const { conflictsRef, conflictsPendingRef, refreshChords } = useTerminalChordConflicts(
+    host,
+    session,
+    visible,
+  );
   const themeVars = useThemeVars(host, session, visible);
   const appearanceVars = useTerminalAppearanceVars(host, session, visible);
   const assets = useGhosttyAssets(host, session);
@@ -1130,15 +1149,20 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
         // registered commands — so an event still un-prevented here was left
         // for this surface to act on.
         if (event.defaultPrevented) return;
+        const chord = terminalChordFromEvent(event.nativeEvent, isMacPlatform(navigator.platform));
+        // While the current keymap answer is outstanding the previous list
+        // is stale for exactly this chord — the mount-time list predates
+        // the focus context, so a mod+w remapped to split would still
+        // dispatch the default close. Abstain rather than guess: the event
+        // falls through to host default handling, and the next press after
+        // the answer lands dispatches the resolved command.
+        if (chord !== null && conflictsPendingRef.current) return;
         // Owning terminal focus means owning the chords — but the host
         // resolved them first, so dispatch the RESOLVED command when the
         // keymap displaced a default (mod+d → terminal.close closes instead
         // of splitting). Capture stays ahead of the VT surface's encoder,
         // which would otherwise keep the bytes for the PTY.
-        const action = resolveTerminalChord(
-          terminalChordFromEvent(event.nativeEvent, isMacPlatform(navigator.platform)),
-          conflictsRef.current,
-        );
+        const action = resolveTerminalChord(chord, conflictsRef.current);
         if (action !== null && dispatchTerminalCommand(action, panelActions)) {
           event.preventDefault();
           event.stopPropagation();
