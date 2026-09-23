@@ -3,7 +3,7 @@ import * as NodeTest from "node:test";
 import React from "react";
 import TestRenderer from "react-test-renderer";
 
-import { useCommentBlockReason, useEditorSelection } from "./commentSession.ts";
+import { useCommentBlockReason, useCommentDraft, useEditorSelection } from "./commentSession.ts";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const { act, create } = TestRenderer;
@@ -119,6 +119,112 @@ NodeTest.describe("useEditorSelection", () => {
         latest.clearSelection();
       });
       NodeAssert.equal(latest.selectionRange, null);
+    } finally {
+      if (root) await act(async () => root.unmount());
+    }
+  });
+});
+
+NodeTest.describe("useCommentDraft", () => {
+  let latest;
+  function Probe(props) {
+    const current = useCommentDraft(props.surface, props.selected);
+    React.useEffect(() => {
+      latest = current;
+    });
+    return null;
+  }
+
+  // Built per call — a reopened or re-synced file yields a fresh string with
+  // the same bytes, which === still matches (value equality on primitives).
+  const bigContents = (...extra) =>
+    [...Array.from({ length: 80 }, (_, index) => `line ${index + 1}`), ...extra].join("\n");
+
+  // r3 item 1 (review F-r2-1): open a draft on L40-42, then let the buffer
+  // drift under it (typing or an external sync). The captured offsets are
+  // dead at read — the form goes stale and submit has nothing live to ship,
+  // so attachAnnotation can never receive offsets captured against
+  // different bytes.
+  NodeTest.it(
+    "a draft whose buffer drifted goes stale instead of shipping stale offsets",
+    async () => {
+      let root;
+      try {
+        await act(async () => {
+          root = create(
+            e(Probe, { selected: "a.ts", surface: editableSurface("a.ts", bigContents()) }),
+          );
+        });
+        await act(async () => {
+          latest.openDraft({ startLine: 40, endLine: 42 });
+        });
+        NodeAssert.equal(latest.draftStale, false);
+        NodeAssert.equal(latest.draft?.path, "a.ts");
+        NodeAssert.deepEqual(latest.draft?.range, { startLine: 40, endLine: 42 });
+        NodeAssert.equal(latest.draft?.excerpt, "line 40\nline 41\nline 42");
+
+        // The drift probe: appended lines leave 40-42 visually intact but the
+        // pinned bytes no longer match the live buffer — the draft is stale.
+        await act(async () => {
+          root.update(
+            e(Probe, {
+              selected: "a.ts",
+              surface: editableSurface("a.ts", bigContents("synced tail")),
+            }),
+          );
+        });
+        NodeAssert.equal(latest.draftStale, true);
+        // Stale stays visible — the form keeps the user's text and names the
+        // drift rather than vanishing.
+        NodeAssert.equal(latest.draft?.path, "a.ts");
+
+        // Cancel still works from the stale state.
+        await act(async () => {
+          latest.closeDraft();
+        });
+        NodeAssert.equal(latest.draft, null);
+        NodeAssert.equal(latest.draftStale, false);
+      } finally {
+        if (root) await act(async () => root.unmount());
+      }
+    },
+  );
+
+  // r3 item 1, navigation probe: a draft dies with navigation the way a held
+  // selection does — select() closes it, and the pin retires on a path
+  // change so an away-and-back reopen on byte-identical contents cannot
+  // re-arm it.
+  NodeTest.it("a draft does not survive navigation away and back", async () => {
+    let root;
+    try {
+      await act(async () => {
+        root = create(
+          e(Probe, { selected: "a.ts", surface: editableSurface("a.ts", bigContents()) }),
+        );
+      });
+      await act(async () => {
+        latest.openDraft({ startLine: 40, endLine: 42 });
+      });
+      NodeAssert.notEqual(latest.draft, null);
+
+      await act(async () => {
+        root.update(
+          e(Probe, { selected: "b.ts", surface: editableSurface("b.ts", ["other"].join("\n")) }),
+        );
+      });
+      NodeAssert.equal(latest.draft, null);
+      NodeAssert.equal(latest.draftStale, false);
+
+      // Reopening a.ts re-reads it: fresh string, byte-identical contents.
+      // Without the render-phase retire the value-equal contents pin would
+      // re-arm the dead draft over a buffer that may have changed in between.
+      await act(async () => {
+        root.update(
+          e(Probe, { selected: "a.ts", surface: editableSurface("a.ts", bigContents()) }),
+        );
+      });
+      NodeAssert.equal(latest.draft, null);
+      NodeAssert.equal(latest.draftStale, false);
     } finally {
       if (root) await act(async () => root.unmount());
     }

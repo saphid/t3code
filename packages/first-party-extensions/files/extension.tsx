@@ -31,11 +31,10 @@ import {
 } from "./fileNavigation.js";
 import {
   COMMENT_EXCERPT_MAX_CHARS,
-  buildCommentExcerpt,
   formatCommentRangeLabel,
   type FileCommentRange,
 } from "./fileComments.js";
-import { useCommentBlockReason, useEditorSelection } from "./commentSession.js";
+import { useCommentBlockReason, useCommentDraft, useEditorSelection } from "./commentSession.js";
 import { parseMarkdown, type MarkdownBlock, type MarkdownInline } from "./markdown.js";
 import {
   FILE_SAVE_DEBOUNCE_MS,
@@ -1208,16 +1207,12 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   // Row 14: review comments on file lines. The textarea's character selection
   // expands to full lines; submit lands a real composer draft review comment
   // through the grant-gated `t3.messages/enrichment.attachAnnotation` seam.
-  // The draft form captures its range + excerpt when opened, so a collapsing
-  // selection (the button click blurs the editor) never retargets it.
+  // The draft form captures its range + excerpt pinned to the live buffer
+  // when opened — a collapsing selection (the button click blurs the editor)
+  // never retargets it, and a drifted buffer turns the draft stale instead
+  // of letting submit ship offsets captured against different bytes.
   const commentThreadId = session.context.resource.threadId;
   const commentBlockReason = useCommentBlockReason(host, session, commentThreadId);
-  const [commentDraft, setCommentDraft] = useState<{
-    path: string;
-    range: FileCommentRange;
-    excerpt: string;
-    truncated: boolean;
-  } | null>(null);
   const [commentBody, setCommentBody] = useState("");
   const [commentSubmit, setCommentSubmit] = useState<{
     busy: boolean;
@@ -1238,22 +1233,28 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     setSelection: setEditorSelection,
     clearSelection: clearEditorSelection,
   } = useEditorSelection(commentSurface, selected);
+  const {
+    draft: commentDraft,
+    draftStale: commentDraftStale,
+    openDraft,
+    closeDraft,
+  } = useCommentDraft(commentSurface, selected);
   const openCommentDraft = (range: FileCommentRange) => {
-    if (selected === null || commentSurface === null) return;
-    const { excerpt, truncated } = buildCommentExcerpt(commentSurface.contents, range);
-    setCommentDraft({ path: selected, range, excerpt, truncated });
+    openDraft(range);
     setCommentBody("");
     setCommentSubmit({ busy: false, error: null });
   };
   const closeCommentDraft = () => {
-    setCommentDraft(null);
+    closeDraft();
     setCommentBody("");
     setCommentSubmit({ busy: false, error: null });
   };
   const submitCommentDraft = () => {
     const draft = commentDraft;
     const body = commentBody.trim();
-    if (draft === null || body === "" || commentSubmit.busy) return;
+    // Stale draft = the pinned buffer drifted under the form; the offsets it
+    // captured are dead and must never reach attachAnnotation.
+    if (draft === null || commentDraftStale || body === "" || commentSubmit.busy) return;
     setCommentSubmit({ busy: true, error: null });
     void bindApi(messagesEnrichmentApi, host, session.context)
       .invoke(
@@ -1366,9 +1367,10 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const select = (path: string, line?: number) => {
     setSelected(path);
     session.save({ relativePath: path });
-    // Selecting is navigating: any held selection dies here even when the
-    // path (and its contents) did not change.
+    // Selecting is navigating: any held selection and any open draft die
+    // here even when the path (and its contents) did not change.
     clearEditorSelection();
+    closeCommentDraft();
     // A plain selection also cancels any reveal still pending for another path.
     if (line !== undefined && line > 0) {
       setRevealRequest({ path, line });
@@ -1942,7 +1944,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
             <RenderedMarkdown blocks={markdownBlocks} links={linkActions} />
           ) : (
             <>
-              {commentDraft !== null && commentDraft.path === selected ? (
+              {commentDraft !== null ? (
                 <div
                   role="group"
                   aria-label={`Comment on ${formatCommentRangeLabel(commentDraft.range.startLine, commentDraft.range.endLine)}`}
@@ -1965,6 +1967,12 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                       ? ` — excerpt truncated to ${COMMENT_EXCERPT_MAX_CHARS} characters`
                       : ""}
                   </span>
+                  {commentDraftStale && (
+                    <span role="status" style={{ fontSize: 11, color: muted }}>
+                      The file changed since this draft opened — select the lines again to comment
+                      on them.
+                    </span>
+                  )}
                   <textarea
                     aria-label="Comment text"
                     value={commentBody}
@@ -1991,7 +1999,9 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                   <div style={{ display: "flex", gap: 6 }}>
                     <button
                       type="button"
-                      disabled={commentBody.trim() === "" || commentSubmit.busy}
+                      disabled={
+                        commentDraftStale || commentBody.trim() === "" || commentSubmit.busy
+                      }
                       onClick={submitCommentDraft}
                     >
                       {commentSubmit.busy ? "Submitting…" : "Submit comment"}

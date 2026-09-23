@@ -14,6 +14,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import type { EditorSurface } from "./editorSession.ts";
 import {
+  buildCommentExcerpt,
   commentUnavailableReason,
   selectionLineRange,
   type FileCommentRange,
@@ -79,6 +80,63 @@ export function useEditorSelection(
     selectionRange,
     setSelection: (selection) => setPinned({ contents, selected, selection }),
     clearSelection: () => setPinned({ contents, selected, selection: null }),
+  };
+}
+
+/** The open comment draft — range + excerpt captured against one buffer. */
+export interface CommentDraft {
+  readonly path: string;
+  readonly range: FileCommentRange;
+  readonly excerpt: string;
+  readonly truncated: boolean;
+}
+
+/**
+ * The comment draft pinned to the buffer its range and excerpt were
+ * captured against — the same pin-at-capture shape as the selection above,
+ * one level deeper at the write path. The editor textarea stays live under
+ * an open draft, so the captured offsets are only honest while the buffer
+ * is byte-identical: a local edit, a reload, or an external sync turns the
+ * form stale (`draftStale`) rather than letting submit retarget drifted
+ * lines — `attachAnnotation` must never receive offsets captured against
+ * different bytes than the buffer live at submit. And a draft dies with
+ * navigation the way a held selection does ("selecting is navigating"):
+ * `select()` closes it, and the pin retires in render the moment the
+ * selected path changes so a byte-identical reopen cannot re-arm it —
+ * `===` on string primitives is value equality, so a reopened file's
+ * identical bytes are indistinguishable to the contents pin alone.
+ */
+export function useCommentDraft(
+  surface: EditorSurface | null,
+  selected: string | null,
+): {
+  readonly draft: CommentDraft | null;
+  readonly draftStale: boolean;
+  readonly openDraft: (range: FileCommentRange) => void;
+  readonly closeDraft: () => void;
+} {
+  const [pinned, setPinned] = useState<{
+    readonly contents: string | null;
+    readonly selected: string | null;
+    readonly draft: CommentDraft | null;
+  }>({ contents: null, selected: null, draft: null });
+  const contents = surface?.contents ?? null;
+  if (pinned.draft !== null && pinned.selected !== selected) {
+    setPinned({ contents: null, selected, draft: null });
+  }
+  const draft = pinned.draft !== null && pinned.selected === selected ? pinned.draft : null;
+  // Stale stays visible: the form keeps the user's text and names the
+  // drift, but submit is dead while the pinned buffer no longer matches.
+  const draftStale = draft !== null && pinned.contents !== contents;
+  return {
+    draft,
+    draftStale,
+    openDraft: (range) => {
+      if (selected === null || surface === null) return;
+      const { excerpt, truncated } = buildCommentExcerpt(surface.contents, range);
+      setPinned({ contents, selected, draft: { path: selected, range, excerpt, truncated } });
+    },
+    closeDraft: () => setPinned({ contents, selected, draft: null }),
   };
 }
 
