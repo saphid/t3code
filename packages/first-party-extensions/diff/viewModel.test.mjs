@@ -36,9 +36,11 @@ import {
   previewState,
   reconcileTurnSelection,
   renderableFromPatch,
+  restoreDiffState,
   retainFileSelection,
   revertTarget,
   selectSource,
+  splitRows,
   toggleAllDiffFiles,
   toggleCollapsedKey,
   turnChoices,
@@ -160,8 +162,9 @@ const caps = (overrides = {}) => ({
   ...overrides,
 });
 
-// Rows carry `ordinal` (their position); assertions compare the payload.
-const bare = ({ ordinal: _ordinal, ...rest }) => rest;
+// Rows carry `ordinal` (their position) and `hunkStart` (a boundary flag for
+// split pairing); assertions compare the payload.
+const bare = ({ ordinal: _ordinal, hunkStart: _hunkStart, ...rest }) => rest;
 
 const filesFrom = (diff = PATCH) => {
   const renderable = renderableFromPatch(diff);
@@ -296,6 +299,246 @@ NodeTest.test("fileRows: expansion caps context and names the remainder", () => 
   NodeAssert.deepEqual(bare(gaps[0]), { kind: "gap", count: 497 - 50 });
   NodeAssert.deepEqual(bare(gaps[1]), { kind: "gap", count: 99 - 50 });
   NodeAssert.ok(MAX_EXPANDED_CONTEXT_LINES > 0);
+});
+
+NodeTest.test("fileRows: first row of each hunk carries hunkStart", () => {
+  const app = filesFrom().find((row) => row.path === "src/app.ts");
+  const rows = fileRows(app);
+  const starts = rows.filter((row) => row.hunkStart === true);
+  NodeAssert.equal(starts.length, 2);
+  NodeAssert.ok(starts[0] === rows[0], "hunk 1 opens the file");
+  NodeAssert.ok(starts[1] === rows[9], "hunk 2 opens right after the gap row");
+});
+
+// Deletion runs pair with the addition runs that follow them inside a hunk;
+// hunk 2 opens with additions while hunk 1 closes with a deletion, separated
+// by collapsedBefore 0 (no gap row) - the adjacency the hunkStart flag exists
+// for. Without it, removed-3 would visually pair with inserted-1.
+const MIX_PATCH = [
+  "diff --git a/mix.ts b/mix.ts",
+  "index 1..2 100644",
+  "--- a/mix.ts",
+  "+++ b/mix.ts",
+  "@@ -10,5 +10,3 @@",
+  " ctx-a",
+  "-removed-1",
+  "-removed-2",
+  "+added-1",
+  " ctx-b",
+  "-removed-3",
+  "@@ -15,1 +13,3 @@",
+  "+inserted-1",
+  "+inserted-2",
+  " ctx-d",
+  "",
+].join("\n");
+
+NodeTest.test("splitRows: pairs runs, pads the shorter side, never crosses hunks", () => {
+  const file = filesFrom(MIX_PATCH)[0];
+  const rows = fileRows(file);
+  NodeAssert.deepEqual(
+    rows.map((row) => row.kind),
+    [
+      "gap",
+      "context",
+      "deletion",
+      "deletion",
+      "addition",
+      "context",
+      "deletion",
+      "addition",
+      "addition",
+      "context",
+    ],
+    "no gap row between the adjacent hunks (only the leading one)",
+  );
+  const split = splitRows(rows);
+  NodeAssert.deepEqual(split.map(bare), [
+    { kind: "gap", count: 9 },
+    {
+      kind: "sides",
+      old: { kind: "context", text: "ctx-a", line: 10 },
+      new: { kind: "context", text: "ctx-a", line: 10 },
+    },
+    {
+      kind: "sides",
+      old: { kind: "deletion", text: "removed-1", line: 11 },
+      new: { kind: "addition", text: "added-1", line: 11 },
+    },
+    {
+      kind: "sides",
+      old: { kind: "deletion", text: "removed-2", line: 12 },
+      new: { kind: "empty" },
+    },
+    {
+      kind: "sides",
+      old: { kind: "context", text: "ctx-b", line: 13 },
+      new: { kind: "context", text: "ctx-b", line: 12 },
+    },
+    {
+      kind: "sides",
+      old: { kind: "deletion", text: "removed-3", line: 14 },
+      new: { kind: "empty" },
+    },
+    {
+      kind: "sides",
+      old: { kind: "empty" },
+      new: { kind: "addition", text: "inserted-1", line: 13 },
+    },
+    {
+      kind: "sides",
+      old: { kind: "empty" },
+      new: { kind: "addition", text: "inserted-2", line: 14 },
+    },
+    {
+      kind: "sides",
+      old: { kind: "context", text: "ctx-d", line: 15 },
+      new: { kind: "context", text: "ctx-d", line: 15 },
+    },
+  ]);
+});
+
+NodeTest.test("splitRows: pure additions and pure deletions pad one side", () => {
+  const added = filesFrom(
+    [
+      "diff --git a/fresh.ts b/fresh.ts",
+      "new file mode 100644",
+      "index 0000000..1111111",
+      "--- /dev/null",
+      "+++ b/fresh.ts",
+      "@@ -0,0 +1,3 @@",
+      "+alpha",
+      "+beta",
+      "+gamma",
+      "",
+    ].join("\n"),
+  )[0];
+  NodeAssert.deepEqual(splitRows(fileRows(added)).map(bare), [
+    { kind: "sides", old: { kind: "empty" }, new: { kind: "addition", text: "alpha", line: 1 } },
+    { kind: "sides", old: { kind: "empty" }, new: { kind: "addition", text: "beta", line: 2 } },
+    { kind: "sides", old: { kind: "empty" }, new: { kind: "addition", text: "gamma", line: 3 } },
+  ]);
+
+  const gone = filesFrom(
+    [
+      "diff --git a/gone.ts b/gone.ts",
+      "deleted file mode 100644",
+      "index 1111111..0000000",
+      "--- a/gone.ts",
+      "+++ /dev/null",
+      "@@ -1,2 +0,0 @@",
+      "-first",
+      "-second",
+      "",
+    ].join("\n"),
+  )[0];
+  NodeAssert.deepEqual(splitRows(fileRows(gone)).map(bare), [
+    { kind: "sides", old: { kind: "deletion", text: "first", line: 1 }, new: { kind: "empty" } },
+    { kind: "sides", old: { kind: "deletion", text: "second", line: 2 }, new: { kind: "empty" } },
+  ]);
+});
+
+NodeTest.test("splitRows: more additions than deletions pad the old side", () => {
+  const file = filesFrom(
+    [
+      "diff --git a/grow.ts b/grow.ts",
+      "index 1..2 100644",
+      "--- a/grow.ts",
+      "+++ b/grow.ts",
+      "@@ -1 +1,3 @@",
+      "-old",
+      "+new1",
+      "+new2",
+      "+new3",
+      "",
+    ].join("\n"),
+  )[0];
+  NodeAssert.deepEqual(splitRows(fileRows(file)).map(bare), [
+    {
+      kind: "sides",
+      old: { kind: "deletion", text: "old", line: 1 },
+      new: { kind: "addition", text: "new1", line: 1 },
+    },
+    { kind: "sides", old: { kind: "empty" }, new: { kind: "addition", text: "new2", line: 2 } },
+    { kind: "sides", old: { kind: "empty" }, new: { kind: "addition", text: "new3", line: 3 } },
+  ]);
+});
+
+NodeTest.test("splitRows: gap separators render full-width, expanded context pairs", () => {
+  const app = filesFrom().find((row) => row.path === "src/app.ts");
+  const collapsed = splitRows(fileRows(app));
+  // hunk1: 1 ctx + 2 pair rows + 4 ctx = 7 rows; gap; hunk2: 1 ctx + 1 add + 2 ctx
+  NodeAssert.equal(collapsed.filter((row) => row.kind === "gap").length, 1);
+  NodeAssert.equal(collapsed.length, 7 + 1 + 4);
+  NodeAssert.deepEqual(bare(collapsed[1]), {
+    kind: "sides",
+    old: { kind: "deletion", text: "old", line: 2 },
+    new: { kind: "addition", text: "new", line: 2 },
+  });
+  NodeAssert.deepEqual(bare(collapsed[2]), {
+    kind: "sides",
+    old: { kind: "empty" },
+    new: { kind: "addition", text: "newer", line: 3 },
+  });
+
+  // With delivered contents every gap becomes real context rows on both sides.
+  const expanded = splitRows(fileRows(app, CONTENTS));
+  NodeAssert.equal(expanded.filter((row) => row.kind === "gap").length, 0);
+  // 45 old lines / 47 new lines collapse into: 44 shared context rows + 3
+  // pair rows (1 del + 2 adds) = 47.
+  NodeAssert.equal(expanded.length, 47);
+  NodeAssert.deepEqual(bare(expanded[1]), {
+    kind: "sides",
+    old: { kind: "deletion", text: "old", line: 2 },
+    new: { kind: "addition", text: "new", line: 2 },
+  });
+});
+
+NodeTest.test("splitRows: hand-built rows pair per run, not per buffer", () => {
+  // A deletion starting after additions opened a new pairing - back-to-back
+  // change blocks each keep their own runs (d1,a1), (empty,a2), (d2,a3).
+  const split = splitRows([
+    { ordinal: 0, kind: "deletion", text: "d1", oldLine: 1 },
+    { ordinal: 1, kind: "addition", text: "a1", newLine: 1 },
+    { ordinal: 2, kind: "addition", text: "a2", newLine: 2 },
+    { ordinal: 3, kind: "deletion", text: "d2", oldLine: 2, hunkStart: true },
+    { ordinal: 4, kind: "addition", text: "a3", newLine: 3 },
+  ]);
+  NodeAssert.deepEqual(
+    split.map((row) =>
+      row.kind === "sides"
+        ? `${row.old.kind}:${row.old.text ?? ""}|${row.new.kind}:${row.new.text ?? ""}`
+        : `gap:${row.count}`,
+    ),
+    ["deletion:d1|addition:a1", "empty:|addition:a2", "deletion:d2|addition:a3"],
+  );
+});
+
+NodeTest.test("splitRows: binary and textless files stay empty", () => {
+  const files = filesFrom();
+  NodeAssert.deepEqual(splitRows(fileRows(files.find((row) => row.path === "logo.bin"))), []);
+  NodeAssert.deepEqual(splitRows(fileRows(files.find((row) => row.path === "renamed.txt"))), []);
+});
+
+NodeTest.test("restoreDiffState: layout round-trips, old records stay valid", () => {
+  NodeAssert.equal(restoreDiffState(null), true, "nothing saved yet");
+  NodeAssert.equal(restoreDiffState({ mode: "workspace" }), true, "oldest record shape");
+  NodeAssert.equal(
+    restoreDiffState({ mode: "workspace", sourceId: "working-tree", ignoreWhitespace: true }),
+    true,
+  );
+  NodeAssert.equal(restoreDiffState({ mode: "turns", turnId: "turn-1", layout: "split" }), true);
+  NodeAssert.equal(restoreDiffState({ layout: "split" }), true);
+  NodeAssert.equal(restoreDiffState({ layout: "unified" }), true);
+  NodeAssert.equal(restoreDiffState({ layout: "side-by-side" }), false, "bad layout value");
+  NodeAssert.equal(restoreDiffState({ layout: "Split" }), false, "case-sensitive values");
+  NodeAssert.equal(restoreDiffState({ layout: 1 }), false, "non-string layout");
+  NodeAssert.equal(restoreDiffState({ wrap: true }), false, "wrap is never persisted");
+  NodeAssert.equal(restoreDiffState("split"), false);
+  // Old records carry no layout; the caller's default (unified) applies.
+  const oldRecord = { mode: "workspace" };
+  NodeAssert.ok(restoreDiffState(oldRecord));
+  NodeAssert.equal(oldRecord.layout, undefined);
 });
 
 NodeTest.test("canExpandFile: only two-sided text changes expand", () => {

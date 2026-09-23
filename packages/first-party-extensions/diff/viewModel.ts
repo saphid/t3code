@@ -175,7 +175,15 @@ function patchCacheKey(patch: string): string {
 
 /* ---------------- per-file display rows ---------------- */
 
-export type DiffDisplayRow = { readonly ordinal: number } & (
+export type DiffDisplayRow = {
+  readonly ordinal: number;
+  /**
+   * True on the first row rendered for a hunk. Split pairing must not cross a
+   * hunk boundary, and adjacent hunks (collapsedBefore 0) render with no
+   * separator row between them — this flag is the only boundary signal.
+   */
+  readonly hunkStart?: boolean;
+} & (
   | {
       readonly kind: "context";
       readonly text: string;
@@ -254,6 +262,9 @@ export function fileRows(
     } else if (hunk.collapsedBefore > 0) {
       rows.push({ ordinal: rows.length, kind: "gap", count: hunk.collapsedBefore });
     }
+    // Hunk content starts here — gap rows above belong to the skipped region,
+    // and split pairing restarts at hunk content, not at the separator.
+    const firstRowIndex = rows.length;
 
     // Text index into the line arrays (patch-scoped for partial diffs,
     // file-scoped once expanded) is tracked separately from the real
@@ -300,6 +311,8 @@ export function fileRows(
         newLine += content.additions;
       }
     }
+    if (rows.length > firstRowIndex)
+      rows[firstRowIndex] = { ...rows[firstRowIndex], hunkStart: true };
     lastAdditionEnd = hunk.additionStart + hunk.additionCount - 1;
     lastDeletionEnd = hunk.deletionStart + hunk.deletionCount - 1;
   }
@@ -308,6 +321,89 @@ export function fileRows(
     if (tail > 0) pushGap(lastDeletionEnd, lastAdditionEnd, tail);
   }
   return rows;
+}
+
+/* ---------------- split (side-by-side) rows ---------------- */
+
+/**
+ * One side of a paired split row. Context lines carry their own old/new line
+ * number; `empty` pads the shorter side of a deletion/addition pair so both
+ * panes stay aligned.
+ */
+export type SplitSide =
+  | { readonly kind: "context"; readonly text: string; readonly line: number }
+  | { readonly kind: "deletion"; readonly text: string; readonly line: number }
+  | { readonly kind: "addition"; readonly text: string; readonly line: number }
+  | { readonly kind: "empty" };
+
+export type DiffSplitRow =
+  | {
+      readonly ordinal: number;
+      readonly kind: "sides";
+      readonly old: SplitSide;
+      readonly new: SplitSide;
+    }
+  /** Full-width separator - the same gap row the unified layout renders. */
+  | { readonly ordinal: number; readonly kind: "gap"; readonly count: number };
+
+/**
+ * Unified display rows -> split (side-by-side) rows. Context appears on both
+ * sides; within a hunk each run of deletions pairs line-by-line with the run
+ * of additions that follows it, the shorter side padded with `empty` cells.
+ * Gap rows and `hunkStart` boundaries flush the pairing, so a hunk's trailing
+ * deletions never align with the next hunk's opening additions when adjacent
+ * hunks render with no separator between them.
+ */
+export function splitRows(rows: readonly DiffDisplayRow[]): readonly DiffSplitRow[] {
+  const out: DiffSplitRow[] = [];
+  let oldRun: { readonly text: string; readonly line: number }[] = [];
+  let newRun: { readonly text: string; readonly line: number }[] = [];
+  const flush = () => {
+    const height = Math.max(oldRun.length, newRun.length);
+    for (let index = 0; index < height; index += 1) {
+      const old = oldRun[index];
+      const current = newRun[index];
+      out.push({
+        ordinal: out.length,
+        kind: "sides",
+        old:
+          old === undefined
+            ? { kind: "empty" }
+            : { kind: "deletion", text: old.text, line: old.line },
+        new:
+          current === undefined
+            ? { kind: "empty" }
+            : { kind: "addition", text: current.text, line: current.line },
+      });
+    }
+    oldRun = [];
+    newRun = [];
+  };
+  for (const row of rows) {
+    // A hunk boundary ends any pending pairing - rows never pair across hunks.
+    if (row.hunkStart === true && (oldRun.length > 0 || newRun.length > 0)) flush();
+    if (row.kind === "gap") {
+      flush();
+      out.push({ ordinal: out.length, kind: "gap", count: row.count });
+    } else if (row.kind === "deletion") {
+      // A deletion run starting after additions belongs to a new pairing -
+      // back-to-back change blocks each keep their own runs.
+      if (newRun.length > 0) flush();
+      oldRun.push({ text: row.text, line: row.oldLine });
+    } else if (row.kind === "addition") {
+      newRun.push({ text: row.text, line: row.newLine });
+    } else {
+      flush();
+      out.push({
+        ordinal: out.length,
+        kind: "sides",
+        old: { kind: "context", text: row.text, line: row.oldLine },
+        new: { kind: "context", text: row.text, line: row.newLine },
+      });
+    }
+  }
+  flush();
+  return out;
 }
 
 /** Only two-sided change files gain anything from the file-contents read. */
@@ -1233,6 +1329,54 @@ export function describePresentation(result: {
 
 /** The panel's two data paths: repository sources vs turn-scoped checkpoint diffs. */
 export type DiffMode = "workspace" | "turns";
+
+/** Row layout: one unified pane, or split old/new panes (native `diffLayout`). */
+export type DiffLayout = "unified" | "split";
+
+/**
+ * The persisted selection record (`session.save`). Fields stay sparse -
+ * defaults are omitted so older records restore unchanged. `layout` is
+ * per-view: the plugin cannot read or write the host's client settings, so
+ * the global native `diffLayout` preference and this record are separate.
+ * `wrap` is deliberately absent - the native wrap toggle is session-local.
+ */
+export interface RestoredState {
+  readonly mode?: string;
+  readonly sourceId?: string;
+  readonly fileKey?: string;
+  readonly baseRef?: string;
+  readonly ignoreWhitespace?: boolean;
+  /** Persisted turn selection - `turnId` for a turn pick, absent + mode "turns" for the whole thread. */
+  readonly turnId?: string;
+  /** Row layout; records saved before split shipped restore as unified. */
+  readonly layout?: DiffLayout;
+}
+
+/** `validateRestore` for the diff surface: null, or a sparse selection record with known keys. */
+export function restoreDiffState(value: unknown): value is RestoredState | null {
+  if (value === null) return true;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    Object.keys(record).every(
+      (key) =>
+        key === "mode" ||
+        key === "sourceId" ||
+        key === "fileKey" ||
+        key === "baseRef" ||
+        key === "ignoreWhitespace" ||
+        key === "turnId" ||
+        key === "layout",
+    ) &&
+    (record.mode === undefined || record.mode === "workspace" || record.mode === "turns") &&
+    (record.sourceId === undefined || typeof record.sourceId === "string") &&
+    (record.fileKey === undefined || typeof record.fileKey === "string") &&
+    (record.baseRef === undefined || typeof record.baseRef === "string") &&
+    (record.ignoreWhitespace === undefined || typeof record.ignoreWhitespace === "boolean") &&
+    (record.turnId === undefined || typeof record.turnId === "string") &&
+    (record.layout === undefined || record.layout === "unified" || record.layout === "split")
+  );
+}
 
 /**
  * The agents-stream fold the panel needs: the checkpoint list drives the
