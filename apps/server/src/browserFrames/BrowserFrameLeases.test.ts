@@ -8,6 +8,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -387,6 +388,42 @@ describe("BrowserFrameLeases", () => {
           ),
         ),
       ).toBe(true);
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("a suspended mint's retained dead-marker survives cap eviction", () =>
+    Effect.gen(function* () {
+      const leases = yield* BrowserFrameLeases;
+      const authority = sessionAuthority("sess-a", "conn-doomed");
+      const entered = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      const outcome = yield* Deferred.make<
+        Option.Option<{ readonly ticket: string; readonly expiresAt: number }>
+      >();
+      // The mint suspends inside withRetainedConnection — the window where a
+      // real provider's async work would run — while the connection is
+      // revoked and enough later revocations land to fill the marker cap.
+      yield* leases
+        .withRetainedConnection(
+          "conn-doomed",
+          Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Deferred.await(resume)),
+            Effect.andThen(leases.issueStreamTicket(issue(authority))),
+          ),
+        )
+        .pipe(
+          Effect.flatMap((result) => Deferred.succeed(outcome, result)),
+          Effect.forkChild,
+        );
+      yield* Deferred.await(entered);
+      yield* leases.revokeConnection("conn-doomed");
+      for (let i = 0; i < 4104; i += 1) {
+        yield* leases.revokeConnection(`conn-flood-${i}`);
+      }
+      yield* Deferred.succeed(resume, undefined);
+      // The marker the pending mint still references was never evicted — the
+      // mint resumes into the dead-connection fence and mints nothing.
+      expect(Option.isNone(yield* Deferred.await(outcome))).toBe(true);
     }).pipe(Effect.provide(TestLayer)),
   );
 });

@@ -131,6 +131,7 @@ const makeDeps = (overrides: Partial<Deps> = {}): Deps => ({
     recordHeldSurfaceClaim: () => Effect.succeed(true),
     heldSurfaceClaim: () => Effect.succeed(Option.none()),
     revokeWhere: () => Effect.void,
+    withRetainedConnection: (_connectionId, effect) => effect,
   },
   authorizeGrant: async () => true,
   ...overrides,
@@ -569,6 +570,7 @@ describe("t3.resources/lease adapter", () => {
             },
             heldSurfaceClaim: () => Effect.succeed(Option.none()),
             revokeWhere: () => Effect.void,
+            withRetainedConnection: (_connectionId, effect) => effect,
           },
         }),
       );

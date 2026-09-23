@@ -193,6 +193,13 @@ interface LeasesState {
    * connection after the sweep committed. FIFO-capped — ids are random.
    */
   readonly deadConnections: ReadonlyMap<string, true>;
+  /**
+   * Dead-connection markers pinned by in-flight operations. An op that read
+   * its connection as live before revocation holds a reference here until it
+   * completes, so the cap eviction can never drop a marker a suspended mint
+   * or claim registration is still about to consult.
+   */
+  readonly retainedConnections: ReadonlyMap<string, number>;
 }
 
 const DEAD_CONNECTION_CAP = 4096;
@@ -277,12 +284,24 @@ const prune = (state: LeasesState, now: number): LeasesState => {
     const next = new Map(deadConnections);
     for (const key of next.keys()) {
       if (next.size <= DEAD_CONNECTION_CAP) break;
+      // A retained marker outlives the cap: the op holding it must still
+      // find its fence when it resumes.
+      if (state.retainedConnections.has(key)) continue;
       next.delete(key);
     }
     deadConnections = next;
     changed = true;
   }
-  return changed ? { tickets, leases, leaseByHolder, heldClaims, deadConnections } : state;
+  return changed
+    ? {
+        tickets,
+        leases,
+        leaseByHolder,
+        heldClaims,
+        deadConnections,
+        retainedConnections: state.retainedConnections,
+      }
+    : state;
 };
 
 export class BrowserFrameLeases extends Context.Service<
@@ -319,6 +338,17 @@ export class BrowserFrameLeases extends Context.Service<
      * channels die with the socket, not just future verifies.
      */
     readonly revokeConnection: (connectionId: string) => Effect.Effect<void>;
+    /**
+     * Pin a connection's dead-marker for the duration of `effect`. An
+     * operation that read its authority's connection as live — and could
+     * still be suspended when the revocation lands — runs inside this so
+     * cap eviction can never drop the marker it will consult on resume.
+     * Reference-counted: concurrent operations share the pin.
+     */
+    readonly withRetainedConnection: <A, E, R>(
+      connectionId: string | undefined,
+      effect: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E, R>;
     /** Revoke every record whose authority fails `match` (catalogue sweeps). */
     readonly revokeWhere: (
       match: (
@@ -380,6 +410,7 @@ export const make = (options?: {
       leaseByHolder: new Map(),
       heldClaims: new Map(),
       deadConnections: new Map(),
+      retainedConnections: new Map(),
     });
     const crypto = yield* Crypto.Crypto;
     const pubsub = yield* Effect.acquireRelease(
@@ -653,6 +684,7 @@ export const make = (options?: {
           leaseByHolder,
           heldClaims,
           deadConnections: pruned.deadConnections,
+          retainedConnections: pruned.retainedConnections,
         },
       ] as const;
     };
@@ -713,6 +745,30 @@ export const make = (options?: {
         });
       });
 
+    const withRetainedConnection: BrowserFrameLeases["Service"]["withRetainedConnection"] = (
+      connectionId,
+      effect,
+    ) =>
+      connectionId === undefined
+        ? effect
+        : Effect.acquireRelease(
+            SynchronizedRef.update(state, (current) => ({
+              ...current,
+              retainedConnections: new Map(current.retainedConnections).set(
+                connectionId,
+                (current.retainedConnections.get(connectionId) ?? 0) + 1,
+              ),
+            })),
+            () =>
+              SynchronizedRef.update(state, (current) => {
+                const retainedConnections = new Map(current.retainedConnections);
+                const remaining = (current.retainedConnections.get(connectionId) ?? 0) - 1;
+                if (remaining > 0) retainedConnections.set(connectionId, remaining);
+                else retainedConnections.delete(connectionId);
+                return { ...current, retainedConnections };
+              }),
+          ).pipe(Effect.andThen(effect), Effect.scoped);
+
     const heldSurfaceClaim: BrowserFrameLeases["Service"]["heldSurfaceClaim"] = Effect.fn(
       "BrowserFrameLeases.heldSurfaceClaim",
     )(function* (token) {
@@ -765,6 +821,7 @@ export const make = (options?: {
       revokeSession,
       revokeConnection,
       revokeWhere,
+      withRetainedConnection,
       recordHeldSurfaceClaim,
       heldSurfaceClaim,
       records,

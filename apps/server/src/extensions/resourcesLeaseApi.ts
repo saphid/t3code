@@ -235,7 +235,7 @@ interface ResourcesLeaseApiDependencies {
    */
   readonly leases: Pick<
     BrowserFrameLeases["Service"],
-    "recordHeldSurfaceClaim" | "heldSurfaceClaim" | "revokeWhere"
+    "recordHeldSurfaceClaim" | "heldSurfaceClaim" | "revokeWhere" | "withRetainedConnection"
   >;
   /**
    * The broker's per-caller authorize check, reachable by installation id:
@@ -684,7 +684,16 @@ export function createResourcesLeaseApiProvider(
     definition: RESOURCES_LEASE_API,
     requiresRootAuthority: true,
     invoke: (method, input, context, signal, metadata) =>
-      Effect.runPromise(invoke(method, input, context, signal, metadata), { signal }),
+      Effect.runPromise(
+        // Claim registration suspends across the abortible checks; a root
+        // connection revoked in between must still have its dead-marker when
+        // the registry's atomic check runs, so pin it for the invocation.
+        dependencies.leases.withRetainedConnection(
+          metadata.rootConnectionId,
+          invoke(method, input, context, signal, metadata),
+        ),
+        { signal },
+      ),
   };
 }
 

@@ -2789,7 +2789,12 @@ const makeWsRpcLayer = (
         [WS_METHODS.browserFramesOpenInput]: (input) =>
           observeRpcEffect(
             WS_METHODS.browserFramesOpenInput,
-            Effect.gen(function* () {
+            // The session listing and hub reads suspend before the mint's
+            // atomic dead-connection check — pin this socket's marker so the
+            // fence is still there when the mint resumes.
+            browserFrameLeases.withRetainedConnection(
+              wsConnectionId,
+              Effect.gen(function* () {
               const details = yield* previewManager.listDetails({ threadId: input.threadId });
               const session = details.sessions.find(
                 (detail) => detail.snapshot.tabId === input.tabId,
@@ -2849,7 +2854,8 @@ const makeWsRpcLayer = (
                     expiresAt: issued.expiresAt,
                   } satisfies BrowserFramesOpenInputResult),
               });
-            }),
+              }),
+            ),
             { "rpc.aggregate": "browser-frames" },
           ),
         [WS_METHODS.browserFramesCloseInput]: (input) =>

@@ -482,7 +482,17 @@ export function createBrowserFramesApiProvider(
     definition: browserFramesApi.definition,
     requiresRootAuthority: true,
     invoke: (method, input, context, signal, metadata) =>
-      Effect.runPromise(invoke(method, input, context, signal, metadata), { signal }),
+      Effect.runPromise(
+        // The claim read and the registry mint suspend across async work; a
+        // root-connection revocation landing in between must still find its
+        // dead-marker fence when the mint resumes, so the connection's marker
+        // is pinned for the whole invocation.
+        dependencies.leases.withRetainedConnection(
+          metadata.rootConnectionId,
+          invoke(method, input, context, signal, metadata),
+        ),
+        { signal },
+      ),
   };
 }
 
