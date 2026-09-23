@@ -691,7 +691,7 @@ describe("BrowserFrameHub", () => {
             // the newest accepted ticket: it binds as a shadow and must
             // not evict the parked 3.
             const ws2 = await openInput(hub.origin, hub.secret, params("2"));
-            await waitNotice(ws2, "bound");
+            await waitNotice(ws2, "shadow");
             finishRelease!();
 
             const bound3 = await waitNotice(ws3, "bound");
@@ -739,22 +739,37 @@ describe("BrowserFrameHub", () => {
             );
             await vi.waitFor(() => expect(stub.dispatched).toHaveLength(1));
 
-            // Same lease, older ticketSeq: binds as a shadow — it may still
-            // dispatch under the lease, but never displaces the incumbent and
-            // never runs lease cleanup.
-            const stale = await connectInput(hub.origin, hub.secret, {
+            // Same lease, older ticketSeq: binds as a shadow — no `bound`
+            // ownership notice, and the lease's replay high-water mark
+            // survives the rebind.
+            const stale = await openInput(hub.origin, hub.secret, {
               ...baseInputParams,
               "x-t3-lease": "lease-a",
               "x-t3-ticket-seq": "1",
             });
-            stale.ws.send(
-              JSON.stringify({ seq: 1, geometrySeq: 0, event: { type: "text", text: "second" } }),
+            const shadowBound = await waitNotice(stale, "shadow");
+            expect(shadowBound.leaseId).toBe("lease-a");
+
+            // Replaying seq=1 must not re-dispatch what the owner already
+            // sent — the shadow inherits the lease's high-water mark.
+            stale.send(
+              JSON.stringify({ seq: 1, geometrySeq: 0, event: { type: "text", text: "replay" } }),
+            );
+            const rejected = await waitNotice(stale, "rejected");
+            expect(rejected.seq).toBe(1);
+            expect(rejected.reason).toBe("replay");
+            expect(stub.dispatched).toHaveLength(1);
+
+            // A newer packet still dispatches: the shadow shares the lease
+            // lane, it is not frozen.
+            stale.send(
+              JSON.stringify({ seq: 2, geometrySeq: 0, event: { type: "text", text: "second" } }),
             );
             await vi.waitFor(() => expect(stub.dispatched).toHaveLength(2));
             expect(modern.ws.readyState).toBe(WebSocket.OPEN);
 
-            stale.ws.close();
-            await waitClosed(stale.ws);
+            stale.close();
+            await waitClosed(stale);
             // Shadow teardown released nothing.
             expect(stub.released).toHaveLength(0);
             modern.ws.terminate();

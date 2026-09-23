@@ -136,6 +136,17 @@ export const BrowserFrameInputNotice = Schema.Union([
      */
     cleanupIncomplete: Schema.optional(Schema.Boolean),
   }),
+  /**
+   * A same-lease socket bound under a ticket older than the newest accepted:
+   * it may dispatch under the lease but owns nothing — no `bound` ownership
+   * notice, no slot, no lease cleanup. Design §3.7 shadow vocabulary.
+   */
+  Schema.Struct({
+    type: Schema.Literal("shadow"),
+    leaseId: TrimmedNonEmptyString,
+    geometrySeq: NonNegativeInt,
+    expiresAt: Schema.Int.check(Schema.isGreaterThan(0)),
+  }),
   Schema.Struct({
     type: Schema.Literal("geometry"),
     geometrySeq: NonNegativeInt,

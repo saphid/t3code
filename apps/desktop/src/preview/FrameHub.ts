@@ -101,10 +101,11 @@ interface SessionActivity {
    */
   configReadSeq: number;
   /**
-   * Per-lease token buckets retained across socket replacement so rebinding
-   * cannot reset rate protection.
+   * Per-lease input lane state — rate tokens and the replay high-water
+   * mark — retained across socket replacement so a rebind or same-lease
+   * shadow can reset neither.
    */
-  rateByLease: Map<string, { tokens: number; tokensAt: number }>;
+  leaseState: Map<string, { tokens: number; tokensAt: number; highSeq: number }>;
   /** Last time the session had viewers, input, or pending work — idle GC. */
   lastTouchedAt: number;
   /**
@@ -265,7 +266,7 @@ const make = Effect.gen(function* () {
       lastFrame: null,
       viewportCss: null,
       configReadSeq: 0,
-      rateByLease: new Map(),
+      leaseState: new Map(),
       lastTouchedAt: Date.now(),
       poller: setInterval(() => pollActivity(runtimeTabId), GEOMETRY_POLL_MS),
     };
@@ -834,7 +835,9 @@ const make = Effect.gen(function* () {
 
     void refreshGeometry(runtimeTabId).then((geometrySeq) =>
       sendNotice(socket, {
-        type: "bound",
+        // A shadow gets no `bound` ownership: it dispatches under the lease
+        // but holds no slot and runs no lease cleanup.
+        type: owning ? "bound" : "shadow",
         leaseId,
         geometrySeq: geometrySeq ?? activity.geometry?.seq ?? 0,
         expiresAt,
@@ -860,7 +863,19 @@ const make = Effect.gen(function* () {
         void endSocket(socket, "expired");
         return;
       }
-      if (packet.seq <= socket.lastSeq) {
+      // The lane state is retained per lease across socket replacement, so
+      // rebinding (or a shadow socket on the same lease) can reset neither
+      // the rate bucket nor the replay high-water mark.
+      let bucket = activity.leaseState.get(leaseId);
+      if (bucket === undefined) {
+        bucket = {
+          tokens: BROWSER_FRAME_INPUT_MAX_EVENTS_PER_SECOND,
+          tokensAt: now,
+          highSeq: 0,
+        };
+        activity.leaseState.set(leaseId, bucket);
+      }
+      if (packet.seq <= bucket.highSeq) {
         rejectPacket(socket, packet.seq, "replay");
         return;
       }
@@ -868,6 +883,7 @@ const make = Effect.gen(function* () {
         socket.seqGaps += packet.seq - socket.lastSeq - 1;
       }
       socket.lastSeq = packet.seq;
+      bucket.highSeq = packet.seq;
       const geometrySeq = activity.geometry?.seq ?? 0;
       if (packet.geometrySeq !== geometrySeq) {
         rejectPacket(socket, packet.seq, "stale-geometry");
@@ -877,13 +893,6 @@ const make = Effect.gen(function* () {
       // the viewport its coordinates were authored against, never whatever
       // a later resize left in `activity.viewportCss`.
       const admittedViewport = activity.viewportCss;
-      // The rate bucket is retained per lease across socket replacement, so
-      // rebinding (or a shadow socket on the same lease) cannot reset it.
-      let bucket = activity.rateByLease.get(leaseId);
-      if (bucket === undefined) {
-        bucket = { tokens: BROWSER_FRAME_INPUT_MAX_EVENTS_PER_SECOND, tokensAt: now };
-        activity.rateByLease.set(leaseId, bucket);
-      }
       bucket.tokens = Math.min(
         BROWSER_FRAME_INPUT_MAX_EVENTS_PER_SECOND,
         bucket.tokens +
