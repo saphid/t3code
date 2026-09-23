@@ -3,7 +3,7 @@ import * as NodeTest from "node:test";
 import React from "react";
 import TestRenderer from "react-test-renderer";
 
-import { useEditorSelection } from "./commentSession.ts";
+import { useCommentBlockReason, useEditorSelection } from "./commentSession.ts";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const { act, create } = TestRenderer;
@@ -178,6 +178,151 @@ NodeTest.describe("useEditorSelection memoization", () => {
       });
       NodeAssert.ok(latest.selectionRange !== held);
       NodeAssert.deepEqual(latest.selectionRange, { startLine: 1, endLine: 2 });
+    } finally {
+      if (root) await act(async () => root.unmount());
+    }
+  });
+});
+
+NodeTest.describe("useCommentBlockReason", () => {
+  const session = {
+    context: {
+      resource: {
+        namespace: "t3.extensions",
+        id: "t3.files",
+        environmentId: "env",
+        projectId: "project",
+        threadId: "thread",
+      },
+      client: "web",
+      workspaceRevision: "rev",
+    },
+    signal: new AbortController().signal,
+    restoring: false,
+    visible: true,
+    onVisibility: () => () => {},
+    restoreState: null,
+    publish: () => true,
+    save: () => true,
+    invoke: () => Promise.reject(new Error("no capabilities")),
+    onDispose: () => {},
+  };
+  let latest;
+  function Probe(props) {
+    latest = useCommentBlockReason(props.host, session, props.threadId);
+    return null;
+  }
+  const settle = (root) =>
+    act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+  // r2 finding 4: a rejected capability probe must land as a named degraded
+  // transport reason, not a "Checking…" state that outlives the probe.
+  NodeTest.it("a rejected probe names the failure, never a permanent checking state", async () => {
+    let failProbe;
+    const host = {
+      invokeApi(request) {
+        NodeAssert.equal(request.method, "getCapabilities");
+        // Held pending so the transient "Checking…" state is observable.
+        return new Promise((_, reject) => {
+          failProbe = () => reject(new Error("provider connection dropped"));
+        });
+      },
+    };
+    let root;
+    try {
+      await act(async () => {
+        root = create(e(Probe, { host, threadId: "thread-a" }));
+      });
+      NodeAssert.equal(latest, "Checking comment support with the host…");
+      await act(async () => {
+        failProbe();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      });
+      NodeAssert.notEqual(latest, "Checking comment support with the host…");
+      NodeAssert.equal(latest, "provider connection dropped");
+    } finally {
+      if (root) await act(async () => root.unmount());
+    }
+  });
+
+  NodeTest.it("a non-Error rejection still names a reason", async () => {
+    const host = { invokeApi: () => Promise.reject("raw string") };
+    let root;
+    try {
+      await act(async () => {
+        root = create(e(Probe, { host, threadId: "thread-a" }));
+      });
+      await settle(root);
+      NodeAssert.equal(latest, "Comment support could not be checked with the host.");
+    } finally {
+      if (root) await act(async () => root.unmount());
+    }
+  });
+
+  NodeTest.it(
+    "clears a ready client transport and forwards the host's unavailable detail",
+    async () => {
+      const ready = {
+        invokeApi: () =>
+          Promise.resolve({
+            adapter: "host.messages",
+            transport: "client",
+            detail: null,
+            operations: { attachAnnotation: true },
+          }),
+      };
+      const down = {
+        invokeApi: () =>
+          Promise.resolve({
+            adapter: "host.messages",
+            transport: "unavailable",
+            detail:
+              "Composer draft state is client-local; no connected client hosts the composer provider.",
+            operations: { attachAnnotation: false },
+          }),
+      };
+      let root;
+      try {
+        await act(async () => {
+          root = create(e(Probe, { host: ready, threadId: "thread-a" }));
+        });
+        await settle(root);
+        NodeAssert.equal(latest, null);
+
+        root.update(e(Probe, { host: down, threadId: "thread-a" }));
+        await settle(root);
+        NodeAssert.equal(
+          latest,
+          "Composer draft state is client-local; no connected client hosts the composer provider.",
+        );
+      } finally {
+        if (root) await act(async () => root.unmount());
+      }
+    },
+  );
+
+  NodeTest.it("names a missing thread scope over a ready transport", async () => {
+    const ready = {
+      invokeApi: () =>
+        Promise.resolve({
+          adapter: "host.messages",
+          transport: "client",
+          detail: null,
+          operations: { attachAnnotation: true },
+        }),
+    };
+    let root;
+    try {
+      await act(async () => {
+        root = create(e(Probe, { host: ready, threadId: undefined }));
+      });
+      await settle(root);
+      NodeAssert.equal(
+        latest,
+        "This panel has no thread scope, so there is no draft to comment into.",
+      );
     } finally {
       if (root) await act(async () => root.unmount());
     }

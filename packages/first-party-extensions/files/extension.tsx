@@ -10,7 +10,6 @@ import {
   workspaceResourcesApi,
   workspaceSearchApi,
   workspaceTreeApi,
-  type MessagesEnrichmentCapabilities,
   type WorkspaceTreeEvent,
 } from "@t3tools/extension-sdk/catalogue";
 import { defineExtension, requireApi } from "@t3tools/extension-sdk/authoring";
@@ -33,11 +32,10 @@ import {
 import {
   COMMENT_EXCERPT_MAX_CHARS,
   buildCommentExcerpt,
-  commentUnavailableReason,
   formatCommentRangeLabel,
   type FileCommentRange,
 } from "./fileComments.js";
-import { useEditorSelection } from "./commentSession.js";
+import { useCommentBlockReason, useEditorSelection } from "./commentSession.js";
 import { parseMarkdown, type MarkdownBlock, type MarkdownInline } from "./markdown.js";
 import {
   FILE_SAVE_DEBOUNCE_MS,
@@ -1213,8 +1211,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   // The draft form captures its range + excerpt when opened, so a collapsing
   // selection (the button click blurs the editor) never retargets it.
   const commentThreadId = session.context.resource.threadId;
-  const [commentCapabilities, setCommentCapabilities] =
-    useState<MessagesEnrichmentCapabilities | null>(null);
+  const commentBlockReason = useCommentBlockReason(host, session, commentThreadId);
   const [commentDraft, setCommentDraft] = useState<{
     path: string;
     range: FileCommentRange;
@@ -1229,26 +1226,9 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const [postedComments, setPostedComments] = useState<
     readonly { path: string; annotationId: string; rangeLabel: string; text: string }[]
   >([]);
-  // The grant-free probe names a client-less host before any selection UI is
-  // offered; a denied write grant can only surface as the invoke's named error
-  // at submit, which the form shows inline.
-  useEffect(() => {
-    const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, session.signal]);
-    void bindApi(messagesEnrichmentApi, host, session.context)
-      .invoke("getCapabilities", {}, signal)
-      .then(
-        (capabilities) => {
-          if (!signal.aborted) setCommentCapabilities(capabilities);
-        },
-        () => {},
-      );
-    return () => controller.abort();
-  }, [host, session]);
-  const commentBlockReason =
-    commentCapabilities === null
-      ? "Checking comment support with the host…"
-      : commentUnavailableReason(commentCapabilities, commentThreadId);
+  // The grant-free capability probe lives in useCommentBlockReason: a
+  // rejected probe names the degraded transport instead of parking the
+  // toolbar on "Checking…" forever.
   const commentSurface = editor.surface?.path === selected ? editor.surface : null;
   // Offsets are only meaningful against the buffer they were made in: the
   // hook clears the selection on a path switch, a re-select of the current
