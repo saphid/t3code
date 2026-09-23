@@ -7,13 +7,14 @@ import {
   uiPanelsApi,
   uiThemeApi,
   type TerminalOutputEventsValue,
+  type TerminalSessionsListEvent,
 } from "@t3tools/extension-sdk/catalogue";
 import { defineExtension, requireApi } from "@t3tools/extension-sdk/authoring";
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { useEffect, useMemo, useReducer, useRef, useState, type RefObject } from "react";
+import { useEffect, useId, useMemo, useReducer, useRef, useState, type RefObject } from "react";
 
 import { isMacPlatform } from "./ghostty/platform.ts";
 import { loadGhosttyRuntime, type GhosttyRuntime } from "./ghostty/runtime.ts";
@@ -23,6 +24,7 @@ import {
   terminalDeleteShortcutData,
   terminalNavigationShortcutData,
 } from "./ghostty/surfaceKeys.ts";
+import { TerminalStreamHub, type TerminalPaneLease } from "./streamHub.ts";
 import { terminalFontFromVars, terminalThemeFromApp } from "./terminalTheme.ts";
 import { TerminalVtAttachment, pumpTerminalOutput } from "./vtAttachment.ts";
 import {
@@ -47,6 +49,14 @@ import {
 } from "./viewModel.ts";
 
 const manifestId = "t3.terminal";
+
+/**
+ * One hub per client document. Every mounted placement of this surface
+ * shares it: the broker's 8-stream cap is per installation, so per-view
+ * feeds would multiply against it — two visible placements with fixed feeds
+ * of their own leave no room for even a first split.
+ */
+const streamHub = new TerminalStreamHub();
 
 const GHOSTTY_VT_ASSET = "assets/ghostty-vt.wasm";
 const GHOSTTY_WRITE_PTY_ASSET = "assets/ghostty-write-pty.wasm";
@@ -207,46 +217,66 @@ function useSessionsStream(
 ) {
   useEffect(() => {
     if (!visible) return;
-    const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, session.signal]);
-    void (async () => {
-      // A `closed` frame (queue overflow / terminal error) or a dropped stream
-      // is recoverable: each fresh subscription starts from a new snapshot.
-      // Bounded retries keep a noisy stream from spinning forever.
-      for (let attempt = 1; attempt <= 3 && !signal.aborted; attempt += 1) {
-        panel.beginListStream();
-        let closed = false;
-        try {
-          const stream = bindStreamApi(terminalSessionsApi, host, session.context).subscribe(
-            "list",
-            {},
-            signal,
-          );
-          for await (const frame of stream) {
-            if (signal.aborted) return;
-            panel.applySessionsEvent(frame.value);
-            if (frame.value.kind === "closed") {
-              closed = true;
-              break;
+    // The thread's session list is placement-independent — every visible
+    // placement of the same thread joins ONE shared subscription (see
+    // streamHub) instead of spending an installation stream each.
+    const environmentId = session.context.resource.environmentId ?? "";
+    const threadId = session.context.resource.threadId ?? "";
+    return streamHub.acquireFixedFeed(
+      `sessions:${environmentId}:${threadId}`,
+      {
+        onFrame: (frame: TerminalSessionsListEvent) => panel.applySessionsEvent(frame),
+        onStatus: (status, message) => {
+          if (status === "connecting") panel.beginListStream();
+          else panel.markStreamDisconnected(message);
+        },
+      },
+      (sink, signal) => {
+        void (async () => {
+          // A `closed` frame (queue overflow / terminal error) or a dropped
+          // stream is recoverable: each fresh subscription starts from a new
+          // snapshot. Bounded retries keep a noisy stream from spinning.
+          for (let attempt = 1; attempt <= 3 && !signal.aborted; attempt += 1) {
+            sink.status("connecting", null);
+            let closed = false;
+            try {
+              const stream = bindStreamApi(terminalSessionsApi, host, session.context).subscribe(
+                "list",
+                {},
+                signal,
+              );
+              for await (const frame of stream) {
+                if (signal.aborted) return;
+                sink.frame(frame.value);
+                if (frame.value.kind === "closed") {
+                  closed = true;
+                  break;
+                }
+              }
+            } catch (error) {
+              if (!signal.aborted)
+                sink.status(
+                  "disconnected",
+                  error instanceof Error ? error.message : "Session list unavailable",
+                );
+              return;
             }
+            if (signal.aborted) return;
+            if (!closed) {
+              sink.status("disconnected", null);
+              return;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
           }
-        } catch (error) {
-          if (!signal.aborted)
-            panel.markStreamDisconnected(
-              error instanceof Error ? error.message : "Session list unavailable",
-            );
-          return;
-        }
-        if (signal.aborted) return;
-        if (!closed) {
-          panel.markStreamDisconnected(null);
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
-      }
-      if (!signal.aborted) panel.markStreamDisconnected("Session list stream ended repeatedly.");
-    })();
-    return () => controller.abort();
+          if (!signal.aborted) sink.status("disconnected", "Session list stream ended repeatedly.");
+        })();
+      },
+      // The feed is shared across placements, and a placement that mounts
+      // while the feed is already live never sees a fresh snapshot — the
+      // replayed [snapshot … deltas] history is what makes its panel go
+      // live. Deltas only count on top of a snapshot.
+      { isStateFrame: (frame) => frame.kind === "snapshot" },
+    );
   }, [host, session, panel, visible]);
 }
 
@@ -272,14 +302,20 @@ function useThemeVars(
   const [vars, setVars] = useState<Record<string, string> | null>(null);
   useEffect(() => {
     if (!visible) return;
-    const controller = new AbortController();
-    void watchThemeVars({
-      client: host,
-      context: session.context,
-      signal: AbortSignal.any([controller.signal, session.signal]),
-      apply: setVars,
-    });
-    return () => controller.abort();
+    // The host's theme is environment-global — one shared feed per
+    // environment serves every placement (stream budget, see streamHub).
+    return streamHub.acquireFixedFeed(
+      `theme:${session.context.resource.environmentId ?? ""}`,
+      { onFrame: setVars, onStatus: () => {} },
+      (sink, signal) => {
+        void watchThemeVars({
+          client: host,
+          context: session.context,
+          signal,
+          apply: (value) => sink.frame(value),
+        });
+      },
+    );
   }, [host, session, visible]);
   return vars;
 }
@@ -301,14 +337,20 @@ function useTerminalAppearanceVars(
   const [vars, setVars] = useState<Record<string, string> | null>(null);
   useEffect(() => {
     if (!visible) return;
-    const controller = new AbortController();
-    void watchTerminalAppearanceVars({
-      client: host,
-      context: session.context,
-      signal: AbortSignal.any([controller.signal, session.signal]),
-      apply: setVars,
-    });
-    return () => controller.abort();
+    // Shared per environment like the theme feed — the terminal appearance
+    // is one host-wide fact, not a per-placement one.
+    return streamHub.acquireFixedFeed(
+      `appearance:${session.context.resource.environmentId ?? ""}`,
+      { onFrame: setVars, onStatus: () => {} },
+      (sink, signal) => {
+        void watchTerminalAppearanceVars({
+          client: host,
+          context: session.context,
+          signal,
+          apply: (value) => sink.frame(value),
+        });
+      },
+    );
   }, [host, session, visible]);
   return vars;
 }
@@ -439,6 +481,8 @@ function TerminalPane(props: {
   readonly session: ViewSession;
   readonly panel: TerminalPanel;
   readonly terminalId: string;
+  /** Per-view prefix making the pane's hub slot unique per placement. */
+  readonly streamKeyPrefix: string;
   /** The focused pane — receives surface focus and the active-pane border. */
   readonly active: boolean;
   /** Member of the visible split group — hidden panes stay mounted offscreen. */
@@ -453,6 +497,7 @@ function TerminalPane(props: {
     session,
     panel,
     terminalId,
+    streamKeyPrefix,
     active,
     shown,
     visible,
@@ -483,43 +528,97 @@ function TerminalPane(props: {
   appearanceVarsRef.current = appearanceVars;
 
   // Epoch changes and lifecycle ends make queued input stale for the new
-  // process incarnation — the panel drops it the moment the stream says so.
-  // Only panes in the visible group hold a stream: the host caps each
-  // installation at 8 concurrent plugin streams, and the sessions/theme
-  // feeds already take 3 — every tracked session attaching at once starves
-  // the sessions stream itself ("Session list disconnected"). Hidden panes
-  // stay mounted (scrollback survives in the surface) and re-attach on
-  // reshown, resuming from the attachment's stream cursor.
+  // process incarnation — the panel drops them the moment the stream says
+  // so. Every pane's output stream comes from the installation-wide slot
+  // pool (streamHub): a visible pane holds a mandatory slot, a hidden pane
+  // keeps an optional one — parser/query continuity across a group switch —
+  // until some visible pane anywhere needs it. A pane that cannot get a
+  // slot says so honestly and retries when one frees.
+  const [streamBlocked, setStreamBlocked] = useState(false);
+  const acquireStreamRef = useRef((_mandatory: boolean) => {});
   useEffect(() => {
-    if (!visible || !shown) return;
-    const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, session.signal]);
-    void pumpTerminalOutput({
-      subscribe: (subscribeSignal) => {
-        const source = bindStreamApi(terminalOutputEventsApi, host, session.context).subscribe(
-          "subscribe",
-          { terminalId },
-          subscribeSignal,
-        );
-        return (async function* () {
-          for await (const frame of source) {
-            const value = frame.value as TerminalOutputEventsValue;
-            // identity-changed means a new process epoch and exit/error means
-            // the process is gone — pending input is stale for both. Overflow
-            // keeps the same incarnation; a reset is only a screen clear.
-            if (value.kind === "closed" && value.reason !== "overflow") {
-              panel.resetInput(terminalId);
+    if (!visible) return;
+    let stopped = false;
+    let run: { controller: AbortController; lease: TerminalPaneLease } | null = null;
+    let retryRegistration: (() => void) | null = null;
+    const stopRun = () => {
+      retryRegistration?.();
+      retryRegistration = null;
+      const current = run;
+      run = null;
+      current?.lease.release();
+      current?.controller.abort();
+    };
+    const acquire = (mandatory: boolean) => {
+      if (stopped || run !== null) return;
+      const lease = streamHub.acquirePaneStream(`${streamKeyPrefix}/${terminalId}`, {
+        mandatory,
+        onEvicted: () => {
+          if (run?.lease === lease) stopRun();
+        },
+      });
+      if (lease === null) {
+        setStreamBlocked(true);
+        // The hub drops one-shot waiters after firing, so each failed
+        // acquire registers a fresh one.
+        retryRegistration = streamHub.onPaneSlotFree(() => acquire(true));
+        return;
+      }
+      setStreamBlocked(false);
+      const controller = new AbortController();
+      run = { controller, lease };
+      void pumpTerminalOutput({
+        subscribe: (subscribeSignal) => {
+          const source = bindStreamApi(terminalOutputEventsApi, host, session.context).subscribe(
+            "subscribe",
+            { terminalId },
+            subscribeSignal,
+          );
+          return (async function* () {
+            for await (const frame of source) {
+              const value = frame.value as TerminalOutputEventsValue;
+              // identity-changed means a new process epoch and exit/error means
+              // the process is gone — pending input is stale for both. Overflow
+              // keeps the same incarnation; a reset is only a screen clear.
+              if (value.kind === "closed" && value.reason !== "overflow") {
+                panel.resetInput(terminalId);
+              }
+              yield { streamId: frame.streamId, sequence: frame.sequence, value };
             }
-            yield { streamId: frame.streamId, sequence: frame.sequence, value };
-          }
-        })();
-      },
-      attachment,
-      signal,
-    });
-    return () => controller.abort();
-    // eslint-disable-next-line react/exhaustive-effect-dependencies -- panel is created once per view
-  }, [host, session, panel, terminalId, attachment, visible, shown]);
+          })();
+        },
+        attachment,
+        signal: AbortSignal.any([controller.signal, session.signal]),
+      }).finally(() => {
+        // The pump ended — the stream finished, or evict/cleanup aborted it
+        // and already released the lease (release is idempotent).
+        if (run?.controller === controller) {
+          run = null;
+          lease.release();
+        }
+      });
+    };
+    acquireStreamRef.current = (mandatory: boolean) => {
+      if (run === null) {
+        if (mandatory) acquire(true);
+        return;
+      }
+      run.lease.setPriority(mandatory);
+    };
+    acquire(shownRef.current);
+    return () => {
+      stopped = true;
+      acquireStreamRef.current = () => {};
+      stopRun();
+    };
+  }, [host, session, panel, terminalId, attachment, visible, streamKeyPrefix]);
+
+  // Group switches inside the view re-prioritize the pane's slot: shown
+  // promotes to mandatory (re-acquiring after an eviction), hidden demotes
+  // to the preemptable optional slot.
+  useEffect(() => {
+    acquireStreamRef.current(shown && visible);
+  }, [shown, visible]);
 
   // Mount the vendored surface once the WASM runtime is ready; output that
   // arrived while WASM loaded replays through the attachment.
@@ -666,6 +765,15 @@ function TerminalPane(props: {
         >
           Attached with truncated history — modes and screen state before the retained tail are
           unknown, so interactive parity is not claimed until the next full snapshot (B4).
+        </output>
+      )}
+      {streamBlocked && (
+        <output
+          aria-label="Stream budget"
+          style={{ padding: "4px 10px", color: muted, fontSize: 11, flexShrink: 0 }}
+        >
+          Waiting for a free output stream — close a pane here or in another terminal panel, and
+          this pane attaches as soon as one frees.
         </output>
       )}
       <div
@@ -821,6 +929,7 @@ const control = {
 function TerminalView(props: { host: ClientHost; session: ViewSession }) {
   const { host, session } = props;
   const [, bump] = useReducer((value: number) => value + 1, 0);
+  const streamKeyPrefix = useId();
   const [panel] = useState(() => {
     const restored =
       session.restoreState &&
@@ -845,6 +954,10 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
       control: controlOps(host, session),
       launch,
       restored,
+      // The installation-wide pane budget gates open/split BEFORE any PTY
+      // spawns: a terminal that could never get an output stream would
+      // render as a dead pane until something else closed.
+      canAllocatePaneStream: () => streamHub.paneSlotAvailable(),
       onChange: () => {
         const snapshot = panel.snapshot;
         session.save({
@@ -896,10 +1009,9 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
   const activeId = snapshot.activeTerminalId;
   const activeTab = snapshot.tabs.find((tab) => tab.terminalId === activeId) ?? null;
   // The active group's members render side-by-side; every other session
-  // keeps its pane mounted offscreen — but not its output stream (the host
-  // caps each installation at 8 concurrent plugin streams, and the
-  // sessions/theme feeds already take 3, so only the visible group may
-  // attach).
+  // keeps its pane mounted offscreen — offscreen panes hold optional stream
+  // slots (streamHub) so the VT parser keeps consuming output and answering
+  // program queries, and they promote when their group becomes visible.
   const activeGroup = snapshot.groups.find((group) => group.id === snapshot.activeGroupId) ?? null;
   const visibleTerminalIds = activeGroup?.terminalIds ?? (activeId !== null ? [activeId] : []);
   const visibleSet = new Set(visibleTerminalIds);
@@ -1288,6 +1400,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
                   session={session}
                   panel={panel}
                   terminalId={terminalId}
+                  streamKeyPrefix={streamKeyPrefix}
                   active={focused}
                   shown={shown}
                   visible={visible}

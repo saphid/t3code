@@ -582,6 +582,7 @@ const clampDimension = (value: number, max: number) =>
 export class TerminalPanel {
   readonly #control: TerminalControlOps;
   readonly #launch: TerminalLaunchContext | null;
+  readonly #canAllocatePaneStream: (() => boolean) | undefined;
   readonly #schedule: (callback: () => void) => void;
   readonly #onChange: (() => void) | undefined;
   #ids: string[];
@@ -607,11 +608,18 @@ export class TerminalPanel {
       }[];
       readonly activeTerminalGroupId?: string | null;
     } | null;
+    /**
+     * Budget gate for open/split — false means the host's stream budget
+     * cannot take another pane output stream, and the open is refused
+     * before any PTY spawns (the view supplies streamHub's answer).
+     */
+    readonly canAllocatePaneStream?: () => boolean;
     readonly schedule?: (callback: () => void) => void;
     readonly onChange?: () => void;
   }) {
     this.#control = options.control;
     this.#launch = options.launch;
+    this.#canAllocatePaneStream = options.canAllocatePaneStream;
     this.#schedule = options.schedule ?? ((callback) => setTimeout(callback, 0));
     this.#onChange = options.onChange;
     this.#ids = normalizeTerminalIds(options.restored?.terminalIds ?? []);
@@ -911,6 +919,12 @@ export class TerminalPanel {
     }
     const destination = mode === "split" ? this.#splitDestination() : null;
     if (destination !== null && destination.terminalIds.length >= MAX_TERMINALS_PER_GROUP) {
+      return null;
+    }
+    if (this.#canAllocatePaneStream !== undefined && !this.#canAllocatePaneStream()) {
+      this.#panelError =
+        "Terminal stream limit reached — close a pane or another terminal panel first.";
+      this.#emit();
       return null;
     }
     const terminalId = nextTerminalId(this.allocatableTerminalIds);

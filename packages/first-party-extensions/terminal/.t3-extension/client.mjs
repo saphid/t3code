@@ -9704,6 +9704,151 @@ var __t3Client = (() => {
     return null;
   }
 
+  // streamHub.ts
+  var BROKER_STREAM_CAP = 8;
+  var FEED_REPLAY_MAX_FRAMES = 64;
+  var advanceReplay = (replay, frame, policy) => {
+    if (policy === void 0 || policy.isStateFrame(frame)) return [frame];
+    if (replay.length === 0 || replay.length >= FEED_REPLAY_MAX_FRAMES) return [];
+    return [...replay, frame];
+  };
+  var TerminalStreamHub = class {
+    #feeds = /* @__PURE__ */ new Map();
+    #panes = /* @__PURE__ */ new Map();
+    #paneWaiters = /* @__PURE__ */ new Set();
+    #now;
+    constructor(options = {}) {
+      this.#now = options.now ?? (() => Date.now());
+    }
+    /** Slots the installation budget leaves for pane output streams. */
+    paneStreamBudget() {
+      return Math.max(0, BROKER_STREAM_CAP - this.#feeds.size);
+    }
+    /** Whether a new mandatory pane slot can be granted right now. */
+    paneSlotAvailable() {
+      return this.#panes.size < this.paneStreamBudget() || this.#evictablePane() !== null;
+    }
+    /**
+     * Joins a shared fixed feed. The driver starts on the first listener and
+     * stops when the last one leaves; frames and status fan out to every
+     * listener, and a late joiner immediately hears the current status and
+     * then the replayed frames (per the feed's policy) so a placement that
+     * mounts while the feed is already live catches up instead of waiting
+     * for the next server event. Returns the detach function (a plain
+     * cleanup so React effects can hand it straight back).
+     */
+    acquireFixedFeed(key, listener, driver, replayPolicy) {
+      let feed = this.#feeds.get(key);
+      if (feed === void 0) {
+        feed = {
+          controller: new AbortController(),
+          listeners: /* @__PURE__ */ new Set(),
+          lastStatus: null,
+          replay: [],
+          // The generic policy is wrapped, not cast: isStateFrame must only
+          // ever see frames the driver emits through this typed call.
+          replayPolicy: replayPolicy === void 0 ? void 0 : { isStateFrame: (frame) => replayPolicy.isStateFrame(frame) }
+        };
+        this.#feeds.set(key, feed);
+        const entry2 = feed;
+        const sink = {
+          frame: (frame) => {
+            entry2.replay = advanceReplay(entry2.replay, frame, entry2.replayPolicy);
+            for (const listener2 of entry2.listeners) listener2.onFrame(frame);
+          },
+          status: (status, message) => {
+            entry2.lastStatus = { status, message };
+            for (const listener2 of entry2.listeners) listener2.onStatus(status, message);
+          }
+        };
+        driver(sink, feed.controller.signal);
+      }
+      const entry = feed;
+      const bound = listener;
+      const replayFrames = entry.replay;
+      entry.listeners.add(bound);
+      if (entry.lastStatus !== null)
+        bound.onStatus(entry.lastStatus.status, entry.lastStatus.message);
+      for (const frame of replayFrames) bound.onFrame(frame);
+      return () => {
+        if (!entry.listeners.delete(bound)) return;
+        if (entry.listeners.size === 0 && this.#feeds.get(key) === entry) {
+          this.#feeds.delete(key);
+          entry.controller.abort();
+        }
+      };
+    }
+    /**
+     * Takes a pane slot. `null` means the budget is exhausted by mandatory
+     * slots — the caller shows a waiting state and retries via
+     * `onPaneSlotFree`. An optional (hidden-pane) lease can be preempted at
+     * any later acquisition; its `onEvicted` fires exactly once.
+     */
+    acquirePaneStream(key, options) {
+      const existing = this.#panes.get(key);
+      if (existing !== void 0) {
+        existing.mandatory = options.mandatory;
+        existing.demotedAt = options.mandatory ? Number.POSITIVE_INFINITY : this.#now();
+        existing.onEvicted = options.onEvicted;
+        return this.#lease(key, existing);
+      }
+      let evicted = null;
+      if (this.#panes.size >= this.paneStreamBudget()) {
+        const victim = this.#evictablePane();
+        if (victim === null) return null;
+        this.#panes.delete(victim.key);
+        evicted = victim.state.onEvicted;
+      }
+      const state2 = {
+        mandatory: options.mandatory,
+        demotedAt: options.mandatory ? Number.POSITIVE_INFINITY : this.#now(),
+        onEvicted: options.onEvicted
+      };
+      this.#panes.set(key, state2);
+      evicted?.();
+      return this.#lease(key, state2);
+    }
+    /**
+     * One-shot notification that a pane slot freed (release or eviction) —
+     * waiters are dropped after firing, so a caller whose acquire fails again
+     * simply registers a fresh one.
+     */
+    onPaneSlotFree(listener) {
+      this.#paneWaiters.add(listener);
+      return () => {
+        this.#paneWaiters.delete(listener);
+      };
+    }
+    #lease(key, state2) {
+      const hub = this;
+      return {
+        setPriority(mandatory) {
+          if (hub.#panes.get(key) !== state2) return;
+          state2.mandatory = mandatory;
+          state2.demotedAt = mandatory ? Number.POSITIVE_INFINITY : hub.#now();
+        },
+        release() {
+          if (hub.#panes.get(key) !== state2) return;
+          hub.#panes.delete(key);
+          hub.#wakeWaiters();
+        }
+      };
+    }
+    #evictablePane() {
+      let victim = null;
+      for (const [key, state2] of this.#panes) {
+        if (state2.mandatory) continue;
+        if (victim === null || state2.demotedAt < victim.state.demotedAt) victim = { key, state: state2 };
+      }
+      return victim;
+    }
+    #wakeWaiters() {
+      const waiters = [...this.#paneWaiters];
+      this.#paneWaiters.clear();
+      for (const waiter of waiters) waiter();
+    }
+  };
+
   // terminalTheme.ts
   function parseTerminalColor(value, fallback) {
     if (typeof document === "undefined") return fallback;
@@ -10312,6 +10457,7 @@ var __t3Client = (() => {
   var TerminalPanel = class {
     #control;
     #launch;
+    #canAllocatePaneStream;
     #schedule;
     #onChange;
     #ids;
@@ -10326,6 +10472,7 @@ var __t3Client = (() => {
     constructor(options) {
       this.#control = options.control;
       this.#launch = options.launch;
+      this.#canAllocatePaneStream = options.canAllocatePaneStream;
       this.#schedule = options.schedule ?? ((callback) => setTimeout(callback, 0));
       this.#onChange = options.onChange;
       this.#ids = normalizeTerminalIds(options.restored?.terminalIds ?? []);
@@ -10442,6 +10589,18 @@ var __t3Client = (() => {
       this.#activeGroupId = this.#resolveActiveGroupId(this.#activeGroupId);
     }
     /**
+     * Native close/reconcile rule: when the active terminal itself may have
+     * moved (the closed pane's slot-slide, or a server list that dropped it),
+     * the visible group follows the POST-change active terminal. The stored
+     * group preference would keep the old group — e.g. close the middle pane
+     * of a split and the pane sliding into focus lands in another group,
+     * leaving the active terminal hidden behind a group it is not in.
+     */
+    #syncGroupsFollowingActive() {
+      this.#groups = normalizeTerminalGroups(this.#groups, this.#ids);
+      this.#activeGroupId = (this.#active !== null ? this.#groupIdOf(this.#active) : "") || (this.#groups[0]?.id ?? "");
+    }
+    /**
      * Where a split lands: the stored active group, else the group holding the
      * active terminal. `null` means there is nothing to split into — the
      * native `effectiveMode === "new"` case.
@@ -10458,7 +10617,7 @@ var __t3Client = (() => {
       const closedIndex = this.#ids.indexOf(terminalId);
       this.#ids = this.#ids.filter((id2) => id2 !== terminalId);
       this.#active = this.#active === terminalId ? fallback === "index" ? this.#ids[Math.min(closedIndex, this.#ids.length - 1)] ?? this.#ids[0] ?? null : resolveActiveTerminalId(this.#ids, null) : resolveActiveTerminalId(this.#ids, this.#active);
-      this.#syncGroups();
+      this.#syncGroupsFollowingActive();
       this.#emit();
     }
     /** Banner + deferred removal on a live→exited/error transition (native #29). */
@@ -10488,7 +10647,7 @@ var __t3Client = (() => {
             if (!this.#ids.includes(id2)) this.#tabs.delete(id2);
           }
           this.#active = resolveActiveTerminalId(this.#ids, this.#active);
-          this.#syncGroups();
+          this.#syncGroupsFollowingActive();
           break;
         }
         case "upsert":
@@ -10560,6 +10719,11 @@ var __t3Client = (() => {
       }
       const destination = mode === "split" ? this.#splitDestination() : null;
       if (destination !== null && destination.terminalIds.length >= MAX_TERMINALS_PER_GROUP) {
+        return null;
+      }
+      if (this.#canAllocatePaneStream !== void 0 && !this.#canAllocatePaneStream()) {
+        this.#panelError = "Terminal stream limit reached \u2014 close a pane or another terminal panel first.";
+        this.#emit();
         return null;
       }
       const terminalId = nextTerminalId(this.allocatableTerminalIds);
@@ -11544,6 +11708,7 @@ var __t3Client = (() => {
   // extension.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
   var manifestId = "t3.terminal";
+  var streamHub = new TerminalStreamHub();
   var GHOSTTY_VT_ASSET = "assets/ghostty-vt.wasm";
   var GHOSTTY_WRITE_PTY_ASSET = "assets/ghostty-write-pty.wasm";
   var SYMBOLS_FONT_ASSET = "assets/SymbolsNerdFontMono-Regular.woff2";
@@ -11621,57 +11786,79 @@ var __t3Client = (() => {
   function useSessionsStream(host, session, panel, visible) {
     (0, import_react.useEffect)(() => {
       if (!visible) return;
-      const controller = new AbortController();
-      const signal = AbortSignal.any([controller.signal, session.signal]);
-      void (async () => {
-        for (let attempt = 1; attempt <= 3 && !signal.aborted; attempt += 1) {
-          panel.beginListStream();
-          let closed = false;
-          try {
-            const stream = bindStreamApi(terminalSessionsApi, host, session.context).subscribe(
-              "list",
-              {},
-              signal
-            );
-            for await (const frame of stream) {
-              if (signal.aborted) return;
-              panel.applySessionsEvent(frame.value);
-              if (frame.value.kind === "closed") {
-                closed = true;
-                break;
+      const environmentId = session.context.resource.environmentId ?? "";
+      const threadId = session.context.resource.threadId ?? "";
+      return streamHub.acquireFixedFeed(
+        `sessions:${environmentId}:${threadId}`,
+        {
+          onFrame: (frame) => panel.applySessionsEvent(frame),
+          onStatus: (status, message) => {
+            if (status === "connecting") panel.beginListStream();
+            else panel.markStreamDisconnected(message);
+          }
+        },
+        (sink, signal) => {
+          void (async () => {
+            for (let attempt = 1; attempt <= 3 && !signal.aborted; attempt += 1) {
+              sink.status("connecting", null);
+              let closed = false;
+              try {
+                const stream = bindStreamApi(terminalSessionsApi, host, session.context).subscribe(
+                  "list",
+                  {},
+                  signal
+                );
+                for await (const frame of stream) {
+                  if (signal.aborted) return;
+                  sink.frame(frame.value);
+                  if (frame.value.kind === "closed") {
+                    closed = true;
+                    break;
+                  }
+                }
+              } catch (error) {
+                if (!signal.aborted)
+                  sink.status(
+                    "disconnected",
+                    error instanceof Error ? error.message : "Session list unavailable"
+                  );
+                return;
               }
+              if (signal.aborted) return;
+              if (!closed) {
+                sink.status("disconnected", null);
+                return;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
             }
-          } catch (error) {
-            if (!signal.aborted)
-              panel.markStreamDisconnected(
-                error instanceof Error ? error.message : "Session list unavailable"
-              );
-            return;
-          }
-          if (signal.aborted) return;
-          if (!closed) {
-            panel.markStreamDisconnected(null);
-            return;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
-        }
-        if (!signal.aborted) panel.markStreamDisconnected("Session list stream ended repeatedly.");
-      })();
-      return () => controller.abort();
+            if (!signal.aborted) sink.status("disconnected", "Session list stream ended repeatedly.");
+          })();
+        },
+        // The feed is shared across placements, and a placement that mounts
+        // while the feed is already live never sees a fresh snapshot — the
+        // replayed [snapshot … deltas] history is what makes its panel go
+        // live. Deltas only count on top of a snapshot.
+        { isStateFrame: (frame) => frame.kind === "snapshot" }
+      );
     }, [host, session, panel, visible]);
   }
   function useThemeVars(host, session, visible) {
     const [vars, setVars] = (0, import_react.useState)(null);
     (0, import_react.useEffect)(() => {
       if (!visible) return;
-      const controller = new AbortController();
-      void watchThemeVars({
-        client: host,
-        context: session.context,
-        signal: AbortSignal.any([controller.signal, session.signal]),
-        apply: setVars
-      });
-      return () => controller.abort();
+      return streamHub.acquireFixedFeed(
+        `theme:${session.context.resource.environmentId ?? ""}`,
+        { onFrame: setVars, onStatus: () => {
+        } },
+        (sink, signal) => {
+          void watchThemeVars({
+            client: host,
+            context: session.context,
+            signal,
+            apply: (value) => sink.frame(value)
+          });
+        }
+      );
     }, [host, session, visible]);
     return vars;
   }
@@ -11679,14 +11866,19 @@ var __t3Client = (() => {
     const [vars, setVars] = (0, import_react.useState)(null);
     (0, import_react.useEffect)(() => {
       if (!visible) return;
-      const controller = new AbortController();
-      void watchTerminalAppearanceVars({
-        client: host,
-        context: session.context,
-        signal: AbortSignal.any([controller.signal, session.signal]),
-        apply: setVars
-      });
-      return () => controller.abort();
+      return streamHub.acquireFixedFeed(
+        `appearance:${session.context.resource.environmentId ?? ""}`,
+        { onFrame: setVars, onStatus: () => {
+        } },
+        (sink, signal) => {
+          void watchTerminalAppearanceVars({
+            client: host,
+            context: session.context,
+            signal,
+            apply: (value) => sink.frame(value)
+          });
+        }
+      );
     }, [host, session, visible]);
     return vars;
   }
@@ -11770,6 +11962,7 @@ var __t3Client = (() => {
       session,
       panel,
       terminalId,
+      streamKeyPrefix,
       active,
       shown,
       visible,
@@ -11790,32 +11983,82 @@ var __t3Client = (() => {
     activeRef.current = active;
     const appearanceVarsRef = (0, import_react.useRef)(appearanceVars);
     appearanceVarsRef.current = appearanceVars;
+    const [streamBlocked, setStreamBlocked] = (0, import_react.useState)(false);
+    const acquireStreamRef = (0, import_react.useRef)((_mandatory) => {
+    });
     (0, import_react.useEffect)(() => {
-      if (!visible || !shown) return;
-      const controller = new AbortController();
-      const signal = AbortSignal.any([controller.signal, session.signal]);
-      void pumpTerminalOutput({
-        subscribe: (subscribeSignal) => {
-          const source = bindStreamApi(terminalOutputEventsApi, host, session.context).subscribe(
-            "subscribe",
-            { terminalId },
-            subscribeSignal
-          );
-          return (async function* () {
-            for await (const frame of source) {
-              const value = frame.value;
-              if (value.kind === "closed" && value.reason !== "overflow") {
-                panel.resetInput(terminalId);
+      if (!visible) return;
+      let stopped = false;
+      let run = null;
+      let retryRegistration = null;
+      const stopRun = () => {
+        retryRegistration?.();
+        retryRegistration = null;
+        const current = run;
+        run = null;
+        current?.lease.release();
+        current?.controller.abort();
+      };
+      const acquire = (mandatory) => {
+        if (stopped || run !== null) return;
+        const lease = streamHub.acquirePaneStream(`${streamKeyPrefix}/${terminalId}`, {
+          mandatory,
+          onEvicted: () => {
+            if (run?.lease === lease) stopRun();
+          }
+        });
+        if (lease === null) {
+          setStreamBlocked(true);
+          retryRegistration = streamHub.onPaneSlotFree(() => acquire(true));
+          return;
+        }
+        setStreamBlocked(false);
+        const controller = new AbortController();
+        run = { controller, lease };
+        void pumpTerminalOutput({
+          subscribe: (subscribeSignal) => {
+            const source = bindStreamApi(terminalOutputEventsApi, host, session.context).subscribe(
+              "subscribe",
+              { terminalId },
+              subscribeSignal
+            );
+            return (async function* () {
+              for await (const frame of source) {
+                const value = frame.value;
+                if (value.kind === "closed" && value.reason !== "overflow") {
+                  panel.resetInput(terminalId);
+                }
+                yield { streamId: frame.streamId, sequence: frame.sequence, value };
               }
-              yield { streamId: frame.streamId, sequence: frame.sequence, value };
-            }
-          })();
-        },
-        attachment,
-        signal
-      });
-      return () => controller.abort();
-    }, [host, session, panel, terminalId, attachment, visible, shown]);
+            })();
+          },
+          attachment,
+          signal: AbortSignal.any([controller.signal, session.signal])
+        }).finally(() => {
+          if (run?.controller === controller) {
+            run = null;
+            lease.release();
+          }
+        });
+      };
+      acquireStreamRef.current = (mandatory) => {
+        if (run === null) {
+          if (mandatory) acquire(true);
+          return;
+        }
+        run.lease.setPriority(mandatory);
+      };
+      acquire(shownRef.current);
+      return () => {
+        stopped = true;
+        acquireStreamRef.current = () => {
+        };
+        stopRun();
+      };
+    }, [host, session, panel, terminalId, attachment, visible, streamKeyPrefix]);
+    (0, import_react.useEffect)(() => {
+      acquireStreamRef.current(shown && visible);
+    }, [shown, visible]);
     (0, import_react.useEffect)(() => {
       const mount = mountRef.current;
       if (mount === null || assets.kind !== "ready") return;
@@ -11932,6 +12175,14 @@ var __t3Client = (() => {
               "aria-label": "Attach degraded",
               style: { padding: "4px 10px", color: muted, fontSize: 11, flexShrink: 0 },
               children: "Attached with truncated history \u2014 modes and screen state before the retained tail are unknown, so interactive parity is not claimed until the next full snapshot (B4)."
+            }
+          ),
+          streamBlocked && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "output",
+            {
+              "aria-label": "Stream budget",
+              style: { padding: "4px 10px", color: muted, fontSize: 11, flexShrink: 0 },
+              children: "Waiting for a free output stream \u2014 close a pane here or in another terminal panel, and this pane attaches as soon as one frees."
             }
           ),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -12068,6 +12319,7 @@ var __t3Client = (() => {
   function TerminalView(props) {
     const { host, session } = props;
     const [, bump] = (0, import_react.useReducer)((value) => value + 1, 0);
+    const streamKeyPrefix = (0, import_react.useId)();
     const [panel] = (0, import_react.useState)(() => {
       const restored = session.restoreState && typeof session.restoreState === "object" && !Array.isArray(session.restoreState) ? session.restoreState : null;
       const workspace = workspaceLaunchFromRevision(session.context.workspaceRevision);
@@ -12084,6 +12336,10 @@ var __t3Client = (() => {
         control: controlOps(host, session),
         launch,
         restored,
+        // The installation-wide pane budget gates open/split BEFORE any PTY
+        // spawns: a terminal that could never get an output stream would
+        // render as a dead pane until something else closed.
+        canAllocatePaneStream: () => streamHub.paneSlotAvailable(),
         onChange: () => {
           const snapshot2 = panel2.snapshot;
           session.save({
@@ -12495,6 +12751,7 @@ var __t3Client = (() => {
                         session,
                         panel,
                         terminalId,
+                        streamKeyPrefix,
                         active: focused,
                         shown,
                         visible,

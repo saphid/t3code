@@ -150,6 +150,7 @@ const props = {
   session,
   panel,
   terminalId: "terminal-1",
+  streamKeyPrefix: "«contracts»",
   active: true,
   shown: true,
   visible: true,
