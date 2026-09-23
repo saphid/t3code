@@ -10988,6 +10988,33 @@ var __t3Client = (() => {
       activation: { surfaceId: TERMINAL_SURFACE_ID, placement: "bottom-dock" }
     }
   ];
+  var TERMINAL_DEFAULT_CHORDS = /* @__PURE__ */ new Map([
+    ["mod+d", "split"],
+    ["mod+shift+d", "splitVertical"],
+    ["mod+n", "new"],
+    ["mod+w", "close"]
+  ]);
+  var NATIVE_TERMINAL_CHORD_COMMANDS = /* @__PURE__ */ new Map([
+    ["terminal.split", "split"],
+    ["terminal.splitVertical", "splitVertical"],
+    ["terminal.new", "new"],
+    ["terminal.close", "close"]
+  ]);
+  function terminalChordFromEvent(event, isMac) {
+    const mod = isMac ? event.metaKey : event.ctrlKey;
+    if (!mod || event.altKey || (isMac ? event.ctrlKey : event.metaKey)) return null;
+    if (event.key.length !== 1) return null;
+    return `mod${event.shiftKey ? "+shift" : ""}+${event.key.toLowerCase()}`;
+  }
+  function resolveTerminalChord(chord, conflicts) {
+    if (chord === null) return null;
+    const fallback = TERMINAL_DEFAULT_CHORDS.get(chord);
+    if (fallback === void 0) return null;
+    if (conflicts === null) return fallback;
+    const entry = conflicts.find((conflict) => conflict.key === chord);
+    if (entry === void 0) return fallback;
+    return NATIVE_TERMINAL_CHORD_COMMANDS.get(entry.command) ?? fallback;
+  }
   function dispatchTerminalCommand(commandId, actions) {
     switch (commandId) {
       case "toggle":
@@ -11946,16 +11973,43 @@ var __t3Client = (() => {
 [terminal] ${message}\r
 `);
   }
-  function matchTerminalChord(event) {
-    const mod = isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
-    if (!mod || event.altKey || (isMacPlatform(navigator.platform) ? event.ctrlKey : event.metaKey))
-      return null;
-    const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
-    if (key === "d") return event.shiftKey ? "splitVertical" : "split";
-    if (event.shiftKey) return null;
-    if (key === "n") return "new";
-    if (key === "w") return "close";
-    return null;
+  function useTerminalChordConflicts(host, session, visible) {
+    const conflictsRef = (0, import_react.useRef)(null);
+    const refreshRef = (0, import_react.useRef)(() => {
+    });
+    (0, import_react.useEffect)(() => {
+      if (!visible) return;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      const api = bindApi(uiKeybindingsApi, host, session.context);
+      let lastRefresh = -Infinity;
+      const refresh = () => {
+        const now = Date.now();
+        if (now - lastRefresh < 1e3) return;
+        lastRefresh = now;
+        void api.invoke("listConflicts", {}, signal).then(
+          (value) => {
+            if (!signal.aborted) conflictsRef.current = value.conflicts;
+          },
+          () => {
+            if (!signal.aborted) conflictsRef.current = null;
+          }
+        );
+      };
+      refreshRef.current = refresh;
+      conflictsRef.current = null;
+      refresh();
+      const onFocusIn = () => refresh();
+      document.addEventListener("focusin", onFocusIn);
+      return () => {
+        refreshRef.current = () => {
+        };
+        controller.abort();
+        document.removeEventListener("focusin", onFocusIn);
+        conflictsRef.current = null;
+      };
+    }, [host, session, visible]);
+    return { conflictsRef, refreshChords: () => refreshRef.current() };
   }
   function handleBeforeKey(event, panel, terminalId) {
     const navigationData = terminalNavigationShortcutData(event);
@@ -12402,6 +12456,7 @@ var __t3Client = (() => {
       [panel, host, session]
     );
     usePanelCommands(host, session, panel, visible, panelActions);
+    const { conflictsRef, refreshChords } = useTerminalChordConflicts(host, session, visible);
     const themeVars = useThemeVars(host, session, visible);
     const appearanceVars = useTerminalAppearanceVars(host, session, visible);
     const assets = useGhosttyAssets(host, session);
@@ -12439,10 +12494,15 @@ var __t3Client = (() => {
       {
         "aria-label": "Terminal",
         onKeyDownCapture: (event) => {
-          const commandId = matchTerminalChord(event.nativeEvent);
-          if (commandId !== null && dispatchTerminalCommand(commandId, panelActions)) {
+          if (event.defaultPrevented) return;
+          const action = resolveTerminalChord(
+            terminalChordFromEvent(event.nativeEvent, isMacPlatform(navigator.platform)),
+            conflictsRef.current
+          );
+          if (action !== null && dispatchTerminalCommand(action, panelActions)) {
             event.preventDefault();
             event.stopPropagation();
+            refreshChords();
           }
         },
         style: {

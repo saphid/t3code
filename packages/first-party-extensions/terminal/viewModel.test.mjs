@@ -769,7 +769,9 @@ import {
   asTerminalAppearance,
   dispatchTerminalCommand,
   registerPanelCommands,
+  resolveTerminalChord,
   terminalAppearanceVars,
+  terminalChordFromEvent,
   themeVarOverrides,
   watchTerminalAppearanceVars,
   watchThemeVars,
@@ -1048,6 +1050,155 @@ NodeTest.describe("t3.ui/keybindings — registration + dispatch", () => {
     );
     const unregister = client.calls.find((call) => call.method === "unregisterCommands");
     NodeAssert.equal(unregister.input.commandSetToken, "cmdset-test");
+  });
+});
+
+NodeTest.describe("t3.ui/keybindings — focused-chord resolution (r2 item 4)", () => {
+  const keyEvent = (overrides = {}) => ({
+    key: "d",
+    metaKey: false,
+    ctrlKey: false,
+    altKey: false,
+    shiftKey: false,
+    ...overrides,
+  });
+  const conflict = (key, command, winner) => ({ command, key, winner, loser: "t3.terminal" });
+
+  NodeTest.it("canonicalizes mod chords in the descriptor defaultKey spelling", () => {
+    // mod is meta on mac, ctrl elsewhere; the other super-ish modifier,
+    // alt, and multi-character keys never form one of our chords.
+    NodeAssert.equal(terminalChordFromEvent(keyEvent({ metaKey: true }), true), "mod+d");
+    NodeAssert.equal(terminalChordFromEvent(keyEvent({ ctrlKey: true }), false), "mod+d");
+    NodeAssert.equal(terminalChordFromEvent(keyEvent({ metaKey: true }), false), null);
+    NodeAssert.equal(terminalChordFromEvent(keyEvent({ ctrlKey: true }), true), null);
+    NodeAssert.equal(terminalChordFromEvent(keyEvent({ metaKey: true, altKey: true }), true), null);
+    NodeAssert.equal(
+      terminalChordFromEvent(keyEvent({ metaKey: true, key: "ArrowUp" }), true),
+      null,
+    );
+    // Shift is tracked by the chord, not folded into the key: "D" while
+    // held is mod+shift+d, the splitVertical defaultKey.
+    NodeAssert.equal(
+      terminalChordFromEvent(keyEvent({ metaKey: true, shiftKey: true, key: "D" }), true),
+      "mod+shift+d",
+    );
+    NodeAssert.equal(
+      terminalChordFromEvent(keyEvent({ ctrlKey: true, shiftKey: true, key: "N" }), false),
+      "mod+shift+n",
+    );
+  });
+
+  NodeTest.it("dispatches the host-resolved command when the keymap displaced a default", () => {
+    // The reviewer repro: the user remapped mod+d → terminal.close. The
+    // host still yields the chord (a focused terminal claims terminal.*),
+    // so the panel must CLOSE, not split — dispatch the resolved command.
+    const calls = [];
+    const actions = {
+      newTerminal: () => calls.push("new"),
+      closeTerminal: () => calls.push("close"),
+      splitTerminal: (direction) => calls.push(`split:${direction}`),
+      toggleSurface: () => calls.push("toggle"),
+    };
+    const remapped = [
+      conflict("mod+d", "terminal.close", "user"),
+      // Cross-mapping: a chord rebound to a different terminal command
+      // dispatches that command, whatever its default was.
+      conflict("mod+n", "terminal.splitVertical", "user"),
+    ];
+    NodeAssert.equal(resolveTerminalChord("mod+d", remapped), "close");
+    NodeAssert.equal(resolveTerminalChord("mod+n", remapped), "splitVertical");
+    // And the resolved action drives the same dispatch funnel the
+    // registered commands use.
+    NodeAssert.equal(
+      dispatchTerminalCommand(resolveTerminalChord("mod+d", remapped), actions),
+      true,
+    );
+    NodeAssert.equal(
+      dispatchTerminalCommand(resolveTerminalChord("mod+n", remapped), actions),
+      true,
+    );
+    NodeAssert.deepEqual(calls, ["close", "split:vertical"]);
+  });
+
+  NodeTest.it("a native-default displacement resolves to that native command", () => {
+    // By default the host's own terminal.* rule shadows the plugin
+    // binding — listConflicts reports it with winner "native". The
+    // resolved command is the honest source of truth either way.
+    NodeAssert.equal(
+      resolveTerminalChord("mod+w", [conflict("mod+w", "terminal.close", "native")]),
+      "close",
+    );
+    NodeAssert.equal(
+      resolveTerminalChord("mod+shift+d", [conflict("mod+shift+d", "terminal.split", "native")]),
+      "split",
+    );
+  });
+
+  NodeTest.it("undisplaced chords keep their default action", () => {
+    // No row (or an empty list) means the plugin default owns the chord.
+    NodeAssert.equal(resolveTerminalChord("mod+d", []), "split");
+    NodeAssert.equal(resolveTerminalChord("mod+shift+d", []), "splitVertical");
+    NodeAssert.equal(resolveTerminalChord("mod+n", []), "new");
+    NodeAssert.equal(resolveTerminalChord("mod+w", []), "close");
+    // A row for a DIFFERENT chord does not displace this one.
+    NodeAssert.equal(
+      resolveTerminalChord("mod+d", [conflict("mod+n", "terminal.close", "user")]),
+      "split",
+    );
+  });
+
+  NodeTest.it("an unavailable list falls back to the static defaults (r1 behavior)", () => {
+    // listConflicts denied or the capability missing: null keeps the
+    // hardcoded chord mapping rather than disabling the chords entirely.
+    NodeAssert.equal(resolveTerminalChord("mod+d", null), "split");
+    NodeAssert.equal(resolveTerminalChord("mod+w", null), "close");
+  });
+
+  NodeTest.it(
+    "the shipped !terminalFocus siblings fall back to the default, not a dead key",
+    () => {
+      // The conflicts list is computed with terminalFocus false, so on the
+      // default keymap the winner for every one of our chords is its
+      // !terminalFocus sibling (diff.toggle on mod+d, chat.new on mod+n,
+      // rightPanel.close on mod+w) — rules that can never fire while this
+      // surface owns focus. Nulling them dead-keyed all four default chords
+      // in the real client; the host preventDefaults what it truly
+      // dispatches at window capture and the handler bails on
+      // defaultPrevented events, so the resolution falls back instead.
+      NodeAssert.equal(
+        resolveTerminalChord("mod+d", [conflict("mod+d", "diff.toggle", "native")]),
+        "split",
+      );
+      NodeAssert.equal(
+        resolveTerminalChord("mod+n", [conflict("mod+n", "chat.new", "user")]),
+        "new",
+      );
+      NodeAssert.equal(
+        resolveTerminalChord("mod+w", [conflict("mod+w", "rightPanel.close", "user")]),
+        "close",
+      );
+      // A same-chord default from another plugin: the host dispatches the
+      // first-registered binding itself (defaultPrevented) — an event that
+      // still reaches this surface was left unclaimed, so the default
+      // stands rather than dead-keying.
+      NodeAssert.equal(
+        resolveTerminalChord("mod+d", [conflict("mod+d", "other.plugin/action", "plugin")]),
+        "split",
+      );
+    },
+  );
+
+  NodeTest.it("a chord that is not one of ours is never intercepted", () => {
+    // mod+e and mod+shift+n have no default binding here — the VT surface
+    // sees the bytes regardless of what the keymap says elsewhere.
+    NodeAssert.equal(resolveTerminalChord("mod+e", null), null);
+    NodeAssert.equal(resolveTerminalChord("mod+e", []), null);
+    NodeAssert.equal(
+      resolveTerminalChord("mod+e", [conflict("mod+e", "terminal.close", "user")]),
+      null,
+    );
+    NodeAssert.equal(resolveTerminalChord("mod+shift+n", []), null);
+    NodeAssert.equal(resolveTerminalChord(null, null), null);
   });
 });
 

@@ -1259,6 +1259,92 @@ export interface TerminalCommandActions {
   readonly toggleSurface: () => void;
 }
 
+/* ------------------------------------------------------------------ */
+/* Focused-terminal chord resolution — the host keymap's answer.       */
+/* ------------------------------------------------------------------ */
+
+export type TerminalChordAction = "split" | "splitVertical" | "new" | "close";
+
+/** One `t3.ui/keybindings.listConflicts` row, as the contract reports it. */
+export interface TerminalKeybindingConflict {
+  readonly command: string;
+  readonly key: string;
+  readonly winner: "user" | "native" | "plugin";
+  readonly loser: string;
+}
+
+/**
+ * The chords this surface owns by default (`claimsTerminalFocus` makes the
+ * host leave them untouched inside the frame), keyed by the same spelling
+ * the command descriptors use for `defaultKey` — `listConflicts` reports
+ * displaced defaults under that exact key.
+ */
+export const TERMINAL_DEFAULT_CHORDS: ReadonlyMap<string, TerminalChordAction> = new Map([
+  ["mod+d", "split"],
+  ["mod+shift+d", "splitVertical"],
+  ["mod+n", "new"],
+  ["mod+w", "close"],
+]);
+
+/**
+ * Native focused-terminal commands the panel can honor chord-for-chord:
+ * dispatching these through the panel's own actions reproduces exactly
+ * what the native terminal would have done.
+ */
+const NATIVE_TERMINAL_CHORD_COMMANDS: ReadonlyMap<string, TerminalChordAction> = new Map([
+  ["terminal.split", "split"],
+  ["terminal.splitVertical", "splitVertical"],
+  ["terminal.new", "new"],
+  ["terminal.close", "close"],
+]);
+
+/**
+ * Canonical chord spelling for a keydown event — "mod+d" style, matching
+ * the descriptor `defaultKey`s. Only single-character keys participate;
+ * null means the event is not a mod chord this surface could own.
+ */
+export function terminalChordFromEvent(
+  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">,
+  isMac: boolean,
+): string | null {
+  const mod = isMac ? event.metaKey : event.ctrlKey;
+  if (!mod || event.altKey || (isMac ? event.ctrlKey : event.metaKey)) return null;
+  if (event.key.length !== 1) return null;
+  return `mod${event.shiftKey ? "+shift" : ""}+${event.key.toLowerCase()}`;
+}
+
+/**
+ * The action a captured chord should dispatch, given the host's keymap
+ * resolution. `listConflicts` rows name the winning command for each
+ * displaced defaultKey — but the list is computed under this surface's
+ * when-context, where `terminalFocus` is false, so the winner for one of
+ * our chords is usually the shipped `!terminalFocus` sibling (mod+d →
+ * diff.toggle, mod+n → chat.new) — a rule that can never fire while this
+ * surface owns focus. A row resolving to a native focused-terminal
+ * command means the user remapped the chord to that command — dispatch
+ * THAT action, not the hardcoded default. Any other row falls back to the
+ * default: the host dispatches at window capture before this surface sees
+ * the event and marks what it dispatched `defaultPrevented`, and the
+ * capture handler bails on those, so a fallback dispatch only lands on a
+ * chord nobody else actually claimed. No row (or an unavailable list)
+ * leaves the default binding in charge, and a chord that is not one of
+ * ours is never intercepted. Residual: a remap guarded by `terminalFocus`
+ * itself (mod+d → terminal.close when terminalFocus) is invisible in the
+ * list's context and keeps its default action plugin-side.
+ */
+export function resolveTerminalChord(
+  chord: string | null,
+  conflicts: readonly TerminalKeybindingConflict[] | null,
+): TerminalChordAction | null {
+  if (chord === null) return null;
+  const fallback = TERMINAL_DEFAULT_CHORDS.get(chord);
+  if (fallback === undefined) return null;
+  if (conflicts === null) return fallback;
+  const entry = conflicts.find((conflict) => conflict.key === chord);
+  if (entry === undefined) return fallback;
+  return NATIVE_TERMINAL_CHORD_COMMANDS.get(entry.command) ?? fallback;
+}
+
 /** Maps a dispatched command id to its panel action; false for unknown ids. */
 export function dispatchTerminalCommand(
   commandId: string,

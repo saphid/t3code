@@ -39,12 +39,15 @@ import {
   isResumableOutputClose,
   noteOutputFrameForStreak,
   registerPanelCommands,
+  resolveTerminalChord,
+  terminalChordFromEvent,
   watchTerminalAppearanceVars,
   watchThemeVars,
   workspaceLaunchFromRevision,
   type OutputBuffer,
   type TerminalCommandActions,
   type TerminalControlOps,
+  type TerminalKeybindingConflict,
   type TerminalPanelSnapshot,
 } from "./viewModel.ts";
 
@@ -424,35 +427,68 @@ function writeSystemMessage(surface: Pick<GhosttyTerminalSurface, "write">, mess
 }
 
 /**
- * The focused-terminal chords this surface owns. `claimsTerminalFocus` makes
- * the host leave mod+d/mod+shift+d/mod+n/mod+w untouched while focus is
- * inside the extension frame — but the host's own resolution still claims
- * them for native `terminal.*` commands first, so registered
- * `t3.ui/keybindings` commands never see a chord press. Owning focus
- * therefore means owning the keymap: the view root captures these chords
- * itself (ahead of the VT surface's encoder, which cannot represent super
- * modifiers anyway) and dispatches them through the same panel actions the
- * registered commands drive.
+ * The host keymap's answer for the chords this surface owns. The host
+ * resolves user and native rules FIRST and then leaves the key untouched
+ * inside the frame (`claimsTerminalFocus`), so a chord press must dispatch
+ * the RESOLVED command, not the default: with mod+d remapped to
+ * terminal.close the host still yields the key, and the panel must close
+ * instead of splitting. `listConflicts` rows exist only while this
+ * surface's focus context is active, and only for displaced defaultKeys —
+ * `key` is the descriptor spelling, `command` the winning rule's command.
+ * Fetched on show and on focus changes (they toggle the when-context),
+ * throttled to one call per second; a denied or unavailable call leaves
+ * null and the resolver falls back to the static defaults.
  */
-function matchTerminalChord(
-  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">,
-): "split" | "splitVertical" | "new" | "close" | null {
-  const mod = isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
-  if (!mod || event.altKey || (isMacPlatform(navigator.platform) ? event.ctrlKey : event.metaKey))
-    return null;
-  const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
-  if (key === "d") return event.shiftKey ? "splitVertical" : "split";
-  if (event.shiftKey) return null;
-  if (key === "n") return "new";
-  if (key === "w") return "close";
-  return null;
+function useTerminalChordConflicts(
+  host: ClientHost,
+  session: ViewSession,
+  visible: boolean,
+): {
+  readonly conflictsRef: RefObject<readonly TerminalKeybindingConflict[] | null>;
+  readonly refreshChords: () => void;
+} {
+  const conflictsRef = useRef<readonly TerminalKeybindingConflict[] | null>(null);
+  const refreshRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    if (!visible) return;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    const api = bindApi(uiKeybindingsApi, host, session.context);
+    let lastRefresh = -Infinity;
+    const refresh = () => {
+      const now = Date.now();
+      if (now - lastRefresh < 1000) return;
+      lastRefresh = now;
+      void api.invoke("listConflicts", {}, signal).then(
+        (value) => {
+          if (!signal.aborted) conflictsRef.current = value.conflicts;
+        },
+        () => {
+          if (!signal.aborted) conflictsRef.current = null;
+        },
+      );
+    };
+    refreshRef.current = refresh;
+    conflictsRef.current = null;
+    refresh();
+    const onFocusIn = () => refresh();
+    document.addEventListener("focusin", onFocusIn);
+    return () => {
+      refreshRef.current = () => {};
+      controller.abort();
+      document.removeEventListener("focusin", onFocusIn);
+      conflictsRef.current = null;
+    };
+  }, [host, session, visible]);
+  return { conflictsRef, refreshChords: () => refreshRef.current() };
 }
 
 /**
  * Surface-local key intercepts the plugin owns: readline-style navigation,
  * line delete, and screen clear. The focused terminal chords are captured at
- * the view root (see matchTerminalChord), so `handleBeforeKey` only
- * intercepts editing keys and never sees them.
+ * the view root (resolved against the host keymap — see
+ * useTerminalChordConflicts), so `handleBeforeKey` only intercepts editing
+ * keys and never sees them.
  */
 function handleBeforeKey(event: KeyboardEvent, panel: TerminalPanel, terminalId: string): boolean {
   const navigationData = terminalNavigationShortcutData(event);
@@ -1002,6 +1038,9 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
     [panel, host, session],
   );
   usePanelCommands(host, session, panel, visible, panelActions);
+  // Pure ref state: the capture handler reads the keymap resolution
+  // synchronously without re-rendering on every focus change.
+  const { conflictsRef, refreshChords } = useTerminalChordConflicts(host, session, visible);
   const themeVars = useThemeVars(host, session, visible);
   const appearanceVars = useTerminalAppearanceVars(host, session, visible);
   const assets = useGhosttyAssets(host, session);
@@ -1047,14 +1086,24 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
     <section
       aria-label="Terminal"
       onKeyDownCapture={(event) => {
-        // Owning terminal focus means owning the chords: the host leaves
-        // mod+d/mod+shift+d/mod+n/mod+w untouched inside this frame, so the
-        // view handles them here — in capture, ahead of the VT surface's
-        // encoder (which would otherwise keep the bytes for the PTY).
-        const commandId = matchTerminalChord(event.nativeEvent);
-        if (commandId !== null && dispatchTerminalCommand(commandId, panelActions)) {
+        // The host's window-capture dispatcher runs first and preventDefaults
+        // any chord it actually dispatched — including this surface's own
+        // registered commands — so an event still un-prevented here was left
+        // for this surface to act on.
+        if (event.defaultPrevented) return;
+        // Owning terminal focus means owning the chords — but the host
+        // resolved them first, so dispatch the RESOLVED command when the
+        // keymap displaced a default (mod+d → terminal.close closes instead
+        // of splitting). Capture stays ahead of the VT surface's encoder,
+        // which would otherwise keep the bytes for the PTY.
+        const action = resolveTerminalChord(
+          terminalChordFromEvent(event.nativeEvent, isMacPlatform(navigator.platform)),
+          conflictsRef.current,
+        );
+        if (action !== null && dispatchTerminalCommand(action, panelActions)) {
           event.preventDefault();
           event.stopPropagation();
+          refreshChords();
         }
       }}
       style={{
