@@ -22,7 +22,7 @@ const runtimeTabId = JSON.stringify([
 ]);
 
 interface ManagerStub {
-  readonly dispatched: Array<{ leaseId: string; event: unknown }>;
+  readonly dispatched: Array<{ leaseId: string; event: unknown; viewportCss: unknown }>;
   readonly released: string[];
   readonly heldReleased: string[];
   readonly started: string[];
@@ -87,10 +87,10 @@ const makeManagerStub = (
       leaseId: string,
       _engineGeneration: string,
       event: unknown,
-      _viewportCss: unknown,
+      viewportCss: unknown,
     ) =>
       Effect.sync(() => {
-        dispatched.push({ leaseId, event });
+        dispatched.push({ leaseId, event, viewportCss });
       }),
     releaseRemoteInput: (tabId: string, _leaseId: string) =>
       Effect.sync(() => {
@@ -836,6 +836,91 @@ describe("BrowserFrameHub", () => {
               clock.mockRestore();
               ws.terminate();
             }
+          });
+        }),
+      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
+    );
+  });
+
+  it("rejects a queued packet whose geometry was replaced before dispatch", async () => {
+    let width = 100;
+    let releaseDispatch: (() => void) | null = null;
+    const dispatchGate = new Promise<void>((resolve) => {
+      releaseDispatch = resolve;
+    });
+    const { stub, layer: managerLayer } = makeManagerStub((manager, stubRef) => {
+      manager.remoteFrameConfig = () =>
+        Effect.succeed({
+          engineGeneration: "gen-1",
+          viewportCss: { width, height: 100 },
+          zoomFactor: 1,
+        });
+      manager.dispatchRemoteInput = (
+        _tabId: string,
+        leaseId: string,
+        _engineGeneration: string,
+        event: unknown,
+        viewportCss: unknown,
+      ) =>
+        Effect.promise(async () => {
+          stubRef.dispatched.push({ leaseId, event, viewportCss });
+          // Hold the first dispatch inside the guest lane so the second
+          // packet waits in the socket's queue across the geometry bump.
+          if (stubRef.dispatched.length === 1) await dispatchGate;
+        });
+    });
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const hub = yield* BrowserFrameHub;
+          yield* Effect.promise(async () => {
+            const ws = await openInput(hub.origin, hub.secret, baseInputParams);
+            const bound = await waitNotice(ws, "bound");
+            const geometrySeq = (bound.geometrySeq as number | undefined) ?? 0;
+            ws.send(
+              JSON.stringify({
+                seq: 1,
+                geometrySeq,
+                event: { type: "text", text: "first" },
+              }),
+            );
+            await vi.waitFor(() => expect(stub.dispatched).toHaveLength(1));
+
+            // Admitted at the old geometry and parked behind the stalled
+            // dispatch — the pong proves the hub consumed it before the bump.
+            ws.send(
+              JSON.stringify({
+                seq: 2,
+                geometrySeq,
+                event: { type: "text", text: "second" },
+              }),
+            );
+            const pong = new Promise((resolve) => ws.once("pong", resolve));
+            ws.ping();
+            await pong;
+
+            width = 200;
+            const config = await fetch(
+              `${hub.origin}/sessions/${encodeURIComponent(tuple.tabId)}/config?` +
+                new URLSearchParams({
+                  "x-t3-hub-auth": hub.secret,
+                  "x-t3-session": runtimeTabId,
+                }),
+            );
+            expect((await config.json()).geometrySeq).toBe(geometrySeq + 1);
+
+            const rejected = waitNotice(ws, "rejected");
+            releaseDispatch!();
+            expect(await rejected).toMatchObject({
+              type: "rejected",
+              seq: 2,
+              reason: "stale-geometry",
+            });
+            // The stale packet never actuates — and never against the
+            // replacement viewport.
+            expect(stub.dispatched).toHaveLength(1);
+            expect(stub.dispatched[0]?.viewportCss).toMatchObject({ width: 100 });
+            ws.terminate();
           });
         }),
       ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),

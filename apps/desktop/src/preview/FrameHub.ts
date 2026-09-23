@@ -815,6 +815,10 @@ const make = Effect.gen(function* () {
         rejectPacket(socket, packet.seq, "stale-geometry");
         return;
       }
+      // Geometry is frozen at admission: the queued packet dispatches with
+      // the viewport its coordinates were authored against, never whatever
+      // a later resize left in `activity.viewportCss`.
+      const admittedViewport = activity.viewportCss;
       // The rate bucket is retained per lease across socket replacement, so
       // rebinding (or a shadow socket on the same lease) cannot reset it.
       let bucket = activity.rateByLease.get(leaseId);
@@ -845,6 +849,13 @@ const make = Effect.gen(function* () {
       socket.dispatchTail = socket.dispatchTail
         .then(() => {
           if (socket.state === "ended" || socket.state === "closing") return undefined;
+          // A geometry bump while this packet queued makes its coordinates
+          // meaningless — reject rather than actuate against the
+          // replacement geometry.
+          if ((activity.geometry?.seq ?? 0) !== geometrySeq) {
+            rejectPacket(socket, packet.seq, "stale-geometry");
+            return undefined;
+          }
           return runPromise(
             manager
               .dispatchRemoteInput(
@@ -852,7 +863,7 @@ const make = Effect.gen(function* () {
                 leaseId,
                 socket.engineGeneration,
                 packet.event,
-                activity.viewportCss,
+                admittedViewport,
               )
               .pipe(
                 Effect.catch((error) =>
