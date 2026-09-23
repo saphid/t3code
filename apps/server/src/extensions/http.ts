@@ -141,24 +141,40 @@ export const extensionsHttpApiLayer = HttpApiBuilder.group(
         // HTTP requests carry no transport connection of their own, but the
         // client echoes the same instance id it announced on its ws upgrade.
         // Resolving it binds the authority to THAT client's live socket —
-        // never a session-global newest — and a caller with no live socket
-        // (or no header at all) gets a connectionless root that session
-        // revocation and expiry still bound.
-        (clientInstanceId === undefined
-          ? Effect.succeed(Option.none<string>())
-          : sessions.connectionIdForClientInstance(session.sessionId, clientInstanceId)
-        ).pipe(
-          Effect.flatMap((connectionId) =>
-            makeSessionApiAuthority(
+        // never a session-global newest. An absent header keeps the
+        // documented connectionless mode (pure-HTTP callers depend on it),
+        // but a supplied instance id that resolves to nothing is a stale
+        // identity: downgrading it silently would mint records no root
+        // connection revocation could ever reach, so it fails by name.
+        Effect.gen(function* () {
+          if (clientInstanceId === undefined) {
+            return yield* makeSessionApiAuthority(
               session,
               environmentId,
               scope,
               sessions,
               writeScope,
-              Option.getOrUndefined(connectionId),
-            ),
-          ),
-        ),
+            );
+          }
+          const connectionId = yield* sessions.connectionIdForClientInstance(
+            session.sessionId,
+            clientInstanceId,
+          );
+          if (Option.isNone(connectionId)) {
+            return yield* new ExtensionOperationError({
+              operation: "api.invoke",
+              detail: `ExtensionClientInstanceError: client instance '${clientInstanceId}' has no live connection on this session.`,
+            });
+          }
+          return yield* makeSessionApiAuthority(
+            session,
+            environmentId,
+            scope,
+            sessions,
+            writeScope,
+            connectionId.value,
+          );
+        }),
     );
     return handlers
       .handle("invokeApi", (args) =>

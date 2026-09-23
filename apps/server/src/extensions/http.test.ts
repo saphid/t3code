@@ -612,13 +612,20 @@ it.live("invokeApi binds the client's own live root connection via the echoed in
       200,
     );
     expect(f.roots[1]?.connectionId).toBe("conn-b");
-    // An unknown instance id and a missing header both mint connectionless.
-    expect((yield* request("api/invoke", apiInvoke, token.access_token, "inst-c")).status).toBe(
-      200,
-    );
-    expect(f.roots[2]?.connectionId).toBeUndefined();
+    // A supplied instance id that resolves to nothing — never registered or
+    // already disconnected — is a stale identity and fails by name rather
+    // than downgrading to connectionless: its mints would escape root
+    // connection revocation entirely. Only an absent header stays
+    // connectionless (documented pure-HTTP mode).
+    const staleUnknown = yield* request("api/invoke", apiInvoke, token.access_token, "inst-c");
+    expect(staleUnknown.status).toBe(400);
+    const staleBody = yield* Effect.promise(() => staleUnknown.json());
+    expect(staleBody).toMatchObject({
+      _tag: "ExtensionOperationError",
+      detail: expect.stringContaining("ExtensionClientInstanceError"),
+    });
     expect((yield* request("api/invoke", apiInvoke, token.access_token)).status).toBe(200);
-    expect(f.roots[3]?.connectionId).toBeUndefined();
+    expect(f.roots[2]?.connectionId).toBeUndefined();
     // A record minted under instance A's authority dies with A's connection
     // while B's binding survives — attribution is per-connection, not
     // per-session-newest.
@@ -667,14 +674,32 @@ it.live("invokeApi binds the client's own live root connection via the echoed in
     expect((yield* request("api/invoke", apiInvoke, token.access_token, "inst-b")).status).toBe(
       200,
     );
-    expect(f.roots[4]?.connectionId).toBe("conn-b");
-    // Disconnecting B too leaves instance B's requests connectionless.
+    expect(f.roots[3]?.connectionId).toBe("conn-b");
+    // Disconnecting B turns its instance header stale — the request fails by
+    // name instead of minting a connectionless root nobody can revoke.
     yield* sessions.markDisconnected(session!.sessionId, "conn-b");
     yield* leases.revokeConnection("conn-b");
     expect((yield* request("api/invoke", apiInvoke, token.access_token, "inst-b")).status).toBe(
+      400,
+    );
+    expect(f.roots).toHaveLength(4);
+    // A reconnect restores the binding — the fresh connection owns its mints
+    // and a second disconnect fences them and the stale header again.
+    yield* sessions.markConnected(session!.sessionId, "conn-b2", "inst-b");
+    expect((yield* request("api/invoke", apiInvoke, token.access_token, "inst-b")).status).toBe(
       200,
     );
-    expect(f.roots[5]?.connectionId).toBeUndefined();
+    expect(f.roots[4]?.connectionId).toBe("conn-b2");
+    const mintedB2 = yield* mintA("conn-b2");
+    expect(Option.isSome(mintedB2)).toBe(true);
+    const ticketB2 = Option.getOrThrow(mintedB2).inputTicket;
+    yield* sessions.markDisconnected(session!.sessionId, "conn-b2");
+    yield* leases.revokeConnection("conn-b2");
+    expect(Option.isNone(yield* leases.verify(ticketB2))).toBe(true);
+    expect((yield* request("api/invoke", apiInvoke, token.access_token, "inst-b")).status).toBe(
+      400,
+    );
+    expect(f.roots).toHaveLength(5);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
