@@ -11077,7 +11077,12 @@ var __t3Client = (() => {
   function isPendingOwnableTerminalChord(chord, conflicts) {
     if (chord === null) return false;
     if (TERMINAL_REGISTERED_CHORDS.has(chord)) return true;
-    return conflicts !== null && conflicts.some((conflict) => conflict.key === chord);
+    if (conflicts !== null && conflicts.some(
+      (conflict) => conflict.key === chord && (NATIVE_TERMINAL_CHORD_COMMANDS.has(conflict.command) || NATIVE_TERMINAL_CHORD_COMMANDS.has(conflict.loser))
+    )) {
+      return true;
+    }
+    return conflicts === null && chord.startsWith("mod+shift+") && chord !== "mod+shift+c" && chord !== "mod+shift+v";
   }
   function dispatchTerminalCommand(commandId, actions) {
     switch (commandId) {

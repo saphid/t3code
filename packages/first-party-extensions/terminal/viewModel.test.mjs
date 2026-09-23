@@ -1217,24 +1217,73 @@ NodeTest.describe("t3.ui/keybindings — focused-chord resolution (r2 item 4)", 
     // static defaults do not carry the toggle chord), so gating the
     // pending swallow on the resolver let Ctrl+J fall through to the VT
     // encoder. The pending set stands on its own — registered default
-    // chords plus the last-known list's chords.
+    // chords, last-known rows naming a native terminal command, and
+    // (before any answer at all) the shifted-mod class.
     NodeAssert.equal(resolveTerminalChord("mod+j", null), null);
     NodeAssert.equal(isPendingOwnableTerminalChord("mod+j", null), true);
     NodeAssert.equal(isPendingOwnableTerminalChord("mod+d", null), true);
     NodeAssert.equal(isPendingOwnableTerminalChord("mod+shift+d", []), true);
     // A chord only the last-known answer carried stays intercepted through
-    // the pending window — a superseding refresh can drop its row without
-    // making the chord unowned.
+    // the pending window when its row names a native terminal command — a
+    // superseding refresh can drop the row, but until its answer lands the
+    // panel still owns the chord.
     NodeAssert.equal(
       isPendingOwnableTerminalChord("mod+e", [conflict("mod+e", "terminal.split", "user")]),
       true,
     );
+    // r6 review finding 1: the list is environment-wide, so rows from
+    // OTHER installations hold their chord when they name a native
+    // terminal command — on either side of the conflict.
+    NodeAssert.equal(
+      isPendingOwnableTerminalChord("mod+shift+j", [
+        {
+          command: "terminal.split",
+          key: "mod+shift+j",
+          winner: "user",
+          loser: "ext.t3.browser.toggle",
+        },
+      ]),
+      true,
+    );
+    NodeAssert.equal(
+      isPendingOwnableTerminalChord("mod+k", [
+        { command: "diff.toggle", key: "mod+k", winner: "user", loser: "terminal.close" },
+      ]),
+      true,
+    );
+    // Before ANY answer has landed no row can vouch for a chord, so the
+    // shifted-mod class holds — the Browser mod+shift+j leak — minus the
+    // VT surface's own clipboard chords, which must keep working at mount.
+    NodeAssert.equal(isPendingOwnableTerminalChord("mod+shift+j", null), true);
+    NodeAssert.equal(isPendingOwnableTerminalChord("mod+shift+c", null), false);
+    NodeAssert.equal(isPendingOwnableTerminalChord("mod+shift+v", null), false);
+    // r6 review finding 2: a foreign-only row names no terminal command
+    // and must NOT hold its chord — after a terminal remap is removed, a
+    // leftover plugin-vs-plugin row on the same key would otherwise eat
+    // that key's ordinary input through every later pending window.
+    NodeAssert.equal(
+      isPendingOwnableTerminalChord("mod+t", [
+        {
+          command: "ext.foreign.a.tools",
+          key: "mod+t",
+          winner: "plugin",
+          loser: "ext.foreign.b.tools",
+        },
+      ]),
+      false,
+    );
+    NodeAssert.equal(
+      isPendingOwnableTerminalChord("mod+t", [conflict("mod+t", "diff.toggle", "user")]),
+      false,
+    );
     // Truly unowned chords fall through: no chord, ordinary keys,
-    // host-only chords, foreign remaps with no row.
+    // host-only chords, foreign remaps with no row — and no shifted-class
+    // hold once any answer exists, even an empty one.
     NodeAssert.equal(isPendingOwnableTerminalChord(null, null), false);
     NodeAssert.equal(isPendingOwnableTerminalChord("mod+t", null), false);
     NodeAssert.equal(isPendingOwnableTerminalChord("mod+e", null), false);
     NodeAssert.equal(isPendingOwnableTerminalChord("mod+e", []), false);
+    NodeAssert.equal(isPendingOwnableTerminalChord("mod+shift+j", []), false);
   });
 });
 

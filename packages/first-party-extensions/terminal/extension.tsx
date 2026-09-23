@@ -1168,9 +1168,12 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
         // to a native split has no row yet and no static default, so the
         // resolver answers null while the swallow must still hold. Swallow
         // the set's chords until the answer lands; the next press then
-        // dispatches the resolved command. Genuinely unowned chords
-        // (ordinary typing, host-only chords, foreign remaps) still fall
-        // through untouched.
+        // dispatches the resolved command. The set reaches beyond this
+        // panel's own descriptors (see isPendingOwnableTerminalChord):
+        // rows naming a native terminal command hold their chord whoever
+        // registered the displaced key, while foreign-only rows and —
+        // before any answer at all — plain mod chords still fall through
+        // untouched, so ordinary input and copy/paste keep working.
         if (
           conflictsPendingRef.current &&
           isPendingOwnableTerminalChord(chord, conflictsRef.current)

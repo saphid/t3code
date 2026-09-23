@@ -1383,13 +1383,38 @@ export function resolveTerminalChord(
 /**
  * Chords the capture handler must keep intercepted while the current
  * `listConflicts` answer is outstanding — judged independently of the stale
- * resolver, which cannot see a remap until its row arrives: every chord the
- * panel's registered commands claim by default (the mod+d family AND the
- * mod+j toggle, whose remap row names a native terminal command the stale
- * or absent list does not carry yet), plus every chord the last-known
- * answer carried (a superseding refresh can drop a row without making its
- * chord unowned). Truly unowned chords — ordinary typing, host-only chords,
- * foreign remaps — still fall through.
+ * resolver, which cannot see a remap until its row arrives. Three clauses:
+ *
+ * 1. Every chord the panel's registered commands claim by default (the
+ *    mod+d family AND the mod+j toggle, whose remap row names a native
+ *    terminal command the stale or absent list does not carry yet).
+ * 2. Every chord whose last-known rows name a native focused-terminal
+ *    command on either side of the conflict. `listConflicts` is
+ *    environment-wide, so the row can come from another installation — a
+ *    foreign registration the user remapped to `terminal.split` produces
+ *    exactly that row, and the panel dispatches it once the answer lands,
+ *    so the pending window must hold the chord even though no default of
+ *    ours sits on it. A foreign-only row (plugin vs plugin, or a remap to
+ *    some other command) names no terminal command and must NOT hold the
+ *    chord: after a terminal remap is removed, a leftover foreign row on
+ *    the same key would otherwise eat that key's ordinary input through
+ *    every later pending window. A row that disappears stops holding its
+ *    chord — the latest answer replaces the list; nothing accumulates.
+ * 3. Before ANY answer has landed (a freshly mounted surface, both the
+ *    mount-time and focused requests outstanding) no row can vouch for or
+ *    against a chord, and clause 1 cannot see other installations'
+ *    registrations at all — a Browser-registered `mod+shift+j` remapped to
+ *    a native split leaked its encoded bytes through exactly this window.
+ *    Hold the shifted-mod class: those chords encode as disambiguated
+ *    CSI-u sequences rather than a plain control byte, so holding one
+ *    costs a re-press while leaking one injects escape garbage into the
+ *    PTY. Plain mod chords stay free — they are the single control bytes
+ *    readline apps bind (Ctrl+T transposes), and the VT surface's own
+ *    clipboard chords (mod+shift+c / mod+shift+v) stay free so copy and
+ *    paste still work at mount.
+ *
+ * Truly unowned chords — ordinary typing, host-only chords, foreign remaps,
+ * foreign-only conflict rows — still fall through.
  */
 export function isPendingOwnableTerminalChord(
   chord: string | null,
@@ -1397,7 +1422,23 @@ export function isPendingOwnableTerminalChord(
 ): boolean {
   if (chord === null) return false;
   if (TERMINAL_REGISTERED_CHORDS.has(chord)) return true;
-  return conflicts !== null && conflicts.some((conflict) => conflict.key === chord);
+  if (
+    conflicts !== null &&
+    conflicts.some(
+      (conflict) =>
+        conflict.key === chord &&
+        (NATIVE_TERMINAL_CHORD_COMMANDS.has(conflict.command) ||
+          NATIVE_TERMINAL_CHORD_COMMANDS.has(conflict.loser)),
+    )
+  ) {
+    return true;
+  }
+  return (
+    conflicts === null &&
+    chord.startsWith("mod+shift+") &&
+    chord !== "mod+shift+c" &&
+    chord !== "mod+shift+v"
+  );
 }
 
 /** Maps a dispatched command id to its panel action; false for unknown ids. */

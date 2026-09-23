@@ -1198,3 +1198,509 @@ NodeTest.describe(
     );
   },
 );
+
+NodeTest.describe(
+  "pending ownable set covers foreign-registered remaps (r6 review finding 1)",
+  () => {
+    NodeTest.test(
+      "Browser-registered mod+shift+j remapped to split stays out of the PTY before any answer lands; the resolved press opens one split",
+      async () => {
+        // The reviewer's PENDING_FOREIGN_REGISTERED_CTRL_SHIFT_J_HOST_CAPTURE_VT
+        // probe: listConflicts is environment-wide, so a chord ANOTHER
+        // installation registered (the shipped Browser toggle on
+        // mod+shift+j) that the user remapped to terminal.split produces a
+        // row naming a native terminal command. Before ANY answer has
+        // landed — both the mount-time and focused requests outstanding,
+        // the conflicts ref null — that row cannot vouch for the chord and
+        // no terminal descriptor sits on it either. The host still resolves
+        // the split and yields the event, so the r6 predicate left it
+        // untouched and the packaged Ghostty encoder sent ESC[106;6u to
+        // the PTY. With no list to consult, the pending set holds the
+        // shifted-mod class (CSI-u-encoded chords; a wrong hold costs a
+        // re-press, a wrong leak injects escape garbage) while plain mod
+        // chords and the VT surface's own clipboard chords keep flowing.
+        // The ChatView host-capture step lives outside this package; the
+        // traversal below starts at the yielded event, exactly what that
+        // step hands over.
+        const setPlatform = (platform) =>
+          Object.defineProperty(globalThis, "navigator", {
+            value: { platform },
+            configurable: true,
+          });
+        setPlatform("Linux x86_64");
+        const keyRequests = [];
+        const invokes = [];
+        const active = new Map();
+        let counter = 0;
+        const host = {
+          readAsset: () => new Promise(() => {}),
+          invokeApi: (request) => {
+            invokes.push({ method: request.method, input: request.input });
+            if (request.method === "listConflicts") {
+              return new Promise((resolve) => keyRequests.push(resolve));
+            }
+            if (["open", "attach", "restart"].includes(request.method)) {
+              return Promise.resolve(sessionMetadata(request.input?.terminalId ?? "ownpane"));
+            }
+            return Promise.resolve({ tokens: {}, cssVars: {} });
+          },
+          subscribeApi: (request, signal) => ({
+            async *[Symbol.asyncIterator]() {
+              const id = ++counter;
+              active.set(id, request.input?.terminalId ?? request.name);
+              try {
+                if (request.name === "list") {
+                  // The snapshot that takes the restored panel live, so a
+                  // dispatched split can actually open its pane.
+                  yield { value: { kind: "snapshot", terminals: [sessionMetadata("ownpane")] } };
+                }
+                await new Promise((resolve) =>
+                  signal.aborted
+                    ? resolve()
+                    : signal.addEventListener("abort", resolve, { once: true }),
+                );
+              } finally {
+                active.delete(id);
+              }
+            },
+          }),
+        };
+        const session = {
+          signal: new AbortController().signal,
+          context: {
+            resource: { threadId: "own7", environmentId: "e" },
+            workspaceRevision: JSON.stringify(["/private/tmp/t3-gap-terminal-splits", null]),
+          },
+          visible: true,
+          save() {},
+          onVisibility: () => () => {},
+          bindCommands: () => () => {},
+          restoreState: { terminalIds: ["ownpane"], activeTerminalId: "ownpane" },
+        };
+        let renderer;
+        await act(async () => {
+          renderer = create(React.createElement(bundle.TerminalView, { host, session }), {
+            createNodeMock: nodeMock,
+          });
+        });
+        await act(async () => fireDocument("focusin"));
+        // Both the mount-time and the focused answers are outstanding — no
+        // list has ever landed.
+        NodeAssert.equal(keyRequests.length, 2);
+        const pty = [];
+        const eventFor = (key, modifiers) => ({
+          key,
+          code: `Key${key.toUpperCase()}`,
+          altKey: false,
+          shiftKey: false,
+          repeat: false,
+          isComposing: false,
+          getModifierState: () => false,
+          defaultPrevented: false,
+          stopped: false,
+          preventCalls: 0,
+          stopCalls: 0,
+          preventDefault() {
+            this.defaultPrevented = true;
+            this.preventCalls++;
+          },
+          stopPropagation() {
+            this.stopped = true;
+            this.stopCalls++;
+          },
+          ...modifiers,
+        });
+        // Capture-phase handling followed by the VT target step, as the real
+        // DOM ordering and the probe both run it: the surface's keydown
+        // listener only fires for events the capture phase left un-stopped,
+        // and beforeKey (the real handler) passes plain mod chords through to
+        // the encoder. `encoded` is the byte sequence the probe's packaged
+        // Ghostty encoder produced for exactly that event — the leak the fix
+        // must keep out of the PTY (Ctrl+Shift+J → ESC[106;6u, Ctrl+D →
+        // EOT).
+        const press = async (event, encoded) => {
+          await act(async () => {
+            renderer.root.findByType("section").props.onKeyDownCapture({
+              get defaultPrevented() {
+                return event.defaultPrevented;
+              },
+              nativeEvent: event,
+              preventDefault: () => event.preventDefault(),
+              stopPropagation: () => event.stopPropagation(),
+            });
+          });
+          if (
+            !event.stopped &&
+            bundle.handleBeforeKey(
+              event,
+              { sendInput: (_id, data) => pty.push(data) },
+              "ownpane",
+            ) &&
+            encoded !== undefined
+          ) {
+            pty.push(encoded);
+          }
+          return {
+            prevented: event.defaultPrevented,
+            stopped: event.stopped,
+            preventCalls: event.preventCalls,
+            stopCalls: event.stopCalls,
+          };
+        };
+        const linuxCtrl = (key) => eventFor(key, { metaKey: false, ctrlKey: true });
+        const linuxCtrlShiftJ = () =>
+          eventFor("J", { metaKey: false, ctrlKey: true, shiftKey: true });
+        // controlCalls counts t3.terminal/control ops only; the mount's own
+        // theme/keybindings invokes are out of scope here.
+        const controlCalls = () =>
+          invokes.filter(({ method }) =>
+            ["open", "attach", "write", "resize", "clear", "restart", "close"].includes(method),
+          );
+        try {
+          // The foreign-registered chord is held exactly once with the
+          // resolver answering null — no PTY bytes, no control calls.
+          const pendingJ = await press(linuxCtrlShiftJ(), "\u001b[106;6u");
+          NodeAssert.deepEqual(pendingJ, {
+            prevented: true,
+            stopped: true,
+            preventCalls: 1,
+            stopCalls: 1,
+          });
+          // The registered default chords stay held in the same no-list
+          // state.
+          NodeAssert.deepEqual(await press(linuxCtrl("d"), "\u0004"), {
+            prevented: true,
+            stopped: true,
+            preventCalls: 1,
+            stopCalls: 1,
+          });
+          NodeAssert.deepEqual(pty, []);
+          NodeAssert.deepEqual(
+            controlCalls().map(({ method }) => method),
+            [],
+          );
+          // Ordinary typing, plain unowned chords, and the VT surface's own
+          // clipboard chords still pass through to the VT target untouched
+          // while the answers pend.
+          NodeAssert.deepEqual(
+            await press(eventFor("x", { metaKey: false, ctrlKey: false }), "x"),
+            { prevented: false, stopped: false, preventCalls: 0, stopCalls: 0 },
+          );
+          NodeAssert.deepEqual(await press(linuxCtrl("t")), {
+            prevented: false,
+            stopped: false,
+            preventCalls: 0,
+            stopCalls: 0,
+          });
+          NodeAssert.deepEqual(
+            await press(eventFor("v", { metaKey: false, ctrlKey: true, shiftKey: true })),
+            { prevented: false, stopped: false, preventCalls: 0, stopCalls: 0 },
+          );
+          NodeAssert.deepEqual(pty, ["x"]);
+          // An already-prevented event the host claimed is a no-op even
+          // when forced through this surface's capture.
+          const claimed = eventFor("J", {
+            metaKey: false,
+            ctrlKey: true,
+            shiftKey: true,
+            defaultPrevented: true,
+          });
+          NodeAssert.deepEqual(await press(claimed), {
+            prevented: true,
+            stopped: false,
+            preventCalls: 0,
+            stopCalls: 0,
+          });
+          // Once the focused answer lands, the row from the Browser
+          // registration dispatches the RESOLVED command — exactly one
+          // split opens, and no chord byte ever reached the PTY. The
+          // mod+d sibling row is the reporter's real !terminalFocus shape
+          // and must not matter.
+          await act(async () =>
+            keyRequests[1]({
+              conflicts: [
+                {
+                  key: "mod+shift+j",
+                  command: "terminal.split",
+                  winner: "user",
+                  loser: "ext.t3.browser.toggle",
+                },
+                { key: "mod+d", command: "diff.toggle", winner: "native", loser: "t3.terminal" },
+              ],
+            }),
+          );
+          const readyJ = await press(linuxCtrlShiftJ(), "\u001b[106;6u");
+          NodeAssert.deepEqual(readyJ, {
+            prevented: true,
+            stopped: true,
+            preventCalls: 1,
+            stopCalls: 1,
+          });
+          NodeAssert.deepEqual(pty, ["x"]);
+          const opened = controlCalls().filter(({ method }) => method === "open");
+          NodeAssert.equal(opened.length, 1);
+          NodeAssert.notEqual(opened[0].input.terminalId, "ownpane");
+          NodeAssert.equal(controlCalls().filter(({ method }) => method === "close").length, 0);
+          // The stale mount-time reply (pre-focus, no rows) resolves last
+          // and stays harmless — no re-pending dispatch, no extra control.
+          await act(async () => keyRequests[0]({ conflicts: [] }));
+          NodeAssert.equal(controlCalls().filter(({ method }) => method === "open").length, 1);
+          NodeAssert.deepEqual(pty, ["x"]);
+        } finally {
+          await act(async () => renderer.unmount());
+        }
+        NodeAssert.equal(active.size, 0);
+      },
+    );
+  },
+);
+
+NodeTest.describe("foreign-only conflict rows never hold a chord (r6 review finding 2)", () => {
+  NodeTest.test(
+    "after the terminal remap is removed, a leftover plugin-vs-plugin row lets Ctrl+T reach the PTY through every pending window",
+    async () => {
+      // The reviewer's REMOVED_REMAP_FOREIGN_ROW_REPEATED_PENDING probe:
+      // the r6 predicate matched ANY row with the chord's key, so after
+      // the user removed their mod+t -> terminal.split remap, a fresh
+      // plugin-vs-plugin row on the same key kept every later pending
+      // window swallowing Ctrl+T while the settled presses correctly
+      // emitted 0x14 — the key stopped reaching readline/apps
+      // intermittently. Only rows naming a native focused-terminal
+      // command (either side) may hold a chord; foreign-only rows must
+      // not, and a row that disappears stops holding its key with the
+      // answer that dropped it. The ChatView host-capture step lives
+      // outside this package; the traversal below starts at the yielded
+      // event, exactly what that step hands over.
+      const setPlatform = (platform) =>
+        Object.defineProperty(globalThis, "navigator", {
+          value: { platform },
+          configurable: true,
+        });
+      setPlatform("Linux x86_64");
+      const keyRequests = [];
+      const invokes = [];
+      const active = new Map();
+      let counter = 0;
+      const host = {
+        readAsset: () => new Promise(() => {}),
+        invokeApi: (request) => {
+          invokes.push({ method: request.method, input: request.input });
+          if (request.method === "listConflicts") {
+            return new Promise((resolve) => keyRequests.push(resolve));
+          }
+          if (["open", "attach", "restart"].includes(request.method)) {
+            return Promise.resolve(sessionMetadata(request.input?.terminalId ?? "ownpane"));
+          }
+          return Promise.resolve({ tokens: {}, cssVars: {} });
+        },
+        subscribeApi: (request, signal) => ({
+          async *[Symbol.asyncIterator]() {
+            const id = ++counter;
+            active.set(id, request.input?.terminalId ?? request.name);
+            try {
+              if (request.name === "list") {
+                // The snapshot that takes the restored panel live, so a
+                // dispatched split can actually open its pane.
+                yield { value: { kind: "snapshot", terminals: [sessionMetadata("ownpane")] } };
+              }
+              await new Promise((resolve) =>
+                signal.aborted
+                  ? resolve()
+                  : signal.addEventListener("abort", resolve, { once: true }),
+              );
+            } finally {
+              active.delete(id);
+            }
+          },
+        }),
+      };
+      const session = {
+        signal: new AbortController().signal,
+        context: {
+          resource: { threadId: "own8", environmentId: "e" },
+          workspaceRevision: JSON.stringify(["/private/tmp/t3-gap-terminal-splits", null]),
+        },
+        visible: true,
+        save() {},
+        onVisibility: () => () => {},
+        bindCommands: () => () => {},
+        restoreState: { terminalIds: ["ownpane"], activeTerminalId: "ownpane" },
+      };
+      let renderer;
+      await act(async () => {
+        renderer = create(React.createElement(bundle.TerminalView, { host, session }), {
+          createNodeMock: nodeMock,
+        });
+      });
+      const pty = [];
+      const eventFor = (key, modifiers) => ({
+        key,
+        code: `Key${key.toUpperCase()}`,
+        altKey: false,
+        shiftKey: false,
+        repeat: false,
+        isComposing: false,
+        getModifierState: () => false,
+        defaultPrevented: false,
+        stopped: false,
+        preventCalls: 0,
+        stopCalls: 0,
+        preventDefault() {
+          this.defaultPrevented = true;
+          this.preventCalls++;
+        },
+        stopPropagation() {
+          this.stopped = true;
+          this.stopCalls++;
+        },
+        ...modifiers,
+      });
+      const press = async (event, encoded) => {
+        await act(async () => {
+          renderer.root.findByType("section").props.onKeyDownCapture({
+            get defaultPrevented() {
+              return event.defaultPrevented;
+            },
+            nativeEvent: event,
+            preventDefault: () => event.preventDefault(),
+            stopPropagation: () => event.stopPropagation(),
+          });
+        });
+        if (
+          !event.stopped &&
+          bundle.handleBeforeKey(event, { sendInput: (_id, data) => pty.push(data) }, "ownpane") &&
+          encoded !== undefined
+        ) {
+          pty.push(encoded);
+        }
+        return {
+          prevented: event.defaultPrevented,
+          stopped: event.stopped,
+          preventCalls: event.preventCalls,
+          stopCalls: event.stopCalls,
+        };
+      };
+      const linuxCtrl = (key) => eventFor(key, { metaKey: false, ctrlKey: true });
+      const controlCalls = () =>
+        invokes.filter(({ method }) =>
+          ["open", "attach", "write", "resize", "clear", "restart", "close"].includes(method),
+        );
+      const openCount = () => controlCalls().filter(({ method }) => method === "open").length;
+      // A focus edge starts an unthrottled refresh; the returned index is
+      // the request that refresh created.
+      const startRefresh = async () => {
+        await act(async () => fireDocument("focusout"));
+        await act(async () => fireDocument("focusin"));
+        return keyRequests.length - 1;
+      };
+      try {
+        // Establish the formerly valid terminal remap: the focused
+        // answer carries the mod+t -> terminal.split row.
+        await act(async () => keyRequests[0]({ conflicts: [] }));
+        await act(async () => fireDocument("focusin"));
+        NodeAssert.equal(keyRequests.length, 2);
+        await act(async () =>
+          keyRequests[1]({
+            conflicts: [
+              {
+                key: "mod+t",
+                command: "terminal.split",
+                winner: "user",
+                loser: "ext.foreign.a.tools",
+              },
+            ],
+          }),
+        );
+        // Settled: the row dispatches the split.
+        NodeAssert.deepEqual(await press(linuxCtrl("t"), "\u0014"), {
+          prevented: true,
+          stopped: true,
+          preventCalls: 1,
+          stopCalls: 1,
+        });
+        NodeAssert.equal(openCount(), 1);
+        NodeAssert.deepEqual(pty, []);
+        // The remap is removed. The fresh answer now reports only a
+        // plugin-vs-plugin row on mod+t — while THAT answer is
+        // outstanding, the last-known TERMINAL row still holds the
+        // chord once (no dispatch, no bytes).
+        const foreignRows = [
+          {
+            command: "ext.foreign.a.tools",
+            key: "mod+t",
+            winner: "plugin",
+            loser: "ext.foreign.b.tools",
+          },
+        ];
+        let request = await startRefresh();
+        NodeAssert.deepEqual(await press(linuxCtrl("t"), "\u0014"), {
+          prevented: true,
+          stopped: true,
+          preventCalls: 1,
+          stopCalls: 1,
+        });
+        NodeAssert.equal(openCount(), 1);
+        NodeAssert.deepEqual(pty, []);
+        await act(async () => keyRequests[request]({ conflicts: foreignRows }));
+        // Settled on the foreign-only row: the resolver answers null and
+        // Ctrl+T reaches the PTY as 0x14 again.
+        NodeAssert.deepEqual(await press(linuxCtrl("t"), "\u0014"), {
+          prevented: false,
+          stopped: false,
+          preventCalls: 0,
+          stopCalls: 0,
+        });
+        NodeAssert.deepEqual(pty, ["\u0014"]);
+        // Every later pending window must keep passing it through — the
+        // foreign-only row must not swallow unrelated input, repeatedly.
+        for (let cycle = 0; cycle < 3; cycle += 1) {
+          request = await startRefresh();
+          NodeAssert.deepEqual(await press(linuxCtrl("t"), "\u0014"), {
+            prevented: false,
+            stopped: false,
+            preventCalls: 0,
+            stopCalls: 0,
+          });
+          await act(async () => keyRequests[request]({ conflicts: foreignRows }));
+          NodeAssert.deepEqual(await press(linuxCtrl("t"), "\u0014"), {
+            prevented: false,
+            stopped: false,
+            preventCalls: 0,
+            stopCalls: 0,
+          });
+        }
+        NodeAssert.deepEqual(pty, [
+          "\u0014",
+          "\u0014",
+          "\u0014",
+          "\u0014",
+          "\u0014",
+          "\u0014",
+          "\u0014",
+        ]);
+        // A row that disappears stops holding its chord with the answer
+        // that dropped it — nothing accumulates across refreshes.
+        request = await startRefresh();
+        await act(async () =>
+          keyRequests[request]({
+            conflicts: [
+              { key: "mod+d", command: "diff.toggle", winner: "native", loser: "t3.terminal" },
+            ],
+          }),
+        );
+        request = await startRefresh();
+        NodeAssert.deepEqual(await press(linuxCtrl("t"), "\u0014"), {
+          prevented: false,
+          stopped: false,
+          preventCalls: 0,
+          stopCalls: 0,
+        });
+        await act(async () => keyRequests[request]({ conflicts: [] }));
+        NodeAssert.equal(openCount(), 1);
+      } finally {
+        await act(async () => renderer.unmount());
+      }
+      NodeAssert.equal(active.size, 0);
+    },
+  );
+});
