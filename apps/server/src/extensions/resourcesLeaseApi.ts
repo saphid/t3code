@@ -8,6 +8,7 @@ import {
   ExtensionOperationError,
   PreviewTabId,
   ProjectId,
+  type BrowserFrameSessionTuple,
   type PreviewListResult,
   ThreadId,
   TrimmedNonEmptyString,
@@ -59,7 +60,6 @@ import {
   BrowserFrameLeases,
   browserFrameAuthorityKey,
   type BrowserFrameAuthority,
-  type BrowserFrameSessionTuple,
 } from "../browserFrames/BrowserFrameLeases.ts";
 import { makeExtensionScopeResolver } from "./scope.ts";
 
@@ -458,6 +458,7 @@ export function createResourcesLeaseApiProvider(
             readonly token: string;
             readonly slotId: string;
             readonly session: BrowserFrameSessionTuple;
+            readonly allowedCommands: ReadonlyArray<string>;
             readonly expiresAt: number;
           }
         | undefined;
@@ -603,6 +604,7 @@ export function createResourcesLeaseApiProvider(
               serverEpoch: listed.serverEpoch,
               tabId: resource.tabId,
             },
+            allowedCommands: resource.allowedCommands,
             expiresAt: surfaceMint.expiresAt,
           };
         }
@@ -638,15 +640,9 @@ export function createResourcesLeaseApiProvider(
             .recordHeldSurfaceClaim({
               token: claim.token,
               session: claim.session,
-              allowedCommands: resource.allowedCommands,
+              allowedCommands: claim.allowedCommands,
               expiresAt: claim.expiresAt,
-              authority: callerAuthority(
-                principal,
-                metadata,
-                grant,
-                scope.context,
-                claim.slotId,
-              ),
+              authority: callerAuthority(principal, metadata, grant, scope.context, claim.slotId),
             })
             .pipe(Effect.mapError(operationError(operation)));
           // The root connection died between revalidation and registration —

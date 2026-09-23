@@ -72,7 +72,7 @@ const LEASE_LANE_CAP = 4096;
  * Lease-lane capacity override — a test seam for driving the over-cap sweep
  * without thousands of upgrades; production layers never provide it.
  */
-export class BrowserFrameHubLeaseLaneCap extends Context.Reference<number>()(
+export class BrowserFrameHubLeaseLaneCap extends Context.Reference<number>(
   "t3.browserFrames/BrowserFrameHubLeaseLaneCap",
   { defaultValue: () => LEASE_LANE_CAP },
 ) {}
@@ -262,9 +262,9 @@ const writeJson = (res: ServerResponse, status: number, body: unknown): void => 
 };
 
 const make = Effect.gen(function* () {
-  const leaseLaneCap = yield* BrowserFrameHubLeaseLaneCap;
   const manager = yield* PreviewManager.PreviewManager;
   const context = yield* Effect.context<never>();
+  const leaseLaneCap = Context.get(context, BrowserFrameHubLeaseLaneCap);
   const runFork = Effect.runForkWith(context);
   const runPromise = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
     new Promise<A>((resolve, reject) =>

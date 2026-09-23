@@ -1043,7 +1043,7 @@ describe("t3.resources/lease adapter", () => {
       );
       yield* Effect.promise(() => suspended);
       controller.abort();
-      const exit = yield* Effect.exit(Effect.promise(() => invocation));
+      const exit = yield* Effect.exit(Effect.promise(() => Promise.resolve(invocation)));
       expect(Exit.isSuccess(exit)).toBe(false);
       // The claim's token never reached the caller, so nothing may stay held.
       const token = urlToken(fakeUrl("browser-surface", "browser-surface", { slotId: "slot-1" }));
