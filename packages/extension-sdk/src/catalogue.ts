@@ -1231,7 +1231,7 @@ export const VCS_REPOSITORY = "t3.vcs/repository";
 
 export type VcsDriverKindValue = "git" | "jj" | "unknown";
 export type VcsSourceControlProvider = {
-  readonly kind: "github" | "gitlab" | "azure-devops" | "bitbucket" | "unknown";
+  readonly kind: "github" | "gitlab" | "azure-devops" | "bitbucket" | "forgejo" | "unknown";
   readonly name: string;
   readonly baseUrl: string;
 };
@@ -1578,7 +1578,7 @@ const vcsStatusLocalSchema = {
       additionalProperties: false,
       required: ["kind", "name", "baseUrl"],
       properties: {
-        kind: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+        kind: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"] },
         name: { type: "string", minLength: 1, maxLength: 256 },
         baseUrl: { type: "string", maxLength: 2048 },
       },
@@ -2873,7 +2873,13 @@ export const RESOURCES_LEASE_API_V1 = resourcesLeaseApiV1.definition;
  * --------------------------------------------------------------------- */
 export const PRS_READ = "t3.prs/read";
 
-export type PrsProviderKind = "github" | "gitlab" | "azure-devops" | "bitbucket" | "unknown";
+export type PrsProviderKind =
+  | "github"
+  | "gitlab"
+  | "azure-devops"
+  | "bitbucket"
+  | "forgejo"
+  | "unknown";
 export type PrsActor = {
   readonly login: string;
   readonly name: string | null;
@@ -3394,7 +3400,7 @@ const prsProviderSummarySchema = {
   required: ["host", "kind", "searchesOnHost", "projectCount", "configured", "detail"],
   properties: {
     host: prsHostField,
-    kind: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+    kind: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"] },
     searchesOnHost: { type: "boolean" },
     projectCount: { type: "integer", minimum: 1 },
     configured: { type: "boolean" },
@@ -3438,7 +3444,7 @@ const prsListEntrySchema = {
         base: { type: "string", minLength: 1, maxLength: 1024 },
       },
     },
-    provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+    provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"] },
     host: prsHostField,
     projectId: { type: "string", minLength: 1, maxLength: 160 },
     projectTitle: { type: "string", minLength: 1, maxLength: 512 },
@@ -3620,7 +3626,7 @@ const prsDetailSchema = {
     "mergeCapabilities",
   ],
   properties: {
-    provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+    provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"] },
     capabilities: prsCapabilitiesSchema,
     viewerPermissions: prsViewerPermissionsSchema,
     projectId: { type: "string", minLength: 1, maxLength: 160 },
@@ -3768,7 +3774,7 @@ const prsSummarySchema = {
     "updatedAt",
   ],
   properties: {
-    provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+    provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"] },
     projectId: { type: "string", minLength: 1, maxLength: 160 },
     repository: prsRepositoryField,
     number: { type: "integer", minimum: 1 },
@@ -4822,7 +4828,9 @@ export const vcsActionsApi: TypedApi<{
         additionalProperties: false,
         required: ["provider", "repository", "visibility"],
         properties: {
-          provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+          provider: {
+            enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"],
+          },
           repository: { type: "string", minLength: 1, maxLength: 512 },
           visibility: { enum: ["private", "public"] },
           remoteName: { type: "string", minLength: 1, maxLength: 256 },
@@ -4839,7 +4847,9 @@ export const vcsActionsApi: TypedApi<{
             additionalProperties: false,
             required: ["provider", "nameWithOwner", "url", "sshUrl"],
             properties: {
-              provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+              provider: {
+                enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"],
+              },
               nameWithOwner: { type: "string", minLength: 1, maxLength: 512 },
               url: { type: "string", minLength: 1, maxLength: 4096 },
               sshUrl: { type: "string", minLength: 1, maxLength: 4096 },

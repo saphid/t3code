@@ -105,7 +105,14 @@ const prepareInput = decode(
 );
 const publishInput = decode(
   Schema.Struct({
-    provider: Schema.Literals(["github", "gitlab", "azure-devops", "bitbucket", "unknown"]),
+    provider: Schema.Literals([
+      "github",
+      "gitlab",
+      "azure-devops",
+      "bitbucket",
+      "forgejo",
+      "unknown",
+    ]),
     repository: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512)),
     visibility: Schema.Literals(["private", "public"]),
     remoteName: Schema.optional(

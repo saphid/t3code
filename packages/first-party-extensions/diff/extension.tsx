@@ -64,17 +64,23 @@ import {
   previewState,
   reconcileTurnSelection,
   renderableFromPatch,
+  restoreDiffState,
   retainFileSelection,
   revertTarget,
   selectSource,
+  splitRows,
   toggleAllDiffFiles,
   toggleCollapsedKey,
   turnChoices,
   CONNECTING_AGENTS,
   type AgentsModel,
   type DiffFileRow,
+  type DiffLayout,
   type DiffMode,
+  type DiffSplitRow,
   type DiffStatusRefresh,
+  type RestoredState,
+  type SplitSide,
   type TurnChoice,
   type TurnSelection,
 } from "./viewModel.js";
@@ -95,39 +101,6 @@ function renderableFor(diffHash: string, diff: string) {
   if (patchParseCache.size >= 16) patchParseCache.clear();
   patchParseCache.set(diffHash, value);
   return value;
-}
-
-interface RestoredState {
-  readonly mode?: string;
-  readonly sourceId?: string;
-  readonly fileKey?: string;
-  readonly baseRef?: string;
-  readonly ignoreWhitespace?: boolean;
-  /** Persisted turn selection — `turnId` for a turn pick, absent + mode "turns" for the whole thread. */
-  readonly turnId?: string;
-}
-
-function restoreState(value: unknown): value is RestoredState | null {
-  if (value === null) return true;
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  return (
-    Object.keys(record).every(
-      (key) =>
-        key === "mode" ||
-        key === "sourceId" ||
-        key === "fileKey" ||
-        key === "baseRef" ||
-        key === "ignoreWhitespace" ||
-        key === "turnId",
-    ) &&
-    (record.mode === undefined || record.mode === "workspace" || record.mode === "turns") &&
-    (record.sourceId === undefined || typeof record.sourceId === "string") &&
-    (record.fileKey === undefined || typeof record.fileKey === "string") &&
-    (record.baseRef === undefined || typeof record.baseRef === "string") &&
-    (record.ignoreWhitespace === undefined || typeof record.ignoreWhitespace === "boolean") &&
-    (record.turnId === undefined || typeof record.turnId === "string")
-  );
 }
 
 /** One-shot capability read; the repository gate decides what the panel may show. */
@@ -565,10 +538,86 @@ function DiffRow({
   );
 }
 
+function SplitCell({
+  cell,
+  wrap,
+  separator,
+  ui,
+}: {
+  cell: SplitSide;
+  wrap: boolean;
+  separator: boolean;
+  ui: PanelTheme;
+}) {
+  const addition = cell.kind === "addition";
+  const deletion = cell.kind === "deletion";
+  return (
+    <div
+      style={{
+        display: "flex",
+        minWidth: 0,
+        whiteSpace: wrap ? "pre-wrap" : "pre",
+        wordBreak: wrap ? "break-all" : undefined,
+        ...(separator ? { borderRight: `1px solid ${ui.border}` } : {}),
+        background: addition
+          ? // Same success-green mix as unified additions; no theme role covers it.
+            "color-mix(in srgb, var(--success, #2da44e) 14%, transparent)"
+          : deletion
+            ? `color-mix(in srgb, ${ui.destructive} 12%, transparent)`
+            : "transparent",
+      }}
+    >
+      <span style={ui.gutter}>{cell.kind === "empty" ? "" : cell.line}</span>
+      <span style={{ color: ui.muted, userSelect: "none", width: 14 }}>
+        {addition ? "+" : deletion ? "−" : " "}
+      </span>
+      <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+        {cell.kind === "empty" ? "" : cell.text}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * A split row is one grid row, so paired old/new cells can never drift out of
+ * vertical alignment, and the file keeps its single scroll container — the
+ * panes cannot horizontally desync because neither pane scrolls on its own.
+ */
+function SplitRow({ row, wrap, ui }: { row: DiffSplitRow; wrap: boolean; ui: PanelTheme }) {
+  if (row.kind === "gap") {
+    return (
+      <div
+        style={{
+          ...ui.rowBase,
+          justifyContent: "center",
+          color: ui.muted,
+          background: ui.mutedSurface,
+          fontStyle: "italic",
+        }}
+      >
+        {row.count} unmodified line{row.count === 1 ? "" : "s"}
+      </div>
+    );
+  }
+  return (
+    <div
+      style={{
+        ...ui.rowBase,
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+      }}
+    >
+      <SplitCell cell={row.old} wrap={wrap} separator ui={ui} />
+      <SplitCell cell={row.new} wrap={wrap} separator={false} ui={ui} />
+    </div>
+  );
+}
+
 function FileSection({
   row,
   selected,
   collapsed,
+  layout,
   wrap,
   expansion,
   expandable,
@@ -583,6 +632,7 @@ function FileSection({
   row: DiffFileRow;
   selected: boolean;
   collapsed: boolean;
+  layout: DiffLayout;
   wrap: boolean;
   expansion: Expansion | undefined;
   expandable: boolean;
@@ -600,6 +650,8 @@ function FileSection({
     () => (collapsed || row.binary || row.textless ? [] : fileRows(row, expanded)),
     [collapsed, row, expanded],
   );
+  // Pairing is pure and row-count-bounded; memoized so unrelated renders don't re-pair.
+  const paired = useMemo(() => (layout === "split" ? splitRows(rows) : null), [layout, rows]);
   return (
     <section
       ref={registerSection}
@@ -684,7 +736,9 @@ function FileSection({
         </p>
       )}
       {!collapsed &&
-        rows.map((line) => <DiffRow key={line.ordinal} row={line} wrap={wrap} ui={ui} />)}
+        (layout === "split"
+          ? paired?.map((line) => <SplitRow key={line.ordinal} row={line} wrap={wrap} ui={ui} />)
+          : rows.map((line) => <DiffRow key={line.ordinal} row={line} wrap={wrap} ui={ui} />))}
       {!collapsed && expansion?.status === "loading" && (
         <p style={{ padding: "4px 10px", color: muted, fontSize: 11, margin: 0 }}>
           Loading file contents…
@@ -731,6 +785,11 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
   const [baseRef, setBaseRef] = useState<string>(restored?.baseRef ?? "");
   const [ignoreWhitespace, setIgnoreWhitespace] = useState<boolean>(
     restored?.ignoreWhitespace ?? false,
+  );
+  // Per-view layout (the plugin cannot reach the host's client settings);
+  // wrap stays session-local — native's wordWrap toggle is unpersisted too.
+  const [layout, setLayout] = useState<DiffLayout>(
+    restored?.layout === "split" ? "split" : "unified",
   );
   const [wrap, setWrap] = useState(false);
   const [collapsedFiles, setCollapsedFiles] = useState<ReadonlySet<string>>(new Set());
@@ -870,6 +929,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
     readonly baseRef: string;
     readonly ignoreWhitespace: boolean;
     readonly turnId?: string;
+    readonly layout: DiffLayout;
   }) => {
     session.save({
       mode: next.mode,
@@ -878,6 +938,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
       ...(next.baseRef !== "" ? { baseRef: next.baseRef } : {}),
       ...(next.ignoreWhitespace ? { ignoreWhitespace: true } : {}),
       ...(next.turnId !== undefined ? { turnId: next.turnId } : {}),
+      ...(next.layout === "split" ? { layout: "split" } : {}),
     });
   };
   // Every field the caller just changed is passed explicitly — reading the
@@ -888,6 +949,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
     readonly fileKey: string | null;
     readonly baseRef: string;
     readonly ignoreWhitespace: boolean;
+    readonly layout: DiffLayout;
   }) =>
     persist({
       mode: next.mode,
@@ -897,6 +959,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
       ignoreWhitespace: next.ignoreWhitespace,
       turnId:
         next.mode === "turns" && turnSelection?.kind === "turn" ? turnSelection.turnId : undefined,
+      layout: next.layout,
     });
   const chooseMode = (nextMode: DiffMode) => {
     if (nextMode === mode) return;
@@ -909,6 +972,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
       fileKey: null,
       baseRef,
       ignoreWhitespace,
+      layout,
     });
   };
   const chooseTurn = (selection: TurnSelection) => {
@@ -922,12 +986,13 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
       baseRef,
       ignoreWhitespace,
       turnId: selection.kind === "turn" ? selection.turnId : undefined,
+      layout,
     });
   };
   const chooseSource = (id: string) => {
     setSourceId(id);
     setFileKey(null);
-    persistSelection({ mode, sourceId: id, fileKey: null, baseRef, ignoreWhitespace });
+    persistSelection({ mode, sourceId: id, fileKey: null, baseRef, ignoreWhitespace, layout });
   };
   const revealFile = (row: DiffFileRow) => {
     setCollapsedFiles((current) => {
@@ -944,6 +1009,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
       fileKey: row.key,
       baseRef,
       ignoreWhitespace,
+      layout,
     });
   };
   const chooseBaseRef = (value: string) => {
@@ -954,6 +1020,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
       fileKey,
       baseRef: value,
       ignoreWhitespace,
+      layout,
     });
   };
   const chooseWhitespace = (value: boolean) => {
@@ -964,6 +1031,19 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
       fileKey,
       baseRef,
       ignoreWhitespace: value,
+      layout,
+    });
+  };
+  const chooseLayout = (value: DiffLayout) => {
+    if (value === layout) return;
+    setLayout(value);
+    persistSelection({
+      mode,
+      sourceId: source?.id ?? null,
+      fileKey,
+      baseRef,
+      ignoreWhitespace,
+      layout: value,
     });
   };
 
@@ -1260,6 +1340,23 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
             </label>
           </>
         )}
+        <div role="group" aria-label="Diff layout" style={{ display: "flex" }}>
+          {(["unified", "split"] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={layout === value}
+              onClick={() => chooseLayout(value)}
+              style={{
+                ...ui.control,
+                fontWeight: layout === value ? 600 : 400,
+                background: layout === value ? ui.accent : "transparent",
+              }}
+            >
+              {value === "unified" ? "Unified" : "Split"}
+            </button>
+          ))}
+        </div>
         <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
           <input
             type="checkbox"
@@ -1529,6 +1626,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
                       row={row}
                       selected={selected?.key === row.key}
                       collapsed={collapsedFiles.has(row.key)}
+                      layout={layout}
                       wrap={wrap}
                       expansion={expansions.get(`${source.diffHash}:${row.key}`)}
                       expandable={mode === "workspace"}
@@ -1564,8 +1662,8 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
       >
         Read-only diff on t3.vcs/diff 1.1 + t3.orchestration: unary small previews, sha256-verified
         streams for large payloads and turn diffs, status-driven refresh. Checkpoint diffs are
-        view-only — revert runs through t3.orchestration/control. Split view and diff-line comments
-        are deferred slices.
+        view-only — revert runs through t3.orchestration/control. Diff-line comments are a deferred
+        slice.
       </output>
     </section>
   );
@@ -1573,7 +1671,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
 
 const authored = defineExtension({
   id: manifestId,
-  version: "0.3.0",
+  version: "0.4.0",
   requires: [
     requireApi(vcsDiffApi),
     requireApi(vcsRepositoryApi),
@@ -1598,7 +1696,7 @@ const authored = defineExtension({
       // installed path exposes none, so this stays empty (design F4).
       capabilities: [],
       stateVersion: 1,
-      validateRestore: restoreState,
+      validateRestore: restoreDiffState,
       createView(host, session) {
         bindDiffViewCommands(host, session);
         return { renderer: () => <DiffPanelView host={host} session={session} /> };

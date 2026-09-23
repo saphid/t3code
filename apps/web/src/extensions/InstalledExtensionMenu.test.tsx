@@ -6,6 +6,8 @@ import type { SurfaceDescriptor, ViewContext } from "@t3tools/extension-sdk/cont
 import { createJSONStorage } from "zustand/middleware";
 import { createMemoryStorage } from "../lib/storage";
 import {
+  type ExtensionPanelSurface,
+  type RightPanelSurface,
   selectThreadExtensionDock,
   selectThreadRightPanelState,
   useRightPanelStore,
@@ -72,7 +74,10 @@ for (const placement of ["side-panel", "bottom-dock"] as const) {
     placement === "side-panel"
       ? selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref)
       : selectThreadExtensionDock(useRightPanelStore.getState().extensionDockByThreadKey, ref);
-  const reader = () => state().surfaces.find((item) => item.kind === "extension")!;
+  const reader = () => {
+    const surfaces: readonly RightPanelSurface[] = state().surfaces;
+    return surfaces.find((item): item is ExtensionPanelSurface => item.kind === "extension")!;
+  };
   const click = async (root: ReactTestRenderer) =>
     act(async () =>
       root.root
