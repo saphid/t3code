@@ -805,6 +805,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   let pendingRecording: PendingRecording | null = null;
   const displayMediaHandlerSessions = new WeakSet<Session>();
   let frameCaptureWindowOpen = true;
+  /**
+   * Newest remote-capture channel seq seen per tab (hub-issued monotonic).
+   * A start/stop landing behind a newer op is dropped inside the same
+   * critical section as the consumer mutation, so an async stop cannot
+   * kill a capture a newer viewer already owns.
+   */
+  const remoteSeqs = new Map<string, number>();
   let currentMainWindow: BrowserWindow | undefined;
   let mainWindowCleanupFiber: Fiber.Fiber<void, never> | undefined;
   const tabLifecycleLocks = new Map<
@@ -976,9 +983,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const stopFrameCapture = Effect.fn("PreviewManager.stopFrameCapture")(function* (
     tabId: string,
     consumer: FrameCaptureConsumer,
+    remoteSeq?: number,
   ) {
     yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) =>
       Effect.gen(function* () {
+        if (remoteSeq !== undefined) {
+          const seen = remoteSeqs.get(tabId) ?? -1;
+          if (remoteSeq <= seen) return [undefined, sessions] as const;
+          remoteSeqs.set(tabId, remoteSeq);
+        }
         const current = sessions.get(tabId);
         if (!current || !current.consumers.has(consumer)) {
           return [undefined, sessions] as const;
@@ -3153,6 +3166,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const startFrameCapture = Effect.fn("PreviewManager.startFrameCapture")(function* (
     tabId: string,
     consumer: FrameCaptureConsumer,
+    remoteSeq?: number,
   ) {
     // Recording keeps only the activity lease. Picture-in-picture and
     // remote-live own the capturePage loop and tolerate transient compositor
@@ -3171,6 +3185,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       frameCaptureSessionsRef,
       (sessions) => {
         return Effect.gen(function* () {
+          if (remoteSeq !== undefined) {
+            const seen = remoteSeqs.get(tabId) ?? -1;
+            if (remoteSeq <= seen) return [false, sessions] as const;
+            remoteSeqs.set(tabId, remoteSeq);
+          }
           if (!frameCaptureWindowOpen) {
             return yield* new PreviewMainWindowClosedError({ tabId });
           }
@@ -4658,8 +4677,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   const startRemoteCapture = Effect.fn("PreviewManager.startRemoteCapture")(function* (
     tabId: string,
+    remoteSeq?: number,
   ) {
-    yield* startFrameCapture(tabId, "remote-live");
+    yield* startFrameCapture(tabId, "remote-live", remoteSeq);
     // A stop that landed while the acquisition was in flight already removed
     // the consumer and cleared remoteLive — only reassert the flag when the
     // consumer registration survived to here, or the state resurrects with
@@ -4673,8 +4693,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   const stopRemoteCapture = Effect.fn("PreviewManager.stopRemoteCapture")(function* (
     tabId: string,
+    remoteSeq?: number,
   ) {
-    yield* stopFrameCapture(tabId, "remote-live");
+    yield* stopFrameCapture(tabId, "remote-live", remoteSeq);
     const stillLive =
       (yield* SynchronizedRef.get(frameCaptureSessionsRef))
         .get(tabId)
@@ -5681,8 +5702,11 @@ export class PreviewManager extends Context.Service<
       },
       PreviewManagerError
     >;
-    readonly startRemoteCapture: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
-    readonly stopRemoteCapture: (tabId: string) => Effect.Effect<void>;
+    readonly startRemoteCapture: (
+      tabId: string,
+      remoteSeq?: number,
+    ) => Effect.Effect<void, PreviewManagerError>;
+    readonly stopRemoteCapture: (tabId: string, remoteSeq?: number) => Effect.Effect<void>;
     readonly dispatchRemoteInput: (
       tabId: string,
       leaseId: string,

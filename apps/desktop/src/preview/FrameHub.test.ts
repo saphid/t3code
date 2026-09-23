@@ -1167,6 +1167,63 @@ describe("BrowserFrameHub", () => {
     );
   });
 
+  it("keeps a surviving viewer's capture when a cancelled startup settles late", async () => {
+    let startCalls = 0;
+    let releaseFirstStart: (() => void) | null = null;
+    const firstStartGate = new Promise<void>((resolve) => {
+      releaseFirstStart = resolve;
+    });
+    const { stub, layer: managerLayer } = makeManagerStub((manager, stubRef) => {
+      manager.startRemoteCapture = (tabId: string, _remoteSeq?: number) => {
+        startCalls += 1;
+        if (startCalls === 1) {
+          return Effect.promise(async () => {
+            stubRef.started.push(tabId);
+            await firstStartGate;
+          });
+        }
+        return Effect.sync(() => {
+          stubRef.started.push(tabId);
+        });
+      };
+    });
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const hub = yield* BrowserFrameHub;
+          yield* Effect.promise(async () => {
+            // A's capture startup stalls mid-acquisition.
+            const aAbort = new AbortController();
+            const aFetch = fetch(streamUrl(hub.origin, hub.secret), {
+              signal: aAbort.signal,
+            }).catch(() => null);
+            await vi.waitFor(() => expect(startCalls).toBe(1));
+
+            // B attaches while A's start is still in flight — B's startup
+            // resolves and its stream opens.
+            const bRes = await fetch(streamUrl(hub.origin, hub.secret));
+            const bReader = bRes.body!.getReader();
+            await bReader.read();
+
+            // A disconnects; its viewers→1, so no disconnect stop runs.
+            aAbort.abort();
+            await aFetch;
+            // A's late-settling start completes into a session B now owns —
+            // its compensation must not re-stop the capture. The pushed
+            // frame's loopback round-trip gives any stale stop enough turns
+            // to land before the assertion.
+            releaseFirstStart!();
+            stub.pushFrame(liveFrame());
+            const pushed = await bReader.read();
+            expect(Buffer.from(pushed.value!).toString("latin1")).toContain("X-Frame-Seq: 8");
+            expect(stub.stopped).toHaveLength(0);
+            await bReader.cancel();
+          });
+        }),
+      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
+    );
+  });
+
   it("never writes capture output ahead of the stream's HTTP headers", async () => {
     const { layer: managerLayer } = makeManagerStub((manager, stubRef) => {
       manager.startRemoteCapture = () =>

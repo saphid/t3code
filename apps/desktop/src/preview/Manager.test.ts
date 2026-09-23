@@ -4624,6 +4624,48 @@ describe("PreviewManager", () => {
       ),
   );
 
+  effectIt.effect("stale remote capture starts and stops cannot kill a newer acquisition", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const wc = makeTestPreviewWebContents(async () => ({
+          toJPEG: () => Buffer.from("pixels"),
+          getSize: () => ({ width: 100, height: 100 }),
+        }));
+        fromId.mockReturnValue(wc as never);
+        const remoteTabId = '["env-a","thread-a","epoch-1","tab-1"]';
+        yield* manager.createTab(remoteTabId);
+        yield* manager.registerWebview(remoteTabId, 42);
+        const streaming = () =>
+          manager
+            .remoteFrameSessions()
+            .pipe(
+              Effect.map(
+                (sessions) =>
+                  sessions.find((session) => session.runtimeTabId === remoteTabId)?.streaming ??
+                  false,
+              ),
+            );
+
+        // A stop issued before the newer start landed must not remove the
+        // remote-live consumer that start owns.
+        yield* manager.startRemoteCapture(remoteTabId, 10);
+        yield* manager.stopRemoteCapture(remoteTabId, 5);
+        expect(yield* streaming()).toBe(true);
+
+        // A start issued before the newer stop landed must not resurrect
+        // the retired consumer.
+        yield* manager.stopRemoteCapture(remoteTabId, 20);
+        yield* manager.startRemoteCapture(remoteTabId, 15);
+        expect(yield* streaming()).toBe(false);
+
+        yield* manager.startRemoteCapture(remoteTabId, 25);
+        expect(yield* streaming()).toBe(true);
+        yield* manager.stopRemoteCapture(remoteTabId, 30);
+        expect(yield* streaming()).toBe(false);
+      }),
+    ),
+  );
+
   effectIt.effect("stopping during initial capture leaves remoteLive false", () =>
     withManager((manager) =>
       Effect.gen(function* () {

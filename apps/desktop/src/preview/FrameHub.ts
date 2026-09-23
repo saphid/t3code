@@ -509,6 +509,12 @@ const make = Effect.gen(function* () {
       .catch(() => null);
   };
 
+  // Remote capture start/stop carry a monotonic channel seq: the manager
+  // drops a start or stop that lands behind a newer op, so an async stop
+  // issued for a disconnected viewer cannot kill a capture a newer viewer
+  // already owns.
+  let remoteChannelSeq = 0;
+
   // Geometry changes are infrequent (guest resize, engine swap) but must be
   // fenced promptly: while anything watches or controls a session, poll its
   // authoritative geometry once a second. Sessions nobody watches are
@@ -649,7 +655,7 @@ const make = Effect.gen(function* () {
       counted = false;
       activity.viewers = Math.max(0, activity.viewers - 1);
       if (activity.viewers === 0) {
-        runFork(manager.stopRemoteCapture(runtimeTabId).pipe(Effect.ignore));
+        runFork(manager.stopRemoteCapture(runtimeTabId, ++remoteChannelSeq).pipe(Effect.ignore));
       }
     };
     res.on("close", cleanup);
@@ -679,7 +685,7 @@ const make = Effect.gen(function* () {
           activity.viewers += 1;
           counted = true;
         });
-        yield* manager.startRemoteCapture(runtimeTabId);
+        yield* manager.startRemoteCapture(runtimeTabId, ++remoteChannelSeq);
         captureStarted = true;
         return null;
       }),
@@ -691,11 +697,14 @@ const make = Effect.gen(function* () {
         }
         if (mismatch !== null || res.destroyed || res.closed || cleanedUp) {
           cleanup();
-          if (captureStarted) {
+          if (captureStarted && (activities.get(runtimeTabId)?.viewers ?? 0) === 0) {
             // The disconnect ran stopRemoteCapture while startRemoteCapture
             // was still in flight; the late-resolved start could resurrect
-            // the capture — re-stop now that it has settled.
-            runFork(manager.stopRemoteCapture(runtimeTabId).pipe(Effect.ignore));
+            // the capture — re-stop now that it has settled, but only when
+            // no surviving viewer owns it.
+            runFork(
+              manager.stopRemoteCapture(runtimeTabId, ++remoteChannelSeq).pipe(Effect.ignore),
+            );
           }
           return;
         }
