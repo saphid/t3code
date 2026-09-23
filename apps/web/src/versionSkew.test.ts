@@ -106,6 +106,47 @@ describe("versionSkew", () => {
     expect(resolveVersionMismatch("0.0.34-nightly.20260824.1126")).toBeNull();
   });
 
+  // Fork Nightly builds use a hyphenated train, e.g. 0.0.42-nightly-v2.20260923.1790125491283725.
+  it("warns when a nightly-v2 server is an earlier build than the client", () => {
+    branding.APP_VERSION = "0.0.42-nightly-v2.20260923.1790125491283725";
+
+    expect(resolveVersionMismatch("0.0.42-nightly-v2.20260918.1789701374653468")).toEqual({
+      clientVersion: "0.0.42-nightly-v2.20260923.1790125491283725",
+      serverVersion: "0.0.42-nightly-v2.20260918.1789701374653468",
+      hint: MISMATCH_HINT,
+    });
+    expect(resolveVersionMismatch("0.0.42-nightly-v2.20260923.1790125491193621")).not.toBeNull();
+  });
+
+  it("does not warn when a nightly-v2 server matches or is ahead of the client", () => {
+    branding.APP_VERSION = "0.0.42-nightly-v2.20260923.1790125491283725";
+
+    expect(resolveVersionMismatch("0.0.42-nightly-v2.20260923.1790125491283725")).toBeNull();
+    expect(resolveVersionMismatch("0.0.42-nightly-v2.20260924.1790200000000000")).toBeNull();
+  });
+
+  it("orders nightly-v2 builds that carry build metadata", () => {
+    branding.APP_VERSION = "0.0.42-nightly-v2.20260923.12+abc";
+
+    expect(resolveVersionMismatch("0.0.42-nightly-v2.20260922.11+def")).not.toBeNull();
+    expect(resolveVersionMismatch("0.0.42-nightly-v2.20260923.12")).toBeNull();
+  });
+
+  it("keeps upstream nightly builds with build metadata on the full-version comparison", () => {
+    branding.APP_VERSION = "0.0.42-nightly.20260923.12+abc";
+
+    expect(resolveVersionMismatch("0.0.42-nightly.20260922.11+def")).not.toBeNull();
+    expect(resolveVersionMismatch("0.0.42-nightly.20260922.11")).not.toBeNull();
+  });
+
+  it("keeps the existing comparison between different nightly trains", () => {
+    branding.APP_VERSION = "0.0.42-nightly.20260923.12";
+    expect(resolveVersionMismatch("0.0.42-nightly-v2.20260922.11")).not.toBeNull();
+
+    branding.APP_VERSION = "0.0.42-nightly-v2.20260923.1790125491283725";
+    expect(resolveVersionMismatch("0.0.41-nightly.20260930.10")).not.toBeNull();
+  });
+
   it("treats a nightly server built past the client as ahead, not skew", () => {
     expect(resolveVersionMismatch("0.0.35-nightly.20260818.1124")).toBeNull();
   });
