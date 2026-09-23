@@ -103,6 +103,39 @@ NodeTest.describe("normalizeTerminalGroups — native partition rule", () => {
       ["same", "same-2"],
     );
   });
+
+  // r2 item 6: only a crafted restore record can exceed the per-group cap
+  // (splits are refused at the cap), so normalization — not the open gate —
+  // must enforce the 4-pane invariant there. Chunk, never drop.
+  NodeTest.it("an oversized group is chunked into cap-sized groups; nothing drops", () => {
+    const groups = normalizeTerminalGroups(
+      [{ id: "big", terminalIds: ["a", "b", "c", "d", "e", "f"], splitDirection: "vertical" }],
+      ["a", "b", "c", "d", "e", "f", "g"],
+    );
+    NodeAssert.deepEqual(groups, [
+      { id: "big", terminalIds: ["a", "b", "c", "d"], splitDirection: "vertical" },
+      { id: "big-2", terminalIds: ["e", "f"], splitDirection: "vertical" },
+      { id: "group-g", terminalIds: ["g"] },
+    ]);
+    // Every terminal is still claimed by exactly one group.
+    NodeAssert.deepEqual(groups.flatMap((group) => group.terminalIds).sort(), [
+      "a",
+      "b",
+      "c",
+      "d",
+      "e",
+      "f",
+      "g",
+    ]);
+  });
+
+  NodeTest.it("a cap-sized group passes through unchunked", () => {
+    const groups = normalizeTerminalGroups(
+      [{ id: "edge", terminalIds: ["a", "b", "c", "d"] }],
+      ["a", "b", "c", "d"],
+    );
+    NodeAssert.deepEqual(groups, [{ id: "edge", terminalIds: ["a", "b", "c", "d"] }]);
+  });
 });
 
 NodeTest.describe("terminal panel — split groups", () => {
@@ -391,6 +424,65 @@ NodeTest.describe("terminal panel — split-group restore", () => {
       },
     });
     NodeAssert.equal(panel.snapshot.activeGroupId, "group-term-2");
+    panel.dispose();
+  });
+
+  // r2 item 6: restore bypassed every group-size gate — a crafted record
+  // with six terminals in one group would render six panes in a split that
+  // can only ever show four. The record is normalized into cap-sized
+  // groups (no drops, first chunk keeps the id), and the invariant survives
+  // reconcile snapshots, which re-run the same normalization.
+  NodeTest.it("a crafted 6-pane restore lands as cap-sized groups, not six panes", () => {
+    const panel = new TerminalPanel({
+      control: fakeControl(),
+      launch,
+      restored: {
+        terminalIds: ["term-1", "term-2", "term-3", "term-4", "term-5", "term-6"],
+        activeTerminalId: "term-1",
+        terminalGroups: [
+          {
+            id: "group-all",
+            terminalIds: ["term-1", "term-2", "term-3", "term-4", "term-5", "term-6"],
+            splitDirection: "vertical",
+          },
+        ],
+        activeTerminalGroupId: "group-all",
+      },
+    });
+    const snapshot = panel.snapshot;
+    NodeAssert.ok(
+      snapshot.groups.every((group) => group.terminalIds.length <= MAX_TERMINALS_PER_GROUP),
+    );
+    NodeAssert.deepEqual(
+      snapshot.groups.map((group) => [group.id, group.terminalIds]),
+      [
+        ["group-all", ["term-1", "term-2", "term-3", "term-4"]],
+        ["group-all-2", ["term-5", "term-6"]],
+      ],
+    );
+    NodeAssert.deepEqual(
+      [...snapshot.terminalIds],
+      ["term-1", "term-2", "term-3", "term-4", "term-5", "term-6"],
+    );
+    // The first chunk keeps the id, so the stored active-group preference
+    // still resolves — and stays resolved through a reconcile.
+    NodeAssert.equal(snapshot.activeGroupId, "group-all");
+    panel.applySessionsEvent({
+      kind: "snapshot",
+      terminals: [
+        meta("term-1"),
+        meta("term-2"),
+        meta("term-3"),
+        meta("term-4"),
+        meta("term-5"),
+        meta("term-6"),
+      ],
+    });
+    NodeAssert.ok(
+      panel.snapshot.groups.every((group) => group.terminalIds.length <= MAX_TERMINALS_PER_GROUP),
+    );
+    NodeAssert.equal(panel.snapshot.groups.length, 2);
+    NodeAssert.equal(panel.snapshot.activeGroupId, "group-all");
     panel.dispose();
   });
 });

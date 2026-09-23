@@ -10267,11 +10267,17 @@ var __t3Client = (() => {
       if (groupTerminalIds.length === 0) continue;
       for (const terminalId of groupTerminalIds) assignedTerminalIds.add(terminalId);
       const baseGroupId = group.id.trim().length > 0 ? group.id.trim() : fallbackGroupId(groupTerminalIds[0] ?? terminalIds[0] ?? "");
-      nextGroups.push({
-        id: assignUniqueGroupId(baseGroupId, usedGroupIds),
-        terminalIds: groupTerminalIds,
-        ...group.splitDirection === "vertical" ? { splitDirection: "vertical" } : {}
-      });
+      const vertical = group.splitDirection === "vertical";
+      for (let start = 0; start < groupTerminalIds.length; start += MAX_TERMINALS_PER_GROUP) {
+        nextGroups.push({
+          id: assignUniqueGroupId(
+            start === 0 ? baseGroupId : `${baseGroupId}-${Math.floor(start / MAX_TERMINALS_PER_GROUP) + 1}`,
+            usedGroupIds
+          ),
+          terminalIds: groupTerminalIds.slice(start, start + MAX_TERMINALS_PER_GROUP),
+          ...vertical ? { splitDirection: "vertical" } : {}
+        });
+      }
     }
     for (const terminalId of terminalIds) {
       if (assignedTerminalIds.has(terminalId)) continue;

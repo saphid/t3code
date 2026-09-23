@@ -220,7 +220,12 @@ function assignUniqueGroupId(baseId: string, usedGroupIds: Set<string>): string 
  * out, duplicates collapse to their first group, and sessions no group
  * claims each earn a trailing singleton — the native
  * `normalizeTerminalGroups` rule, which is also what makes old restore
- * records (no group field) land as one group per terminal.
+ * records (no group field) land as one group per terminal. A group larger
+ * than the per-group cap — only a crafted restore record; splits are
+ * refused at the cap — is chunked into cap-sized groups rather than
+ * rendering (or spawning) more panes than a split layout can show: nothing
+ * is dropped, the first chunk keeps the id and direction, and overflow
+ * chunks continue the same direction under uniquified ids.
  */
 export function normalizeTerminalGroups(
   groups: readonly TerminalGroup[],
@@ -242,11 +247,19 @@ export function normalizeTerminalGroups(
       group.id.trim().length > 0
         ? group.id.trim()
         : fallbackGroupId(groupTerminalIds[0] ?? terminalIds[0] ?? "");
-    nextGroups.push({
-      id: assignUniqueGroupId(baseGroupId, usedGroupIds),
-      terminalIds: groupTerminalIds,
-      ...(group.splitDirection === "vertical" ? { splitDirection: "vertical" as const } : {}),
-    });
+    const vertical = group.splitDirection === "vertical";
+    for (let start = 0; start < groupTerminalIds.length; start += MAX_TERMINALS_PER_GROUP) {
+      nextGroups.push({
+        id: assignUniqueGroupId(
+          start === 0
+            ? baseGroupId
+            : `${baseGroupId}-${Math.floor(start / MAX_TERMINALS_PER_GROUP) + 1}`,
+          usedGroupIds,
+        ),
+        terminalIds: groupTerminalIds.slice(start, start + MAX_TERMINALS_PER_GROUP),
+        ...(vertical ? { splitDirection: "vertical" as const } : {}),
+      });
+    }
   }
 
   for (const terminalId of terminalIds) {
