@@ -688,6 +688,7 @@ export function createBrowserFrameClient(
         geometrySeq?: number;
         expiresAt?: number;
         seq?: number;
+        highSeq?: number;
         reason?: string;
       };
       try {
@@ -699,6 +700,17 @@ export function createBrowserFrameClient(
         case "bound":
           inputBound = true;
           if (typeof notice.expiresAt === "number") scheduleInputRenewal(notice.expiresAt);
+          // The hub retains the lease's replay high-water mark across socket
+          // replacement — resume numbering above it so packets after a
+          // reconnect continue the lease sequence rather than restarting at
+          // zero into `replay` rejections.
+          if (
+            typeof notice.highSeq === "number" &&
+            Number.isInteger(notice.highSeq) &&
+            notice.highSeq >= 0
+          ) {
+            inputSeq = notice.highSeq;
+          }
           events.onInputConnected(true);
           break;
         case "geometry":

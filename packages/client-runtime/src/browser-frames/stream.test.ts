@@ -541,6 +541,70 @@ describe("createBrowserFrameClient input lane", () => {
     client.stop();
   });
 
+  it("resumes input seq above the lease high-water reported on bound after a stream reset", async () => {
+    const openInput = vi.fn(async () => ({
+      leaseId: "bfli.1",
+      inputTicket: "bfv1.in.t",
+      expiresAt: Date.now() + 60_000,
+    }));
+    const events = makeEvents();
+    const client = createBrowserFrameClient(
+      { access, session, openInput },
+      { canvas: fakeCanvas() },
+      events,
+    );
+    client.start();
+    client.sendPointer("move", 0.1, 0.1);
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const first = FakeWebSocket.instances[0]!;
+    await vi.waitFor(() => expect(first.readyState).toBe(FakeWebSocket.OPEN));
+    first.emit({
+      type: "bound",
+      leaseId: "bfli.1",
+      geometrySeq: 4,
+      expiresAt: Date.now() + 60_000,
+    });
+    await vi.waitFor(() => expect(streamControllers).toHaveLength(1));
+    paintFrame(streamControllers[0]!);
+    await vi.waitFor(() => {
+      client.sendPointer("move", 0.2, 0.2);
+      client.sendPointer("move", 0.3, 0.3);
+      expect(first.sent).toHaveLength(2);
+    });
+    expect(JSON.parse(first.sent[1]!)).toMatchObject({ seq: 2 });
+
+    // End-of-body resets the stream and the input lease: the client re-mints
+    // and rebinds under the same lease.
+    streamControllers[0]!.close();
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2), {
+      timeout: 5_000,
+      interval: 50,
+    });
+    const second = FakeWebSocket.instances[1]!;
+    await vi.waitFor(() => expect(second.readyState).toBe(FakeWebSocket.OPEN));
+    // The hub retained the lease's high-water mark across the socket
+    // replacement — the client resumes numbering above it rather than
+    // restarting at 1 into replay rejections.
+    second.emit({
+      type: "bound",
+      leaseId: "bfli.1",
+      geometrySeq: 4,
+      highSeq: 2,
+      expiresAt: Date.now() + 60_000,
+    });
+    await vi.waitFor(() => expect(streamControllers.length).toBeGreaterThan(1), {
+      timeout: 5_000,
+      interval: 50,
+    });
+    paintFrame(streamControllers[1]!);
+    await vi.waitFor(() => {
+      client.sendPointer("move", 0.4, 0.4);
+      expect(second.sent).toHaveLength(1);
+    });
+    expect(JSON.parse(second.sent[0]!)).toMatchObject({ seq: 3, geometrySeq: 4 });
+    client.stop();
+  });
+
   it("re-mints the lease through openInput when the socket dies", async () => {
     let mints = 0;
     const openInput = vi.fn(async () => ({

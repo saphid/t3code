@@ -130,6 +130,13 @@ export const BrowserFrameInputNotice = Schema.Union([
     geometrySeq: NonNegativeInt,
     expiresAt: Schema.Int.check(Schema.isGreaterThan(0)),
     /**
+     * The lease's retained replay high-water mark at bind time. A client
+     * whose socket reconnects under the same lease resumes its packet seq
+     * numbering above this value — the hub's per-lease `highSeq` survives
+     * socket replacement, so restarting at zero reads as replay.
+     */
+    highSeq: Schema.optional(NonNegativeInt),
+    /**
      * Set when the superseded socket's held-input cleanup could not fully
      * settle before this bind — the guest may still carry released-state the
      * ledger could not confirm. Design §3.7 cleanup vocabulary.

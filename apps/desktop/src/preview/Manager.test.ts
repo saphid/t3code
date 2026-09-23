@@ -4260,6 +4260,7 @@ describe("PreviewManager", () => {
           "42",
           { type: "key", phase: "down", key: "Shift", code: "ShiftLeft" },
           { width: 100, height: 100 },
+          null,
         );
         expect(keyEvents("down")).toHaveLength(1);
 
@@ -4272,6 +4273,7 @@ describe("PreviewManager", () => {
           "42",
           { type: "key", phase: "up", key: "Shift", code: "ShiftLeft" },
           { width: 100, height: 100 },
+          null,
         );
         expect(keyEvents("up")).toHaveLength(1);
 
@@ -4283,6 +4285,7 @@ describe("PreviewManager", () => {
           "42",
           { type: "key", phase: "up", key: "Shift", code: "ShiftLeft" },
           { width: 100, height: 100 },
+          null,
         );
         expect(keyEvents("up")).toHaveLength(2);
 
@@ -4294,6 +4297,7 @@ describe("PreviewManager", () => {
             "999",
             { type: "key", phase: "down", key: "a", code: "KeyA" },
             { width: 100, height: 100 },
+            null,
           ),
         );
         expect(Exit.isFailure(staleExit)).toBe(true);
@@ -4327,6 +4331,7 @@ describe("PreviewManager", () => {
           "42",
           { type: "key", phase: "down", key: "Shift", code: "ShiftLeft" },
           viewport,
+          null,
         );
         yield* manager.dispatchRemoteInput(
           remoteTabId,
@@ -4334,6 +4339,7 @@ describe("PreviewManager", () => {
           "42",
           { type: "key", phase: "down", key: "Control", code: "ControlLeft" },
           viewport,
+          null,
         );
 
         // Releasing a lease with nothing held sends nothing.
@@ -4374,6 +4380,7 @@ describe("PreviewManager", () => {
           "42",
           { type: "key", phase: "down", key: "Shift", code: "ShiftLeft" },
           viewport,
+          null,
         );
         const clean = yield* manager.releaseRemoteInput(remoteTabId, "lease-a");
         expect(clean).toEqual({ attempted: 2, failed: 0 });
@@ -4391,6 +4398,7 @@ describe("PreviewManager", () => {
           "42",
           { type: "key", phase: "down", key: "Control", code: "ControlLeft" },
           viewport,
+          null,
         );
         sendCommand.mockImplementation(async (method: string, args: { type?: string }) => {
           if (method === "Input.dispatchKeyEvent" && args.type === "keyUp") {
@@ -4430,6 +4438,7 @@ describe("PreviewManager", () => {
             "42",
             { type: "key", phase: "down", key: "Shift", code: "ShiftLeft" },
             { width: 100, height: 100 },
+            null,
           )
           .pipe(Effect.ignore);
         yield* manager.releaseRemoteInput(remoteTabId, "l");
@@ -4472,6 +4481,7 @@ describe("PreviewManager", () => {
             "42",
             { type: "pointer", phase: "move", x: 0, y: 0 },
             { width: 100, height: 100 },
+            null,
           )
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(started);
@@ -4482,6 +4492,7 @@ describe("PreviewManager", () => {
             "42",
             { type: "text", text: "must be cancelled" },
             { width: 100, height: 100 },
+            null,
           )
           .pipe(Effect.forkChild({ startImmediately: true }));
         const end = yield* manager
@@ -4543,6 +4554,7 @@ describe("PreviewManager", () => {
             "42",
             { type: "text", text: "hello" },
             { width: 100, height: 100 },
+            null,
           )
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Effect.yieldNow;
@@ -4675,6 +4687,130 @@ describe("PreviewManager", () => {
           expect(Exit.isFailure(outcome)).toBe(true);
         }),
       ),
+  );
+
+  effectIt.effect(
+    "remote capture completing after a guest replacement drops the superseded generation's pixels",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const entered = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const image = () => ({
+            toJPEG: () => Buffer.from("pixels"),
+            getSize: () => ({ width: 100, height: 100 }),
+          });
+          const captureOld = vi.fn(async () => image());
+          const old = makeTestPreviewWebContents(captureOld, 42);
+          const fresh = makeTestPreviewWebContents(async () => image(), 43);
+          fromId.mockImplementation((id) => (id === 42 ? old : id === 43 ? fresh : null));
+          const remoteTabId = '["env-a","thread-a","epoch-1","tab-1"]';
+          yield* manager.createTab(remoteTabId);
+          yield* manager.registerWebview(remoteTabId, 42);
+          // Stall the POST-capture geometry read: the guest is replaced after
+          // capturePage already returned 42's pixels, while the stamp is
+          // still being derived.
+          let viewportReads = 0;
+          old.executeJavaScript = vi.fn(() => {
+            viewportReads += 1;
+            if (viewportReads === 2) {
+              return Effect.runPromise(
+                Deferred.succeed(entered, undefined).pipe(
+                  Effect.andThen(Deferred.await(release)),
+                  Effect.as({ width: 1280, height: 720 }),
+                ),
+              );
+            }
+            return Promise.resolve({ width: 1280, height: 720 });
+          });
+          const capture = yield* manager
+            .captureFrameJpeg(remoteTabId)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(entered);
+          yield* manager.registerWebview(remoteTabId, 43);
+          yield* Deferred.succeed(release, undefined);
+          // The post-capture read re-validates the guest identity: the
+          // superseded-generation attempt reschedules on the retry delay and
+          // the retry resolves the live guest — old-guest pixels are never
+          // stamped or published under the new generation.
+          yield* TestClock.adjust(1_000);
+          const frame = yield* Fiber.join(capture);
+          expect(captureOld).toHaveBeenCalledTimes(1);
+          expect(frame.engineGeneration).toBe("43");
+          expect(frame.geometryKey.startsWith("43:")).toBe(true);
+        }),
+      ),
+  );
+
+  effectIt.effect("input queued on the guest lane cannot actuate with stale geometry", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents({ id: 42 });
+        let width = 100;
+        Object.assign(preview.webContents, {
+          focus: vi.fn(),
+          executeJavaScript: vi.fn(async () => ({ width, height: 100 })),
+        });
+        fromId.mockReturnValue(preview.webContents);
+        const remoteTabId = '["env-a","thread-a","epoch-1","tab-1"]';
+        yield* manager.createTab(remoteTabId);
+        yield* manager.registerWebview(remoteTabId, 42);
+        const sendCommand = (
+          preview.webContents as { debugger: { sendCommand: ReturnType<typeof vi.fn> } }
+        ).debugger.sendCommand;
+        const started = yield* Deferred.make<void>();
+        const finish = yield* Deferred.make<void>();
+        sendCommand.mockImplementation((method: string, args: { type?: string }) =>
+          method === "Input.dispatchMouseEvent" && args.type === "mouseMoved"
+            ? Effect.runPromise(
+                Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(finish))),
+              )
+            : Promise.resolve(undefined),
+        );
+        const geometryKey = PreviewManager.remoteFrameGeometryKey(
+          "42",
+          { width: 100, height: 100 },
+          1,
+        );
+        const first = yield* manager
+          .dispatchRemoteInput(
+            remoteTabId,
+            "l",
+            "42",
+            { type: "pointer", phase: "move", x: 0, y: 0 },
+            { width: 100, height: 100 },
+            geometryKey,
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(started);
+        // The pointer-down queues behind the stalled move on the guest lane.
+        const second = yield* manager
+          .dispatchRemoteInput(
+            remoteTabId,
+            "l",
+            "42",
+            { type: "pointer", phase: "down", x: 0.5, y: 0.5, button: "left" },
+            { width: 100, height: 100 },
+            geometryKey,
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        // The guest resizes while the queued packet waits on the lane.
+        width = 200;
+        yield* Deferred.succeed(finish, undefined);
+        yield* Fiber.join(first);
+        const outcome = yield* Fiber.await(second);
+        expect(Exit.isFailure(outcome)).toBe(true);
+        // The queued packet's admitted geometry stopped matching inside the
+        // lane — it never actuated a press against the post-resize guest.
+        expect(
+          sendCommand.mock.calls.filter(
+            (call) =>
+              call[0] === "Input.dispatchMouseEvent" &&
+              (call[1] as { type?: string } | undefined)?.type === "mousePressed",
+          ),
+        ).toHaveLength(0);
+      }),
+    ),
   );
 
   effectIt.effect("stale remote capture starts and stops cannot kill a newer acquisition", () =>

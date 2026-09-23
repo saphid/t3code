@@ -4611,6 +4611,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       Effect.gen(function* () {
         const viewportCss = yield* readRemoteViewport(tabId, wc);
         const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+        // The awaited viewport read can outlive the guest it describes: a
+        // replaced webContents makes every value derived from `wc` obsolete —
+        // stamping or publishing against it would attribute old-guest pixels
+        // (and old-guest geometry) to the live generation. Failing here feeds
+        // the capture retry, which re-resolves the live guest.
+        if (wc.isDestroyed() || tab?.webContentsId !== wc.id) {
+          return yield* new PreviewOperationError({
+            operation: "remoteFrames.capturePage",
+            tabId,
+            webContentsId: wc.id,
+            cause: new Error("Guest was replaced during capture."),
+          });
+        }
         const engineGeneration = String(wc.id);
         const zoomFactor = tab?.zoomFactor ?? DEFAULT_ZOOM_FACTOR;
         return {
@@ -4841,6 +4854,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     state: RemoteInputLeaseState,
     event: BrowserFrameInputEvent,
     viewportCss: { readonly width: number; readonly height: number } | null,
+    geometryKey: string | null,
   ) {
     const ledger = state.ledger;
     // Cleanup began after this packet was admitted: it drops here rather than
@@ -4862,6 +4876,24 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         webContentsId: wc.id,
         cause: new Error("Bound guest generation was replaced."),
       });
+    }
+    // The lane itself is a queue: the hub re-checks geometrySeq before
+    // enqueueing here, but a guest resize landing while the packet waits for
+    // the permit must not let it actuate with coordinates authored for the
+    // old viewport. Re-derive the live geometry and require the admitted key
+    // to still describe this guest before any side effect runs.
+    if (geometryKey !== null) {
+      const currentViewport = yield* readRemoteViewport(tabId, wc);
+      const currentZoom =
+        (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.zoomFactor ?? DEFAULT_ZOOM_FACTOR;
+      if (remoteFrameGeometryKey(ledger.generation, currentViewport, currentZoom) !== geometryKey) {
+        return yield* new PreviewOperationError({
+          operation: "remoteFrames.dispatch",
+          tabId,
+          webContentsId: wc.id,
+          cause: new Error("Bound geometry changed before dispatch."),
+        });
+      }
     }
     const owner: InputStateOwner = { kind: "lease", id: leaseId };
     const control = yield* ensureControlSession(wc);
@@ -5013,10 +5045,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     engineGeneration: string,
     event: BrowserFrameInputEvent,
     viewportCss: { readonly width: number; readonly height: number } | null,
+    geometryKey: string | null,
   ) {
     const state = yield* requireRemoteInputLease(tabId, leaseId, engineGeneration);
     yield* state.ledger.lane.withPermits(1)(
-      dispatchRemoteInputSerialized(tabId, leaseId, state, event, viewportCss),
+      dispatchRemoteInputSerialized(tabId, leaseId, state, event, viewportCss, geometryKey),
     );
   });
 
@@ -5713,6 +5746,12 @@ export class PreviewManager extends Context.Service<
       engineGeneration: string,
       event: BrowserFrameInputEvent,
       viewportCss: { readonly width: number; readonly height: number } | null,
+      /**
+       * The geometry the packet was admitted under, as a
+       * `remoteFrameGeometryKey`; `null` skips the lane-internal geometry
+       * re-fence (callers that never asserted a geometry).
+       */
+      geometryKey: string | null,
     ) => Effect.Effect<void, PreviewManagerError>;
     readonly releaseRemoteInput: (
       tabId: string,

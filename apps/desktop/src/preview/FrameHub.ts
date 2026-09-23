@@ -79,6 +79,14 @@ interface HubGeometry {
 
 interface SessionActivity {
   viewers: number;
+  /**
+   * Stream startups past request validation but before viewer registration:
+   * the config/capture awaits in between must not look idle to the sweep —
+   * reclaiming the activity would leave the startup incrementing a detached
+   * object whose later disconnect then issues `stopRemoteCapture` while
+   * another viewer still owns the live activity.
+   */
+  pendingStarts: number;
   /** The owning input socket — the slot a same-or-newer ticket supersedes. */
   input: HubInputSocket | null;
   /**
@@ -101,11 +109,13 @@ interface SessionActivity {
    */
   configReadSeq: number;
   /**
-   * Per-lease input lane state — rate tokens and the replay high-water
-   * mark — retained across socket replacement so a rebind or same-lease
-   * shadow can reset neither.
+   * Per-lease input lane state — rate tokens, the replay high-water mark,
+   * and the newest accepted ticket seq — retained across socket
+   * replacement so a rebind or same-lease shadow can reset none of them.
+   * `ticketSeq` is what keeps an already-superseded upgrade from seizing
+   * the slot after the newer socket it followed has ended.
    */
-  leaseState: Map<string, { tokens: number; tokensAt: number; highSeq: number }>;
+  leaseState: Map<string, { tokens: number; tokensAt: number; highSeq: number; ticketSeq: number }>;
   /** Last time the session had viewers, input, or pending work — idle GC. */
   lastTouchedAt: number;
   /**
@@ -258,6 +268,7 @@ const make = Effect.gen(function* () {
     }
     const created: SessionActivity = {
       viewers: 0,
+      pendingStarts: 0,
       input: null,
       shadows: new Set(),
       pending: null,
@@ -273,6 +284,21 @@ const make = Effect.gen(function* () {
     created.poller.unref();
     activities.set(runtimeTabId, created);
     return created;
+  };
+
+  /** Per-lease lane record, created on first use and kept for the activity's life. */
+  const leaseBucket = (activity: SessionActivity, leaseId: string) => {
+    let bucket = activity.leaseState.get(leaseId);
+    if (bucket === undefined) {
+      bucket = {
+        tokens: BROWSER_FRAME_INPUT_MAX_EVENTS_PER_SECOND,
+        tokensAt: Date.now(),
+        highSeq: 0,
+        ticketSeq: 0,
+      };
+      activity.leaseState.set(leaseId, bucket);
+    }
+    return bucket;
   };
 
   const sendNotice = (socket: HubInputSocket, notice: unknown): void => {
@@ -404,6 +430,10 @@ const make = Effect.gen(function* () {
         }
         activity.pending = null;
         clearTimeout(candidate.expiryTimer);
+        // A newer same-lease ticket accepted while this candidate awaited
+        // its config read demotes this bind to a shadow — it dispatches
+        // under the lease but never owns the slot.
+        const retainedTicketSeq = activity.leaseState.get(candidate.leaseId)?.ticketSeq ?? 0;
         bindInputSocket(
           candidate.ws,
           candidate.asserted,
@@ -411,7 +441,7 @@ const make = Effect.gen(function* () {
           candidate.ticketSeq,
           candidate.expiresAt,
           config.engineGeneration,
-          true,
+          candidate.ticketSeq >= retainedTicketSeq,
           cleanup !== null && cleanup.failed > 0,
         );
       })
@@ -538,7 +568,7 @@ const make = Effect.gen(function* () {
       (activity.input !== null && activity.input.state !== "ended") ||
       activity.pending !== null ||
       activity.shadows.size > 0;
-    if (activity.viewers > 0 || inputLive) {
+    if (activity.viewers > 0 || activity.pendingStarts > 0 || inputLive) {
       activity.lastTouchedAt = now;
       void refreshGeometry(runtimeTabId);
       return;
@@ -680,6 +710,10 @@ const make = Effect.gen(function* () {
       flushPending();
     });
 
+    // Counted BEFORE the first await: the config read below can outlive an
+    // idle sweep, and reclaiming the activity mid-startup would orphan this
+    // startup onto a detached object.
+    activity.pendingStarts += 1;
     void runPromise(
       Effect.gen(function* () {
         const config = yield* manager.remoteFrameConfig(runtimeTabId);
@@ -705,6 +739,9 @@ const make = Effect.gen(function* () {
         return null;
       }),
     )
+      .finally(() => {
+        activity.pendingStarts -= 1;
+      })
       .then((mismatch) => {
         if (mismatch === "engine-generation-mismatch") {
           writeJson(res, 409, { error: mismatch });
@@ -841,6 +878,10 @@ const make = Effect.gen(function* () {
         leaseId,
         geometrySeq: geometrySeq ?? activity.geometry?.seq ?? 0,
         expiresAt,
+        // The lease's retained replay high-water mark: a client whose socket
+        // reconnects under the same lease resumes its seq numbering above
+        // this rather than restarting at zero into replay rejections.
+        highSeq: activity.leaseState.get(leaseId)?.highSeq ?? 0,
         ...(cleanupIncomplete ? { cleanupIncomplete: true } : {}),
       }),
     );
@@ -866,15 +907,7 @@ const make = Effect.gen(function* () {
       // The lane state is retained per lease across socket replacement, so
       // rebinding (or a shadow socket on the same lease) can reset neither
       // the rate bucket nor the replay high-water mark.
-      let bucket = activity.leaseState.get(leaseId);
-      if (bucket === undefined) {
-        bucket = {
-          tokens: BROWSER_FRAME_INPUT_MAX_EVENTS_PER_SECOND,
-          tokensAt: now,
-          highSeq: 0,
-        };
-        activity.leaseState.set(leaseId, bucket);
-      }
+      const bucket = leaseBucket(activity, leaseId);
       if (packet.seq <= bucket.highSeq) {
         rejectPacket(socket, packet.seq, "replay");
         return;
@@ -891,8 +924,11 @@ const make = Effect.gen(function* () {
       }
       // Geometry is frozen at admission: the queued packet dispatches with
       // the viewport its coordinates were authored against, never whatever
-      // a later resize left in `activity.viewportCss`.
+      // a later resize left in `activity.viewportCss`. The admitted geometry
+      // key rides along so the Manager can re-fence inside the guest lane —
+      // the hub's own re-check before enqueueing stops at the lane's edge.
       const admittedViewport = activity.viewportCss;
+      const admittedGeometryKey = activity.geometry?.key ?? null;
       bucket.tokens = Math.min(
         BROWSER_FRAME_INPUT_MAX_EVENTS_PER_SECOND,
         bucket.tokens +
@@ -931,6 +967,7 @@ const make = Effect.gen(function* () {
                 socket.engineGeneration,
                 packet.event,
                 admittedViewport,
+                admittedGeometryKey,
               )
               .pipe(
                 Effect.catch((error) =>
@@ -1005,10 +1042,13 @@ const make = Effect.gen(function* () {
           const incumbent =
             activity.input !== null && activity.input.state !== "ended" ? activity.input : null;
           // A same-lease ticket older than the newest the hub has already
-          // accepted — incumbent OR parked pending — is a valid credential
-          // but may not seize the slot or evict the newer candidate: it
-          // binds immediately as a shadow and never runs lease cleanup.
-          let newestSameLeaseSeq: number | null = null;
+          // accepted is a valid credential but may not seize the slot or
+          // evict the newer candidate: it binds immediately as a shadow and
+          // never runs lease cleanup. The retained per-lease high-water
+          // remembers an accepted ticket even after its socket ended — an
+          // older upgrade completing late must not inherit the freed slot.
+          let newestSameLeaseSeq: number | null =
+            activity.leaseState.get(leaseId)?.ticketSeq ?? null;
           for (const held of [incumbent, activity.pending] as const) {
             if (held !== null && held.leaseId === leaseId) {
               newestSameLeaseSeq =
@@ -1029,6 +1069,11 @@ const make = Effect.gen(function* () {
             );
             return;
           }
+          // Accepted — retain the ticket seq for the lease's lifetime so a
+          // later-ending socket cannot erase the ordering this upgrade
+          // established.
+          const accepted = leaseBucket(activity, leaseId);
+          accepted.ticketSeq = Math.max(accepted.ticketSeq, ticketSeq);
           // Latest arrival wins the single pending slot: a parked candidate
           // is closed `superseded` when a newer upgrade lands.
           const prior = activity.pending;

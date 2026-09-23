@@ -1409,6 +1409,187 @@ describe("BrowserFrameHub", () => {
     }
   });
 
+  it("reports the lease high-water on bound so a rebind continues the input sequence", async () => {
+    const { stub, layer: managerLayer } = makeManagerStub();
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const hub = yield* BrowserFrameHub;
+          yield* Effect.promise(async () => {
+            const first = await connectInput(hub.origin, hub.secret, {
+              ...baseInputParams,
+              "x-t3-lease": "lease-a",
+              "x-t3-ticket-seq": "1",
+            });
+            first.ws.send(
+              JSON.stringify({ seq: 1, geometrySeq: 0, event: { type: "text", text: "a" } }),
+            );
+            first.ws.send(
+              JSON.stringify({ seq: 2, geometrySeq: 0, event: { type: "text", text: "b" } }),
+            );
+            await vi.waitFor(() => expect(stub.dispatched).toHaveLength(2));
+            const firstClosed = waitClosed(first.ws);
+            first.ws.terminate();
+            await firstClosed;
+
+            // The same lease rebinds under a newer ticket: the retained
+            // high-water is reported on the bound notice so the client
+            // resumes numbering instead of restarting at zero.
+            const second = await connectInput(hub.origin, hub.secret, {
+              ...baseInputParams,
+              "x-t3-lease": "lease-a",
+              "x-t3-ticket-seq": "2",
+            });
+            expect(second.bound.highSeq).toBe(2);
+            // A packet continuing above the waterline dispatches; a replay of
+            // the retained range is still rejected — rebind resets neither.
+            second.ws.send(
+              JSON.stringify({ seq: 3, geometrySeq: 0, event: { type: "text", text: "c" } }),
+            );
+            await vi.waitFor(() => expect(stub.dispatched).toHaveLength(3));
+            const replayed = nextNotice(second.ws, "rejected");
+            second.ws.send(
+              JSON.stringify({ seq: 2, geometrySeq: 0, event: { type: "text", text: "no" } }),
+            );
+            expect(await replayed).toMatchObject({ type: "rejected", seq: 2, reason: "replay" });
+            second.ws.terminate();
+          });
+        }),
+      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
+    );
+  });
+
+  it("a stale-seq upgrade completing after the newer socket ends binds as a shadow", async () => {
+    let releaseConfig: (() => void) | null = null;
+    const configGate = new Promise<void>((resolve) => {
+      releaseConfig = resolve;
+    });
+    let configCalls = 0;
+    const { layer: managerLayer } = makeManagerStub((manager) => {
+      const config = {
+        engineGeneration: "gen-1",
+        viewportCss: { width: 100, height: 100 },
+        zoomFactor: 1,
+      };
+      manager.remoteFrameConfig = () => {
+        configCalls += 1;
+        return configCalls === 1
+          ? Effect.promise(() => configGate.then(() => config))
+          : Effect.succeed(config);
+      };
+    });
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const hub = yield* BrowserFrameHub;
+          yield* Effect.promise(async () => {
+            // Ticket 2's upgrade stalls inside its config read.
+            const ws2 = await openInput(hub.origin, hub.secret, {
+              ...baseInputParams,
+              "x-t3-lease": "lease-a",
+              "x-t3-ticket-seq": "2",
+            });
+            // A newer ticket for the same lease upgrades, binds, and ends
+            // while ticket 2 is still waiting on config.
+            const ws3 = await openInput(hub.origin, hub.secret, {
+              ...baseInputParams,
+              "x-t3-lease": "lease-a",
+              "x-t3-ticket-seq": "3",
+            });
+            const bound3 = await waitNotice(ws3, "bound");
+            expect(bound3.type).toBe("bound");
+            const closed3 = waitClosed(ws3);
+            ws3.terminate();
+            await closed3;
+
+            // Ticket 2's config read finally completes: the retained
+            // per-lease high-water still orders it below the accepted ticket
+            // 3 — it must bind as a shadow, not seize the freed slot.
+            releaseConfig!();
+            const shadow = await waitNotice(ws2, "shadow");
+            expect(shadow.type).toBe("shadow");
+            expect(shadow.leaseId).toBe("lease-a");
+            const buffered = noticeBuffers.get(ws2) ?? [];
+            expect(buffered.some((notice) => notice.type === "bound")).toBe(false);
+            ws2.terminate();
+          });
+        }),
+      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
+    );
+  });
+
+  it("an idle sweep cannot reclaim a session while a stream startup is in flight", async () => {
+    let releaseConfig: (() => void) | null = null;
+    const configGate = new Promise<void>((resolve) => {
+      releaseConfig = resolve;
+    });
+    let configCalls = 0;
+    const { stub, layer: managerLayer } = makeManagerStub((manager) => {
+      const config = {
+        engineGeneration: "gen-1",
+        viewportCss: { width: 100, height: 100 },
+        zoomFactor: 1,
+      };
+      manager.remoteFrameConfig = () => {
+        configCalls += 1;
+        return configCalls === 1
+          ? Effect.promise(() => configGate.then(() => config))
+          : Effect.succeed(config);
+      };
+    });
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const hub = yield* BrowserFrameHub;
+          yield* Effect.promise(async () => {
+            // Install the fake clock first so the activity's own sweep is a
+            // fake timer the test can advance.
+            vi.useFakeTimers();
+            try {
+              // First stream's startup stalls inside its config read.
+              const firstResponse = fetch(streamUrl(hub.origin, hub.secret));
+              for (let i = 0; i < 400 && configCalls === 0; i++) {
+                await vi.advanceTimersByTimeAsync(5);
+              }
+              expect(configCalls).toBe(1);
+              // The session's own sweep runs well past the idle window while
+              // the startup still awaits config — the in-flight startup must
+              // count, or the sweep orphans it onto a detached activity.
+              await vi.advanceTimersByTimeAsync(61_000 + 2_000);
+              // A second viewer arrives and registers on the live activity.
+              const second = await fetch(streamUrl(hub.origin, hub.secret));
+              expect(second.status).toBe(200);
+              const reader2 = second.body!.getReader();
+              await reader2.read();
+              // The stalled startup completes and registers its viewer too.
+              releaseConfig!();
+              const first = await firstResponse;
+              expect(first.status).toBe(200);
+              const reader1 = first.body!.getReader();
+              await reader1.read();
+              // First viewer disconnects: capture belongs to the second
+              // viewer now — a detached-object cleanup would have stopped it.
+              await reader1.cancel();
+              for (let i = 0; i < 100; i++) {
+                await vi.advanceTimersByTimeAsync(10);
+                if (stub.stopped.length > 0) break;
+              }
+              expect(stub.stopped).not.toContain(runtimeTabId);
+              await reader2.cancel();
+              for (let i = 0; i < 100 && stub.stopped.length === 0; i++) {
+                await vi.advanceTimersByTimeAsync(10);
+              }
+              // Positive control: the last viewer's disconnect does stop it.
+              expect(stub.stopped).toContain(runtimeTabId);
+            } finally {
+              vi.useRealTimers();
+            }
+          });
+        }),
+      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
+    );
+  });
+
   it("reclaims an idle session's cache and stops its sweep", async () => {
     let captures = 0;
     const { stub, layer: managerLayer } = makeManagerStub((manager) => {
