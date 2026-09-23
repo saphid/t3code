@@ -1,0 +1,93 @@
+{
+  "upstreamRepository": "pingdotgg/t3code",
+  "upstreamTag": "d2675dcbd9adeb2e9ac090ee38de5a286946c239",
+  "upstreamBranch": "t3code/codex-turn-mapping",
+  "releaseChannel": "nightly-v2",
+  "upstreamUrl": "https://github.com/pingdotgg/t3code/commit/d2675dcbd9adeb2e9ac090ee38de5a286946c239",
+  "releaseRepository": "saphid/t3code",
+  "fingerprint": "273930411f148b8a09c99f347db84a399da48453bf91f174557d8b8e2635fe79",
+  "version": "0.0.42-nightly-v2.20260923.1790141064993300",
+  "tag": "v0.0.42-nightly-v2.20260923.1790141064993300",
+  "patches": [
+    {
+      "label": "saphid/t3code@75be8c113049",
+      "name": "fix(nightly-v2): adapt custom updater to V2 profiles",
+      "commits": ["75be8c113049000ec80dd274e786e954a0f2a539"]
+    },
+    {
+      "label": "saphid/t3code@03c0e81aade3",
+      "name": "feat(desktop): support fork nightly streams on orchestrator v2",
+      "commits": ["03c0e81aade35bb4d2d0faa9979ce269b580b874"]
+    },
+    {
+      "label": "saphid/t3code@92b4ff4f9b29",
+      "name": "fix(nightly): reuse nightly artwork for v2 installers",
+      "commits": ["92b4ff4f9b2997c72b0863da6af27b6241e0bd44"]
+    },
+    {
+      "label": "saphid/t3code@1baa52f90a0e",
+      "name": "test(mobile): make cold highlighting independent of runner speed",
+      "commits": ["1baa52f90a0e6fb33cee66955406e029370af647"]
+    },
+    {
+      "label": "saphid/t3code@5564f3a64282",
+      "name": "fix(updates): keep OV2 desktop and server releases on the fork",
+      "commits": ["5564f3a64282f2095e928b338bea3335e0e201b6"]
+    },
+    {
+      "label": "saphid/t3code@0d3a80563e44",
+      "name": "test(desktop): provide packaged branding in early startup fixture",
+      "commits": ["0d3a80563e44aa321ddc17a9de811dc3286f08a1"]
+    },
+    {
+      "label": "saphid/t3code@b7485402f3db",
+      "name": "fix(build): identify Windows native probes exactly",
+      "commits": ["b7485402f3db602ce9a18f96b5a4c9904fe811fb"]
+    },
+    {
+      "label": "saphid/t3code@1dddd827e6a0",
+      "name": "test(desktop): skip unavailable libsecret helper",
+      "commits": ["1dddd827e6a0cd80f322f04d0509c6635726caca"]
+    },
+    {
+      "label": "saphid/t3code@655caf571b0e",
+      "name": "fix(server): resume orphaned provider starts after recovery",
+      "commits": ["655caf571b0efb5d71edb159885e9b5dde042195"]
+    },
+    {
+      "label": "saphid/t3code@fc445c87172c",
+      "name": "test(server): adapt provider recovery fixture to projection queries",
+      "commits": ["fc445c87172cfac29b7e779c9ea2d586a33e53be"]
+    },
+    {
+      "label": "saphid/t3code@93e61149f8ac",
+      "name": "fix(opencode): recover from slow CLI health probes",
+      "commits": ["93e61149f8ac17bbb2275feed3ab077388742c45"]
+    },
+    {
+      "label": "saphid/t3code@64fb9a328d4e",
+      "name": "fix(server): preserve racy timestamps in review indexes",
+      "commits": ["64fb9a328d4e1be6b426e2d1137c1bf5268294c3"]
+    },
+    {
+      "label": "saphid/t3code@b0ad145784ff",
+      "name": "test(server): await ACP prompt settlement before soft-steer interrupts",
+      "commits": ["b0ad145784ff8886bcab7902845753a2c6c7f7af"]
+    },
+    {
+      "label": "saphid/t3code@bff0fe603922",
+      "name": "test(web): keep React completion outside simulated application timers",
+      "commits": ["bff0fe603922c76e6f82a602c91550bbff71f5a9"]
+    },
+    {
+      "label": "saphid/t3code@843307eb2083",
+      "name": "fix(v2): keep startup recovery running past undecodable thread projections",
+      "commits": ["843307eb2083aade12c8cf2839e7961d4b7451f5"]
+    },
+    {
+      "label": "saphid/t3code@6f6ae98244eb",
+      "name": "fix(web): detect Fork Nightly servers that are behind the client",
+      "commits": ["6f6ae98244eb5ad3260ecf9e0261cde0ce3d221d"]
+    }
+  ]
+}
