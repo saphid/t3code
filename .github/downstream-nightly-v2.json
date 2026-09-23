@@ -88,6 +88,12 @@
       "repository": "saphid/t3code",
       "sha": "bff0fe603922c76e6f82a602c91550bbff71f5a9",
       "name": "test(web): keep React completion outside simulated application timers"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "843307eb2083aade12c8cf2839e7961d4b7451f5",
+      "name": "fix(v2): keep startup recovery running past undecodable thread projections"
     }
   ]
 }
