@@ -94,6 +94,12 @@
       "repository": "saphid/t3code",
       "sha": "843307eb2083aade12c8cf2839e7961d4b7451f5",
       "name": "fix(v2): keep startup recovery running past undecodable thread projections"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "6f6ae98244eb5ad3260ecf9e0261cde0ce3d221d",
+      "name": "fix(web): detect Fork Nightly servers that are behind the client"
     }
   ]
 }
