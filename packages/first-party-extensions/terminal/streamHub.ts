@@ -33,9 +33,11 @@
 export const BROKER_STREAM_CAP = 8;
 
 /**
- * Frames kept per feed for late-joiner replay. Overflow resets the history —
- * a joiner then starts at the replayed status and waits for the next state
- * frame rather than reconstructing state from a lossy prefix.
+ * Frames kept per feed for late-joiner replay. At the cap the window slides
+ * — the oldest frame is dropped, never the whole history. If the evicted
+ * frame was the state anchor, the next join restarts the feed (its fresh
+ * subscription re-anchors with a new state frame) instead of replaying
+ * deltas a joiner could not reconstruct state from.
  */
 export const FEED_REPLAY_MAX_FRAMES = 64;
 
@@ -82,8 +84,11 @@ export interface TerminalFeedReplayPolicy<Frame> {
 
 /**
  * History for one delivered frame. Returns a fresh array — late joiners may
- * be mid-replay of the previous one. Returns `[]` (replay unavailable) when
- * a delta arrives with no state frame yet, or when the history is full.
+ * be mid-replay of the previous one. Returns `[]` when a delta arrives with
+ * no state frame yet (it carries no standalone state). At the cap the
+ * oldest frame is evicted so the window keeps sliding: the newest frames
+ * survive, and the hub restarts the feed on the next join if the eviction
+ * took the state anchor with it.
  */
 const advanceReplay = <Frame>(
   replay: readonly Frame[],
@@ -91,7 +96,8 @@ const advanceReplay = <Frame>(
   policy: TerminalFeedReplayPolicy<Frame> | undefined,
 ): readonly Frame[] => {
   if (policy === undefined || policy.isStateFrame(frame)) return [frame];
-  if (replay.length === 0 || replay.length >= FEED_REPLAY_MAX_FRAMES) return [];
+  if (replay.length === 0) return [];
+  if (replay.length >= FEED_REPLAY_MAX_FRAMES) return [...replay.slice(1), frame];
   return [...replay, frame];
 };
 
@@ -105,7 +111,10 @@ export interface TerminalPaneLease {
 }
 
 interface FixedFeed {
-  readonly controller: AbortController;
+  /** Replaced on restart; sinks capture their own controller and go inert. */
+  controller: AbortController;
+  /** The driver this feed was created with — restarts reuse it verbatim. */
+  readonly driver: TerminalFeedDriver<unknown>;
   readonly listeners: Set<TerminalSharedFeedListener<unknown>>;
   lastStatus: { status: TerminalFeedStatus; message: string | null } | null;
   /** Frames a late joiner replays, in delivery order. Never mutated in place. */
@@ -177,6 +186,7 @@ export class TerminalStreamHub {
       }
       feed = {
         controller: new AbortController(),
+        driver: driver as TerminalFeedDriver<unknown>,
         listeners: new Set(),
         lastStatus: null,
         replay: [],
@@ -189,32 +199,28 @@ export class TerminalStreamHub {
       };
       this.#feeds.set(key, feed);
       const entry = feed;
-      const sink: TerminalFeedSink<Frame> = {
-        frame: (frame) => {
-          entry.replay = advanceReplay(entry.replay, frame, entry.replayPolicy);
-          for (const listener of entry.listeners) listener.onFrame(frame);
-        },
-        status: (status, message) => {
-          entry.lastStatus = { status, message };
-          for (const listener of entry.listeners) listener.onStatus(status, message);
-        },
-      };
-      const start = () => {
-        if (entry.controller.signal.aborted || this.#feeds.get(key) !== entry) return;
-        driver(sink, entry.controller.signal);
-      };
       if (evictedAny) {
         // An evicted pane's host-level unsubscribe resolves on the
         // microtask queue; starting the replacement subscription in the
         // same synchronous block would race it to the broker. Let the
         // victim's teardown drain first.
-        queueMicrotask(start);
+        queueMicrotask(() => this.#startDriver(key, entry));
       } else {
-        start();
+        this.#startDriver(key, entry);
       }
     }
     const entry = feed;
     const bound = listener as TerminalSharedFeedListener<unknown>;
+    // A slid window may have evicted the replay's state anchor. Trailing
+    // deltas reconstruct nothing — restart the shared subscription instead:
+    // it opens with a fresh state frame (the sessions feed snapshots at
+    // establishment), re-anchoring replay for this joiner and re-syncing
+    // the listeners already attached.
+    const anchorEvicted =
+      entry.replayPolicy !== undefined &&
+      entry.replay.length > 0 &&
+      !entry.replayPolicy.isStateFrame(entry.replay[0]);
+    if (anchorEvicted && this.#feeds.get(key) === entry) this.#restartFeed(key, entry);
     // Replay must be a stable prefix: it is read before joining, and
     // advanceReplay always reassigns (never mutates), so a frame fanning
     // out after the join lands after the replayed history.
@@ -288,6 +294,43 @@ export class TerminalStreamHub {
     return () => {
       this.#paneWaiters.delete(listener);
     };
+  }
+
+  /**
+   * Runs the feed's driver against its current controller. The sink captures
+   * that controller, so a restart (or the last detach) renders the previous
+   * sink inert — an in-flight frame from the old subscription can no longer
+   * advance the new replay window.
+   */
+  #startDriver(key: string, feed: FixedFeed): void {
+    if (feed.controller.signal.aborted || this.#feeds.get(key) !== feed) return;
+    const controller = feed.controller;
+    const sink: TerminalFeedSink<unknown> = {
+      frame: (frame) => {
+        if (controller.signal.aborted) return;
+        feed.replay = advanceReplay(feed.replay, frame, feed.replayPolicy);
+        for (const listener of feed.listeners) listener.onFrame(frame);
+      },
+      status: (status, message) => {
+        if (controller.signal.aborted) return;
+        feed.lastStatus = { status, message };
+        for (const listener of feed.listeners) listener.onStatus(status, message);
+      },
+    };
+    feed.driver(sink, controller.signal);
+  }
+
+  /**
+   * Tears the feed's subscription down and starts it again. The old
+   * subscription's broker-side teardown resolves on the microtask queue, so
+   * the replacement starts one microtask later — overlapping the two would
+   * transiently exceed the stream cap.
+   */
+  #restartFeed(key: string, feed: FixedFeed): void {
+    feed.controller.abort();
+    feed.controller = new AbortController();
+    feed.replay = [];
+    queueMicrotask(() => this.#startDriver(key, feed));
   }
 
   #lease(key: string, state: PaneLeaseState): TerminalPaneLease {

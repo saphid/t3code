@@ -194,41 +194,44 @@ NodeTest.describe("fixed feed late-joiner replay", () => {
     NodeAssert.deepEqual(joined.frames, []);
   });
 
-  NodeTest.test("history overflow resets; the next state frame restores replay", () => {
-    const { hub } = clockHub();
-    let sink = null;
-    hub.acquireFixedFeed(
-      "sessions:t:1",
-      { onFrame() {}, onStatus() {} },
-      (feedSink) => {
+  NodeTest.test(
+    "overflow slides the window; the next join restarts the feed for a fresh anchor",
+    async () => {
+      const { hub } = clockHub();
+      let sink = null;
+      const starts = [];
+      const driver = (feedSink) => {
+        starts.push(`start-${starts.length + 1}`);
         sink = feedSink;
         sink.status("connecting", null);
-      },
-      sessionsPolicy,
-    );
-    sink.frame({ kind: "snapshot", terminals: [] });
-    for (let i = 0; i < FEED_REPLAY_MAX_FRAMES; i += 1)
-      sink.frame({ kind: "upsert", terminal: `term-${i}` });
-    const overflowed = { frames: [] };
-    hub.acquireFixedFeed(
-      "sessions:t:1",
-      { onFrame: (frame) => overflowed.frames.push(frame), onStatus() {} },
-      () => {},
-      sessionsPolicy,
-    );
-    // A lossy prefix is worse than none — the joiner waits for real state.
-    NodeAssert.deepEqual(overflowed.frames, []);
-    sink.frame({ kind: "snapshot", terminals: [] });
-    const afterReset = { frames: [] };
-    hub.acquireFixedFeed(
-      "sessions:t:1",
-      { onFrame: (frame) => afterReset.frames.push(frame), onStatus() {} },
-      () => {},
-      sessionsPolicy,
-    );
-    NodeAssert.equal(afterReset.frames.length, 1);
-    NodeAssert.equal(afterReset.frames[0].kind, "snapshot");
-  });
+        // Each (re)subscription opens with its snapshot — as the real sessions
+        // feed does at establishment.
+        sink.frame({ kind: "snapshot", terminals: starts.length === 1 ? [] : ["fresh"] });
+      };
+      hub.acquireFixedFeed("sessions:t:1", { onFrame() {}, onStatus() {} }, driver, sessionsPolicy);
+      sink.frame({ kind: "snapshot", terminals: [] });
+      for (let i = 0; i < FEED_REPLAY_MAX_FRAMES; i += 1)
+        sink.frame({ kind: "upsert", terminal: `term-${i}` });
+      const overflowed = { frames: [] };
+      hub.acquireFixedFeed(
+        "sessions:t:1",
+        {
+          onFrame: (frame) => overflowed.frames.push(frame),
+          onStatus() {},
+        },
+        driver,
+        sessionsPolicy,
+      );
+      // The window slid past its state anchor, so the join restarted the
+      // shared subscription instead of replaying deltas that anchor nothing.
+      await new Promise((resolve) => queueMicrotask(resolve));
+      NodeAssert.equal(starts.length, 2);
+      NodeAssert.deepEqual(overflowed.frames, [{ kind: "snapshot", terminals: ["fresh"] }]);
+      // Live frames continue after the re-anchored restart.
+      sink.frame({ kind: "upsert", terminal: "live" });
+      NodeAssert.equal(overflowed.frames.at(-1).kind, "upsert");
+    },
+  );
 
   NodeTest.test("a second placement goes live through the replay (dual-mount regression)", () => {
     const { hub } = clockHub();
@@ -282,6 +285,80 @@ NodeTest.describe("fixed feed late-joiner replay", () => {
     const second = join(secondPanel);
     NodeAssert.equal(secondPanel.snapshot.stream, "live");
     NodeAssert.deepEqual(secondPanel.snapshot.terminalIds, ["term-1", "term-2"]);
+    first();
+    second();
+    firstPanel.dispose();
+    secondPanel.dispose();
+  });
+
+  NodeTest.test("a late joiner after 64 upserts goes live via a feed restart", async () => {
+    // The reviewer's LATE_JOIN_AFTER_64_UPSERTS probe: the sessions feed
+    // snapshots only at subscription establishment, and repeated activity
+    // upserts (no new terminals needed) overflowed the replay history.
+    // Pre-fix the overflow discarded everything and the second placement's
+    // panel sat on "connecting" forever — open/split stayed gated even
+    // though its tabs kept receiving live metadata.
+    const { hub } = clockHub();
+    const meta = (terminalId, label = "") => ({
+      terminalId,
+      status: "running",
+      label,
+      hasRunningSubprocess: false,
+      exitCode: null,
+      exitSignal: null,
+      updatedAt: "2026-09-12T00:00:00Z",
+    });
+    const control = {
+      open: async () => {},
+      attach: async () => {},
+      write: async () => ({}),
+      resize: async () => ({}),
+      clear: async () => ({}),
+      restart: async () => {},
+      close: async () => ({}),
+    };
+    const launch = { cwd: "/workspace", worktreePath: null };
+    let sink = null;
+    const starts = [];
+    const join = (panel) =>
+      hub.acquireFixedFeed(
+        "sessions:e:t",
+        {
+          onFrame: (frame) => panel.applySessionsEvent(frame),
+          onStatus: (status, message) => {
+            if (status === "connecting") panel.beginListStream();
+            else panel.markStreamDisconnected(message);
+          },
+        },
+        (feedSink) => {
+          starts.push(`start-${starts.length + 1}`);
+          sink = feedSink;
+          sink.status("connecting", null);
+          sink.frame({ kind: "snapshot", terminals: [meta("term-1")] });
+        },
+        sessionsPolicy,
+      );
+    const firstPanel = new TerminalPanel({ control, launch });
+    const first = join(firstPanel);
+    // Sixty-four metadata upserts for the SAME terminal — plain activity,
+    // not session churn.
+    for (let i = 0; i < FEED_REPLAY_MAX_FRAMES; i += 1)
+      sink.frame({ kind: "upsert", terminal: meta("term-1", `tick-${i}`) });
+    NodeAssert.equal(firstPanel.snapshot.stream, "live");
+    const secondPanel = new TerminalPanel({ control, launch });
+    const second = join(secondPanel);
+    await new Promise((resolve) => queueMicrotask(resolve));
+    // The join restarted the shared subscription; its fresh snapshot took
+    // the second placement live (pre-fix it was still "connecting" here).
+    NodeAssert.equal(starts.length, 2);
+    NodeAssert.equal(secondPanel.snapshot.stream, "live");
+    NodeAssert.deepEqual(secondPanel.snapshot.terminalIds, ["term-1"]);
+    NodeAssert.equal(firstPanel.snapshot.stream, "live");
+    // Live deltas still flow to both placements after the restart.
+    sink.frame({ kind: "upsert", terminal: meta("term-1", "live") });
+    const tabOf = (panel) => panel.snapshot.tabs.find((tab) => tab.terminalId === "term-1");
+    NodeAssert.equal(tabOf(secondPanel)?.label, "live");
+    NodeAssert.equal(tabOf(firstPanel)?.label, "live");
     first();
     second();
     firstPanel.dispose();

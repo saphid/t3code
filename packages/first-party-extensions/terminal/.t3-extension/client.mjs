@@ -9709,7 +9709,8 @@ var __t3Client = (() => {
   var FEED_REPLAY_MAX_FRAMES = 64;
   var advanceReplay = (replay, frame, policy) => {
     if (policy === void 0 || policy.isStateFrame(frame)) return [frame];
-    if (replay.length === 0 || replay.length >= FEED_REPLAY_MAX_FRAMES) return [];
+    if (replay.length === 0) return [];
+    if (replay.length >= FEED_REPLAY_MAX_FRAMES) return [...replay.slice(1), frame];
     return [...replay, frame];
   };
   var TerminalStreamHub = class {
@@ -9750,6 +9751,7 @@ var __t3Client = (() => {
         }
         feed = {
           controller: new AbortController(),
+          driver,
           listeners: /* @__PURE__ */ new Set(),
           lastStatus: null,
           replay: [],
@@ -9759,28 +9761,16 @@ var __t3Client = (() => {
         };
         this.#feeds.set(key, feed);
         const entry2 = feed;
-        const sink = {
-          frame: (frame) => {
-            entry2.replay = advanceReplay(entry2.replay, frame, entry2.replayPolicy);
-            for (const listener2 of entry2.listeners) listener2.onFrame(frame);
-          },
-          status: (status, message) => {
-            entry2.lastStatus = { status, message };
-            for (const listener2 of entry2.listeners) listener2.onStatus(status, message);
-          }
-        };
-        const start = () => {
-          if (entry2.controller.signal.aborted || this.#feeds.get(key) !== entry2) return;
-          driver(sink, entry2.controller.signal);
-        };
         if (evictedAny) {
-          queueMicrotask(start);
+          queueMicrotask(() => this.#startDriver(key, entry2));
         } else {
-          start();
+          this.#startDriver(key, entry2);
         }
       }
       const entry = feed;
       const bound = listener;
+      const anchorEvicted = entry.replayPolicy !== void 0 && entry.replay.length > 0 && !entry.replayPolicy.isStateFrame(entry.replay[0]);
+      if (anchorEvicted && this.#feeds.get(key) === entry) this.#restartFeed(key, entry);
       const replayFrames = entry.replay;
       entry.listeners.add(bound);
       if (entry.lastStatus !== null)
@@ -9837,6 +9827,41 @@ var __t3Client = (() => {
       return () => {
         this.#paneWaiters.delete(listener);
       };
+    }
+    /**
+     * Runs the feed's driver against its current controller. The sink captures
+     * that controller, so a restart (or the last detach) renders the previous
+     * sink inert — an in-flight frame from the old subscription can no longer
+     * advance the new replay window.
+     */
+    #startDriver(key, feed) {
+      if (feed.controller.signal.aborted || this.#feeds.get(key) !== feed) return;
+      const controller = feed.controller;
+      const sink = {
+        frame: (frame) => {
+          if (controller.signal.aborted) return;
+          feed.replay = advanceReplay(feed.replay, frame, feed.replayPolicy);
+          for (const listener of feed.listeners) listener.onFrame(frame);
+        },
+        status: (status, message) => {
+          if (controller.signal.aborted) return;
+          feed.lastStatus = { status, message };
+          for (const listener of feed.listeners) listener.onStatus(status, message);
+        }
+      };
+      feed.driver(sink, controller.signal);
+    }
+    /**
+     * Tears the feed's subscription down and starts it again. The old
+     * subscription's broker-side teardown resolves on the microtask queue, so
+     * the replacement starts one microtask later — overlapping the two would
+     * transiently exceed the stream cap.
+     */
+    #restartFeed(key, feed) {
+      feed.controller.abort();
+      feed.controller = new AbortController();
+      feed.replay = [];
+      queueMicrotask(() => this.#startDriver(key, feed));
     }
     #lease(key, state2) {
       const hub = this;
