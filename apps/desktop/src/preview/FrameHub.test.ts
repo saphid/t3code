@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalFetchInEffect:off globalDate:off globalDateInEffect:off globalTimers:off globalTimersInEffect:off preferSchemaOverJson:off -- Native socket test boundary: real HTTP/WS against the loopback hub, packet bytes are raw JSON.
+import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { get, ServerResponse } from "node:http";
@@ -1895,7 +1896,7 @@ describe("BrowserFrameHub", () => {
     );
   });
 
-  it("a stalled renewal's admission deadline survives the lane-cap sweep", async () => {
+  effectIt.live("a stalled renewal's admission deadline survives the lane-cap sweep", () => {
     let configCalls = 0;
     let gating = false;
     let releaseConfig: (() => void) | null = null;
@@ -1921,105 +1922,104 @@ describe("BrowserFrameHub", () => {
       };
     });
     const capLayer = Layer.succeed(BrowserFrameHubLeaseLaneCap, 3);
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const hub = yield* BrowserFrameHub;
-          yield* Effect.promise(async () => {
-            vi.useFakeTimers();
-            try {
-              // Ticket 1 binds under a short deadline and admits seq 114.
-              const ws1 = await openInput(hub.origin, hub.secret, {
-                ...baseInputParams,
-                "x-t3-lease": "lease-a",
-                "x-t3-lease-expires": String(Date.now() + 10_000),
-                "x-t3-ticket-seq": "1",
-              });
-              const bound1 = await waitNotice(ws1, "bound");
-              ws1.send(
-                JSON.stringify({
-                  seq: 114,
-                  geometrySeq: bound1.geometrySeq ?? 0,
-                  event: { type: "text", text: "peak" },
-                }),
-              );
-              for (let i = 0; i < 200 && stub.dispatched.length === 0; i++) {
-                await vi.advanceTimersByTimeAsync(10);
-              }
-              expect(stub.dispatched).toHaveLength(1);
-              ws1.close();
-              await waitClosed(ws1);
-
-              // The renewal stalls inside its config read — but admission
-              // already stamped the extended deadline into the lane.
-              gating = true;
-              const ws2Promise = openInput(hub.origin, hub.secret, {
-                ...baseInputParams,
-                "x-t3-lease": "lease-a",
-                "x-t3-lease-expires": String(Date.now() + 600_000),
-                "x-t3-ticket-seq": "2",
-              });
-              const callsBefore = configCalls;
-              for (let i = 0; i < 400 && configCalls === callsBefore; i++) {
-                await vi.advanceTimersByTimeAsync(5);
-              }
-              expect(configCalls).toBe(callsBefore + 1);
-              const ws2 = await ws2Promise;
-
-              // The lease's earlier deadline lapses while the renewal is
-              // still parked in its config read.
-              await vi.advanceTimersByTimeAsync(20_000);
-
-              // Cap pressure: three other leases push the map over the cap,
-              // running the sweep — the renewal's lane survives on its
-              // admission-stamped deadline instead of losing its high-water.
-              for (const leaseId of ["lease-b", "lease-c", "lease-d"]) {
-                const pressure = await openInput(hub.origin, hub.secret, {
-                  ...baseInputParams,
-                  "x-t3-lease": leaseId,
-                  "x-t3-lease-expires": String(Date.now() + 600_000),
-                });
-                await waitNotice(pressure, "bound");
-                pressure.close();
-              }
-
-              // The renewal resumes and binds: the lane it kept still
-              // carries the admitted high-water — not a fresh zero.
-              releaseConfig!();
-              const bound2 = await waitNotice(ws2, "bound");
-              expect(bound2.highSeq).toBe(114);
-              ws2.send(
-                JSON.stringify({
-                  seq: 1,
-                  geometrySeq: bound2.geometrySeq ?? 0,
-                  event: { type: "text", text: "replay" },
-                }),
-              );
-              const rejected = await waitNotice(ws2, "rejected");
-              expect(rejected.seq).toBe(1);
-              expect(rejected.reason).toBe("replay");
-              expect(stub.dispatched).toHaveLength(1);
-              ws2.send(
-                JSON.stringify({
-                  seq: 115,
-                  geometrySeq: bound2.geometrySeq ?? 0,
-                  event: { type: "text", text: "after" },
-                }),
-              );
-              for (let i = 0; i < 200 && stub.dispatched.length < 2; i++) {
-                await vi.advanceTimersByTimeAsync(10);
-              }
-              expect(stub.dispatched).toHaveLength(2);
-              ws2.terminate();
-            } finally {
-              vi.useRealTimers();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* BrowserFrameHub;
+        yield* Effect.promise(async () => {
+          vi.useFakeTimers();
+          try {
+            // Ticket 1 binds under a short deadline and admits seq 114.
+            const ws1 = await openInput(hub.origin, hub.secret, {
+              ...baseInputParams,
+              "x-t3-lease": "lease-a",
+              "x-t3-lease-expires": String(Date.now() + 10_000),
+              "x-t3-ticket-seq": "1",
+            });
+            const bound1 = await waitNotice(ws1, "bound");
+            ws1.send(
+              JSON.stringify({
+                seq: 114,
+                geometrySeq: bound1.geometrySeq ?? 0,
+                event: { type: "text", text: "peak" },
+              }),
+            );
+            for (let i = 0; i < 200 && stub.dispatched.length === 0; i++) {
+              await vi.advanceTimersByTimeAsync(10);
             }
-          });
-        }),
-      ).pipe(
-        Effect.provide(
-          BrowserFrameHubLayer.pipe(Layer.provide(managerLayer), Layer.provide(capLayer)),
-        ),
+            expect(stub.dispatched).toHaveLength(1);
+            ws1.close();
+            await waitClosed(ws1);
+
+            // The renewal stalls inside its config read — but admission
+            // already stamped the extended deadline into the lane.
+            gating = true;
+            const ws2Promise = openInput(hub.origin, hub.secret, {
+              ...baseInputParams,
+              "x-t3-lease": "lease-a",
+              "x-t3-lease-expires": String(Date.now() + 600_000),
+              "x-t3-ticket-seq": "2",
+            });
+            const callsBefore = configCalls;
+            for (let i = 0; i < 400; i++) {
+              if (configCalls !== callsBefore) break;
+              await vi.advanceTimersByTimeAsync(5);
+            }
+            expect(configCalls).toBe(callsBefore + 1);
+            const ws2 = await ws2Promise;
+
+            // The lease's earlier deadline lapses while the renewal is
+            // still parked in its config read.
+            await vi.advanceTimersByTimeAsync(20_000);
+
+            // Cap pressure: three other leases push the map over the cap,
+            // running the sweep — the renewal's lane survives on its
+            // admission-stamped deadline instead of losing its high-water.
+            for (const leaseId of ["lease-b", "lease-c", "lease-d"]) {
+              const pressure = await openInput(hub.origin, hub.secret, {
+                ...baseInputParams,
+                "x-t3-lease": leaseId,
+                "x-t3-lease-expires": String(Date.now() + 600_000),
+              });
+              await waitNotice(pressure, "bound");
+              pressure.close();
+            }
+
+            // The renewal resumes and binds: the lane it kept still
+            // carries the admitted high-water — not a fresh zero.
+            releaseConfig!();
+            const bound2 = await waitNotice(ws2, "bound");
+            expect(bound2.highSeq).toBe(114);
+            ws2.send(
+              JSON.stringify({
+                seq: 1,
+                geometrySeq: bound2.geometrySeq ?? 0,
+                event: { type: "text", text: "replay" },
+              }),
+            );
+            const rejected = await waitNotice(ws2, "rejected");
+            expect(rejected.seq).toBe(1);
+            expect(rejected.reason).toBe("replay");
+            expect(stub.dispatched).toHaveLength(1);
+            ws2.send(
+              JSON.stringify({
+                seq: 115,
+                geometrySeq: bound2.geometrySeq ?? 0,
+                event: { type: "text", text: "after" },
+              }),
+            );
+            for (let i = 0; i < 200 && stub.dispatched.length < 2; i++) {
+              await vi.advanceTimersByTimeAsync(10);
+            }
+            expect(stub.dispatched).toHaveLength(2);
+            ws2.terminate();
+          } finally {
+            vi.useRealTimers();
+          }
+        });
+      }),
+    ).pipe(
+      Effect.provide(
+        BrowserFrameHubLayer.pipe(Layer.provide(managerLayer), Layer.provide(capLayer)),
       ),
     );
   });
