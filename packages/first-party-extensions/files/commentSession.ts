@@ -3,7 +3,7 @@
  * the view so its lifecycle is testable.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { EditorSurface } from "./editorSession.ts";
 import { selectionLineRange, type FileCommentRange } from "./fileComments.ts";
@@ -37,13 +37,19 @@ export function useEditorSelection(
   useEffect(() => {
     setEditorSelection(null);
   }, [contents, selected]);
-  const selectionRange =
-    editorSelection !== null &&
-    editorSelection.path === selected &&
-    surface !== null &&
-    surface.open.editable
-      ? selectionLineRange(surface.contents, editorSelection.start, editorSelection.end)
-      : null;
+  // Drag-select re-renders on every mousemove while a selection is held, and
+  // expanding two offsets into lines scans the buffer from offset 0 — the
+  // memo bounds that to one scan per actual input change.
+  const selectionRange = useMemo(
+    () =>
+      editorSelection !== null &&
+      editorSelection.path === selected &&
+      surface !== null &&
+      surface.open.editable
+        ? selectionLineRange(surface.contents, editorSelection.start, editorSelection.end)
+        : null,
+    [surface, editorSelection, selected],
+  );
   return {
     selectionRange,
     setSelection: setEditorSelection,

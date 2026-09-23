@@ -124,3 +124,62 @@ NodeTest.describe("useEditorSelection", () => {
     }
   });
 });
+
+NodeTest.describe("useEditorSelection memoization", () => {
+  let latest;
+  let renders;
+  function Probe(props) {
+    renders += 1;
+    const current = useEditorSelection(props.surface, props.selected);
+    React.useEffect(() => {
+      latest = current;
+    });
+    return null;
+  }
+
+  // r2 finding 3: while a selection is held, unrelated re-renders (drag
+  // mousemove, theme ticks, save-state flips) must not rescan the buffer —
+  // selectionLineRange builds a fresh object per call, so a held reference
+  // across renders is the observable proof the memo held.
+  NodeTest.it("holds one line-range object across unrelated renders", async () => {
+    renders = 0;
+    const contents = Array.from({ length: 200 }, (_, index) => `line ${index + 1}`).join("\n");
+    const surface = {
+      path: "big.ts",
+      open: { editable: true },
+      contents,
+      saveState: { kind: "saved" },
+    };
+    let root;
+    try {
+      await act(async () => {
+        root = create(e(Probe, { selected: "big.ts", surface, bump: 0 }));
+      });
+      await act(async () => {
+        latest.setSelection({ path: "big.ts", start: 90, end: 100 });
+      });
+      const held = latest.selectionRange;
+      // Lines 1-9 are 7 chars ("line N\n"), line 10 on are 8: offset 90
+      // sits on line 13, offset 99 on line 14.
+      NodeAssert.deepEqual(held, { startLine: 13, endLine: 14 });
+
+      // Same surface object, same selection — five unrelated re-renders.
+      for (let bump = 1; bump <= 5; bump += 1) {
+        await act(async () => {
+          root.update(e(Probe, { selected: "big.ts", surface, bump }));
+        });
+        NodeAssert.ok(latest.selectionRange === held, `range identity broke at render ${bump}`);
+      }
+      NodeAssert.ok(renders > 5, "the probe actually re-rendered");
+
+      // A real input change legitimately recomputes.
+      await act(async () => {
+        latest.setSelection({ path: "big.ts", start: 0, end: 8 });
+      });
+      NodeAssert.ok(latest.selectionRange !== held);
+      NodeAssert.deepEqual(latest.selectionRange, { startLine: 1, endLine: 2 });
+    } finally {
+      if (root) await act(async () => root.unmount());
+    }
+  });
+});
