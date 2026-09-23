@@ -457,7 +457,9 @@ function writeSystemMessage(surface: Pick<GhosttyTerminalSurface, "write">, mess
  * predates the focus context. Only the newest request's answer applies
  * (an older reply landing late can no longer overwrite it), and while
  * that answer is outstanding `conflictsPendingRef` is true so the
- * capture handler abstains instead of dispatching from the stale list.
+ * capture handler swallows owned chords instead of dispatching from the
+ * stale list — nothing else will claim them, and the VT encoder must
+ * not take their bytes to the PTY.
  * A denied or unavailable call leaves null and the resolver falls back
  * to the static defaults.
  */
@@ -1150,19 +1152,28 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
         // for this surface to act on.
         if (event.defaultPrevented) return;
         const chord = terminalChordFromEvent(event.nativeEvent, isMacPlatform(navigator.platform));
+        const action = resolveTerminalChord(chord, conflictsRef.current);
         // While the current keymap answer is outstanding the previous list
         // is stale for exactly this chord — the mount-time list predates
         // the focus context, so a mod+w remapped to split would still
-        // dispatch the default close. Abstain rather than guess: the event
-        // falls through to host default handling, and the next press after
-        // the answer lands dispatches the resolved command.
-        if (chord !== null && conflictsPendingRef.current) return;
+        // dispatch the default close. Abstain from dispatching, but keep
+        // the chord intercepted: the host already resolved and yielded at
+        // window capture, so no later handler will claim the event — left
+        // un-prevented it reaches the VT surface, whose encoder sends the
+        // bytes to the PTY (mod+w → `w`, mod+d → EOT can exit a shell).
+        // Swallow owned chords until the answer lands; the next press then
+        // dispatches the resolved command. Genuinely unowned chords
+        // (ordinary typing, host-only chords) still fall through untouched.
+        if (action !== null && conflictsPendingRef.current) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         // Owning terminal focus means owning the chords — but the host
         // resolved them first, so dispatch the RESOLVED command when the
         // keymap displaced a default (mod+d → terminal.close closes instead
         // of splitting). Capture stays ahead of the VT surface's encoder,
         // which would otherwise keep the bytes for the PTY.
-        const action = resolveTerminalChord(chord, conflictsRef.current);
         if (action !== null && dispatchTerminalCommand(action, panelActions)) {
           event.preventDefault();
           event.stopPropagation();

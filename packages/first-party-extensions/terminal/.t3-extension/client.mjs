@@ -12573,8 +12573,12 @@ var __t3Client = (() => {
         onKeyDownCapture: (event) => {
           if (event.defaultPrevented) return;
           const chord = terminalChordFromEvent(event.nativeEvent, isMacPlatform(navigator.platform));
-          if (chord !== null && conflictsPendingRef.current) return;
           const action = resolveTerminalChord(chord, conflictsRef.current);
+          if (action !== null && conflictsPendingRef.current) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
           if (action !== null && dispatchTerminalCommand(action, panelActions)) {
             event.preventDefault();
             event.stopPropagation();
