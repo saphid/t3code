@@ -213,6 +213,65 @@ NodeTest.describe("terminal panel — split groups", () => {
     },
   );
 
+  // r2 item 2: the reviewer's repro — close the active pane of a split
+  // group while a later single-pane group exists. The pane sliding into
+  // focus (term-3) lives in ANOTHER group; the stored-group preference kept
+  // showing [term-1] while term-3 was active, hiding the focused terminal.
+  NodeTest.it("close follows the next active terminal into its group (never hidden)", async () => {
+    const { panel } = livePanel();
+    await panel.openTerminal(); // term-1
+    await panel.splitTerminal("horizontal"); // [term-1, term-2]
+    await panel.openTerminal(); // term-3 in its own group
+    panel.activate("term-2");
+    NodeAssert.equal(panel.snapshot.activeGroupId, groupOf(panel, "term-1").id);
+    panel.requestAction("term-2", "close");
+    await panel.confirmAction("term-2");
+    NodeAssert.equal(panel.snapshot.activeTerminalId, "term-3");
+    // The visible group is the one holding the now-active pane.
+    NodeAssert.equal(panel.snapshot.activeGroupId, groupOf(panel, "term-3").id);
+    NodeAssert.ok(activeGroup(panel).terminalIds.includes("term-3"));
+    // The residual split group still holds its survivor.
+    NodeAssert.deepEqual(groupOf(panel, "term-1").terminalIds, ["term-1"]);
+    panel.dispose();
+  });
+
+  // Same rule for the server-driven path: a remove event that displaces the
+  // active terminal must surface the group of the terminal that replaces it.
+  NodeTest.it("server remove keeps the active terminal visible", async () => {
+    const { panel } = livePanel();
+    await panel.openTerminal(); // term-1
+    await panel.splitTerminal("horizontal"); // [term-1, term-2]
+    await panel.openTerminal(); // term-3
+    panel.activate("term-3");
+    panel.applySessionsEvent({ kind: "remove", terminalId: "term-3" });
+    NodeAssert.equal(panel.snapshot.activeTerminalId, "term-1");
+    NodeAssert.equal(panel.snapshot.activeGroupId, groupOf(panel, "term-1").id);
+    NodeAssert.ok(activeGroup(panel).terminalIds.includes(panel.snapshot.activeTerminalId));
+    panel.dispose();
+  });
+
+  // And for a snapshot that drops the active terminal: reconcile follows the
+  // surviving active terminal into its group (native reconcile rule).
+  NodeTest.it("snapshot reconcile dropping the active terminal follows its successor", async () => {
+    const { panel } = livePanel();
+    await panel.openTerminal(); // term-1
+    await panel.splitTerminal("horizontal"); // [term-1, term-2]
+    await panel.openTerminal(); // term-3
+    panel.activate("term-3");
+    // A server list that names an id the client lacks replaces the client
+    // list outright (the strict-subset lag rule does not apply) — term-3 is
+    // dropped and term-1 becomes the resolved active terminal.
+    panel.applySessionsEvent({
+      kind: "snapshot",
+      terminals: [meta("term-1"), meta("term-2"), meta("term-9")],
+    });
+    NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1", "term-2", "term-9"]);
+    NodeAssert.equal(panel.snapshot.activeTerminalId, "term-1");
+    NodeAssert.equal(panel.snapshot.activeGroupId, groupOf(panel, "term-1").id);
+    NodeAssert.ok(activeGroup(panel).terminalIds.includes("term-1"));
+    panel.dispose();
+  });
+
   NodeTest.it("reconcile keeps group membership; departed sessions leave their group", async () => {
     const { panel } = livePanel();
     await panel.openTerminal();

@@ -743,6 +743,20 @@ export class TerminalPanel {
   }
 
   /**
+   * Native close/reconcile rule: when the active terminal itself may have
+   * moved (the closed pane's slot-slide, or a server list that dropped it),
+   * the visible group follows the POST-change active terminal. The stored
+   * group preference would keep the old group — e.g. close the middle pane
+   * of a split and the pane sliding into focus lands in another group,
+   * leaving the active terminal hidden behind a group it is not in.
+   */
+  #syncGroupsFollowingActive() {
+    this.#groups = normalizeTerminalGroups(this.#groups, this.#ids);
+    this.#activeGroupId =
+      (this.#active !== null ? this.#groupIdOf(this.#active) : "") || (this.#groups[0]?.id ?? "");
+  }
+
+  /**
    * Where a split lands: the stored active group, else the group holding the
    * active terminal. `null` means there is nothing to split into — the
    * native `effectiveMode === "new"` case.
@@ -768,7 +782,7 @@ export class TerminalPanel {
           ? (this.#ids[Math.min(closedIndex, this.#ids.length - 1)] ?? this.#ids[0] ?? null)
           : resolveActiveTerminalId(this.#ids, null)
         : resolveActiveTerminalId(this.#ids, this.#active);
-    this.#syncGroups();
+    this.#syncGroupsFollowingActive();
     this.#emit();
   }
 
@@ -811,7 +825,9 @@ export class TerminalPanel {
           if (!this.#ids.includes(id)) this.#tabs.delete(id);
         }
         this.#active = resolveActiveTerminalId(this.#ids, this.#active);
-        this.#syncGroups();
+        // Native reconcileThreadTerminalSessionIds: the visible group
+        // follows the reconciled active terminal, not the stored group.
+        this.#syncGroupsFollowingActive();
         break;
       }
       case "upsert":
