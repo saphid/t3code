@@ -180,6 +180,9 @@ describe("review comment context parsing", () => {
     expect(inferReviewCommentFenceLanguage("docs/plan.md")).toBe("md");
     expect(inferReviewCommentFenceLanguage("src/view.tsx")).toBe("tsx");
 
+    const content = ["# Example", "```ts", "const value = 1;", "```"].join("\n");
+    expect(formatReviewCommentFence("md", content)).toBe(`\`\`\`\`md\n${content}\n\`\`\`\``);
+
     const serialized = formatReviewCommentContext({
       id: "comment-3",
       sectionId: "file:docs/plan.md",
@@ -189,7 +192,7 @@ describe("review comment context parsing", () => {
       endIndex: 2,
       rangeLabel: "L1 to L3",
       text: "Update this example.",
-      diff: ["# Example", "```ts", "const value = 1;", "```"].join("\n"),
+      diff: content,
       fenceLanguage: "md",
     });
     const [segment] = parseReviewCommentMessageSegments(serialized);
