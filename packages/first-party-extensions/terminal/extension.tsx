@@ -631,8 +631,12 @@ function TerminalPane(props: {
       if (lease === null) {
         setStreamBlocked(true);
         // The hub drops one-shot waiters after firing, so each failed
-        // acquire registers a fresh one.
-        retryRegistration = streamHub.onPaneSlotFree(() => acquire(true));
+        // acquire registers a fresh one. The retry re-reads visibility
+        // when it fires: a hidden pane's waiter must retry as optional
+        // or it seizes every demoted slot as mandatory, and the newly
+        // visible pane starves behind permanently-mandatory hidden
+        // holders that no priority effect will ever demote.
+        retryRegistration = streamHub.onPaneSlotFree(() => acquire(shownRef.current));
         return;
       }
       setStreamBlocked(false);

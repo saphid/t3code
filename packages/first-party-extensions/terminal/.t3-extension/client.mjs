@@ -12152,7 +12152,7 @@ var __t3Client = (() => {
         });
         if (lease === null) {
           setStreamBlocked(true);
-          retryRegistration = streamHub.onPaneSlotFree(() => acquire(true));
+          retryRegistration = streamHub.onPaneSlotFree(() => acquire(shownRef.current));
           return;
         }
         setStreamBlocked(false);

@@ -410,3 +410,184 @@ NodeTest.describe("first-focus chord refresh (r3 finding 5)", () => {
     }
   });
 });
+
+NodeTest.describe("hidden waiters retry at current visibility (r4 finding 1)", () => {
+  NodeTest.test("refused hidden waiters cannot seize demoted slots as mandatory", async () => {
+    // The reviewer's HIDDEN_WAITERS_STEAL_DEMOTED_SLOTS probe: five
+    // visible panes fill the pool, four hidden panes and b are refused
+    // and wait. Switching to [b, c] demotes a1..a4 — pre-fix, every
+    // hidden waiter's retry acquired MANDATORY, so the demotions handed
+    // h1..h4 permanent mandatory slots and the newly visible b starved
+    // behind "Stream budget" with nothing left to evict.
+    const { host, active } = paneStreamHost();
+    const session = {
+      signal: new AbortController().signal,
+      context: { resource: { threadId: "t", environmentId: "e" } },
+    };
+    const panel = { resetInput() {}, resize() {}, sendInput() {} };
+    const assets = { kind: "ready", runtime: {}, symbolsFontUrl: "fixture" };
+    const paneProps = (terminalId) => ({
+      host,
+      session,
+      panel,
+      terminalId,
+      streamKeyPrefix: "review",
+      active: false,
+      shown: true,
+      visible: true,
+      assets,
+      themeVars: null,
+      appearanceVars: null,
+    });
+    const releases = [];
+    for (const key of ["sessions", "theme", "appearance"]) {
+      releases.push(
+        bundle.streamHub.acquireFixedFeed(key, { onFrame() {}, onStatus() {} }, () => {}),
+      );
+    }
+    const ids = ["a1", "a2", "a3", "a4", "c", "h1", "h2", "h3", "h4", "b"];
+    const render = (order, shown) =>
+      React.createElement(
+        React.Fragment,
+        null,
+        ...order.map((terminalId) =>
+          React.createElement(bundle.TerminalPane, {
+            ...paneProps(terminalId),
+            key: terminalId,
+            shown: shown.includes(terminalId),
+          }),
+        ),
+      );
+    let renderer;
+    await act(async () => {
+      renderer = create(render(ids, ["a1", "a2", "a3", "a4", "c"]), {
+        createNodeMock: nodeMock,
+      });
+    });
+    try {
+      NodeAssert.deepEqual([...active].sort(), ["a1", "a2", "a3", "a4", "c"]);
+      await act(async () => {
+        renderer.update(render(["b", ...ids.slice(0, 9)], ["b", "c"]));
+      });
+      // The whole switch resolves inside the update's effect flush: the
+      // demotion wakes resolve in bounded cycles, no polling.
+      const paneB = renderer.root
+        .findAllByType(bundle.TerminalPane)
+        .find((node) => node.props.terminalId === "b");
+      NodeAssert.equal(
+        paneB.findAll((node) => node.props["aria-label"] === "Stream budget").length,
+        0,
+      );
+      // The hidden waiters stayed optional: none of them holds a stream,
+      // and the pool keeps evictable capacity for the next visible pane.
+      for (const hidden of ["h1", "h2", "h3", "h4"]) {
+        NodeAssert.equal(active.has(hidden), false);
+      }
+      NodeAssert.equal(bundle.streamHub.paneSlotAvailable(), true);
+      // b evicted exactly one demoted a-pane; the rest demoted in place.
+      NodeAssert.deepEqual([...active].sort(), ["a2", "a3", "a4", "b", "c"]);
+    } finally {
+      await act(async () => renderer.unmount());
+    }
+    for (const release of releases) release();
+    await act(async () => {}); // drain the pumps' async teardown
+    NodeAssert.equal(active.size, 0);
+  });
+});
+
+NodeTest.describe("two full views sidebar switch (r4 finding 1)", () => {
+  NodeTest.test("the selected pane wins the stream budget in both placements", async () => {
+    // The reviewer's TWO_FULL_VIEWS_SIDEBAR_SWITCH probe: two complete
+    // TerminalView placements for one thread, eleven restored sessions.
+    // Selecting b through its real sidebar callback demotes a1..a4 in the
+    // left placement — pre-fix, the left placement's earlier refused
+    // hidden waiters re-acquired MANDATORY slots on those demotions, the
+    // streams stayed on c/h2..h5, and the visible b showed "Stream budget".
+    const active = new Map();
+    let counter = 0;
+    const host = {
+      readAsset: () => new Promise(() => {}),
+      invokeApi: async (request) =>
+        request.method === "listConflicts" ? { conflicts: [] } : { tokens: {}, cssVars: {} },
+      subscribeApi: (request, signal) => ({
+        async *[Symbol.asyncIterator]() {
+          const id = ++counter;
+          active.set(id, request.input?.terminalId ?? request.name);
+          try {
+            await new Promise((resolve) =>
+              signal.aborted
+                ? resolve()
+                : signal.addEventListener("abort", resolve, { once: true }),
+            );
+          } finally {
+            active.delete(id);
+          }
+        },
+      }),
+    };
+    const ids = ["a1", "a2", "a3", "a4", "h1", "h2", "h3", "h4", "h5", "b", "c"];
+    const groups = [
+      { id: "g", terminalIds: ["a1", "a2", "a3", "a4"] },
+      ...ids.slice(4).map((terminalId) => ({ id: terminalId, terminalIds: [terminalId] })),
+    ];
+    const sessionFor = (activeId) => ({
+      signal: new AbortController().signal,
+      context: { resource: { threadId: "full", environmentId: "e" } },
+      visible: true,
+      save() {},
+      onVisibility: () => () => {},
+      bindCommands: () => () => {},
+      restoreState: {
+        terminalIds: ids,
+        activeTerminalId: activeId,
+        terminalGroups: groups,
+        activeTerminalGroupId: activeId === "a1" ? "g" : activeId,
+      },
+    });
+    let renderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(
+          React.Fragment,
+          null,
+          React.createElement(bundle.TerminalView, {
+            host,
+            session: sessionFor("a1"),
+            key: "left",
+          }),
+          React.createElement(bundle.TerminalView, {
+            host,
+            session: sessionFor("c"),
+            key: "right",
+          }),
+        ),
+        { createNodeMock: nodeMock },
+      );
+    });
+    try {
+      // The shared feeds (3) plus five pane slots sit exactly at the cap.
+      NodeAssert.equal(active.size, 8);
+      const leftTree = renderer.root.findAllByType(bundle.TerminalView)[0];
+      const selectB = leftTree
+        .findAllByType("li")
+        .find((node) =>
+          node.findAllByType("button").some((button) => button.props["aria-label"] === "Close b"),
+        )
+        .findAllByType("button")[0];
+      await act(async () => selectB.props.onClick());
+      const visible = leftTree
+        .findAllByType(bundle.TerminalPane)
+        .filter((node) => node.props.shown)
+        .map((node) => ({
+          id: node.props.terminalId,
+          waiting: node.findAll((inner) => inner.props["aria-label"] === "Stream budget").length,
+        }));
+      NodeAssert.deepEqual(visible, [{ id: "b", waiting: 0 }]);
+      NodeAssert.equal([...active.values()].includes("b"), true);
+      NodeAssert.equal(active.size, 8);
+    } finally {
+      await act(async () => renderer.unmount());
+    }
+    NodeAssert.equal(active.size, 0);
+  });
+});
