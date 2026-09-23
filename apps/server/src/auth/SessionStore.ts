@@ -431,27 +431,34 @@ export class SessionStore extends Context.Service<
       sessionId: AuthSessionId,
       /**
        * Identity of the transport connection being registered (the ws
-       * connection id). The newest registration wins: HTTP-path mints bind
-       * their authority to the session's currently live connection.
+       * connection id).
        */
       connectionId?: string,
+      /**
+       * Identity the client presents on its ws upgrade and echoes on HTTP
+       * requests (one per client runtime instance) so a connectionless HTTP
+       * invocation can be attributed to THIS client's live socket rather
+       * than whichever socket registered most recently.
+       */
+      clientInstanceId?: string,
     ) => Effect.Effect<void, never>;
     readonly markDisconnected: (
       sessionId: AuthSessionId,
       /**
-       * Clears the session's active-connection binding only when it still
-       * names this connection — an older socket's teardown must not erase a
-       * newer connection's identity.
+       * Drops this connection's liveness and instance binding — an older
+       * socket's teardown must not erase a newer connection's identity.
        */
       connectionId?: string,
     ) => Effect.Effect<void, never>;
+    /** Whether the named transport connection is still registered as live. */
+    readonly isConnectionLive: (connectionId: string) => Effect.Effect<boolean, never>;
     /**
-     * The transport connection currently bound to the session, when any.
-     * Extension invocations on transports that carry no connection identity
-     * (HTTP) adopt it so connection-scoped revocation still reaches them.
+     * Resolve a client-presented instance identity to the live transport
+     * connection that instance registered with its ws upgrade, when any.
      */
-    readonly activeConnectionId: (
+    readonly connectionIdForClientInstance: (
       sessionId: AuthSessionId,
+      clientInstanceId: string,
     ) => Effect.Effect<Option.Option<string>, never>;
     readonly recordClientConnection: (
       sessionId: AuthSessionId,
@@ -531,7 +538,13 @@ export const make = Effect.gen(function* () {
   const authSessions = yield* AuthSessions.AuthSessionRepository;
   const signingSecret = yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
   const connectedSessionsRef = yield* Ref.make(new Map<AuthSessionId, number>());
-  const activeConnectionsRef = yield* Ref.make(new Map<AuthSessionId, string>());
+  // Live transport connection ids — mints bound to a connection die with it
+  // and authorities revalidating against a dead connection are refused.
+  const liveConnectionsRef = yield* Ref.make(new Set<string>());
+  // sessionId -> (clientInstanceId -> connectionId): the ws upgrade registers
+  // its client's instance id so an HTTP request echoing that id resolves to
+  // the socket that instance actually holds — never a session-global newest.
+  const instanceConnectionsRef = yield* Ref.make(new Map<AuthSessionId, Map<string, string>>());
   const changesPubSub = yield* PubSub.unbounded<SessionCredentialChange>();
   const cookieInput = {
     mode: serverConfig.mode,
@@ -584,13 +597,30 @@ export const make = Effect.gen(function* () {
       );
     });
 
-  const markConnected: SessionStore["Service"]["markConnected"] = (sessionId, connectionId) =>
-    Ref.update(activeConnectionsRef, (current) => {
-      if (connectionId === undefined) return current;
-      const next = new Map(current);
-      next.set(sessionId, connectionId);
-      return next;
-    }).pipe(
+  const markConnected: SessionStore["Service"]["markConnected"] = (
+    sessionId,
+    connectionId,
+    clientInstanceId,
+  ) =>
+    Effect.all([
+      Ref.update(liveConnectionsRef, (current) => {
+        if (connectionId === undefined) return current;
+        const next = new Set(current);
+        next.add(connectionId);
+        return next;
+      }),
+      Ref.update(instanceConnectionsRef, (current) => {
+        if (connectionId === undefined || clientInstanceId === undefined) return current;
+        const next = new Map(current);
+        const forSession = new Map(next.get(sessionId));
+        // The instance's newest socket wins: during a reconnect overlap both
+        // sockets are live and the client's HTTP requests belong with the
+        // connection it most recently established.
+        forSession.set(clientInstanceId, connectionId);
+        next.set(sessionId, forSession);
+        return next;
+      }),
+    ]).pipe(
       Effect.andThen(
         Ref.modify(connectedSessionsRef, (current) => {
           const next = new Map(current);
@@ -649,14 +679,27 @@ export const make = Effect.gen(function* () {
           );
 
   const markDisconnected: SessionStore["Service"]["markDisconnected"] = (sessionId, connectionId) =>
-    Ref.update(activeConnectionsRef, (current) => {
-      if (connectionId === undefined || current.get(sessionId) !== connectionId) {
-        return current;
-      }
-      const next = new Map(current);
-      next.delete(sessionId);
-      return next;
-    }).pipe(
+    Effect.all([
+      Ref.update(liveConnectionsRef, (current) => {
+        if (connectionId === undefined || !current.has(connectionId)) return current;
+        const next = new Set(current);
+        next.delete(connectionId);
+        return next;
+      }),
+      Ref.update(instanceConnectionsRef, (current) => {
+        const forSession = current.get(sessionId);
+        if (connectionId === undefined || forSession === undefined) return current;
+        const entries = [...forSession].filter(([, connId]) => connId !== connectionId);
+        if (entries.length === forSession.size) return current;
+        const next = new Map(current);
+        if (entries.length === 0) {
+          next.delete(sessionId);
+        } else {
+          next.set(sessionId, new Map(entries));
+        }
+        return next;
+      }),
+    ]).pipe(
       Effect.andThen(
         Ref.update(connectedSessionsRef, (current) => {
           const next = new Map(current);
@@ -684,9 +727,15 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("SessionStore.markDisconnected"),
     );
 
-  const activeConnectionId: SessionStore["Service"]["activeConnectionId"] = (sessionId) =>
-    Ref.get(activeConnectionsRef).pipe(
-      Effect.map((current) => Option.fromNullishOr(current.get(sessionId))),
+  const isConnectionLive: SessionStore["Service"]["isConnectionLive"] = (connectionId) =>
+    Ref.get(liveConnectionsRef).pipe(Effect.map((current) => current.has(connectionId)));
+
+  const connectionIdForClientInstance: SessionStore["Service"]["connectionIdForClientInstance"] = (
+    sessionId,
+    clientInstanceId,
+  ) =>
+    Ref.get(instanceConnectionsRef).pipe(
+      Effect.map((current) => Option.fromNullishOr(current.get(sessionId)?.get(clientInstanceId))),
     );
 
   const encodeClaims = Schema.encodeEffect(Schema.fromJsonString(SessionClaims));
@@ -1090,7 +1139,8 @@ export const make = Effect.gen(function* () {
     revokeAllExcept,
     markConnected,
     markDisconnected,
-    activeConnectionId,
+    isConnectionLive,
+    connectionIdForClientInstance,
     recordClientConnection,
   });
 });

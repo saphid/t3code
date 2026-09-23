@@ -32,12 +32,14 @@ export const makeSessionApiAuthority = Effect.fn("Extensions.makeSessionApiAutho
   session: AuthenticatedSession | EnvironmentSessionPrincipalShape,
   environmentId: string,
   requiredScope: AuthEnvironmentScope,
-  sessions: Pick<SessionStore["Service"], "revalidate">,
+  sessions: Pick<SessionStore["Service"], "revalidate" | "isConnectionLive">,
   writeScope?: AuthEnvironmentScope,
   /**
    * Identity of the transport connection this root rides on (the ws
    * connection id). Providers that key records to the viewer's root
    * connection receive it as `HostApiInvocationMetadata.rootConnectionId`.
+   * When set, every revalidation also requires that connection to still be
+   * live — a captured root cannot mint after its connection was revoked.
    */
   connectionId?: string,
 ) {
@@ -62,6 +64,12 @@ export const makeSessionApiAuthority = Effect.fn("Extensions.makeSessionApiAutho
         DateTime.toEpochMillis(captured.expiresAt) <= DateTime.toEpochMillis(now))
     )
       return yield* denied();
+    // A revoked transport connection invalidates the root immediately —
+    // `revokeConnection` sweeps existing records, and without this fence an
+    // in-flight request could still mint new ones under the dead identity.
+    if (connectionId !== undefined && !(yield* sessions.isConnectionLive(connectionId))) {
+      return yield* denied();
+    }
     return current;
   });
   const current = yield* read();

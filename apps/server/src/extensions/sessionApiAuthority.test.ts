@@ -31,6 +31,7 @@ function fixture() {
     expiresAt: DateTime.makeUnsafe(10_000),
   };
   let revoked = false;
+  const deadConnections = new Set<string>();
   const sessions = {
     revalidate: () =>
       revoked
@@ -41,6 +42,7 @@ function fixture() {
             }),
           )
         : Effect.succeed(current),
+    isConnectionLive: (connectionId: string) => Effect.succeed(!deadConnections.has(connectionId)),
   };
   return {
     session,
@@ -50,6 +52,9 @@ function fixture() {
     },
     revoke() {
       revoked = true;
+    },
+    disconnect(connectionId: string) {
+      deadConnections.add(connectionId);
     },
   };
 }
@@ -193,5 +198,35 @@ it.effect("rejects revocation and changed persisted identity during revalidation
     f.setCurrent({ ...f.session });
     f.revoke();
     expect(yield* check(root).pipe(Effect.flip)).toMatchObject({ _tag: "ExtensionOperationError" });
+  }),
+);
+
+it.effect("a connection-bound root dies when its transport connection is revoked", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const root = yield* makeSessionApiAuthority(
+      f.session,
+      "environment-a",
+      AuthOrchestrationReadScope,
+      f.sessions,
+      undefined,
+      "conn-1",
+    );
+    expect(root.connectionId).toBe("conn-1");
+    yield* check(root);
+    // A captured root cannot revalidate after its connection ended — the
+    // in-flight-mint hole behind revoked HTTP roots.
+    f.disconnect("conn-1");
+    expect(yield* check(root).pipe(Effect.flip)).toMatchObject({
+      _tag: "ExtensionOperationError",
+    });
+    // A connectionless root is unaffected by connection lifecycle.
+    const connectionless = yield* makeSessionApiAuthority(
+      f.session,
+      "environment-a",
+      AuthOrchestrationReadScope,
+      f.sessions,
+    );
+    yield* check(connectionless);
   }),
 );

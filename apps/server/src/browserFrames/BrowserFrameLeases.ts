@@ -186,7 +186,16 @@ interface LeasesState {
   readonly leaseByHolder: ReadonlyMap<string, string>;
   /** Held `browser-surface` presentation claims, keyed by the token itself. */
   readonly heldClaims: ReadonlyMap<string, HeldBrowserSurfaceClaim>;
+  /**
+   * Connection ids `revokeConnection` has already swept. Mint admission
+   * checks this inside the same atomic update as the record insert, so an
+   * in-flight request cannot mint a new record under a revoked root
+   * connection after the sweep committed. FIFO-capped — ids are random.
+   */
+  readonly deadConnections: ReadonlyMap<string, true>;
 }
+
+const DEAD_CONNECTION_CAP = 4096;
 
 const sessionKey = (session: BrowserFrameSessionTuple): string =>
   JSON.stringify([session.environmentId, session.threadId, session.serverEpoch, session.tabId]);
@@ -202,6 +211,10 @@ export const authorityRidesOnSession = (
   authority.kind === "session"
     ? authority.sessionId === sessionId
     : authority.principalKind === "environment-session" && authority.principalId === sessionId;
+
+/** The transport connection a mint's authority rides on, when connection-bound. */
+const authorityConnectionId = (authority: BrowserFrameAuthority): string | undefined =>
+  authority.kind === "session" ? authority.connectionId : authority.rootConnectionId;
 
 const isLive = (expiresAt: number, now: number): boolean => expiresAt > now;
 
@@ -233,7 +246,17 @@ const prune = (state: LeasesState, now: number): LeasesState => {
       changed = true;
     }
   }
-  return changed ? { tickets, leases, leaseByHolder, heldClaims } : state;
+  let deadConnections = state.deadConnections;
+  if (deadConnections.size > DEAD_CONNECTION_CAP) {
+    const next = new Map(deadConnections);
+    for (const key of next.keys()) {
+      if (next.size <= DEAD_CONNECTION_CAP) break;
+      next.delete(key);
+    }
+    deadConnections = next;
+    changed = true;
+  }
+  return changed ? { tickets, leases, leaseByHolder, heldClaims, deadConnections } : state;
 };
 
 export class BrowserFrameLeases extends Context.Service<
@@ -241,7 +264,7 @@ export class BrowserFrameLeases extends Context.Service<
   {
     readonly issueStreamTicket: (
       input: IssueBrowserFrameTicketInput,
-    ) => Effect.Effect<{ readonly ticket: string; readonly expiresAt: number }>;
+    ) => Effect.Effect<Option.Option<{ readonly ticket: string; readonly expiresAt: number }>>;
     /**
      * Mint a fresh input lease for this authority+tuple, or renew a live
      * lease when `leaseId` names one this authority owns. Renewal extends
@@ -280,6 +303,8 @@ export class BrowserFrameLeases extends Context.Service<
      * Record a `browser-surface` presentation claim the calling authority just
      * acquired. The frames mint only accepts tokens registered here — a signed
      * token that was never held through this service cannot open a stream.
+     * Returns `false` when the minting authority's root connection is already
+     * revoked — the claim was not recorded.
      */
     readonly recordHeldSurfaceClaim: (claim: {
       readonly token: string;
@@ -287,7 +312,7 @@ export class BrowserFrameLeases extends Context.Service<
       readonly session: BrowserFrameSessionTuple;
       readonly allowedCommands: ReadonlyArray<string>;
       readonly expiresAt: number;
-    }) => Effect.Effect<void>;
+    }) => Effect.Effect<boolean>;
     /** Look up the held-claim record for a presented token. */
     readonly heldSurfaceClaim: (
       token: string,
@@ -328,6 +353,7 @@ export const make = (options?: {
       leases: new Map(),
       leaseByHolder: new Map(),
       heldClaims: new Map(),
+      deadConnections: new Map(),
     });
     const crypto = yield* Crypto.Crypto;
     const pubsub = yield* Effect.acquireRelease(
@@ -346,8 +372,15 @@ export const make = (options?: {
       const now = yield* currentMillis;
       const expiresAt = capExpiry(input, now);
       const ticket = `bfv1.st.${yield* randomUUID}`;
-      yield* SynchronizedRef.update(state, (current) => {
+      return yield* SynchronizedRef.modify(state, (current) => {
         const pruned = prune(current, now);
+        // Mint admission fence: a revoked root connection can never mint
+        // again — the check lives inside this atomic update so a disconnect
+        // racing an in-flight request cannot slip a record past the sweep.
+        const connectionId = authorityConnectionId(input.authority);
+        if (connectionId !== undefined && pruned.deadConnections.has(connectionId)) {
+          return [Option.none(), pruned] as const;
+        }
         const tickets = new Map(pruned.tickets);
         tickets.set(ticket, {
           ticket,
@@ -361,9 +394,8 @@ export const make = (options?: {
           expiresAt,
           superseded: false,
         });
-        return { ...pruned, tickets };
+        return [Option.some({ ticket, expiresAt }), { ...pruned, tickets }] as const;
       });
-      return { ticket, expiresAt };
     });
 
     const issueInputLease: BrowserFrameLeases["Service"]["issueInputLease"] = Effect.fn(
@@ -375,6 +407,12 @@ export const make = (options?: {
       const newLeaseId = `bfli.${yield* randomUUID}`;
       const minted = yield* SynchronizedRef.modify(state, (current) => {
         const pruned = prune(current, now);
+        // Same mint admission fence as issueStreamTicket: a revoked root
+        // connection can neither mint nor renew.
+        const connectionId = authorityConnectionId(input.authority);
+        if (connectionId !== undefined && pruned.deadConnections.has(connectionId)) {
+          return [Option.none<IssuedInputLease>(), pruned] as const;
+        }
         // Explicit renewal: the caller names its live lease and must own it.
         if (input.leaseId !== undefined) {
           const existing = pruned.leases.get(input.leaseId);
@@ -468,7 +506,7 @@ export const make = (options?: {
         });
         return [
           Option.some({ leaseId, inputTicket, ticketSeq, expiresAt }),
-          { tickets, leases, leaseByHolder, heldClaims: pruned.heldClaims },
+          { ...pruned, tickets, leases, leaseByHolder },
         ] as const;
       });
       return minted;
@@ -526,54 +564,72 @@ export const make = (options?: {
         if (leaseByHolder.get(holderKey(lease.authority, lease.session)) === leaseId) {
           leaseByHolder.delete(holderKey(lease.authority, lease.session));
         }
-        return [true, { tickets, leases, leaseByHolder, heldClaims: current.heldClaims }] as const;
+        return [true, { ...current, tickets, leases, leaseByHolder }] as const;
       });
       if (revoked) yield* publish({ type: "lease", leaseId });
       return revoked;
     });
 
+    /** Revoke every record matching `match`; returns the invalidations to publish. */
+    const applyRevocation = (
+      pruned: LeasesState,
+      match: (
+        record: BrowserFrameTicketRecord | BrowserFrameInputLeaseState | HeldBrowserSurfaceClaim,
+      ) => boolean,
+    ): readonly [ReadonlyArray<BrowserFrameLeaseInvalidation>, LeasesState] => {
+      const deadLeases: Array<BrowserFrameInputLeaseState> = [];
+      const deadAuthorityKeys = new Set<string>();
+      const leases = new Map(pruned.leases);
+      const leaseByHolder = new Map(pruned.leaseByHolder);
+      const tickets = new Map(pruned.tickets);
+      for (const lease of pruned.leases.values()) {
+        if (!lease.revoked && match(lease)) {
+          leases.set(lease.leaseId, { ...lease, revoked: true });
+          deadLeases.push(lease);
+          deadAuthorityKeys.add(browserFrameAuthorityKey(lease.authority));
+          if (leaseByHolder.get(holderKey(lease.authority, lease.session)) === lease.leaseId) {
+            leaseByHolder.delete(holderKey(lease.authority, lease.session));
+          }
+        }
+      }
+      for (const [ticket, record] of pruned.tickets) {
+        if (!record.superseded && match(record)) {
+          tickets.set(ticket, { ...record, superseded: true });
+          deadAuthorityKeys.add(browserFrameAuthorityKey(record.authority));
+        }
+      }
+      const heldClaims = new Map(pruned.heldClaims);
+      for (const [token, claim] of pruned.heldClaims) {
+        if (match(claim)) {
+          heldClaims.delete(token);
+          deadAuthorityKeys.add(browserFrameAuthorityKey(claim.authority));
+        }
+      }
+      const events: Array<BrowserFrameLeaseInvalidation> = [
+        ...deadLeases.map((lease) => ({ type: "lease", leaseId: lease.leaseId }) as const),
+        ...[...deadAuthorityKeys].map(
+          (authorityKey) => ({ type: "authority", authorityKey }) as const,
+        ),
+      ];
+      return [
+        events,
+        {
+          tickets,
+          leases,
+          leaseByHolder,
+          heldClaims,
+          deadConnections: pruned.deadConnections,
+        },
+      ] as const;
+    };
+
     const revokeWhere: BrowserFrameLeases["Service"]["revokeWhere"] = Effect.fn(
       "BrowserFrameLeases.revokeWhere",
     )(function* (match) {
       const now = yield* currentMillis;
-      const events = yield* SynchronizedRef.modify(state, (current) => {
-        const pruned = prune(current, now);
-        const deadLeases: Array<BrowserFrameInputLeaseState> = [];
-        const deadAuthorityKeys = new Set<string>();
-        const leases = new Map(pruned.leases);
-        const leaseByHolder = new Map(pruned.leaseByHolder);
-        const tickets = new Map(pruned.tickets);
-        for (const lease of pruned.leases.values()) {
-          if (!lease.revoked && match(lease)) {
-            leases.set(lease.leaseId, { ...lease, revoked: true });
-            deadLeases.push(lease);
-            deadAuthorityKeys.add(browserFrameAuthorityKey(lease.authority));
-            if (leaseByHolder.get(holderKey(lease.authority, lease.session)) === lease.leaseId) {
-              leaseByHolder.delete(holderKey(lease.authority, lease.session));
-            }
-          }
-        }
-        for (const [ticket, record] of pruned.tickets) {
-          if (!record.superseded && match(record)) {
-            tickets.set(ticket, { ...record, superseded: true });
-            deadAuthorityKeys.add(browserFrameAuthorityKey(record.authority));
-          }
-        }
-        const heldClaims = new Map(pruned.heldClaims);
-        for (const [token, claim] of pruned.heldClaims) {
-          if (match(claim)) {
-            heldClaims.delete(token);
-            deadAuthorityKeys.add(browserFrameAuthorityKey(claim.authority));
-          }
-        }
-        const events: Array<BrowserFrameLeaseInvalidation> = [
-          ...deadLeases.map((lease) => ({ type: "lease", leaseId: lease.leaseId }) as const),
-          ...[...deadAuthorityKeys].map(
-            (authorityKey) => ({ type: "authority", authorityKey }) as const,
-          ),
-        ];
-        return [events, { tickets, leases, leaseByHolder, heldClaims }] as const;
-      });
+      const events = yield* SynchronizedRef.modify(state, (current) =>
+        applyRevocation(prune(current, now), match),
+      );
       for (const event of events) yield* publish(event);
     });
 
@@ -587,18 +643,30 @@ export const make = (options?: {
     const revokeConnection: BrowserFrameLeases["Service"]["revokeConnection"] = Effect.fn(
       "BrowserFrameLeases.revokeConnection",
     )(function* (connectionId) {
-      yield* revokeWhere((record) =>
-        record.authority.kind === "session"
-          ? record.authority.connectionId === connectionId
-          : record.authority.rootConnectionId === connectionId,
-      );
+      const now = yield* currentMillis;
+      // Mark the connection dead inside the same atomic update that sweeps
+      // its records: a mint committed before this update is swept; a mint
+      // committed after sees the dead marker and is refused. No window.
+      const events = yield* SynchronizedRef.modify(state, (current) => {
+        const deadConnections = new Map(current.deadConnections);
+        deadConnections.set(connectionId, true);
+        return applyRevocation(
+          prune({ ...current, deadConnections }, now),
+          (record) => authorityConnectionId(record.authority) === connectionId,
+        );
+      });
+      for (const event of events) yield* publish(event);
     });
 
     const recordHeldSurfaceClaim: BrowserFrameLeases["Service"]["recordHeldSurfaceClaim"] =
       Effect.fn("BrowserFrameLeases.recordHeldSurfaceClaim")(function* (claim) {
         const now = yield* currentMillis;
-        yield* SynchronizedRef.update(state, (current) => {
+        return yield* SynchronizedRef.modify(state, (current) => {
           const pruned = prune(current, now);
+          const connectionId = authorityConnectionId(claim.authority);
+          if (connectionId !== undefined && pruned.deadConnections.has(connectionId)) {
+            return [false, pruned] as const;
+          }
           const heldClaims = new Map(pruned.heldClaims);
           heldClaims.set(claim.token, {
             token: claim.token,
@@ -607,7 +675,7 @@ export const make = (options?: {
             allowedCommands: claim.allowedCommands,
             expiresAt: claim.expiresAt,
           });
-          return { ...pruned, heldClaims };
+          return [true, { ...pruned, heldClaims }] as const;
         });
       });
 

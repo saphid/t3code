@@ -577,7 +577,7 @@ export function createResourcesLeaseApiProvider(
         // bearer token — so simultaneous mints never share a slot.
         const heldToken = surfaceTokenFromUrl(surfaceMint.relativeUrl);
         if (heldToken !== null) {
-          yield* dependencies.leases
+          const recorded = yield* dependencies.leases
             .recordHeldSurfaceClaim({
               token: heldToken,
               session: {
@@ -597,6 +597,14 @@ export function createResourcesLeaseApiProvider(
               ),
             })
             .pipe(Effect.mapError(operationError(operation)));
+          // The root connection died between revalidation and registration —
+          // the just-minted claim must not be returned as usable.
+          if (!recorded) {
+            return yield* bindingDenied(
+              operation,
+              "the minting root connection was revoked before the claim could be held.",
+            );
+          }
         }
       } else {
         // Every remaining union member (attachment today) has a declared grant

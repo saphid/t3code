@@ -187,7 +187,7 @@ describe("BrowserFrameProxy", () => {
         undefined,
         ({ hub, web, leases }) =>
           Effect.gen(function* () {
-            const minted = yield* leases.issueStreamTicket(ticketMint(hub));
+            const minted = Option.getOrThrow(yield* leases.issueStreamTicket(ticketMint(hub)));
             const pending = web.handler(
               new Request(
                 `http://fixture/api/browser-frames/sessions/tab-1/stream.mjpeg?frameTicket=${minted.ticket}`,
@@ -227,7 +227,7 @@ describe("BrowserFrameProxy", () => {
           undefined,
           ({ hub, web, leases }) =>
             Effect.gen(function* () {
-              const minted = yield* leases.issueStreamTicket(ticketMint(hub));
+              const minted = Option.getOrThrow(yield* leases.issueStreamTicket(ticketMint(hub)));
               const response = yield* Effect.promise(() =>
                 web.handler(
                   new Request(
@@ -262,10 +262,12 @@ describe("BrowserFrameProxy", () => {
       ({ hub, web, leases }) =>
         Effect.gen(function* () {
           // Mint bound to connectionId 'hc-stale'; the broker now reports 'hc'.
-          const minted = yield* leases.issueStreamTicket({
-            ...ticketMint(hub),
-            hostConnectionId: "hc-stale",
-          });
+          const minted = Option.getOrThrow(
+            yield* leases.issueStreamTicket({
+              ...ticketMint(hub),
+              hostConnectionId: "hc-stale",
+            }),
+          );
           const response = yield* Effect.promise(() =>
             web.handler(
               new Request(
@@ -407,10 +409,12 @@ describe("BrowserFrameProxy", () => {
           ...extensionAuthority,
           rootConnectionId: "conn-1",
         };
-        const streamTicket = yield* leases.issueStreamTicket({
-          ...ticketMint(hub),
-          authority: connOne,
-        });
+        const streamTicket = Option.getOrThrow(
+          yield* leases.issueStreamTicket({
+            ...ticketMint(hub),
+            authority: connOne,
+          }),
+        );
         const inputLease = yield* leases.issueInputLease({
           ...ticketMint(hub),
           authority: connOne,
@@ -422,10 +426,12 @@ describe("BrowserFrameProxy", () => {
           ...extensionAuthority,
           rootConnectionId: "conn-2",
         };
-        const controlTicket = yield* leases.issueStreamTicket({
-          ...ticketMint(hub),
-          authority: connTwo,
-        });
+        const controlTicket = Option.getOrThrow(
+          yield* leases.issueStreamTicket({
+            ...ticketMint(hub),
+            authority: connTwo,
+          }),
+        );
         // Held presentation claims ride the same connection identity:
         // conn-1's claim is released by the disconnect, conn-2's survives.
         const claimExpiry = (yield* Clock.currentTimeMillis) + 60_000;
@@ -513,7 +519,7 @@ describe("BrowserFrameProxy", () => {
       undefined,
       ({ hub, web, leases }) =>
         Effect.gen(function* () {
-          const minted = yield* leases.issueStreamTicket(ticketMint(hub));
+          const minted = Option.getOrThrow(yield* leases.issueStreamTicket(ticketMint(hub)));
           const response = yield* Effect.promise(() =>
             web.handler(
               new Request(

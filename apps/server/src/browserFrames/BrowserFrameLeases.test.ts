@@ -75,7 +75,7 @@ describe("BrowserFrameLeases", () => {
     Effect.gen(function* () {
       const leases = yield* BrowserFrameLeases;
       const authority = sessionAuthority("sess-a");
-      const issued = yield* leases.issueStreamTicket(issue(authority));
+      const issued = Option.getOrThrow(yield* leases.issueStreamTicket(issue(authority)));
       expect(issued.ticket.startsWith("bfv1.st.")).toBe(true);
       const record = yield* leases.verify(issued.ticket);
       expect(Option.isSome(record)).toBe(true);
@@ -239,7 +239,7 @@ describe("BrowserFrameLeases", () => {
     Effect.gen(function* () {
       const leases = yield* BrowserFrameLeases;
       const input = issue(sessionAuthority("sess-a"));
-      const stream = yield* leases.issueStreamTicket(input);
+      const stream = Option.getOrThrow(yield* leases.issueStreamTicket(input));
       const input_ = yield* leases.issueInputLease(input);
       if (Option.isNone(input_)) throw new Error("expected mint to succeed");
       yield* TestClock.adjust(BROWSER_FRAME_TICKET_TTL_MS + 1);
@@ -254,10 +254,12 @@ describe("BrowserFrameLeases", () => {
       const leases = yield* BrowserFrameLeases;
       const now = yield* Clock.currentTimeMillis;
       const cap = now + 1_000;
-      const issued = yield* leases.issueStreamTicket({
-        ...issue(sessionAuthority("sess-a")),
-        authorityExpiresAt: cap,
-      });
+      const issued = Option.getOrThrow(
+        yield* leases.issueStreamTicket({
+          ...issue(sessionAuthority("sess-a")),
+          authorityExpiresAt: cap,
+        }),
+      );
       expect(issued.expiresAt).toBe(cap);
       yield* TestClock.adjust(1_001);
       expect(Option.isNone(yield* leases.verify(issued.ticket))).toBe(true);
@@ -267,9 +269,15 @@ describe("BrowserFrameLeases", () => {
   it.effect("revokeSession sweeps session and extension authorities riding on it", () =>
     Effect.gen(function* () {
       const leases = yield* BrowserFrameLeases;
-      const sessionTicket = yield* leases.issueStreamTicket(issue(sessionAuthority("sess-a")));
-      const extensionTicket = yield* leases.issueStreamTicket(issue(extensionAuthority("sess-a")));
-      const unaffected = yield* leases.issueStreamTicket(issue(sessionAuthority("sess-b")));
+      const sessionTicket = Option.getOrThrow(
+        yield* leases.issueStreamTicket(issue(sessionAuthority("sess-a"))),
+      );
+      const extensionTicket = Option.getOrThrow(
+        yield* leases.issueStreamTicket(issue(extensionAuthority("sess-a"))),
+      );
+      const unaffected = Option.getOrThrow(
+        yield* leases.issueStreamTicket(issue(sessionAuthority("sess-b"))),
+      );
 
       yield* leases.revokeSession(AuthSessionId.make("sess-a"));
 
@@ -343,6 +351,42 @@ describe("BrowserFrameLeases", () => {
       yield* leases.recordHeldSurfaceClaim({ ...claim, token: "tok-b" });
       yield* TestClock.adjust(61_000);
       expect(Option.isNone(yield* leases.heldSurfaceClaim("tok-b"))).toBe(true);
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("a revoked connection can never mint again — tickets, leases, claims", () =>
+    Effect.gen(function* () {
+      const leases = yield* BrowserFrameLeases;
+      const sessionAuth = sessionAuthority("sess-a", "conn-1");
+      const extensionAuth = { ...extensionAuthority("sess-a"), rootConnectionId: "conn-1" };
+      // Live records under conn-1 die at revoke, as before.
+      yield* leases.issueStreamTicket(issue(sessionAuth));
+      yield* leases.revokeConnection("conn-1");
+      // Every mint path now refuses the dead connection — the in-flight hole.
+      expect(Option.isNone(yield* leases.issueStreamTicket(issue(sessionAuth)))).toBe(true);
+      expect(Option.isNone(yield* leases.issueInputLease(issue(sessionAuth)))).toBe(true);
+      expect(Option.isNone(yield* leases.issueStreamTicket(issue(extensionAuth)))).toBe(true);
+      expect(Option.isNone(yield* leases.issueInputLease(issue(extensionAuth)))).toBe(true);
+      expect(
+        yield* leases.recordHeldSurfaceClaim({
+          token: "tok-dead",
+          authority: extensionAuth,
+          session,
+          allowedCommands: ["attach"],
+          expiresAt: (yield* Clock.currentTimeMillis) + 60_000,
+        }),
+      ).toBe(false);
+      // A different live connection mints normally.
+      expect(
+        Option.isSome(yield* leases.issueStreamTicket(issue(sessionAuthority("sess-a", "conn-2")))),
+      ).toBe(true);
+      expect(
+        Option.isSome(
+          yield* leases.issueInputLease(
+            issue({ ...extensionAuthority("sess-a"), rootConnectionId: "conn-2" }),
+          ),
+        ),
+      ).toBe(true);
     }).pipe(Effect.provide(TestLayer)),
   );
 });

@@ -127,7 +127,7 @@ const makeDeps = (overrides: Partial<Deps> = {}): Deps => ({
       slotId: "slot-1",
     }),
   leases: {
-    recordHeldSurfaceClaim: () => Effect.void,
+    recordHeldSurfaceClaim: () => Effect.succeed(true),
     heldSurfaceClaim: () => Effect.succeed(Option.none()),
     revokeWhere: () => Effect.void,
   },
@@ -564,7 +564,7 @@ describe("t3.resources/lease adapter", () => {
           leases: {
             recordHeldSurfaceClaim: (claim) => {
               held = claim;
-              return Effect.void;
+              return Effect.succeed(true);
             },
             heldSurfaceClaim: () => Effect.succeed(Option.none()),
             revokeWhere: () => Effect.void,
@@ -906,6 +906,7 @@ describe("t3.resources/lease adapter", () => {
           authority: held.value.authority,
           session: held.value.session,
         });
+        if (Option.isNone(streamTicket)) throw new Error("stream ticket must mint");
         const inputLease = yield* leases.issueInputLease({
           authority: held.value.authority,
           session: held.value.session,
@@ -920,7 +921,7 @@ describe("t3.resources/lease adapter", () => {
         expect(released).toEqual({ released: true });
         // Claim, stream ticket, and input lease all die with the release.
         expect(Option.isNone(yield* leases.heldSurfaceClaim(token))).toBe(true);
-        expect(Option.isNone(yield* leases.verify(streamTicket.ticket))).toBe(true);
+        expect(Option.isNone(yield* leases.verify(streamTicket.value.ticket))).toBe(true);
         expect(Option.isNone(yield* leases.verify(inputLease.value.inputTicket))).toBe(true);
         const lease = yield* leases.resolveLease(inputLease.value.leaseId);
         expect(Option.isNone(lease) || lease.value.revoked).toBe(true);

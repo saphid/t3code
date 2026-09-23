@@ -414,6 +414,17 @@ const isClientWebDeployment = Schema.is(ClientWebDeployment);
 const MAX_CLIENT_APP_VERSION_LENGTH = 64;
 const MAX_CLIENT_BROWSER_LENGTH = 64;
 const MAX_CLIENT_DEVICE_MODEL_LENGTH = 80;
+const MAX_CLIENT_INSTANCE_ID_LENGTH = 128;
+
+// The client runtime's per-instance identity, announced on the /ws upgrade
+// URL and echoed on environment HTTP requests. Optional and lenient like the
+// origin params — older clients never send it.
+function readClientInstanceId(request: HttpServerRequest.HttpServerRequest): string | undefined {
+  const url = HttpServerRequest.toURL(request);
+  if (Option.isNone(url)) return undefined;
+  const value = url.value.searchParams.get("clientInstanceId")?.trim() ?? "";
+  return value !== "" && value.length <= MAX_CLIENT_INSTANCE_ID_LENGTH ? value : undefined;
+}
 
 // Optional client identity announced on the /ws upgrade URL next to wsTicket.
 // Lenient by design: absent or malformed values degrade to {} so a connection
@@ -3169,6 +3180,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         );
         const clientOrigin = readClientConnectionOrigin(request);
         const clientAnalyticsProps = readClientAnalyticsProps(request);
+        const clientInstanceId = readClientInstanceId(request);
         const crypto = yield* Crypto.Crypto;
         const wsConnectionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
         const browserFrameLeases = yield* BrowserFrameLeases.BrowserFrameLeases;
@@ -3219,10 +3231,11 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           ),
         );
         return yield* Effect.acquireUseRelease(
-          // The session's active-connection binding follows the newest ws
-          // upgrade: HTTP-path mints (which carry no connection identity of
-          // their own) adopt it so revocation still reaches them.
-          sessions.markConnected(session.sessionId, wsConnectionId),
+          // Register this socket's liveness and its client's instance id:
+          // HTTP requests echoing the same instance id resolve to THIS
+          // connection rather than a session-global newest, and connection-
+          // scoped revocation stays attribution-exact per client instance.
+          sessions.markConnected(session.sessionId, wsConnectionId, clientInstanceId),
           () => rpcWebSocketHttpEffect,
           // Viewer root disconnect terminates everything this connection
           // minted — leases, held claims, and bound input sockets die with

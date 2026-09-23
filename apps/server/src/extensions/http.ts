@@ -34,11 +34,18 @@ export function makeOperations(
     session: EnvironmentSessionPrincipalShape,
     scope: AuthEnvironmentScope,
     writeScope?: AuthEnvironmentScope,
+    /**
+     * The client runtime instance id echoed from the request's
+     * `x-t3-client-instance` header — resolves to that client's live ws
+     * connection so HTTP mints bind to the correct root connection.
+     */
+    clientInstanceId?: string,
   ) => Effect.Effect<HostApiRootAuthority, ExtensionOperationError>,
 ) {
   return {
     invokeApi: Effect.fn("environment.extensions.invokeApi")(function* (
       input: ExtensionApiInvokeInput,
+      clientInstanceId?: string,
     ) {
       // Domain scopes decide write capability: an ordinary paired session with
       // orchestration:operate gets a write-capable root without any
@@ -50,7 +57,12 @@ export function makeOperations(
         ? AuthOrchestrationOperateScope
         : AuthOrchestrationReadScope;
       const session = yield* requireEnvironmentScope(requiredScope);
-      const root = yield* makeAuthority(session, requiredScope, AuthOrchestrationOperateScope);
+      const root = yield* makeAuthority(
+        session,
+        requiredScope,
+        AuthOrchestrationOperateScope,
+        clientInstanceId,
+      );
       return { result: yield* extensions.invokeApi(input, root) };
     }),
     discoverApis: Effect.fn("environment.extensions.discoverApis")(function* (
@@ -123,14 +135,19 @@ export const extensionsHttpApiLayer = HttpApiBuilder.group(
     const sessions = yield* SessionStore;
     const environment = yield* ServerEnvironment;
     const environmentId = yield* environment.getEnvironmentId;
-    const operations = makeOperations(yield* EnvironmentExtensions, (session, scope, writeScope) =>
-      // HTTP requests carry no transport connection of their own — the
-      // authority adopts the session's live root connection (registered by
-      // the ws upgrade) so connection-scoped revocation reaches mints made
-      // through this path too, matching the subscribeApi root's semantics.
-      sessions
-        .activeConnectionId(session.sessionId)
-        .pipe(
+    const operations = makeOperations(
+      yield* EnvironmentExtensions,
+      (session, scope, writeScope, clientInstanceId) =>
+        // HTTP requests carry no transport connection of their own, but the
+        // client echoes the same instance id it announced on its ws upgrade.
+        // Resolving it binds the authority to THAT client's live socket —
+        // never a session-global newest — and a caller with no live socket
+        // (or no header at all) gets a connectionless root that session
+        // revocation and expiry still bound.
+        (clientInstanceId === undefined
+          ? Effect.succeed(Option.none<string>())
+          : sessions.connectionIdForClientInstance(session.sessionId, clientInstanceId)
+        ).pipe(
           Effect.flatMap((connectionId) =>
             makeSessionApiAuthority(
               session,
@@ -146,7 +163,7 @@ export const extensionsHttpApiLayer = HttpApiBuilder.group(
     return handlers
       .handle("invokeApi", (args) =>
         annotateEnvironmentRequest(args.endpoint.name).pipe(
-          Effect.andThen(operations.invokeApi(args.payload)),
+          Effect.andThen(operations.invokeApi(args.payload, args.headers["x-t3-client-instance"])),
         ),
       )
       .handle("discoverApis", (args) =>

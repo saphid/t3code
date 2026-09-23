@@ -377,6 +377,13 @@ export function createBrowserFramesApiProvider(
           hostClientId,
           hostConnectionId,
         });
+        if (Option.isNone(issued)) {
+          return yield* named(
+            operation,
+            "BrowserStreamTicketDenied",
+            "the mint authority's root connection is no longer live.",
+          );
+        }
         return {
           session: {
             environmentId: dependencies.environmentId,
@@ -391,8 +398,8 @@ export function createBrowserFramesApiProvider(
             snapshot: sessionPath(target.tabId, "snapshot"),
             config: sessionPath(target.tabId, "config"),
           },
-          ticket: issued.ticket,
-          expiresAt: issued.expiresAt,
+          ticket: issued.value.ticket,
+          expiresAt: issued.value.expiresAt,
         } satisfies BrowserFrameStreamDescriptor;
       }
 
