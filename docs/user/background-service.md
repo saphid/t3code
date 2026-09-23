@@ -95,3 +95,15 @@ Downloads, it may need Full Disk Access for the `t3` executable listed in
 
 For failures after signing in to T3 Connect, see
 [connection troubleshooting](./remote-access.md#t3-connect-troubleshooting).
+
+## One server per home directory
+
+A home directory can be owned by one running T3 Code server at a time. If a second
+server reports that another server may be using its state, connect to the running
+server. To run a separate environment, choose a different home directory. Multiple
+web, desktop, and mobile clients can connect to the same server.
+
+This prevents a newly started server from cancelling work that belongs to another
+running server. Upgrade both the desktop's bundled server and any standalone
+server to get this protection. Older servers do not participate in ownership
+locking. The protection does not change runs already recorded as cancelled.
