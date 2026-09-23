@@ -1393,4 +1393,61 @@ describe("BrowserFrameHub", () => {
       spy.mockRestore();
     }
   });
+
+  it("reclaims an idle session's cache and stops its sweep", async () => {
+    let captures = 0;
+    const { stub, layer: managerLayer } = makeManagerStub((manager) => {
+      manager.captureFrameJpeg = () => {
+        captures += 1;
+        return Effect.succeed({
+          jpeg: Buffer.from("seed-jpeg"),
+          width: 100,
+          height: 100,
+          engineGeneration: "gen-1",
+          viewportCss: { width: 100, height: 100 },
+          geometryKey: PreviewManager.remoteFrameGeometryKey(
+            "gen-1",
+            { width: 100, height: 100 },
+            1,
+          ),
+        });
+      };
+    });
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const hub = yield* BrowserFrameHub;
+          yield* Effect.promise(async () => {
+            // Install the fake clock first so the activity's own sweep is a
+            // fake timer the test can advance.
+            vi.useFakeTimers();
+            try {
+              const ws = await openInput(hub.origin, hub.secret, baseInputParams);
+              await waitNotice(ws, "bound");
+              // Cache a frame a later viewer could otherwise be seeded with.
+              stub.pushFrame(liveFrame());
+              ws.terminate();
+              await waitClosed(ws);
+
+              // Advance the session's own sweep past the idle window: once the
+              // socket's release lands, the next tick reclaims the activity —
+              // poller, cached frames, and all.
+              await vi.advanceTimersByTimeAsync(61_000 + 2_000);
+              expect(stub.released).toContain(runtimeTabId);
+            } finally {
+              vi.useRealTimers();
+            }
+
+            const res = await fetch(streamUrl(hub.origin, hub.secret));
+            const reader = res.body!.getReader();
+            await reader.read();
+            // The reclaimed session kept no cached seed — the stream's seed
+            // had to capture afresh.
+            expect(captures).toBe(1);
+            await reader.cancel();
+          });
+        }),
+      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
+    );
+  });
 });

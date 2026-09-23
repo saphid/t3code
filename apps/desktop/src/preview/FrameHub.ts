@@ -107,6 +107,13 @@ interface SessionActivity {
   rateByLease: Map<string, { tokens: number; tokensAt: number }>;
   /** Last time the session had viewers, input, or pending work — idle GC. */
   lastTouchedAt: number;
+  /**
+   * This session's own sweep: refresh geometry while anything watches or
+   * controls it, and reclaim the activity — poller, cached frames, and all —
+   * once it has been idle past ACTIVITY_IDLE_MS. Nothing polls a session
+   * nobody owns.
+   */
+  poller: NodeJS.Timeout;
 }
 
 interface PendingCandidate {
@@ -260,7 +267,9 @@ const make = Effect.gen(function* () {
       configReadSeq: 0,
       rateByLease: new Map(),
       lastTouchedAt: Date.now(),
+      poller: setInterval(() => pollActivity(runtimeTabId), GEOMETRY_POLL_MS),
     };
+    created.poller.unref();
     activities.set(runtimeTabId, created);
     return created;
   };
@@ -516,28 +525,28 @@ const make = Effect.gen(function* () {
   let remoteChannelSeq = 0;
 
   // Geometry changes are infrequent (guest resize, engine swap) but must be
-  // fenced promptly: while anything watches or controls a session, poll its
-  // authoritative geometry once a second. Sessions nobody watches are
-  // reclaimed once they have been idle past ACTIVITY_IDLE_MS — the map (and
-  // its cached frames) cannot grow without bound.
-  const geometryPoller = setInterval(() => {
+  // fenced promptly: while anything watches or controls a session, its own
+  // sweep polls the authoritative geometry once a second. A session nobody
+  // watches is reclaimed once it has been idle past ACTIVITY_IDLE_MS — its
+  // poller stops with it, so the hub holds no timer for dead sessions.
+  const pollActivity = (runtimeTabId: string): void => {
+    const activity = activities.get(runtimeTabId);
+    if (activity === undefined) return;
     const now = Date.now();
-    for (const [runtimeTabId, activity] of activities) {
-      const inputLive =
-        (activity.input !== null && activity.input.state !== "ended") ||
-        activity.pending !== null ||
-        activity.shadows.size > 0;
-      if (activity.viewers > 0 || inputLive) {
-        activity.lastTouchedAt = now;
-        void refreshGeometry(runtimeTabId);
-        continue;
-      }
-      if (now - activity.lastTouchedAt > ACTIVITY_IDLE_MS) {
-        activities.delete(runtimeTabId);
-      }
+    const inputLive =
+      (activity.input !== null && activity.input.state !== "ended") ||
+      activity.pending !== null ||
+      activity.shadows.size > 0;
+    if (activity.viewers > 0 || inputLive) {
+      activity.lastTouchedAt = now;
+      void refreshGeometry(runtimeTabId);
+      return;
     }
-  }, GEOMETRY_POLL_MS);
-  geometryPoller.unref();
+    if (now - activity.lastTouchedAt > ACTIVITY_IDLE_MS) {
+      clearInterval(activity.poller);
+      activities.delete(runtimeTabId);
+    }
+  };
 
   // One Manager subscription fans frames out to every connected stream. The
   // seq stamped on each part is capture-scoped, so viewers see identical
@@ -649,7 +658,12 @@ const make = Effect.gen(function* () {
       if (cleanedUp) return;
       cleanedUp = true;
       if (expiryTimer !== null) clearTimeout(expiryTimer);
-      streamListeners.get(runtimeTabId)?.delete(listener);
+      const listenerSet = streamListeners.get(runtimeTabId);
+      if (listenerSet !== undefined) {
+        listenerSet.delete(listener);
+        // An emptied set must not pin the session's listener entry forever.
+        if (listenerSet.size === 0) streamListeners.delete(runtimeTabId);
+      }
       pending = null;
       if (!counted) return;
       counted = false;
@@ -1216,8 +1230,8 @@ const make = Effect.gen(function* () {
 
   yield* Effect.addFinalizer(() =>
     Effect.sync(() => {
-      clearInterval(geometryPoller);
       for (const activity of activities.values()) {
+        clearInterval(activity.poller);
         if (activity.pending !== null) {
           activity.pending.cancelled = true;
           clearTimeout(activity.pending.expiryTimer);
