@@ -451,9 +451,11 @@ function writeSystemMessage(surface: Pick<GhosttyTerminalSurface, "write">, mess
  * instead of splitting. `listConflicts` rows exist only while this
  * surface's focus context is active, and only for displaced defaultKeys —
  * `key` is the descriptor spelling, `command` the winning rule's command.
- * Fetched on show and on focus changes (they toggle the when-context),
- * throttled to one call per second; a denied or unavailable call leaves
- * null and the resolver falls back to the static defaults.
+ * Fetched on show and on focus changes (they toggle the when-context);
+ * ordinary refreshes are throttled to one call per second, but the first
+ * refresh after a focus edge is never throttled — the mount-time list
+ * predates the focus context. A denied or unavailable call leaves null
+ * and the resolver falls back to the static defaults.
  */
 function useTerminalChordConflicts(
   host: ClientHost,
@@ -471,10 +473,8 @@ function useTerminalChordConflicts(
     const signal = AbortSignal.any([controller.signal, session.signal]);
     const api = bindApi(uiKeybindingsApi, host, session.context);
     let lastRefresh = -Infinity;
-    const refresh = () => {
-      const now = Date.now();
-      if (now - lastRefresh < 1000) return;
-      lastRefresh = now;
+    const invokeList = () => {
+      lastRefresh = Date.now();
       void api.invoke("listConflicts", {}, signal).then(
         (value) => {
           if (!signal.aborted) conflictsRef.current = value.conflicts;
@@ -484,15 +484,34 @@ function useTerminalChordConflicts(
         },
       );
     };
+    const refresh = () => {
+      if (Date.now() - lastRefresh < 1000) return;
+      invokeList();
+    };
     refreshRef.current = refresh;
     conflictsRef.current = null;
     refresh();
-    const onFocusIn = () => refresh();
+    // Focus edges toggle the when-context the list is computed under, and
+    // the surface usually mounts before it CAN be focused — its mount-time
+    // list predates the focus context entirely. The first refresh after
+    // focus (re)enters bypasses the throttle, or the capture handler keeps
+    // dispatching stale defaults well after the user remaps became visible.
+    let focused = false;
+    const onFocusIn = () => {
+      if (focused) return refresh();
+      focused = true;
+      invokeList();
+    };
+    const onFocusOut = () => {
+      focused = false;
+    };
     document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("focusout", onFocusOut);
     return () => {
       refreshRef.current = () => {};
       controller.abort();
       document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("focusout", onFocusOut);
       conflictsRef.current = null;
     };
   }, [host, session, visible]);

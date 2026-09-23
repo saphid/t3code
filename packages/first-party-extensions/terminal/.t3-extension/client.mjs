@@ -12037,10 +12037,8 @@ var __t3Client = (() => {
       const signal = AbortSignal.any([controller.signal, session.signal]);
       const api = bindApi(uiKeybindingsApi, host, session.context);
       let lastRefresh = -Infinity;
-      const refresh = () => {
-        const now = Date.now();
-        if (now - lastRefresh < 1e3) return;
-        lastRefresh = now;
+      const invokeList = () => {
+        lastRefresh = Date.now();
         void api.invoke("listConflicts", {}, signal).then(
           (value) => {
             if (!signal.aborted) conflictsRef.current = value.conflicts;
@@ -12050,16 +12048,30 @@ var __t3Client = (() => {
           }
         );
       };
+      const refresh = () => {
+        if (Date.now() - lastRefresh < 1e3) return;
+        invokeList();
+      };
       refreshRef.current = refresh;
       conflictsRef.current = null;
       refresh();
-      const onFocusIn = () => refresh();
+      let focused = false;
+      const onFocusIn = () => {
+        if (focused) return refresh();
+        focused = true;
+        invokeList();
+      };
+      const onFocusOut = () => {
+        focused = false;
+      };
       document.addEventListener("focusin", onFocusIn);
+      document.addEventListener("focusout", onFocusOut);
       return () => {
         refreshRef.current = () => {
         };
         controller.abort();
         document.removeEventListener("focusin", onFocusIn);
+        document.removeEventListener("focusout", onFocusOut);
         conflictsRef.current = null;
       };
     }, [host, session, visible]);

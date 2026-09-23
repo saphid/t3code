@@ -20,6 +20,7 @@ const require = NodeModule.createRequire(new URL(".", import.meta.url));
 const { build } = require("esbuild");
 const React = require("react");
 const { act, create } = require("react-test-renderer");
+const { resolveTerminalChord } = await import("./viewModel.ts");
 
 const packageDir = NodeURL.fileURLToPath(new URL(".", import.meta.url));
 
@@ -124,6 +125,8 @@ NodeTest.before(async () => {
 });
 
 const nodeMock = (element) => ({ id: element.props["aria-label"] });
+
+const fireDocument = (type) => documentListeners.get(type)?.();
 
 function sessionMetadata(terminalId) {
   return {
@@ -344,4 +347,66 @@ NodeTest.describe("group switch waiter wake (r3 finding 2)", () => {
       NodeAssert.equal(active.size, 0);
     },
   );
+});
+
+NodeTest.describe("first-focus chord refresh (r3 finding 5)", () => {
+  NodeTest.test("the first focusin after mount refreshes conflicts unthrottled", async () => {
+    // The reviewer's FIRST_FOCUS_REMAP_RACE probe: the surface mounts
+    // unfocused, so its mount-time listConflicts ran outside the focus
+    // context and returned no rows. The user's mod+d -> terminal.close
+    // rule only becomes visible once the surface is focused; a focusin
+    // 100ms after mount was swallowed by the 1s throttle, and the next
+    // mod+d dispatched the stale default (split) instead of close.
+    let focused = false;
+    let invocations = 0;
+    const keyHost = {
+      invokeApi: async () => {
+        invocations += 1;
+        return {
+          conflicts: focused
+            ? [{ key: "mod+d", command: "terminal.close", winner: "user", loser: "split" }]
+            : [],
+        };
+      },
+    };
+    const session = {
+      signal: new AbortController().signal,
+      context: { resource: { threadId: "t", environmentId: "e" } },
+    };
+    let chordState;
+    function ChordProbe() {
+      chordState = bundle.useTerminalChordConflicts(keyHost, session, true);
+      return null;
+    }
+    const realNow = Date.now;
+    let clock = 0;
+    Date.now = () => clock;
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(React.createElement(ChordProbe), { createNodeMock: nodeMock });
+      });
+      NodeAssert.equal(invocations, 1);
+      NodeAssert.deepEqual(chordState.conflictsRef.current, []);
+      clock = 100;
+      focused = true;
+      await act(async () => fireDocument("focusin"));
+      // The focus transition bypassed the 1s throttle: the remap row is
+      // in before the next keypress resolves.
+      NodeAssert.equal(invocations, 2);
+      NodeAssert.equal(resolveTerminalChord("mod+d", chordState.conflictsRef.current), "close");
+      // An explicit refresh inside the same second stays throttled.
+      chordState.refreshChords();
+      await act(async () => {});
+      NodeAssert.equal(invocations, 2);
+      // The next focus edge (leave, re-enter) bypasses again.
+      fireDocument("focusout");
+      clock = 150;
+      await act(async () => fireDocument("focusin"));
+      NodeAssert.equal(invocations, 3);
+    } finally {
+      await act(async () => renderer.unmount());
+      Date.now = realNow;
+    }
+  });
 });
