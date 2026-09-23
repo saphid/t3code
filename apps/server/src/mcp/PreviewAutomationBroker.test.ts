@@ -1152,12 +1152,37 @@ it.effect(
             makeHost({ clientId: "real", frameHub: { origin, secret: "s" } }),
           );
           expect(yield* broker.frameHubs).toHaveLength(1);
-          expect(paths).toEqual(["/health"]);
+          // Registration probes once; the read re-probes so a hub that later
+          // stops is not advertised as available.
+          expect(paths).toEqual(["/health", "/health"]);
         } finally {
           yield* closeServer(server);
         }
       }),
     ),
+);
+
+it.effect("stops advertising a frame hub that dies while its automation connection survives", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const server = createServer((_req, res) => {
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ service: "t3.browser-frame-hub" }));
+      });
+      const origin = yield* Effect.promise(() => listen(server));
+      const broker = yield* makeBroker;
+      yield* connectReady(
+        broker,
+        makeHost({ clientId: "real", frameHub: { origin, secret: "s" } }),
+      );
+      expect(yield* broker.frameHubs).toHaveLength(1);
+
+      // The hub process stops but the automation connection stays
+      // registered — stored health must not keep it advertised.
+      yield* closeServer(server);
+      expect(yield* broker.frameHubs).toHaveLength(0);
+    }),
+  ),
 );
 
 it.effect("the hub health probe never follows a redirect into a private path", () =>

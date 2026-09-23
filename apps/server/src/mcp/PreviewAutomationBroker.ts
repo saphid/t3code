@@ -771,6 +771,21 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
             ],
       ),
     ),
+    // Registration-time health is a point-in-time fact: the hub can stop
+    // while its automation connection survives, so every read re-probes and
+    // only currently-reachable hubs are advertised to capability and mint
+    // resolution.
+    Effect.flatMap((endpoints) =>
+      Effect.forEach(
+        endpoints,
+        (endpoint) =>
+          probeFrameHub(endpoint).pipe(Effect.map((healthy) => (healthy ? [endpoint] : []))),
+        { concurrency: "unbounded" },
+      ).pipe(
+        Effect.map((kept) => kept.flat()),
+        Effect.provide(FetchHttpClient.layer),
+      ),
+    ),
   );
 
   return PreviewAutomationBroker.of({
