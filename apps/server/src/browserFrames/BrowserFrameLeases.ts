@@ -262,6 +262,14 @@ export class BrowserFrameLeases extends Context.Service<
     readonly revokeLease: (leaseId: string) => Effect.Effect<boolean>;
     /** Revoke every record whose authority rides on the removed session. */
     readonly revokeSession: (sessionId: AuthSessionId) => Effect.Effect<void>;
+    /**
+     * Revoke every record minted under a transport connection: session
+     * authorities carry `connectionId`, extension authorities
+     * `rootConnectionId`, and held presentation claims carry whichever their
+     * minting authority held. Root disconnect runs this so already-open
+     * channels die with the socket, not just future verifies.
+     */
+    readonly revokeConnection: (connectionId: string) => Effect.Effect<void>;
     /** Revoke every record whose authority fails `match` (catalogue sweeps). */
     readonly revokeWhere: (
       match: (
@@ -576,6 +584,16 @@ export const make = (options?: {
       yield* publish({ type: "session", sessionId });
     });
 
+    const revokeConnection: BrowserFrameLeases["Service"]["revokeConnection"] = Effect.fn(
+      "BrowserFrameLeases.revokeConnection",
+    )(function* (connectionId) {
+      yield* revokeWhere((record) =>
+        record.authority.kind === "session"
+          ? record.authority.connectionId === connectionId
+          : record.authority.rootConnectionId === connectionId,
+      );
+    });
+
     const recordHeldSurfaceClaim: BrowserFrameLeases["Service"]["recordHeldSurfaceClaim"] =
       Effect.fn("BrowserFrameLeases.recordHeldSurfaceClaim")(function* (claim) {
         const now = yield* currentMillis;
@@ -643,6 +661,7 @@ export const make = (options?: {
       resolveLease,
       revokeLease,
       revokeSession,
+      revokeConnection,
       revokeWhere,
       recordHeldSurfaceClaim,
       heldSurfaceClaim,

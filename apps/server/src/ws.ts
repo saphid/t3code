@@ -3222,20 +3222,12 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           sessions.markConnected(session.sessionId),
           () => rpcWebSocketHttpEffect,
           // Viewer root disconnect terminates everything this connection
-          // minted — leases and bound input sockets die with the ws
-          // connection, not just at ticket expiry.
+          // minted — leases, held claims, and bound input sockets die with
+          // the ws connection, not just at ticket expiry.
           () =>
             sessions
               .markDisconnected(session.sessionId)
-              .pipe(
-                Effect.andThen(
-                  browserFrameLeases.revokeWhere(
-                    (record) =>
-                      record.authority.kind === "session" &&
-                      record.authority.connectionId === wsConnectionId,
-                  ),
-                ),
-              ),
+              .pipe(Effect.andThen(browserFrameLeases.revokeConnection(wsConnectionId))),
         );
       }).pipe(
         Effect.catchTags({

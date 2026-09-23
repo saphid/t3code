@@ -1,13 +1,19 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetch:off -- Route-layer tests drive real loopback HTTP against a stub upstream.
 import { it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { createServer, type RequestListener, type Server } from "node:http";
+import { createHash } from "node:crypto";
+import type { AddressInfo } from "node:net";
+import type { Socket as NetSocket } from "node:net";
 import { FetchHttpClient, HttpRouter } from "effect/unstable/http";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import { describe, expect } from "vite-plus/test";
+import { describe, expect, vi } from "vite-plus/test";
 
 import {
   type BrowserFrameAuthority,
@@ -55,39 +61,39 @@ const sessionStoreStub = {
   revalidate: () => Effect.succeed({ subject: "u", scopes: ["orchestration:read"] }),
 };
 
-const routes = (
+const routeDeps = (
   leases: BrowserFrameLeases["Service"],
   hub: Broker.BrowserFrameHubEndpoint,
   extensions: Pick<EnvironmentExtensions["Service"], "list">,
   auth?: Partial<EnvAuth.EnvironmentAuth["Service"]>,
 ) =>
-  browserFrameProxyRouteLayer.pipe(
-    Layer.provideMerge(Layer.succeed(BrowserFrameLeases, leases)),
-    Layer.provideMerge(
-      Layer.succeed(Broker.PreviewAutomationBroker, {
-        frameHubs: Effect.succeed([hub]),
-        frameHubEvents: Stream.never,
-        watchFrameHubEvents: () => Effect.succeed(Stream.never),
-      } as unknown as Broker.PreviewAutomationBroker["Service"]),
-    ),
-    Layer.provideMerge(
-      Layer.succeed(EnvironmentExtensions, extensions as EnvironmentExtensions["Service"]),
-    ),
-    Layer.provideMerge(
-      Layer.succeed(ExtensionCatalogueChanges, {
-        changes: Stream.never,
-        publish: Effect.void,
-      } as unknown as ExtensionCatalogueChanges["Service"]),
-    ),
-    Layer.provideMerge(
-      Layer.succeed(SessionStore, sessionStoreStub as unknown as SessionStore["Service"]),
-    ),
-    Layer.provideMerge(
-      Layer.succeed(EnvAuth.EnvironmentAuth, (auth ?? {}) as EnvAuth.EnvironmentAuth["Service"]),
-    ),
-    Layer.provideMerge(FetchHttpClient.layer),
-    Layer.provideMerge(NodeServices.layer),
+  Layer.mergeAll(
+    Layer.succeed(BrowserFrameLeases, leases),
+    Layer.succeed(Broker.PreviewAutomationBroker, {
+      frameHubs: Effect.succeed([hub]),
+      frameHubEvents: Stream.never,
+      watchFrameHubEvents: () => Effect.succeed(Stream.never),
+    } as unknown as Broker.PreviewAutomationBroker["Service"]),
+    Layer.succeed(EnvironmentExtensions, extensions as EnvironmentExtensions["Service"]),
+    Layer.succeed(ExtensionCatalogueChanges, {
+      changes: Stream.never,
+      publish: Effect.void,
+    } as unknown as ExtensionCatalogueChanges["Service"]),
+    Layer.succeed(SessionStore, sessionStoreStub as unknown as SessionStore["Service"]),
+    Layer.succeed(EnvAuth.EnvironmentAuth, (auth ?? {}) as EnvAuth.EnvironmentAuth["Service"]),
+    FetchHttpClient.layer,
+    NodeServices.layer,
   );
+
+const routes = (
+  leases: BrowserFrameLeases["Service"],
+  hub: Broker.BrowserFrameHubEndpoint,
+  extensions: Pick<EnvironmentExtensions["Service"], "list">,
+  auth?: Partial<EnvAuth.EnvironmentAuth["Service"]>,
+) => browserFrameProxyRouteLayer.pipe(Layer.provideMerge(routeDeps(leases, hub, extensions, auth)));
+
+/** Loopback GET against a real Node server — kept out of Effect code. */
+const httpGet = (url: string): Promise<Response> => fetch(url);
 
 const listen = async (server: Server): Promise<string> => {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -323,6 +329,169 @@ describe("BrowserFrameProxy", () => {
         }),
     );
   });
+
+  it.live("root disconnect terminates already-open extension stream and input channels", () =>
+    Effect.gen(function* () {
+      const leases = yield* BrowserFrameLeases;
+      // Upstream engine hub: a held-open MJPEG response and an input WS
+      // that accepts and idles — both must die when the viewer's root
+      // connection goes away.
+      const upstreamSockets = new Set<NetSocket>();
+      const upstream = createServer((req, res) => {
+        if (req.url?.startsWith("/sessions/tab-1/stream.mjpeg")) {
+          res.writeHead(200, {
+            "content-type": "multipart/x-mixed-replace; boundary=t3frame",
+          });
+          res.write("--t3frame\r\nContent-Length: 1\r\n\r\nx\r\n");
+          return;
+        }
+        res.writeHead(404);
+        res.end();
+      });
+      // Minimal 101 handshake upstream — accepts the input upgrade and idles
+      // so the test observes the proxy closing the hop, not WS semantics.
+      upstream.on("upgrade", (req, socket: NetSocket) => {
+        if (req.url?.startsWith("/sessions/tab-1/input")) {
+          const key = req.headers["sec-websocket-key"];
+          const accept = createHash("sha1")
+            .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+            .digest("base64");
+          socket.write(
+            "HTTP/1.1 101 Switching Protocols\r\n" +
+              "Upgrade: websocket\r\n" +
+              "Connection: Upgrade\r\n" +
+              `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+          );
+          upstreamSockets.add(socket);
+          socket.on("close", () => upstreamSockets.delete(socket));
+          socket.on("error", () => {});
+          // Answer the peer's close frame with FIN — without it the proxy's
+          // close handshake never completes and the TCP connection lingers.
+          socket.on("data", (data) => {
+            if ((data[0]! & 0x0f) === 0x8) socket.end();
+          });
+          return;
+        }
+        socket.destroy();
+      });
+      const upstreamOrigin = yield* Effect.promise(() => listen(upstream));
+      const hub = {
+        origin: upstreamOrigin,
+        secret: "hub-secret",
+        clientId: "h",
+        connectionId: "hc",
+        environmentId: "env-a",
+      } as Broker.BrowserFrameHubEndpoint;
+      // A real Node server so the input path exercises an actual upgrade.
+      const nodeServer = createServer();
+      yield* Layer.build(
+        HttpRouter.serve(routes(leases, hub, okExtensions, undefined), {
+          disableLogger: true,
+        }).pipe(
+          // Route handlers read these as ambient request-time services —
+          // same provision shape `server.ts` gives the real routes layer.
+          Layer.provideMerge(routeDeps(leases, hub, okExtensions, undefined)),
+          Layer.provide(
+            NodeHttpServer.layer(() => nodeServer, {
+              port: 0,
+              host: "127.0.0.1",
+              websocket: {},
+            }),
+          ),
+        ),
+      );
+      const origin = `http://127.0.0.1:${(nodeServer.address() as AddressInfo).port}`;
+      let inputSocket: WebSocket | undefined;
+      try {
+        const connOne: BrowserFrameAuthority = {
+          ...extensionAuthority,
+          rootConnectionId: "conn-1",
+        };
+        const streamTicket = yield* leases.issueStreamTicket({
+          ...ticketMint(hub),
+          authority: connOne,
+        });
+        const inputLease = yield* leases.issueInputLease({
+          ...ticketMint(hub),
+          authority: connOne,
+        });
+        expect(Option.isSome(inputLease)).toBe(true);
+        // A second connection sharing the session: its records must outlive
+        // conn-1's disconnect.
+        const connTwo: BrowserFrameAuthority = {
+          ...extensionAuthority,
+          rootConnectionId: "conn-2",
+        };
+        const controlTicket = yield* leases.issueStreamTicket({
+          ...ticketMint(hub),
+          authority: connTwo,
+        });
+        // Held presentation claims ride the same connection identity:
+        // conn-1's claim is released by the disconnect, conn-2's survives.
+        const claimExpiry = (yield* Clock.currentTimeMillis) + 60_000;
+        yield* leases.recordHeldSurfaceClaim({
+          token: "tok-conn-1",
+          authority: { ...connOne, heldSlot: "tok-conn-1" },
+          session: tuple,
+          allowedCommands: ["attach", "present", "release"],
+          expiresAt: claimExpiry,
+        });
+        yield* leases.recordHeldSurfaceClaim({
+          token: "tok-conn-2",
+          authority: { ...connTwo, heldSlot: "tok-conn-2" },
+          session: tuple,
+          allowedCommands: ["attach", "present", "release"],
+          expiresAt: claimExpiry,
+        });
+
+        const streamResponse = yield* Effect.promise(() =>
+          httpGet(
+            `${origin}/api/browser-frames/sessions/tab-1/stream.mjpeg?frameTicket=${streamTicket.ticket}`,
+          ),
+        );
+        expect(streamResponse.status).toBe(200);
+        const reader = streamResponse.body!.getReader();
+        expect((yield* Effect.promise(() => reader.read())).done).toBe(false);
+
+        inputSocket = yield* Effect.promise(
+          () =>
+            new Promise<WebSocket>((resolve, reject) => {
+              const ws = new WebSocket(
+                `${origin}/api/browser-frames/sessions/tab-1/input?inputTicket=${Option.getOrThrow(inputLease).inputTicket}`,
+              );
+              ws.addEventListener("open", () => resolve(ws), { once: true });
+              ws.addEventListener("error", () => reject(new Error("input upgrade rejected")), {
+                once: true,
+              });
+            }),
+        );
+        yield* Effect.promise(() => vi.waitFor(() => expect(upstreamSockets.size).toBe(1)));
+
+        // The ws layer's disconnect path: every record riding conn-1 dies.
+        yield* leases.revokeConnection("conn-1");
+
+        const streamEnd = yield* Effect.promise(() => reader.read());
+        expect(streamEnd.done).toBe(true);
+        yield* Effect.promise(() =>
+          vi.waitFor(() => expect(inputSocket?.readyState).toBe(WebSocket.CLOSED)),
+        );
+        yield* Effect.promise(() => vi.waitFor(() => expect(upstreamSockets.size).toBe(0)));
+        expect(Option.isSome(yield* leases.verify(controlTicket.ticket))).toBe(true);
+        expect(Option.isNone(yield* leases.heldSurfaceClaim("tok-conn-1"))).toBe(true);
+        expect(Option.isSome(yield* leases.heldSurfaceClaim("tok-conn-2"))).toBe(true);
+      } finally {
+        inputSocket?.close();
+        for (const socket of upstreamSockets) socket.destroy();
+        yield* Effect.promise(
+          () =>
+            new Promise<void>((resolve) => {
+              upstream.closeAllConnections();
+              upstream.close(() => resolve());
+            }),
+        );
+      }
+    }).pipe(Effect.scoped, Effect.provide(LeasesLive)),
+  );
 
   it.live("scopes a ticket-bound /sessions listing to the bound tuple", () =>
     withProxy(
