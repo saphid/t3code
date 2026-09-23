@@ -1188,17 +1188,26 @@ NodeTest.describe("t3.ui/keybindings — focused-chord resolution (r2 item 4)", 
     },
   );
 
-  NodeTest.it("a chord that is not one of ours is never intercepted", () => {
+  NodeTest.it("a chord with no default and no row is never intercepted", () => {
     // mod+e and mod+shift+n have no default binding here — the VT surface
     // sees the bytes regardless of what the keymap says elsewhere.
     NodeAssert.equal(resolveTerminalChord("mod+e", null), null);
     NodeAssert.equal(resolveTerminalChord("mod+e", []), null);
-    NodeAssert.equal(
-      resolveTerminalChord("mod+e", [conflict("mod+e", "terminal.close", "user")]),
-      null,
-    );
     NodeAssert.equal(resolveTerminalChord("mod+shift+n", []), null);
     NodeAssert.equal(resolveTerminalChord(null, null), null);
+    // A row on ANY chord — not just the four pane-action defaults — naming
+    // a native focused-terminal command dispatches it: the host left that
+    // event for this surface and nobody else will act on it (r3 finding 4).
+    NodeAssert.equal(
+      resolveTerminalChord("mod+e", [conflict("mod+e", "terminal.close", "user")]),
+      "close",
+    );
+    // A row naming anything else still leaves nothing in charge — the
+    // host's own dispatch of that command already marked defaultPrevented.
+    NodeAssert.equal(
+      resolveTerminalChord("mod+e", [conflict("mod+e", "other.plugin/action", "plugin")]),
+      null,
+    );
   });
 });
 

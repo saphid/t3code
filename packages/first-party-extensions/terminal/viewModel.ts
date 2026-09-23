@@ -1329,33 +1329,45 @@ export function terminalChordFromEvent(
 /**
  * The action a captured chord should dispatch, given the host's keymap
  * resolution. `listConflicts` rows name the winning command for each
- * displaced defaultKey — but the list is computed under this surface's
- * when-context, where `terminalFocus` is false, so the winner for one of
- * our chords is usually the shipped `!terminalFocus` sibling (mod+d →
- * diff.toggle, mod+n → chat.new) — a rule that can never fire while this
- * surface owns focus. A row resolving to a native focused-terminal
- * command means the user remapped the chord to that command — dispatch
- * THAT action, not the hardcoded default. Any other row falls back to the
- * default: the host dispatches at window capture before this surface sees
- * the event and marks what it dispatched `defaultPrevented`, and the
- * capture handler bails on those, so a fallback dispatch only lands on a
- * chord nobody else actually claimed. No row (or an unavailable list)
- * leaves the default binding in charge, and a chord that is not one of
- * ours is never intercepted. Residual: a remap guarded by `terminalFocus`
- * itself (mod+d → terminal.close when terminalFocus) is invisible in the
- * list's context and keeps its default action plugin-side.
+ * displaced registered defaultKey — the mod+d family AND the mod+j toggle —
+ * but the list is computed under this surface's when-context, where
+ * `terminalFocus` is false, so the winner is usually the shipped
+ * `!terminalFocus` sibling (mod+d → diff.toggle, mod+n → chat.new) — a rule
+ * that can never fire while this surface owns focus. A row on ANY chord
+ * resolving to a native focused-terminal command means the user remapped
+ * that chord to that command — dispatch THAT action, not the hardcoded
+ * default: the host leaves exactly those events untouched for this surface
+ * (isExtensionClaimedTerminalCommand), so nobody else will. Any other row
+ * falls back to the default: the host dispatches at window capture before
+ * this surface sees the event and marks what it dispatched
+ * `defaultPrevented`, and the capture handler bails on those, so a fallback
+ * dispatch only lands on a chord nobody else actually claimed. No row (or
+ * an unavailable list) leaves the default binding in charge.
+ *
+ * Residuals the plugin cannot see (the SDK keybindings surface exposes only
+ * getCapabilities/registerCommands/unregisterCommands/listConflicts — no
+ * resolve): a remap on a chord no registered default sits on (mod+e →
+ * terminal.split) produces no row at all, and a remap guarded by
+ * `terminalFocus` itself is invisible in the list's false-terminalFocus
+ * context — the default action still fires plugin-side for those.
  */
 export function resolveTerminalChord(
   chord: string | null,
   conflicts: readonly TerminalKeybindingConflict[] | null,
 ): TerminalChordAction | null {
   if (chord === null) return null;
-  const fallback = TERMINAL_DEFAULT_CHORDS.get(chord);
-  if (fallback === undefined) return null;
-  if (conflicts === null) return fallback;
-  const entry = conflicts.find((conflict) => conflict.key === chord);
-  if (entry === undefined) return fallback;
-  return NATIVE_TERMINAL_CHORD_COMMANDS.get(entry.command) ?? fallback;
+  if (conflicts !== null) {
+    const entry = conflicts.find((conflict) => conflict.key === chord);
+    if (entry !== undefined) {
+      // Rows exist for every displaced defaultKey, not just the four
+      // pane-action chords — the mod+j toggle default displaces the same
+      // way, and its row must resolve too or the host yields an event the
+      // surface then drops.
+      const action = NATIVE_TERMINAL_CHORD_COMMANDS.get(entry.command);
+      if (action !== undefined) return action;
+    }
+  }
+  return TERMINAL_DEFAULT_CHORDS.get(chord) ?? null;
 }
 
 /** Maps a dispatched command id to its panel action; false for unknown ids. */

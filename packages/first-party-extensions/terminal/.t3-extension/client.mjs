@@ -11060,12 +11060,14 @@ var __t3Client = (() => {
   }
   function resolveTerminalChord(chord, conflicts) {
     if (chord === null) return null;
-    const fallback = TERMINAL_DEFAULT_CHORDS.get(chord);
-    if (fallback === void 0) return null;
-    if (conflicts === null) return fallback;
-    const entry = conflicts.find((conflict) => conflict.key === chord);
-    if (entry === void 0) return fallback;
-    return NATIVE_TERMINAL_CHORD_COMMANDS.get(entry.command) ?? fallback;
+    if (conflicts !== null) {
+      const entry = conflicts.find((conflict) => conflict.key === chord);
+      if (entry !== void 0) {
+        const action = NATIVE_TERMINAL_CHORD_COMMANDS.get(entry.command);
+        if (action !== void 0) return action;
+      }
+    }
+    return TERMINAL_DEFAULT_CHORDS.get(chord) ?? null;
   }
   function dispatchTerminalCommand(commandId, actions) {
     switch (commandId) {
