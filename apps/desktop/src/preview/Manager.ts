@@ -4574,40 +4574,72 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   const captureFrameJpeg = Effect.fn("PreviewManager.captureFrameJpeg")(function* (tabId: string) {
-    const wc = yield* requireWebContents(tabId);
-    const viewportCss = yield* readRemoteViewport(tabId, wc);
-    const image = yield* capturePageWithRetry(
-      { operation: "remoteFrames.capturePage", tabId, webContentsId: wc.id },
-      tabId,
-      wc,
-    );
-    const size = yield* attempt(
-      { operation: "remoteFrames.measureFrame", tabId, webContentsId: wc.id },
-      () => image.getSize(),
-    );
-    if (size.width <= 0 || size.height <= 0) {
-      return yield* new PreviewOperationError({
-        operation: "remoteFrames.measureFrame",
-        tabId,
-        webContentsId: wc.id,
-        cause: new Error("Captured frame has no size."),
+    const readGeometry = (wc: Electron.WebContents) =>
+      Effect.gen(function* () {
+        const viewportCss = yield* readRemoteViewport(tabId, wc);
+        const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+        const engineGeneration = String(wc.id);
+        const zoomFactor = tab?.zoomFactor ?? DEFAULT_ZOOM_FACTOR;
+        return {
+          engineGeneration,
+          viewportCss,
+          geometryKey: remoteFrameGeometryKey(engineGeneration, viewportCss, zoomFactor),
+        } as const;
       });
-    }
-    const jpeg = yield* attempt(
-      { operation: "remoteFrames.encodeFrame", tabId, webContentsId: wc.id },
-      () => image.toJPEG(PICTURE_IN_PICTURE_JPEG_QUALITY),
+    // The stamp must describe ONE geometry: generation, viewport, and zoom
+    // are read around the capture and the frame is kept only when both
+    // reads agree — a resize or zoom change mid-capture would otherwise
+    // stamp new-size pixels with the old viewport. Unstable captures retry;
+    // a still-unstable one drops rather than publishing a mixed stamp.
+    const capture = Effect.gen(function* () {
+      const wc = yield* requireWebContents(tabId);
+      const before = yield* readGeometry(wc);
+      const image = yield* capturePageWithRetry(
+        { operation: "remoteFrames.capturePage", tabId, webContentsId: wc.id },
+        tabId,
+        wc,
+      );
+      const after = yield* readGeometry(wc);
+      if (before.geometryKey !== after.geometryKey) {
+        return yield* new PreviewOperationError({
+          operation: "remoteFrames.capturePage",
+          tabId,
+          webContentsId: wc.id,
+          cause: new Error("Guest geometry changed during capture."),
+        });
+      }
+      const size = yield* attempt(
+        { operation: "remoteFrames.measureFrame", tabId, webContentsId: wc.id },
+        () => image.getSize(),
+      );
+      if (size.width <= 0 || size.height <= 0) {
+        return yield* new PreviewOperationError({
+          operation: "remoteFrames.measureFrame",
+          tabId,
+          webContentsId: wc.id,
+          cause: new Error("Captured frame has no size."),
+        });
+      }
+      const jpeg = yield* attempt(
+        { operation: "remoteFrames.encodeFrame", tabId, webContentsId: wc.id },
+        () => image.toJPEG(PICTURE_IN_PICTURE_JPEG_QUALITY),
+      );
+      return {
+        jpeg,
+        width: size.width,
+        height: size.height,
+        engineGeneration: before.engineGeneration,
+        viewportCss: before.viewportCss,
+        geometryKey: before.geometryKey,
+      } as const;
+    });
+    return yield* capture.pipe(
+      Effect.retry({
+        times: CAPTURE_PAGE_RETRY_ATTEMPTS - 1,
+        schedule: Schedule.spaced(CAPTURE_PAGE_RETRY_DELAY_MS),
+        while: isPreviewOperationError,
+      }),
     );
-    const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
-    const zoomFactor = tab?.zoomFactor ?? DEFAULT_ZOOM_FACTOR;
-    const engineGeneration = String(wc.id);
-    return {
-      jpeg,
-      width: size.width,
-      height: size.height,
-      engineGeneration,
-      viewportCss,
-      geometryKey: remoteFrameGeometryKey(engineGeneration, viewportCss, zoomFactor),
-    } as const;
   });
 
   const startRemoteCapture = Effect.fn("PreviewManager.startRemoteCapture")(function* (

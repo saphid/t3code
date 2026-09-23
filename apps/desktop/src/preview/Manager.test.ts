@@ -4542,6 +4542,50 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect(
+    "snapshot capture retries a mid-capture resize and stamps the settled geometry",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const started = yield* Deferred.make<void>();
+          const finish = yield* Deferred.make<void>();
+          let width = 100;
+          const capturePage = vi.fn(() =>
+            Effect.runPromise(
+              Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(Deferred.await(finish)),
+                Effect.as({
+                  toJPEG: () => Buffer.from("pixels"),
+                  getSize: () => ({ width: 200, height: 100 }),
+                }),
+              ),
+            ),
+          );
+          const wc = makeTestPreviewWebContents(capturePage);
+          wc.executeJavaScript = vi.fn(async () => ({ width, height: 100 }));
+          fromId.mockReturnValue(wc as never);
+          const remoteTabId = '["env-a","thread-a","epoch-1","tab-1"]';
+          yield* manager.createTab(remoteTabId);
+          yield* manager.registerWebview(remoteTabId, 42);
+          const capture = yield* manager
+            .captureFrameJpeg(remoteTabId)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(started);
+          width = 200;
+          yield* Deferred.succeed(finish, undefined);
+          // The unstable first attempt reschedules on the retry delay.
+          yield* TestClock.adjust(1_000);
+          const frame = yield* Fiber.join(capture);
+          // The first attempt spanned the resize and was discarded; the
+          // retried capture stamps the settled post-resize geometry — never
+          // new-size pixels under the old viewport.
+          expect(capturePage).toHaveBeenCalledTimes(2);
+          expect(frame.viewportCss).toEqual({ width: 200, height: 100 });
+          expect(frame.geometryKey).toBe("42:200x100@1");
+        }),
+      ),
+  );
+
   effectIt.effect("stopping during initial capture leaves remoteLive false", () =>
     withManager((manager) =>
       Effect.gen(function* () {

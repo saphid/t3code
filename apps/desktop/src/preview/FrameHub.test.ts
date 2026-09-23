@@ -1027,6 +1027,79 @@ describe("BrowserFrameHub", () => {
     );
   });
 
+  it("seeds a stream with the settled geometry when its capture spans a resize", async () => {
+    let width = 100;
+    let captureEntered: (() => void) | null = null;
+    let releaseCapture: (() => void) | null = null;
+    const captureStarted = new Promise<void>((resolve) => {
+      captureEntered = resolve;
+    });
+    const captureGate = new Promise<void>((resolve) => {
+      releaseCapture = resolve;
+    });
+    const { layer: managerLayer } = makeManagerStub((manager) => {
+      manager.remoteFrameConfig = () =>
+        Effect.succeed({
+          engineGeneration: "gen-1",
+          viewportCss: { width, height: 100 },
+          zoomFactor: 1,
+        });
+      manager.captureFrameJpeg = () =>
+        Effect.promise(async () => {
+          captureEntered!();
+          await captureGate;
+          // The real Manager retries a capture that spans a resize and only
+          // returns a self-consistent stamp — this is the settled post-resize
+          // read, pixels and viewport agreeing at 200x100.
+          return {
+            jpeg: Buffer.from("resized-jpeg"),
+            width: 200,
+            height: 100,
+            engineGeneration: "gen-1",
+            viewportCss: { width: 200, height: 100 },
+            geometryKey: PreviewManager.remoteFrameGeometryKey(
+              "gen-1",
+              { width: 200, height: 100 },
+              1,
+            ),
+          };
+        });
+    });
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const hub = yield* BrowserFrameHub;
+          yield* Effect.promise(async () => {
+            const response = fetch(streamUrl(hub.origin, hub.secret));
+            // The seed capture runs after the stream's initial config read,
+            // so reaching it proves seq 0 (100x100) was already advertised.
+            await captureStarted;
+            width = 200;
+            const config = await fetch(
+              `${hub.origin}/sessions/${encodeURIComponent(tuple.tabId)}/config?` +
+                new URLSearchParams({
+                  "x-t3-hub-auth": hub.secret,
+                  "x-t3-session": runtimeTabId,
+                }),
+            );
+            expect((await config.json()).geometrySeq).toBe(1);
+            releaseCapture!();
+            const res = await response;
+            const reader = res.body!.getReader();
+            const first = await reader.read();
+            const part = Buffer.from(first.value!).toString("latin1");
+            // The seed's settled geometry is the advertised one — a stale
+            // pre-resize stamp would have bumped the seq again and moved the
+            // advertised geometry backward.
+            expect(part).toContain("X-Geometry-Seq: 1");
+            expect(part).toContain("X-Frame-Width: 200");
+            await reader.cancel();
+          });
+        }),
+      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
+    );
+  });
+
   it("never writes capture output ahead of the stream's HTTP headers", async () => {
     const { layer: managerLayer } = makeManagerStub((manager, stubRef) => {
       manager.startRemoteCapture = () =>
