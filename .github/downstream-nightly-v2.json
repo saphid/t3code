@@ -88,12 +88,6 @@
       "repository": "saphid/t3code",
       "sha": "bff0fe603922c76e6f82a602c91550bbff71f5a9",
       "name": "test(web): keep React completion outside simulated application timers"
-    },
-    {
-      "type": "commit",
-      "repository": "saphid/t3code",
-      "sha": "f2f8d2d95cdebaf476505a31e2b2f6a930922492",
-      "name": "test(server): align selection restart fixture with open-failure settling"
     }
   ]
 }
