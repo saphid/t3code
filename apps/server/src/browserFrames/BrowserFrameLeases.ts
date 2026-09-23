@@ -61,6 +61,19 @@ export type BrowserFrameAuthority =
       readonly rootCallerId: string;
       readonly callerId: string;
       readonly callerGenerations: ReadonlyArray<BrowserFrameCallerGeneration>;
+      /**
+       * The held `browser-surface` presentation token this mint rode in on.
+       * Two presentation slots sharing a caller chain and view context still
+       * get distinct authority keys, so one slot can never renew or close
+       * another slot's lease.
+       */
+      readonly heldSlot?: string;
+      /**
+       * Identity of the transport connection the root authority rides on.
+       * Root disconnect sweeps records carrying it; two connections sharing a
+       * session never share a holder key.
+       */
+      readonly rootConnectionId?: string;
       /** The caller's resolved view context — replayed for grant revalidation. */
       readonly context: unknown;
       /** Grants the mint checked; revalidation re-checks each. */
@@ -86,16 +99,19 @@ const stableJson = (value: unknown): string => {
 
 /**
  * Identity used to group "the same caller" for lease renewal. Two slots,
- * installations, generations, or connections sharing a principal get distinct
- * keys so one cannot renew or close another's lease — distinct extension
- * contexts and installation generations never share a holder key.
+ * installations, generations, connections, or presentation tokens sharing a
+ * principal get distinct keys so one cannot renew or close another's lease —
+ * distinct extension contexts, installation generations, root connections,
+ * and held surface claims never share a holder key.
  */
 export const browserFrameAuthorityKey = (authority: BrowserFrameAuthority): string =>
   authority.kind === "session"
     ? `sess:${authority.sessionId}:${authority.connectionId}`
     : `ext:${authority.principalId}:${authority.rootCallerId}:${authority.callerId}:${authority.callerGenerations
         .map((generation) => `${generation.pluginId}@${generation.installationGeneration}`)
-        .join(",")}:${stableJson(authority.context)}`;
+        .join(",")}:${stableJson(authority.context)}:slot=${stableJson(
+        authority.heldSlot ?? null,
+      )}:conn=${stableJson(authority.rootConnectionId ?? null)}`;
 
 export type BrowserFrameLeaseInvalidation =
   | { readonly type: "lease"; readonly leaseId: string }

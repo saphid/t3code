@@ -577,7 +577,9 @@ export const makeResourcesLeaseApiProvider = Effect.fn("ResourcesLeaseApi.make")
       allowedCommands: input.allowedCommands,
       expiresAt: input.expiresAt,
       // The same authority shape the frames mint binds its records to —
-      // equality of `browserFrameAuthorityKey` is the held-claim check.
+      // equality of `browserFrameAuthorityKey` is the held-claim check. The
+      // held token itself joins the key as the slot identity, so two
+      // presentation slots under one caller never share frame authority.
       authority: {
         kind: "extension",
         principalKind: principal.kind,
@@ -586,6 +588,10 @@ export const makeResourcesLeaseApiProvider = Effect.fn("ResourcesLeaseApi.make")
         rootCallerId: input.metadata.rootCallerId,
         callerId: input.metadata.callerId,
         callerGenerations: input.metadata.callerGenerations,
+        ...(input.metadata.rootConnectionId !== undefined
+          ? { rootConnectionId: input.metadata.rootConnectionId }
+          : {}),
+        heldSlot: input.token,
         context: input.context,
         grants: [input.grant],
       },

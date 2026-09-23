@@ -657,8 +657,15 @@ export function useRemoteBrowserFrames(
     const leases = bindApi(resourcesLeaseApi, host, session.context);
     // The frames mints require held-presentation evidence: a `browser-surface`
     // claim minted through `t3.resources/lease` for this exact session tuple.
-    // Minted per call so a renewal never presents an expired claim.
+    // One claim per view is the presentation slot's identity — the frames
+    // authority key includes its token, so renewals and closeInput must reuse
+    // the same claim until it nears expiry (then a fresh claim is a fresh
+    // slot and mints its own lease).
+    let surfaceLease: { readonly url: string; readonly expiresAt: number } | null = null;
     const mintSurfaceLease = async (): Promise<string | null> => {
+      if (surfaceLease !== null && surfaceLease.expiresAt - Date.now() > 30_000) {
+        return surfaceLease.url;
+      }
       try {
         const context = validateContext(session.context);
         const threadId = context.resource.threadId;
@@ -676,6 +683,7 @@ export function useRemoteBrowserFrames(
           },
           signal,
         );
+        surfaceLease = { url: mint.url, expiresAt: mint.expiresAt };
         return mint.url;
       } catch {
         return null;
@@ -778,7 +786,18 @@ export function useRemoteBrowserFrames(
       // retires the lease record early so a second presenter does not wait
       // out the TTL. Best-effort — the signal may already be dead.
       if (inputLeaseId !== null) {
-        void api.invoke("closeInput", { leaseId: inputLeaseId }, session.signal).catch(() => {});
+        // The close names the slot that minted the lease; without the claim
+        // the server cannot attribute it and leaves the record to expire.
+        void api
+          .invoke(
+            "closeInput",
+            {
+              leaseId: inputLeaseId,
+              ...(surfaceLease !== null ? { surfaceLease: surfaceLease.url } : {}),
+            },
+            session.signal,
+          )
+          .catch(() => {});
       }
     };
     // The view is re-presented only when the element or session identity changes.

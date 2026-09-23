@@ -34,6 +34,12 @@ export const makeSessionApiAuthority = Effect.fn("Extensions.makeSessionApiAutho
   requiredScope: AuthEnvironmentScope,
   sessions: Pick<SessionStore["Service"], "revalidate">,
   writeScope?: AuthEnvironmentScope,
+  /**
+   * Identity of the transport connection this root rides on (the ws
+   * connection id). Providers that key records to the viewer's root
+   * connection receive it as `HostApiInvocationMetadata.rootConnectionId`.
+   */
+  connectionId?: string,
 ) {
   const captured = Object.freeze({
     sessionId: session.sessionId,
@@ -70,9 +76,10 @@ export const makeSessionApiAuthority = Effect.fn("Extensions.makeSessionApiAutho
   const clock = yield* Clock.Clock;
   const allowWrite =
     writeScope === undefined ? requiredScope === AuthAccessWriteScope : scopes.includes(writeScope);
-  return {
+  const authority: HostApiRootAuthority = {
     principal,
     allowWrite,
+    ...(connectionId === undefined ? {} : { connectionId }),
     revalidate: () =>
       Effect.runPromise(
         Effect.gen(function* () {
@@ -80,5 +87,6 @@ export const makeSessionApiAuthority = Effect.fn("Extensions.makeSessionApiAutho
           if (!scopes.every((scope) => next.scopes.includes(scope))) return yield* denied();
         }).pipe(Effect.provideService(Clock.Clock, clock)),
       ),
-  } satisfies HostApiRootAuthority;
+  };
+  return authority;
 });

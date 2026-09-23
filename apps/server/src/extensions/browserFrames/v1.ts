@@ -91,7 +91,15 @@ const decodeInputTargetInput = Schema.decodeUnknownEffect(
   { onExcessProperty: "error" },
 );
 const decodeLeaseInput = Schema.decodeUnknownEffect(
-  Schema.Struct({ leaseId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)) }),
+  Schema.Struct({
+    leaseId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+    /**
+     * The closing caller's own presentation claim. Lease records are keyed to
+     * the slot that minted them — without it the close cannot name its slot
+     * and closes nothing.
+     */
+    surfaceLease: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(2048))),
+  }),
   { onExcessProperty: "error" },
 );
 
@@ -197,12 +205,16 @@ export function createBrowserFramesApiProvider(
       }
 
       /**
-       * The verified authority this mint binds to: the root principal (for
+       * The verified authority a mint binds to: the root principal (for
        * `environment-session` roots, `principalId` is the session id), the
        * caller chain and its installation generations, the resolved view
-       * context, and the grants the broker already enforced for this method.
+       * context, the grants the broker already enforced for this method, the
+       * root connection identity, and — once the presented claim is known —
+       * the held presentation slot's token. Two slots sharing everything else
+       * still get distinct authority keys, so one cannot renew or close the
+       * other's lease.
        */
-      const authority: BrowserFrameAuthority = {
+      const authorityFor = (heldSlot?: string): BrowserFrameAuthority => ({
         kind: "extension",
         principalKind: principal.kind,
         principalId: principal.id,
@@ -210,11 +222,15 @@ export function createBrowserFramesApiProvider(
         rootCallerId: metadata.rootCallerId,
         callerId: metadata.callerId,
         callerGenerations: metadata.callerGenerations,
+        ...(metadata.rootConnectionId !== undefined
+          ? { rootConnectionId: metadata.rootConnectionId }
+          : {}),
+        ...(heldSlot !== undefined ? { heldSlot } : {}),
         context: scope.context,
         grants:
           browserFramesApi.definition.methods?.find((entry) => entry.name === method)
             ?.requiredGrants ?? [],
-      };
+      });
 
       const requireSession = Effect.fn("BrowserFrames.requireSession")(function* (target: {
         readonly tabId: string;
@@ -240,8 +256,10 @@ export function createBrowserFramesApiProvider(
           );
         }
         // The mint requires a held presentation claim for exactly this session
-        // tuple — watching without presentation authority is not enough.
+        // tuple — watching without presentation authority is not enough. The
+        // token doubles as this slot's identity inside the mint authority.
         const surfaceToken = surfaceTokenFromLease(target.surfaceLease);
+        const authority = authorityFor(surfaceToken);
         const claims = yield* dependencies
           .verifySurfaceClaims(surfaceToken, {
             environmentId: dependencies.environmentId,
@@ -302,6 +320,7 @@ export function createBrowserFramesApiProvider(
           hostClientId: host.clientId,
           hostConnectionId: host.connectionId,
           claimExpiresAt: claims.expiresAt,
+          authority,
         };
       });
 
@@ -315,7 +334,8 @@ export function createBrowserFramesApiProvider(
             ),
           ),
         );
-        const { hostClientId, hostConnectionId, claimExpiresAt } = yield* requireSession(target);
+        const { hostClientId, hostConnectionId, claimExpiresAt, authority } =
+          yield* requireSession(target);
         const issued = yield* dependencies.leases.issueStreamTicket({
           authority,
           authorityExpiresAt: claimExpiresAt,
@@ -358,7 +378,8 @@ export function createBrowserFramesApiProvider(
             ),
           ),
         );
-        const { hostClientId, hostConnectionId, claimExpiresAt } = yield* requireSession(target);
+        const { hostClientId, hostConnectionId, claimExpiresAt, authority } =
+          yield* requireSession(target);
         const issued = yield* dependencies.leases.issueInputLease({
           authority,
           authorityExpiresAt: claimExpiresAt,
@@ -397,6 +418,13 @@ export function createBrowserFramesApiProvider(
               "closeInput input fails the declared schema.",
             ),
           ),
+        );
+        // Slot-keyed ownership: the close only lands when the presented
+        // presentation claim names the same slot that minted the lease.
+        const authority = authorityFor(
+          decoded.surfaceLease !== undefined
+            ? surfaceTokenFromLease(decoded.surfaceLease)
+            : undefined,
         );
         const lease = yield* dependencies.leases.resolveLease(decoded.leaseId);
         if (

@@ -3016,6 +3016,11 @@ const makeWsRpcLayer = (
                   environmentId,
                   AuthOrchestrationReadScope,
                   sessions,
+                  undefined,
+                  // Extension authorities minted under this root carry the
+                  // connection identity so disconnect revokes them (and two
+                  // connections sharing a session never share a record).
+                  wsConnectionId,
                 );
                 return guardExtensionSessionStream(
                   environmentExtensions.subscribeApi(input, root),

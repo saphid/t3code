@@ -50,7 +50,7 @@ const context = (): ViewContext => ({
 
 const meta = (
   provider: HostApiProvider,
-  options: { readonly callerId?: string } = {},
+  options: { readonly callerId?: string; readonly rootConnectionId?: string } = {},
 ): HostApiInvocationMetadata => ({
   callId: "call",
   rootCallerId: "root",
@@ -58,6 +58,7 @@ const meta = (
   providerId: provider.providerId,
   providerGeneration: 1,
   callerGenerations: [],
+  ...(options.rootConnectionId !== undefined ? { rootConnectionId: options.rootConnectionId } : {}),
   principal: {
     kind: "environment-session" as const,
     id: "session",
@@ -68,13 +69,21 @@ const meta = (
 });
 
 /** The authority the provider builds from `meta` + the resolved context. */
-const providerAuthority = (callerId = "caller"): BrowserFrameAuthority => ({
+const providerAuthority = (
+  options: {
+    readonly callerId?: string;
+    readonly heldSlot?: string;
+    readonly rootConnectionId?: string;
+  } = {},
+): BrowserFrameAuthority => ({
   kind: "extension",
   principalKind: "environment-session",
   principalId: "session",
   rootCallerId: "root",
-  callerId,
+  callerId: options.callerId ?? "caller",
   callerGenerations: [],
+  ...(options.heldSlot !== undefined ? { heldSlot: options.heldSlot } : {}),
+  ...(options.rootConnectionId !== undefined ? { rootConnectionId: options.rootConnectionId } : {}),
   // `resolve` normalizes in place — with projectId/workspaceRevision already
   // correct, this object is the resolved scope context verbatim.
   context: context(),
@@ -180,6 +189,25 @@ const openStreamInput = (surfaceLease = "tok-1") => ({
   surfaceLease,
 });
 
+const recordClaim = (
+  leases: BrowserFrameLeases["Service"],
+  token: string,
+  authority: BrowserFrameAuthority,
+  allowedCommands: ReadonlyArray<string> = ["attach", "present", "release"],
+) =>
+  leases.recordHeldSurfaceClaim({
+    token,
+    authority,
+    session: {
+      environmentId: "env" as never,
+      threadId: "thread" as never,
+      serverEpoch: "epoch-1",
+      tabId: "tab-1" as never,
+    },
+    allowedCommands,
+    expiresAt: CLAIM_EXPIRES,
+  });
+
 describe("browser frames adapter", () => {
   it.effect("openStream denies a signed token that was never held", () =>
     Effect.gen(function* () {
@@ -194,18 +222,11 @@ describe("browser frames adapter", () => {
     Effect.gen(function* () {
       const { leases } = yield* harness;
       const provider = createBrowserFramesApiProvider(makeDeps(leases));
-      yield* leases.recordHeldSurfaceClaim({
-        token: "tok-1",
-        authority: providerAuthority("other-caller"),
-        session: {
-          environmentId: "env" as never,
-          threadId: "thread" as never,
-          serverEpoch: "epoch-1",
-          tabId: "tab-1" as never,
-        },
-        allowedCommands: ["attach", "present", "release"],
-        expiresAt: CLAIM_EXPIRES,
-      });
+      yield* recordClaim(
+        leases,
+        "tok-1",
+        providerAuthority({ callerId: "other-caller", heldSlot: "tok-1" }),
+      );
       const error = yield* invokeError(provider, "openStream", openStreamInput(), meta(provider));
       expect(error.detail).toContain("BrowserSurfaceClaimDenied");
     }),
@@ -217,18 +238,7 @@ describe("browser frames adapter", () => {
       Effect.gen(function* () {
         const { leases } = yield* harness;
         const provider = createBrowserFramesApiProvider(makeDeps(leases));
-        yield* leases.recordHeldSurfaceClaim({
-          token: "tok-1",
-          authority: providerAuthority(),
-          session: {
-            environmentId: "env" as never,
-            threadId: "thread" as never,
-            serverEpoch: "epoch-1",
-            tabId: "tab-1" as never,
-          },
-          allowedCommands: ["attach", "present", "release"],
-          expiresAt: CLAIM_EXPIRES,
-        });
+        yield* recordClaim(leases, "tok-1", providerAuthority({ heldSlot: "tok-1" }));
         const result = (yield* invoke(
           provider,
           "openStream",
@@ -252,18 +262,7 @@ describe("browser frames adapter", () => {
     Effect.gen(function* () {
       const { leases } = yield* harness;
       const provider = createBrowserFramesApiProvider(makeDeps(leases));
-      yield* leases.recordHeldSurfaceClaim({
-        token: "tok-1",
-        authority: providerAuthority(),
-        session: {
-          environmentId: "env" as never,
-          threadId: "thread" as never,
-          serverEpoch: "epoch-1",
-          tabId: "tab-1" as never,
-        },
-        allowedCommands: ["attach"],
-        expiresAt: CLAIM_EXPIRES,
-      });
+      yield* recordClaim(leases, "tok-1", providerAuthority({ heldSlot: "tok-1" }), ["attach"]);
       const error = yield* invokeError(provider, "openStream", openStreamInput(), meta(provider));
       expect(error.detail).toContain("BrowserSurfaceClaimDenied");
     }),
@@ -319,6 +318,106 @@ describe("browser frames adapter", () => {
       };
       expect(filtered.stream.supported).toBe(false);
       expect(filtered.input.supported).toBe(false);
+    }),
+  );
+
+  it.effect(
+    "distinct held presentation slots mint isolated input leases in an identical context",
+    () =>
+      Effect.gen(function* () {
+        const { leases } = yield* harness;
+        const provider = createBrowserFramesApiProvider(makeDeps(leases));
+        for (const token of ["slot-a", "slot-b"]) {
+          yield* recordClaim(leases, token, providerAuthority({ heldSlot: token }));
+        }
+        const a = (yield* invoke(provider, "openInput", openStreamInput("slot-a"))) as {
+          readonly leaseId: string;
+          readonly inputTicket: string;
+        };
+        const b = (yield* invoke(provider, "openInput", openStreamInput("slot-b"))) as {
+          readonly leaseId: string;
+          readonly inputTicket: string;
+        };
+        // Two slots under one caller chain and view context never share a lease.
+        expect(a.leaseId).not.toBe(b.leaseId);
+        // The second slot's mint does not supersede the first slot's ticket.
+        expect(Option.isSome(yield* leases.verify(a.inputTicket))).toBe(true);
+        expect(Option.isSome(yield* leases.verify(b.inputTicket))).toBe(true);
+
+        // A close that names no slot — or another slot's claim — closes nothing.
+        const unnamed = (yield* invoke(provider, "closeInput", { leaseId: b.leaseId })) as {
+          readonly closed: boolean;
+        };
+        expect(unnamed).toEqual({ closed: false });
+        const foreign = (yield* invoke(provider, "closeInput", {
+          leaseId: b.leaseId,
+          surfaceLease: "slot-a",
+        })) as { readonly closed: boolean };
+        expect(foreign).toEqual({ closed: false });
+        expect(Option.isSome(yield* leases.verify(b.inputTicket))).toBe(true);
+
+        // Cross-slot renewal is refused; same-slot renewal bumps ticketSeq.
+        const stolen = yield* invokeError(provider, "openInput", {
+          ...openStreamInput("slot-b"),
+          leaseId: a.leaseId,
+        });
+        expect(stolen.detail).toContain("BrowserInputLeaseDenied");
+        const renewed = (yield* invoke(provider, "openInput", {
+          ...openStreamInput("slot-a"),
+          leaseId: a.leaseId,
+        })) as { readonly leaseId: string; readonly inputTicket: string };
+        expect(renewed.leaseId).toBe(a.leaseId);
+        expect(Option.isNone(yield* leases.verify(a.inputTicket))).toBe(true);
+        expect(Option.isSome(yield* leases.verify(renewed.inputTicket))).toBe(true);
+
+        // The slot that minted a lease is the only authority that closes it.
+        const closed = (yield* invoke(provider, "closeInput", {
+          leaseId: b.leaseId,
+          surfaceLease: "slot-b",
+        })) as { readonly closed: boolean };
+        expect(closed).toEqual({ closed: true });
+        expect(Option.isNone(yield* leases.verify(b.inputTicket))).toBe(true);
+        expect(Option.isSome(yield* leases.verify(renewed.inputTicket))).toBe(true);
+      }),
+  );
+
+  it.effect("root connection identity separates identical-context mints sharing a session", () =>
+    Effect.gen(function* () {
+      const { leases } = yield* harness;
+      const provider = createBrowserFramesApiProvider(makeDeps(leases));
+      yield* recordClaim(
+        leases,
+        "slot-a",
+        providerAuthority({ heldSlot: "slot-a", rootConnectionId: "conn-1" }),
+      );
+      yield* recordClaim(
+        leases,
+        "slot-b",
+        providerAuthority({ heldSlot: "slot-b", rootConnectionId: "conn-2" }),
+      );
+      const first = (yield* invoke(
+        provider,
+        "openInput",
+        openStreamInput("slot-a"),
+        meta(provider, { rootConnectionId: "conn-1" }),
+      )) as { readonly leaseId: string; readonly inputTicket: string };
+      const second = (yield* invoke(
+        provider,
+        "openInput",
+        openStreamInput("slot-b"),
+        meta(provider, { rootConnectionId: "conn-2" }),
+      )) as { readonly leaseId: string; readonly inputTicket: string };
+      expect(first.leaseId).not.toBe(second.leaseId);
+      expect(Option.isSome(yield* leases.verify(first.inputTicket))).toBe(true);
+      expect(Option.isSome(yield* leases.verify(second.inputTicket))).toBe(true);
+      // A claim recorded under one connection does not satisfy another's mint.
+      const denied = yield* invokeError(
+        provider,
+        "openInput",
+        openStreamInput("slot-a"),
+        meta(provider, { rootConnectionId: "conn-2" }),
+      );
+      expect(denied.detail).toContain("BrowserSurfaceClaimDenied");
     }),
   );
 });

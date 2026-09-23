@@ -4975,7 +4975,7 @@ export const browserFramesApi: TypedApi<{
     output: BrowserFrameInputLease;
   };
   closeInput: {
-    input: { readonly leaseId: string };
+    input: { readonly leaseId: string; readonly surfaceLease?: string };
     output: { readonly closed: boolean };
   };
 }> = defineApi<{
@@ -4999,7 +4999,7 @@ export const browserFramesApi: TypedApi<{
     output: BrowserFrameInputLease;
   };
   closeInput: {
-    input: { readonly leaseId: string };
+    input: { readonly leaseId: string; readonly surfaceLease?: string };
     output: { readonly closed: boolean };
   };
 }>({
@@ -5072,7 +5072,12 @@ export const browserFramesApi: TypedApi<{
         type: "object",
         additionalProperties: false,
         required: ["leaseId"],
-        properties: { leaseId: { type: "string", minLength: 1, maxLength: 128 } },
+        properties: {
+          leaseId: { type: "string", minLength: 1, maxLength: 128 },
+          // The closing slot's own presentation claim — leases are keyed to
+          // the slot that minted them, so a close without it names no slot.
+          surfaceLease: { type: "string", minLength: 1, maxLength: 2048 },
+        },
       },
       outputSchema: {
         type: "object",
