@@ -25,8 +25,13 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { EffectOutboxV2, layer as effectOutboxLayer } from "./EffectOutbox.ts";
+import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
+import { EventSinkV2 } from "./EventSink.ts";
+import * as IdAllocator from "./IdAllocator.ts";
 import { ProjectionStoreV2, layer as projectionStoreLayer } from "./ProjectionStore.ts";
+import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 const TestLayer = Layer.mergeAll(projectionStoreLayer, effectOutboxLayer).pipe(
   Layer.provideMerge(SqlitePersistenceMemory),
@@ -446,3 +451,46 @@ it.effect("marks fork descendants unreadable when their source is missing or cor
     );
   }).pipe(Effect.provide(TestLayer)),
 );
+
+it.effect("starts runtime recovery when one thread projection cannot be decoded", () => {
+  const committedThreadIds: Array<ThreadId> = [];
+  const recoveryLayer = ProviderRuntimeRecovery.layer.pipe(
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(EventSinkV2)({
+          commitCommand: (input) => {
+            committedThreadIds.push(input.threadId);
+            return Effect.succeed({ committed: true, cancelledEffectCount: 0 } as never);
+          },
+        }),
+        IdAllocator.layer,
+        Layer.mock(OrchestrationEffectWorkerV2)({ runRecoveryOnce: Effect.succeed(false) }),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const healthy = yield* createThread("decodable-running");
+    yield* createRun(healthy, "running");
+    const newer = yield* createThread("newer-build-running");
+    yield* createRun(newer, "running");
+    // A newer build persisted a value this build's schema does not accept.
+    yield* sql`
+      UPDATE orchestration_v2_projection_runs
+      SET payload_json = json_set(payload_json, '$.status', 'status_from_newer_build')
+      WHERE thread_id = ${newer}
+    `;
+    // Sorts after the undecodable thread, so recovery must continue past it.
+    const later = yield* createThread("resumes-after-skip");
+    yield* createRun(later, "running");
+
+    const summary = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService.pipe(
+      Effect.flatMap((recovery) => recovery.recover),
+      Effect.provide(recoveryLayer),
+    );
+
+    assert.deepEqual(committedThreadIds, [healthy, later]);
+    assert.equal(summary.terminalizedRuns, 2);
+  }).pipe(Effect.provide(TestLayer));
+});

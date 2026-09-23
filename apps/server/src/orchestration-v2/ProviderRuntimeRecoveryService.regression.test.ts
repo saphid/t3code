@@ -80,3 +80,41 @@ it("uses the thread provider for stale background work without provider threads"
     expect(event?.type === "turn-item.updated" ? event.payload.status : null).toBe("cancelled");
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
+
+it("keeps projection storage failures fatal during startup recovery", async () => {
+  const threadId = ThreadId.make("thread_recovery_storage_failure");
+  const layer = ProviderRuntimeRecovery.layer.pipe(
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getRecoveryThreadIds: () => Effect.succeed([threadId]),
+          getRuntimeRecoveryProjection: () =>
+            Effect.fail(
+              new ProjectionStore.ProjectionStoreReadError({
+                threadId,
+                cause: new Error("SQLITE_IOERR"),
+              }),
+            ),
+        }),
+        Layer.mock(EventSink.EventSinkV2)({}),
+        IdAllocator.layer,
+        Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
+          runRecoveryOnce: Effect.succeed(false),
+        }),
+        Layer.mock(EffectOutbox.EffectOutboxV2)({
+          reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+        }),
+      ),
+    ),
+  );
+
+  const error = await Effect.gen(function* () {
+    return yield* Effect.flip(
+      (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).recover,
+    );
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+
+  expect(error.operation).toBe("read-projections");
+  expect(error.threadId).toBe(threadId);
+});
