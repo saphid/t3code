@@ -67,6 +67,15 @@ const ACTIVITY_IDLE_MS = 60_000;
  * while live lanes are retained for their credential's lifetime.
  */
 const LEASE_LANE_CAP = 4096;
+
+/**
+ * Lease-lane capacity override — a test seam for driving the over-cap sweep
+ * without thousands of upgrades; production layers never provide it.
+ */
+export class BrowserFrameHubLeaseLaneCap extends Context.Reference<number>()(
+  "t3.browserFrames/BrowserFrameHubLeaseLaneCap",
+  { defaultValue: () => LEASE_LANE_CAP },
+) {}
 /** Config-confirmed geometry-key → viewport memory, FIFO-bounded. */
 const GEOMETRY_VIEWPORT_CAP = 128;
 
@@ -232,8 +241,9 @@ const parseAssertedSession = (url: URL): AssertedSession | null => {
 export const sweepExpiredLeaseLanes = (
   lanes: Map<string, { expiresAt: number }>,
   now: number,
+  cap: number = LEASE_LANE_CAP,
 ): void => {
-  if (lanes.size <= LEASE_LANE_CAP) return;
+  if (lanes.size <= cap) return;
   for (const [key, entry] of lanes) {
     if (entry.expiresAt <= now) lanes.delete(key);
   }
@@ -252,6 +262,7 @@ const writeJson = (res: ServerResponse, status: number, body: unknown): void => 
 };
 
 const make = Effect.gen(function* () {
+  const leaseLaneCap = yield* BrowserFrameHubLeaseLaneCap;
   const manager = yield* PreviewManager.PreviewManager;
   const context = yield* Effect.context<never>();
   const runFork = Effect.runForkWith(context);
@@ -342,7 +353,7 @@ const make = Effect.gen(function* () {
       expiresAt,
     };
     leaseLanes.set(key, lane);
-    sweepExpiredLeaseLanes(leaseLanes, Date.now());
+    sweepExpiredLeaseLanes(leaseLanes, Date.now(), leaseLaneCap);
     return lane;
   };
 
@@ -1124,6 +1135,11 @@ const make = Effect.gen(function* () {
       reject();
       return;
     }
+    // The lease lane's deadline is stamped at upgrade admission — before the
+    // async config read below. A stalled renewal must not leave the lane
+    // sweepable under an already-superseded expiry: eviction would reset the
+    // retained replay high-water and accepted ticket ordering.
+    leaseLane(asserted.runtimeTabId, leaseId, expiresAt);
     wss.handleUpgrade(req, socket, head, (ws) => {
       // Fence before the machine runs: a stale engine generation or dead tab
       // closes the socket with the named reason rather than parking it.
