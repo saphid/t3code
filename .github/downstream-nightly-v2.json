@@ -88,6 +88,18 @@
       "repository": "saphid/t3code",
       "sha": "bff0fe603922c76e6f82a602c91550bbff71f5a9",
       "name": "test(web): keep React completion outside simulated application timers"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "4c33b5549dcf543e630c71736e6300e3ff5768a9",
+      "name": "feat(voice): restore GPT Live voice on the current V2 stack"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "9a03101343a99f5e58442ca25b58602c628ddcb0",
+      "name": "fix(voice): close review gaps in the V2 voice restore"
     }
   ]
 }
