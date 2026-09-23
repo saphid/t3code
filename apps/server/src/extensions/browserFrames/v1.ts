@@ -47,6 +47,7 @@ import {
 } from "../../browserFrames/BrowserFrameLeases.ts";
 import { BROWSER_FRAMES_ROUTE_PREFIX } from "@t3tools/contracts";
 import { ASSET_ROUTE_PREFIX, verifyBrowserSurfaceClaims } from "../../assets/AssetAccess.ts";
+import { base64UrlDecodeUtf8 } from "../../auth/utils.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import { makeExtensionScopeResolver } from "../scope.ts";
 
@@ -117,6 +118,32 @@ const surfaceTokenFromLease = (value: string): string => {
   return slash === -1 ? body : body.slice(0, slash);
 };
 
+/**
+ * The slot identity a presented claim carries — read from the unsigned
+ * payload copy (the held-claim check compares authority keys; a forged
+ * payload can only name a slot it cannot own). No `slotId` decodable names
+ * no slot, so a malformed claim closes nothing.
+ */
+const surfaceSlotIdFromLease = (value: string): string | undefined => {
+  const payload = surfaceTokenFromLease(value).split(".")[0];
+  if (!payload) return undefined;
+  try {
+    const claims: unknown = JSON.parse(base64UrlDecodeUtf8(payload));
+    if (
+      claims !== null &&
+      typeof claims === "object" &&
+      "slotId" in claims &&
+      typeof claims.slotId === "string" &&
+      claims.slotId.length > 0
+    ) {
+      return claims.slotId;
+    }
+  } catch {
+    /* fall through to undefined */
+  }
+  return undefined;
+};
+
 const sessionPath = (tabId: string, leaf: string) =>
   `${BROWSER_FRAMES_ROUTE_PREFIX}/sessions/${encodeURIComponent(tabId)}/${leaf}`;
 
@@ -137,7 +164,7 @@ export function createBrowserFramesApiProvider(
         readonly tabId: string;
         readonly serverEpoch: string;
       },
-    ) => Effect.Effect<{ readonly expiresAt: number } | null>;
+    ) => Effect.Effect<{ readonly expiresAt: number; readonly slotId: string } | null>;
   },
 ): HostApiProvider {
   const resolve = makeExtensionScopeResolver(dependencies);
@@ -209,10 +236,10 @@ export function createBrowserFramesApiProvider(
        * `environment-session` roots, `principalId` is the session id), the
        * caller chain and its installation generations, the resolved view
        * context, the grants the broker already enforced for this method, the
-       * root connection identity, and — once the presented claim is known —
-       * the held presentation slot's token. Two slots sharing everything else
-       * still get distinct authority keys, so one cannot renew or close the
-       * other's lease.
+       * root connection identity, and — once the presented claim is
+       * verified — the held presentation slot's server-owned slotId. Two
+       * slots sharing everything else still get distinct authority keys, so
+       * one cannot renew or close the other's lease.
        */
       const authorityFor = (heldSlot?: string): BrowserFrameAuthority => ({
         kind: "extension",
@@ -257,9 +284,9 @@ export function createBrowserFramesApiProvider(
         }
         // The mint requires a held presentation claim for exactly this session
         // tuple — watching without presentation authority is not enough. The
-        // token doubles as this slot's identity inside the mint authority.
+        // claim's server-owned slotId is this slot's identity inside the mint
+        // authority — the bearer token never stands in for it.
         const surfaceToken = surfaceTokenFromLease(target.surfaceLease);
-        const authority = authorityFor(surfaceToken);
         const claims = yield* dependencies
           .verifySurfaceClaims(surfaceToken, {
             environmentId: dependencies.environmentId,
@@ -275,6 +302,7 @@ export function createBrowserFramesApiProvider(
             "no live browser-surface presentation lease covers this session.",
           );
         }
+        const authority = authorityFor(claims.slotId);
         // A valid signature is not mint authority: the claim must have been
         // acquired through `t3.resources/lease` by this same authority for
         // this same tuple — an unheld or foreign-held token is denied.
@@ -423,7 +451,7 @@ export function createBrowserFramesApiProvider(
         // presentation claim names the same slot that minted the lease.
         const authority = authorityFor(
           decoded.surfaceLease !== undefined
-            ? surfaceTokenFromLease(decoded.surfaceLease)
+            ? surfaceSlotIdFromLease(decoded.surfaceLease)
             : undefined,
         );
         const lease = yield* dependencies.leases.resolveLease(decoded.leaseId);

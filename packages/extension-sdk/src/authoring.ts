@@ -658,9 +658,9 @@ export function useRemoteBrowserFrames(
     // The frames mints require held-presentation evidence: a `browser-surface`
     // claim minted through `t3.resources/lease` for this exact session tuple.
     // One claim per view is the presentation slot's identity — the frames
-    // authority key includes its token, so renewals and closeInput must reuse
-    // the same claim until it nears expiry (then a fresh claim is a fresh
-    // slot and mints its own lease).
+    // authority key includes its server-owned slotId, so renewals and
+    // closeInput must reuse the same claim until it nears expiry (then a
+    // fresh claim is a fresh slot and mints its own lease).
     let surfaceLease: { readonly url: string; readonly expiresAt: number } | null = null;
     const mintSurfaceLease = async (): Promise<string | null> => {
       if (surfaceLease !== null && surfaceLease.expiresAt - Date.now() > 30_000) {
@@ -797,6 +797,14 @@ export function useRemoteBrowserFrames(
             },
             session.signal,
           )
+          .catch(() => {});
+      }
+      // Retire the held presentation claim itself: releasing invalidates the
+      // claim and every stream ticket minted under its slot, so a released
+      // view's credentials die now rather than at claim expiry.
+      if (surfaceLease !== null) {
+        void leases
+          .invoke("releasePresentation", { presentationUrl: surfaceLease.url }, session.signal)
           .catch(() => {});
       }
     };

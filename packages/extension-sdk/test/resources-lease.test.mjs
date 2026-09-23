@@ -36,12 +36,22 @@ NodeTest.test("t3.resources/lease is 1.1.0 with a frozen 1.0.0 alongside", () =>
   }
 });
 
-NodeTest.test("methods are closed-schema reads with no method-level grant list", () => {
+NodeTest.test("methods are closed-schema with no method-level grant list", () => {
   for (const definition of [RESOURCES_LEASE_API, RESOURCES_LEASE_API_V1]) {
     const methods = methodsOf(definition);
-    NodeAssert.deepEqual(Object.keys(methods).sort(), ["createPresentationUrl", "getCapabilities"]);
+    // releasePresentation joined in 1.1.0 — the frozen 1.0.0 stays two methods.
+    NodeAssert.deepEqual(
+      Object.keys(methods).sort(),
+      definition.version === "1.1.0"
+        ? ["createPresentationUrl", "getCapabilities", "releasePresentation"]
+        : ["createPresentationUrl", "getCapabilities"],
+    );
     for (const [name, method] of Object.entries(methods)) {
-      NodeAssert.equal(method.effect, "read", `${definition.version}:${name}`);
+      NodeAssert.equal(
+        method.effect,
+        name === "releasePresentation" ? "write" : "read",
+        `${definition.version}:${name}`,
+      );
       NodeAssert.equal(method.inputSchema.additionalProperties, false, name);
       // Per-kind grants cannot live on the method — the host adapter enforces
       // RESOURCE_LEASE_KIND_GRANTS at mint time for every caller.

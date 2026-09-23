@@ -33,6 +33,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import {
+  ASSET_ROUTE_PREFIX,
   BrowserSurfaceIssueError,
   issueAssetUrl,
   issueBrowserSurfaceUrl,
@@ -53,7 +54,11 @@ import {
 } from "../persistence/Services/ProjectionThreads.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
-import { BrowserFrameLeases } from "../browserFrames/BrowserFrameLeases.ts";
+import {
+  BrowserFrameLeases,
+  browserFrameAuthorityKey,
+  type BrowserFrameAuthority,
+} from "../browserFrames/BrowserFrameLeases.ts";
 import { makeExtensionScopeResolver } from "./scope.ts";
 
 type LeaseIssueResult = Effect.Success<ReturnType<typeof issueAssetUrl>>;
@@ -120,6 +125,13 @@ const decodeResource = Schema.decodeUnknownSync(
   },
 );
 
+const decodeReleasePresentationInput = Schema.decodeUnknownSync(
+  Schema.Struct({ presentationUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)) }),
+  {
+    onExcessProperty: "error",
+  },
+);
+
 /** The claim kind minted, read back out of the signed payload — the honest value. */
 const KNOWN_CLAIM_KINDS = new Set<ResourceLeaseClaimKind>([
   "workspace-file",
@@ -134,6 +146,16 @@ const surfaceTokenFromUrl = (relativeUrl: string): string | null => {
   const suffix = relativeUrl.slice("/api/assets/".length);
   const slash = suffix.indexOf("/");
   return slash === -1 ? null : suffix.slice(0, slash);
+};
+
+/** The claim token a release names — the minted URL form or the bare token. */
+const surfaceTokenFromPresentation = (value: string): string | null => {
+  const trimmed = value.trim();
+  const prefixed = `${ASSET_ROUTE_PREFIX}/`;
+  const body = trimmed.startsWith(prefixed) ? trimmed.slice(prefixed.length) : trimmed;
+  const slash = body.indexOf("/");
+  const token = slash === -1 ? body : body.slice(0, slash);
+  return token.length > 0 ? token : null;
 };
 
 const mintedClaimKind = (relativeUrl: string): ResourceLeaseClaimKind | null => {
@@ -200,26 +222,19 @@ interface ResourcesLeaseApiDependencies {
     readonly serverEpoch: string;
     readonly allowedCommands: ReadonlyArray<"attach" | "present" | "release">;
   }) => Effect.Effect<
-    { readonly relativeUrl: string; readonly expiresAt: number },
+    { readonly relativeUrl: string; readonly expiresAt: number; readonly slotId: string },
     BrowserSurfaceIssueError
   >;
   /**
-   * Register the minted `browser-surface` claim as held by this caller's
-   * authority — `t3.browser/frames` only accepts tokens recorded here, so a
-   * signed claim that never passed this gate cannot open a frame channel.
+   * The held-claim registry the frames mint consults. `t3.browser/frames`
+   * only accepts tokens recorded here — a signed claim that never passed
+   * this gate cannot open a frame channel — and `releasePresentation`
+   * retires the claim together with every ticket minted under its slot.
    */
-  readonly recordHeldBrowserSurface: (input: {
-    readonly token: string;
-    readonly environmentId: string;
-    readonly threadId: string;
-    readonly tabId: string;
-    readonly serverEpoch: string;
-    readonly allowedCommands: ReadonlyArray<string>;
-    readonly expiresAt: number;
-    readonly grant: string;
-    readonly metadata: HostApiInvocationMetadata;
-    readonly context: ViewContext;
-  }) => Effect.Effect<void>;
+  readonly leases: Pick<
+    BrowserFrameLeases["Service"],
+    "recordHeldSurfaceClaim" | "heldSurfaceClaim" | "revokeWhere"
+  >;
   /**
    * The broker's per-caller authorize check, reachable by installation id:
    * enabled + capability listed + projectIds cover the context + scope still
@@ -240,6 +255,33 @@ export function createResourcesLeaseApiProvider(
     principal !== undefined &&
     principal.environmentId === dependencies.environmentId &&
     principal.scopes.includes(AuthOrchestrationReadScope);
+
+  /**
+   * The held-claim authority shape — the same key the frames mint binds its
+   * records to. `heldSlot` is the claim's server-owned slotId, never the
+   * bearer token: two claims for one session never share a presentation slot.
+   */
+  const callerAuthority = (
+    principal: HostApiPrincipal,
+    metadata: HostApiInvocationMetadata,
+    grant: string,
+    context: ViewContext,
+    heldSlot?: string,
+  ): BrowserFrameAuthority => ({
+    kind: "extension",
+    principalKind: principal.kind,
+    principalId: principal.id,
+    ...(principal.subject !== undefined ? { subject: principal.subject } : {}),
+    rootCallerId: metadata.rootCallerId,
+    callerId: metadata.callerId,
+    callerGenerations: metadata.callerGenerations,
+    ...(metadata.rootConnectionId !== undefined
+      ? { rootConnectionId: metadata.rootConnectionId }
+      : {}),
+    ...(heldSlot !== undefined ? { heldSlot } : {}),
+    context,
+    grants: [grant],
+  });
 
   /**
    * Every caller in the chain must hold the kind's grant — the broker's
@@ -307,15 +349,62 @@ export function createResourcesLeaseApiProvider(
     Effect.gen(function* () {
       signal.throwIfAborted();
       const operation = `resources.lease.${method}`;
-      if (!authorized(metadata.principal)) {
+      if (!authorized(metadata.principal) || metadata.principal === undefined) {
         return yield* failure(operation, "Resource lease authority is unavailable.");
       }
+      const principal = metadata.principal;
       const scope = yield* resolve(context);
       if (method === "getCapabilities") {
         yield* postChecks(operation, context, scope.context, metadata, signal);
         return {
           supportedKinds: [...RESOURCE_LEASE_SUPPORTED_KINDS],
         } satisfies ResourceLeaseCapabilities;
+      }
+      if (method === "releasePresentation") {
+        const safe = yield* Effect.try({
+          try: () => decodeReleasePresentationInput(input),
+          catch: () => failure(operation, "Invalid resource lease release input."),
+        });
+        // Releasing a browser-surface claim rides on the same grant as the
+        // mint — a caller that lost it cannot retire claims it once held.
+        const releaseGrant = RESOURCE_LEASE_KIND_GRANTS["browser-surface"];
+        if (releaseGrant === undefined || releaseGrant === null) {
+          return yield* kindDenied(
+            operation,
+            "browser-surface",
+            "has no declared mint grant in this build.",
+          );
+        }
+        yield* requireKindGrant(operation, "browser-surface", releaseGrant, context, metadata);
+        const token = surfaceTokenFromPresentation(safe.presentationUrl);
+        if (token === null) {
+          return { released: false };
+        }
+        const held = yield* dependencies.leases.heldSurfaceClaim(token);
+        if (Option.isNone(held)) {
+          return { released: false };
+        }
+        // Only the claim's holder may retire it: the caller's authority must
+        // equal the recorded one — the slot binding is copied from the claim
+        // itself, so this reduces to the same caller, context, connection.
+        const expected = callerAuthority(
+          principal,
+          metadata,
+          releaseGrant,
+          scope.context,
+          held.value.authority.kind === "extension" ? held.value.authority.heldSlot : undefined,
+        );
+        if (
+          browserFrameAuthorityKey(held.value.authority) !== browserFrameAuthorityKey(expected) ||
+          !held.value.allowedCommands.includes("release")
+        ) {
+          return { released: false };
+        }
+        const claimKey = browserFrameAuthorityKey(held.value.authority);
+        yield* dependencies.leases.revokeWhere(
+          (record) => browserFrameAuthorityKey(record.authority) === claimKey,
+        );
+        return { released: true };
       }
       if (method !== "createPresentationUrl") {
         return yield* failure(operation, "Resource lease API method is unavailable.");
@@ -472,7 +561,7 @@ export function createResourcesLeaseApiProvider(
             `session '${resource.tabId}' does not exist on the claimed thread.`,
           );
         }
-        issued = yield* dependencies
+        const surfaceMint = yield* dependencies
           .issueBrowserSurface({
             environmentId: dependencies.environmentId,
             threadId: resource.threadId,
@@ -481,22 +570,31 @@ export function createResourcesLeaseApiProvider(
             allowedCommands: resource.allowedCommands,
           })
           .pipe(Effect.mapError(operationError(operation)));
+        issued = surfaceMint;
         // Held-claim registration: the frames mint only honors tokens that
-        // passed through this path under the same authority and tuple.
-        const heldToken = surfaceTokenFromUrl(issued.relativeUrl);
+        // passed through this path under the same authority and tuple. The
+        // slot identity is the claim's server-owned slotId — never the
+        // bearer token — so simultaneous mints never share a slot.
+        const heldToken = surfaceTokenFromUrl(surfaceMint.relativeUrl);
         if (heldToken !== null) {
-          yield* dependencies
-            .recordHeldBrowserSurface({
+          yield* dependencies.leases
+            .recordHeldSurfaceClaim({
               token: heldToken,
-              environmentId: dependencies.environmentId,
-              threadId: resource.threadId,
-              tabId: resource.tabId,
-              serverEpoch: listed.serverEpoch,
+              session: {
+                environmentId: EnvironmentId.make(dependencies.environmentId),
+                threadId: resource.threadId,
+                serverEpoch: listed.serverEpoch,
+                tabId: resource.tabId,
+              },
               allowedCommands: resource.allowedCommands,
-              expiresAt: issued.expiresAt,
-              grant,
-              metadata,
-              context: scope.context,
+              expiresAt: surfaceMint.expiresAt,
+              authority: callerAuthority(
+                principal,
+                metadata,
+                grant,
+                scope.context,
+                surfaceMint.slotId,
+              ),
             })
             .pipe(Effect.mapError(operationError(operation)));
         }
@@ -559,44 +657,9 @@ export const makeResourcesLeaseApiProvider = Effect.fn("ResourcesLeaseApi.make")
   const issueBrowserSurface: ResourcesLeaseApiDependencies["issueBrowserSurface"] = (input) =>
     issueBrowserSurfaceUrl(input).pipe(
       Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
+      Effect.provideService(Crypto.Crypto, crypto),
     );
   const frameLeases = yield* BrowserFrameLeases;
-  const recordHeldBrowserSurface: ResourcesLeaseApiDependencies["recordHeldBrowserSurface"] = (
-    input,
-  ) => {
-    const principal = input.metadata.principal;
-    if (principal === undefined) return Effect.void;
-    return frameLeases.recordHeldSurfaceClaim({
-      token: input.token,
-      session: {
-        environmentId: EnvironmentId.make(input.environmentId),
-        threadId: ThreadId.make(input.threadId),
-        serverEpoch: input.serverEpoch,
-        tabId: input.tabId,
-      },
-      allowedCommands: input.allowedCommands,
-      expiresAt: input.expiresAt,
-      // The same authority shape the frames mint binds its records to —
-      // equality of `browserFrameAuthorityKey` is the held-claim check. The
-      // held token itself joins the key as the slot identity, so two
-      // presentation slots under one caller never share frame authority.
-      authority: {
-        kind: "extension",
-        principalKind: principal.kind,
-        principalId: principal.id,
-        ...(principal.subject !== undefined ? { subject: principal.subject } : {}),
-        rootCallerId: input.metadata.rootCallerId,
-        callerId: input.metadata.callerId,
-        callerGenerations: input.metadata.callerGenerations,
-        ...(input.metadata.rootConnectionId !== undefined
-          ? { rootConnectionId: input.metadata.rootConnectionId }
-          : {}),
-        heldSlot: input.token,
-        context: input.context,
-        grants: [input.grant],
-      },
-    });
-  };
   return createResourcesLeaseApiProvider({
     environmentId: yield* environment.getEnvironmentId,
     projects: yield* ProjectionProjectRepository,
@@ -605,7 +668,7 @@ export const makeResourcesLeaseApiProvider = Effect.fn("ResourcesLeaseApi.make")
     normalizeWorkspaceRoot: workspacePaths.normalizeWorkspaceRoot,
     issueUrl,
     issueBrowserSurface,
-    recordHeldBrowserSurface,
+    leases: frameLeases,
     authorizeGrant,
   });
 });

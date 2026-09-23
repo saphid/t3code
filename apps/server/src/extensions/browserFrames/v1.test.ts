@@ -3,7 +3,6 @@ import {
   AuthOrchestrationReadScope,
   ExtensionOperationError,
   ProjectId,
-  ThreadId,
   extensionWorkspaceRevision,
 } from "@t3tools/contracts";
 import { BROWSER_FRAMES, BROWSER_SESSIONS } from "@t3tools/extension-sdk/catalogue";
@@ -108,7 +107,7 @@ const makeDeps = (
         readonly tabId: string;
         readonly serverEpoch: string;
       },
-    ) => Effect.Effect<{ readonly expiresAt: number } | null>;
+    ) => Effect.Effect<{ readonly expiresAt: number; readonly slotId: string } | null>;
   } = {},
 ): Parameters<typeof createBrowserFramesApiProvider>[0] => ({
   environmentId: ENV_ID,
@@ -149,9 +148,33 @@ const makeDeps = (
       ],
     ),
   } as never,
+  // The claim's slot identity lives in its signed payload — the fake verifier
+  // decodes it like the real one so tests exercise slotId ≠ token.
   verifySurfaceClaims:
-    overrides.verifySurfaceClaims ?? (() => Effect.succeed({ expiresAt: CLAIM_EXPIRES })),
+    overrides.verifySurfaceClaims ??
+    ((token) => {
+      try {
+        const claims: unknown = JSON.parse(
+          Buffer.from(token.split(".")[0] ?? "", "base64url").toString("utf8"),
+        );
+        if (
+          claims !== null &&
+          typeof claims === "object" &&
+          "slotId" in claims &&
+          typeof claims.slotId === "string"
+        ) {
+          return Effect.succeed({ expiresAt: CLAIM_EXPIRES, slotId: claims.slotId });
+        }
+      } catch {
+        /* fall through to null */
+      }
+      return Effect.succeed(null);
+    }),
 });
+
+/** A claim-shaped test token whose payload binds `slotId`, like a real mint. */
+const surfaceToken = (slotId: string) =>
+  `${Buffer.from(JSON.stringify({ kind: "browser-surface", slotId })).toString("base64url")}.sig`;
 
 const LeasesLive = BrowserFrameLeasesLayer.pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -183,7 +206,7 @@ const invokeError = (...args: Parameters<typeof invoke>) =>
     }),
   );
 
-const openStreamInput = (surfaceLease = "tok-1") => ({
+const openStreamInput = (surfaceLease = surfaceToken("slot-1")) => ({
   tabId: "tab-1",
   serverEpoch: "epoch-1",
   surfaceLease,
@@ -224,8 +247,8 @@ describe("browser frames adapter", () => {
       const provider = createBrowserFramesApiProvider(makeDeps(leases));
       yield* recordClaim(
         leases,
-        "tok-1",
-        providerAuthority({ callerId: "other-caller", heldSlot: "tok-1" }),
+        surfaceToken("slot-1"),
+        providerAuthority({ callerId: "other-caller", heldSlot: "slot-1" }),
       );
       const error = yield* invokeError(provider, "openStream", openStreamInput(), meta(provider));
       expect(error.detail).toContain("BrowserSurfaceClaimDenied");
@@ -238,7 +261,11 @@ describe("browser frames adapter", () => {
       Effect.gen(function* () {
         const { leases } = yield* harness;
         const provider = createBrowserFramesApiProvider(makeDeps(leases));
-        yield* recordClaim(leases, "tok-1", providerAuthority({ heldSlot: "tok-1" }));
+        yield* recordClaim(
+          leases,
+          surfaceToken("slot-1"),
+          providerAuthority({ heldSlot: "slot-1" }),
+        );
         const result = (yield* invoke(
           provider,
           "openStream",
@@ -262,7 +289,12 @@ describe("browser frames adapter", () => {
     Effect.gen(function* () {
       const { leases } = yield* harness;
       const provider = createBrowserFramesApiProvider(makeDeps(leases));
-      yield* recordClaim(leases, "tok-1", providerAuthority({ heldSlot: "tok-1" }), ["attach"]);
+      yield* recordClaim(
+        leases,
+        surfaceToken("slot-1"),
+        providerAuthority({ heldSlot: "slot-1" }),
+        ["attach"],
+      );
       const error = yield* invokeError(provider, "openStream", openStreamInput(), meta(provider));
       expect(error.detail).toContain("BrowserSurfaceClaimDenied");
     }),
@@ -327,14 +359,22 @@ describe("browser frames adapter", () => {
       Effect.gen(function* () {
         const { leases } = yield* harness;
         const provider = createBrowserFramesApiProvider(makeDeps(leases));
-        for (const token of ["slot-a", "slot-b"]) {
-          yield* recordClaim(leases, token, providerAuthority({ heldSlot: token }));
+        for (const slotId of ["slot-a", "slot-b"]) {
+          yield* recordClaim(leases, surfaceToken(slotId), providerAuthority({ heldSlot: slotId }));
         }
-        const a = (yield* invoke(provider, "openInput", openStreamInput("slot-a"))) as {
+        const a = (yield* invoke(
+          provider,
+          "openInput",
+          openStreamInput(surfaceToken("slot-a")),
+        )) as {
           readonly leaseId: string;
           readonly inputTicket: string;
         };
-        const b = (yield* invoke(provider, "openInput", openStreamInput("slot-b"))) as {
+        const b = (yield* invoke(
+          provider,
+          "openInput",
+          openStreamInput(surfaceToken("slot-b")),
+        )) as {
           readonly leaseId: string;
           readonly inputTicket: string;
         };
@@ -351,19 +391,19 @@ describe("browser frames adapter", () => {
         expect(unnamed).toEqual({ closed: false });
         const foreign = (yield* invoke(provider, "closeInput", {
           leaseId: b.leaseId,
-          surfaceLease: "slot-a",
+          surfaceLease: surfaceToken("slot-a"),
         })) as { readonly closed: boolean };
         expect(foreign).toEqual({ closed: false });
         expect(Option.isSome(yield* leases.verify(b.inputTicket))).toBe(true);
 
         // Cross-slot renewal is refused; same-slot renewal bumps ticketSeq.
         const stolen = yield* invokeError(provider, "openInput", {
-          ...openStreamInput("slot-b"),
+          ...openStreamInput(surfaceToken("slot-b")),
           leaseId: a.leaseId,
         });
         expect(stolen.detail).toContain("BrowserInputLeaseDenied");
         const renewed = (yield* invoke(provider, "openInput", {
-          ...openStreamInput("slot-a"),
+          ...openStreamInput(surfaceToken("slot-a")),
           leaseId: a.leaseId,
         })) as { readonly leaseId: string; readonly inputTicket: string };
         expect(renewed.leaseId).toBe(a.leaseId);
@@ -373,7 +413,7 @@ describe("browser frames adapter", () => {
         // The slot that minted a lease is the only authority that closes it.
         const closed = (yield* invoke(provider, "closeInput", {
           leaseId: b.leaseId,
-          surfaceLease: "slot-b",
+          surfaceLease: surfaceToken("slot-b"),
         })) as { readonly closed: boolean };
         expect(closed).toEqual({ closed: true });
         expect(Option.isNone(yield* leases.verify(b.inputTicket))).toBe(true);
@@ -387,24 +427,24 @@ describe("browser frames adapter", () => {
       const provider = createBrowserFramesApiProvider(makeDeps(leases));
       yield* recordClaim(
         leases,
-        "slot-a",
+        surfaceToken("slot-a"),
         providerAuthority({ heldSlot: "slot-a", rootConnectionId: "conn-1" }),
       );
       yield* recordClaim(
         leases,
-        "slot-b",
+        surfaceToken("slot-b"),
         providerAuthority({ heldSlot: "slot-b", rootConnectionId: "conn-2" }),
       );
       const first = (yield* invoke(
         provider,
         "openInput",
-        openStreamInput("slot-a"),
+        openStreamInput(surfaceToken("slot-a")),
         meta(provider, { rootConnectionId: "conn-1" }),
       )) as { readonly leaseId: string; readonly inputTicket: string };
       const second = (yield* invoke(
         provider,
         "openInput",
-        openStreamInput("slot-b"),
+        openStreamInput(surfaceToken("slot-b")),
         meta(provider, { rootConnectionId: "conn-2" }),
       )) as { readonly leaseId: string; readonly inputTicket: string };
       expect(first.leaseId).not.toBe(second.leaseId);
@@ -414,7 +454,7 @@ describe("browser frames adapter", () => {
       const denied = yield* invokeError(
         provider,
         "openInput",
-        openStreamInput("slot-a"),
+        openStreamInput(surfaceToken("slot-a")),
         meta(provider, { rootConnectionId: "conn-2" }),
       );
       expect(denied.detail).toContain("BrowserSurfaceClaimDenied");

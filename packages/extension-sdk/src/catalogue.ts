@@ -2662,6 +2662,10 @@ export const resourcesLeaseApi = defineApi<{
     input: ResourceLeaseCreatePresentationUrlInput;
     output: ResourceLeasePresentationUrl;
   };
+  releasePresentation: {
+    input: { readonly presentationUrl: string };
+    output: { readonly released: boolean };
+  };
   getCapabilities: { input: Record<string, never>; output: ResourceLeaseCapabilities };
 }>({
   id: RESOURCES_LEASE,
@@ -2696,6 +2700,29 @@ export const resourcesLeaseApi = defineApi<{
             ],
           },
         },
+      },
+    },
+    {
+      name: "releasePresentation",
+      effect: "write",
+      // Only a held `browser-surface` claim can be released, and only by the
+      // authority that holds it — enforced inside the host adapter.
+      requiredGrants: [],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["presentationUrl"],
+        properties: {
+          // The value `createPresentationUrl` returned (`/api/assets/<token>/…`)
+          // or the bare signed token.
+          presentationUrl: { type: "string", minLength: 1, maxLength: 4096 },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["released"],
+        properties: { released: { type: "boolean" } },
       },
     },
     {
