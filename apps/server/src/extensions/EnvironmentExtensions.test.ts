@@ -250,14 +250,10 @@ function fixture() {
     Layer.succeed(ProjectionProjectRepository, {
       getById: () => Effect.succeed(Option.some(project)),
       upsert: () => Effect.void,
-      listAll: () => Effect.succeed([project]),
-      deleteById: () => Effect.void,
     }),
     Layer.succeed(ProjectionThreadRepository, {
       getById: () => Effect.succeed(Option.some(thread)),
       upsert: () => Effect.void,
-      listByProjectId: () => Effect.succeed([thread]),
-      deleteById: () => Effect.void,
     }),
     Layer.succeed(WorkspaceEntries, {
       list: () => Effect.succeed({ entries: [], truncated: false }),

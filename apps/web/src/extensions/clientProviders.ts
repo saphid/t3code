@@ -767,7 +767,8 @@ export function createComposerClientProvider(deps: ClientProviderDeps): ClientLo
                 files: draft.files.length,
                 images: draft.images.length + draft.persistedAttachments.length,
                 terminalContexts: draft.terminalContexts.length,
-                elementContexts: draft.elementContexts.length,
+                // Element picks are drafted as preview annotations; the SDK keeps the key.
+                elementContexts: 0,
                 previewAnnotations: draft.previewAnnotations.length,
                 reviewComments: draft.reviewComments.length,
               },
