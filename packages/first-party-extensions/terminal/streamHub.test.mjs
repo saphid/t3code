@@ -328,6 +328,50 @@ NodeTest.test("full pool of optional slots evicts least-recently-demoted", () =>
   NodeAssert.deepEqual(evicted, ["a", "b"]);
 });
 
+NodeTest.test("demoting a mandatory slot wakes waiters so a visible pane can take it", () => {
+  // The reviewer's WAITING_VISIBLE_AFTER_DEMOTION probe: a group switch
+  // demotes the old group's panes AFTER the newly visible pane already
+  // failed to acquire. Pre-fix, demotion never woke the waiter — the
+  // visible pane stayed disconnected despite evictable slots.
+  const { hub } = clockHub();
+  const leases = [];
+  for (let index = 0; index < BROKER_STREAM_CAP; index += 1) {
+    leases.push(hub.acquirePaneStream(`f${index}`, { mandatory: true, onEvicted() {} }));
+  }
+  NodeAssert.equal(hub.acquirePaneStream("visible", { mandatory: true, onEvicted() {} }), null);
+  const fired = [];
+  hub.onPaneSlotFree(() => fired.push("woken"));
+  leases[0].setPriority(false);
+  NodeAssert.deepEqual(fired, ["woken"]);
+  NodeAssert.ok(hub.acquirePaneStream("visible", { mandatory: true, onEvicted() {} }) !== null);
+});
+
+NodeTest.test("re-demoting an already-optional slot wakes no one", () => {
+  const { hub } = clockHub();
+  for (let index = 0; index < BROKER_STREAM_CAP - 1; index += 1) {
+    hub.acquirePaneStream(`f${index}`, { mandatory: true, onEvicted() {} });
+  }
+  const optional = hub.acquirePaneStream("hidden", { mandatory: false, onEvicted() {} });
+  NodeAssert.ok(optional !== null);
+  const fired = [];
+  hub.onPaneSlotFree(() => fired.push("woken"));
+  optional.setPriority(false); // no mandatory → optional transition
+  NodeAssert.deepEqual(fired, []);
+});
+
+NodeTest.test("re-acquiring a held key as optional wakes waiters on the demotion", () => {
+  const { hub } = clockHub();
+  for (let index = 0; index < BROKER_STREAM_CAP - 1; index += 1) {
+    hub.acquirePaneStream(`f${index}`, { mandatory: true, onEvicted() {} });
+  }
+  const lease = hub.acquirePaneStream("pane", { mandatory: true, onEvicted() {} });
+  NodeAssert.ok(lease !== null);
+  const fired = [];
+  hub.onPaneSlotFree(() => fired.push("woken"));
+  NodeAssert.ok(hub.acquirePaneStream("pane", { mandatory: false, onEvicted() {} }) !== null);
+  NodeAssert.deepEqual(fired, ["woken"]);
+});
+
 NodeTest.test("mandatory slots are never evicted; setPriority demotes to evictable", () => {
   const { hub, advance } = clockHub();
   const evicted = [];

@@ -137,6 +137,27 @@ function sessionMetadata(terminalId) {
   };
 }
 
+/** A pane-output host that records which terminalIds hold live streams. */
+function paneStreamHost() {
+  const active = new Set();
+  const host = {
+    subscribeApi: (request, signal) => ({
+      async *[Symbol.asyncIterator]() {
+        const terminalId = request.input?.terminalId ?? "?";
+        active.add(terminalId);
+        try {
+          await new Promise((resolve) =>
+            signal.aborted ? resolve() : signal.addEventListener("abort", resolve, { once: true }),
+          );
+        } finally {
+          active.delete(terminalId);
+        }
+      },
+    }),
+  };
+  return { host, active };
+}
+
 NodeTest.describe("cold restore stream budget (r3 finding 1)", () => {
   NodeTest.test(
     "eight-session restore admits sessions/theme/appearance inside the cap",
@@ -237,6 +258,90 @@ NodeTest.describe("cold restore stream budget (r3 finding 1)", () => {
         attempts.filter((name) => name.includes("/list")),
         [attempts.find((name) => name.includes("/list"))],
       );
+    },
+  );
+});
+
+NodeTest.describe("group switch waiter wake (r3 finding 2)", () => {
+  NodeTest.test(
+    "a group switch connects the newly visible pane after demotions drain",
+    async () => {
+      // The reviewer's GROUP_SWITCH_WAIT probe, on real TerminalPane
+      // components: three fixed feeds plus a1..a4/c fill the pool, b is
+      // hidden and unallocated. Reorder b first and show only b and c —
+      // pre-fix, b's failed acquire never retried because the later
+      // demotions of a1..a4 did not wake waiters, leaving the visible pane
+      // disconnected despite evictable streams.
+      const { host, active } = paneStreamHost();
+      const session = {
+        signal: new AbortController().signal,
+        context: { resource: { threadId: "t", environmentId: "e" } },
+      };
+      const panel = { resetInput() {}, resize() {}, sendInput() {} };
+      const assets = { kind: "ready", runtime: {}, symbolsFontUrl: "fixture" };
+      const paneProps = (terminalId) => ({
+        host,
+        session,
+        panel,
+        terminalId,
+        streamKeyPrefix: "review",
+        active: false,
+        shown: true,
+        visible: true,
+        assets,
+        themeVars: null,
+        appearanceVars: null,
+      });
+      const releases = [];
+      for (const key of ["sessions", "theme", "appearance"]) {
+        releases.push(
+          bundle.streamHub.acquireFixedFeed(key, { onFrame() {}, onStatus() {} }, () => {}),
+        );
+      }
+      const render = (order, shown) =>
+        React.createElement(
+          React.Fragment,
+          null,
+          ...order.map((terminalId) =>
+            React.createElement(bundle.TerminalPane, {
+              ...paneProps(terminalId),
+              key: terminalId,
+              shown: shown.includes(terminalId),
+            }),
+          ),
+        );
+      let renderer;
+      await act(async () => {
+        renderer = create(
+          render(["a1", "a2", "a3", "a4", "c", "b"], ["a1", "a2", "a3", "a4", "c"]),
+          {
+            createNodeMock: nodeMock,
+          },
+        );
+      });
+      try {
+        // Sanity: the five visible panes hold the budget's mandatory slots and
+        // the hidden pane's optional acquire was refused, not churned.
+        NodeAssert.deepEqual([...active].sort(), ["a1", "a2", "a3", "a4", "c"]);
+        NodeAssert.equal(bundle.streamHub.paneSlotAvailable(), false);
+        await act(async () => {
+          renderer.update(render(["b", "a1", "a2", "a3", "a4", "c"], ["b", "c"]));
+        });
+        // After the switch, the newly visible pane owns a stream: the
+        // demotions of a1..a4 woke its waiter, which evicted one of them.
+        NodeAssert.equal(active.has("b"), true);
+        NodeAssert.equal(active.has("c"), true);
+        const disconnected = renderer.root
+          .findAllByType(bundle.TerminalPane)
+          .find((node) => node.props.terminalId === "b")
+          .findAll((node) => node.props["aria-label"] === "Stream budget");
+        NodeAssert.equal(disconnected.length, 0);
+      } finally {
+        await act(async () => renderer.unmount());
+      }
+      for (const release of releases) release();
+      await act(async () => {}); // drain the pumps' async teardown
+      NodeAssert.equal(active.size, 0);
     },
   );
 });

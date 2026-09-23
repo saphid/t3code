@@ -244,9 +244,11 @@ export class TerminalStreamHub {
   ): TerminalPaneLease | null {
     const existing = this.#panes.get(key);
     if (existing !== undefined) {
+      const wasMandatory = existing.mandatory;
       existing.mandatory = options.mandatory;
       existing.demotedAt = options.mandatory ? Number.POSITIVE_INFINITY : this.#now();
       existing.onEvicted = options.onEvicted;
+      if (wasMandatory && !options.mandatory) this.#wakeWaiters();
       return this.#lease(key, existing);
     }
     let evicted: (() => void) | null = null;
@@ -293,8 +295,13 @@ export class TerminalStreamHub {
     return {
       setPriority(mandatory: boolean) {
         if (hub.#panes.get(key) !== state) return;
+        const wasMandatory = state.mandatory;
         state.mandatory = mandatory;
         state.demotedAt = mandatory ? Number.POSITIVE_INFINITY : hub.#now();
+        // Demotion creates preemptable capacity: a pane that failed to
+        // acquire against a fully-mandatory pool can now evict this slot,
+        // so it must hear about the transition (release() already wakes).
+        if (wasMandatory && !mandatory) hub.#wakeWaiters();
       },
       release() {
         if (hub.#panes.get(key) !== state) return;

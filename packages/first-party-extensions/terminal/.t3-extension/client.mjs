@@ -9803,9 +9803,11 @@ var __t3Client = (() => {
     acquirePaneStream(key, options) {
       const existing = this.#panes.get(key);
       if (existing !== void 0) {
+        const wasMandatory = existing.mandatory;
         existing.mandatory = options.mandatory;
         existing.demotedAt = options.mandatory ? Number.POSITIVE_INFINITY : this.#now();
         existing.onEvicted = options.onEvicted;
+        if (wasMandatory && !options.mandatory) this.#wakeWaiters();
         return this.#lease(key, existing);
       }
       let evicted = null;
@@ -9841,8 +9843,10 @@ var __t3Client = (() => {
       return {
         setPriority(mandatory) {
           if (hub.#panes.get(key) !== state2) return;
+          const wasMandatory = state2.mandatory;
           state2.mandatory = mandatory;
           state2.demotedAt = mandatory ? Number.POSITIVE_INFINITY : hub.#now();
+          if (wasMandatory && !mandatory) hub.#wakeWaiters();
         },
         release() {
           if (hub.#panes.get(key) !== state2) return;
