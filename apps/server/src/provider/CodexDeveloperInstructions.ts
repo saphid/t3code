@@ -201,8 +201,8 @@ export function buildCodexDeveloperInstructions(
   interactionMode: ProviderInteractionMode,
   runtime: CodexRuntimeInfo,
   /**
-   * Which T3 tools (preview, device) this turn's issued MCP credential grants.
-   * An extensions-only credential grants neither. Callers use the credential rather than the
+   * Whether the `t3-code` MCP server is attached to this turn. Callers derive
+   * it from the session's actual MCP configuration rather than re-reading the
    * setting, so the prompt cannot claim tools the turn doesn't have.
    */
   browserToolsAvailable: boolean | T3CodeToolAvailability = true,

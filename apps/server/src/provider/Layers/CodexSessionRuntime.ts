@@ -74,8 +74,8 @@ function configuredMcpToolAvailability(
   mcpCapabilities: ReadonlySet<string> | undefined,
 ): T3CodeToolAvailability {
   if (!hasConfiguredMcpServer(appServerArgs)) return { browser: false, device: false };
-  // Browser and device instructions require an explicit grant on the credential.
-  if (mcpCapabilities === undefined) return { browser: false, device: false };
+  // Callers predating the capability set attached the browser toolkit only.
+  if (mcpCapabilities === undefined) return { browser: true, device: false };
   return { browser: mcpCapabilities.has("preview"), device: mcpCapabilities.has("device") };
 }
 
@@ -599,7 +599,7 @@ function buildCodexCollaborationMode(input: {
       developer_instructions: buildCodexDeveloperInstructions(
         input.interactionMode,
         { model, reasoningEffort },
-        input.browserToolsAvailable ?? false,
+        input.browserToolsAvailable ?? true,
       ),
     },
   };
@@ -621,7 +621,7 @@ export function buildTurnStartParams(input: {
   readonly serviceTier?: CodexServiceTier;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly interactionMode?: ProviderInteractionMode;
-  /** Browser instructions require an explicit preview grant from the attached MCP credential. */
+  /** Defaults to true so callers that predate the agent-access gate are unchanged. */
   readonly browserToolsAvailable?: boolean | T3CodeToolAvailability;
 }): Effect.Effect<
   CodexTurnStartParamsWithCollaborationMode,
@@ -643,7 +643,7 @@ export function buildTurnStartParams(input: {
     ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
-    browserToolsAvailable: input.browserToolsAvailable ?? false,
+    browserToolsAvailable: input.browserToolsAvailable ?? true,
   });
 
   return decodeCodexTurnStartParamsWithCollaborationMode({
