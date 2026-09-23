@@ -11625,15 +11625,16 @@ var __t3Client = (() => {
         const sameWindow = priorWindow !== null && priorWindow.epoch === value.streamEpoch && !missedClear;
         const priorEnd = priorUnitStart === null ? null : priorUnitStart + priorBaseLength + priorHole + priorBufferedLength;
         const boundaryEnd = value.contentsUnitStart + value.contents.length;
+        const coversPriorEnd = priorEnd !== null && value.contentsUnitStart <= priorEnd;
         const heldClaims = this.#unanswered.length > 0;
         let gapRun = null;
-        if (sameWindow && priorEnd !== null && boundaryEnd > priorEnd) {
+        if (sameWindow && priorEnd !== null && boundaryEnd > priorEnd && coversPriorEnd) {
           const gapStart = Math.max(0, priorEnd - value.contentsUnitStart);
           gapRun = { start: gapStart, data: value.contents.slice(gapStart) };
           this.#unanswered.push(gapRun);
           this.#unansweredEpoch = value.streamEpoch;
         }
-        const caughtUp = sameWindow && priorEnd !== null && boundaryEnd >= priorEnd && !heldClaims;
+        const caughtUp = sameWindow && priorEnd !== null && boundaryEnd >= priorEnd && coversPriorEnd && !heldClaims;
         this.#replayFaithful = !missedClear && !value.truncated && value.clearGeneration === 0 && value.contentsUnitStart === 0;
         const unfaithful = !this.#replayFaithful;
         if (this.#sink) {

@@ -573,13 +573,19 @@ export class TerminalVtAttachment {
           ? null
           : priorUnitStart + priorBaseLength + priorHole + priorBufferedLength;
       const boundaryEnd = value.contentsUnitStart + value.contents.length;
+      // Retained coverage of the first unseen byte: the window must start
+      // at or before priorEnd, or the bytes between were evicted before
+      // ANY parser saw them (r3 finding 6). An eviction hole can carry
+      // mode changes — a DECRST the process still expects honored — that
+      // no intact snapshot end can prove absent.
+      const coversPriorEnd = priorEnd !== null && value.contentsUnitStart <= priorEnd;
       // Claims still held after reconcile (a mount in the beginStream →
       // snapshot gap parsed their bytes suppressed and holds their replies
       // for epoch proof) can only release through #replayInto's
       // proof-checked ranges — the incremental path below never re-parses.
       const heldClaims = this.#unanswered.length > 0;
       let gapRun: { start: number; data: string } | null = null;
-      if (sameWindow && priorEnd !== null && boundaryEnd > priorEnd) {
+      if (sameWindow && priorEnd !== null && boundaryEnd > priorEnd && coversPriorEnd) {
         const gapStart = Math.max(0, priorEnd - value.contentsUnitStart);
         gapRun = { start: gapStart, data: value.contents.slice(gapStart) };
         this.#unanswered.push(gapRun);
@@ -591,9 +597,11 @@ export class TerminalVtAttachment {
       // modes the process still expects — application cursor, bracketed
       // paste — exactly the hidden→reshow continuity break. When the same
       // window's boundary has caught up to or passed our last received
-      // byte and no held claims need the replay, the parser only LACKS the
-      // gap: deliver exactly that, replies enabled, and skip the re-base.
-      const caughtUp = sameWindow && priorEnd !== null && boundaryEnd >= priorEnd && !heldClaims;
+      // byte, that byte's coverage is proven (no eviction hole), and no
+      // held claims need the replay, the parser only LACKS the gap:
+      // deliver exactly that, replies enabled, and skip the re-base.
+      const caughtUp =
+        sameWindow && priorEnd !== null && boundaryEnd >= priorEnd && coversPriorEnd && !heldClaims;
       // Parser fidelity needs retained-coverage evidence, not client
       // observation history: only an epoch with zero clears whose
       // retained window still starts at unit 0 provably contains every

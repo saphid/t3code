@@ -1374,3 +1374,84 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
     },
   );
 });
+
+NodeTest.describe("attachment retention gap (r3 finding 6)", () => {
+  const snap = (contents, extra = {}) => ({
+    kind: "snapshot",
+    terminalId: "t",
+    streamEpoch: "epoch",
+    status: "running",
+    contents,
+    retainedByteLength: contents.length,
+    truncated: false,
+    clearGeneration: 0,
+    contentsUnitStart: 0,
+    boundarySequence: 1,
+    ...extra,
+  });
+
+  NodeTest.it(
+    "an unobserved retention hole degrades instead of preserving stale modes",
+    async () => {
+      // The reviewer's VT_UNOBSERVED_RETENTION_GAP probe: a hidden pane's
+      // stream drops mid-history while the program disables application
+      // cursor keys and floods output past the 8192-byte retention tail.
+      // Pre-fix, the caught-up check looked only at the snapshot END, so
+      // the surviving parser kept the obsolete mode with degraded=false —
+      // arrows would encode with the wrong mode and no indication.
+      const { core, writes } = await makeCore();
+      const attachment = new TerminalVtAttachment("t");
+      attachment.attach(core);
+      const frame = (value) => attachment.applyFrame({ streamId: "s", sequence: 1 }, value);
+      const initial = "\x1b[?1h\x1b[?2004hhello";
+      attachment.beginStream();
+      frame(snap(initial));
+      attachment.beginStream();
+      frame(snap(initial + "\x1b[6n", { boundarySequence: 2 }));
+      NodeAssert.deepEqual(writes, ["\x1b[1;6R"]);
+      NodeAssert.equal(core.isApplicationCursorKeys(), true);
+      // Control: a truncated prefix whose window still COVERS every unseen
+      // byte keeps the continuity fast path — modes preserved, not degraded.
+      attachment.beginStream();
+      frame(
+        snap("hello\x1b[6n", {
+          contentsUnitStart: initial.indexOf("hello"),
+          boundarySequence: 2,
+          truncated: true,
+        }),
+      );
+      NodeAssert.equal(core.isApplicationCursorKeys(), true);
+      NodeAssert.equal(attachment.state.degraded, false);
+      // The gap: everything after the observed end was evicted except the
+      // legal final 8192-byte tail; the DECRST lives in the hole.
+      const missed = "\x1b[?1l" + "x".repeat(9000) + "\r\nTAIL\x1b[6n";
+      const whole = initial + "\x1b[6n" + missed;
+      const tail = whole.slice(-8192);
+      attachment.beginStream();
+      frame(
+        snap(tail, {
+          contentsUnitStart: whole.length - tail.length,
+          boundarySequence: 100,
+          truncated: true,
+        }),
+      );
+      // Reference: an uninterrupted parser fed the same bytes.
+      const reference = await makeCore();
+      reference.core.write(whole);
+      NodeAssert.equal(reference.core.isApplicationCursorKeys(), false);
+      // Honest recovery: re-based from the retained tail (the mode now
+      // matches the reference) and flagged degraded — never silent
+      // continuity over a hole that changed negotiated modes.
+      NodeAssert.equal(core.isApplicationCursorKeys(), false);
+      NodeAssert.equal(attachment.state.degraded, true);
+      NodeAssert.match(attachment.state.statusText, /truncated|incomplete/);
+      const lastReply = writes.at(-1) ?? "";
+      NodeAssert.ok(
+        lastReply.startsWith("\x1b[") && lastReply.endsWith("R"),
+        `unexpected reply ${JSON.stringify(lastReply)}`,
+      );
+      core.dispose();
+      reference.core.dispose();
+    },
+  );
+});
