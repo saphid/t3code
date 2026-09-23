@@ -1645,6 +1645,7 @@ const assertBrowserApiCorsPreflightHeaders = (
     "content-type",
     "dpop",
     "traceparent",
+    "x-t3-client-instance",
   ]);
 };
 const crossOriginClientOrigin = "http://remote-client.test:3773";
@@ -4257,6 +4258,27 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("responds to extension api/invoke preflights carrying the client-instance header", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      // Cross-origin extension invokes carry `x-t3-client-instance` for
+      // connection attribution; the allow-list must not reject the preflight.
+      const invokeUrl = yield* getHttpServerUrl("/api/extensions/api/invoke");
+      const response = yield* fetchEffect(invokeUrl, {
+        method: "OPTIONS",
+        headers: {
+          origin: crossOriginClientOrigin,
+          "access-control-request-method": "POST",
+          "access-control-request-headers": "authorization, x-t3-client-instance",
+        },
+      });
+
+      assert.equal(response.status, 204);
+      assertBrowserApiCorsPreflightHeaders(response.headers);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("allows credentialed cloud link proof preflights from the configured dev UI", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest({
@@ -5238,6 +5260,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "content-type",
         "dpop",
         "traceparent",
+        "x-t3-client-instance",
       ]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

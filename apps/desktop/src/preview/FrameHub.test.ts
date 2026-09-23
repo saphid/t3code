@@ -5,7 +5,11 @@ import { get, ServerResponse } from "node:http";
 import { WebSocket } from "ws";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { BrowserFrameHub, layer as BrowserFrameHubLayer } from "./FrameHub.ts";
+import {
+  BrowserFrameHub,
+  layer as BrowserFrameHubLayer,
+  sweepExpiredLeaseLanes,
+} from "./FrameHub.ts";
 import * as PreviewManager from "./Manager.ts";
 
 const tuple = {
@@ -1888,5 +1892,30 @@ describe("BrowserFrameHub", () => {
         }),
       ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
     );
+  });
+});
+
+describe("sweepExpiredLeaseLanes", () => {
+  it("sweeps only expired lanes and never evicts a still-valid lane", () => {
+    const now = 1_000_000;
+    const lanes = new Map<string, { expiresAt: number }>();
+    // Over the 4096 cap with every lane still valid: nothing may be evicted,
+    // since a dropped lane resets its replay high-water and ticket sequence.
+    for (let i = 0; i < 5000; i += 1) lanes.set(`live-${i}`, { expiresAt: now + 60_000 });
+    sweepExpiredLeaseLanes(lanes, now);
+    expect(lanes.size).toBe(5000);
+
+    // Expired entries die under cap pressure while live ones are retained.
+    for (let i = 0; i < 2000; i += 1) lanes.set(`dead-${i}`, { expiresAt: now - 1 });
+    sweepExpiredLeaseLanes(lanes, now);
+    expect(lanes.size).toBe(5000);
+    expect(lanes.has("live-0")).toBe(true);
+    expect(lanes.has("dead-0")).toBe(false);
+
+    // Under the cap the sweep is a no-op even for expired entries — the next
+    // over-cap insert or the lane's own expiry fence still covers them.
+    const small = new Map<string, { expiresAt: number }>([["old", { expiresAt: now - 1 }]]);
+    sweepExpiredLeaseLanes(small, now);
+    expect(small.size).toBe(1);
   });
 });

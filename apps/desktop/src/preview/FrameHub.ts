@@ -61,8 +61,10 @@ const INPUT_DISPATCH_QUEUE_MAX = 32;
 const ACTIVITY_IDLE_MS = 60_000;
 /**
  * Lease lanes outlive idle activity reclamation — tickets remain valid for
- * minutes after the session's frame caches are dropped. The cap bounds the
- * map under lease churn; eviction drops the earliest-expiring lanes first.
+ * minutes after the session's frame caches are dropped. Lanes are only ever
+ * swept once expired: evicting a live lane would reset its replay high-water
+ * and accepted ticket sequence, so the cap bounds expired-entry accumulation
+ * while live lanes are retained for their credential's lifetime.
  */
 const LEASE_LANE_CAP = 4096;
 /** Config-confirmed geometry-key → viewport memory, FIFO-bounded. */
@@ -221,6 +223,22 @@ const parseAssertedSession = (url: URL): AssertedSession | null => {
   return null;
 };
 
+/**
+ * Over-cap lane sweep. A live lane is never evicted — dropping it would
+ * reset its replay high-water and accepted ticket sequence, re-authorizing
+ * packets the lease already rejected — so only expired entries die and the
+ * map may exceed the cap while every lane is still valid.
+ */
+export const sweepExpiredLeaseLanes = (
+  lanes: Map<string, { expiresAt: number }>,
+  now: number,
+): void => {
+  if (lanes.size <= LEASE_LANE_CAP) return;
+  for (const [key, entry] of lanes) {
+    if (entry.expiresAt <= now) lanes.delete(key);
+  }
+};
+
 const writeJson = (res: ServerResponse, status: number, body: unknown): void => {
   if (res.headersSent || res.destroyed) {
     res.destroy();
@@ -324,19 +342,7 @@ const make = Effect.gen(function* () {
       expiresAt,
     };
     leaseLanes.set(key, lane);
-    if (leaseLanes.size > LEASE_LANE_CAP) {
-      const now = Date.now();
-      for (const [key, entry] of leaseLanes) {
-        if (entry.expiresAt <= now) leaseLanes.delete(key);
-      }
-      if (leaseLanes.size > LEASE_LANE_CAP) {
-        const byExpiry = [...leaseLanes.entries()].sort((a, b) => a[1].expiresAt - b[1].expiresAt);
-        for (const [key] of byExpiry) {
-          if (leaseLanes.size <= LEASE_LANE_CAP) break;
-          leaseLanes.delete(key);
-        }
-      }
-    }
+    sweepExpiredLeaseLanes(leaseLanes, Date.now());
     return lane;
   };
 

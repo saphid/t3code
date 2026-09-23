@@ -670,38 +670,53 @@ export function useRemoteBrowserFrames(
     // mint two slots and abandon one untracked.
     let surfaceLease: { readonly url: string; readonly expiresAt: number } | null = null;
     const surfaceLeaseUrls = new Set<string>();
+    // Operations that mint server-side resources go in here so teardown can
+    // wait for them to settle — a mint that resolves after abort still adds
+    // its claim to `surfaceLeaseUrls`, and a late openInput still names its
+    // lease, both of which cleanup must release.
+    const pendingOps = new Set<Promise<unknown>>();
+    const track = <T>(op: Promise<T>): Promise<T> => {
+      pendingOps.add(op);
+      void op.then(
+        () => pendingOps.delete(op),
+        () => pendingOps.delete(op),
+      );
+      return op;
+    };
     let minting: Promise<string | null> | null = null;
     const mintSurfaceLease = (): Promise<string | null> => {
       if (surfaceLease !== null && surfaceLease.expiresAt - Date.now() > 30_000) {
         return Promise.resolve(surfaceLease.url);
       }
-      minting ??= (async () => {
-        try {
-          const context = validateContext(session.context);
-          const threadId = context.resource.threadId;
-          if (!threadId) return null;
-          const mint = await leases.invoke(
-            "createPresentationUrl",
-            {
-              resource: {
-                _tag: "browser-surface",
-                threadId,
-                tabId: target.tabId,
-                serverEpoch: target.serverEpoch,
-                allowedCommands: ["attach", "present", "release"],
+      minting ??= track(
+        (async () => {
+          try {
+            const context = validateContext(session.context);
+            const threadId = context.resource.threadId;
+            if (!threadId) return null;
+            const mint = await leases.invoke(
+              "createPresentationUrl",
+              {
+                resource: {
+                  _tag: "browser-surface",
+                  threadId,
+                  tabId: target.tabId,
+                  serverEpoch: target.serverEpoch,
+                  allowedCommands: ["attach", "present", "release"],
+                },
               },
-            },
-            signal,
-          );
-          surfaceLease = { url: mint.url, expiresAt: mint.expiresAt };
-          surfaceLeaseUrls.add(mint.url);
-          return mint.url;
-        } catch {
-          return null;
-        } finally {
-          minting = null;
-        }
-      })();
+              signal,
+            );
+            surfaceLease = { url: mint.url, expiresAt: mint.expiresAt };
+            surfaceLeaseUrls.add(mint.url);
+            return mint.url;
+          } catch {
+            return null;
+          } finally {
+            minting = null;
+          }
+        })(),
+      );
       return minting;
     };
     let detach: () => void = () => {};
@@ -753,31 +768,34 @@ export function useRemoteBrowserFrames(
             return null;
           }
         },
-        openInput: async () => {
-          try {
-            const surfaceLease = await mintSurfaceLease();
-            if (surfaceLease === null) return null;
-            const lease = await api.invoke(
-              "openInput",
-              {
-                tabId: target.tabId,
-                serverEpoch: target.serverEpoch,
-                surfaceLease,
-                expectedEngineGeneration: sessionRef.current?.engineGeneration ?? null,
-              },
-              signal,
-            );
-            inputLeaseId = lease.leaseId;
-            inputLeaseSurfaceUrl = surfaceLease;
-            return {
-              leaseId: lease.leaseId,
-              inputTicket: lease.inputTicket,
-              expiresAt: lease.expiresAt,
-            };
-          } catch {
-            return null;
-          }
-        },
+        openInput: () =>
+          track(
+            (async () => {
+              try {
+                const surfaceLease = await mintSurfaceLease();
+                if (surfaceLease === null) return null;
+                const lease = await api.invoke(
+                  "openInput",
+                  {
+                    tabId: target.tabId,
+                    serverEpoch: target.serverEpoch,
+                    surfaceLease,
+                    expectedEngineGeneration: sessionRef.current?.engineGeneration ?? null,
+                  },
+                  signal,
+                );
+                inputLeaseId = lease.leaseId;
+                inputLeaseSurfaceUrl = surfaceLease;
+                return {
+                  leaseId: lease.leaseId,
+                  inputTicket: lease.inputTicket,
+                  expiresAt: lease.expiresAt,
+                };
+              } catch {
+                return null;
+              }
+            })(),
+          ),
       });
       if (signal.aborted) {
         if (presented.ok) presented.view.detach();
@@ -802,36 +820,42 @@ export function useRemoteBrowserFrames(
     return () => {
       controller.abort();
       detach();
-      // Cleanup must outlive the session's own abort — invoking under
-      // `session.signal` (or the already-dead combined `signal`) cancels the
-      // release before it can fire whenever teardown raced acquisition. A
-      // dedicated bounded signal gives each release a real chance to land.
-      const cleanupSignal = AbortSignal.timeout(5_000);
-      // Honest release: the socket close already unwinds the hub side; this
-      // retires the lease record early so a second presenter does not wait
-      // out the TTL. The close names the slot that minted the lease — after
-      // claim rotation that can be an earlier claim than the cached one.
-      if (inputLeaseId !== null) {
-        void api
-          .invoke(
-            "closeInput",
-            {
-              leaseId: inputLeaseId,
-              ...(inputLeaseSurfaceUrl !== null ? { surfaceLease: inputLeaseSurfaceUrl } : {}),
-            },
-            cleanupSignal,
-          )
-          .catch(() => {});
-      }
-      // Retire every held presentation claim, not just the latest: rotation
-      // minted fresh claims whose slots may still hold stream tickets.
-      // Releasing invalidates each claim and every ticket under its slot, so
-      // a released view's credentials die now rather than at claim expiry.
-      for (const presentationUrl of surfaceLeaseUrls) {
-        void leases
-          .invoke("releasePresentation", { presentationUrl }, cleanupSignal)
-          .catch(() => {});
-      }
+      void (async () => {
+        // A mint or openInput in flight when teardown fired can still resolve
+        // — the invoke was under `signal`, so it settles promptly — and what
+        // it minted must be released below, not left to its TTL.
+        await Promise.allSettled(pendingOps);
+        // Cleanup must outlive the session's own abort — invoking under
+        // `session.signal` (or the already-dead combined `signal`) cancels the
+        // release before it can fire whenever teardown raced acquisition. A
+        // dedicated bounded signal gives each release a real chance to land.
+        const cleanupSignal = AbortSignal.timeout(5_000);
+        // Honest release: the socket close already unwinds the hub side; this
+        // retires the lease record early so a second presenter does not wait
+        // out the TTL. The close names the slot that minted the lease — after
+        // claim rotation that can be an earlier claim than the cached one.
+        if (inputLeaseId !== null) {
+          void api
+            .invoke(
+              "closeInput",
+              {
+                leaseId: inputLeaseId,
+                ...(inputLeaseSurfaceUrl !== null ? { surfaceLease: inputLeaseSurfaceUrl } : {}),
+              },
+              cleanupSignal,
+            )
+            .catch(() => {});
+        }
+        // Retire every held presentation claim, not just the latest: rotation
+        // minted fresh claims whose slots may still hold stream tickets.
+        // Releasing invalidates each claim and every ticket under its slot, so
+        // a released view's credentials die now rather than at claim expiry.
+        for (const presentationUrl of surfaceLeaseUrls) {
+          void leases
+            .invoke("releasePresentation", { presentationUrl }, cleanupSignal)
+            .catch(() => {});
+        }
+      })();
     };
     // The view is re-presented only when the element or session identity changes.
   }, [element, targetKey, options.enabled, host, session]);

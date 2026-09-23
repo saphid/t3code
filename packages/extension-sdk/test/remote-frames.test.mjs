@@ -76,7 +76,7 @@ function makeHost(options = {}) {
           expiresAt: options.expiresAt ?? Date.now() + 60_000,
         };
         mints.push(mint);
-        return Promise.resolve(mint);
+        return Promise.resolve(options.mintGate).then(() => mint);
       }
       if (request.method === "openStream") {
         return Promise.resolve({ ticket: "stream-ticket", expiresAt: Date.now() + 60_000 });
@@ -218,4 +218,42 @@ NodeTest.test("cleanup invocations still fire after the session signal aborted",
   for (const call of cleanupCalls) {
     NodeAssert.equal(call.signal.aborted, false, `${call.method} ran under a live signal`);
   }
+});
+
+NodeTest.test("cleanup waits for an in-flight mint and releases its claim", async () => {
+  // The mint resolves only after teardown: without the settle-wait the claim
+  // the server minted would never be released and would live out its TTL.
+  let openGate;
+  const mintGate = new Promise((resolve) => {
+    openGate = resolve;
+  });
+  const bag = makeHost({ mintGate });
+  const { host, calls, mints } = bag;
+  const session = makeSession(new AbortController().signal);
+  let renderer;
+  await act(async () => {
+    renderer = create(
+      createElement(View, { host, session, options: { session: sessionRef, enabled: true } }),
+    );
+  });
+  await flush();
+
+  const stream = bag.presentRequest.openStream(); // mint starts, gate held
+  await act(async () => {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  });
+  await act(async () => {
+    renderer.unmount();
+  });
+  openGate(); // mint lands after teardown already ran
+  await stream;
+  await act(async () => {
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+  });
+
+  NodeAssert.equal(mints.length, 1);
+  const released = calls
+    .filter((c) => c.method === "releasePresentation")
+    .map((c) => c.input.presentationUrl);
+  NodeAssert.deepEqual(released, [mints[0].url]);
 });
