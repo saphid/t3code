@@ -28,11 +28,13 @@ export interface EditorSelection {
 
 /**
  * The editor selection the comment toolbar offers, expanded to whole lines.
- * A selection is a pair of offsets into one buffer, so it dies with that
- * buffer: a path switch (or re-selecting the current file) and any new
- * contents identity — a local edit, a reload, an external sync — invalidate
- * it. Without that, reopening a file re-arms the stale offsets over lines
- * that drifted underneath them and offers "Comment on L40 to L42" for a
+ * A selection is a pair of offsets into one buffer, so it is captured pinned
+ * to that buffer (path + contents identity) and dies the moment either
+ * changes: a path switch (or re-selecting the current file), a local edit, a
+ * reload, an external sync. Liveness is derived at read rather than cleared
+ * in an effect — the toolbar never renders one frame of a stale range. And
+ * without the pin at all, reopening a file re-arms stale offsets over lines
+ * that drifted underneath them, offering "Comment on L40 to L42" for a
  * selection nobody is holding.
  */
 export function useEditorSelection(
@@ -43,11 +45,23 @@ export function useEditorSelection(
   readonly setSelection: (selection: EditorSelection) => void;
   readonly clearSelection: () => void;
 } {
-  const [editorSelection, setEditorSelection] = useState<EditorSelection | null>(null);
+  const [pinned, setPinned] = useState<{
+    readonly contents: string | null;
+    readonly selected: string | null;
+    readonly selection: EditorSelection | null;
+  }>({ contents: null, selected: null, selection: null });
   const contents = surface?.contents ?? null;
-  useEffect(() => {
-    setEditorSelection(null);
-  }, [contents, selected]);
+  // The pin is on the contents string, not the surface object: a save-state
+  // flip swaps the object while the string keeps its identity.
+  const editorSelection =
+    pinned.contents === contents && pinned.selected === selected ? pinned.selection : null;
+  if (pinned.selection !== null && pinned.selected !== selected) {
+    // The selection's file was left — even away and back. Retire the pin in
+    // render (React's adjust-state-when-props-change shape) so a reopen with
+    // byte-identical contents — which this V8 dedupes to the same string
+    // identity — cannot re-arm offsets nobody is holding.
+    setPinned({ contents: null, selected, selection: null });
+  }
   // Drag-select re-renders on every mousemove while a selection is held, and
   // expanding two offsets into lines scans the buffer from offset 0 — the
   // memo bounds that to one scan per actual input change.
@@ -63,8 +77,8 @@ export function useEditorSelection(
   );
   return {
     selectionRange,
-    setSelection: setEditorSelection,
-    clearSelection: () => setEditorSelection(null),
+    setSelection: (selection) => setPinned({ contents, selected, selection }),
+    clearSelection: () => setPinned({ contents, selected, selection: null }),
   };
 }
 

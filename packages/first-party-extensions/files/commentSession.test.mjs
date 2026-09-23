@@ -129,9 +129,9 @@ NodeTest.describe("useEditorSelection memoization", () => {
   let latest;
   let renders;
   function Probe(props) {
-    renders += 1;
     const current = useEditorSelection(props.surface, props.selected);
     React.useEffect(() => {
+      renders += 1;
       latest = current;
     });
     return null;
@@ -209,10 +209,13 @@ NodeTest.describe("useCommentBlockReason", () => {
   };
   let latest;
   function Probe(props) {
-    latest = useCommentBlockReason(props.host, session, props.threadId);
+    const current = useCommentBlockReason(props.host, session, props.threadId);
+    React.useEffect(() => {
+      latest = current;
+    });
     return null;
   }
-  const settle = (root) =>
+  const settle = () =>
     act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     });
@@ -254,7 +257,7 @@ NodeTest.describe("useCommentBlockReason", () => {
       await act(async () => {
         root = create(e(Probe, { host, threadId: "thread-a" }));
       });
-      await settle(root);
+      await settle();
       NodeAssert.equal(latest, "Comment support could not be checked with the host.");
     } finally {
       if (root) await act(async () => root.unmount());
@@ -288,11 +291,11 @@ NodeTest.describe("useCommentBlockReason", () => {
         await act(async () => {
           root = create(e(Probe, { host: ready, threadId: "thread-a" }));
         });
-        await settle(root);
+        await settle();
         NodeAssert.equal(latest, null);
 
         root.update(e(Probe, { host: down, threadId: "thread-a" }));
-        await settle(root);
+        await settle();
         NodeAssert.equal(
           latest,
           "Composer draft state is client-local; no connected client hosts the composer provider.",
@@ -318,7 +321,7 @@ NodeTest.describe("useCommentBlockReason", () => {
       await act(async () => {
         root = create(e(Probe, { host: ready, threadId: undefined }));
       });
-      await settle(root);
+      await settle();
       NodeAssert.equal(
         latest,
         "This panel has no thread scope, so there is no draft to comment into.",
