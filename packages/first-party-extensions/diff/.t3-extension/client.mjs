@@ -7437,6 +7437,7 @@ ${prefix}`;
       } else if (hunk.collapsedBefore > 0) {
         rows.push({ ordinal: rows.length, kind: "gap", count: hunk.collapsedBefore });
       }
+      const firstRowIndex = rows.length;
       let additionIndex = expanded ? Math.max(hunk.additionStart - 1, 0) : hunk.additionLineIndex;
       let deletionIndex = expanded ? Math.max(hunk.deletionStart - 1, 0) : hunk.deletionLineIndex;
       let newLine = hunk.additionStart;
@@ -7479,6 +7480,8 @@ ${prefix}`;
           newLine += content.additions;
         }
       }
+      if (rows.length > firstRowIndex)
+        rows[firstRowIndex] = { ...rows[firstRowIndex], hunkStart: true };
       lastAdditionEnd = hunk.additionStart + hunk.additionCount - 1;
       lastDeletionEnd = hunk.deletionStart + hunk.deletionCount - 1;
     }
@@ -7487,6 +7490,48 @@ ${prefix}`;
       if (tail > 0) pushGap(lastDeletionEnd, lastAdditionEnd, tail);
     }
     return rows;
+  }
+  function splitRows(rows) {
+    const out = [];
+    let oldRun = [];
+    let newRun = [];
+    const flush = () => {
+      const height = Math.max(oldRun.length, newRun.length);
+      for (let index = 0; index < height; index += 1) {
+        const old = oldRun[index];
+        const current = newRun[index];
+        out.push({
+          ordinal: out.length,
+          kind: "sides",
+          old: old === void 0 ? { kind: "empty" } : { kind: "deletion", text: old.text, line: old.line },
+          new: current === void 0 ? { kind: "empty" } : { kind: "addition", text: current.text, line: current.line }
+        });
+      }
+      oldRun = [];
+      newRun = [];
+    };
+    for (const row of rows) {
+      if (row.hunkStart === true && (oldRun.length > 0 || newRun.length > 0)) flush();
+      if (row.kind === "gap") {
+        flush();
+        out.push({ ordinal: out.length, kind: "gap", count: row.count });
+      } else if (row.kind === "deletion") {
+        if (newRun.length > 0) flush();
+        oldRun.push({ text: row.text, line: row.oldLine });
+      } else if (row.kind === "addition") {
+        newRun.push({ text: row.text, line: row.newLine });
+      } else {
+        flush();
+        out.push({
+          ordinal: out.length,
+          kind: "sides",
+          old: { kind: "context", text: row.text, line: row.oldLine },
+          new: { kind: "context", text: row.text, line: row.newLine }
+        });
+      }
+    }
+    flush();
+    return out;
   }
   function canExpandFile(row) {
     return !row.binary && !row.textless && (row.changeType === "change" || row.changeType === "rename-changed");
@@ -8044,6 +8089,14 @@ ${prefix}`;
   function describePresentation(result) {
     return `opens in ${result.surfaceId} \xB7 ${result.placement}`;
   }
+  function restoreDiffState(value) {
+    if (value === null) return true;
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+    const record = value;
+    return Object.keys(record).every(
+      (key) => key === "mode" || key === "sourceId" || key === "fileKey" || key === "baseRef" || key === "ignoreWhitespace" || key === "turnId" || key === "layout"
+    ) && (record.mode === void 0 || record.mode === "workspace" || record.mode === "turns") && (record.sourceId === void 0 || typeof record.sourceId === "string") && (record.fileKey === void 0 || typeof record.fileKey === "string") && (record.baseRef === void 0 || typeof record.baseRef === "string") && (record.ignoreWhitespace === void 0 || typeof record.ignoreWhitespace === "boolean") && (record.turnId === void 0 || typeof record.turnId === "string") && (record.layout === void 0 || record.layout === "unified" || record.layout === "split");
+  }
   var CONNECTING_AGENTS = {
     revision: 0,
     streamEpoch: null,
@@ -8150,14 +8203,6 @@ ${prefix}`;
     if (patchParseCache.size >= 16) patchParseCache.clear();
     patchParseCache.set(diffHash, value);
     return value;
-  }
-  function restoreState(value) {
-    if (value === null) return true;
-    if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-    const record = value;
-    return Object.keys(record).every(
-      (key) => key === "mode" || key === "sourceId" || key === "fileKey" || key === "baseRef" || key === "ignoreWhitespace" || key === "turnId"
-    ) && (record.mode === void 0 || record.mode === "workspace" || record.mode === "turns") && (record.sourceId === void 0 || typeof record.sourceId === "string") && (record.fileKey === void 0 || typeof record.fileKey === "string") && (record.baseRef === void 0 || typeof record.baseRef === "string") && (record.ignoreWhitespace === void 0 || typeof record.ignoreWhitespace === "boolean") && (record.turnId === void 0 || typeof record.turnId === "string");
   }
   function useCapabilities(host, session, visible, tick) {
     const [result, setResult] = (0, import_react.useState)(null);
@@ -8479,10 +8524,76 @@ ${prefix}`;
       }
     );
   }
+  function SplitCell({
+    cell,
+    wrap,
+    separator,
+    ui
+  }) {
+    const addition = cell.kind === "addition";
+    const deletion = cell.kind === "deletion";
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+      "div",
+      {
+        style: {
+          display: "flex",
+          minWidth: 0,
+          whiteSpace: wrap ? "pre-wrap" : "pre",
+          wordBreak: wrap ? "break-all" : void 0,
+          ...separator ? { borderRight: `1px solid ${ui.border}` } : {},
+          background: addition ? (
+            // Same success-green mix as unified additions; no theme role covers it.
+            "color-mix(in srgb, var(--success, #2da44e) 14%, transparent)"
+          ) : deletion ? `color-mix(in srgb, ${ui.destructive} 12%, transparent)` : "transparent"
+        },
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: ui.gutter, children: cell.kind === "empty" ? "" : cell.line }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: ui.muted, userSelect: "none", width: 14 }, children: addition ? "+" : deletion ? "\u2212" : " " }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }, children: cell.kind === "empty" ? "" : cell.text })
+        ]
+      }
+    );
+  }
+  function SplitRow({ row, wrap, ui }) {
+    if (row.kind === "gap") {
+      return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+        "div",
+        {
+          style: {
+            ...ui.rowBase,
+            justifyContent: "center",
+            color: ui.muted,
+            background: ui.mutedSurface,
+            fontStyle: "italic"
+          },
+          children: [
+            row.count,
+            " unmodified line",
+            row.count === 1 ? "" : "s"
+          ]
+        }
+      );
+    }
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+      "div",
+      {
+        style: {
+          ...ui.rowBase,
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)"
+        },
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SplitCell, { cell: row.old, wrap, separator: true, ui }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SplitCell, { cell: row.new, wrap, separator: false, ui })
+        ]
+      }
+    );
+  }
   function FileSection({
     row,
     selected,
     collapsed,
+    layout,
     wrap,
     expansion,
     expandable,
@@ -8500,6 +8611,7 @@ ${prefix}`;
       () => collapsed || row.binary || row.textless ? [] : fileRows(row, expanded),
       [collapsed, row, expanded]
     );
+    const paired = (0, import_react.useMemo)(() => layout === "split" ? splitRows(rows) : null, [layout, rows]);
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "section",
       {
@@ -8590,7 +8702,7 @@ ${prefix}`;
             displayPath(row),
             "."
           ] }),
-          !collapsed && rows.map((line) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DiffRow, { row: line, wrap, ui }, line.ordinal)),
+          !collapsed && (layout === "split" ? paired?.map((line) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SplitRow, { row: line, wrap, ui }, line.ordinal)) : rows.map((line) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DiffRow, { row: line, wrap, ui }, line.ordinal))),
           !collapsed && expansion?.status === "loading" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { padding: "4px 10px", color: muted, fontSize: 11, margin: 0 }, children: "Loading file contents\u2026" }),
           !collapsed && expansion?.status === "error" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { padding: "4px 10px", color: muted, fontSize: 11, margin: 0 }, children: expansion.detail }),
           !collapsed && expansion?.status === "loaded" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { padding: "4px 10px", color: muted, fontSize: 11, margin: 0 }, children: "Full file context loaded via t3.vcs/diff." })
@@ -8615,6 +8727,9 @@ ${prefix}`;
     const [baseRef, setBaseRef] = (0, import_react.useState)(restored?.baseRef ?? "");
     const [ignoreWhitespace, setIgnoreWhitespace] = (0, import_react.useState)(
       restored?.ignoreWhitespace ?? false
+    );
+    const [layout, setLayout] = (0, import_react.useState)(
+      restored?.layout === "split" ? "split" : "unified"
     );
     const [wrap, setWrap] = (0, import_react.useState)(false);
     const [collapsedFiles, setCollapsedFiles] = (0, import_react.useState)(/* @__PURE__ */ new Set());
@@ -8708,7 +8823,8 @@ ${prefix}`;
         ...next.fileKey !== null ? { fileKey: next.fileKey } : {},
         ...next.baseRef !== "" ? { baseRef: next.baseRef } : {},
         ...next.ignoreWhitespace ? { ignoreWhitespace: true } : {},
-        ...next.turnId !== void 0 ? { turnId: next.turnId } : {}
+        ...next.turnId !== void 0 ? { turnId: next.turnId } : {},
+        ...next.layout === "split" ? { layout: "split" } : {}
       });
     };
     const persistSelection = (next) => persist({
@@ -8717,7 +8833,8 @@ ${prefix}`;
       fileKey: next.fileKey,
       baseRef: next.baseRef,
       ignoreWhitespace: next.ignoreWhitespace,
-      turnId: next.mode === "turns" && turnSelection?.kind === "turn" ? turnSelection.turnId : void 0
+      turnId: next.mode === "turns" && turnSelection?.kind === "turn" ? turnSelection.turnId : void 0,
+      layout: next.layout
     });
     const chooseMode = (nextMode) => {
       if (nextMode === mode) return;
@@ -8729,7 +8846,8 @@ ${prefix}`;
         sourceId: source?.id ?? null,
         fileKey: null,
         baseRef,
-        ignoreWhitespace
+        ignoreWhitespace,
+        layout
       });
     };
     const chooseTurn = (selection) => {
@@ -8742,13 +8860,14 @@ ${prefix}`;
         fileKey: null,
         baseRef,
         ignoreWhitespace,
-        turnId: selection.kind === "turn" ? selection.turnId : void 0
+        turnId: selection.kind === "turn" ? selection.turnId : void 0,
+        layout
       });
     };
     const chooseSource = (id2) => {
       setSourceId(id2);
       setFileKey(null);
-      persistSelection({ mode, sourceId: id2, fileKey: null, baseRef, ignoreWhitespace });
+      persistSelection({ mode, sourceId: id2, fileKey: null, baseRef, ignoreWhitespace, layout });
     };
     const revealFile = (row) => {
       setCollapsedFiles((current) => {
@@ -8764,7 +8883,8 @@ ${prefix}`;
         sourceId: source?.id ?? null,
         fileKey: row.key,
         baseRef,
-        ignoreWhitespace
+        ignoreWhitespace,
+        layout
       });
     };
     const chooseBaseRef = (value) => {
@@ -8774,7 +8894,8 @@ ${prefix}`;
         sourceId: source?.id ?? null,
         fileKey,
         baseRef: value,
-        ignoreWhitespace
+        ignoreWhitespace,
+        layout
       });
     };
     const chooseWhitespace = (value) => {
@@ -8784,7 +8905,20 @@ ${prefix}`;
         sourceId: source?.id ?? null,
         fileKey,
         baseRef,
-        ignoreWhitespace: value
+        ignoreWhitespace: value,
+        layout
+      });
+    };
+    const chooseLayout = (value) => {
+      if (value === layout) return;
+      setLayout(value);
+      persistSelection({
+        mode,
+        sourceId: source?.id ?? null,
+        fileKey,
+        baseRef,
+        ignoreWhitespace,
+        layout: value
       });
     };
     const confirmRevert = (choice) => {
@@ -9051,6 +9185,21 @@ ${prefix}`;
                     "Ignore whitespace"
                   ] })
                 ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { role: "group", "aria-label": "Diff layout", style: { display: "flex" }, children: ["unified", "split"].map((value) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "button",
+                  {
+                    type: "button",
+                    "aria-pressed": layout === value,
+                    onClick: () => chooseLayout(value),
+                    style: {
+                      ...ui.control,
+                      fontWeight: layout === value ? 600 : 400,
+                      background: layout === value ? ui.accent : "transparent"
+                    },
+                    children: value === "unified" ? "Unified" : "Split"
+                  },
+                  value
+                )) }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { style: { display: "flex", alignItems: "center", gap: 4, fontSize: 12 }, children: [
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                     "input",
@@ -9267,6 +9416,7 @@ ${prefix}`;
                     row,
                     selected: selected?.key === row.key,
                     collapsed: collapsedFiles.has(row.key),
+                    layout,
                     wrap,
                     expansion: expansions.get(`${source.diffHash}:${row.key}`),
                     expandable: mode === "workspace",
@@ -9297,7 +9447,7 @@ ${prefix}`;
                 borderTop: `1px solid ${ui.border}`,
                 flexShrink: 0
               },
-              children: "Read-only diff on t3.vcs/diff 1.1 + t3.orchestration: unary small previews, sha256-verified streams for large payloads and turn diffs, status-driven refresh. Checkpoint diffs are view-only \u2014 revert runs through t3.orchestration/control. Split view and diff-line comments are deferred slices."
+              children: "Read-only diff on t3.vcs/diff 1.1 + t3.orchestration: unary small previews, sha256-verified streams for large payloads and turn diffs, status-driven refresh. Checkpoint diffs are view-only \u2014 revert runs through t3.orchestration/control. Diff-line comments are a deferred slice."
             }
           )
         ]
@@ -9306,7 +9456,7 @@ ${prefix}`;
   }
   var authored = defineExtension({
     id: manifestId,
-    version: "0.3.0",
+    version: "0.4.0",
     requires: [
       requireApi(vcsDiffApi),
       requireApi(vcsRepositoryApi),
@@ -9331,7 +9481,7 @@ ${prefix}`;
         // installed path exposes none, so this stays empty (design F4).
         capabilities: [],
         stateVersion: 1,
-        validateRestore: restoreState,
+        validateRestore: restoreDiffState,
         createView(host, session) {
           bindDiffViewCommands(host, session);
           return { renderer: () => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DiffPanelView, { host, session }) };
