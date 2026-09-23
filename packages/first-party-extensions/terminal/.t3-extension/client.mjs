@@ -11519,6 +11519,7 @@ var __t3Client = (() => {
         const priorUnitStart = this.#receivedUnitStart;
         const priorBaseLength = this.#base?.length ?? 0;
         const priorHole = this.#bufferedHole;
+        const priorBufferedLength = this.#bufferedLength;
         const priorWindow = this.#baseWindow;
         this.#epoch = value.streamEpoch;
         this.#nativeWatermark = value.boundarySequence;
@@ -11540,17 +11541,38 @@ var __t3Client = (() => {
             priorHole
           );
         }
+        const sameWindow = priorWindow !== null && priorWindow.epoch === value.streamEpoch && !missedClear;
+        const priorEnd = priorUnitStart === null ? null : priorUnitStart + priorBaseLength + priorHole + priorBufferedLength;
+        const boundaryEnd = value.contentsUnitStart + value.contents.length;
+        const heldClaims = this.#unanswered.length > 0;
+        let gapRun = null;
+        if (sameWindow && priorEnd !== null && boundaryEnd > priorEnd) {
+          const gapStart = Math.max(0, priorEnd - value.contentsUnitStart);
+          gapRun = { start: gapStart, data: value.contents.slice(gapStart) };
+          this.#unanswered.push(gapRun);
+          this.#unansweredEpoch = value.streamEpoch;
+        }
+        const caughtUp = sameWindow && priorEnd !== null && boundaryEnd >= priorEnd && !heldClaims;
         this.#replayFaithful = !missedClear && !value.truncated && value.clearGeneration === 0 && value.contentsUnitStart === 0;
         const unfaithful = !this.#replayFaithful;
         if (this.#sink) {
-          this.#replayInto(this.#sink, value.contents, true);
+          if (caughtUp) {
+            if (gapRun !== null) {
+              this.#sink.write(gapRun.data);
+              this.#unanswered = this.#unanswered.filter((run) => run !== gapRun);
+              if (this.#unanswered.length === 0) this.#unansweredEpoch = null;
+            }
+          } else {
+            this.#replayInto(this.#sink, value.contents, true);
+          }
         }
         const ended = value.status === "exited" || value.status === "error";
         const running = this.#runningStatus();
+        const degraded = caughtUp ? this.#state.degraded : unfaithful;
         this.#emit({
           status: ended ? "exited" : running.status,
-          statusText: ended ? `Terminal is ${value.status}.` : this.#sinkFailure !== null ? this.#sinkFailure : value.truncated ? "Watching live output \u2014 earlier history was truncated, so terminal state may be incomplete." : value.clearGeneration > 0 ? "Watching live output \u2014 history was cleared, so terminal modes may be incomplete." : unfaithful ? "Watching live output \u2014 earlier output exceeded retention, so terminal state may be incomplete." : "Watching live output.",
-          degraded: unfaithful && !ended,
+          statusText: ended ? `Terminal is ${value.status}.` : this.#sinkFailure !== null ? this.#sinkFailure : caughtUp ? "Watching live output." : value.truncated ? "Watching live output \u2014 earlier history was truncated, so terminal state may be incomplete." : value.clearGeneration > 0 ? "Watching live output \u2014 history was cleared, so terminal modes may be incomplete." : unfaithful ? "Watching live output \u2014 earlier output exceeded retention, so terminal state may be incomplete." : "Watching live output.",
+          degraded: degraded && !ended,
           exitCode: null,
           ended
         });

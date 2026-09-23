@@ -243,14 +243,18 @@ NodeTest.describe("TerminalVtAttachment — snapshot + attach", () => {
   );
 
   NodeTest.it(
-    "a post-clear snapshot in the same epoch is NOT a fidelity restore — mode bytes are gone (P1)",
+    "a post-clear resubscribe keeps the surviving parser's modes; a remount degrades (P1)",
     () => {
       // The server reports truncated:false after a clear (retention dropped
-      // nothing; history was explicitly cleared), but the snapshot still
-      // lacks the mode-establishing bytes — replaying it cannot resync
-      // parser modes. Degraded must persist until a new process epoch.
+      // nothing; history was explicitly cleared). The live pane OBSERVED
+      // the clear, so its parser kept the pre-clear modes — the resubscribe
+      // snapshot must deliver only the gap bytes and keep them. A REMOUNT
+      // replays post-clear retention only; its replay cannot reconstruct
+      // the pre-clear mode bytes, so honesty requires the degraded banner
+      // until a new process epoch.
+      const s = sink();
       const vt = new TerminalVtAttachment("term-1");
-      vt.attach(sink());
+      vt.attach(s);
       vt.beginStream();
       vt.applyFrame(frame(1, snapshot()), snapshot());
       const reset = {
@@ -263,8 +267,9 @@ NodeTest.describe("TerminalVtAttachment — snapshot + attach", () => {
       };
       vt.applyFrame(frame(2, reset), reset);
       NodeAssert.equal(vt.state.degraded, false); // live sink preserved modes
-      // Resubscribe (same epoch): the snapshot claims truncated:false but
-      // its contents start after the clear — still degraded.
+      // Resubscribe (same epoch): the snapshot's post-clear bytes arrived
+      // in the subscription gap. The parser sits at the post-clear origin,
+      // so it receives exactly the gap — no RIS re-base, no degradation.
       vt.beginStream();
       const snap2 = snapshot({
         contents: "post-clear",
@@ -272,8 +277,15 @@ NodeTest.describe("TerminalVtAttachment — snapshot + attach", () => {
         clearGeneration: 1,
       });
       vt.applyFrame(frame(1, snap2), snap2);
+      NodeAssert.equal(vt.state.degraded, false);
+      NodeAssert.deepEqual(s.calls.at(-1), ["write", "post-clear"]);
+      NodeAssert.equal(s.calls.filter(([m]) => m === "resetAndWrite").length, 1);
+      // Remount: the replay base is post-clear only — the pre-clear
+      // mode-establishing bytes are gone from retention.
+      vt.detach();
+      const s2 = sink();
+      vt.attach(s2);
       NodeAssert.equal(vt.state.degraded, true);
-      NodeAssert.match(vt.state.statusText, /history was cleared/);
       // A new process epoch re-proves everything.
       vt.beginStream();
       const snap3 = {
@@ -489,7 +501,9 @@ NodeTest.describe("TerminalVtAttachment — failure paths", () => {
       // Astra r4: an unanswered run is not necessarily a suffix of the
       // replay stream — the resubscribe snapshot's retained contents can
       // append newer output after it. Replay must suppress only the
-      // already-answered/history bytes around the run.
+      // already-answered/history bytes around the run. Since r2 item 3 the
+      // appended gap bytes ("later") are claimed too — nothing parsed them
+      // with the reply writer attached, so their queries replay answered.
       const vt = new TerminalVtAttachment("term-1");
       vt.beginStream();
       const snap0 = snapshot({ contents: "", retainedByteLength: 0, boundarySequence: 0 });
@@ -516,10 +530,74 @@ NodeTest.describe("TerminalVtAttachment — failure paths", () => {
         ["resetAndWrite", ""],
         ["endReplay"],
         ["write", "Q"],
-        ["beginReplay"],
         ["write", "later"],
-        ["endReplay"],
       ]);
+    },
+  );
+
+  NodeTest.it(
+    "a query emitted while hidden is answered on reshow — no RIS re-base (r2 item 3)",
+    () => {
+      // The reviewer's probe: the pane hides, its output stream is dropped,
+      // and the program emits a cursor-position query (CSI 6n). The surface
+      // stays mounted with its parser; on reshow the resubscribe snapshot
+      // carries the gap bytes. The surviving parser must receive exactly the
+      // gap — with the PTY reply writer attached (no suppression bracket) —
+      // and without the RIS reset that would wipe application-cursor mode.
+      const s = bracketedSink();
+      const vt = new TerminalVtAttachment("term-1");
+      vt.attach(s);
+      vt.beginStream();
+      vt.applyFrame(frame(1, snapshot()), snapshot());
+      vt.applyFrame(frame(2, output(10, "[?1h")), output(10, "[?1h"));
+      const before = s.calls.length;
+      // Hidden: the stream is gone and the host retains "\r\nQ" (a DSR the
+      // process is still waiting on) past our last received byte.
+      vt.beginStream();
+      const reshow = snapshot({
+        contents: "prompt$ [?1h\r\nQ",
+        retainedByteLength: 14,
+        boundarySequence: 11,
+      });
+      vt.applyFrame(frame(1, reshow), reshow);
+      // Exactly the gap bytes, bracket-free — replies enabled — and no
+      // resetAndWrite anywhere in the reshow.
+      NodeAssert.deepEqual(s.calls.slice(before), [["write", "\r\nQ"]]);
+      NodeAssert.equal(vt.state.degraded, false);
+      NodeAssert.equal(vt.state.status, "live");
+    },
+  );
+
+  NodeTest.it(
+    "a truncated reshow snapshot does not wipe the surviving parser's modes (r2 item 3)",
+    () => {
+      // Retention evicted early history, so the reshow snapshot is truncated
+      // — but the pane's parser saw every byte live. The snapshot must not
+      // RIS-re-base it (that would drop application-cursor and friends the
+      // process still expects); only the gap is delivered, the live pane
+      // stays clean, and the unfaithful base degrades the NEXT remount.
+      const s = sink();
+      const vt = new TerminalVtAttachment("term-1");
+      vt.attach(s);
+      vt.beginStream();
+      vt.applyFrame(frame(1, snapshot()), snapshot());
+      vt.applyFrame(frame(2, output(10, "[?1hmode-text")), output(10, "[?1hmode-text"));
+      const before = s.calls.length;
+      vt.beginStream();
+      const reshow = snapshot({
+        contents: "pt$ [?1hmode-textgap",
+        retainedByteLength: 21,
+        truncated: true,
+        contentsUnitStart: 4,
+        boundarySequence: 11,
+      });
+      vt.applyFrame(frame(1, reshow), reshow);
+      NodeAssert.deepEqual(s.calls.slice(before), [["write", "gap"]]);
+      NodeAssert.equal(vt.state.degraded, false);
+      vt.detach();
+      const s2 = sink();
+      vt.attach(s2);
+      NodeAssert.equal(vt.state.degraded, true);
     },
   );
 

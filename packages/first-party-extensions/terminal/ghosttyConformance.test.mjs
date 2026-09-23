@@ -519,14 +519,15 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       attachment.applyFrame({ streamId: "s", sequence: 3 }, closed);
       attachment.beginStream();
       // Retained contents: our live DSR, newer output, then ANOTHER DSR
-      // the process emitted while we were gone (history-only — suppressed).
+      // the process emitted while we were gone. Since r2 item 3 the
+      // gap-emitted copy earns its own reply too — nothing parsed it with
+      // the reply writer attached — so BOTH queries answer, each at its
+      // own cursor position.
       attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap("\x1b[6nlater\x1b[6n", 2));
       const { core, writes } = await makeCore();
       attachment.attach(core);
       await new Promise((resolve) => setTimeout(resolve, 0));
-      // Exactly one reply, and it must be the cursor position at the FIRST
-      // query — the one that went undelivered live — not the newer copy.
-      NodeAssert.deepEqual(writes, ["\x1b[1;1R"]);
+      NodeAssert.deepEqual(writes, ["\x1b[1;1R", "\x1b[1;6R"]);
       core.dispose();
     },
   );
@@ -578,7 +579,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       const { core, writes } = await makeCore();
       attachment.attach(core);
       await new Promise((resolve) => setTimeout(resolve, 0));
-      NodeAssert.deepEqual(writes, ["\x1b[1;1R", "\x1b[1;7R"]);
+      NodeAssert.deepEqual(writes, ["\x1b[1;1R", "\x1b[1;6R", "\x1b[1;7R"]);
       core.dispose();
     },
   );
@@ -589,8 +590,9 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       // Astra r6: the original query falls entirely outside the retained
       // tail while a NEWER identical query lands inside the resnapshot.
       // The pending reply must drop with its bytes — never re-anchor to
-      // the coincidental copy (which is snapshot history and stays
-      // suppressed). Expected: no replies at all.
+      // the coincidental copy. The newer copy is r2 item 3's gap bytes
+      // though: nothing parsed it with the reply writer attached, so it
+      // answers at ITS own position (after the CSI H + "later" → col 6).
       const attachment = new TerminalVtAttachment("term-1");
       const snap = (
         contents,
@@ -636,7 +638,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       const { core, writes } = await makeCore();
       attachment.attach(core);
       await new Promise((resolve) => setTimeout(resolve, 0));
-      NodeAssert.deepEqual(writes, []);
+      NodeAssert.deepEqual(writes, ["\x1b[1;6R"]);
       core.dispose();
     },
   );
@@ -1041,6 +1043,8 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       // While disconnected: a NEW ESC[6n plus 5000 LFs arrive (seq 2).
       // Line retention evicts the original query line entirely — the
       // retained tail starts at window unit 5, still under the byte cap.
+      // The original claim drops by position; the gap-emitted query earns
+      // its own reply (r2 item 3), answered before the LFs scroll.
       attachment.applyFrame(
         { streamId: "s2", sequence: 1 },
         snap("\x1b[6n" + "\n".repeat(5000), 2, 5),
@@ -1048,7 +1052,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       const { core, writes } = await makeCore();
       attachment.attach(core);
       await new Promise((resolve) => setTimeout(resolve, 0));
-      NodeAssert.deepEqual(writes, []);
+      NodeAssert.deepEqual(writes, ["\x1b[1;1R"]);
       core.dispose();
     },
   );
@@ -1101,7 +1105,11 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
         snap("\x1b[6n" + "\n".repeat(5000), 2, 5),
       );
       await new Promise((resolve) => setTimeout(resolve, 0));
-      NodeAssert.deepEqual(writes, []);
+      // The evicted claim dropped; the surviving parser receives exactly
+      // the gap over the live channel, and the gap's own query answers —
+      // at row 2, because the gap-mount replay already parsed the held
+      // "\x1b[6n\n" bytes (suppressed) which moved the cursor a line.
+      NodeAssert.deepEqual(writes, ["\x1b[2;1R"]);
       core.dispose();
     },
   );

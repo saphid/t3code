@@ -518,6 +518,7 @@ export class TerminalVtAttachment {
       const priorUnitStart = this.#receivedUnitStart;
       const priorBaseLength = this.#base?.length ?? 0;
       const priorHole = this.#bufferedHole;
+      const priorBufferedLength = this.#bufferedLength;
       const priorWindow = this.#baseWindow;
       this.#epoch = value.streamEpoch;
       this.#nativeWatermark = value.boundarySequence;
@@ -558,6 +559,41 @@ export class TerminalVtAttachment {
           priorHole,
         );
       }
+      // The subscription gap: bytes the host retained past everything we
+      // ever received (a hidden pane whose stream was dropped or evicted).
+      // Nothing parsed them with the PTY reply writer attached, so their
+      // queries — a DA/DSR the program is still waiting on — earned no
+      // reply. Claim the range positionally (same window only; a missed
+      // clear makes the old end meaningless) so replay answers it, live
+      // now or at the next attach.
+      const sameWindow =
+        priorWindow !== null && priorWindow.epoch === value.streamEpoch && !missedClear;
+      const priorEnd =
+        priorUnitStart === null
+          ? null
+          : priorUnitStart + priorBaseLength + priorHole + priorBufferedLength;
+      const boundaryEnd = value.contentsUnitStart + value.contents.length;
+      // Claims still held after reconcile (a mount in the beginStream →
+      // snapshot gap parsed their bytes suppressed and holds their replies
+      // for epoch proof) can only release through #replayInto's
+      // proof-checked ranges — the incremental path below never re-parses.
+      const heldClaims = this.#unanswered.length > 0;
+      let gapRun: { start: number; data: string } | null = null;
+      if (sameWindow && priorEnd !== null && boundaryEnd > priorEnd) {
+        const gapStart = Math.max(0, priorEnd - value.contentsUnitStart);
+        gapRun = { start: gapStart, data: value.contents.slice(gapStart) };
+        this.#unanswered.push(gapRun);
+        this.#unansweredEpoch = value.streamEpoch;
+      }
+      // A surviving surface (panes stay mounted through the gap) already
+      // parsed every byte through priorEnd. Replaying the snapshot with a
+      // parser reset would rebuild state from the retained tail and wipe
+      // modes the process still expects — application cursor, bracketed
+      // paste — exactly the hidden→reshow continuity break. When the same
+      // window's boundary has caught up to or passed our last received
+      // byte and no held claims need the replay, the parser only LACKS the
+      // gap: deliver exactly that, replies enabled, and skip the re-base.
+      const caughtUp = sameWindow && priorEnd !== null && boundaryEnd >= priorEnd && !heldClaims;
       // Parser fidelity needs retained-coverage evidence, not client
       // observation history: only an epoch with zero clears whose
       // retained window still starts at unit 0 provably contains every
@@ -570,26 +606,40 @@ export class TerminalVtAttachment {
         value.contentsUnitStart === 0;
       const unfaithful = !this.#replayFaithful;
       if (this.#sink) {
-        // Re-base the live parser; unanswered runs inside the new
-        // contents still earn their one reply right now.
-        this.#replayInto(this.#sink, value.contents, true);
+        if (caughtUp) {
+          if (gapRun !== null) {
+            this.#sink.write(gapRun.data);
+            this.#unanswered = this.#unanswered.filter((run) => run !== gapRun);
+            if (this.#unanswered.length === 0) this.#unansweredEpoch = null;
+          }
+        } else {
+          // Re-base the live parser; unanswered runs inside the new
+          // contents still earn their one reply right now.
+          this.#replayInto(this.#sink, value.contents, true);
+        }
       }
       const ended = value.status === "exited" || value.status === "error";
       const running = this.#runningStatus();
+      // With a caught-up parser the pane's own state is whatever it was
+      // before the gap — a truncated retention window only degrades a
+      // future REMOUNT (recorded in #replayFaithful), not the live pane.
+      const degraded = caughtUp ? this.#state.degraded : unfaithful;
       this.#emit({
         status: ended ? "exited" : running.status,
         statusText: ended
           ? `Terminal is ${value.status}.`
           : this.#sinkFailure !== null
             ? this.#sinkFailure
-            : value.truncated
-              ? "Watching live output — earlier history was truncated, so terminal state may be incomplete."
-              : value.clearGeneration > 0
-                ? "Watching live output — history was cleared, so terminal modes may be incomplete."
-                : unfaithful
-                  ? "Watching live output — earlier output exceeded retention, so terminal state may be incomplete."
-                  : "Watching live output.",
-        degraded: unfaithful && !ended,
+            : caughtUp
+              ? "Watching live output."
+              : value.truncated
+                ? "Watching live output — earlier history was truncated, so terminal state may be incomplete."
+                : value.clearGeneration > 0
+                  ? "Watching live output — history was cleared, so terminal modes may be incomplete."
+                  : unfaithful
+                    ? "Watching live output — earlier output exceeded retention, so terminal state may be incomplete."
+                    : "Watching live output.",
+        degraded: degraded && !ended,
         exitCode: null,
         ended,
       });
