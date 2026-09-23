@@ -381,7 +381,7 @@ export function createBrowserFramesApiProvider(
           return yield* named(
             operation,
             "BrowserStreamTicketDenied",
-            "the mint authority's root connection is no longer live.",
+            "the presentation claim was released or the mint authority's root connection is no longer live.",
           );
         }
         return {
@@ -433,7 +433,7 @@ export function createBrowserFramesApiProvider(
           return yield* named(
             operation,
             "BrowserInputLeaseDenied",
-            "the named lease is not a live lease owned by this caller for this session.",
+            "the named lease is not a live lease owned by this caller for this session, the presentation claim was released, or the root connection is no longer live.",
           );
         }
         return {

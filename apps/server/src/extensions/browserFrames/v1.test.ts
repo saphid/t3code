@@ -10,6 +10,7 @@ import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { HostApiInvocationMetadata, HostApiProvider } from "@t3tools/extension-runtime";
 import { describe, expect, it } from "@effect/vitest";
 import * as Data from "effect/Data";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -22,6 +23,7 @@ import {
   type BrowserFrameAuthority,
 } from "../../browserFrames/BrowserFrameLeases.ts";
 import { createBrowserFramesApiProvider } from "./v1.ts";
+import { createResourcesLeaseApiProvider } from "../resourcesLeaseApi.ts";
 
 const isOperationError = Schema.is(ExtensionOperationError);
 const signal = new AbortController().signal;
@@ -230,6 +232,36 @@ const recordClaim = (
     allowedCommands,
     expiresAt: CLAIM_EXPIRES,
   });
+
+/** Minimal resources-lease deps — enough to drive `releasePresentation`. */
+const resourcesDeps = (
+  leases: BrowserFrameLeases["Service"],
+): Parameters<typeof createResourcesLeaseApiProvider>[0] => ({
+  environmentId: ENV_ID,
+  projects: {
+    getById: () =>
+      Effect.succeedSome({
+        projectId: ProjectId.make(PROJECT_ID),
+        workspaceRoot: WORKSPACE,
+        faviconPath: null,
+        deletedAt: null,
+      }),
+  },
+  threads: {
+    getById: () =>
+      Effect.succeedSome({
+        projectId: ProjectId.make(PROJECT_ID),
+        worktreePath: null,
+        deletedAt: null,
+      }),
+  },
+  normalizeWorkspaceRoot: (root) => Effect.succeed(root),
+  preview: { list: () => Effect.die("unused in this test") },
+  issueUrl: () => Effect.die("unused in this test"),
+  issueBrowserSurface: () => Effect.die("unused in this test"),
+  leases,
+  authorizeGrant: async () => true,
+});
 
 describe("browser frames adapter", () => {
   it.effect("openStream denies a signed token that was never held", () =>
@@ -458,6 +490,103 @@ describe("browser frames adapter", () => {
         meta(provider, { rootConnectionId: "conn-2" }),
       );
       expect(denied.detail).toContain("BrowserSurfaceClaimDenied");
+    }),
+  );
+
+  it.effect("release fences mints already past the held-claim read", () =>
+    Effect.gen(function* () {
+      const { leases } = yield* harness;
+      const resources = createResourcesLeaseApiProvider(resourcesDeps(leases));
+
+      // A mint suspended inside the engine-host lookup — past the claim read
+      // but before the registry insert — observes a release that commits
+      // while it is suspended.
+      const racedMint = (method: "openStream" | "openInput", input: unknown) =>
+        Effect.gen(function* () {
+          const entered = yield* Deferred.make<void>();
+          const resume = yield* Deferred.make<void>();
+          const deps = makeDeps(leases);
+          const provider = createBrowserFramesApiProvider({
+            ...deps,
+            broker: {
+              frameHubs: Deferred.succeed(entered, undefined).pipe(
+                Effect.andThen(Deferred.await(resume)),
+                Effect.andThen(deps.broker.frameHubs),
+              ),
+            },
+          });
+          const outcome = yield* Deferred.make<
+            | { readonly ok: true; readonly value: unknown }
+            | { readonly ok: false; readonly rejection: InvokeRejection }
+          >();
+          yield* invoke(provider, method, input, meta(provider)).pipe(
+            Effect.match({
+              onFailure: (rejection) => ({ ok: false as const, rejection }),
+              onSuccess: (value) => ({ ok: true as const, value }),
+            }),
+            Effect.flatMap((result) => Deferred.succeed(outcome, result)),
+            Effect.forkChild,
+          );
+          yield* Deferred.await(entered);
+          return { resume, outcome };
+        });
+
+      const release = (token: string) =>
+        invoke(
+          resources,
+          "releasePresentation",
+          { presentationUrl: token },
+          meta(resources),
+        ) as Effect.Effect<{ readonly released: boolean }, InvokeRejection>;
+
+      const expectDenied = (
+        result:
+          | { readonly ok: true; readonly value: unknown }
+          | { readonly ok: false; readonly rejection: InvokeRejection },
+        name: string,
+      ) => {
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          const cause = result.rejection.cause;
+          expect(isOperationError(cause) ? cause.detail : String(cause)).toContain(name);
+        }
+      };
+
+      // A paused openStream resumed after release mints nothing valid, and a
+      // second release reports the raced mint produced no record.
+      const streamClaim = surfaceToken("slot-stream");
+      yield* recordClaim(leases, streamClaim, providerAuthority({ heldSlot: "slot-stream" }));
+      const stream = yield* racedMint("openStream", openStreamInput(streamClaim));
+      expect((yield* release(streamClaim)).released).toBe(true);
+      yield* Deferred.succeed(stream.resume, undefined);
+      expectDenied(yield* Deferred.await(stream.outcome), "BrowserStreamTicketDenied");
+      expect((yield* release(streamClaim)).released).toBe(false);
+
+      // Same race through openInput.
+      const inputClaim = surfaceToken("slot-input");
+      yield* recordClaim(leases, inputClaim, providerAuthority({ heldSlot: "slot-input" }));
+      const input = yield* racedMint("openInput", openStreamInput(inputClaim));
+      expect((yield* release(inputClaim)).released).toBe(true);
+      yield* Deferred.succeed(input.resume, undefined);
+      expectDenied(yield* Deferred.await(input.outcome), "BrowserInputLeaseDenied");
+
+      // An explicit renewal named by leaseId rides the same fence: release
+      // kills both the pending renewal and the lease it would have extended.
+      const renewClaim = surfaceToken("slot-renew");
+      yield* recordClaim(leases, renewClaim, providerAuthority({ heldSlot: "slot-renew" }));
+      const provider = createBrowserFramesApiProvider(makeDeps(leases));
+      const issued = (yield* invoke(provider, "openInput", openStreamInput(renewClaim))) as {
+        readonly leaseId: string;
+        readonly inputTicket: string;
+      };
+      const renewal = yield* racedMint("openInput", {
+        ...openStreamInput(renewClaim),
+        leaseId: issued.leaseId,
+      });
+      expect((yield* release(renewClaim)).released).toBe(true);
+      yield* Deferred.succeed(renewal.resume, undefined);
+      expectDenied(yield* Deferred.await(renewal.outcome), "BrowserInputLeaseDenied");
+      expect(Option.isNone(yield* leases.verify(issued.inputTicket))).toBe(true);
     }),
   );
 });

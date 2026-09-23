@@ -212,6 +212,32 @@ export const authorityRidesOnSession = (
     ? authority.sessionId === sessionId
     : authority.principalKind === "environment-session" && authority.principalId === sessionId;
 
+/**
+ * An extension mint bound to a presentation slot is valid only while that
+ * claim is still held — checked inside the same atomic update as the record
+ * insert so a `releasePresentation` committed between the provider's earlier
+ * claim read and this insert fences the mint instead of resurrecting a
+ * ticket for a released slot.
+ */
+const heldClaimSatisfied = (
+  authority: BrowserFrameAuthority,
+  session: BrowserFrameSessionTuple,
+  state: LeasesState,
+): boolean => {
+  if (authority.kind !== "extension" || authority.heldSlot === undefined) return true;
+  const key = browserFrameAuthorityKey(authority);
+  const tuple = sessionKey(session);
+  for (const claim of state.heldClaims.values()) {
+    if (
+      browserFrameAuthorityKey(claim.authority) === key &&
+      sessionKey(claim.session) === tuple
+    ) {
+      return true;
+    }
+  }
+  return false;
+};
+
 /** The transport connection a mint's authority rides on, when connection-bound. */
 const authorityConnectionId = (authority: BrowserFrameAuthority): string | undefined =>
   authority.kind === "session" ? authority.connectionId : authority.rootConnectionId;
@@ -381,6 +407,9 @@ export const make = (options?: {
         if (connectionId !== undefined && pruned.deadConnections.has(connectionId)) {
           return [Option.none(), pruned] as const;
         }
+        if (!heldClaimSatisfied(input.authority, input.session, pruned)) {
+          return [Option.none(), pruned] as const;
+        }
         const tickets = new Map(pruned.tickets);
         tickets.set(ticket, {
           ticket,
@@ -411,6 +440,11 @@ export const make = (options?: {
         // connection can neither mint nor renew.
         const connectionId = authorityConnectionId(input.authority);
         if (connectionId !== undefined && pruned.deadConnections.has(connectionId)) {
+          return [Option.none<IssuedInputLease>(), pruned] as const;
+        }
+        // Renewals ride the same fence: a released presentation cannot be
+        // resurrected by an in-flight renewal either.
+        if (!heldClaimSatisfied(input.authority, input.session, pruned)) {
           return [Option.none<IssuedInputLease>(), pruned] as const;
         }
         // Explicit renewal: the caller names its live lease and must own it.
