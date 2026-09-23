@@ -18,8 +18,9 @@ Interactive terminal plugin driven entirely by public contracts:
   overrides so nothing contract-derived outlives its feed. On the VT pane
   the same properties feed `terminalThemeFromApp` → `surface.setTheme`, so
   the canvas and the chrome share one theme pipeline.
-- `t3.ui/keybindings@^1.0.0` — per-view `toggle`/`new`/`close` commands
-  (default keys mirror the native `mod+j`/`mod+n`/`mod+w` chords; the host's
+- `t3.ui/keybindings@^1.0.0` — per-view `toggle`/`new`/`close`/`split`/
+  `splitVertical` commands (default keys mirror the native
+  `mod+j`/`mod+n`/`mod+w`/`mod+d`/`mod+shift+d` chords; the host's
   user/native precedence decides who claims them), plus a staged
   installation-scoped `toggle` with a bottom-dock `activation` fallback for
   cold open (`t3.ui/keybindings.global` + `t3.ui/panels` grants). All actions
@@ -35,12 +36,42 @@ a capable host.
 
 `t3.ui/notifications` is deliberately not adopted: the native terminal only
 toasts on link-preview failure, and this panel has no link-activation path —
-its inline status rows match native usage. Split chords
-(`terminal.split`/`splitVertical`) stay deferred — the panel has no split
-layout to bind them to. The Ghostty-level editing intercepts (clear,
-word-nav, delete) are implemented locally on the VT surface via
-`handleBeforeKey`; what remains absent is adopting them as configurable
-commands through `t3.ui/keybindings`.
+its inline status rows match native usage. The Ghostty-level editing
+intercepts (clear, word-nav, delete) are implemented locally on the VT
+surface via `handleBeforeKey`; what remains absent is adopting them as
+configurable commands through `t3.ui/keybindings`.
+
+## Split groups and focus claim
+
+The panel ports the native drawer's group model: every session belongs to a
+group of at most 4 terminals, and the active group's members render
+side-by-side — columns for `horizontal`, rows for `vertical` — each with its
+own VT attachment and PTY stream. `terminal.split` (`mod+d`) inserts a fresh
+session after the focused pane and `terminal.splitVertical` (`mod+shift+d`)
+does the same stacked; at 4 panes the split controls disable with the
+native "(max 4 per group)" label and the chord is refused before any PTY
+spawns. `terminal.new` (`mod+n`) opens a session in its own group;
+`terminal.close` (`mod+w`) closes the focused pane and the group collapses,
+empty groups dropping away. Clicking a pane focuses it; clicking a session
+or group header in the sidebar activates that terminal (and its group).
+Group membership, direction, and the active group persist in the view's
+restore state; pre-split records restore as one singleton group per
+session. Panes outside the visible group stay mounted but hold no output
+stream — the host caps each installation at 8 concurrent plugin streams,
+and the sessions/theme feeds already take 3, so attaching every tracked
+session at once would starve the sessions stream itself. Hidden panes
+re-attach and resume their retained history when their group is shown.
+
+The surface declares `claimsTerminalFocus`, so the host tags the frame
+`data-terminal-owner="extension"` and leaves the four focused terminal
+chords untouched instead of routing them to a native terminal. Owning the
+claim means owning the keymap — the host's own rules still resolve the
+chords to `terminal.*` first, so the view captures them at its root
+(`onKeyDownCapture`, ahead of the VT encoder) and dispatches them through
+the same actions the registered `t3.ui/keybindings` commands drive. The
+`<pre>` fallback for asset-less hosts stays single-pane — the group model
+still applies (sidebar membership and activation), it just does not render
+side-by-side.
 
 ## Rendering: real Ghostty VT (format 4)
 
@@ -155,11 +186,6 @@ cancellation, or ordering fences to disambiguate it — hence halt + discard +
 explicit resume rather than replay. Host-side op-id fencing remains unsolved.
 
 ## Known limitations
-
-- **Focus arbitration (B7):** the plugin does not emit `data-terminal-owner`
-  and cannot claim focus-owner parity — without host-side arbitration, the
-  native terminal close/split/new keybindings may still target the native
-  terminal while the plugin has focus.
 - **Dock sizing (B8):** dock geometry is host-owned; the plugin only sizes
   its own terminal content.
 - **Remote pixels/frames:** out of scope; rendering is local WASM only.

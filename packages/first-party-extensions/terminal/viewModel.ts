@@ -175,6 +175,90 @@ export function resolveActiveTerminalId(
     : (ids[0] ?? null);
 }
 
+/* ------------------------------------------------------------------ */
+/* Split groups — port of the native terminalUiStateStore group model. */
+/* ------------------------------------------------------------------ */
+
+/** Same cap the native drawer enforces per split group. */
+export const MAX_TERMINALS_PER_GROUP = 4;
+
+export type TerminalSplitDirection = "horizontal" | "vertical";
+
+/**
+ * Internal/restored group shape — mirrors the native `ThreadTerminalGroup`:
+ * `splitDirection` stays optional and only `"vertical"` is ever stored;
+ * absent means horizontal.
+ */
+export interface TerminalGroup {
+  id: string;
+  terminalIds: string[];
+  splitDirection?: "vertical";
+}
+
+/** Snapshot-facing group with the direction resolved for rendering. */
+export interface TerminalPaneGroup {
+  readonly id: string;
+  readonly terminalIds: readonly string[];
+  readonly splitDirection: TerminalSplitDirection;
+}
+
+const fallbackGroupId = (terminalId: string) => `group-${terminalId}`;
+
+function assignUniqueGroupId(baseId: string, usedGroupIds: Set<string>): string {
+  let candidate = baseId;
+  let index = 2;
+  while (usedGroupIds.has(candidate)) {
+    candidate = `${baseId}-${index}`;
+    index += 1;
+  }
+  usedGroupIds.add(candidate);
+  return candidate;
+}
+
+/**
+ * Groups partition the session list: members that left `terminalIds` drop
+ * out, duplicates collapse to their first group, and sessions no group
+ * claims each earn a trailing singleton — the native
+ * `normalizeTerminalGroups` rule, which is also what makes old restore
+ * records (no group field) land as one group per terminal.
+ */
+export function normalizeTerminalGroups(
+  groups: readonly TerminalGroup[],
+  terminalIds: readonly string[],
+): TerminalGroup[] {
+  if (terminalIds.length === 0) return [];
+  const validTerminalIdSet = new Set(terminalIds);
+  const assignedTerminalIds = new Set<string>();
+  const nextGroups: TerminalGroup[] = [];
+  const usedGroupIds = new Set<string>();
+
+  for (const group of groups) {
+    const groupTerminalIds = normalizeTerminalIds(group.terminalIds).filter(
+      (terminalId) => validTerminalIdSet.has(terminalId) && !assignedTerminalIds.has(terminalId),
+    );
+    if (groupTerminalIds.length === 0) continue;
+    for (const terminalId of groupTerminalIds) assignedTerminalIds.add(terminalId);
+    const baseGroupId =
+      group.id.trim().length > 0
+        ? group.id.trim()
+        : fallbackGroupId(groupTerminalIds[0] ?? terminalIds[0] ?? "");
+    nextGroups.push({
+      id: assignUniqueGroupId(baseGroupId, usedGroupIds),
+      terminalIds: groupTerminalIds,
+      ...(group.splitDirection === "vertical" ? { splitDirection: "vertical" as const } : {}),
+    });
+  }
+
+  for (const terminalId of terminalIds) {
+    if (assignedTerminalIds.has(terminalId)) continue;
+    nextGroups.push({
+      id: assignUniqueGroupId(fallbackGroupId(terminalId), usedGroupIds),
+      terminalIds: [terminalId],
+    });
+  }
+  return nextGroups;
+}
+
 export const EMPTY_OUTPUT_BUFFER: OutputBuffer = {
   contents: "",
   retainedBytes: 0,
@@ -462,6 +546,12 @@ export interface TerminalPanelSnapshot {
   readonly terminalIds: readonly string[];
   readonly activeTerminalId: string | null;
   readonly tabs: readonly TerminalTabState[];
+  /**
+   * The split-group partition of `terminalIds`; the group named by
+   * `activeGroupId` is what the pane area renders (≤4 panes).
+   */
+  readonly groups: readonly TerminalPaneGroup[];
+  readonly activeGroupId: string | null;
   readonly stream: "connecting" | "live" | "closed";
   readonly panelError: string | null;
 }
@@ -496,6 +586,9 @@ export class TerminalPanel {
   readonly #onChange: (() => void) | undefined;
   #ids: string[];
   #active: string | null;
+  #groups: TerminalGroup[] = [];
+  /** Empty string mirrors the native store's "no active group" sentinel. */
+  #activeGroupId = "";
   readonly #tabs = new Map<string, TabInternal>();
   #stream: "connecting" | "live" | "closed" = "connecting";
   #panelError: string | null = null;
@@ -507,6 +600,12 @@ export class TerminalPanel {
     readonly restored?: {
       readonly terminalIds: readonly string[];
       readonly activeTerminalId: string | null;
+      readonly terminalGroups?: readonly {
+        readonly id: string;
+        readonly terminalIds: readonly string[];
+        readonly splitDirection?: TerminalSplitDirection;
+      }[];
+      readonly activeTerminalGroupId?: string | null;
     } | null;
     readonly schedule?: (callback: () => void) => void;
     readonly onChange?: () => void;
@@ -517,6 +616,17 @@ export class TerminalPanel {
     this.#onChange = options.onChange;
     this.#ids = normalizeTerminalIds(options.restored?.terminalIds ?? []);
     this.#active = resolveActiveTerminalId(this.#ids, options.restored?.activeTerminalId ?? null);
+    this.#groups = normalizeTerminalGroups(
+      (options.restored?.terminalGroups ?? []).map((group) => ({
+        id: group.id,
+        terminalIds: [...group.terminalIds],
+        ...(group.splitDirection === "vertical" ? { splitDirection: "vertical" as const } : {}),
+      })),
+      this.#ids,
+    );
+    this.#activeGroupId = this.#resolveActiveGroupId(
+      options.restored?.activeTerminalGroupId ?? null,
+    );
     for (const id of this.#ids) this.#tab(id);
   }
 
@@ -524,6 +634,12 @@ export class TerminalPanel {
     return {
       terminalIds: [...this.#ids],
       activeTerminalId: this.#active,
+      groups: this.#groups.map((group) => ({
+        id: group.id,
+        terminalIds: [...group.terminalIds],
+        splitDirection: group.splitDirection ?? "horizontal",
+      })),
+      activeGroupId: this.#activeGroupId === "" ? null : this.#activeGroupId,
       tabs: this.#ids.map((id) => {
         const tab = this.#tabs.get(id)!;
         const meta = tab.meta;
@@ -599,11 +715,60 @@ export class TerminalPanel {
     return tab;
   }
 
-  #removeTab(terminalId: string) {
+  /** Group containing a session, or the current active group as a fallback. */
+  #groupIdOf(terminalId: string): string {
+    return (
+      this.#groups.find((group) => group.terminalIds.includes(terminalId))?.id ??
+      this.#activeGroupId
+    );
+  }
+
+  /**
+   * Native rule: the stored active group survives renormalization while it
+   * still exists; otherwise the active terminal's group (or the first group)
+   * takes over.
+   */
+  #resolveActiveGroupId(preferred: string | null): string {
+    if (preferred !== null && preferred !== "" && this.#groups.some((g) => g.id === preferred))
+      return preferred;
+    return (
+      (this.#active !== null ? this.#groupIdOf(this.#active) : "") || (this.#groups[0]?.id ?? "")
+    );
+  }
+
+  /** Re-partition groups after `#ids` changed and re-resolve the active group. */
+  #syncGroups() {
+    this.#groups = normalizeTerminalGroups(this.#groups, this.#ids);
+    this.#activeGroupId = this.#resolveActiveGroupId(this.#activeGroupId);
+  }
+
+  /**
+   * Where a split lands: the stored active group, else the group holding the
+   * active terminal. `null` means there is nothing to split into — the
+   * native `effectiveMode === "new"` case.
+   */
+  #splitDestination(): TerminalGroup | null {
+    if (this.#active === null) return null;
+    const byId = this.#groups.find((group) => group.id === this.#activeGroupId);
+    if (byId) return byId;
+    return this.#groups.find((group) => group.terminalIds.includes(this.#active!)) ?? null;
+  }
+
+  #removeTab(terminalId: string, fallback: "first" | "index" = "first") {
     this.#tabs.get(terminalId)?.input.dispose();
     this.#tabs.delete(terminalId);
+    const closedIndex = this.#ids.indexOf(terminalId);
     this.#ids = this.#ids.filter((id) => id !== terminalId);
-    this.#active = resolveActiveTerminalId(this.#ids, this.#active);
+    // A user close activates the pane that slides into the closed slot
+    // (native closeThreadTerminal); a server-driven remove keeps the older
+    // reconcile rule — keep the current active, else the first session.
+    this.#active =
+      this.#active === terminalId
+        ? fallback === "index"
+          ? (this.#ids[Math.min(closedIndex, this.#ids.length - 1)] ?? this.#ids[0] ?? null)
+          : resolveActiveTerminalId(this.#ids, null)
+        : resolveActiveTerminalId(this.#ids, this.#active);
+    this.#syncGroups();
     this.#emit();
   }
 
@@ -646,10 +811,14 @@ export class TerminalPanel {
           if (!this.#ids.includes(id)) this.#tabs.delete(id);
         }
         this.#active = resolveActiveTerminalId(this.#ids, this.#active);
+        this.#syncGroups();
         break;
       }
       case "upsert":
         this.#observeMeta(event.terminal);
+        // An upsert for an unknown id appended it to the list — keep the
+        // group partition covering every session (new ids earn singletons).
+        this.#syncGroups();
         break;
       case "remove":
         this.#removeTab(event.terminalId);
@@ -692,8 +861,23 @@ export class TerminalPanel {
     this.#emit();
   }
 
-  /** Open a fresh terminal; the client picks the id (#15). */
+  /** Open a fresh terminal in its own group; the client picks the id (#15). */
   async openTerminal(): Promise<string | null> {
+    return this.#open("new", "horizontal");
+  }
+
+  /**
+   * `terminal.split`/`terminal.splitVertical`: a fresh session inserted into
+   * the active group right after the focused pane, capped at
+   * MAX_TERMINALS_PER_GROUP — at the cap the chord is refused before any PTY
+   * spawns, exactly like the native `hasReachedSplitLimit` gate. With no
+   * sessions yet the split degenerates to a plain open, as native does.
+   */
+  async splitTerminal(direction: TerminalSplitDirection = "horizontal"): Promise<string | null> {
+    return this.#open("split", direction);
+  }
+
+  async #open(mode: "new" | "split", direction: TerminalSplitDirection): Promise<string | null> {
     const launch = this.#launch;
     if (!launch) {
       this.#panelError = "Terminal requires a workspace scope.";
@@ -709,6 +893,10 @@ export class TerminalPanel {
       this.#emit();
       return null;
     }
+    const destination = mode === "split" ? this.#splitDestination() : null;
+    if (destination !== null && destination.terminalIds.length >= MAX_TERMINALS_PER_GROUP) {
+      return null;
+    }
     const terminalId = nextTerminalId(this.allocatableTerminalIds);
     const tab = this.#tab(terminalId);
     tab.starting = true;
@@ -718,7 +906,20 @@ export class TerminalPanel {
     tab.input.setReady(false);
     tab.error = null;
     this.#ids = [...this.#ids.filter((id) => id !== terminalId), terminalId];
+    if (destination !== null) {
+      // Insert after the focused pane (native anchors on the active
+      // terminal) and stamp the direction this split was made with.
+      const anchorIndex = destination.terminalIds.indexOf(this.#active ?? "");
+      if (anchorIndex >= 0) destination.terminalIds.splice(anchorIndex + 1, 0, terminalId);
+      else destination.terminalIds.push(terminalId);
+      if (direction === "vertical") destination.splitDirection = "vertical";
+      else delete destination.splitDirection;
+    }
     this.#active = terminalId;
+    this.#syncGroups();
+    // "new" shows the fresh singleton group; "split" keeps showing the
+    // destination group — both resolve to the group now holding the id.
+    this.#activeGroupId = this.#groupIdOf(terminalId);
     this.#emit();
     try {
       const meta = await this.#control.open({
@@ -878,7 +1079,7 @@ export class TerminalPanel {
           // The session may already be gone; the tab still leaves.
         }
       }
-      this.#removeTab(terminalId);
+      this.#removeTab(terminalId, "index");
       return;
     }
     const launch = this.#launch;
@@ -916,9 +1117,11 @@ export class TerminalPanel {
     this.#emit();
   }
 
+  /** Focus a pane — also surfaces its group, like the native setActiveTerminal. */
   activate(terminalId: string) {
     if (!this.#ids.includes(terminalId)) return;
     this.#active = terminalId;
+    this.#activeGroupId = this.#groupIdOf(terminalId);
     this.#emit();
   }
 
@@ -948,11 +1151,13 @@ export const TERMINAL_FOCUS_WHEN = `extension.${TERMINAL_SURFACE_ID}.focus`;
  * binding → exactly-one thread binding → installation → activation). The
  * `defaultKey`s mirror the native terminal chords; the host always resolves
  * user and native rules first, so a displaced default is honest metadata
- * `listConflicts` reports rather than a stolen chord. Split chords stay
- * unregistered — the panel has no split layout to dispatch them to. The
- * Ghostty-level editing intercepts (clear, word-nav, delete) exist locally
- * on the VT surface via `handleBeforeKey`; what remains absent is adopting
- * them as configurable commands through `t3.ui/keybindings`.
+ * `listConflicts` reports rather than a stolen chord. The surface declares
+ * `claimsTerminalFocus`, so while it owns focus the host leaves the
+ * split/new/close chords untouched and they reach these bindings instead
+ * of a native terminal. The Ghostty-level editing intercepts (clear,
+ * word-nav, delete) exist locally on the VT surface via `handleBeforeKey`;
+ * what remains absent is adopting them as configurable commands through
+ * `t3.ui/keybindings`.
  */
 export const TERMINAL_VIEW_COMMANDS: readonly GlobalCommandDescriptor[] = [
   {
@@ -974,6 +1179,20 @@ export const TERMINAL_VIEW_COMMANDS: readonly GlobalCommandDescriptor[] = [
     title: "Close terminal",
     scope: "surface",
     defaultKey: "mod+w",
+    when: TERMINAL_FOCUS_WHEN,
+  },
+  {
+    id: "split",
+    title: "Split terminal horizontally",
+    scope: "surface",
+    defaultKey: "mod+d",
+    when: TERMINAL_FOCUS_WHEN,
+  },
+  {
+    id: "splitVertical",
+    title: "Split terminal vertically",
+    scope: "surface",
+    defaultKey: "mod+shift+d",
     when: TERMINAL_FOCUS_WHEN,
   },
 ];
@@ -1004,6 +1223,8 @@ export interface TerminalCommandActions {
   readonly newTerminal: () => void;
   /** Close the active terminal — the panel's inline confirm still applies. */
   readonly closeTerminal: () => void;
+  /** Split the active group with a fresh pane in the given direction. */
+  readonly splitTerminal: (direction: TerminalSplitDirection) => void;
   /** Dismiss the hosting surface (a `t3.ui/panels` closeSurface call). */
   readonly toggleSurface: () => void;
 }
@@ -1022,6 +1243,12 @@ export function dispatchTerminalCommand(
       return true;
     case "close":
       actions.closeTerminal();
+      return true;
+    case "split":
+      actions.splitTerminal("horizontal");
+      return true;
+    case "splitVertical":
+      actions.splitTerminal("vertical");
       return true;
     default:
       return false;

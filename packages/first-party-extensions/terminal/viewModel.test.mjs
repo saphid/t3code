@@ -919,8 +919,21 @@ NodeTest.describe("t3.ui/keybindings — command descriptors", () => {
     NodeAssert.equal(view.toggle.scope, "global");
     NodeAssert.equal(view.toggle.defaultKey, "mod+j");
     NodeAssert.equal(view.toggle.when, undefined);
-    // Split chords stay unregistered — no split layout to dispatch them to.
-    NodeAssert.ok(!TERMINAL_VIEW_COMMANDS.some((command) => command.id.startsWith("split")));
+    // Split chords mirror the native terminal.split/splitVertical bindings.
+    NodeAssert.deepEqual(view.split, {
+      id: "split",
+      title: "Split terminal horizontally",
+      scope: "surface",
+      defaultKey: "mod+d",
+      when: TERMINAL_FOCUS_WHEN,
+    });
+    NodeAssert.deepEqual(view.splitVertical, {
+      id: "splitVertical",
+      title: "Split terminal vertically",
+      scope: "surface",
+      defaultKey: "mod+shift+d",
+      when: TERMINAL_FOCUS_WHEN,
+    });
   });
 
   NodeTest.it("stages a legal installation-tier activation for cold open", () => {
@@ -943,13 +956,16 @@ NodeTest.describe("t3.ui/keybindings — registration + dispatch", () => {
     const actions = {
       newTerminal: () => calls.push("new"),
       closeTerminal: () => calls.push("close"),
+      splitTerminal: (direction) => calls.push(`split:${direction}`),
       toggleSurface: () => calls.push("toggle"),
     };
     NodeAssert.equal(dispatchTerminalCommand("toggle", actions), true);
     NodeAssert.equal(dispatchTerminalCommand("new", actions), true);
     NodeAssert.equal(dispatchTerminalCommand("close", actions), true);
+    NodeAssert.equal(dispatchTerminalCommand("split", actions), true);
+    NodeAssert.equal(dispatchTerminalCommand("splitVertical", actions), true);
     NodeAssert.equal(dispatchTerminalCommand("terminal.new", actions), false);
-    NodeAssert.deepEqual(calls, ["toggle", "new", "close"]);
+    NodeAssert.deepEqual(calls, ["toggle", "new", "close", "split:horizontal", "split:vertical"]);
   });
 
   NodeTest.it("registers the view set, binds the token, dispatches registered ids", async () => {
@@ -961,6 +977,8 @@ NodeTest.describe("t3.ui/keybindings — registration + dispatch", () => {
       },
       { commandId: "new", status: "registered" },
       { commandId: "close", status: "registered" },
+      { commandId: "split", status: "registered" },
+      { commandId: "splitVertical", status: "registered" },
     ]);
     const bound = [];
     const dispatched = [];
@@ -978,7 +996,7 @@ NodeTest.describe("t3.ui/keybindings — registration + dispatch", () => {
     NodeAssert.equal(register.id, "t3.ui/keybindings");
     NodeAssert.deepEqual(
       register.input.commands.map((command) => command.id),
-      ["toggle", "new", "close"],
+      ["toggle", "new", "close", "split", "splitVertical"],
     );
     NodeAssert.equal(bound[0].token, "cmdset-test");
     bound[0].handler({ commandId: "new", context: viewContext });

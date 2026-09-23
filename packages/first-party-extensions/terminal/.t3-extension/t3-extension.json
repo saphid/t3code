@@ -18,6 +18,7 @@
           "desktop"
         ],
         "capabilities": [],
+        "claimsTerminalFocus": true,
         "stateVersion": 1
       }
     ]

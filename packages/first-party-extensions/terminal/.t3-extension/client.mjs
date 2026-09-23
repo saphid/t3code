@@ -6437,6 +6437,11 @@ var __t3Client = (() => {
   // extension.tsx
   var import_react = __toESM(require_react(), 1);
 
+  // ghostty/platform.ts
+  function isMacPlatform(platform) {
+    return /mac|iphone|ipad|ipod/i.test(platform);
+  }
+
   // ghostty/runtime.ts
   var textDecoder = new TextDecoder();
   var GhosttyRuntime = class _GhosttyRuntime {
@@ -6621,11 +6626,6 @@ var __t3Client = (() => {
     });
     runtimePromises.set(sources, promise);
     return promise;
-  }
-
-  // ghostty/platform.ts
-  function isMacPlatform(platform) {
-    return /mac|iphone|ipad|ipod/i.test(platform);
   }
 
   // ghostty/selection.ts
@@ -10097,6 +10097,46 @@ var __t3Client = (() => {
     if (ids.length === 0) return null;
     return activeTerminalId !== null && ids.includes(activeTerminalId) ? activeTerminalId : ids[0] ?? null;
   }
+  var MAX_TERMINALS_PER_GROUP = 4;
+  var fallbackGroupId = (terminalId) => `group-${terminalId}`;
+  function assignUniqueGroupId(baseId, usedGroupIds) {
+    let candidate = baseId;
+    let index = 2;
+    while (usedGroupIds.has(candidate)) {
+      candidate = `${baseId}-${index}`;
+      index += 1;
+    }
+    usedGroupIds.add(candidate);
+    return candidate;
+  }
+  function normalizeTerminalGroups(groups, terminalIds) {
+    if (terminalIds.length === 0) return [];
+    const validTerminalIdSet = new Set(terminalIds);
+    const assignedTerminalIds = /* @__PURE__ */ new Set();
+    const nextGroups = [];
+    const usedGroupIds = /* @__PURE__ */ new Set();
+    for (const group of groups) {
+      const groupTerminalIds = normalizeTerminalIds(group.terminalIds).filter(
+        (terminalId) => validTerminalIdSet.has(terminalId) && !assignedTerminalIds.has(terminalId)
+      );
+      if (groupTerminalIds.length === 0) continue;
+      for (const terminalId of groupTerminalIds) assignedTerminalIds.add(terminalId);
+      const baseGroupId = group.id.trim().length > 0 ? group.id.trim() : fallbackGroupId(groupTerminalIds[0] ?? terminalIds[0] ?? "");
+      nextGroups.push({
+        id: assignUniqueGroupId(baseGroupId, usedGroupIds),
+        terminalIds: groupTerminalIds,
+        ...group.splitDirection === "vertical" ? { splitDirection: "vertical" } : {}
+      });
+    }
+    for (const terminalId of terminalIds) {
+      if (assignedTerminalIds.has(terminalId)) continue;
+      nextGroups.push({
+        id: assignUniqueGroupId(fallbackGroupId(terminalId), usedGroupIds),
+        terminalIds: [terminalId]
+      });
+    }
+    return nextGroups;
+  }
   var EMPTY_OUTPUT_BUFFER = {
     contents: "",
     retainedBytes: 0,
@@ -10276,6 +10316,9 @@ var __t3Client = (() => {
     #onChange;
     #ids;
     #active;
+    #groups = [];
+    /** Empty string mirrors the native store's "no active group" sentinel. */
+    #activeGroupId = "";
     #tabs = /* @__PURE__ */ new Map();
     #stream = "connecting";
     #panelError = null;
@@ -10287,12 +10330,29 @@ var __t3Client = (() => {
       this.#onChange = options.onChange;
       this.#ids = normalizeTerminalIds(options.restored?.terminalIds ?? []);
       this.#active = resolveActiveTerminalId(this.#ids, options.restored?.activeTerminalId ?? null);
+      this.#groups = normalizeTerminalGroups(
+        (options.restored?.terminalGroups ?? []).map((group) => ({
+          id: group.id,
+          terminalIds: [...group.terminalIds],
+          ...group.splitDirection === "vertical" ? { splitDirection: "vertical" } : {}
+        })),
+        this.#ids
+      );
+      this.#activeGroupId = this.#resolveActiveGroupId(
+        options.restored?.activeTerminalGroupId ?? null
+      );
       for (const id2 of this.#ids) this.#tab(id2);
     }
     get snapshot() {
       return {
         terminalIds: [...this.#ids],
         activeTerminalId: this.#active,
+        groups: this.#groups.map((group) => ({
+          id: group.id,
+          terminalIds: [...group.terminalIds],
+          splitDirection: group.splitDirection ?? "horizontal"
+        })),
+        activeGroupId: this.#activeGroupId === "" ? null : this.#activeGroupId,
         tabs: this.#ids.map((id2) => {
           const tab = this.#tabs.get(id2);
           const meta = tab.meta;
@@ -10362,11 +10422,43 @@ var __t3Client = (() => {
       }
       return tab;
     }
-    #removeTab(terminalId) {
+    /** Group containing a session, or the current active group as a fallback. */
+    #groupIdOf(terminalId) {
+      return this.#groups.find((group) => group.terminalIds.includes(terminalId))?.id ?? this.#activeGroupId;
+    }
+    /**
+     * Native rule: the stored active group survives renormalization while it
+     * still exists; otherwise the active terminal's group (or the first group)
+     * takes over.
+     */
+    #resolveActiveGroupId(preferred) {
+      if (preferred !== null && preferred !== "" && this.#groups.some((g) => g.id === preferred))
+        return preferred;
+      return (this.#active !== null ? this.#groupIdOf(this.#active) : "") || (this.#groups[0]?.id ?? "");
+    }
+    /** Re-partition groups after `#ids` changed and re-resolve the active group. */
+    #syncGroups() {
+      this.#groups = normalizeTerminalGroups(this.#groups, this.#ids);
+      this.#activeGroupId = this.#resolveActiveGroupId(this.#activeGroupId);
+    }
+    /**
+     * Where a split lands: the stored active group, else the group holding the
+     * active terminal. `null` means there is nothing to split into — the
+     * native `effectiveMode === "new"` case.
+     */
+    #splitDestination() {
+      if (this.#active === null) return null;
+      const byId = this.#groups.find((group) => group.id === this.#activeGroupId);
+      if (byId) return byId;
+      return this.#groups.find((group) => group.terminalIds.includes(this.#active)) ?? null;
+    }
+    #removeTab(terminalId, fallback = "first") {
       this.#tabs.get(terminalId)?.input.dispose();
       this.#tabs.delete(terminalId);
+      const closedIndex = this.#ids.indexOf(terminalId);
       this.#ids = this.#ids.filter((id2) => id2 !== terminalId);
-      this.#active = resolveActiveTerminalId(this.#ids, this.#active);
+      this.#active = this.#active === terminalId ? fallback === "index" ? this.#ids[Math.min(closedIndex, this.#ids.length - 1)] ?? this.#ids[0] ?? null : resolveActiveTerminalId(this.#ids, null) : resolveActiveTerminalId(this.#ids, this.#active);
+      this.#syncGroups();
       this.#emit();
     }
     /** Banner + deferred removal on a live→exited/error transition (native #29). */
@@ -10396,10 +10488,12 @@ var __t3Client = (() => {
             if (!this.#ids.includes(id2)) this.#tabs.delete(id2);
           }
           this.#active = resolveActiveTerminalId(this.#ids, this.#active);
+          this.#syncGroups();
           break;
         }
         case "upsert":
           this.#observeMeta(event.terminal);
+          this.#syncGroups();
           break;
         case "remove":
           this.#removeTab(event.terminalId);
@@ -10438,8 +10532,21 @@ var __t3Client = (() => {
       this.#panelError = message;
       this.#emit();
     }
-    /** Open a fresh terminal; the client picks the id (#15). */
+    /** Open a fresh terminal in its own group; the client picks the id (#15). */
     async openTerminal() {
+      return this.#open("new", "horizontal");
+    }
+    /**
+     * `terminal.split`/`terminal.splitVertical`: a fresh session inserted into
+     * the active group right after the focused pane, capped at
+     * MAX_TERMINALS_PER_GROUP — at the cap the chord is refused before any PTY
+     * spawns, exactly like the native `hasReachedSplitLimit` gate. With no
+     * sessions yet the split degenerates to a plain open, as native does.
+     */
+    async splitTerminal(direction = "horizontal") {
+      return this.#open("split", direction);
+    }
+    async #open(mode, direction) {
       const launch = this.#launch;
       if (!launch) {
         this.#panelError = "Terminal requires a workspace scope.";
@@ -10451,6 +10558,10 @@ var __t3Client = (() => {
         this.#emit();
         return null;
       }
+      const destination = mode === "split" ? this.#splitDestination() : null;
+      if (destination !== null && destination.terminalIds.length >= MAX_TERMINALS_PER_GROUP) {
+        return null;
+      }
       const terminalId = nextTerminalId(this.allocatableTerminalIds);
       const tab = this.#tab(terminalId);
       tab.starting = true;
@@ -10458,7 +10569,16 @@ var __t3Client = (() => {
       tab.input.setReady(false);
       tab.error = null;
       this.#ids = [...this.#ids.filter((id2) => id2 !== terminalId), terminalId];
+      if (destination !== null) {
+        const anchorIndex = destination.terminalIds.indexOf(this.#active ?? "");
+        if (anchorIndex >= 0) destination.terminalIds.splice(anchorIndex + 1, 0, terminalId);
+        else destination.terminalIds.push(terminalId);
+        if (direction === "vertical") destination.splitDirection = "vertical";
+        else delete destination.splitDirection;
+      }
       this.#active = terminalId;
+      this.#syncGroups();
+      this.#activeGroupId = this.#groupIdOf(terminalId);
       this.#emit();
       try {
         const meta = await this.#control.open({
@@ -10607,7 +10727,7 @@ var __t3Client = (() => {
           } catch {
           }
         }
-        this.#removeTab(terminalId);
+        this.#removeTab(terminalId, "index");
         return;
       }
       const launch = this.#launch;
@@ -10643,9 +10763,11 @@ var __t3Client = (() => {
       }
       this.#emit();
     }
+    /** Focus a pane — also surfaces its group, like the native setActiveTerminal. */
     activate(terminalId) {
       if (!this.#ids.includes(terminalId)) return;
       this.#active = terminalId;
+      this.#activeGroupId = this.#groupIdOf(terminalId);
       this.#emit();
     }
     dispose() {
@@ -10676,6 +10798,20 @@ var __t3Client = (() => {
       scope: "surface",
       defaultKey: "mod+w",
       when: TERMINAL_FOCUS_WHEN
+    },
+    {
+      id: "split",
+      title: "Split terminal horizontally",
+      scope: "surface",
+      defaultKey: "mod+d",
+      when: TERMINAL_FOCUS_WHEN
+    },
+    {
+      id: "splitVertical",
+      title: "Split terminal vertically",
+      scope: "surface",
+      defaultKey: "mod+shift+d",
+      when: TERMINAL_FOCUS_WHEN
     }
   ];
   var TERMINAL_GLOBAL_COMMANDS = [
@@ -10698,6 +10834,12 @@ var __t3Client = (() => {
         return true;
       case "close":
         actions.closeTerminal();
+        return true;
+      case "split":
+        actions.splitTerminal("horizontal");
+        return true;
+      case "splitVertical":
+        actions.splitTerminal("vertical");
         return true;
       default:
         return false;
@@ -11405,11 +11547,19 @@ var __t3Client = (() => {
   var GHOSTTY_VT_ASSET = "assets/ghostty-vt.wasm";
   var GHOSTTY_WRITE_PTY_ASSET = "assets/ghostty-write-pty.wasm";
   var SYMBOLS_FONT_ASSET = "assets/SymbolsNerdFontMono-Regular.woff2";
+  var RESTORED_GROUP_KEYS = /* @__PURE__ */ new Set(["id", "terminalIds", "splitDirection"]);
+  function isRestoredGroup(value) {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+    const candidate = value;
+    return Object.keys(value).every((key) => RESTORED_GROUP_KEYS.has(key)) && typeof candidate.id === "string" && Array.isArray(candidate.terminalIds) && candidate.terminalIds.every((id2) => typeof id2 === "string") && (candidate.splitDirection === void 0 || candidate.splitDirection === "horizontal" || candidate.splitDirection === "vertical");
+  }
   function restoreState(value) {
     if (value === null) return true;
     if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
     const candidate = value;
-    return Object.keys(value).every((key) => key === "terminalIds" || key === "activeTerminalId") && (candidate.terminalIds === void 0 || Array.isArray(candidate.terminalIds) && candidate.terminalIds.every((id2) => typeof id2 === "string")) && (candidate.activeTerminalId === void 0 || typeof candidate.activeTerminalId === "string" || candidate.activeTerminalId === null);
+    return Object.keys(value).every(
+      (key) => key === "terminalIds" || key === "activeTerminalId" || key === "terminalGroups" || key === "activeTerminalGroupId"
+    ) && (candidate.terminalIds === void 0 || Array.isArray(candidate.terminalIds) && candidate.terminalIds.every((id2) => typeof id2 === "string")) && (candidate.activeTerminalId === void 0 || typeof candidate.activeTerminalId === "string" || candidate.activeTerminalId === null) && (candidate.terminalGroups === void 0 || Array.isArray(candidate.terminalGroups) && candidate.terminalGroups.every(isRestoredGroup)) && (candidate.activeTerminalGroupId === void 0 || typeof candidate.activeTerminalGroupId === "string" || candidate.activeTerminalGroupId === null);
   }
   function controlOps(host, session) {
     const api = bindApi(terminalControlApi, host, session.context);
@@ -11433,11 +11583,9 @@ var __t3Client = (() => {
         try {
           if (!host.readAsset) throw new Error("This host cannot load package assets.");
           const readAsset = host.readAsset.bind(host);
-          const [vt, writePty, font] = await Promise.all([
-            readAsset(GHOSTTY_VT_ASSET, signal),
-            readAsset(GHOSTTY_WRITE_PTY_ASSET, signal),
-            readAsset(SYMBOLS_FONT_ASSET, signal)
-          ]);
+          const vt = await readAsset(GHOSTTY_VT_ASSET, signal);
+          const writePty = await readAsset(GHOSTTY_WRITE_PTY_ASSET, signal);
+          const font = await readAsset(SYMBOLS_FONT_ASSET, signal);
           if (signal.aborted) return;
           if (vt.mediaType !== "application/wasm" || writePty.mediaType !== "application/wasm") {
             throw new Error("Terminal WASM assets failed package verification.");
@@ -11552,22 +11700,12 @@ var __t3Client = (() => {
       }
     );
   }
-  function usePanelCommands(host, session, panel, visible) {
+  function usePanelCommands(host, session, panel, visible, actions) {
     (0, import_react.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       let release = null;
-      const actions = {
-        newTerminal: () => void panel.openTerminal(),
-        closeTerminal: () => {
-          const activeId = panel.snapshot.activeTerminalId;
-          if (activeId !== null) panel.requestAction(activeId, "close");
-        },
-        toggleSurface: () => void closeOwnSurface(host, session).catch(
-          (error) => panel.notePanelError(error instanceof Error ? error.message : "Panel action failed")
-        )
-      };
       void registerPanelCommands({
         client: host,
         context: session.context,
@@ -11587,12 +11725,23 @@ var __t3Client = (() => {
         controller.abort();
         release?.();
       };
-    }, [host, session, panel, visible]);
+    }, [host, session, panel, visible, actions]);
   }
   function writeSystemMessage(surface, message) {
     surface.write(`\r
 [terminal] ${message}\r
 `);
+  }
+  function matchTerminalChord(event) {
+    const mod = isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
+    if (!mod || event.altKey || (isMacPlatform(navigator.platform) ? event.ctrlKey : event.metaKey))
+      return null;
+    const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+    if (key === "d") return event.shiftKey ? "splitVertical" : "split";
+    if (event.shiftKey) return null;
+    if (key === "n") return "new";
+    if (key === "w") return "close";
+    return null;
   }
   function handleBeforeKey(event, panel, terminalId) {
     const navigationData = terminalNavigationShortcutData(event);
@@ -11616,7 +11765,18 @@ var __t3Client = (() => {
     return false;
   }
   function TerminalPane(props) {
-    const { host, session, panel, terminalId, active, visible, assets, themeVars, appearanceVars } = props;
+    const {
+      host,
+      session,
+      panel,
+      terminalId,
+      active,
+      shown,
+      visible,
+      assets,
+      themeVars,
+      appearanceVars
+    } = props;
     const [, bump] = (0, import_react.useReducer)((value) => value + 1, 0);
     const [attachment] = (0, import_react.useState)(
       () => new TerminalVtAttachment(terminalId, () => {
@@ -11625,11 +11785,11 @@ var __t3Client = (() => {
     );
     const mountRef = (0, import_react.useRef)(null);
     const surfaceRef = (0, import_react.useRef)(null);
-    const shownRef = (0, import_react.useRef)(active && visible);
+    const shownRef = (0, import_react.useRef)(shown && visible);
     const appearanceVarsRef = (0, import_react.useRef)(appearanceVars);
     appearanceVarsRef.current = appearanceVars;
     (0, import_react.useEffect)(() => {
-      if (!visible) return;
+      if (!visible || !shown) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       void pumpTerminalOutput({
@@ -11653,7 +11813,7 @@ var __t3Client = (() => {
         signal
       });
       return () => controller.abort();
-    }, [host, session, panel, terminalId, attachment, visible]);
+    }, [host, session, panel, terminalId, attachment, visible, shown]);
     (0, import_react.useEffect)(() => {
       const mount = mountRef.current;
       if (mount === null || assets.kind !== "ready") return;
@@ -11728,10 +11888,10 @@ var __t3Client = (() => {
       };
     }, [assets, attachment, panel, terminalId]);
     (0, import_react.useEffect)(() => {
-      shownRef.current = active && visible;
-      surfaceRef.current?.setVisible(active && visible);
-      if (active && visible) surfaceRef.current?.focus();
-    }, [active, visible]);
+      shownRef.current = shown && visible;
+      surfaceRef.current?.setVisible(shown && visible);
+      if (active && shown && visible) surfaceRef.current?.focus();
+    }, [active, shown, visible]);
     (0, import_react.useEffect)(() => {
       const mount = mountRef.current;
       if (mount !== null) surfaceRef.current?.setTheme(terminalThemeFromApp(mount));
@@ -11744,10 +11904,11 @@ var __t3Client = (() => {
       "div",
       {
         style: {
-          display: active ? "flex" : "none",
+          display: "flex",
           flexDirection: "column",
           flex: 1,
-          minHeight: 0
+          minHeight: 0,
+          minWidth: 0
         },
         children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
@@ -11924,7 +12085,15 @@ var __t3Client = (() => {
           const snapshot2 = panel2.snapshot;
           session.save({
             terminalIds: [...snapshot2.terminalIds],
-            activeTerminalId: snapshot2.activeTerminalId
+            activeTerminalId: snapshot2.activeTerminalId,
+            terminalGroups: snapshot2.groups.map((group) => ({
+              id: group.id,
+              terminalIds: [...group.terminalIds],
+              // The native group shape stores only "vertical"; absent reads
+              // as horizontal, so the default direction stays unwritten.
+              ...group.splitDirection === "vertical" ? { splitDirection: "vertical" } : {}
+            })),
+            activeTerminalGroupId: snapshot2.activeGroupId
           });
           bump();
         }
@@ -11937,13 +12106,38 @@ var __t3Client = (() => {
     (0, import_react.useEffect)(() => session.onVisibility(setVisible), [session]);
     (0, import_react.useEffect)(() => () => panel.dispose(), [panel]);
     useSessionsStream(host, session, panel, visible);
-    usePanelCommands(host, session, panel, visible);
+    const panelActions = (0, import_react.useMemo)(
+      () => ({
+        newTerminal: () => void panel.openTerminal(),
+        closeTerminal: () => {
+          const activeId2 = panel.snapshot.activeTerminalId;
+          if (activeId2 !== null) panel.requestAction(activeId2, "close");
+        },
+        splitTerminal: (direction) => void panel.splitTerminal(direction),
+        toggleSurface: () => void closeOwnSurface(host, session).catch(
+          (error) => panel.notePanelError(error instanceof Error ? error.message : "Panel action failed")
+        )
+      }),
+      [panel, host, session]
+    );
+    usePanelCommands(host, session, panel, visible, panelActions);
     const themeVars = useThemeVars(host, session, visible);
     const appearanceVars = useTerminalAppearanceVars(host, session, visible);
     const assets = useGhosttyAssets(host, session);
     const snapshot = panel.snapshot;
     const activeId = snapshot.activeTerminalId;
     const activeTab = snapshot.tabs.find((tab) => tab.terminalId === activeId) ?? null;
+    const activeGroup = snapshot.groups.find((group) => group.id === snapshot.activeGroupId) ?? null;
+    const visibleTerminalIds = activeGroup?.terminalIds ?? (activeId !== null ? [activeId] : []);
+    const visibleSet = new Set(visibleTerminalIds);
+    const splitDirection = activeGroup?.splitDirection ?? "horizontal";
+    const paneOrder = [
+      ...visibleTerminalIds,
+      ...snapshot.terminalIds.filter((id2) => !visibleSet.has(id2))
+    ];
+    const tabById = new Map(snapshot.tabs.map((tab) => [tab.terminalId, tab]));
+    const hasReachedSplitLimit = visibleTerminalIds.length >= MAX_TERMINALS_PER_GROUP;
+    const showGroupHeaders = snapshot.groups.length > 1 || snapshot.groups.some((group) => group.terminalIds.length > 1);
     const textFallback = assets.kind === "unavailable";
     const output = useTerminalOutput(
       host,
@@ -11963,6 +12157,13 @@ var __t3Client = (() => {
       "section",
       {
         "aria-label": "Terminal",
+        onKeyDownCapture: (event) => {
+          const commandId = matchTerminalChord(event.nativeEvent);
+          if (commandId !== null && dispatchTerminalCommand(commandId, panelActions)) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+        },
         style: {
           height: "100%",
           display: "flex",
@@ -12002,6 +12203,32 @@ var __t3Client = (() => {
                     children: "New terminal"
                   }
                 ),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                  "button",
+                  {
+                    type: "button",
+                    onClick: () => void panel.splitTerminal("horizontal"),
+                    disabled: snapshot.stream !== "live" || hasReachedSplitLimit,
+                    style: control,
+                    children: [
+                      "Split horizontally",
+                      hasReachedSplitLimit ? ` (max ${MAX_TERMINALS_PER_GROUP} per group)` : ""
+                    ]
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                  "button",
+                  {
+                    type: "button",
+                    onClick: () => void panel.splitTerminal("vertical"),
+                    disabled: snapshot.stream !== "live" || hasReachedSplitLimit,
+                    style: control,
+                    children: [
+                      "Split vertically",
+                      hasReachedSplitLimit ? ` (max ${MAX_TERMINALS_PER_GROUP} per group)` : ""
+                    ]
+                  }
+                ),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, fontSize: 11 }, children: snapshot.stream === "closed" ? "Session list disconnected" : snapshot.stream === "connecting" ? "Connecting\u2026" : "" })
               ]
             }
@@ -12019,102 +12246,156 @@ var __t3Client = (() => {
                 flexDirection: "column",
                 gap: 2
               },
-              children: snapshot.tabs.map((tab) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: { display: "flex", gap: 6, alignItems: "center" }, children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              children: snapshot.groups.map((group) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: { display: "flex", flexDirection: "column", gap: 2 }, children: [
+                showGroupHeaders && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
                   "button",
                   {
                     type: "button",
-                    "aria-current": tab.terminalId === activeId ? "true" : void 0,
-                    onClick: () => panel.activate(tab.terminalId),
+                    "aria-label": `Activate terminal group ${group.id}`,
+                    onClick: () => {
+                      const target = group.terminalIds.includes(activeId ?? "") ? activeId : group.terminalIds[0];
+                      if (target !== void 0) panel.activate(target);
+                    },
                     style: {
-                      flex: 1,
-                      minWidth: 0,
-                      textAlign: "left",
-                      padding: "4px 6px",
+                      display: "flex",
+                      gap: 6,
+                      alignItems: "center",
+                      padding: "2px 6px",
                       border: "1px solid transparent",
                       borderRadius: 5,
                       cursor: "pointer",
                       font: "inherit",
-                      fontSize: 12,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      color: "inherit",
-                      background: tab.terminalId === activeId ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))" : "transparent"
+                      fontSize: 11,
+                      color: snapshot.activeGroupId === group.id ? "inherit" : muted,
+                      background: snapshot.activeGroupId === group.id ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))" : "transparent"
                     },
-                    children: tab.label
+                    children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flex: 1, minWidth: 0, textAlign: "left" }, children: group.terminalIds.length === 1 ? "Single" : group.splitDirection === "vertical" ? "Stacked" : "Side by side" }),
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { fontSize: 10 }, children: group.terminalIds.length })
+                    ]
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted, fontSize: 11 }, children: [
-                  tab.status,
-                  tab.hasRunningSubprocess ? " \xB7 running" : "",
-                  tab.queuedInputCount > 0 ? ` \xB7 queued ${tab.queuedInputCount}` : ""
-                ] }),
-                tab.confirmAction === null ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-                  (tab.status === "exited" || tab.status === "error" || tab.status === "closed") && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                    "button",
-                    {
-                      type: "button",
-                      "aria-label": `Start ${tab.terminalId}`,
-                      onClick: () => void panel.startSession(tab.terminalId),
-                      style: control,
-                      children: "Start"
-                    }
-                  ),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                    "button",
-                    {
-                      type: "button",
-                      "aria-label": `Clear ${tab.terminalId}`,
-                      onClick: () => panel.requestAction(tab.terminalId, "clear"),
-                      style: control,
-                      children: "Clear"
-                    }
-                  ),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                    "button",
-                    {
-                      type: "button",
-                      "aria-label": `Restart ${tab.terminalId}`,
-                      onClick: () => panel.requestAction(tab.terminalId, "restart"),
-                      style: control,
-                      children: "Restart"
-                    }
-                  ),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                    "button",
-                    {
-                      type: "button",
-                      "aria-label": `Close ${tab.terminalId}`,
-                      onClick: () => panel.requestAction(tab.terminalId, "close"),
-                      style: control,
-                      children: "\xD7"
-                    }
-                  )
-                ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, fontSize: 11 }, children: tab.confirmAction === "close" ? "Close this terminal?" : tab.confirmAction === "restart" ? "Restart this terminal?" : "Clear history?" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                    "button",
-                    {
-                      type: "button",
-                      "aria-label": `Confirm ${tab.confirmAction} ${tab.terminalId}`,
-                      onClick: () => void panel.confirmAction(tab.terminalId),
-                      style: control,
-                      children: "Confirm"
-                    }
-                  ),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                    "button",
-                    {
-                      type: "button",
-                      "aria-label": `Cancel ${tab.confirmAction} ${tab.terminalId}`,
-                      onClick: () => panel.cancelAction(tab.terminalId),
-                      style: control,
-                      children: "Cancel"
-                    }
-                  )
-                ] })
-              ] }, tab.terminalId))
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "ul",
+                  {
+                    style: {
+                      listStyle: "none",
+                      margin: 0,
+                      padding: 0,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 2
+                    },
+                    children: group.terminalIds.map((terminalId) => {
+                      const tab = tabById.get(terminalId);
+                      if (!tab) return null;
+                      return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                        "li",
+                        {
+                          style: { display: "flex", gap: 6, alignItems: "center" },
+                          children: [
+                            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                              "button",
+                              {
+                                type: "button",
+                                "aria-current": tab.terminalId === activeId ? "true" : void 0,
+                                onClick: () => panel.activate(tab.terminalId),
+                                style: {
+                                  flex: 1,
+                                  minWidth: 0,
+                                  textAlign: "left",
+                                  padding: "4px 6px",
+                                  border: "1px solid transparent",
+                                  borderRadius: 5,
+                                  cursor: "pointer",
+                                  font: "inherit",
+                                  fontSize: 12,
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                  color: "inherit",
+                                  background: tab.terminalId === activeId ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))" : "transparent"
+                                },
+                                children: tab.label
+                              }
+                            ),
+                            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted, fontSize: 11 }, children: [
+                              tab.status,
+                              tab.hasRunningSubprocess ? " \xB7 running" : "",
+                              tab.queuedInputCount > 0 ? ` \xB7 queued ${tab.queuedInputCount}` : ""
+                            ] }),
+                            tab.confirmAction === null ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+                              (tab.status === "exited" || tab.status === "error" || tab.status === "closed") && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                                "button",
+                                {
+                                  type: "button",
+                                  "aria-label": `Start ${tab.terminalId}`,
+                                  onClick: () => void panel.startSession(tab.terminalId),
+                                  style: control,
+                                  children: "Start"
+                                }
+                              ),
+                              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                                "button",
+                                {
+                                  type: "button",
+                                  "aria-label": `Clear ${tab.terminalId}`,
+                                  onClick: () => panel.requestAction(tab.terminalId, "clear"),
+                                  style: control,
+                                  children: "Clear"
+                                }
+                              ),
+                              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                                "button",
+                                {
+                                  type: "button",
+                                  "aria-label": `Restart ${tab.terminalId}`,
+                                  onClick: () => panel.requestAction(tab.terminalId, "restart"),
+                                  style: control,
+                                  children: "Restart"
+                                }
+                              ),
+                              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                                "button",
+                                {
+                                  type: "button",
+                                  "aria-label": `Close ${tab.terminalId}`,
+                                  onClick: () => panel.requestAction(tab.terminalId, "close"),
+                                  style: control,
+                                  children: "\xD7"
+                                }
+                              )
+                            ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+                              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, fontSize: 11 }, children: tab.confirmAction === "close" ? "Close this terminal?" : tab.confirmAction === "restart" ? "Restart this terminal?" : "Clear history?" }),
+                              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                                "button",
+                                {
+                                  type: "button",
+                                  "aria-label": `Confirm ${tab.confirmAction} ${tab.terminalId}`,
+                                  onClick: () => void panel.confirmAction(tab.terminalId),
+                                  style: control,
+                                  children: "Confirm"
+                                }
+                              ),
+                              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                                "button",
+                                {
+                                  type: "button",
+                                  "aria-label": `Cancel ${tab.confirmAction} ${tab.terminalId}`,
+                                  onClick: () => panel.cancelAction(tab.terminalId),
+                                  style: control,
+                                  children: "Cancel"
+                                }
+                              )
+                            ] })
+                          ]
+                        },
+                        tab.terminalId
+                      );
+                    })
+                  }
+                )
+              ] }, group.id))
             }
           ),
           snapshot.tabs.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: "No terminals yet. New terminal opens a shell in this workspace." }),
@@ -12174,21 +12455,57 @@ var __t3Client = (() => {
               ]
             }
           ),
-          !textFallback && snapshot.tabs.map((tab) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            TerminalPane,
+          !textFallback && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "div",
             {
-              host,
-              session,
-              panel,
-              terminalId: tab.terminalId,
-              active: tab.terminalId === activeId,
-              visible,
-              assets,
-              themeVars,
-              appearanceVars
-            },
-            tab.terminalId
-          )),
+              "aria-label": "Terminal panes",
+              style: {
+                display: "flex",
+                flexDirection: splitDirection === "vertical" ? "column" : "row",
+                flex: 1,
+                minHeight: 0,
+                minWidth: 0
+              },
+              children: paneOrder.map((terminalId, index) => {
+                const shown = visibleSet.has(terminalId);
+                const focused = terminalId === activeId;
+                return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "div",
+                  {
+                    "data-t3-terminal-pane": terminalId,
+                    onMouseDown: shown && !focused ? () => {
+                      panel.activate(terminalId);
+                    } : void 0,
+                    style: {
+                      display: shown ? "flex" : "none",
+                      flexDirection: "column",
+                      flex: "1 1 0",
+                      minWidth: 0,
+                      minHeight: 0,
+                      borderLeft: splitDirection === "horizontal" && index > 0 ? `1px solid ${focused ? "var(--t3-terminal-border, var(--border, #dfe3e8))" : "var(--t3-terminal-muted, var(--border, #dfe3e8))"}` : void 0,
+                      borderTop: splitDirection === "vertical" && index > 0 ? `1px solid ${focused ? "var(--t3-terminal-border, var(--border, #dfe3e8))" : "var(--t3-terminal-muted, var(--border, #dfe3e8))"}` : void 0
+                    },
+                    children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      TerminalPane,
+                      {
+                        host,
+                        session,
+                        panel,
+                        terminalId,
+                        active: focused,
+                        shown,
+                        visible,
+                        assets,
+                        themeVars,
+                        appearanceVars
+                      }
+                    )
+                  },
+                  terminalId
+                );
+              })
+            }
+          ),
           textFallback && activeId !== null && activeTab !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
             "div",
             {
@@ -12320,6 +12637,11 @@ var __t3Client = (() => {
         placements: ["side-panel", "bottom-dock"],
         clients: ["web", "desktop"],
         capabilities: [],
+        // Owning focus-owner arbitration: the host tags the frame
+        // `data-terminal-owner="extension"` and leaves the focused terminal
+        // chords (split/splitVertical/new/close) to this view's keybindings.
+        // The claim is only honest because the panel implements all four.
+        claimsTerminalFocus: true,
         stateVersion: 1,
         validateRestore: restoreState,
         createView(host, session) {

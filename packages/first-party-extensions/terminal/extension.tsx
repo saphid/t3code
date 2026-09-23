@@ -13,8 +13,9 @@ import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { useEffect, useReducer, useRef, useState, type RefObject } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState, type RefObject } from "react";
 
+import { isMacPlatform } from "./ghostty/platform.ts";
 import { loadGhosttyRuntime, type GhosttyRuntime } from "./ghostty/runtime.ts";
 import { GhosttyTerminalSurface, type GhosttyTerminalSurfaceOptions } from "./ghostty/surface.ts";
 import {
@@ -27,6 +28,7 @@ import { TerminalVtAttachment, pumpTerminalOutput } from "./vtAttachment.ts";
 import {
   EMPTY_OUTPUT_BUFFER,
   EMPTY_OVERFLOW_STREAK,
+  MAX_TERMINALS_PER_GROUP,
   TERMINAL_GLOBAL_COMMANDS,
   TERMINAL_SURFACE_ID,
   TerminalPanel,
@@ -50,23 +52,69 @@ const GHOSTTY_VT_ASSET = "assets/ghostty-vt.wasm";
 const GHOSTTY_WRITE_PTY_ASSET = "assets/ghostty-write-pty.wasm";
 const SYMBOLS_FONT_ASSET = "assets/SymbolsNerdFontMono-Regular.woff2";
 
+interface RestoredGroup {
+  readonly id: string;
+  readonly terminalIds: readonly string[];
+  readonly splitDirection?: "horizontal" | "vertical";
+}
+
 interface RestoredState {
   readonly terminalIds: readonly string[];
   readonly activeTerminalId: string | null;
+  readonly terminalGroups?: readonly RestoredGroup[];
+  readonly activeTerminalGroupId?: string | null;
 }
 
+const RESTORED_GROUP_KEYS = new Set(["id", "terminalIds", "splitDirection"]);
+
+function isRestoredGroup(value: unknown): value is RestoredGroup {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const candidate = value as { id?: unknown; terminalIds?: unknown; splitDirection?: unknown };
+  return (
+    Object.keys(value).every((key) => RESTORED_GROUP_KEYS.has(key)) &&
+    typeof candidate.id === "string" &&
+    Array.isArray(candidate.terminalIds) &&
+    candidate.terminalIds.every((id) => typeof id === "string") &&
+    (candidate.splitDirection === undefined ||
+      candidate.splitDirection === "horizontal" ||
+      candidate.splitDirection === "vertical")
+  );
+}
+
+/**
+ * Restore accepts both record shapes: pre-split state carried only
+ * `terminalIds`/`activeTerminalId` — those records land as one singleton
+ * group per session, exactly what they rendered before.
+ */
 function restoreState(value: unknown): value is RestoredState | null {
   if (value === null) return true;
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const candidate = value as { terminalIds?: unknown; activeTerminalId?: unknown };
+  const candidate = value as {
+    terminalIds?: unknown;
+    activeTerminalId?: unknown;
+    terminalGroups?: unknown;
+    activeTerminalGroupId?: unknown;
+  };
   return (
-    Object.keys(value).every((key) => key === "terminalIds" || key === "activeTerminalId") &&
+    Object.keys(value).every(
+      (key) =>
+        key === "terminalIds" ||
+        key === "activeTerminalId" ||
+        key === "terminalGroups" ||
+        key === "activeTerminalGroupId",
+    ) &&
     (candidate.terminalIds === undefined ||
       (Array.isArray(candidate.terminalIds) &&
         candidate.terminalIds.every((id) => typeof id === "string"))) &&
     (candidate.activeTerminalId === undefined ||
       typeof candidate.activeTerminalId === "string" ||
-      candidate.activeTerminalId === null)
+      candidate.activeTerminalId === null) &&
+    (candidate.terminalGroups === undefined ||
+      (Array.isArray(candidate.terminalGroups) &&
+        candidate.terminalGroups.every(isRestoredGroup))) &&
+    (candidate.activeTerminalGroupId === undefined ||
+      typeof candidate.activeTerminalGroupId === "string" ||
+      candidate.activeTerminalGroupId === null)
   );
 }
 
@@ -107,11 +155,13 @@ function useGhosttyAssets(host: ClientHost, session: ViewSession): GhosttyAssets
       try {
         if (!host.readAsset) throw new Error("This host cannot load package assets.");
         const readAsset = host.readAsset.bind(host);
-        const [vt, writePty, font] = await Promise.all([
-          readAsset(GHOSTTY_VT_ASSET, signal),
-          readAsset(GHOSTTY_WRITE_PTY_ASSET, signal),
-          readAsset(SYMBOLS_FONT_ASSET, signal),
-        ]);
+        // The runtime caps concurrent asset reads per installation at 4 —
+        // parallel reads plus a StrictMode replay of this effect can cross
+        // that cap and the whole mount degrades to the text fallback.
+        // Sequential reads keep each mount to one outstanding read.
+        const vt = await readAsset(GHOSTTY_VT_ASSET, signal);
+        const writePty = await readAsset(GHOSTTY_WRITE_PTY_ASSET, signal);
+        const font = await readAsset(SYMBOLS_FONT_ASSET, signal);
         if (signal.aborted) return;
         if (vt.mediaType !== "application/wasm" || writePty.mediaType !== "application/wasm") {
           throw new Error("Terminal WASM assets failed package verification.");
@@ -279,17 +329,19 @@ function closeOwnSurface(host: ClientHost, session: ViewSession): Promise<void> 
 
 /**
  * `t3.ui/keybindings` consumer: registers the view's command set (toggle/new/
- * close) and binds the dispatch handler for the focused-view and thread
- * arbitration tiers. Every action stays panel-local — `new`/`close` drive the
- * tab model (close keeps the inline confirm), `toggle` dismisses the hosting
- * surface through `t3.ui/panels`. A denied or failing registration leaves
- * the toolbar buttons as the only path — nothing else changes.
+ * close/split/splitVertical) and binds the dispatch handler for the
+ * focused-view and thread arbitration tiers. Every action stays panel-local —
+ * `new`/`close`/`split` drive the group model (close keeps the inline
+ * confirm), `toggle` dismisses the hosting surface through `t3.ui/panels`. A
+ * denied or failing registration only loses palette/remap dispatch — the
+ * captured chords and the toolbar buttons still work.
  */
 function usePanelCommands(
   host: ClientHost,
   session: ViewSession,
   panel: TerminalPanel,
   visible: boolean,
+  actions: TerminalCommandActions,
 ) {
   useEffect(() => {
     // bindCommands throws on a hidden view ("View is inactive") — registration
@@ -298,17 +350,6 @@ function usePanelCommands(
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
     let release: (() => void) | null = null;
-    const actions: TerminalCommandActions = {
-      newTerminal: () => void panel.openTerminal(),
-      closeTerminal: () => {
-        const activeId = panel.snapshot.activeTerminalId;
-        if (activeId !== null) panel.requestAction(activeId, "close");
-      },
-      toggleSurface: () =>
-        void closeOwnSurface(host, session).catch((error: unknown) =>
-          panel.notePanelError(error instanceof Error ? error.message : "Panel action failed"),
-        ),
-    };
     void registerPanelCommands({
       client: host,
       context: session.context,
@@ -329,7 +370,7 @@ function usePanelCommands(
       controller.abort();
       release?.();
     };
-  }, [host, session, panel, visible]);
+  }, [host, session, panel, visible, actions]);
 }
 
 /* ------------------------------------------------------------------ */
@@ -341,11 +382,35 @@ function writeSystemMessage(surface: Pick<GhosttyTerminalSurface, "write">, mess
 }
 
 /**
+ * The focused-terminal chords this surface owns. `claimsTerminalFocus` makes
+ * the host leave mod+d/mod+shift+d/mod+n/mod+w untouched while focus is
+ * inside the extension frame — but the host's own resolution still claims
+ * them for native `terminal.*` commands first, so registered
+ * `t3.ui/keybindings` commands never see a chord press. Owning focus
+ * therefore means owning the keymap: the view root captures these chords
+ * itself (ahead of the VT surface's encoder, which cannot represent super
+ * modifiers anyway) and dispatches them through the same panel actions the
+ * registered commands drive.
+ */
+function matchTerminalChord(
+  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">,
+): "split" | "splitVertical" | "new" | "close" | null {
+  const mod = isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
+  if (!mod || event.altKey || (isMacPlatform(navigator.platform) ? event.ctrlKey : event.metaKey))
+    return null;
+  const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+  if (key === "d") return event.shiftKey ? "splitVertical" : "split";
+  if (event.shiftKey) return null;
+  if (key === "n") return "new";
+  if (key === "w") return "close";
+  return null;
+}
+
+/**
  * Surface-local key intercepts the plugin owns: readline-style navigation,
- * line delete, and screen clear. Host `terminal.*` command bindings are NOT
- * suppressed here — without extension-aware focus arbitration (B7) the
- * native capture-phase dispatch can still route close/split/new to the
- * native terminal, and the plugin must not pretend otherwise.
+ * line delete, and screen clear. The focused terminal chords are captured at
+ * the view root (see matchTerminalChord), so `handleBeforeKey` only
+ * intercepts editing keys and never sees them.
  */
 function handleBeforeKey(event: KeyboardEvent, panel: TerminalPanel, terminalId: string): boolean {
   const navigationData = terminalNavigationShortcutData(event);
@@ -374,14 +439,27 @@ function TerminalPane(props: {
   readonly session: ViewSession;
   readonly panel: TerminalPanel;
   readonly terminalId: string;
+  /** The focused pane — receives surface focus and the active-pane border. */
   readonly active: boolean;
+  /** Member of the visible split group — hidden panes stay mounted offscreen. */
+  readonly shown: boolean;
   readonly visible: boolean;
   readonly assets: GhosttyAssets;
   readonly themeVars: Record<string, string> | null;
   readonly appearanceVars: Record<string, string> | null;
 }) {
-  const { host, session, panel, terminalId, active, visible, assets, themeVars, appearanceVars } =
-    props;
+  const {
+    host,
+    session,
+    panel,
+    terminalId,
+    active,
+    shown,
+    visible,
+    assets,
+    themeVars,
+    appearanceVars,
+  } = props;
   const [, bump] = useReducer((value: number) => value + 1, 0);
   const [attachment] = useState(
     () =>
@@ -391,7 +469,7 @@ function TerminalPane(props: {
   );
   const mountRef = useRef<HTMLDivElement | null>(null);
   const surfaceRef = useRef<GhosttyTerminalSurface | null>(null);
-  const shownRef = useRef(active && visible);
+  const shownRef = useRef(shown && visible);
   // Latest published appearance vars. The async create bakes them into
   // options.font and, once the surface exists, reconciles any publication
   // that landed while the create was pending (its setFont was skipped
@@ -401,8 +479,14 @@ function TerminalPane(props: {
 
   // Epoch changes and lifecycle ends make queued input stale for the new
   // process incarnation — the panel drops it the moment the stream says so.
+  // Only panes in the visible group hold a stream: the host caps each
+  // installation at 8 concurrent plugin streams, and the sessions/theme
+  // feeds already take 3 — every tracked session attaching at once starves
+  // the sessions stream itself ("Session list disconnected"). Hidden panes
+  // stay mounted (scrollback survives in the surface) and re-attach on
+  // reshown, resuming from the attachment's stream cursor.
   useEffect(() => {
-    if (!visible) return;
+    if (!visible || !shown) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
     void pumpTerminalOutput({
@@ -430,7 +514,7 @@ function TerminalPane(props: {
     });
     return () => controller.abort();
     // eslint-disable-next-line react/exhaustive-effect-dependencies -- panel is created once per view
-  }, [host, session, panel, terminalId, attachment, visible]);
+  }, [host, session, panel, terminalId, attachment, visible, shown]);
 
   // Mount the vendored surface once the WASM runtime is ready; output that
   // arrived while WASM loaded replays through the attachment.
@@ -526,10 +610,10 @@ function TerminalPane(props: {
   }, [assets, attachment, panel, terminalId]);
 
   useEffect(() => {
-    shownRef.current = active && visible;
-    surfaceRef.current?.setVisible(active && visible);
-    if (active && visible) surfaceRef.current?.focus();
-  }, [active, visible]);
+    shownRef.current = shown && visible;
+    surfaceRef.current?.setVisible(shown && visible);
+    if (active && shown && visible) surfaceRef.current?.focus();
+  }, [active, shown, visible]);
 
   // The contract layers republish `--t3-terminal-*` on the view root; the
   // surface re-reads them through terminalThemeFromApp whenever either feed
@@ -549,10 +633,11 @@ function TerminalPane(props: {
   return (
     <div
       style={{
-        display: active ? "flex" : "none",
+        display: "flex",
         flexDirection: "column",
         flex: 1,
         minHeight: 0,
+        minWidth: 0,
       }}
     >
       <output
@@ -752,6 +837,14 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
         session.save({
           terminalIds: [...snapshot.terminalIds],
           activeTerminalId: snapshot.activeTerminalId,
+          terminalGroups: snapshot.groups.map((group) => ({
+            id: group.id,
+            terminalIds: [...group.terminalIds],
+            // The native group shape stores only "vertical"; absent reads
+            // as horizontal, so the default direction stays unwritten.
+            ...(group.splitDirection === "vertical" ? { splitDirection: "vertical" as const } : {}),
+          })),
+          activeTerminalGroupId: snapshot.activeGroupId,
         });
         bump();
       },
@@ -764,13 +857,50 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
   useEffect(() => session.onVisibility(setVisible), [session]);
   useEffect(() => () => panel.dispose(), [panel]);
   useSessionsStream(host, session, panel, visible);
-  usePanelCommands(host, session, panel, visible);
+  // The one action funnel both dispatch paths share: registered
+  // `t3.ui/keybindings` commands and the captured focused-terminal chords.
+  // Stable identity — the command registration effect keys on it.
+  const panelActions = useMemo<TerminalCommandActions>(
+    () => ({
+      newTerminal: () => void panel.openTerminal(),
+      closeTerminal: () => {
+        const activeId = panel.snapshot.activeTerminalId;
+        if (activeId !== null) panel.requestAction(activeId, "close");
+      },
+      splitTerminal: (direction) => void panel.splitTerminal(direction),
+      toggleSurface: () =>
+        void closeOwnSurface(host, session).catch((error: unknown) =>
+          panel.notePanelError(error instanceof Error ? error.message : "Panel action failed"),
+        ),
+    }),
+    [panel, host, session],
+  );
+  usePanelCommands(host, session, panel, visible, panelActions);
   const themeVars = useThemeVars(host, session, visible);
   const appearanceVars = useTerminalAppearanceVars(host, session, visible);
   const assets = useGhosttyAssets(host, session);
   const snapshot: TerminalPanelSnapshot = panel.snapshot;
   const activeId = snapshot.activeTerminalId;
   const activeTab = snapshot.tabs.find((tab) => tab.terminalId === activeId) ?? null;
+  // The active group's members render side-by-side; every other session
+  // keeps its pane mounted offscreen — but not its output stream (the host
+  // caps each installation at 8 concurrent plugin streams, and the
+  // sessions/theme feeds already take 3, so only the visible group may
+  // attach).
+  const activeGroup = snapshot.groups.find((group) => group.id === snapshot.activeGroupId) ?? null;
+  const visibleTerminalIds = activeGroup?.terminalIds ?? (activeId !== null ? [activeId] : []);
+  const visibleSet = new Set(visibleTerminalIds);
+  const splitDirection = activeGroup?.splitDirection ?? "horizontal";
+  // DOM order: visible panes in group order first, then hidden panes — the
+  // keyed reorder keeps every VT attachment mounted across group switches.
+  const paneOrder = [
+    ...visibleTerminalIds,
+    ...snapshot.terminalIds.filter((id) => !visibleSet.has(id)),
+  ];
+  const tabById = new Map(snapshot.tabs.map((tab) => [tab.terminalId, tab]));
+  const hasReachedSplitLimit = visibleTerminalIds.length >= MAX_TERMINALS_PER_GROUP;
+  const showGroupHeaders =
+    snapshot.groups.length > 1 || snapshot.groups.some((group) => group.terminalIds.length > 1);
   const textFallback = assets.kind === "unavailable";
   const output = useTerminalOutput(
     host,
@@ -791,6 +921,17 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
   return (
     <section
       aria-label="Terminal"
+      onKeyDownCapture={(event) => {
+        // Owning terminal focus means owning the chords: the host leaves
+        // mod+d/mod+shift+d/mod+n/mod+w untouched inside this frame, so the
+        // view handles them here — in capture, ahead of the VT surface's
+        // encoder (which would otherwise keep the bytes for the PTY).
+        const commandId = matchTerminalChord(event.nativeEvent);
+        if (commandId !== null && dispatchTerminalCommand(commandId, panelActions)) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
       style={{
         height: "100%",
         display: "flex",
@@ -828,6 +969,24 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
         >
           New terminal
         </button>
+        <button
+          type="button"
+          onClick={() => void panel.splitTerminal("horizontal")}
+          disabled={snapshot.stream !== "live" || hasReachedSplitLimit}
+          style={control}
+        >
+          Split horizontally
+          {hasReachedSplitLimit ? ` (max ${MAX_TERMINALS_PER_GROUP} per group)` : ""}
+        </button>
+        <button
+          type="button"
+          onClick={() => void panel.splitTerminal("vertical")}
+          disabled={snapshot.stream !== "live" || hasReachedSplitLimit}
+          style={control}
+        >
+          Split vertically
+          {hasReachedSplitLimit ? ` (max ${MAX_TERMINALS_PER_GROUP} per group)` : ""}
+        </button>
         <span style={{ color: muted, fontSize: 11 }}>
           {snapshot.stream === "closed"
             ? "Session list disconnected"
@@ -848,103 +1007,164 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
           gap: 2,
         }}
       >
-        {snapshot.tabs.map((tab) => (
-          <li key={tab.terminalId} style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <button
-              type="button"
-              aria-current={tab.terminalId === activeId ? "true" : undefined}
-              onClick={() => panel.activate(tab.terminalId)}
+        {snapshot.groups.map((group) => (
+          <li key={group.id} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {showGroupHeaders && (
+              <button
+                type="button"
+                aria-label={`Activate terminal group ${group.id}`}
+                onClick={() => {
+                  const target = group.terminalIds.includes(activeId ?? "")
+                    ? activeId!
+                    : group.terminalIds[0];
+                  if (target !== undefined) panel.activate(target);
+                }}
+                style={{
+                  display: "flex",
+                  gap: 6,
+                  alignItems: "center",
+                  padding: "2px 6px",
+                  border: "1px solid transparent",
+                  borderRadius: 5,
+                  cursor: "pointer",
+                  font: "inherit",
+                  fontSize: 11,
+                  color: snapshot.activeGroupId === group.id ? "inherit" : muted,
+                  background:
+                    snapshot.activeGroupId === group.id
+                      ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))"
+                      : "transparent",
+                }}
+              >
+                <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+                  {group.terminalIds.length === 1
+                    ? "Single"
+                    : group.splitDirection === "vertical"
+                      ? "Stacked"
+                      : "Side by side"}
+                </span>
+                <span style={{ fontSize: 10 }}>{group.terminalIds.length}</span>
+              </button>
+            )}
+            <ul
               style={{
-                flex: 1,
-                minWidth: 0,
-                textAlign: "left",
-                padding: "4px 6px",
-                border: "1px solid transparent",
-                borderRadius: 5,
-                cursor: "pointer",
-                font: "inherit",
-                fontSize: 12,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                color: "inherit",
-                background:
-                  tab.terminalId === activeId
-                    ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))"
-                    : "transparent",
+                listStyle: "none",
+                margin: 0,
+                padding: 0,
+                display: "flex",
+                flexDirection: "column",
+                gap: 2,
               }}
             >
-              {tab.label}
-            </button>
-            <span style={{ color: muted, fontSize: 11 }}>
-              {tab.status}
-              {tab.hasRunningSubprocess ? " · running" : ""}
-              {tab.queuedInputCount > 0 ? ` · queued ${tab.queuedInputCount}` : ""}
-            </span>
-            {tab.confirmAction === null ? (
-              <>
-                {(tab.status === "exited" || tab.status === "error" || tab.status === "closed") && (
-                  <button
-                    type="button"
-                    aria-label={`Start ${tab.terminalId}`}
-                    onClick={() => void panel.startSession(tab.terminalId)}
-                    style={control}
+              {group.terminalIds.map((terminalId) => {
+                const tab = tabById.get(terminalId);
+                if (!tab) return null;
+                return (
+                  <li
+                    key={tab.terminalId}
+                    style={{ display: "flex", gap: 6, alignItems: "center" }}
                   >
-                    Start
-                  </button>
-                )}
-                <button
-                  type="button"
-                  aria-label={`Clear ${tab.terminalId}`}
-                  onClick={() => panel.requestAction(tab.terminalId, "clear")}
-                  style={control}
-                >
-                  Clear
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Restart ${tab.terminalId}`}
-                  onClick={() => panel.requestAction(tab.terminalId, "restart")}
-                  style={control}
-                >
-                  Restart
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Close ${tab.terminalId}`}
-                  onClick={() => panel.requestAction(tab.terminalId, "close")}
-                  style={control}
-                >
-                  ×
-                </button>
-              </>
-            ) : (
-              <>
-                <span style={{ color: muted, fontSize: 11 }}>
-                  {tab.confirmAction === "close"
-                    ? "Close this terminal?"
-                    : tab.confirmAction === "restart"
-                      ? "Restart this terminal?"
-                      : "Clear history?"}
-                </span>
-                <button
-                  type="button"
-                  aria-label={`Confirm ${tab.confirmAction} ${tab.terminalId}`}
-                  onClick={() => void panel.confirmAction(tab.terminalId)}
-                  style={control}
-                >
-                  Confirm
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Cancel ${tab.confirmAction} ${tab.terminalId}`}
-                  onClick={() => panel.cancelAction(tab.terminalId)}
-                  style={control}
-                >
-                  Cancel
-                </button>
-              </>
-            )}
+                    <button
+                      type="button"
+                      aria-current={tab.terminalId === activeId ? "true" : undefined}
+                      onClick={() => panel.activate(tab.terminalId)}
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        textAlign: "left",
+                        padding: "4px 6px",
+                        border: "1px solid transparent",
+                        borderRadius: 5,
+                        cursor: "pointer",
+                        font: "inherit",
+                        fontSize: 12,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        color: "inherit",
+                        background:
+                          tab.terminalId === activeId
+                            ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))"
+                            : "transparent",
+                      }}
+                    >
+                      {tab.label}
+                    </button>
+                    <span style={{ color: muted, fontSize: 11 }}>
+                      {tab.status}
+                      {tab.hasRunningSubprocess ? " · running" : ""}
+                      {tab.queuedInputCount > 0 ? ` · queued ${tab.queuedInputCount}` : ""}
+                    </span>
+                    {tab.confirmAction === null ? (
+                      <>
+                        {(tab.status === "exited" ||
+                          tab.status === "error" ||
+                          tab.status === "closed") && (
+                          <button
+                            type="button"
+                            aria-label={`Start ${tab.terminalId}`}
+                            onClick={() => void panel.startSession(tab.terminalId)}
+                            style={control}
+                          >
+                            Start
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          aria-label={`Clear ${tab.terminalId}`}
+                          onClick={() => panel.requestAction(tab.terminalId, "clear")}
+                          style={control}
+                        >
+                          Clear
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Restart ${tab.terminalId}`}
+                          onClick={() => panel.requestAction(tab.terminalId, "restart")}
+                          style={control}
+                        >
+                          Restart
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Close ${tab.terminalId}`}
+                          onClick={() => panel.requestAction(tab.terminalId, "close")}
+                          style={control}
+                        >
+                          ×
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <span style={{ color: muted, fontSize: 11 }}>
+                          {tab.confirmAction === "close"
+                            ? "Close this terminal?"
+                            : tab.confirmAction === "restart"
+                              ? "Restart this terminal?"
+                              : "Clear history?"}
+                        </span>
+                        <button
+                          type="button"
+                          aria-label={`Confirm ${tab.confirmAction} ${tab.terminalId}`}
+                          onClick={() => void panel.confirmAction(tab.terminalId)}
+                          style={control}
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Cancel ${tab.confirmAction} ${tab.terminalId}`}
+                          onClick={() => panel.cancelAction(tab.terminalId)}
+                          style={control}
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
           </li>
         ))}
       </ul>
@@ -1001,21 +1221,72 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
           VT renderer unavailable ({assets.message}) — showing a plain-text view.
         </output>
       )}
-      {!textFallback &&
-        snapshot.tabs.map((tab) => (
-          <TerminalPane
-            key={tab.terminalId}
-            host={host}
-            session={session}
-            panel={panel}
-            terminalId={tab.terminalId}
-            active={tab.terminalId === activeId}
-            visible={visible}
-            assets={assets}
-            themeVars={themeVars}
-            appearanceVars={appearanceVars}
-          />
-        ))}
+      {!textFallback && (
+        <div
+          aria-label="Terminal panes"
+          style={{
+            display: "flex",
+            flexDirection: splitDirection === "vertical" ? "column" : "row",
+            flex: 1,
+            minHeight: 0,
+            minWidth: 0,
+          }}
+        >
+          {paneOrder.map((terminalId, index) => {
+            const shown = visibleSet.has(terminalId);
+            const focused = terminalId === activeId;
+            return (
+              <div
+                key={terminalId}
+                data-t3-terminal-pane={terminalId}
+                onMouseDown={
+                  shown && !focused
+                    ? () => {
+                        panel.activate(terminalId);
+                      }
+                    : undefined
+                }
+                style={{
+                  display: shown ? "flex" : "none",
+                  flexDirection: "column",
+                  flex: "1 1 0",
+                  minWidth: 0,
+                  minHeight: 0,
+                  borderLeft:
+                    splitDirection === "horizontal" && index > 0
+                      ? `1px solid ${
+                          focused
+                            ? "var(--t3-terminal-border, var(--border, #dfe3e8))"
+                            : "var(--t3-terminal-muted, var(--border, #dfe3e8))"
+                        }`
+                      : undefined,
+                  borderTop:
+                    splitDirection === "vertical" && index > 0
+                      ? `1px solid ${
+                          focused
+                            ? "var(--t3-terminal-border, var(--border, #dfe3e8))"
+                            : "var(--t3-terminal-muted, var(--border, #dfe3e8))"
+                        }`
+                      : undefined,
+                }}
+              >
+                <TerminalPane
+                  host={host}
+                  session={session}
+                  panel={panel}
+                  terminalId={terminalId}
+                  active={focused}
+                  shown={shown}
+                  visible={visible}
+                  assets={assets}
+                  themeVars={themeVars}
+                  appearanceVars={appearanceVars}
+                />
+              </div>
+            );
+          })}
+        </div>
+      )}
       {textFallback && activeId !== null && activeTab !== null && (
         <div
           style={{
@@ -1133,6 +1404,11 @@ const authored = defineExtension({
       placements: ["side-panel", "bottom-dock"],
       clients: ["web", "desktop"],
       capabilities: [],
+      // Owning focus-owner arbitration: the host tags the frame
+      // `data-terminal-owner="extension"` and leaves the focused terminal
+      // chords (split/splitVertical/new/close) to this view's keybindings.
+      // The claim is only honest because the panel implements all four.
+      claimsTerminalFocus: true,
       stateVersion: 1,
       validateRestore: restoreState,
       createView(host, session) {

@@ -6,15 +6,17 @@
 // shape); no browser is involved. Also proves the local Ghostty editing
 // intercepts exist: Ctrl+L writes U+000C to the PTY.
 
-import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
-import { test } from "node:test";
+import * as NodeAssert from "node:assert/strict";
+import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
+import * as NodeTest from "node:test";
+import * as NodeURL from "node:url";
 
 const packageDir = new URL("./", import.meta.url).pathname;
-const require = createRequire(pathToFileURL(join(packageDir, "../../extension-sdk/package.json")));
+const require = NodeModule.createRequire(
+  NodeURL.pathToFileURL(NodePath.join(packageDir, "../../extension-sdk/package.json")),
+);
 const { build } = require("esbuild");
 const React = require("react");
 const { create, act } = require("react-test-renderer");
@@ -25,12 +27,12 @@ globalThis.__vtPaneContracts = recorded;
 
 // The bundle must resolve workspace packages (`@t3tools/*`, react) — it has
 // to live under the repo for node to walk up to the workspace node_modules.
-const bundleDir = mkdtempSync(join(packageDir, ".pane-contracts-"));
-const bundled = join(bundleDir, "pane.mjs");
+const bundleDir = NodeFS.mkdtempSync(NodePath.join(packageDir, ".pane-contracts-"));
+const bundled = NodePath.join(bundleDir, "pane.mjs");
 await build({
   stdin: {
     contents:
-      readFileSync(join(packageDir, "extension.tsx"), "utf8") +
+      NodeFS.readFileSync(NodePath.join(packageDir, "extension.tsx"), "utf8") +
       "\nexport { TerminalPane, handleBeforeKey };\n",
     resolveDir: packageDir,
     loader: "tsx",
@@ -77,7 +79,7 @@ await build({
   ],
 });
 
-const { TerminalPane, handleBeforeKey } = await import(pathToFileURL(bundled).href);
+const { TerminalPane, handleBeforeKey } = await import(NodeURL.pathToFileURL(bundled).href);
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 globalThis.MutationObserver = class {
@@ -148,13 +150,14 @@ const props = {
   panel,
   terminalId: "terminal-1",
   active: true,
+  shown: true,
   visible: true,
   assets,
   themeVars: null,
   appearanceVars: terminalAppearanceVars(first),
 };
 
-test("published font vars reach the surface: create, update, reset", async () => {
+NodeTest.test("published font vars reach the surface: create, update, reset", async () => {
   let renderer;
   await act(async () => {
     renderer = create(React.createElement(TerminalPane, props), {
@@ -163,8 +166,8 @@ test("published font vars reach the surface: create, update, reset", async () =>
   });
   // Creation carries the already-published font — none of it waits for an
   // update cycle.
-  assert.equal(recorded.options.length, 1);
-  assert.deepEqual(recorded.options[0].font, { family: "First Mono", size: 18 });
+  NodeAssert.equal(recorded.options.length, 1);
+  NodeAssert.deepEqual(recorded.options[0].font, { family: "First Mono", size: 18 });
 
   // A republished appearance drives setFont with the new family/size.
   await act(async () => {
@@ -175,29 +178,29 @@ test("published font vars reach the surface: create, update, reset", async () =>
       }),
     );
   });
-  assert.deepEqual(recorded.fonts.at(-1), { family: "Second Mono", size: 24 });
+  NodeAssert.deepEqual(recorded.fonts.at(-1), { family: "Second Mono", size: 24 });
 
   // A cleared feed resets the surface to its packaged defaults.
   await act(async () => {
     renderer.update(React.createElement(TerminalPane, { ...props, appearanceVars: null }));
   });
-  assert.deepEqual(recorded.fonts.at(-1), {});
+  NodeAssert.deepEqual(recorded.fonts.at(-1), {});
 
   // The same effect keeps the color pipeline live.
-  assert.ok(recorded.themes.length >= 2);
+  NodeAssert.ok(recorded.themes.length >= 2);
 
   await act(async () => {
     renderer.unmount();
     controller.abort();
   });
-  rmSync(bundleDir, { recursive: true, force: true });
+  NodeFS.rmSync(bundleDir, { recursive: true, force: true });
 });
 
 // A publication that lands while `GhosttyTerminalSurface.create` is still
 // pending must reconcile onto the new surface — the update effect sees
 // surfaceRef null and its setFont is skipped, so the create continuation
 // re-reads the latest vars after the await resolves.
-test("republish during pending async create lands on the new surface", async () => {
+NodeTest.test("republish during pending async create lands on the new surface", async () => {
   resetRecorded();
   recorded.delay = true;
   let renderer;
@@ -215,20 +218,20 @@ test("republish during pending async create lands on the new surface", async () 
       }),
     );
   });
-  assert.equal(recorded.fonts.length, 0);
+  NodeAssert.equal(recorded.fonts.length, 0);
   await act(async () => {
     recorded.release();
   });
   // The new surface was created with the pre-republish font, then
   // reconciled to the latest publication.
-  assert.deepEqual(recorded.options[0].font, { family: "First Mono", size: 18 });
-  assert.deepEqual(recorded.fonts.at(-1), { family: "Second Mono", size: 24 });
+  NodeAssert.deepEqual(recorded.options[0].font, { family: "First Mono", size: 18 });
+  NodeAssert.deepEqual(recorded.fonts.at(-1), { family: "Second Mono", size: 24 });
   await act(async () => {
     renderer.unmount();
   });
 });
 
-test("clear during pending async create resets the new surface", async () => {
+NodeTest.test("clear during pending async create resets the new surface", async () => {
   resetRecorded();
   recorded.delay = true;
   let renderer;
@@ -240,12 +243,12 @@ test("clear during pending async create resets the new surface", async () => {
   await act(async () => {
     renderer.update(React.createElement(TerminalPane, { ...props, appearanceVars: null }));
   });
-  assert.equal(recorded.fonts.length, 0);
+  NodeAssert.equal(recorded.fonts.length, 0);
   await act(async () => {
     recorded.release();
   });
-  assert.deepEqual(recorded.options[0].font, { family: "First Mono", size: 18 });
-  assert.deepEqual(recorded.fonts.at(-1), {});
+  NodeAssert.deepEqual(recorded.options[0].font, { family: "First Mono", size: 18 });
+  NodeAssert.deepEqual(recorded.fonts.at(-1), {});
   await act(async () => {
     renderer.unmount();
   });
@@ -253,7 +256,7 @@ test("clear during pending async create resets the new surface", async () => {
 
 // A rejected setFont keeps current metrics and must not wedge the
 // reconciliation — the next publication still reaches the surface.
-test("a rejected setFont does not wedge later updates", async () => {
+NodeTest.test("a rejected setFont does not wedge later updates", async () => {
   resetRecorded();
   recorded.delay = true;
   const rejected = {
@@ -278,7 +281,7 @@ test("a rejected setFont does not wedge later updates", async () => {
     recorded.release();
   });
   // The reconciling setFont rejected — swallowed like the settled path.
-  assert.deepEqual(recorded.fonts.at(-1), { family: "Reject Mono", size: 20 });
+  NodeAssert.deepEqual(recorded.fonts.at(-1), { family: "Reject Mono", size: 20 });
   await act(async () => {
     renderer.update(
       React.createElement(TerminalPane, {
@@ -287,13 +290,13 @@ test("a rejected setFont does not wedge later updates", async () => {
       }),
     );
   });
-  assert.deepEqual(recorded.fonts.at(-1), { family: "Second Mono", size: 24 });
+  NodeAssert.deepEqual(recorded.fonts.at(-1), { family: "Second Mono", size: 24 });
   await act(async () => {
     renderer.unmount();
   });
 });
 
-test("local Ghostty editing intercepts exist: Ctrl+L writes FF to the PTY", () => {
+NodeTest.test("local Ghostty editing intercepts exist: Ctrl+L writes FF to the PTY", () => {
   let prevented = false;
   let stopped = false;
   const result = handleBeforeKey(
@@ -314,7 +317,7 @@ test("local Ghostty editing intercepts exist: Ctrl+L writes FF to the PTY", () =
     panel,
     "terminal-1",
   );
-  assert.equal(result, false);
-  assert.ok(prevented && stopped);
-  assert.deepEqual(recorded.input.at(-1), { id: "terminal-1", data: "\f" });
+  NodeAssert.equal(result, false);
+  NodeAssert.ok(prevented && stopped);
+  NodeAssert.deepEqual(recorded.input.at(-1), { id: "terminal-1", data: "\f" });
 });
