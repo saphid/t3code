@@ -1,5 +1,6 @@
 import type { EnvironmentId, ServerConfig, ServerSelfUpdateCapability } from "@t3tools/contracts";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
+import { cliReleaseChannelOf } from "@t3tools/shared/cliRelease";
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 import * as Schema from "effect/Schema";
 
@@ -43,10 +44,34 @@ function versionCore(version: string): string {
 }
 
 /**
+ * Build date and run of a Fork Nightly (`nightly-v2`) version, or null for any
+ * other train. Semver parsing drops everything after the second hyphen, so it
+ * cannot order these versions.
+ */
+function nightlyV2Build(version: string): { core: string; date: string; run: bigint } | null {
+  const withoutMetadata = version.replace(/\+.*$/, "");
+  if (cliReleaseChannelOf(withoutMetadata) !== "nightly-v2") return null;
+  const build = /\.(\d{8})\.(\d+)$/.exec(withoutMetadata);
+  if (!build?.[1] || !build[2]) return null;
+  return { core: versionCore(withoutMetadata), date: build[1], run: BigInt(build[2]) };
+}
+
+function compareNightlyV2Builds(
+  left: NonNullable<ReturnType<typeof nightlyV2Build>>,
+  right: NonNullable<ReturnType<typeof nightlyV2Build>>,
+): number {
+  const byCore = compareSemverVersions(left.core, right.core);
+  if (byCore !== 0) return byCore;
+  if (left.date !== right.date) return left.date < right.date ? -1 : 1;
+  return left.run === right.run ? 0 : left.run < right.run ? -1 : 1;
+}
+
+/**
  * The skew a user can act on: the connected server runs an older T3 Code than
  * this client, so the server is the side that needs updating.
  *
  * Two nightly builds compare their full versions, including the date and run.
+ * Two Fork Nightly (`nightly-v2`) builds compare core, date, then run.
  * Other combinations compare their core `major.minor.patch` only, so a stable
  * build and a nightly build with the same core do not cause an update warning.
  * A server ahead of the client does not need an update. Versions that do not
@@ -66,13 +91,17 @@ export function resolveVersionMismatch(
   const compareNightlyBuilds =
     parseSemver(normalizedClientVersion)?.prerelease[0] === "nightly" &&
     parseSemver(normalizedServerVersion)?.prerelease[0] === "nightly";
+  const clientNightlyV2 = nightlyV2Build(normalizedClientVersion);
+  const serverNightlyV2 = nightlyV2Build(normalizedServerVersion);
   const serverIsBehind =
-    parseSemver(clientCore) && parseSemver(serverCore)
-      ? compareSemverVersions(
-          compareNightlyBuilds ? normalizedServerVersion : serverCore,
-          compareNightlyBuilds ? normalizedClientVersion : clientCore,
-        ) < 0
-      : normalizedServerVersion !== normalizedClientVersion;
+    clientNightlyV2 && serverNightlyV2
+      ? compareNightlyV2Builds(serverNightlyV2, clientNightlyV2) < 0
+      : parseSemver(clientCore) && parseSemver(serverCore)
+        ? compareSemverVersions(
+            compareNightlyBuilds ? normalizedServerVersion : serverCore,
+            compareNightlyBuilds ? normalizedClientVersion : clientCore,
+          ) < 0
+        : normalizedServerVersion !== normalizedClientVersion;
   if (!serverIsBehind) {
     return null;
   }
