@@ -58,6 +58,7 @@ export type ModelPickerKeybindingCommand = (typeof MODEL_PICKER_KEYBINDING_COMMA
 
 export const STATIC_KEYBINDING_COMMANDS = [
   "sidebar.toggle",
+  "sidebar.customizeThreadRows",
   "terminal.toggle",
   "terminal.split",
   "terminal.splitVertical",
@@ -88,6 +89,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "composer.host",
   "composer.effort",
   "composer.mode",
+  "composer.customize",
   "composer.workspace",
   "composer.previousWorktree",
   "composer.branch",

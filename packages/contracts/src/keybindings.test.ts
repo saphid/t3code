@@ -47,6 +47,18 @@ it.effect("parses keybinding rules", () =>
       command: "threadPanel.toggle",
     });
     assert.strictEqual(parsedThreadPanelToggle.command, "threadPanel.toggle");
+
+    const parsedComposerCustomize = yield* decode(KeybindingRule, {
+      key: "mod+alt+c",
+      command: "composer.customize",
+    });
+    assert.strictEqual(parsedComposerCustomize.command, "composer.customize");
+
+    const parsedSidebarCustomizeThreadRows = yield* decode(KeybindingRule, {
+      key: "mod+alt+r",
+      command: "sidebar.customizeThreadRows",
+    });
+    assert.strictEqual(parsedSidebarCustomizeThreadRows.command, "sidebar.customizeThreadRows");
     const parsedRightPanelToggleMaximized = yield* decode(KeybindingRule, {
       key: "mod+shift+m",
       command: "rightPanel.toggleMaximized",

@@ -141,6 +141,52 @@ describe("ClientSettings thread details sections", () => {
   });
 });
 
+describe("ClientSettings personalization", () => {
+  it("defaults to recommended composition for absent preferences", () => {
+    const settings = decodeClientSettings({});
+    expect(settings.composerControls).toEqual({ order: [], placements: {} });
+    expect(settings.sidebarThreadRowDensity).toBe("comfortable");
+    expect(settings.sidebarThreadRowFields).toBeNull();
+  });
+
+  it("decodes composer controls with the recommended order and preserved unknown ids", () => {
+    const decoded = decodeClientSettings({
+      composerControls: { placements: { traits: "hidden", "plugin:x:y": "more" } },
+    });
+    expect(decoded.composerControls).toEqual({
+      order: [],
+      placements: { traits: "hidden", "plugin:x:y": "more" },
+    });
+  });
+
+  it("keeps unknown sidebar field ids so a stale preference decodes unchanged", () => {
+    expect(
+      decodeClientSettings({ sidebarThreadRowFields: ["branch", "unknown"] })
+        .sidebarThreadRowFields,
+    ).toEqual(["branch", "unknown"]);
+  });
+
+  it("accepts each personalization key alone in a patch", () => {
+    expect(decodeClientSettingsPatch({ composerControls: { order: ["a"] } })).toEqual({
+      composerControls: { order: ["a"], placements: {} },
+    });
+    expect(decodeClientSettingsPatch({ sidebarThreadRowDensity: "compact" })).toEqual({
+      sidebarThreadRowDensity: "compact",
+    });
+    expect(decodeClientSettingsPatch({ sidebarThreadRowFields: ["branch"] })).toEqual({
+      sidebarThreadRowFields: ["branch"],
+    });
+  });
+
+  it("rejects an invalid placement literal", () => {
+    expect(() =>
+      decodeClientSettingsPatch({
+        composerControls: { placements: { traits: "somewhere" } },
+      }),
+    ).toThrow();
+  });
+});
+
 describe("ServerSettings default permissions", () => {
   it("keeps full access for settings saved before a default was configured", () => {
     expect(decodeServerSettings({}).defaultRuntimeMode).toBe("full-access");

@@ -313,9 +313,39 @@ export const DEFAULT_THREAD_DETAILS_SECTIONS: ThreadDetailsSectionsSetting = Sch
   ThreadDetailsSectionsSetting,
 )({});
 
+export const ComposerControlPlacement = Schema.Literals(["pinned", "more", "hidden"]);
+export type ComposerControlPlacement = typeof ComposerControlPlacement.Type;
+export const ComposerControlsPreference = Schema.Struct({
+  // Stable block ids in the user's order. Empty means the recommended order.
+  order: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  // Only ids the user placed. Unknown ids are preserved for later recovery.
+  placements: Schema.Record(Schema.String, ComposerControlPlacement).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+});
+export type ComposerControlsPreference = typeof ComposerControlsPreference.Type;
+export const DEFAULT_COMPOSER_CONTROLS_PREFERENCE: ComposerControlsPreference = {
+  order: [],
+  placements: {},
+};
+
+export const SidebarThreadRowDensity = Schema.Literals(["comfortable", "compact"]);
+export type SidebarThreadRowDensity = typeof SidebarThreadRowDensity.Type;
+export const DEFAULT_SIDEBAR_THREAD_ROW_DENSITY: SidebarThreadRowDensity = "comfortable";
+
 export const ClientSettingsSchema = Schema.Struct({
+  // ── Personalization (client-only, sparse overrides; absent means recommended) ──
   threadDetailsSections: ThreadDetailsSectionsSetting.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_THREAD_DETAILS_SECTIONS)),
+  ),
+  composerControls: ComposerControlsPreference.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_COMPOSER_CONTROLS_PREFERENCE)),
+  ),
+  sidebarThreadRowDensity: SidebarThreadRowDensity.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_ROW_DENSITY)),
+  ),
+  sidebarThreadRowFields: Schema.NullOr(Schema.Array(Schema.String)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -1671,6 +1701,9 @@ export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
   threadDetailsSections: Schema.optionalKey(ThreadDetailsSectionsSetting),
+  composerControls: Schema.optionalKey(ComposerControlsPreference),
+  sidebarThreadRowDensity: Schema.optionalKey(SidebarThreadRowDensity),
+  sidebarThreadRowFields: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.String))),
   notificationMode: Schema.optionalKey(NotificationMode),
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
