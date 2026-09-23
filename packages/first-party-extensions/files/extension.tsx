@@ -35,9 +35,9 @@ import {
   buildCommentExcerpt,
   commentUnavailableReason,
   formatCommentRangeLabel,
-  selectionLineRange,
   type FileCommentRange,
 } from "./fileComments.js";
+import { useEditorSelection } from "./commentSession.js";
 import { parseMarkdown, type MarkdownBlock, type MarkdownInline } from "./markdown.js";
 import {
   FILE_SAVE_DEBOUNCE_MS,
@@ -1215,11 +1215,6 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const commentThreadId = session.context.resource.threadId;
   const [commentCapabilities, setCommentCapabilities] =
     useState<MessagesEnrichmentCapabilities | null>(null);
-  const [editorSelection, setEditorSelection] = useState<{
-    path: string;
-    start: number;
-    end: number;
-  } | null>(null);
   const [commentDraft, setCommentDraft] = useState<{
     path: string;
     range: FileCommentRange;
@@ -1255,13 +1250,14 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       ? "Checking comment support with the host…"
       : commentUnavailableReason(commentCapabilities, commentThreadId);
   const commentSurface = editor.surface?.path === selected ? editor.surface : null;
-  const selectionRange =
-    editorSelection !== null &&
-    editorSelection.path === selected &&
-    commentSurface !== null &&
-    commentSurface.open.editable
-      ? selectionLineRange(commentSurface.contents, editorSelection.start, editorSelection.end)
-      : null;
+  // Offsets are only meaningful against the buffer they were made in: the
+  // hook clears the selection on a path switch, a re-select of the current
+  // file, and any new contents identity (edit, reload, external sync).
+  const {
+    selectionRange,
+    setSelection: setEditorSelection,
+    clearSelection: clearEditorSelection,
+  } = useEditorSelection(commentSurface, selected);
   const openCommentDraft = (range: FileCommentRange) => {
     if (selected === null || commentSurface === null) return;
     const { excerpt, truncated } = buildCommentExcerpt(commentSurface.contents, range);
@@ -1390,6 +1386,9 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const select = (path: string, line?: number) => {
     setSelected(path);
     session.save({ relativePath: path });
+    // Selecting is navigating: any held selection dies here even when the
+    // path (and its contents) did not change.
+    clearEditorSelection();
     // A plain selection also cancels any reveal still pending for another path.
     if (line !== undefined && line > 0) {
       setRevealRequest({ path, line });
