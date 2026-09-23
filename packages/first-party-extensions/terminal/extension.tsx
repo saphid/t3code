@@ -470,6 +470,11 @@ function TerminalPane(props: {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const surfaceRef = useRef<GhosttyTerminalSurface | null>(null);
   const shownRef = useRef(shown && visible);
+  // Latest active/shown state for the async surface creation: a surface
+  // finishing after the focus effect last ran must know whether this pane
+  // owns focus NOW, not at effect time.
+  const activeRef = useRef(active);
+  activeRef.current = active;
   // Latest published appearance vars. The async create bakes them into
   // options.font and, once the surface exists, reconciles any publication
   // that landed while the create was pending (its setFont was skipped
@@ -583,6 +588,14 @@ function TerminalPane(props: {
         void surface.setFont(latestFont).catch(() => {});
       }
       surfaceRef.current = surface;
+      // A pane that was already the focused one while its surface was still
+      // creating — the fresh-split case — owns focus the moment the surface
+      // exists. The [active, shown, visible] effect cannot deliver it: it
+      // ran before the async create assigned the ref and its deps never
+      // change again for a freshly split pane, so without this call the new
+      // pane would never take focus (keystrokes landing in the old pane).
+      // Recreated surfaces (assets reloading) get the same reconciliation.
+      if (activeRef.current && shownRef.current) surface.focus();
       try {
         attachment.attach(surface);
       } catch {

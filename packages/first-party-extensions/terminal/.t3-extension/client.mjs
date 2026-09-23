@@ -11786,6 +11786,8 @@ var __t3Client = (() => {
     const mountRef = (0, import_react.useRef)(null);
     const surfaceRef = (0, import_react.useRef)(null);
     const shownRef = (0, import_react.useRef)(shown && visible);
+    const activeRef = (0, import_react.useRef)(active);
+    activeRef.current = active;
     const appearanceVarsRef = (0, import_react.useRef)(appearanceVars);
     appearanceVarsRef.current = appearanceVars;
     (0, import_react.useEffect)(() => {
@@ -11866,6 +11868,7 @@ var __t3Client = (() => {
           });
         }
         surfaceRef.current = surface;
+        if (activeRef.current && shownRef.current) surface.focus();
         try {
           attachment.attach(surface);
         } catch {

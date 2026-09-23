@@ -22,7 +22,7 @@ const React = require("react");
 const { create, act } = require("react-test-renderer");
 const { terminalAppearanceVars } = await import("./viewModel.ts");
 
-const recorded = { options: [], themes: [], fonts: [], input: [] };
+const recorded = { options: [], themes: [], fonts: [], input: [], focuses: [] };
 globalThis.__vtPaneContracts = recorded;
 
 // The bundle must resolve workspace packages (`@t3tools/*`, react) — it has
@@ -67,7 +67,7 @@ await build({
               if (font.family === "Reject Mono") throw new Error("load rejection");
             }
             setVisible() {}
-            focus() {}
+            focus() { globalThis.__vtPaneContracts.focuses.push("focus"); }
             write() {}
             resetAndWrite() {}
             dispose() {}
@@ -133,6 +133,7 @@ function resetRecorded() {
   recorded.themes.length = 0;
   recorded.fonts.length = 0;
   recorded.input.length = 0;
+  recorded.focuses.length = 0;
   recorded.delay = false;
   recorded.release = undefined;
 }
@@ -320,4 +321,70 @@ NodeTest.test("local Ghostty editing intercepts exist: Ctrl+L writes FF to the P
   NodeAssert.equal(result, false);
   NodeAssert.ok(prevented && stopped);
   NodeAssert.deepEqual(recorded.input.at(-1), { id: "terminal-1", data: "\f" });
+});
+
+// r2 item 1 (BLOCKER): a pane that is active+shown at mount — the fresh
+// split case — must receive focus once its async surface creation
+// completes. The [active, shown, visible] effect runs before the create
+// resolves and its deps never change again for that pane, so without the
+// creation-time reconciliation the new pane never takes focus and
+// keystrokes land in the old pane's PTY.
+NodeTest.test("active pane takes focus when its surface creation completes", async () => {
+  resetRecorded();
+  recorded.delay = true;
+  let renderer;
+  await act(async () => {
+    renderer = create(React.createElement(TerminalPane, props), {
+      createNodeMock: () => ({}),
+    });
+  });
+  // The create is still pending — no focus yet.
+  NodeAssert.equal(recorded.focuses.length, 0);
+  await act(async () => {
+    recorded.release();
+  });
+  NodeAssert.deepEqual(recorded.focuses, ["focus"]);
+  await act(async () => {
+    renderer.unmount();
+  });
+});
+
+// Same reconciliation without the artificial delay: a plain mount of an
+// active pane focuses exactly once the surface exists (the pre-fix code
+// never focused a freshly mounted pane at all).
+NodeTest.test("active pane focuses on plain mount, once", async () => {
+  resetRecorded();
+  let renderer;
+  await act(async () => {
+    renderer = create(React.createElement(TerminalPane, props), {
+      createNodeMock: () => ({}),
+    });
+  });
+  NodeAssert.deepEqual(recorded.focuses, ["focus"]);
+  await act(async () => {
+    renderer.unmount();
+  });
+});
+
+// A pane that lost focus (or was never active) before its surface
+// finished creating must NOT steal focus at creation time.
+NodeTest.test("pane deactivated during pending create does not steal focus", async () => {
+  resetRecorded();
+  recorded.delay = true;
+  let renderer;
+  await act(async () => {
+    renderer = create(React.createElement(TerminalPane, props), {
+      createNodeMock: () => ({}),
+    });
+  });
+  await act(async () => {
+    renderer.update(React.createElement(TerminalPane, { ...props, active: false }));
+  });
+  await act(async () => {
+    recorded.release();
+  });
+  NodeAssert.equal(recorded.focuses.length, 0);
+  await act(async () => {
+    renderer.unmount();
+  });
 });
