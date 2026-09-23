@@ -90,6 +90,14 @@ export const ExtensionApiInvocation = Schema.Struct({
   context: ExtensionViewContext,
   expectedGeneration: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
   requestId: Schema.optional(Identity),
+  /**
+   * Session-validated routing hint for client-provider-backed contracts
+   * (`t3.ui/*`). Stamped by the client's own ClientHost wrapper at invoke time;
+   * the server accepts it only when the named connection is live and bound to
+   * the same authenticated session the invoke arrived under. It can only ever
+   * resolve to `self` — never a general target selector.
+   */
+  clientConnectionId: Schema.optional(Identity),
 });
 export const ExtensionApiInvokeInput = Schema.Struct({
   installationId: Identity,
@@ -106,6 +114,8 @@ export const ExtensionApiStreamInvocation = Schema.Struct({
   context: ExtensionViewContext,
   expectedGeneration: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
   cursor: Schema.optional(Schema.String.check(Schema.isMaxLength(1024))),
+  /** Same session-validated `self` hint as `ExtensionApiInvocation`. */
+  clientConnectionId: Schema.optional(Identity),
 });
 export const ExtensionApiSubscribeInput = Schema.Struct({
   installationId: Identity,

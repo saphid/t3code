@@ -16,6 +16,7 @@ import {
 import {
   applyThemeColorPreview,
   restoreThemeAfterPreview,
+  transferThemePreviewOwner,
   THEME_COLOR_ROLES,
   THEME_FILE_VERSION,
   THEME_PREVIEW_OWNER_EDITOR,
@@ -470,9 +471,12 @@ export function ThemeEditorPanel({
 
   // The whole app wears the draft while the editor is open, so a role change
   // is judged on the real interface rather than a miniature. The stored theme
-  // comes back when the editor closes, including on cancel.
+  // comes back when the editor closes, including on cancel. A painted preview
+  // owned by an extension overlay transfers to the editor first — the host's
+  // draft always wins the paint over client-supplied overlays.
   useEffect(() => {
     if (!open || !isDraftSeeded) return;
+    transferThemePreviewOwner(THEME_PREVIEW_OWNER_EDITOR);
     applyThemeColorPreview(colorsByAppearance[activeAppearance], activeAppearance);
   }, [activeAppearance, colorsByAppearance, isDraftSeeded, open]);
 
@@ -949,11 +953,7 @@ export function ThemeEditorPanel({
     // A locked mode stays hoverable so the tooltip can say why it is off;
     // a real disabled attribute would swallow the pointer events.
     const button = (
-      <Toggle
-        aria-disabled={lockReason !== null}
-        value={appearance}
-        className={lockReason !== null ? "opacity-50" : undefined}
-      >
+      <Toggle aria-disabled={lockReason !== null} value={appearance}>
         {appearance === "light" ? "Light" : "Dark"}
       </Toggle>
     );

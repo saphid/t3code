@@ -3,8 +3,23 @@ import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts"
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import { EnvironmentExtensions } from "./EnvironmentExtensions.ts";
+import type { ClientApiProviders } from "./ClientApiProviders.ts";
 import { handlers } from "./mcp.ts";
 import { McpInvocationContext, type McpCapability } from "../mcp/McpInvocationContext.ts";
+
+const unusedClientApiProviders = {
+  connect: () => Effect.die("unused"),
+  respond: () => Effect.die("unused"),
+  emit: () => Effect.die("unused"),
+  invoke: () => Effect.die("unused"),
+  openSubscription: () => Effect.die("unused"),
+  registerCorrelation: () => Effect.die("unused"),
+  unregisterCorrelation: () => Effect.die("unused"),
+  listTargets: () => Effect.die("unused"),
+  resolveTarget: () => Effect.die("unused"),
+  hasProvider: () => Effect.die("unused"),
+  connectionForSession: () => Effect.die("unused"),
+} satisfies ClientApiProviders["Service"];
 
 const context = {
   resource: {
@@ -56,6 +71,7 @@ function fixture(capabilities: readonly McpCapability[], resolvedContext = conte
         return resolvedContext;
       }),
     tools: () => Effect.sync(() => (available ? [tool] : [])),
+    clientApiProviders: unusedClientApiProviders,
   });
   const invocation = {
     environmentId: EnvironmentId.make("env-a"),

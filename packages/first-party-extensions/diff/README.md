@@ -20,8 +20,10 @@ This is a read-oriented panel. It consumes `t3.vcs/read` plus the
 - per-file hunks parsed with the vendored `@pierre/diffs`
   `parsePatchFiles` (the same pure parser the native panel feeds — its
   React `CodeView` imports react-dom and cannot be bundled into an
-  extension), rendered as package-owned unified rows in collapsible
-  per-file sections,
+  extension), rendered as package-owned rows in collapsible per-file
+  sections in either a unified or split (side-by-side) layout — within a
+  hunk each deletion run pairs line-by-line with the addition run that
+  follows it, the shorter side padded,
 - full-file context expansion via `getFileContents` /
   `streamFileContents` (same unary-first policy; per-side sha256) for
   two-sided text changes; binary files are detected from the delivered
@@ -33,7 +35,11 @@ This is a read-oriented panel. It consumes `t3.vcs/read` plus the
   open-in-editor via `t3.file/presentation.open` (reports the resolved
   surface — mounting it awaits the unshipped `t3.ui/surfaces` contract),
   base-ref picker over `t3.vcs/refs.list`, ignore-whitespace and
-  word-wrap toggles,
+  word-wrap toggles, unified/split layout toggle — the layout persists
+  per view through `session.save` (records saved before split shipped
+  restore as unified; the plugin cannot read or write the host's global
+  `diffLayout` client setting, so the two preferences are separate), and
+  wrap stays session-local like native's `wordWrap`,
 - freshness via `t3.vcs/status.subscribe`: one refresh per distinct
   local-status fingerprint (never per frame, never polled), bounded
   resubscribe on `closed`, honest "stream ended" fallback to manual
@@ -55,12 +61,31 @@ This is a read-oriented panel. It consumes `t3.vcs/read` plus the
 - turn-mode expansion is disabled on purpose: checkpoint commits are
   root commits, so `getFileContents`'s merge-base path cannot expand
   turn sources — the panel says so instead of issuing requests that
-  cannot resolve.
+  cannot resolve,
+- `t3.ui/*` adoption: theme values resolve through
+  `t3.ui/theme.getTokens` + `subscribeState` (stored preference,
+  session overlay, and external previews all re-resolve the panel's
+  `var(--x, token)` fallbacks; a missing grant keeps the static
+  values), the `mod+d` toggle stages through
+  `ClientHost.registerGlobalCommands` and the mounted view binds via
+  `session.bindCommands` so host arbitration (focused view →
+  thread-matched binding → installation handler → cold activation)
+  owns precedence, and the toggle itself runs through
+  `t3.ui/panels` (`listSurfaces` → open/activate/close, matching the
+  native `diff.toggle`). Panel access gates availability: the view
+  runs a grant-enforced `listSurfaces` read before registering
+  (denied or unreachable panels access means the command is never
+  offered), and a dispatch that finds the capability denied or
+  revoked withdraws the command set so the palette stops offering
+  it. `t3.ui/notify` is used only to report
+  command-dispatch failures and access loss — a rejected toggle has
+  no in-panel affordance, so an error toast is the honest channel;
+  status rows stay inline, matching the native panel.
 
-Deferred slices: split view + Pierre renderer features (react-dom is
-bundler-banned), diff-line comments (`t3.messages/enrichment`),
-repo-root→workspace path remapping for open (no public repo-root
-contract).
+Deferred slices: Pierre renderer features (react-dom is bundler-banned)
+— syntax highlighting, virtualization, sticky headers; diff-line comments
+(`t3.messages/enrichment`); repo-root→workspace path remapping for open
+(no public repo-root contract).
 
 Per-row dispositions and native citations:
 `docs/internals/extensions/vcs-diff-binding-disposition.md`.

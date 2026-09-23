@@ -279,19 +279,24 @@ const proxyWebSocket = Effect.fn("BrowserFrameProxy.proxyWebSocket")(function* (
       const writeToClient = yield* client.writer;
       const writeToUpstream = yield* upstream.writer;
       // Whichever side closes first ends the other via scope teardown: a close
-      // fails that side's run loop with a SocketError, which loses the race.
-      // The interrupt effect is the third racer: lease invalidation ends both.
+      // fails that side's pull with a SocketError, which loses the race. The
+      // interrupt effect is the third racer: lease invalidation ends both.
       return yield* Effect.raceFirst(
-        Effect.raceFirst(
-          upstream.runRaw((data) => writeToClient(data)),
-          client.runRaw((data) => writeToUpstream(data)),
-        ),
+        Effect.raceFirst(pumpFrames(upstream, writeToClient), pumpFrames(client, writeToUpstream)),
         interrupt,
       );
     }),
   ).pipe(Effect.catchCause(() => Effect.void));
   return HttpServerResponse.empty();
 });
+
+const pumpFrames = (source: Socket.Socket, sink: Socket.Writer) =>
+  Effect.gen(function* () {
+    const { pull } = yield* source.reader;
+    while (true) {
+      yield* sink.writeAll(yield* pull);
+    }
+  });
 
 const upstreamParams = (
   params: URLSearchParams,

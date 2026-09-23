@@ -51,7 +51,16 @@ async function buildCandidate() {
   calls.push(run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund"], candidate));
   calls.push(run("npm", ["run", "build"], candidate));
   calls.push(run("npm", ["run", "check"], candidate));
+  // The receipt pins the checkout the SDK tarball was packed from —
+  // without it a proof could silently drift from the source it claims.
+  const head = run("git", ["rev-parse", "HEAD"], sdk);
+  const dirty = run("git", ["status", "--porcelain"], sdk);
+  calls.push(head, dirty);
   const callRecords = calls.map(({ stdout, stderr, ...call }) => ({ ...call, stdout, stderr }));
+  const checkout = {
+    commit: head.stdout.trim(),
+    dirty: dirty.stdout.trim().length > 0,
+  };
   const sourceHashes = {};
   for (const name of await NodeFSP.readdir(source)) {
     sourceHashes[name] = NodeCrypto.createHash("sha256")
@@ -61,7 +70,14 @@ async function buildCandidate() {
   const failed = calls.find((call) => call.exitCode !== 0);
   if (failed) {
     const receipt = JSON.stringify(
-      { kind: "typed-files-builder", candidate, sdkTarball, calls: callRecords, sourceHashes },
+      {
+        kind: "typed-files-builder",
+        candidate,
+        sdkTarball,
+        calls: callRecords,
+        sourceHashes,
+        checkout,
+      },
       null,
       2,
     );
@@ -92,6 +108,7 @@ async function buildCandidate() {
       sdkTarball,
       calls: calls.map(({ stdout, stderr, ...call }) => ({ ...call, stdout, stderr })),
       sourceHashes,
+      checkout,
     },
     null,
     2,
@@ -267,5 +284,20 @@ NodeTest.test(
     const baselineRequests = await exercise(createBaseline);
     const candidateRequests = await exercise(createCandidate);
     NodeAssert.deepEqual(candidateRequests, baselineRequests);
+    const proofReceipt = JSON.parse(
+      await NodeFSP.readFile(
+        NodePath.join(
+          NodePath.dirname(NodePath.dirname(NodePath.dirname(builtClient))),
+          "receipts.json",
+        ),
+        "utf8",
+      ),
+    );
+    NodeAssert.match(
+      proofReceipt.checkout.commit,
+      /^[0-9a-f]{40}$/,
+      "proof receipt does not pin the checkout commit",
+    );
+    NodeAssert.equal(typeof proofReceipt.checkout.dirty, "boolean");
   },
 );

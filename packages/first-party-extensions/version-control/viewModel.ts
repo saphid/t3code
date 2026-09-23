@@ -13,6 +13,11 @@
  * stay host-side.
  */
 import type {
+  VcsActionKind,
+  VcsActionPhase,
+  VcsActionProgressEvent,
+  VcsActionResult,
+  VcsActionRunInput,
   VcsCapabilitiesResult,
   VcsChangeEntry,
   VcsListRefsResult,
@@ -113,6 +118,7 @@ export type MutationOp =
   | "stage"
   | "unstage"
   | "commit"
+  | "stacked"
   | "ref-create"
   | "ref-switch"
   | "pull"
@@ -210,37 +216,78 @@ export function planCommit(lanes: LaneGroups, message: string): CommitPlan {
   return { disabled: null, label: "Commit all changes", paths: undefined };
 }
 
+/**
+ * Where the mutation's transient receipt is delivered. "notification" means
+ * a live `t3.ui/notifications` toast carries it; "inline" paints the panel's
+ * mutation row. The channel is recorded on the phase — not on adapter
+ * liveness — so a mutation that began before the capability probe resolved
+ * keeps its inline row even when toasts come up mid-flight.
+ */
+export type MutationReceipt = "inline" | "notification";
+
 /** Single-flight mutation phase — one op at a time, like native's serialized VCS actions. */
 export type MutationPhase =
   | { readonly kind: "idle" }
-  | { readonly kind: "running"; readonly op: MutationOp; readonly label: string }
-  | { readonly kind: "succeeded"; readonly op: MutationOp; readonly detail: string }
-  | { readonly kind: "failed"; readonly op: MutationOp; readonly detail: string };
+  | {
+      readonly kind: "running";
+      readonly op: MutationOp;
+      readonly label: string;
+      readonly receipt: MutationReceipt;
+    }
+  | {
+      readonly kind: "succeeded";
+      readonly op: MutationOp;
+      readonly detail: string;
+      readonly receipt: MutationReceipt;
+    }
+  | {
+      readonly kind: "failed";
+      readonly op: MutationOp;
+      readonly detail: string;
+      readonly receipt: MutationReceipt;
+    };
 
 export const IDLE_MUTATION: MutationPhase = { kind: "idle" };
 
 /**
  * Begin a mutation. Returns null when one is already running — the view
  * disables all mutation controls on `running`, so a null here is also the
- * guard against a raced second click.
+ * guard against a raced second click. `receipt` names the channel the
+ * caller already secured: a begun toast or the inline fallback.
  */
 export function startMutation(
   phase: MutationPhase,
   op: MutationOp,
   label: string,
+  receipt: MutationReceipt,
 ): MutationPhase | null {
   if (phase.kind === "running") return null;
-  return { kind: "running", op, label };
+  return { kind: "running", op, label, receipt };
 }
 
 /** Settle the running op: rejection detail (the named error) or a success line. */
 export function settleMutation(
+  phase: MutationPhase,
   op: MutationOp,
   result: { readonly ok: boolean; readonly detail: string },
 ): MutationPhase {
+  const receipt = phase.kind !== "idle" && phase.op === op ? phase.receipt : "inline";
   return result.ok
-    ? { kind: "succeeded", op, detail: result.detail }
-    : { kind: "failed", op, detail: result.detail };
+    ? { kind: "succeeded", op, detail: result.detail, receipt }
+    : { kind: "failed", op, detail: result.detail, receipt };
+}
+
+/**
+ * Toast delivery for `op` failed after it began — a rejected `notify`, an
+ * unapplied `update`, or a dismissed loading toast. The phase keeps its
+ * detail but the receipt channel returns to the inline row; the mutation
+ * outcome must never silently vanish.
+ */
+export function releaseMutationReceipt(op: MutationOp): (phase: MutationPhase) => MutationPhase {
+  return (phase) =>
+    phase.kind !== "idle" && phase.op === op && phase.receipt === "notification"
+      ? { ...phase, receipt: "inline" }
+      : phase;
 }
 
 /** One-line rendering of the mutation phase for the panel status line. */
@@ -363,6 +410,288 @@ export function pushState(
     return { disabled: 'Add an "origin" remote before pushing', label: "Push" };
   if (remote.aheadCount === 0) return { disabled: "No local commits to push", label: "Push" };
   return { disabled: null, label: `Push ↑${remote.aheadCount}` };
+}
+
+/* ---------------- stacked actions (t3.vcs/actions) ---------------- */
+
+/**
+ * The composite-action surface — `t3.vcs/actions.run` runs the native
+ * stacked action (commit → push → create-PR phases) under a server-minted
+ * actionId; progress arrives on the `actionProgress` stream. The offer
+ * set mirrors the native menu/quick-action gating
+ * (GitActionsControl.logic.ts): commit needs a dirty tree or a feature
+ * branch to create, push needs a branch that is not behind with an
+ * upstream or primary remote, and the PR phase additionally needs no
+ * open PR and a delta over the default branch. Conflicted trees block
+ * every commit-including action for the same reason `planCommit` does —
+ * the composite's commit phase is `add -A` and would stage conflict
+ * markers.
+ */
+export interface StackedActionOffer {
+  readonly action: VcsActionKind;
+  readonly label: string;
+  /** Why the offer is disabled; null when it may run. */
+  readonly disabled: string | null;
+}
+
+export function stackedActionLabel(action: VcsActionKind): string {
+  switch (action) {
+    case "commit":
+      return "Commit";
+    case "push":
+      return "Push";
+    case "create_pr":
+      return "Push & create PR";
+    case "commit_push":
+      return "Commit & push";
+    case "commit_push_pr":
+      return "Commit, push & create PR";
+  }
+}
+
+const STACKED_ACTION_ORDER: readonly VcsActionKind[] = [
+  "commit",
+  "commit_push",
+  "commit_push_pr",
+  "push",
+  "create_pr",
+];
+
+export function stackedActionOffers(
+  local: VcsStatusLocal | null,
+  remote: VcsStatusRemote | null,
+  lanes: LaneGroups,
+  featureBranch: boolean,
+): readonly StackedActionOffer[] {
+  const offer = (action: VcsActionKind, disabled: string | null): StackedActionOffer => ({
+    action,
+    label: stackedActionLabel(action),
+    disabled,
+  });
+  if (local === null) {
+    return STACKED_ACTION_ORDER.map((action) => offer(action, "Repository status pending"));
+  }
+  const hasBranch = local.refName !== null;
+  const hasChanges = local.hasWorkingTreeChanges || featureBranch;
+  const hasOpenPr = remote?.pr?.state === "open";
+  const isBehind = (remote?.behindCount ?? 0) > 0;
+  const hasDefaultDelta =
+    (remote?.aheadOfDefaultCount ?? remote?.aheadCount ?? 0) > 0 || hasChanges;
+  const conflicts =
+    lanes.conflicted.length > 0 ? "Resolve merge conflicts before committing" : null;
+  const tooManyStaged =
+    lanes.staged.length > VCS_PATHS_MAX
+      ? `Over ${VCS_PATHS_MAX} staged paths — unstage some first`
+      : null;
+  const commitBlocked =
+    conflicts ??
+    tooManyStaged ??
+    (!hasChanges ? "No changes to commit" : null) ??
+    (!hasBranch && !featureBranch ? "Detached HEAD — checkout a ref first" : null);
+  const remotePending = remote === null ? "Upstream status pending" : null;
+  const remoteBehind =
+    remote !== null && isBehind
+      ? remote.aheadCount > 0
+        ? "Diverged from upstream — rebase or merge first"
+        : "Behind upstream — pull first"
+      : null;
+  const remoteMissing =
+    remote !== null && !remote.hasUpstream && !local.hasPrimaryRemote
+      ? 'Add an "origin" remote before pushing'
+      : null;
+  /**
+   * The standalone push block — dirty tree and nothing-ahead included.
+   * Composite offers don't inherit these two: their commit phase produces
+   * the commits, so they only need the push FEASIBLE checks.
+   */
+  const pushBlocked =
+    (!hasBranch ? "Detached HEAD — checkout a ref first" : null) ??
+    (local.hasWorkingTreeChanges ? "Commit local changes before pushing" : null) ??
+    remotePending ??
+    remoteBehind ??
+    remoteMissing ??
+    (remote !== null && remote.aheadCount === 0 ? "No local commits to push" : null);
+  const pushPhaseBlocked =
+    (!hasBranch ? "Detached HEAD — checkout a ref first" : null) ??
+    remotePending ??
+    remoteBehind ??
+    remoteMissing;
+  // An open PR is named before push feasibility — native's reason order.
+  const openPrBlocked = hasOpenPr ? "A pull request is already open for this branch" : null;
+  const prDeltaBlocked = !hasDefaultDelta ? "No commits over the default branch" : null;
+  /**
+   * `create_pr` needs push FEASIBILITY but not outstanding commits —
+   * native's canCreatePr only asks for a clean tree, a default-branch
+   * delta, no open PR and a reachable remote; GitManager skips the push
+   * phase when the upstream is already current. Requiring aheadCount > 0
+   * would strand the ordinary already-pushed branch.
+   */
+  const createPrBlocked =
+    openPrBlocked ??
+    (local.hasWorkingTreeChanges ? "Commit local changes first" : null) ??
+    pushPhaseBlocked ??
+    prDeltaBlocked;
+  return [
+    offer("commit", commitBlocked),
+    offer("commit_push", commitBlocked ?? pushPhaseBlocked),
+    offer("commit_push_pr", commitBlocked ?? openPrBlocked ?? pushPhaseBlocked ?? prDeltaBlocked),
+    offer("push", pushBlocked),
+    offer("create_pr", createPrBlocked),
+  ];
+}
+
+/**
+ * The one action native's quick-action button would pick right now —
+ * `resolveQuickAction` reduced to the run_action kinds this contract
+ * carries (pull and publish are separate surfaces; open-PR lives in the
+ * pull-request view). Returns null when no stacked action is the honest
+ * suggestion.
+ */
+export function stackedActionSuggestion(
+  local: VcsStatusLocal | null,
+  remote: VcsStatusRemote | null,
+): VcsActionKind | null {
+  if (local === null || local.refName === null) return null;
+  const hasChanges = local.hasWorkingTreeChanges;
+  const hasOpenPr = remote?.pr?.state === "open";
+  const isAhead = (remote?.aheadCount ?? 0) > 0;
+  const hasDefaultDelta = (remote?.aheadOfDefaultCount ?? remote?.aheadCount ?? 0) > 0;
+  const isBehind = (remote?.behindCount ?? 0) > 0;
+  const isDiverged = isAhead && isBehind;
+  const pushable = remote?.hasUpstream === true || local.hasPrimaryRemote;
+
+  if (hasChanges) {
+    if (!pushable) return "commit";
+    return hasOpenPr || local.isDefaultRef ? "commit_push" : "commit_push_pr";
+  }
+  if (!pushable || isDiverged || isBehind) return null;
+  if (isAhead) return hasOpenPr || local.isDefaultRef ? "push" : "create_pr";
+  if (hasDefaultDelta && !local.isDefaultRef && !hasOpenPr) return "create_pr";
+  return null;
+}
+
+/**
+ * Which actions carry a commit phase — GitManager's `isCommitAction`.
+ * `featureBranch` is only meaningful there: the service rejects it on
+ * push-only or PR-only requests, and a fresh ref off the default branch
+ * has nothing to push or open a PR from until the commit phase lands.
+ */
+export function stackedActionCommits(action: VcsActionKind): boolean {
+  return action === "commit" || action === "commit_push" || action === "commit_push_pr";
+}
+
+/**
+ * The request payload for `actions.run`. `featureBranch` and `paths`
+ * ride along only when the action has a commit phase — sending either
+ * on a push-only or PR-only action gets the request rejected.
+ */
+export function stackedActionInput(input: {
+  readonly action: VcsActionKind;
+  /** Trimmed; "" keeps native leave-blank auto-generate semantics. */
+  readonly commitMessage: string;
+  readonly featureBranch: boolean;
+  readonly stagedPaths: readonly string[];
+}): VcsActionRunInput {
+  const commits = stackedActionCommits(input.action);
+  return {
+    action: input.action,
+    ...(input.commitMessage === "" ? {} : { commitMessage: input.commitMessage }),
+    ...(commits && input.featureBranch ? { featureBranch: true } : {}),
+    ...(commits && input.stagedPaths.length > 0 ? { paths: input.stagedPaths } : {}),
+  };
+}
+
+/**
+ * Native's `requiresDefaultBranchConfirmation` — every action except a
+ * plain commit needs an explicit continue/feature-ref decision before it
+ * runs on the default ref. Picking "new feature branch" IS the native
+ * alternative, so a checked featureBranch already answers the prompt —
+ * but only where a commit phase can use it; a stale flag on a push-only
+ * or PR-only pick answers nothing.
+ */
+export function stackedActionNeedsConfirm(
+  action: VcsActionKind,
+  local: VcsStatusLocal | null,
+  featureBranch: boolean,
+): boolean {
+  if (local?.isDefaultRef !== true || action === "commit") return false;
+  return !(featureBranch && stackedActionCommits(action));
+}
+
+/** Live composite progress, folded from `actionProgress` events. */
+export interface StackedActionProgress {
+  readonly action: VcsActionKind | null;
+  readonly phases: readonly VcsActionPhase[];
+  /** Phases reported started — the last entry is the one in flight. */
+  readonly started: readonly { readonly phase: VcsActionPhase; readonly label: string }[];
+  readonly hook: { readonly name: string | null; readonly lastLine: string | null } | null;
+  readonly result: VcsActionResult | null;
+  readonly failure: { readonly phase: VcsActionPhase | null; readonly message: string } | null;
+  readonly closed: "overflow" | "authorization-revoked" | null;
+}
+
+export const IDLE_STACKED_PROGRESS: StackedActionProgress = {
+  action: null,
+  phases: [],
+  started: [],
+  hook: null,
+  result: null,
+  failure: null,
+  closed: null,
+};
+
+export function applyStackedEvent(
+  model: StackedActionProgress,
+  event: VcsActionProgressEvent,
+): StackedActionProgress {
+  switch (event.kind) {
+    case "action_started":
+      return { ...IDLE_STACKED_PROGRESS, action: event.action, phases: event.phases };
+    case "phase_started":
+      return {
+        ...model,
+        started: [...model.started, { phase: event.phase, label: event.label }],
+      };
+    case "hook_started":
+      return { ...model, hook: { name: event.hookName, lastLine: null } };
+    case "hook_output": {
+      const lastLine = event.text.trimEnd().split("\n").pop() ?? null;
+      return {
+        ...model,
+        hook: { name: event.hookName ?? model.hook?.name ?? null, lastLine },
+      };
+    }
+    case "hook_finished":
+      return model.hook === null ? model : { ...model, hook: null };
+    case "action_finished":
+      return { ...model, result: event.result };
+    case "action_failed":
+      return { ...model, failure: { phase: event.phase, message: event.message } };
+    case "closed":
+      return { ...model, closed: event.reason };
+  }
+}
+
+/** One-line rendering of in-flight composite progress for the panel. */
+export function describeStackedProgress(model: StackedActionProgress): string {
+  const current = model.started[model.started.length - 1] ?? null;
+  const tail = model.hook?.lastLine ?? current?.label ?? "Starting";
+  return `${model.action === null ? "Action" : stackedActionLabel(model.action)} — ${tail}`;
+}
+
+/**
+ * The settled line for the mutation status row. Success leads with the
+ * composite's own toast title; provenance markers (P1) name who wrote the
+ * text — `generated` means the host composed the message/body, `existing`
+ * an already-open PR's words.
+ */
+export function describeStackedResult(result: VcsActionResult): string {
+  const parts = [result.toast.title];
+  if (result.commit.messageSource === "generated") parts.push("generated commit message");
+  if (result.pr.status === "created" && result.pr.url !== undefined) parts.push(result.pr.url);
+  if (result.pr.status === "opened_existing" && result.pr.url !== undefined)
+    parts.push(`existing PR ${result.pr.url}`);
+  return parts.join(" — ");
 }
 
 /* ---------------- remotes + worktrees (P10-C rows 12, 13) ---------------- */
@@ -641,4 +970,201 @@ export function repositoryState(
     };
   }
   return { kind: "ready", capabilities };
+}
+
+// ---------------------------------------------------------------------------
+// t3.ui/theme consumption
+// ---------------------------------------------------------------------------
+
+/**
+ * The roles this panel consumes, each republished as a
+ * `--t3-version-control-*` custom property on the view root. Component
+ * styles chain `var(--t3-version-control-x, …)` onto their pre-contract
+ * fallbacks, so a host that cannot serve the contract (ungranted or
+ * provider-less) renders exactly what it rendered before adoption. Roles
+ * absent here stay theme-independent on purpose: `--info` and `--success`
+ * are host constants outside the contract's role set, and the `font-*`
+ * vars are not color tokens.
+ */
+export const VC_THEME_VARS = {
+  mutedForeground: "--t3-version-control-muted-foreground",
+  border: "--t3-version-control-border",
+  error: "--t3-version-control-error",
+  warning: "--t3-version-control-warning",
+  text: "--t3-version-control-text",
+  canvas: "--t3-version-control-canvas",
+  accentSurface: "--t3-version-control-accent-surface",
+  muted: "--t3-version-control-muted",
+} as const;
+
+/**
+ * `getTokens` output → root-level custom properties. Each override carries
+ * the contract's advertised var name with the resolved value as its
+ * fallback, so the panel tracks `--app-theme-*` paints live and still gets
+ * the right color on hosts that answer the contract without painting those
+ * variables. A role missing from `tokens` is skipped entirely rather than
+ * overridden with a lie.
+ */
+export function themeVarOverrides(
+  tokens: Readonly<Record<string, string>>,
+  cssVars: Readonly<Record<string, string>>,
+): Record<string, string> {
+  const overrides: Record<string, string> = {};
+  for (const [role, property] of Object.entries(VC_THEME_VARS)) {
+    const value = tokens[role];
+    if (value === undefined) continue;
+    const contractVar = cssVars[role];
+    overrides[property] = contractVar ? `var(${contractVar}, ${value})` : value;
+  }
+  return overrides;
+}
+
+/**
+ * The override map the panel publishes after a theme read. A resolved read
+ * repaints fresh `--t3-version-control-*` vars; every loss — a rejected
+ * `getTokens`, a closed or errored `subscribeState` stream — clears the map
+ * entirely so the panel returns to its legacy `var()` chain. Publishing the
+ * last resolved map after the contract stops serving it would paint a theme
+ * the host no longer vouches for (the no-stale-fallback rule).
+ */
+export function nextThemeVars(
+  read:
+    | {
+        readonly ok: true;
+        readonly tokens: Readonly<Record<string, string>>;
+        readonly cssVars: Readonly<Record<string, string>>;
+      }
+    | { readonly ok: false },
+): Record<string, string> | null {
+  return read.ok ? themeVarOverrides(read.tokens, read.cssVars) : null;
+}
+
+// ---------------------------------------------------------------------------
+// t3.ui/notifications consumption
+// ---------------------------------------------------------------------------
+
+/**
+ * The toast lifecycle for one mutation — the panel's mirror of native
+ * GitActionsControl receipts: `loading` opens on start and the same
+ * notification updates to `success` or `error` on settle. A success
+ * receipt dismisses after MUTATION_TOAST_DISMISS_MS of *seen* time,
+ * matching native's `dismissAfterVisibleMs` — the contract's `update`
+ * carries no duration, so the adapter schedules `dismiss` itself on a
+ * pause/resume clock that never runs while the receipt can't be read.
+ * Errors stay pinned until the user dismisses them, matching native
+ * failure toasts.
+ */
+export const MUTATION_TOAST_DISMISS_MS = 10_000;
+
+/**
+ * Whether an `update`/`dismiss` rejection is the notification having been
+ * dismissed rather than a delivery failure. Provider codes reach the plugin
+ * as the leading segment of the bridged error message (`"code: detail"`);
+ * `notification-expired` means the toast is already gone — overwhelmingly
+ * user dismissal of the loading toast — so the adapter stays live and the
+ * mutation's receipt returns to the inline row. Anything else is treated
+ * as delivery loss and latches the adapter dead.
+ */
+export function isNotificationDismissal(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("notification-expired");
+}
+
+/**
+ * What the receipt-dismiss clock reads: `seen()` reports whether the
+ * receipt can actually be read right now — the view is shown and the
+ * document is visible and focused, the native
+ * ThreadToastVisibleAutoDismiss predicate — and `onChange` fires on every
+ * transition so the accumulator can pause/resume.
+ */
+export interface ReceiptSeenSource {
+  readonly seen: () => boolean;
+  readonly onChange: (listener: () => void) => () => void;
+  readonly signal: AbortSignal;
+}
+
+/**
+ * `dismiss` after `windowMs` of *seen* time — a pause/resume accumulator
+ * mirroring native ThreadToastVisibleAutoDismiss (toast.tsx). Hidden spans
+ * pause the clock rather than expiring the receipt, so a success that
+ * settled while its thread was inactive — or while the document was
+ * backgrounded/unfocused — still gets its full readable window after the
+ * user returns. The abort signal ends the watch without firing.
+ */
+export function dismissReceiptAfterSeen(
+  source: ReceiptSeenSource,
+  windowMs: number,
+  dismiss: () => void,
+): void {
+  let remainingMs = windowMs;
+  let startedAtMs: number | null = null;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let done = false;
+  let off: () => void = () => {};
+
+  const clearTimer = () => {
+    if (timeoutId === null) return;
+    clearTimeout(timeoutId);
+    timeoutId = null;
+  };
+  const finish = () => {
+    if (done) return;
+    done = true;
+    clearTimer();
+    off();
+    source.signal.removeEventListener("abort", onAbort);
+    dismiss();
+  };
+  const pause = () => {
+    if (startedAtMs === null) return;
+    remainingMs = Math.max(0, remainingMs - (Date.now() - startedAtMs));
+    startedAtMs = null;
+    clearTimer();
+  };
+  const start = () => {
+    if (done || startedAtMs !== null) return;
+    if (remainingMs <= 0) {
+      finish();
+      return;
+    }
+    startedAtMs = Date.now();
+    timeoutId = setTimeout(() => {
+      startedAtMs = null;
+      remainingMs = 0;
+      finish();
+    }, remainingMs);
+  };
+  const sync = () => {
+    if (source.seen()) start();
+    else pause();
+  };
+  const onAbort = () => {
+    done = true;
+    pause();
+    off();
+  };
+  off = source.onChange(sync);
+  source.signal.addEventListener("abort", onAbort, { once: true });
+  sync();
+}
+
+export function mutationToastStart(label: string): {
+  readonly severity: "loading";
+  readonly title: string;
+} {
+  return { severity: "loading", title: `${label}…` };
+}
+
+/** The `update` patch for a settled mutation; failures split the named error into the body. */
+export function mutationToastSettle(
+  label: string,
+  result: { readonly ok: boolean; readonly detail: string },
+): {
+  readonly severity: "success" | "error";
+  readonly title: string;
+  readonly body?: string;
+} {
+  return result.ok
+    ? { severity: "success", title: result.detail }
+    : { severity: "error", title: `${label} failed`, body: result.detail };
 }

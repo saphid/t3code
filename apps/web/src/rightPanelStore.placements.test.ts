@@ -6,6 +6,8 @@ import { createJSONStorage } from "zustand/middleware";
 import { createMemoryStorage } from "./lib/storage";
 import {
   extensionPanelSurface,
+  type ExtensionPanelSurface,
+  type RightPanelSurface,
   migratePersistedRightPanelState,
   selectThreadExtensionDock,
   selectThreadRightPanelState,
@@ -285,10 +287,11 @@ describe("generic extension placements", () => {
 for (const placement of ["side-panel", "bottom-dock"] as const) {
   it(`rejects stale metadata and closed/reopened owners in ${placement}`, () => {
     const store = useRightPanelStore.getState();
-    const current = () =>
-      (placement === "bottom-dock" ? dock() : side()).surfaces.find(
-        (entry) => entry.kind === "extension",
-      );
+    const current = () => {
+      const surfaces: readonly RightPanelSurface[] = (placement === "bottom-dock" ? dock() : side())
+        .surfaces;
+      return surfaces.find((entry): entry is ExtensionPanelSurface => entry.kind === "extension");
+    };
     const old = record(placement);
     store.openExtension(a, old);
     const oldGeneration = current()!.viewerGeneration;

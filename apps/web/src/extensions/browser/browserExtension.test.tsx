@@ -171,15 +171,17 @@ vi.mock("~/browser/browserSurfaceStore", () => ({
   ) => select({ byTabId: {} }),
 }));
 
-vi.mock("~/previewMiniPlayerStore", () => {
+vi.mock("~/previewMiniPlayerStore", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/previewMiniPlayerStore")>();
   const usePreviewMiniPlayerStore = Object.assign(
     (select: (state: unknown) => unknown) =>
       select({
         byThreadKey: mocks.miniPlayerTabId
           ? {
               "environment-1:thread-1": {
-                tabId: mocks.miniPlayerTabId,
+                source: actual.browserMiniPlayerSource(mocks.miniPlayerTabId),
                 position: null,
+                width: null,
               },
             }
           : {},
@@ -191,12 +193,7 @@ vi.mock("~/previewMiniPlayerStore", () => {
       }),
     },
   );
-  return {
-    selectThreadPreviewMiniPlayer: (
-      byThreadKey: Record<string, { tabId: string; position: null }>,
-    ) => byThreadKey["environment-1:thread-1"] ?? null,
-    usePreviewMiniPlayerStore,
-  };
+  return { ...actual, usePreviewMiniPlayerStore };
 });
 
 vi.mock("~/rightPanelStore", () => ({
@@ -417,7 +414,10 @@ describe.each([false, true])("Browser composition registered=%s", (registered) =
     const view = await mount(registered);
     try {
       await act(async () => mocks.togglePictureInPicture!());
-      expect(mocks.openMiniPlayer).toHaveBeenCalledWith(TEST_THREAD_REF, "tab-1");
+      expect(mocks.openMiniPlayer).toHaveBeenCalledWith(TEST_THREAD_REF, {
+        kind: "browser",
+        tabId: "tab-1",
+      });
       expect(mocks.closeRightPanel).toHaveBeenCalledWith(TEST_THREAD_REF);
       mocks.miniPlayerTabId = "tab-1";
       await view.update({ threadRef: TEST_THREAD_REF, tabId: "tab-1", visible: true });

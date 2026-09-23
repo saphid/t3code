@@ -53,6 +53,7 @@ import {
   PullRequestProviderRegistry,
   fromProviders,
 } from "../pullRequest/PullRequestProviderRegistry.ts";
+import { SourceControlRepositoryService } from "../sourceControl/SourceControlRepositoryService.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 
@@ -137,6 +138,7 @@ function fixture() {
   let options: Parameters<typeof createExtensionRuntime>[0] | undefined;
   const calls: Array<{ cwd: string; relativePath: string }> = [];
   const forwardedRoots: unknown[] = [];
+  const forwardedApiRequests: unknown[] = [];
   let afterRead = () => {};
   let afterInvoke = () => {};
   let afterClient = () => {};
@@ -152,11 +154,13 @@ function fixture() {
     discoverApis: async () => [],
     invokeApi: async (_id, _hash, _input, _signal, root) => {
       forwardedRoots.push(root);
+      forwardedApiRequests.push(_input);
       afterInvoke();
       return { ok: true };
     },
     subscribeApi: (_id, _hash, _request, signal, root) => {
       forwardedRoots.push(root);
+      forwardedApiRequests.push(_request);
       streamSignal = signal;
       return {
         async *[Symbol.asyncIterator]() {
@@ -248,14 +252,10 @@ function fixture() {
     Layer.succeed(ProjectionProjectRepository, {
       getById: () => Effect.succeed(Option.some(project)),
       upsert: () => Effect.void,
-      listAll: () => Effect.succeed([project]),
-      deleteById: () => Effect.void,
     }),
     Layer.succeed(ProjectionThreadRepository, {
       getById: () => Effect.succeed(Option.some(thread)),
       upsert: () => Effect.void,
-      listByProjectId: () => Effect.succeed([thread]),
-      deleteById: () => Effect.void,
     }),
     Layer.succeed(WorkspaceEntries, {
       list: () => Effect.succeed({ entries: [], truncated: false }),
@@ -299,6 +299,7 @@ function fixture() {
     Layer.mock(PreviewAutomationBroker)({}),
     Layer.mock(BrowserFrameLeases)({}),
     Layer.mock(PullRequestService)({}),
+    Layer.mock(SourceControlRepositoryService)({}),
     Layer.succeed(PullRequestProviderRegistry, fromProviders([])),
     Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
       getProjectShellById: () => Effect.succeed(Option.none()),
@@ -313,6 +314,7 @@ function fixture() {
     runtime,
     calls,
     forwardedRoots,
+    forwardedApiRequests,
     getOptions: () => {
       if (!options) throw new Error("Runtime not constructed");
       return options;
@@ -387,6 +389,44 @@ it.effect("forwards the verified root authority to unary and stream runtime call
       expect(f.forwardedRoots).toHaveLength(2);
       expect(f.forwardedRoots[0]).toBe(root);
       expect(f.forwardedRoots[1]).toBe(root);
+    }).pipe(Effect.provide(f.services)),
+  );
+});
+
+it.effect("forwards the clientConnectionId self-hint on unary and stream calls", () => {
+  const f = fixture();
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const service = yield* make(f.factory);
+      yield* service.invokeApi({
+        installationId: "fixture.reader",
+        expectedContentHash: hash,
+        request: {
+          id: "fixture.reader/events",
+          versionRange: "^1.0.0",
+          method: "read",
+          input: {},
+          context: invoke.context,
+          clientConnectionId: "conn-hint",
+        },
+      });
+      yield* service
+        .subscribeApi({
+          installationId: "fixture.reader",
+          expectedContentHash: hash,
+          request: {
+            id: "fixture.reader/events",
+            versionRange: "^1.0.0",
+            name: "changes",
+            input: {},
+            context: invoke.context,
+            clientConnectionId: "conn-hint",
+          },
+        })
+        .pipe(Stream.runDrain);
+      expect(f.forwardedApiRequests).toHaveLength(2);
+      expect(f.forwardedApiRequests[0]).toMatchObject({ clientConnectionId: "conn-hint" });
+      expect(f.forwardedApiRequests[1]).toMatchObject({ clientConnectionId: "conn-hint" });
     }).pipe(Effect.provide(f.services)),
   );
 });

@@ -50,11 +50,15 @@ import { makeTextEditsApiProvider } from "./textEditsApi.ts";
 import { makeWorkspaceResourcesApiProvider } from "./workspaceResourcesApi.ts";
 import { makeResourcesLeaseApiProvider } from "./resourcesLeaseApi.ts";
 import { makeVcsApiProviders } from "./vcsApi.ts";
+import { makeVcsActionsApiProvider } from "./vcsActionsApi.ts";
 import { makeVcsDiffApiProvider } from "./vcsDiffApi.ts";
 import { makeComposerApiProviders } from "./composerApi.ts";
 import { makePrsApiProvider } from "./prs/v1.ts";
 import { makeProvidersStatusApiProvider } from "./providersStatusApi.ts";
+import { makePrsWriteApiProvider } from "./prs/write.ts";
 import { boundedWorkspaceText } from "./workspaceText.ts";
+import { make as makeClientApiProviders } from "./ClientApiProviders.ts";
+import { createUiClientApiProviders } from "./uiClientApis.ts";
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.Json);
 
@@ -96,7 +100,13 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   const workspaceResourcesApi = yield* makeWorkspaceResourcesApiProvider();
   const vcsApis = yield* makeVcsApiProviders();
   const vcsDiffApi = yield* makeVcsDiffApiProvider();
-  const composerApis = yield* makeComposerApiProviders();
+  // Built inside this service so the client-provider registry is shared by
+  // the WS handlers (via this service's `clientApiProviders` field) and the
+  // `t3.ui/*` adapters without adding a new layer dependency anywhere.
+  const clientApiProviders = yield* makeClientApiProviders.pipe(
+    Effect.provideService(ServerEnvironment.ServerEnvironment, environment),
+  );
+  const composerApis = yield* makeComposerApiProviders({ environmentId, clientApiProviders });
   const orchestrationApis = yield* makeOrchestrationApiProviders();
   const prsApi = yield* makePrsApiProvider();
   const providersStatusApi = yield* makeProvidersStatusApiProvider();
@@ -125,6 +135,22 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
       return entry !== undefined && (await authorize(entry, grant, context));
     },
   );
+  const uiApis = createUiClientApiProviders({
+    environmentId,
+    clientApiProviders,
+    authorizeGrant: async (installationId, grant, context) => {
+      const entry = extensionRuntime?.list().find((item) => item.id === installationId);
+      return entry !== undefined && (await authorize(entry, grant, context));
+    },
+  });
+  // Same late-bound caller-chain grant check as the lease provider —
+  // publishRepository and the composite's pr phase ask for `t3.prs/write`
+  // dynamically, which `requiredGrants` cannot express.
+  const vcsActionsApi = yield* makeVcsActionsApiProvider(async (callerId, grant, context) => {
+    const entry = extensionRuntime?.list().find((item) => item.id === callerId);
+    return entry !== undefined && (await authorize(entry, grant, context));
+  });
+  const prsWriteApi = yield* makePrsWriteApiProvider();
   const read = Effect.fn("EnvironmentExtensions.readWorkspace")(function* (
     input: unknown,
     context: ViewContext,
@@ -175,12 +201,15 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
             terminalOutputEventsApi,
             terminalControlApi,
             ...vcsApis,
+            vcsActionsApi,
             vcsDiffApi,
             ...orchestrationApis,
             prsApi,
             providersStatusApi,
+            prsWriteApi,
             resourcesLeaseApi,
             ...composerApis,
+            ...uiApis,
           ],
           onCatalogueChanged: () => Effect.runSync(catalogueChanges.publish),
           auditApi: (event) => {
@@ -226,6 +255,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
         operationError("initialize", new Error("Extension runtime unavailable.")),
     );
     return {
+      clientApiProviders,
       catalogue: unavailable,
       list: unavailable,
       invokeApi: (_input: ExtensionApiInvokeInput) => unavailable,
@@ -253,6 +283,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
       throw new Error("Extension client is unavailable or its installed content changed.");
   };
   return {
+    clientApiProviders,
     catalogue: Effect.sync(() => runtime.catalogue()),
     subscribeApi: (input: ExtensionApiSubscribeInput, root?: HostApiRootAuthority) =>
       Stream.unwrap(
@@ -275,6 +306,9 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
                 ? {}
                 : { expectedGeneration: input.request.expectedGeneration }),
               ...(input.request.cursor === undefined ? {} : { cursor: input.request.cursor }),
+              ...(input.request.clientConnectionId === undefined
+                ? {}
+                : { clientConnectionId: input.request.clientConnectionId }),
             },
             controller.signal,
             root,
@@ -304,6 +338,9 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
               : {}),
             ...(input.request.requestId !== undefined
               ? { requestId: input.request.requestId }
+              : {}),
+            ...(input.request.clientConnectionId !== undefined
+              ? { clientConnectionId: input.request.clientConnectionId }
               : {}),
           },
           signal,

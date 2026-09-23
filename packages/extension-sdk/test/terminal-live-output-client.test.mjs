@@ -61,6 +61,8 @@ const snapshot = (terminalId, contents) => ({
     contents,
     retainedByteLength: contents.length,
     truncated: false,
+    clearGeneration: 0,
+    contentsUnitStart: 0,
   },
 });
 NodeTest.test(

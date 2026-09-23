@@ -61,6 +61,8 @@ export function ExtensionSurface(props: {
       hidden: concealed,
       inert: hidden,
       "aria-hidden": hidden || undefined,
+      "data-extension-view": `${host.hostKey}:${viewId}`,
+      "data-extension-surface": snapshot?.record.surfaceId,
     },
     Renderer && snapshot
       ? createElement(

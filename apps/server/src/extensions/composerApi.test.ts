@@ -1,5 +1,6 @@
 import {
   AuthOrchestrationReadScope,
+  ClientProvidersError,
   ExtensionOperationError,
   ProjectId,
   ThreadId,
@@ -33,29 +34,51 @@ const makeContext = (threadId: string | null = "thread"): ViewContext => ({
   workspaceRevision: extensionWorkspaceRevision(WORKSPACE, null),
 });
 
-const providers = createComposerApiProviders({
-  environmentId: "env",
-  projects: {
-    getById: () =>
-      Effect.succeedSome({
-        projectId: ProjectId.make("project"),
-        workspaceRoot: WORKSPACE,
-        deletedAt: null,
-      }),
-  },
-  threads: {
-    getById: (input) =>
-      Effect.succeed(
-        input.threadId === ThreadId.make("thread")
-          ? Option.some({
-              projectId: ProjectId.make("project"),
-              worktreePath: null,
-              deletedAt: null,
-            })
-          : Option.none(),
-      ),
-  },
+const noClient = new ClientProvidersError({
+  code: "client-provider-unavailable",
+  detail: "No connected client hosts this provider; the draft store is client-local.",
 });
+const providers = createComposerApiProviders(
+  {
+    environmentId: "env",
+    projects: {
+      getById: () =>
+        Effect.succeedSome({
+          projectId: ProjectId.make("project"),
+          workspaceRoot: WORKSPACE,
+          deletedAt: null,
+        }),
+    },
+    threads: {
+      getById: (input) =>
+        Effect.succeed(
+          input.threadId === ThreadId.make("thread")
+            ? Option.some({
+                projectId: ProjectId.make("project"),
+                worktreePath: null,
+                deletedAt: null,
+              })
+            : Option.none(),
+        ),
+    },
+  },
+  {
+    environmentId: "env",
+    clientApiProviders: {
+      connect: () => Effect.die("unused"),
+      respond: () => Effect.die("unused"),
+      emit: () => Effect.die("unused"),
+      invoke: () => Effect.fail(noClient),
+      openSubscription: () => Effect.fail(noClient),
+      registerCorrelation: () => Effect.die("unused"),
+      unregisterCorrelation: () => Effect.die("unused"),
+      listTargets: () => Effect.succeed([]),
+      resolveTarget: () => Effect.fail(noClient),
+      hasProvider: () => Effect.succeed(false),
+      connectionForSession: () => Effect.succeed(false),
+    },
+  },
+);
 const composer = providers.find((p) => p.providerId === "host.composer")!;
 const messages = providers.find((p) => p.providerId === "host.messages")!;
 

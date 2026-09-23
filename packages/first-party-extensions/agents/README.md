@@ -44,6 +44,20 @@ terminal.
   rather than writing into someone's foreground process. The write is the
   native `command + "\r"` with the native script env (`T3CODE_PROJECT_ROOT`,
   `T3CODE_WORKTREE_PATH`). Output appears in the terminal surface.
+- `t3.ui/theme@^1.0.0` — under the `t3.ui/theme.read` grant: `getTokens`
+  resolves the host's effective theme (stored preference, session overlay,
+  or external preview — the provider folds them) and `subscribeState`
+  re-reads on every transition. Resolved values land on the view root as
+  `--t3-agents-*` variables ahead of each style's legacy `var()` chain, so an
+  installation without the grant — or a host that never connects a theme
+  provider — renders the pre-contract appearance unchanged. The overrides are
+  cleared, never retained, when a read fails or the state stream is lost:
+  the contract can no longer vouch for the painted theme, so the legacy chain
+  takes back over. The panel keeps
+  inline `<output>` receipts instead of `t3.ui/notifications` toasts (the
+  native Agents surface is read-only and never toasts), and registers no
+  `t3.ui/keybindings` commands (the surface has no shortcuts natively; the
+  host-owned `thread.settle` command already covers the thread level).
 
 The roster renders the native model exactly: workflow coordinators group
 their members into phases and never double-count work or tokens; statuses

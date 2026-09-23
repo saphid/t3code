@@ -7,10 +7,27 @@ import * as NodeModule from "node:module";
 import * as NodeChildProcess from "node:child_process";
 import { build } from "esbuild";
 import { validateEnvironmentPackage, validateServerExtension } from "../dist/environment.js";
+import { rewriteEmittedLabels } from "./emit-labels.mjs";
 const sdk = NodePath.resolve(NodeURL.fileURLToPath(new URL("..", import.meta.url)));
 const require = NodeModule.createRequire(import.meta.url);
 const [command, target = "."] = process.argv.slice(2);
 const sha = (bytes) => NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+// Emitted bundles carry the resolved-path labels esbuild stamps into
+// comments and generated wrapper keys; emit-labels.mjs rewrites just those
+// positions to canonical node_modules/<name>/… spellings so build output
+// is identical across checkout locations and working directories. The
+// emitted JavaScript is the authoritative compile — it is parsed, never
+// re-bundled.
+const buildCanonical = async (dir, options) => {
+  const result = await build({
+    ...options,
+    absWorkingDir: dir,
+    stdin: options.stdin ? { ...options.stdin, resolveDir: dir } : undefined,
+    write: false,
+    metafile: true,
+  });
+  return rewriteEmittedLabels(result.outputFiles[0].text, Object.keys(result.metafile.inputs), dir);
+};
 async function check(dir) {
   const pkg = validateEnvironmentPackage(
     JSON.parse(await NodeFSP.readFile(NodePath.join(dir, "t3-extension.json"), "utf8")),
@@ -82,7 +99,9 @@ async function main() {
     throw new Error(
       "Usage: t3-extension create <new-directory> | build <source-directory> | check <built-directory>",
     );
-  const dir = NodePath.resolve(target);
+  // Realpath so labels esbuild derives from absWorkingDir never mix
+  // symlinked and physical spellings of the same directory.
+  const dir = await NodeFSP.realpath(NodePath.resolve(target));
   const out = NodePath.join(dir, ".t3-extension");
   const temp = await NodeFSP.mkdtemp(NodePath.join(dir, ".t3-extension-build-"));
   const backup = temp + "-previous";
@@ -157,10 +176,10 @@ async function main() {
     if (typecheck.status !== 0)
       throw new Error("Declared entry typecheck failed (exit " + typecheck.status + ")");
     await NodeFSP.rm(config);
-    const bundle = async (contents, outfile, platform) =>
-      build({
+    const bundle = async (contents, platform) =>
+      buildCanonical(dir, {
+        tsconfig: NodePath.join(dir, "tsconfig.json"),
         stdin: { contents, resolveDir: dir, sourcefile: "generated-entry.ts", loader: "ts" },
-        outfile: NodePath.join(temp, outfile),
         bundle: true,
         platform,
         format: "esm",
@@ -169,7 +188,8 @@ async function main() {
       });
     if (pkg.clientEntry) {
       // Evaluate dependency modules inside each factory so imported hooks share the host identity.
-      const client = await build({
+      const client = await buildCanonical(dir, {
+        tsconfig: NodePath.join(dir, "tsconfig.json"),
         stdin: {
           contents: 'import extension from "./extension.ts"; export default extension.client;',
           resolveDir: dir,
@@ -177,7 +197,6 @@ async function main() {
           loader: "ts",
         },
         bundle: true,
-        write: false,
         platform: "browser",
         format: "iife",
         globalName: "__t3Client",
@@ -203,8 +222,27 @@ async function main() {
                   path === "react"
                     ? "module.exports = __t3Host.React;"
                     : "const R = __t3Host.React; exports.Fragment = R.Fragment; " +
-                      "exports.jsx = exports.jsxs = exports.jsxDEV = (type, props, key) => " +
-                      "R.createElement(type, key === undefined ? props : { ...props, key });",
+                      // Dev React warns for array children whose
+                      // _store.validated is falsy, but createElement only
+                      // marks its vararg children — the automatic runtime
+                      // passes children inside props, so nothing was marked
+                      // and every static sibling group warned. Mirror the
+                      // real runtimes: jsxs and isStaticChildren jsxDEV
+                      // mark each child element; jsx marks only the
+                      // children node itself, so unkeyed dynamic lists
+                      // still warn.
+                      "const mark = (n) => { " +
+                      "if (n && typeof n === 'object' && n._store) n._store.validated = 1; }; " +
+                      "const el = (type, props, key, isStatic) => { " +
+                      "const c = props == null ? undefined : props.children; " +
+                      "if (Array.isArray(c)) { " +
+                      "if (isStatic) { for (const x of c) mark(x); Object.freeze(c); } " +
+                      "} else mark(c); " +
+                      "return R.createElement(type, key === undefined ? props : { ...props, key }); " +
+                      "}; " +
+                      "exports.jsx = (t, p, k) => el(t, p, k, false); " +
+                      "exports.jsxs = (t, p, k) => el(t, p, k, true); " +
+                      "exports.jsxDEV = (t, p, k, s) => el(t, p, k, s === true);",
               }));
             },
           },
@@ -213,7 +251,7 @@ async function main() {
       await NodeFSP.writeFile(
         NodePath.join(temp, pkg.clientEntry),
         "export default function (__t3Host) {\n" +
-          client.outputFiles[0].text +
+          client +
           "\nreturn __t3Client.default(__t3Host);\n}\n",
       );
     }
@@ -224,12 +262,14 @@ async function main() {
         authored.serverEntry.split(/[\\/]/).includes("..")
       )
         throw new Error("serverEntry must stay inside the source directory");
-      await bundle(
-        "import server from " +
-          JSON.stringify("./" + authored.serverEntry) +
-          "; export default { tools: [], ...server };",
-        pkg.serverEntry,
-        "node",
+      await NodeFSP.writeFile(
+        NodePath.join(temp, pkg.serverEntry),
+        await bundle(
+          "import server from " +
+            JSON.stringify("./" + authored.serverEntry) +
+            "; export default { tools: [], ...server };",
+          "node",
+        ),
       );
     }
     await NodeFSP.rm(NodePath.join(temp, "definition.mjs"));

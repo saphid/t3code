@@ -5,11 +5,15 @@ import {
   CONNECTING_STATUS,
   EMPTY_LANES,
   IDLE_MUTATION,
+  IDLE_STACKED_PROGRESS,
+  applyStackedEvent,
   applyStatusEvent,
   branchLabel,
   describeEntry,
   describeMutation,
   describeRef,
+  describeStackedProgress,
+  describeStackedResult,
   describeStatus,
   entryMutation,
   laneCount,
@@ -29,9 +33,22 @@ import {
   repositoryState,
   retainSelection,
   settleMutation,
+  stackedActionCommits,
+  stackedActionInput,
+  stackedActionLabel,
+  stackedActionNeedsConfirm,
+  stackedActionOffers,
+  stackedActionSuggestion,
   startMutation,
   syncLabel,
   canWorktreeRef,
+  dismissReceiptAfterSeen,
+  isNotificationDismissal,
+  mutationToastSettle,
+  mutationToastStart,
+  nextThemeVars,
+  releaseMutationReceipt,
+  themeVarOverrides,
   workingTreeLabel,
   worktreeRows,
 } from "./viewModel.ts";
@@ -411,33 +428,93 @@ NodeTest.describe("vcs view model — commit plan", () => {
 
 NodeTest.describe("vcs view model — mutation phase machine", () => {
   NodeTest.it("idle -> running -> succeeded/failed; running refuses a second op", () => {
-    const running = startMutation(IDLE_MUTATION, "stage", "Staging 2 paths");
-    NodeAssert.deepEqual(running, { kind: "running", op: "stage", label: "Staging 2 paths" });
-    NodeAssert.equal(startMutation(running, "commit", "Committing"), null);
-    const ok = settleMutation("stage", { ok: true, detail: "Staged 2 paths" });
-    NodeAssert.deepEqual(ok, { kind: "succeeded", op: "stage", detail: "Staged 2 paths" });
-    const failed = settleMutation("stage", { ok: false, detail: "Staging failed: denied" });
+    const running = startMutation(IDLE_MUTATION, "stage", "Staging 2 paths", "inline");
+    NodeAssert.deepEqual(running, {
+      kind: "running",
+      op: "stage",
+      label: "Staging 2 paths",
+      receipt: "inline",
+    });
+    NodeAssert.equal(startMutation(running, "commit", "Committing", "inline"), null);
+    const ok = settleMutation(running, "stage", { ok: true, detail: "Staged 2 paths" });
+    NodeAssert.deepEqual(ok, {
+      kind: "succeeded",
+      op: "stage",
+      detail: "Staged 2 paths",
+      receipt: "inline",
+    });
+    const failed = settleMutation(running, "stage", {
+      ok: false,
+      detail: "Staging failed: denied",
+    });
     NodeAssert.deepEqual(failed, {
       kind: "failed",
       op: "stage",
       detail: "Staging failed: denied",
+      receipt: "inline",
     });
-    NodeAssert.notEqual(startMutation(ok, "unstage", "Unstaging"), null);
-    NodeAssert.notEqual(startMutation(failed, "unstage", "Unstaging"), null);
+    NodeAssert.notEqual(startMutation(ok, "unstage", "Unstaging", "inline"), null);
+    NodeAssert.notEqual(startMutation(failed, "unstage", "Unstaging", "inline"), null);
+  });
+
+  NodeTest.it("keeps the receipt channel across settle, on either channel", () => {
+    // A mutation that began before the capability probe resolved records
+    // "inline" and keeps the row after settling — a probe landing
+    // mid-mutation must not hide a receipt that never had a toast.
+    const inline = startMutation(IDLE_MUTATION, "push", "Pushing", "inline");
+    NodeAssert.equal(
+      settleMutation(inline, "push", { ok: true, detail: "Pushed main" }).receipt,
+      "inline",
+    );
+    const toasted = startMutation(IDLE_MUTATION, "push", "Pushing", "notification");
+    NodeAssert.equal(
+      settleMutation(toasted, "push", { ok: true, detail: "Pushed main" }).receipt,
+      "notification",
+    );
+    NodeAssert.equal(
+      settleMutation(toasted, "push", { ok: false, detail: "rejected" }).receipt,
+      "notification",
+    );
+  });
+
+  NodeTest.it("releaseMutationReceipt returns a lost toast receipt to the row", () => {
+    const running = startMutation(IDLE_MUTATION, "push", "Pushing", "notification");
+    NodeAssert.equal(releaseMutationReceipt("push")(running).receipt, "inline");
+    // The mapper is op-scoped: a different or already-inline phase is
+    // untouched, and idle stays idle.
+    NodeAssert.equal(releaseMutationReceipt("pull")(running), running);
+    NodeAssert.equal(releaseMutationReceipt("push")(IDLE_MUTATION), IDLE_MUTATION);
+    const inline = startMutation(IDLE_MUTATION, "push", "Pushing", "inline");
+    NodeAssert.equal(releaseMutationReceipt("push")(inline), inline);
   });
 
   NodeTest.it("describes every phase for the status line", () => {
     NodeAssert.equal(describeMutation(IDLE_MUTATION), null);
     NodeAssert.equal(
-      describeMutation({ kind: "running", op: "commit", label: "Committing" }),
+      describeMutation({
+        kind: "running",
+        op: "commit",
+        label: "Committing",
+        receipt: "inline",
+      }),
       "Committing…",
     );
     NodeAssert.equal(
-      describeMutation({ kind: "succeeded", op: "commit", detail: "Committed abc on main" }),
+      describeMutation({
+        kind: "succeeded",
+        op: "commit",
+        detail: "Committed abc on main",
+        receipt: "inline",
+      }),
       "Committed abc on main",
     );
     NodeAssert.equal(
-      describeMutation({ kind: "failed", op: "stage", detail: "Stage failed: denied" }),
+      describeMutation({
+        kind: "failed",
+        op: "stage",
+        detail: "Stage failed: denied",
+        receipt: "inline",
+      }),
       "Stage failed: denied",
     );
   });
@@ -716,5 +793,581 @@ NodeTest.describe("vcs view model — remotes and worktrees", () => {
       baseRefName: null,
       disabled: null,
     });
+  });
+});
+
+NodeTest.describe("vcs view model — stacked actions", () => {
+  const lanes = (overrides = {}) => ({
+    conflicted: [],
+    staged: [],
+    changes: [change("a.ts", { unstaged: true })],
+    untracked: [],
+    ...overrides,
+  });
+  const offerOf = (offers, action) => offers.find((o) => o.action === action);
+
+  NodeTest.it("labels every stacked action kind", () => {
+    NodeAssert.equal(stackedActionLabel("commit"), "Commit");
+    NodeAssert.equal(stackedActionLabel("commit_push"), "Commit & push");
+    NodeAssert.equal(stackedActionLabel("commit_push_pr"), "Commit, push & create PR");
+    NodeAssert.equal(stackedActionLabel("push"), "Push");
+    NodeAssert.equal(stackedActionLabel("create_pr"), "Push & create PR");
+  });
+
+  NodeTest.it("offers the full composite set for a dirty pushable branch", () => {
+    const offers = stackedActionOffers(
+      local({ hasWorkingTreeChanges: true }),
+      remote(),
+      lanes(),
+      false,
+    );
+    NodeAssert.deepEqual(
+      offers.map((o) => o.action),
+      ["commit", "commit_push", "commit_push_pr", "push", "create_pr"],
+    );
+    // commit phases can run; standalone push/create_pr can't (dirty tree, nothing ahead).
+    NodeAssert.equal(offerOf(offers, "commit").disabled, null);
+    NodeAssert.equal(offerOf(offers, "commit_push").disabled, null);
+    NodeAssert.equal(offerOf(offers, "commit_push_pr").disabled, null);
+    NodeAssert.match(offerOf(offers, "push").disabled ?? "", /Commit local changes/);
+    NodeAssert.match(offerOf(offers, "create_pr").disabled ?? "", /Commit local changes/);
+  });
+
+  NodeTest.it("blocks every commit-including action on conflicts", () => {
+    const conflicted = lanes({ conflicted: [change("x.ts", { conflicted: true })] });
+    const offers = stackedActionOffers(local(), remote(), conflicted, false);
+    for (const action of ["commit", "commit_push", "commit_push_pr"]) {
+      NodeAssert.match(offerOf(offers, action).disabled ?? "", /conflicts/);
+    }
+    // Standalone push keeps its own reason, not the conflict one.
+    NodeAssert.match(offerOf(offers, "push").disabled ?? "", /Commit local changes/);
+  });
+
+  NodeTest.it("blocks clean-tree commit offers but allows push when ahead", () => {
+    const offers = stackedActionOffers(
+      local({ hasWorkingTreeChanges: false }),
+      remote({ aheadCount: 2 }),
+      EMPTY_LANES,
+      false,
+    );
+    NodeAssert.match(offerOf(offers, "commit").disabled ?? "", /No changes/);
+    NodeAssert.match(offerOf(offers, "commit_push").disabled ?? "", /No changes/);
+    NodeAssert.equal(offerOf(offers, "push").disabled, null);
+    NodeAssert.equal(offerOf(offers, "create_pr").disabled, null);
+  });
+
+  NodeTest.it("blocks PR-including actions when a PR is already open", () => {
+    const openPr = remote({ aheadCount: 1, pr: { state: "open", number: 7 } });
+    const offers = stackedActionOffers(local(), openPr, lanes(), false);
+    NodeAssert.match(offerOf(offers, "commit_push_pr").disabled ?? "", /already open/);
+    NodeAssert.match(offerOf(offers, "create_pr").disabled ?? "", /already open/);
+    NodeAssert.equal(offerOf(offers, "commit_push").disabled, null);
+  });
+
+  NodeTest.it("offers create_pr on an already-pushed branch with a default delta", () => {
+    // Clean feature branch, upstream current (ahead 0), commits over the
+    // default ref — native's canCreatePr needs push feasibility, not
+    // outstanding commits: GitManager skips the push phase when the
+    // upstream is already current.
+    const offers = stackedActionOffers(
+      local({ hasWorkingTreeChanges: false }),
+      remote({ aheadCount: 0, aheadOfDefaultCount: 2 }),
+      EMPTY_LANES,
+      false,
+    );
+    NodeAssert.equal(offerOf(offers, "create_pr").disabled, null);
+    NodeAssert.equal(
+      stackedActionSuggestion(
+        local({ hasWorkingTreeChanges: false }),
+        remote({ aheadCount: 0, aheadOfDefaultCount: 2 }),
+      ),
+      "create_pr",
+    );
+    // Its own rules still stand: dirty tree, open PR, no delta.
+    NodeAssert.match(
+      offerOf(
+        stackedActionOffers(
+          local({ hasWorkingTreeChanges: true }),
+          remote({ aheadCount: 0, aheadOfDefaultCount: 2 }),
+          lanes(),
+          false,
+        ),
+        "create_pr",
+      ).disabled ?? "",
+      /Commit local changes/,
+    );
+    NodeAssert.match(
+      offerOf(
+        stackedActionOffers(
+          local({ hasWorkingTreeChanges: false }),
+          remote({ aheadCount: 0, aheadOfDefaultCount: 2, pr: { state: "open", number: 9 } }),
+          EMPTY_LANES,
+          false,
+        ),
+        "create_pr",
+      ).disabled ?? "",
+      /already open/,
+    );
+    NodeAssert.match(
+      offerOf(
+        stackedActionOffers(
+          local({ hasWorkingTreeChanges: false }),
+          remote({ aheadCount: 0, aheadOfDefaultCount: 0 }),
+          EMPTY_LANES,
+          false,
+        ),
+        "create_pr",
+      ).disabled ?? "",
+      /default branch/,
+    );
+  });
+
+  NodeTest.it("requires the default-branch confirmation for every action but commit", () => {
+    const onDefault = local({ isDefaultRef: true, refName: "main" });
+    NodeAssert.equal(stackedActionNeedsConfirm("commit", onDefault, false), false);
+    for (const action of ["push", "create_pr", "commit_push", "commit_push_pr"]) {
+      NodeAssert.equal(stackedActionNeedsConfirm(action, onDefault, false), true);
+    }
+    // A checked feature-branch choice IS the native alternative — no prompt.
+    NodeAssert.equal(stackedActionNeedsConfirm("commit_push_pr", onDefault, true), false);
+    // Off the default ref nothing needs the prompt.
+    NodeAssert.equal(stackedActionNeedsConfirm("commit_push_pr", local(), false), false);
+    NodeAssert.equal(stackedActionNeedsConfirm("push", null, false), false);
+  });
+
+  NodeTest.it(
+    "lets a stale featureBranch flag skip the prompt only where a commit phase exists",
+    () => {
+      const onDefault = local({ isDefaultRef: true, refName: "main" });
+      // Commit-capable actions accept the flag as the feature-ref answer.
+      for (const action of ["commit_push", "commit_push_pr"]) {
+        NodeAssert.equal(stackedActionNeedsConfirm(action, onDefault, true), false);
+      }
+      // push/create_pr cannot carry a feature branch — a checked flag
+      // answers nothing and the prompt still stands.
+      for (const action of ["push", "create_pr"]) {
+        NodeAssert.equal(stackedActionNeedsConfirm(action, onDefault, true), true);
+      }
+    },
+  );
+
+  NodeTest.it("never sends featureBranch or scoped paths on push/PR-only actions", () => {
+    for (const action of ["push", "create_pr"]) {
+      NodeAssert.equal(stackedActionCommits(action), false);
+      NodeAssert.deepEqual(
+        stackedActionInput({
+          action,
+          commitMessage: "msg",
+          featureBranch: true,
+          stagedPaths: ["a.ts"],
+        }),
+        { action, commitMessage: "msg" },
+      );
+    }
+  });
+
+  NodeTest.it("keeps featureBranch and scoped paths on commit-capable actions", () => {
+    for (const action of ["commit", "commit_push", "commit_push_pr"]) {
+      NodeAssert.equal(stackedActionCommits(action), true);
+      NodeAssert.deepEqual(
+        stackedActionInput({
+          action,
+          commitMessage: "msg",
+          featureBranch: true,
+          stagedPaths: ["a.ts"],
+        }),
+        { action, commitMessage: "msg", featureBranch: true, paths: ["a.ts"] },
+      );
+    }
+    // Blank message is omitted — native leave-blank auto-generate.
+    NodeAssert.deepEqual(
+      stackedActionInput({
+        action: "commit_push",
+        commitMessage: "",
+        featureBranch: false,
+        stagedPaths: [],
+      }),
+      { action: "commit_push" },
+    );
+  });
+
+  NodeTest.it("lets a feature branch run with a clean tree and no branch delta", () => {
+    const offers = stackedActionOffers(
+      local({ hasWorkingTreeChanges: false, isDefaultRef: true }),
+      remote(),
+      EMPTY_LANES,
+      true,
+    );
+    NodeAssert.equal(offerOf(offers, "commit").disabled, null);
+    NodeAssert.equal(offerOf(offers, "commit_push_pr").disabled, null);
+  });
+
+  NodeTest.it("reports pending status when local is unknown", () => {
+    const offers = stackedActionOffers(null, null, EMPTY_LANES, false);
+    NodeAssert.ok(offers.every((o) => o.disabled === "Repository status pending"));
+  });
+
+  NodeTest.it("suggests the native quick action per status", () => {
+    // Dirty on a pushable non-default branch: the full composite.
+    NodeAssert.equal(stackedActionSuggestion(local(), remote()), "commit_push_pr");
+    // Dirty with an open PR or on the default ref: commit & push only.
+    NodeAssert.equal(
+      stackedActionSuggestion(local(), remote({ pr: { state: "open", number: 1 } })),
+      "commit_push",
+    );
+    NodeAssert.equal(
+      stackedActionSuggestion(local({ isDefaultRef: true }), remote()),
+      "commit_push",
+    );
+    // Dirty without a push path: commit only.
+    NodeAssert.equal(
+      stackedActionSuggestion(local({ hasPrimaryRemote: false }), remote({ hasUpstream: false })),
+      "commit",
+    );
+    // Clean + ahead + no open PR: create_pr; open PR: plain push.
+    NodeAssert.equal(
+      stackedActionSuggestion(local({ hasWorkingTreeChanges: false }), remote({ aheadCount: 1 })),
+      "create_pr",
+    );
+    NodeAssert.equal(
+      stackedActionSuggestion(
+        local({ hasWorkingTreeChanges: false }),
+        remote({ aheadCount: 1, pr: { state: "open", number: 2 } }),
+      ),
+      "push",
+    );
+    // Behind/diverged: nothing honest to suggest.
+    NodeAssert.equal(
+      stackedActionSuggestion(
+        local({ hasWorkingTreeChanges: false }),
+        remote({ aheadCount: 1, behindCount: 1 }),
+      ),
+      null,
+    );
+    NodeAssert.equal(
+      stackedActionSuggestion(local({ hasWorkingTreeChanges: false }), remote()),
+      null,
+    );
+  });
+
+  NodeTest.it("reduces actionProgress events into the live model", () => {
+    let model = IDLE_STACKED_PROGRESS;
+    model = applyStackedEvent(model, {
+      kind: "action_started",
+      action: "commit_push_pr",
+      phases: ["commit", "push", "pr"],
+    });
+    model = applyStackedEvent(model, {
+      kind: "phase_started",
+      action: "commit_push_pr",
+      phase: "commit",
+      label: "Committing changes",
+    });
+    NodeAssert.equal(
+      describeStackedProgress(model),
+      "Commit, push & create PR — Committing changes",
+    );
+    model = applyStackedEvent(model, {
+      kind: "hook_started",
+      action: "commit_push_pr",
+      hookName: "pre-commit",
+    });
+    model = applyStackedEvent(model, {
+      kind: "hook_output",
+      action: "commit_push_pr",
+      hookName: "pre-commit",
+      stream: "stdout",
+      text: "lint ok\ntest ok\n",
+    });
+    NodeAssert.equal(describeStackedProgress(model), "Commit, push & create PR — test ok");
+    model = applyStackedEvent(model, {
+      kind: "hook_finished",
+      action: "commit_push_pr",
+      hookName: "pre-commit",
+      exitCode: 0,
+      durationMs: 10,
+    });
+    NodeAssert.equal(model.hook, null);
+    model = applyStackedEvent(model, {
+      kind: "action_failed",
+      action: "commit_push_pr",
+      phase: "push",
+      message: "rejected: non-fast-forward",
+    });
+    NodeAssert.deepEqual(model.failure, {
+      phase: "push",
+      message: "rejected: non-fast-forward",
+    });
+  });
+
+  NodeTest.it("carries the post-service revocation closed event by name", () => {
+    let model = IDLE_STACKED_PROGRESS;
+    model = applyStackedEvent(model, {
+      kind: "action_started",
+      action: "push",
+      phases: ["push"],
+    });
+    model = applyStackedEvent(model, {
+      kind: "action_finished",
+      action: "push",
+      result: {
+        action: "push",
+        branch: { status: "skipped_not_requested" },
+        commit: { status: "skipped_no_changes", messageSource: "not_applicable" },
+        push: { status: "pushed", branch: "feat" },
+        pr: { status: "skipped_not_requested", contentSource: "not_applicable" },
+        toast: { title: "Pushed", cta: { kind: "none" } },
+      },
+    });
+    // The phase terminal arrived — the detached post-check can still
+    // append a named denial after it.
+    model = applyStackedEvent(model, { kind: "closed", reason: "authorization-revoked" });
+    NodeAssert.equal(model.closed, "authorization-revoked");
+    NodeAssert.notEqual(model.result, null);
+  });
+
+  NodeTest.it("describes the settled result with provenance markers", () => {
+    const result = {
+      action: "commit_push_pr",
+      branch: { status: "skipped_not_requested" },
+      commit: { status: "created", commitSha: "abc", messageSource: "generated" },
+      push: { status: "pushed", branch: "feat" },
+      pr: {
+        status: "created",
+        url: "https://github.com/o/r/pull/9",
+        contentSource: "generated",
+      },
+      toast: { title: "Created PR", cta: { kind: "none" } },
+    };
+    NodeAssert.equal(
+      describeStackedResult(result),
+      "Created PR — generated commit message — https://github.com/o/r/pull/9",
+    );
+    const existing = {
+      ...result,
+      commit: { status: "created", commitSha: "abc", messageSource: "caller" },
+      pr: {
+        status: "opened_existing",
+        url: "https://github.com/o/r/pull/9",
+        contentSource: "existing",
+      },
+    };
+    NodeAssert.equal(
+      describeStackedResult(existing),
+      "Created PR — existing PR https://github.com/o/r/pull/9",
+    );
+  });
+});
+
+NodeTest.describe("themeVarOverrides", () => {
+  const cssVars = {
+    mutedForeground: "--app-theme-muted-foreground",
+    border: "--app-theme-border",
+    error: "--app-theme-error",
+    warning: "--app-theme-warning",
+    text: "--app-theme-text",
+    canvas: "--app-theme-canvas",
+    accentSurface: "--app-theme-accent-surface",
+    muted: "--app-theme-muted",
+  };
+
+  NodeTest.it("republishes contract tokens as panel-scoped vars", () => {
+    const overrides = themeVarOverrides(
+      {
+        mutedForeground: "#98a2b3",
+        border: "#eaecf0",
+        error: "#f04438",
+        warning: "#dc6803",
+        text: "#101828",
+        canvas: "#ffffff",
+        accentSurface: "#e8eef7",
+        muted: "#f4f5f7",
+      },
+      cssVars,
+    );
+    NodeAssert.deepEqual(overrides, {
+      "--t3-version-control-muted-foreground": "var(--app-theme-muted-foreground, #98a2b3)",
+      "--t3-version-control-border": "var(--app-theme-border, #eaecf0)",
+      "--t3-version-control-error": "var(--app-theme-error, #f04438)",
+      "--t3-version-control-warning": "var(--app-theme-warning, #dc6803)",
+      "--t3-version-control-text": "var(--app-theme-text, #101828)",
+      "--t3-version-control-canvas": "var(--app-theme-canvas, #ffffff)",
+      "--t3-version-control-accent-surface": "var(--app-theme-accent-surface, #e8eef7)",
+      "--t3-version-control-muted": "var(--app-theme-muted, #f4f5f7)",
+    });
+  });
+
+  NodeTest.it("skips roles the host did not resolve rather than overriding them", () => {
+    const overrides = themeVarOverrides({ text: "#101828" }, cssVars);
+    NodeAssert.deepEqual(overrides, {
+      "--t3-version-control-text": "var(--app-theme-text, #101828)",
+    });
+  });
+
+  NodeTest.it("falls back to the resolved value when no css var is advertised", () => {
+    const overrides = themeVarOverrides({ mutedForeground: "#98a2b3" }, {});
+    NodeAssert.deepEqual(overrides, {
+      "--t3-version-control-muted-foreground": "#98a2b3",
+    });
+  });
+
+  NodeTest.it("ignores unrelated roles the contract does not publish to this panel", () => {
+    const overrides = themeVarOverrides(
+      { mutedForeground: "#98a2b3", terminalBackground: "#000000", chrome: "#111" },
+      { ...cssVars, terminalBackground: "--app-theme-terminal-background" },
+    );
+    NodeAssert.deepEqual(Object.keys(overrides), ["--t3-version-control-muted-foreground"]);
+  });
+});
+
+NodeTest.describe("nextThemeVars — no stale fallback", () => {
+  const cssVars = { text: "--app-theme-text" };
+
+  NodeTest.it("clears the published map on any read loss, even after a good read", () => {
+    // A resolved read followed by a failed refresh or a lost subscription
+    // must not leave the last theme painted — the map returns to null so
+    // the legacy var() chain renders.
+    const published = nextThemeVars({ ok: true, tokens: { text: "#111" }, cssVars });
+    NodeAssert.deepEqual(published, {
+      "--t3-version-control-text": "var(--app-theme-text, #111)",
+    });
+    NodeAssert.equal(nextThemeVars({ ok: false }), null);
+    NodeAssert.equal(nextThemeVars({ ok: false }), null);
+  });
+
+  NodeTest.it("recovers on the next resolved read, including hosts without css vars", () => {
+    NodeAssert.equal(nextThemeVars({ ok: false }), null);
+    const republished = nextThemeVars({ ok: true, tokens: { text: "#222" }, cssVars: {} });
+    NodeAssert.deepEqual(republished, { "--t3-version-control-text": "#222" });
+  });
+});
+
+NodeTest.describe("mutation toasts", () => {
+  NodeTest.it("opens a loading toast with the running label", () => {
+    NodeAssert.deepEqual(mutationToastStart("Pushing"), {
+      severity: "loading",
+      title: "Pushing…",
+    });
+  });
+
+  NodeTest.it("settles success as the receipt detail on the same toast", () => {
+    NodeAssert.deepEqual(mutationToastSettle("Pushing", { ok: true, detail: "Pushed main" }), {
+      severity: "success",
+      title: "Pushed main",
+    });
+  });
+
+  NodeTest.it("settles failure as a named title with the error in the body", () => {
+    NodeAssert.deepEqual(
+      mutationToastSettle("Pushing", { ok: false, detail: "rejected: non-fast-forward" }),
+      {
+        severity: "error",
+        title: "Pushing failed",
+        body: "rejected: non-fast-forward",
+      },
+    );
+  });
+});
+
+NodeTest.describe("isNotificationDismissal", () => {
+  NodeTest.it("recognizes the bridged notification-expired code as user dismissal", () => {
+    NodeAssert.equal(
+      isNotificationDismissal(
+        new Error("notification-expired: The notification is unknown or expired."),
+      ),
+      true,
+    );
+    NodeAssert.equal(isNotificationDismissal("notification-expired"), true);
+  });
+
+  NodeTest.it("treats every other rejection as delivery loss, not dismissal", () => {
+    NodeAssert.equal(
+      isNotificationDismissal(new Error("notification-owner-mismatch: not yours")),
+      false,
+    );
+    NodeAssert.equal(isNotificationDismissal(new Error("client-provider-unavailable")), false);
+    NodeAssert.equal(isNotificationDismissal(new Error("View is inactive")), false);
+    NodeAssert.equal(isNotificationDismissal({ reason: "nope" }), false);
+  });
+});
+
+NodeTest.describe("dismissReceiptAfterSeen", () => {
+  const stubSource = (seen) => {
+    const controller = new AbortController();
+    const source = {
+      seenNow: seen,
+      signal: controller.signal,
+      listeners: /** @type {Set<() => void>} */ (new Set()),
+      seen() {
+        return source.seenNow;
+      },
+      onChange(listener) {
+        source.listeners.add(listener);
+        return () => source.listeners.delete(listener);
+      },
+      setSeen(next) {
+        source.seenNow = next;
+        for (const listener of source.listeners) listener();
+      },
+    };
+    return source;
+  };
+
+  NodeTest.it("dismisses after the window when seen throughout", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000 });
+    const source = stubSource(true);
+    let dismissed = 0;
+    dismissReceiptAfterSeen(source, 10_000, () => dismissed++);
+    t.mock.timers.tick(9_999);
+    NodeAssert.equal(dismissed, 0);
+    t.mock.timers.tick(1);
+    NodeAssert.equal(dismissed, 1);
+    NodeAssert.equal(source.listeners.size, 0, "watch torn down on fire");
+  });
+
+  NodeTest.it("a settle while unseen keeps its full window after returning", (t) => {
+    // The mutation completed while another thread was active or the
+    // document was backgrounded — the clock must not run while unseen,
+    // and returning must not dismiss without a readable interval.
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000 });
+    const source = stubSource(false);
+    let dismissed = 0;
+    dismissReceiptAfterSeen(source, 10_000, () => dismissed++);
+    t.mock.timers.tick(120_000);
+    NodeAssert.equal(dismissed, 0, "no clock while unseen");
+    source.setSeen(true);
+    NodeAssert.equal(dismissed, 0, "returning does not dismiss on the spot");
+    t.mock.timers.tick(9_999);
+    NodeAssert.equal(dismissed, 0);
+    t.mock.timers.tick(1);
+    NodeAssert.equal(dismissed, 1, "full readable window after return");
+  });
+
+  NodeTest.it("pauses and resumes across hidden spans instead of restarting", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000 });
+    const source = stubSource(true);
+    let dismissed = 0;
+    dismissReceiptAfterSeen(source, 10_000, () => dismissed++);
+    t.mock.timers.tick(4_000);
+    source.setSeen(false);
+    t.mock.timers.tick(60_000);
+    NodeAssert.equal(dismissed, 0, "hidden span does not burn the window");
+    source.setSeen(true);
+    t.mock.timers.tick(5_999);
+    NodeAssert.equal(dismissed, 0);
+    t.mock.timers.tick(1);
+    NodeAssert.equal(dismissed, 1, "the remaining 6 s resume, not a fresh 10 s");
+  });
+
+  NodeTest.it("gives up without firing when the session dies mid-window", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000 });
+    const source = stubSource(true);
+    let dismissed = 0;
+    dismissReceiptAfterSeen(source, 10_000, () => dismissed++);
+    t.mock.timers.tick(2_000);
+    source.signal.dispatchEvent(new Event("abort"));
+    NodeAssert.equal(source.listeners.size, 0);
+    t.mock.timers.tick(60_000);
+    NodeAssert.equal(dismissed, 0);
   });
 });

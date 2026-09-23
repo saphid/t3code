@@ -12,6 +12,7 @@ import {
   type ClientFactory,
   type ClientHost,
   type EnvironmentPackage,
+  type GlobalCommandsHandle,
 } from "@t3tools/extension-sdk/environment";
 import type { Extension } from "@t3tools/extension-sdk/host";
 import type {
@@ -27,6 +28,11 @@ import type * as React from "react";
 import type { BrowserSurfaceBinding } from "./browserSurfaceBridge";
 import type { BrowserFramesBinding } from "./browserFramesBridge";
 import type { BrowserFramesHost, BrowserSurfaceHost } from "@t3tools/extension-sdk/catalogue";
+import {
+  discardStagedGlobalCommands,
+  stageGlobalCommands,
+  unregisterInstallationCommands,
+} from "./extensionCommandRegistry";
 
 export type InstalledPackage = Omit<ExtensionInstallation, "package"> & {
   readonly package: EnvironmentPackage;
@@ -177,6 +183,10 @@ export function createInstalledExtensionController(options: {
   readonly browserFrames?: (binding: BrowserFramesBinding) => BrowserFramesHost;
 }) {
   const active = new Map<string, { signature: string; stop: () => void }>();
+  // One epoch per live registration — a re-registered installation gets a new
+  // one so stale command bindings can be told apart from live ones.
+  const epochs = new Map<string, number>();
+  let epochCounter = 0;
   let generation = 0;
   let pending: AbortController | undefined;
   let disposed = false;
@@ -460,6 +470,34 @@ export function createInstalledExtensionController(options: {
                   throw new Error("Installed tool invocation expired");
                 return copyJson(result);
               },
+              registerGlobalCommands(commands, handler) {
+                // Factory-time staging only: the commit flush runs once the
+                // installation is registered and a seam socket is live.
+                const entry = stageGlobalCommands(
+                  options.environmentId,
+                  item.id,
+                  commands,
+                  handler,
+                );
+                const handle: GlobalCommandsHandle = {
+                  get status() {
+                    return entry.status;
+                  },
+                  get token() {
+                    return entry.token;
+                  },
+                  get rejections() {
+                    return entry.rejections;
+                  },
+                  onDidChange(listener) {
+                    entry.listeners.add(listener);
+                    return () => {
+                      entry.listeners.delete(listener);
+                    };
+                  },
+                };
+                return handle;
+              },
               ...(browserSurface ? { browserSurface } : {}),
               ...(browserFrames ? { browserFrames } : {}),
             };
@@ -467,11 +505,13 @@ export function createInstalledExtensionController(options: {
             if (canonical(extension.manifest) !== canonical(item.package.manifest))
               throw new Error("Installed client manifest does not match its package");
             const unregister = options.register(extension, clientHost);
+            epochs.set(item.id, ++epochCounter);
             active.set(item.id, {
               signature: identity,
               stop: () => {
                 lifetime.abort();
                 unregister();
+                unregisterInstallationCommands(options.environmentId, item.id);
               },
             });
             registered = true;
@@ -481,7 +521,10 @@ export function createInstalledExtensionController(options: {
               item.id + ": " + (error instanceof Error ? error.message : "Client unavailable"),
             );
           } finally {
-            if (!registered) lifetime.abort();
+            if (!registered) {
+              lifetime.abort();
+              discardStagedGlobalCommands(options.environmentId, item.id);
+            }
           }
         }
         if (live())
@@ -508,6 +551,10 @@ export function createInstalledExtensionController(options: {
           error: error instanceof Error ? error.message : "Could not load environment extensions",
         });
       }
+    },
+    /** Live registration epoch for an installation, or null when it is not active. */
+    installationEpoch(installationId: string) {
+      return active.has(installationId) ? (epochs.get(installationId) ?? null) : null;
     },
     dispose() {
       disposed = true;

@@ -116,6 +116,51 @@ export interface ServerExtension {
   readonly apis?: readonly ServerApi[];
   readonly tools: readonly ServerTool[];
 }
+/** One command in an installation-scoped `t3.ui/keybindings` set. */
+export type GlobalCommandDescriptor = {
+  /** Plugin-local command id; dispatched as `ext.<pluginId>.<id>`. */
+  readonly id: string;
+  readonly title: string;
+  readonly description?: string;
+  /** A key value (`mod+shift+p` form) used when no user rule claims the key. */
+  readonly defaultKey?: string;
+  /** Host-computable `when` expression over the shortcut context only. */
+  readonly when?: string;
+  readonly scope: "surface" | "thread" | "global";
+  /**
+   * Cold-open fallback: legal only on `scope:"global"` sets under
+   * `t3.ui/keybindings.global` + `t3.ui/panels`; `surfaceId` must name a
+   * surface in the calling installation's own manifest.
+   */
+  readonly activation?: {
+    readonly surfaceId: string;
+    readonly placement: "side-panel" | "bottom-dock";
+  };
+};
+
+export type GlobalCommandRejection = {
+  readonly commandId: string;
+  readonly reason: string;
+};
+
+/**
+ * Live view of a staged installation-scoped command set. `status` moves
+ * "staged" → "active" once the registration commits on a live client-provider
+ * connection, or "rejected" when the server refused the set. Fields reflect
+ * the latest state; subscribe with `onDidChange`.
+ */
+export type GlobalCommandsHandle = {
+  readonly status: "staged" | "active" | "rejected";
+  readonly token?: string | undefined;
+  readonly rejections?: readonly GlobalCommandRejection[] | undefined;
+  onDidChange(listener: () => void): () => void;
+};
+
+export type GlobalCommandHandler = (call: {
+  readonly commandId: string;
+  readonly context: ViewContext;
+}) => void;
+
 export interface ClientHost {
   /** Use this React identity; a client entry must not bundle or import another React runtime. */
   readonly React: typeof React;
@@ -128,6 +173,18 @@ export interface ClientHost {
   ): Promise<{ readonly bytes: Uint8Array; readonly mediaType: string; readonly sha256: string }>;
   /** Host resolves installed grants and authenticated scope; supplied context is not authority. */
   invokeTool(toolId: string, input: Json, context: ViewContext, signal: AbortSignal): Promise<Json>;
+  /**
+   * Stages an installation-scoped `t3.ui/keybindings` command set at factory
+   * time. The synchronous `ClientFactory` cannot await the registration-gated
+   * invoke, so the host records the set and flushes it once the installation
+   * has committed and a live client-provider connection exists; reconnects
+   * replay committed entries at the current installation generation. Absent on
+   * hosts without a client-provider seam.
+   */
+  registerGlobalCommands?(
+    commands: readonly GlobalCommandDescriptor[],
+    handler?: GlobalCommandHandler,
+  ): GlobalCommandsHandle;
   /**
    * `t3.browser/surface` host capability (catalogue contract, not a brokered
    * API). Absent on hosts that predate it — treat absence as the named

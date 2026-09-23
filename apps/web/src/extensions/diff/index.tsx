@@ -10,14 +10,13 @@ export type DiffBindings = Omit<ComponentProps<typeof DiffPanel>, "mode"> & {
 
 export function createDiffExtension(useBindings: () => DiffBindings): Extension<SurfaceRenderer> {
   const Renderer: SurfaceRenderer = function DiffExtensionRenderer() {
-    const { panelKey, composerDraftTarget, initialGitScope, workspaceMutationId } = useBindings();
+    const { panelKey, composerDraftTarget, workspaceMutationId } = useBindings();
     return (
       <Suspense fallback={null}>
         <DiffPanel
           key={panelKey}
           mode="embedded"
           composerDraftTarget={composerDraftTarget}
-          initialGitScope={initialGitScope}
           workspaceMutationId={workspaceMutationId}
         />
       </Suspense>

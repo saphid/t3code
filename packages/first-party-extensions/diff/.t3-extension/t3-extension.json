@@ -2,7 +2,7 @@
   "format": 2,
   "manifest": {
     "id": "t3.diff",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "apiVersion": 1,
     "surfaces": [
       {
@@ -51,6 +51,22 @@
     },
     {
       "id": "t3.orchestration/control",
+      "versionRange": "^1.0.0"
+    },
+    {
+      "id": "t3.ui/theme",
+      "versionRange": "^1.0.0"
+    },
+    {
+      "id": "t3.ui/keybindings",
+      "versionRange": "^1.0.0"
+    },
+    {
+      "id": "t3.ui/panels",
+      "versionRange": "^1.0.0"
+    },
+    {
+      "id": "t3.ui/notifications",
       "versionRange": "^1.0.0"
     }
   ],

@@ -72,6 +72,10 @@
     "./authoring": {
       "types": "./dist/authoring.d.ts",
       "default": "./dist/authoring.js"
+    },
+    "./clientProviders": {
+      "types": "./dist/clientProviders.d.ts",
+      "default": "./dist/clientProviders.js"
     }
   },
   "scripts": {
@@ -80,6 +84,7 @@
     "prepare": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "acorn": "8.16.0",
     "esbuild": "0.28.1",
     "react": "19.2.6",
     "typescript": "7.0.2"

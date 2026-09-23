@@ -1,8 +1,8 @@
 {
-  "format": 2,
+  "format": 4,
   "manifest": {
     "id": "t3.terminal",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "apiVersion": 1,
     "surfaces": [
       {
@@ -41,7 +41,57 @@
     {
       "id": "t3.terminal/control",
       "versionRange": "^1.0.0"
+    },
+    {
+      "id": "t3.ui/theme",
+      "versionRange": "^1.0.0"
+    },
+    {
+      "id": "t3.ui/keybindings",
+      "versionRange": "^1.0.0"
+    },
+    {
+      "id": "t3.ui/panels",
+      "versionRange": "^1.0.0"
     }
   ],
-  "dependencies": []
+  "dependencies": [],
+  "assets": [
+    {
+      "path": "assets/ghostty-vt.wasm",
+      "byteLength": 630932,
+      "sha256": "51b016a6aa3c29ead71c7c8acf8c01d43b064bae19957a9c9f9e2bf469267629",
+      "mediaType": "application/wasm"
+    },
+    {
+      "path": "assets/ghostty-write-pty.wasm",
+      "byteLength": 112,
+      "sha256": "75cb147e98ede3f85f3cd6236a30f6d12565b0b237e1d8db941f5f3e8ad3d903",
+      "mediaType": "application/wasm"
+    },
+    {
+      "path": "assets/SymbolsNerdFontMono-Regular.woff2",
+      "byteLength": 1177576,
+      "sha256": "a8e2fc5ae3c2525812151b95da80c5beab0befa84aca84fc33aaed94317502df",
+      "mediaType": "font/woff2"
+    },
+    {
+      "path": "assets/SymbolsNerdFontMono-LICENSE.txt",
+      "byteLength": 1082,
+      "sha256": "84a7a98c82140fb12c37fe42b93805baa16024cb3e5acc599b7ffe612c55d847",
+      "mediaType": "application/octet-stream"
+    },
+    {
+      "path": "assets/libghostty-vt-LICENSE.txt",
+      "byteLength": 1097,
+      "sha256": "386211873e5b7a02f663ae4d7adf96285999f91608f8f9f31fecfd0f4095e6f1",
+      "mediaType": "application/octet-stream"
+    },
+    {
+      "path": "assets/libghostty-vt-VERSION.txt",
+      "byteLength": 41,
+      "sha256": "3fc03e29c86b5100e6738d20cb1c97c3969ab1044debbe8a4cd7d49cdc9cf321",
+      "mediaType": "application/octet-stream"
+    }
+  ]
 }

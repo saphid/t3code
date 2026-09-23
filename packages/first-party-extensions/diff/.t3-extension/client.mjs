@@ -1,4 +1,5 @@
 export default function (__t3Host) {
+"use strict";
 var __t3Client = (() => {
   var __create = Object.create;
   var __defProp = Object.defineProperty;
@@ -38,6 +39,7 @@ var __t3Client = (() => {
   // host-react:react
   var require_react = __commonJS({
     "host-react:react"(exports, module) {
+      "use strict";
       module.exports = __t3Host.React;
     }
   });
@@ -45,9 +47,25 @@ var __t3Client = (() => {
   // host-react:react/jsx-runtime
   var require_jsx_runtime = __commonJS({
     "host-react:react/jsx-runtime"(exports) {
+      "use strict";
       var R = __t3Host.React;
       exports.Fragment = R.Fragment;
-      exports.jsx = exports.jsxs = exports.jsxDEV = (type, props, key) => R.createElement(type, key === void 0 ? props : { ...props, key });
+      var mark = (n) => {
+        if (n && typeof n === "object" && n._store) n._store.validated = 1;
+      };
+      var el = (type, props, key, isStatic) => {
+        const c = props == null ? void 0 : props.children;
+        if (Array.isArray(c)) {
+          if (isStatic) {
+            for (const x of c) mark(x);
+            Object.freeze(c);
+          }
+        } else mark(c);
+        return R.createElement(type, key === void 0 ? props : { ...props, key });
+      };
+      exports.jsx = (t, p, k) => el(t, p, k, false);
+      exports.jsxs = (t, p, k) => el(t, p, k, true);
+      exports.jsxDEV = (t, p, k, s) => el(t, p, k, s === true);
     }
   });
 
@@ -57,7 +75,7 @@ var __t3Client = (() => {
     default: () => generated_client_default
   });
 
-  // ../../extension-sdk/dist/contracts.js
+  // node_modules/@t3tools/extension-sdk/dist/contracts.js
   var API_VERSION = 1;
   var MAX_PAYLOAD_BYTES = 64 * 1024;
   function assertId(value) {
@@ -129,6 +147,8 @@ var __t3Client = (() => {
       if (!Array.isArray(surface.capabilities))
         throw new Error("Invalid capabilities");
       surface.capabilities.forEach(assertId);
+      if (surface.claimsTerminalFocus !== void 0 && typeof surface.claimsTerminalFocus !== "boolean")
+        throw new Error("Invalid terminal focus claim");
     }
     for (const descriptors of [manifest.composerContexts ?? [], manifest.messageDecorations ?? []]) {
       if (!Array.isArray(descriptors) || descriptors.length > 16)
@@ -145,7 +165,7 @@ var __t3Client = (() => {
     return manifest;
   }
 
-  // ../../extension-sdk/dist/capabilities.js
+  // node_modules/@t3tools/extension-sdk/dist/capabilities.js
   function defineApi(definition) {
     return { definition: validateApiDefinition(definition) };
   }
@@ -238,7 +258,7 @@ var __t3Client = (() => {
     return api;
   }
 
-  // ../../extension-sdk/dist/orchestration.js
+  // node_modules/@t3tools/extension-sdk/dist/orchestration.js
   var ORCHESTRATION_STATUS = "t3.orchestration/status";
   var ORCHESTRATION_CONTROL = "t3.orchestration/control";
   var ORCHESTRATION_READ = "t3.orchestration/read";
@@ -464,7 +484,7 @@ var __t3Client = (() => {
   }
   var ORCHESTRATION_CONTROL_API = orchestrationControlApi.definition;
 
-  // ../../extension-sdk/dist/textEdits.js
+  // node_modules/@t3tools/extension-sdk/dist/textEdits.js
   var WORKSPACE_READ_TEXT_EDITS = "t3.workspace/text-edits";
   var WORKSPACE_READ_TEXT_GRANT = "t3.workspace/read-text";
   var WORKSPACE_WRITE_TEXT = "t3.workspace/write-text";
@@ -657,7 +677,809 @@ var __t3Client = (() => {
     ]
   });
 
-  // ../../extension-sdk/dist/catalogue.js
+  // node_modules/@t3tools/extension-sdk/dist/workspaceResources.js
+  var WORKSPACE_RESOURCES = "t3.workspace/resources";
+  var WORKSPACE_RESOURCE_CHUNK_UNITS = 8192;
+  var WORKSPACE_RESOURCE_MAX_CHUNKS = 2048;
+  var WORKSPACE_RESOURCE_MAX_BYTES = 8 * 1024 * 1024;
+  var WORKSPACE_RESOURCE_REASONS = [
+    "not-found",
+    "not-regular-file",
+    "binary",
+    "invalid-utf8",
+    "oversized",
+    "outside-workspace",
+    "unsafe-path",
+    "changed-during-read",
+    "aborted",
+    "io-error",
+    "unknown-upload",
+    "upload-limit",
+    "upload-incomplete",
+    "digest-mismatch"
+  ];
+  var resourcePath = { type: "string", minLength: 1, maxLength: 512 };
+  var resourceDigest = {
+    type: "string",
+    minLength: 64,
+    maxLength: 64,
+    pattern: "^[0-9a-f]{64}$"
+  };
+  var resourceReason = { enum: WORKSPACE_RESOURCE_REASONS };
+  var uploadId = { type: "string", minLength: 1, maxLength: 128 };
+  var resourceByteLength = {
+    type: "integer",
+    minimum: 0,
+    maximum: WORKSPACE_RESOURCE_MAX_BYTES
+  };
+  var resourceChunkCount = {
+    type: "integer",
+    minimum: 0,
+    maximum: WORKSPACE_RESOURCE_MAX_CHUNKS
+  };
+  var saveUnavailableOutput = {
+    type: "object",
+    additionalProperties: false,
+    required: ["kind", "reason"],
+    properties: {
+      kind: { const: "unavailable" },
+      relativePath: resourcePath,
+      reason: resourceReason
+    }
+  };
+  var workspaceResourcesApi = defineStreamApi({
+    id: WORKSPACE_RESOURCES,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "save.begin",
+        effect: "write",
+        requiredGrants: [WORKSPACE_WRITE_TEXT],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["relativePath", "expectedRevision", "byteLength", "chunkCount", "sha256"],
+          properties: {
+            relativePath: resourcePath,
+            expectedRevision: resourceDigest,
+            byteLength: resourceByteLength,
+            chunkCount: resourceChunkCount,
+            sha256: resourceDigest
+          }
+        },
+        outputSchema: {
+          type: "object",
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "uploadId"],
+              properties: { kind: { const: "session" }, uploadId }
+            },
+            saveUnavailableOutput
+          ]
+        }
+      },
+      {
+        name: "save.chunk",
+        effect: "write",
+        requiredGrants: [WORKSPACE_WRITE_TEXT],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["uploadId", "chunkIndex", "data"],
+          properties: {
+            uploadId,
+            chunkIndex: {
+              type: "integer",
+              minimum: 0,
+              maximum: WORKSPACE_RESOURCE_MAX_CHUNKS - 1
+            },
+            data: { type: "string", maxLength: WORKSPACE_RESOURCE_CHUNK_UNITS }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "received"],
+              properties: {
+                kind: { const: "accepted" },
+                received: resourceChunkCount
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "reason"],
+              properties: { kind: { const: "unavailable" }, reason: resourceReason }
+            }
+          ]
+        }
+      },
+      {
+        name: "save.commit",
+        effect: "write",
+        requiredGrants: [WORKSPACE_WRITE_TEXT],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["uploadId"],
+          properties: { uploadId }
+        },
+        outputSchema: {
+          type: "object",
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "relativePath", "revision"],
+              properties: {
+                kind: { const: "saved" },
+                relativePath: resourcePath,
+                revision: resourceDigest
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "relativePath"],
+              properties: { kind: { const: "conflict" }, relativePath: resourcePath }
+            },
+            saveUnavailableOutput
+          ]
+        }
+      },
+      {
+        name: "save.abort",
+        effect: "write",
+        requiredGrants: [WORKSPACE_WRITE_TEXT],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["uploadId"],
+          properties: { uploadId }
+        },
+        outputSchema: { type: "object", additionalProperties: false, properties: {} }
+      }
+    ],
+    streams: [
+      {
+        name: "read",
+        requiredGrants: [WORKSPACE_RESOURCES],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["relativePath"],
+          properties: {
+            relativePath: resourcePath,
+            maxBytes: { type: "integer", minimum: 1, maximum: WORKSPACE_RESOURCE_MAX_BYTES }
+          }
+        },
+        eventSchema: {
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: [
+                "kind",
+                "relativePath",
+                "byteLength",
+                "deliveredByteLength",
+                "chunkCount",
+                "truncated"
+              ],
+              properties: {
+                kind: { const: "manifest" },
+                relativePath: resourcePath,
+                byteLength: { type: "integer", minimum: 0 },
+                deliveredByteLength: resourceByteLength,
+                chunkCount: resourceChunkCount,
+                truncated: { type: "boolean" }
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "chunkIndex", "data"],
+              properties: {
+                kind: { const: "chunk" },
+                chunkIndex: {
+                  type: "integer",
+                  minimum: 0,
+                  maximum: WORKSPACE_RESOURCE_MAX_CHUNKS - 1
+                },
+                data: { type: "string", maxLength: WORKSPACE_RESOURCE_CHUNK_UNITS }
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "sha256"],
+              properties: { kind: { const: "complete" }, sha256: resourceDigest }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "relativePath", "reason"],
+              properties: {
+                kind: { const: "unavailable" },
+                relativePath: resourcePath,
+                reason: resourceReason
+              }
+            }
+          ]
+        }
+      }
+    ]
+  });
+  var WORKSPACE_RESOURCES_API = workspaceResourcesApi.definition;
+
+  // node_modules/@t3tools/extension-sdk/dist/clientProviders.js
+  var targetSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["kind"],
+    properties: {
+      kind: { enum: ["self", "connection"] },
+      connectionId: { type: "string", minLength: 1, maxLength: 160 }
+    }
+  };
+  var withTarget = (properties, required = []) => ({
+    type: "object",
+    additionalProperties: false,
+    required: ["target", ...required],
+    properties: { target: targetSchema, ...properties }
+  });
+  var okOutput = {
+    type: "object",
+    additionalProperties: false,
+    required: ["applied"],
+    properties: { applied: { type: "boolean" } }
+  };
+  var themeAppearance = { enum: ["light", "dark"] };
+  var themeHalvesSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      light: { type: "string", maxLength: 160 },
+      dark: { type: "string", maxLength: 160 }
+    }
+  };
+  var themeProviderStateSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "theme",
+      "resolvedTheme",
+      "systemDark",
+      "followSystem",
+      "appearanceMode",
+      "themeHalves",
+      "effectiveTheme",
+      "sessionOverlay"
+    ],
+    properties: {
+      theme: { type: "string", maxLength: 160 },
+      resolvedTheme: themeAppearance,
+      systemDark: { type: "boolean" },
+      followSystem: { type: "boolean" },
+      appearanceMode: { enum: ["light", "dark", "system"] },
+      themeHalves: { anyOf: [themeHalvesSchema, { type: "null" }] },
+      effectiveTheme: {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind"],
+        properties: {
+          kind: { enum: ["stored", "session-overlay", "external-preview"] },
+          theme: { type: "string", maxLength: 160 },
+          writer: { type: "string", maxLength: 160 },
+          tokens: {
+            type: "object",
+            additionalProperties: { type: "string", maxLength: 400 }
+          }
+        }
+      },
+      sessionOverlay: {
+        anyOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["theme", "writer"],
+            properties: {
+              theme: { type: "string", maxLength: 160 },
+              appearanceMode: { enum: ["light", "dark", "system"] },
+              themeHalves: themeHalvesSchema,
+              writer: { type: "string", minLength: 1, maxLength: 160 }
+            }
+          },
+          { type: "null" }
+        ]
+      }
+    }
+  };
+  var themeTokensOutput = {
+    type: "object",
+    additionalProperties: false,
+    required: ["tokens", "cssVars"],
+    properties: {
+      tokens: { type: "object", additionalProperties: { type: "string", maxLength: 400 } },
+      cssVars: { type: "object", additionalProperties: { type: "string", maxLength: 80 } }
+    }
+  };
+  var terminalAppearanceSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["theme", "font", "appearance"],
+    properties: {
+      theme: {
+        type: "object",
+        additionalProperties: false,
+        required: ["background", "foreground", "cursor"],
+        properties: {
+          background: { type: "string", maxLength: 400 },
+          foreground: { type: "string", maxLength: 400 },
+          cursor: { type: "string", maxLength: 400 },
+          selectionBackground: { type: "string", maxLength: 400 }
+        }
+      },
+      font: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          family: { type: "string", maxLength: 400 },
+          size: { type: "number", minimum: 1, maximum: 128 },
+          lineHeight: { type: "number", minimum: 0.1, maximum: 10 },
+          ligatures: { type: "boolean" }
+        }
+      },
+      appearance: themeAppearance
+    }
+  };
+  var CLIENT_THEME_API = validateApiDefinition({
+    id: "t3.client/theme",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getState",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({}),
+        outputSchema: themeProviderStateSchema
+      },
+      {
+        name: "resolveTokens",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({ appearance: themeAppearance }),
+        outputSchema: themeTokensOutput
+      },
+      {
+        name: "applyPreference",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          writer: { type: "string", minLength: 1, maxLength: 160 },
+          preference: {
+            type: "object",
+            additionalProperties: false,
+            required: ["mode"],
+            properties: {
+              theme: { type: "string", minLength: 1, maxLength: 160 },
+              appearanceMode: { enum: ["light", "dark", "system"] },
+              themeHalves: themeHalvesSchema,
+              mode: { enum: ["persist", "session"] },
+              clear: { type: "boolean" }
+            }
+          }
+        }, ["writer", "preference"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: {
+            applied: { type: "boolean" },
+            reason: { type: "string", maxLength: 200 },
+            propagatedTo: { enum: ["storage-origin", "connection"] }
+          }
+        }
+      }
+    ],
+    streams: [
+      {
+        name: "watchState",
+        inputSchema: withTarget({}),
+        eventSchema: themeProviderStateSchema,
+        requiredGrants: []
+      }
+    ]
+  });
+  var notificationActionSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["id", "label"],
+    properties: {
+      id: { type: "string", minLength: 1, maxLength: 80 },
+      label: { type: "string", minLength: 1, maxLength: 80 },
+      variant: { enum: ["default", "primary", "destructive"] }
+    }
+  };
+  var notificationBodySchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["notificationId", "severity", "title"],
+    properties: {
+      notificationId: { type: "string", minLength: 1, maxLength: 160 },
+      severity: { enum: ["info", "success", "warning", "error", "loading"] },
+      title: { type: "string", minLength: 1, maxLength: 200 },
+      body: { type: "string", maxLength: 2e3 },
+      threadId: { type: "string", maxLength: 128 },
+      projectId: { type: "string", maxLength: 128 },
+      anchor: { enum: ["global", "thread"] },
+      dismissible: { type: "boolean" },
+      durationMs: { type: "integer", minimum: 0, maximum: 6e4 },
+      actions: {
+        type: "array",
+        maxItems: 3,
+        items: notificationActionSchema
+      }
+    }
+  };
+  var CLIENT_NOTIFICATIONS_API = validateApiDefinition({
+    id: "t3.client/notifications",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "notify",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({ notification: notificationBodySchema }, ["notification"]),
+        outputSchema: okOutput
+      },
+      {
+        name: "update",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          notificationId: { type: "string", minLength: 1, maxLength: 160 },
+          patch: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              severity: { enum: ["info", "success", "warning", "error", "loading"] },
+              title: { type: "string", minLength: 1, maxLength: 200 },
+              body: { type: "string", maxLength: 2e3 },
+              dismissible: { type: "boolean" }
+            }
+          }
+        }, ["notificationId", "patch"]),
+        outputSchema: okOutput
+      },
+      {
+        name: "dismiss",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({ notificationId: { type: "string", minLength: 1, maxLength: 160 } }, ["notificationId"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["dismissed"],
+          properties: { dismissed: { type: "boolean" } }
+        }
+      }
+    ]
+  });
+  var commandDescriptorSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["id", "title", "scope"],
+    properties: {
+      id: { type: "string", minLength: 1, maxLength: 80 },
+      title: { type: "string", minLength: 1, maxLength: 200 },
+      description: { type: "string", maxLength: 1e3 },
+      defaultKey: { type: "string", minLength: 1, maxLength: 64 },
+      when: { type: "string", minLength: 1, maxLength: 256 },
+      scope: { enum: ["surface", "thread", "global"] },
+      activation: {
+        type: "object",
+        additionalProperties: false,
+        required: ["surfaceId", "placement"],
+        properties: {
+          surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+          placement: { enum: ["side-panel", "bottom-dock"] }
+        }
+      }
+    }
+  };
+  var commandResultSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["commandId", "status"],
+    properties: {
+      commandId: { type: "string", minLength: 1, maxLength: 80 },
+      status: { enum: ["registered", "rejected"] },
+      reason: { type: "string", maxLength: 400 }
+    }
+  };
+  var CLIENT_KEYBINDINGS_API = validateApiDefinition({
+    id: "t3.client/keybindings",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "registerCommands",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          installationScoped: { type: "boolean" },
+          commands: {
+            type: "array",
+            minItems: 1,
+            maxItems: 64,
+            items: commandDescriptorSchema
+          }
+        }, ["commands"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["commandSetToken", "results"],
+          properties: {
+            commandSetToken: { type: "string", minLength: 1, maxLength: 160 },
+            results: { type: "array", maxItems: 64, items: commandResultSchema }
+          }
+        }
+      },
+      {
+        name: "unregisterCommands",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({ commandSetToken: { type: "string", minLength: 1, maxLength: 160 } }, ["commandSetToken"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["unregistered"],
+          properties: { unregistered: { type: "boolean" } }
+        }
+      },
+      {
+        name: "listConflicts",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({}),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["conflicts"],
+          properties: {
+            conflicts: {
+              type: "array",
+              maxItems: 256,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["command", "key", "winner", "loser"],
+                properties: {
+                  command: { type: "string", maxLength: 256 },
+                  key: { type: "string", maxLength: 64 },
+                  winner: { enum: ["user", "native", "plugin"] },
+                  loser: { type: "string", maxLength: 256 }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  });
+  var panelThreadInput = {
+    threadId: { type: "string", minLength: 1, maxLength: 128 }
+  };
+  var CLIENT_PANELS_API = validateApiDefinition({
+    id: "t3.client/panels",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "openSurface",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget(
+          {
+            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+            title: { type: "string", minLength: 1, maxLength: 200 },
+            placement: { enum: ["side-panel", "bottom-dock"] },
+            ...panelThreadInput
+          },
+          // Optional fields mirror the public contract: the client fills them
+          // from the surface's own declared metadata when omitted.
+          ["surfaceId", "threadId"]
+        ),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaceId"],
+          properties: { surfaceId: { type: "string", maxLength: 160 } }
+        }
+      },
+      {
+        name: "activateSurface",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+          ...panelThreadInput
+        }, ["surfaceId", "threadId"]),
+        outputSchema: okOutput
+      },
+      {
+        name: "closeSurface",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+          ...panelThreadInput
+        }, ["surfaceId", "threadId"]),
+        outputSchema: okOutput
+      },
+      {
+        name: "listSurfaces",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({ ...panelThreadInput }, ["threadId"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaces"],
+          properties: {
+            surfaces: {
+              type: "array",
+              maxItems: 64,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["id", "title", "placement", "active"],
+                properties: {
+                  id: { type: "string", maxLength: 160 },
+                  title: { type: "string", maxLength: 200 },
+                  placement: { enum: ["side-panel", "bottom-dock"] },
+                  active: { type: "boolean" }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        name: "hideDock",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({ ...panelThreadInput }, ["threadId"]),
+        outputSchema: okOutput
+      },
+      {
+        name: "showDock",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({ ...panelThreadInput }, ["threadId"]),
+        outputSchema: okOutput
+      }
+    ]
+  });
+  var composerRefSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["path"],
+    properties: {
+      path: { type: "string", minLength: 1, maxLength: 512 },
+      startLine: { type: "integer", minimum: 1, maximum: 1e6 },
+      endLine: { type: "integer", minimum: 1, maximum: 1e6 },
+      excerpt: { type: "string", maxLength: 512 }
+    }
+  };
+  var CLIENT_COMPOSER_API = validateApiDefinition({
+    id: "t3.client/composer",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "insertContext",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          threadId: { type: "string", minLength: 1, maxLength: 128 },
+          refs: { type: "array", minItems: 1, maxItems: 8, items: composerRefSchema }
+        }, ["threadId", "refs"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["inserted", "target"],
+          properties: {
+            inserted: { type: "integer", minimum: 0, maximum: 8 },
+            target: { type: "string", minLength: 1, maxLength: 256 }
+          }
+        }
+      },
+      {
+        name: "getDraftState",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({ threadId: { type: "string", minLength: 1, maxLength: 128 } }, [
+          "threadId"
+        ]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["draft"],
+          properties: {
+            draft: {
+              type: ["object", "null"],
+              properties: {
+                prompt: { type: "string", maxLength: 1e4 },
+                promptTruncated: { type: "boolean" },
+                contextCounts: { type: "object" }
+              }
+            }
+          }
+        }
+      },
+      {
+        name: "attachAnnotation",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          threadId: { type: "string", minLength: 1, maxLength: 128 },
+          annotation: {
+            type: "object",
+            additionalProperties: false,
+            required: ["filePath", "startLine", "endLine", "body"],
+            properties: {
+              filePath: { type: "string", minLength: 1, maxLength: 512 },
+              startLine: { type: "integer", minimum: 1, maximum: 1e6 },
+              endLine: { type: "integer", minimum: 1, maximum: 1e6 },
+              body: { type: "string", minLength: 1, maxLength: 4096 },
+              excerpt: { type: "string", maxLength: 4096 }
+            }
+          }
+        }, ["threadId", "annotation"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["annotationId"],
+          properties: { annotationId: { type: "string", minLength: 1, maxLength: 256 } }
+        }
+      }
+    ]
+  });
+  var CLIENT_TERMINAL_APPEARANCE_API = validateApiDefinition({
+    id: "t3.client/terminal-appearance",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getAppearance",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({}),
+        outputSchema: terminalAppearanceSchema
+      }
+    ],
+    streams: [
+      {
+        name: "watchAppearance",
+        inputSchema: withTarget({}),
+        eventSchema: terminalAppearanceSchema,
+        requiredGrants: []
+      }
+    ]
+  });
+  var CLIENT_PROVIDER_APIS = new Map([
+    CLIENT_THEME_API,
+    CLIENT_NOTIFICATIONS_API,
+    CLIENT_KEYBINDINGS_API,
+    CLIENT_PANELS_API,
+    CLIENT_COMPOSER_API,
+    CLIENT_TERMINAL_APPEARANCE_API
+  ].map((definition) => [definition.id, definition]));
+
+  // node_modules/@t3tools/extension-sdk/dist/catalogue.js
   var BROWSER_LOCAL_SERVERS = "t3.browser/local-servers";
   var BROWSER_READ_LOCAL_SERVERS = "t3.browser/read-local-servers";
   var browserLocalServersApi = defineStreamApi({
@@ -701,6 +1523,55 @@ var __t3Client = (() => {
               properties: { kind: { const: "closed" }, reason: { const: "source-unavailable" } }
             }
           ]
+        }
+      }
+    ]
+  });
+  var PROVIDERS_STATUS = "t3.providers/status";
+  var PROVIDERS_READ = "t3.providers/read";
+  var PROVIDER_STATUS_DISPLAY_NAME_MAX_LENGTH = 200;
+  var PROVIDER_STATUS_ENTRY_SCHEMA = {
+    type: "object",
+    additionalProperties: false,
+    required: ["instanceId", "driver", "enabled", "installed", "status", "availability", "checkedAt"],
+    properties: {
+      instanceId: { type: "string", minLength: 1, maxLength: 160 },
+      driver: { type: "string", minLength: 1, maxLength: 64 },
+      displayName: {
+        type: "string",
+        minLength: 1,
+        maxLength: PROVIDER_STATUS_DISPLAY_NAME_MAX_LENGTH
+      },
+      enabled: { type: "boolean" },
+      installed: { type: "boolean" },
+      status: { enum: ["ready", "warning", "error", "disabled"] },
+      availability: { enum: ["available", "unavailable"] },
+      checkedAt: { type: "string", minLength: 1, maxLength: 40 },
+      supportsConversationRollback: { type: "boolean" },
+      supportsTextGeneration: { type: "boolean" },
+      requiresNewThreadForModelChange: { type: "boolean" },
+      showInteractionModeToggle: { type: "boolean" },
+      reportsContextWindow: { type: "boolean" }
+    }
+  };
+  var providersStatusApi = defineStreamApi({
+    id: PROVIDERS_STATUS,
+    version: "1.0.0",
+    methods: [],
+    streams: [
+      {
+        name: "subscribe",
+        requiredGrants: [PROVIDERS_READ],
+        inputSchema: { type: "object", additionalProperties: false, properties: {} },
+        eventSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["kind", "scope", "providers"],
+          properties: {
+            kind: { const: "snapshot" },
+            scope: { const: "environment" },
+            providers: { type: "array", maxItems: 64, items: PROVIDER_STATUS_ENTRY_SCHEMA }
+          }
         }
       }
     ]
@@ -1094,6 +1965,8 @@ var __t3Client = (() => {
           "contents",
           "retainedByteLength",
           "truncated",
+          "clearGeneration",
+          "contentsUnitStart",
           "boundarySequence"
         ],
         properties: {
@@ -1104,6 +1977,12 @@ var __t3Client = (() => {
           contents: { type: "string", maxLength: 8192 },
           retainedByteLength: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
           truncated: { type: "boolean" },
+          clearGeneration: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+          contentsUnitStart: {
+            type: "integer",
+            minimum: 0,
+            maximum: Number.MAX_SAFE_INTEGER
+          },
           boundarySequence: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER }
         }
       },
@@ -1132,12 +2011,13 @@ var __t3Client = (() => {
       {
         type: "object",
         additionalProperties: false,
-        required: ["kind", "terminalId", "streamEpoch", "sequence", "reason"],
+        required: ["kind", "terminalId", "streamEpoch", "sequence", "clearGeneration", "reason"],
         properties: {
           kind: { const: "reset" },
           terminalId: { type: "string", minLength: 1, maxLength: 128 },
           streamEpoch: { type: "string", minLength: 1, maxLength: 128 },
           sequence: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+          clearGeneration: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
           reason: { const: "history-cleared" }
         }
       },
@@ -2272,7 +3152,6 @@ var __t3Client = (() => {
   var VCS_REPOSITORY_API = vcsRepositoryApi.definition;
   var VCS_REPOSITORY_API_V1 = vcsRepositoryApiV1.definition;
   var RESOURCES_LEASE = "t3.resources/lease";
-  var WORKSPACE_RESOURCES = "t3.workspace/resources";
   var BROWSER_SESSIONS = "t3.browser/sessions";
   var BROWSER_SURFACE_COMMANDS = ["attach", "present", "release"];
   var RESOURCE_LEASE_KIND_GRANTS = {
@@ -3407,6 +4286,1147 @@ var __t3Client = (() => {
     ]
   });
   var PRS_READ_API = prsReadApi.definition;
+  var VCS_ACTIONS = "t3.vcs/actions";
+  var vcsActionKindSchema = {
+    enum: ["commit", "push", "create_pr", "commit_push", "commit_push_pr"]
+  };
+  var vcsActionPhaseSchema = { enum: ["branch", "commit", "push", "pr"] };
+  var vcsActionMessageSourceSchema = { enum: ["caller", "generated", "not_applicable"] };
+  var vcsActionContentSourceSchema = {
+    enum: ["caller", "generated", "existing", "not_applicable"]
+  };
+  var vcsActionResultSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["action", "branch", "commit", "push", "pr", "toast"],
+    properties: {
+      action: vcsActionKindSchema,
+      branch: {
+        type: "object",
+        additionalProperties: false,
+        required: ["status"],
+        properties: {
+          status: { enum: ["created", "skipped_not_requested"] },
+          name: { type: "string", minLength: 1, maxLength: 4096 }
+        }
+      },
+      commit: {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "messageSource"],
+        properties: {
+          status: { enum: ["created", "skipped_no_changes", "skipped_not_requested"] },
+          commitSha: { type: "string", minLength: 1, maxLength: 128 },
+          subject: { type: "string", minLength: 1, maxLength: 4096 },
+          messageSource: vcsActionMessageSourceSchema
+        }
+      },
+      push: {
+        type: "object",
+        additionalProperties: false,
+        required: ["status"],
+        properties: {
+          status: { enum: ["pushed", "skipped_not_requested", "skipped_up_to_date"] },
+          branch: { type: "string", minLength: 1, maxLength: 4096 },
+          upstreamBranch: { type: "string", minLength: 1, maxLength: 4096 },
+          setUpstream: { type: "boolean" }
+        }
+      },
+      pr: {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "contentSource"],
+        properties: {
+          status: { enum: ["created", "opened_existing", "skipped_not_requested"] },
+          url: { type: "string", minLength: 1, maxLength: 4096 },
+          number: { type: "integer", minimum: 1 },
+          baseBranch: { type: "string", minLength: 1, maxLength: 4096 },
+          headBranch: { type: "string", minLength: 1, maxLength: 4096 },
+          title: { type: "string", minLength: 1, maxLength: 2048 },
+          contentSource: vcsActionContentSourceSchema
+        }
+      },
+      toast: {
+        type: "object",
+        additionalProperties: false,
+        required: ["title", "cta"],
+        properties: {
+          title: { type: "string", minLength: 1, maxLength: 512 },
+          description: { type: "string", minLength: 1, maxLength: 1024 },
+          cta: {
+            oneOf: [
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind"],
+                properties: { kind: { const: "none" } }
+              },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind", "label", "url"],
+                properties: {
+                  kind: { const: "open_pr" },
+                  label: { type: "string", minLength: 1, maxLength: 256 },
+                  url: { type: "string", maxLength: 4096 }
+                }
+              },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind", "label", "action"],
+                properties: {
+                  kind: { const: "run_action" },
+                  label: { type: "string", minLength: 1, maxLength: 256 },
+                  action: {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["kind"],
+                    properties: { kind: vcsActionKindSchema }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  };
+  var vcsActionEventBase = {
+    action: vcsActionKindSchema
+  };
+  var vcsActionProgressEventSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "phases"],
+        properties: {
+          kind: { const: "action_started" },
+          ...vcsActionEventBase,
+          phases: { type: "array", maxItems: 4, items: vcsActionPhaseSchema }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "phase", "label"],
+        properties: {
+          kind: { const: "phase_started" },
+          ...vcsActionEventBase,
+          phase: vcsActionPhaseSchema,
+          label: { type: "string", minLength: 1, maxLength: 1024 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "hookName"],
+        properties: {
+          kind: { const: "hook_started" },
+          ...vcsActionEventBase,
+          hookName: { type: "string", minLength: 1, maxLength: 512 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "hookName", "stream", "text"],
+        properties: {
+          kind: { const: "hook_output" },
+          ...vcsActionEventBase,
+          hookName: { type: ["string", "null"], minLength: 1, maxLength: 512 },
+          stream: { enum: ["stdout", "stderr"] },
+          // Native bounds hook lines at 500 chars; keep slack for future raises.
+          text: { type: "string", minLength: 1, maxLength: 4096 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "hookName", "exitCode", "durationMs"],
+        properties: {
+          kind: { const: "hook_finished" },
+          ...vcsActionEventBase,
+          hookName: { type: "string", minLength: 1, maxLength: 512 },
+          exitCode: { type: ["integer", "null"] },
+          durationMs: { type: ["integer", "null"], minimum: 0 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "result"],
+        properties: {
+          kind: { const: "action_finished" },
+          ...vcsActionEventBase,
+          result: vcsActionResultSchema
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "phase", "message"],
+        properties: {
+          kind: { const: "action_failed" },
+          ...vcsActionEventBase,
+          phase: { type: ["string", "null"], enum: ["branch", "commit", "push", "pr", null] },
+          message: { type: "string", minLength: 1, maxLength: 4096 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "reason"],
+        properties: {
+          kind: { const: "closed" },
+          reason: { enum: ["overflow", "authorization-revoked"] }
+        }
+      }
+    ]
+  };
+  var vcsActionResolvedPullRequestSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["number", "title", "url", "baseBranch", "headBranch", "state"],
+    properties: {
+      number: { type: "integer", minimum: 1 },
+      title: { type: "string", minLength: 1, maxLength: 2048 },
+      url: { type: "string", maxLength: 4096 },
+      baseBranch: { type: "string", minLength: 1, maxLength: 4096 },
+      headBranch: { type: "string", minLength: 1, maxLength: 4096 },
+      state: { enum: ["open", "closed", "merged"] }
+    }
+  };
+  var vcsActionReferenceInputSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["reference"],
+    properties: {
+      reference: { type: "string", minLength: 1, maxLength: 2048 }
+    }
+  };
+  var vcsActionsOperationsSupportSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "actions.run",
+      "actions.resolvePullRequest",
+      "actions.preparePullRequestThread",
+      "actions.publishRepository",
+      "actions.actionProgress"
+    ],
+    properties: {
+      "actions.run": { type: "boolean" },
+      "actions.resolvePullRequest": { type: "boolean" },
+      "actions.preparePullRequestThread": { type: "boolean" },
+      "actions.publishRepository": { type: "boolean" },
+      "actions.actionProgress": { type: "boolean" }
+    }
+  };
+  var vcsActionsCapabilitiesResultSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["detected", "kind", "detail", "driver", "operations"],
+    properties: {
+      detected: { type: "boolean" },
+      kind: { type: ["string", "null"], enum: ["git", "jj", "unknown", null] },
+      detail: { type: ["string", "null"], maxLength: 512 },
+      driver: vcsDriverCapabilitiesSchema,
+      operations: vcsActionsOperationsSupportSchema
+    }
+  };
+  var vcsActionsApi = defineStreamApi({
+    id: VCS_ACTIONS,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [VCS_READ],
+        inputSchema: prsEmptyInputSchema,
+        outputSchema: vcsActionsCapabilitiesResultSchema
+      },
+      {
+        name: "run",
+        effect: "write",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["action"],
+          properties: {
+            action: vcsActionKindSchema,
+            commitMessage: { type: "string", maxLength: 1e4 },
+            featureBranch: { type: "boolean" },
+            paths: {
+              type: "array",
+              minItems: 1,
+              maxItems: 100,
+              items: { type: "string", minLength: 1, maxLength: 512 }
+            }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["actionId"],
+          properties: { actionId: { type: "string", minLength: 1, maxLength: 128 } }
+        }
+      },
+      {
+        name: "resolvePullRequest",
+        // Read-shaped but Operate-gated: it shells the provider CLI, matching
+        // the native RPC's Operate scope (design: `t3.vcs/mutate`).
+        effect: "read",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: vcsActionReferenceInputSchema,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["pullRequest"],
+          properties: { pullRequest: vcsActionResolvedPullRequestSchema }
+        }
+      },
+      {
+        name: "preparePullRequestThread",
+        effect: "write",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["reference", "mode"],
+          properties: {
+            reference: { type: "string", minLength: 1, maxLength: 2048 },
+            mode: { enum: ["local", "worktree"] }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["pullRequest", "branch", "worktreePath", "isOnPullRequestHead"],
+          properties: {
+            pullRequest: vcsActionResolvedPullRequestSchema,
+            branch: { type: "string", minLength: 1, maxLength: 4096 },
+            worktreePath: { type: ["string", "null"], minLength: 1, maxLength: 32768 },
+            isOnPullRequestHead: { type: "boolean" }
+          }
+        }
+      },
+      {
+        name: "publishRepository",
+        // Declared `t3.vcs/mutate`; the adapter additionally requires every
+        // caller in the chain to hold `t3.prs/write` (P-a conjunctive under
+        // G3 — a comment-only grant must never reach pushCurrentBranch).
+        effect: "write",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["provider", "repository", "visibility"],
+          properties: {
+            provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+            repository: { type: "string", minLength: 1, maxLength: 512 },
+            visibility: { enum: ["private", "public"] },
+            remoteName: { type: "string", minLength: 1, maxLength: 256 },
+            protocol: { enum: ["auto", "ssh", "https"] }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "remoteName", "remoteUrl", "branch", "status"],
+          properties: {
+            repository: {
+              type: "object",
+              additionalProperties: false,
+              required: ["provider", "nameWithOwner", "url", "sshUrl"],
+              properties: {
+                provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+                nameWithOwner: { type: "string", minLength: 1, maxLength: 512 },
+                url: { type: "string", minLength: 1, maxLength: 4096 },
+                sshUrl: { type: "string", minLength: 1, maxLength: 4096 }
+              }
+            },
+            remoteName: { type: "string", minLength: 1, maxLength: 256 },
+            remoteUrl: { type: "string", minLength: 1, maxLength: 4096 },
+            branch: { type: "string", minLength: 1, maxLength: 4096 },
+            upstreamBranch: { type: "string", minLength: 1, maxLength: 4096 },
+            status: { enum: ["pushed", "remote_added"] }
+          }
+        }
+      }
+    ],
+    streams: [
+      {
+        name: "actionProgress",
+        requiredGrants: [VCS_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["actionId"],
+          properties: { actionId: { type: "string", minLength: 1, maxLength: 128 } }
+        },
+        eventSchema: vcsActionProgressEventSchema
+      }
+    ]
+  });
+  var VCS_ACTIONS_API = vcsActionsApi.definition;
+  var PRS_WRITE = "t3.prs/write";
+  var prsWriteBodySchema = { type: "string", minLength: 1, maxLength: 65536 };
+  var prsWriteOperationsSupportSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "prs.runAction",
+      "prs.update",
+      "prs.comment",
+      "prs.updateComment",
+      "prs.submitReview",
+      "prs.replyToThread",
+      "prs.setThreadResolution",
+      "prs.setReaction",
+      "prs.requestReviewers",
+      "prs.setLabels"
+    ],
+    properties: {
+      "prs.runAction": { type: "boolean" },
+      "prs.update": { type: "boolean" },
+      "prs.comment": { type: "boolean" },
+      "prs.updateComment": { type: "boolean" },
+      "prs.submitReview": { type: "boolean" },
+      "prs.replyToThread": { type: "boolean" },
+      "prs.setThreadResolution": { type: "boolean" },
+      "prs.setReaction": { type: "boolean" },
+      "prs.requestReviewers": { type: "boolean" },
+      "prs.setLabels": { type: "boolean" }
+    }
+  };
+  var prsWriteActionKindSchema = {
+    enum: [
+      "merge",
+      "ready",
+      "draft",
+      "close",
+      "reopen",
+      "update-branch",
+      "enable-auto-merge",
+      "disable-auto-merge",
+      "revert",
+      "approve-workflows"
+    ]
+  };
+  var prsWriteMergeMethodSchema = { enum: ["merge", "squash", "rebase"] };
+  var prsWriteVerdictSchema = { enum: ["comment", "approve", "request-changes"] };
+  var prsWriteCapabilitiesResultSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "hosted",
+      "reason",
+      "detail",
+      "operations",
+      "actions",
+      "mergeMethods",
+      "updateMethods",
+      "verdicts"
+    ],
+    properties: {
+      hosted: { type: "boolean" },
+      reason: {
+        enum: ["cli-missing", "cli-unauthenticated", "provider-unsupported", null]
+      },
+      detail: { type: ["string", "null"], maxLength: 1024 },
+      operations: prsWriteOperationsSupportSchema,
+      actions: { type: "array", maxItems: 16, items: prsWriteActionKindSchema },
+      mergeMethods: { type: "array", maxItems: 8, items: prsWriteMergeMethodSchema },
+      updateMethods: {
+        type: "array",
+        maxItems: 4,
+        items: { enum: ["merge", "rebase"] }
+      },
+      verdicts: { type: "array", maxItems: 8, items: prsWriteVerdictSchema }
+    }
+  };
+  var prsWriteActionInputSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["repository", "number", "action"],
+    properties: {
+      host: prsHostField,
+      repository: prsRepositoryField,
+      number: { type: "integer", minimum: 1 },
+      action: prsWriteActionKindSchema,
+      mergeMethod: prsWriteMergeMethodSchema,
+      updateMethod: { enum: ["merge", "rebase"] },
+      stackNumber: { type: "integer", minimum: 1 },
+      expectedStackHeads: {
+        type: "array",
+        maxItems: 100,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["number", "headSha"],
+          properties: {
+            number: { type: "integer", minimum: 1 },
+            headSha: { type: "string", minLength: 1, maxLength: 128 }
+          }
+        }
+      }
+    }
+  };
+  var prsWriteReviewCommentDraftSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["path", "position", "body"],
+    properties: {
+      path: { type: "string", minLength: 1, maxLength: 1024 },
+      oldPath: { type: "string", minLength: 1, maxLength: 1024 },
+      position: {
+        oneOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "newLine"],
+            properties: {
+              kind: { const: "added" },
+              newLine: { type: "integer", minimum: 1 }
+            }
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "oldLine"],
+            properties: {
+              kind: { const: "deleted" },
+              oldLine: { type: "integer", minimum: 1 }
+            }
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "oldLine", "newLine", "side"],
+            properties: {
+              kind: { const: "context" },
+              oldLine: { type: "integer", minimum: 1 },
+              newLine: { type: "integer", minimum: 1 },
+              side: { enum: ["left", "right"] }
+            }
+          }
+        ]
+      },
+      body: prsWriteBodySchema
+    }
+  };
+  var prsWriteApi = defineApi({
+    id: PRS_WRITE,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: prsEmptyInputSchema,
+        outputSchema: prsWriteCapabilitiesResultSchema
+      },
+      {
+        name: "runAction",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: prsWriteActionInputSchema,
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "update",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            title: { type: "string", minLength: 1, maxLength: 1024 },
+            body: { type: "string", maxLength: 65536 }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "comment",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "body"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            body: prsWriteBodySchema
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "updateComment",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "commentId", "kind", "body"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            commentId: { type: "string", minLength: 1, maxLength: 512 },
+            kind: { enum: ["issue-comment", "review-comment"] },
+            body: prsWriteBodySchema
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "submitReview",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "verdict", "body", "comments"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            verdict: { enum: ["comment", "approve", "request-changes"] },
+            body: { type: "string", maxLength: 65536 },
+            comments: { type: "array", maxItems: 100, items: prsWriteReviewCommentDraftSchema }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "replyToThread",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "threadId", "body"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            threadId: { type: "string", minLength: 1, maxLength: 512 },
+            body: prsWriteBodySchema
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "setThreadResolution",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "threadId", "resolved"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            threadId: { type: "string", minLength: 1, maxLength: 512 },
+            resolved: { type: "boolean" }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "setReaction",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "content", "reacted"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            subjectId: { type: "string", minLength: 1, maxLength: 512 },
+            content: {
+              enum: [
+                "thumbs-up",
+                "thumbs-down",
+                "laugh",
+                "hooray",
+                "confused",
+                "heart",
+                "rocket",
+                "eyes"
+              ]
+            },
+            reacted: { type: "boolean" }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "requestReviewers",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "reviewers", "requested"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            reviewers: {
+              type: "array",
+              minItems: 1,
+              maxItems: 25,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["id", "kind"],
+                properties: {
+                  id: { type: "string", minLength: 1, maxLength: 512 },
+                  kind: { enum: ["user", "team"] }
+                }
+              }
+            },
+            requested: { type: "boolean" }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "setLabels",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "labels", "applied"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            labels: {
+              type: "array",
+              minItems: 1,
+              maxItems: 25,
+              items: { type: "string", minLength: 1, maxLength: 512 }
+            },
+            applied: { type: "boolean" }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      }
+    ]
+  });
+  var PRS_WRITE_API = prsWriteApi.definition;
+  var BROWSER_OPERATE = "t3.browser/operate";
+  var BROWSER_SESSION_COMMANDS = [
+    "back",
+    "forward",
+    "reload",
+    "hardReload",
+    "resize",
+    "zoom",
+    "setAppearance",
+    "setAudioMuted"
+  ];
+  var BROWSER_SESSION_URL_MAX_LENGTH = 2048;
+  var BROWSER_SESSION_TITLE_MAX_LENGTH = 512;
+  var BROWSER_SESSION_LIMIT = 64;
+  var browserSessionTabId = {
+    type: "string",
+    minLength: 1,
+    maxLength: 128
+  };
+  var browserSessionEpoch = {
+    type: "string",
+    minLength: 1,
+    maxLength: 128
+  };
+  var browserSessionRevision = { type: "integer", minimum: 0 };
+  var browserSessionUrl = {
+    type: "string",
+    minLength: 1,
+    maxLength: BROWSER_SESSION_URL_MAX_LENGTH
+  };
+  var browserSessionViewport = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["_tag"],
+        properties: { _tag: { const: "fill" } }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["_tag", "width", "height"],
+        properties: {
+          _tag: { const: "freeform" },
+          width: { type: "integer", minimum: 240, maximum: 3840 },
+          height: { type: "integer", minimum: 240, maximum: 3840 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["_tag", "width", "height", "presetId"],
+        properties: {
+          _tag: { const: "preset" },
+          width: { type: "integer", minimum: 240, maximum: 3840 },
+          height: { type: "integer", minimum: 240, maximum: 3840 },
+          presetId: { type: "string", minLength: 1, maxLength: 64 }
+        }
+      }
+    ]
+  };
+  var browserSessionObject = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "tabId",
+      "requestedUrl",
+      "navigation",
+      "canGoBack",
+      "canGoForward",
+      "viewport",
+      "engine",
+      "zoomFactor",
+      "appearance",
+      "audioMuted",
+      "audible"
+    ],
+    properties: {
+      tabId: browserSessionTabId,
+      requestedUrl: {
+        type: ["string", "null"],
+        minLength: 1,
+        maxLength: BROWSER_SESSION_URL_MAX_LENGTH
+      },
+      navigation: {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "url", "title"],
+        properties: {
+          kind: { enum: ["idle", "pending", "loading", "loaded", "failed"] },
+          url: {
+            type: ["string", "null"],
+            minLength: 1,
+            maxLength: BROWSER_SESSION_URL_MAX_LENGTH
+          },
+          title: { type: "string", maxLength: BROWSER_SESSION_TITLE_MAX_LENGTH },
+          failureCode: {
+            enum: [
+              "aborted",
+              "dns",
+              "offline",
+              "timeout",
+              "refused",
+              "reset",
+              "certificate",
+              "blocked",
+              "redirect",
+              "invalid-url",
+              "crash",
+              "unknown"
+            ]
+          }
+        }
+      },
+      canGoBack: { type: "boolean" },
+      canGoForward: { type: "boolean" },
+      viewport: browserSessionViewport,
+      profileId: { type: "string", minLength: 1, maxLength: 64 },
+      engine: {
+        type: "object",
+        additionalProperties: false,
+        required: ["state", "generation"],
+        properties: {
+          state: { enum: ["unavailable", "starting", "ready", "recovering", "crashed"] },
+          generation: { type: ["string", "null"], minLength: 1, maxLength: 128 },
+          reason: { type: "string", minLength: 1, maxLength: 256 }
+        }
+      },
+      zoomFactor: { type: ["number", "null"] },
+      appearance: { enum: ["system", "light", "dark", null] },
+      audioMuted: { type: ["boolean", "null"] },
+      audible: { type: ["boolean", "null"] }
+    }
+  };
+  var browserSessionReceipt = {
+    type: "object",
+    additionalProperties: false,
+    required: ["commandId", "outcome", "serverEpoch", "revision", "session"],
+    properties: {
+      commandId: { type: "string", minLength: 1, maxLength: 64 },
+      outcome: { enum: ["accepted", "rejected", "unknown"] },
+      serverEpoch: browserSessionEpoch,
+      revision: browserSessionRevision,
+      session: browserSessionObject
+    }
+  };
+  var browserSessionCommandGuard = {
+    tabId: browserSessionTabId,
+    serverEpoch: browserSessionEpoch,
+    expectedEngineGeneration: { type: ["string", "null"], minLength: 1, maxLength: 128 }
+  };
+  var browserSessionGuardRequired = ["tabId", "serverEpoch", "expectedEngineGeneration"];
+  var browserSessionCommandMethod = (name, extraProperties = {}, extraRequired = []) => ({
+    name,
+    effect: "write",
+    requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: [...browserSessionGuardRequired, ...extraRequired],
+      properties: { ...browserSessionCommandGuard, ...extraProperties }
+    },
+    outputSchema: browserSessionReceipt
+  });
+  var BROWSER_SESSION_ZOOM_LEVELS = [
+    0.25,
+    0.33,
+    0.5,
+    0.67,
+    0.75,
+    0.8,
+    0.9,
+    1,
+    1.1,
+    1.25,
+    1.5,
+    1.75,
+    2,
+    2.5,
+    3,
+    4,
+    5
+  ];
+  var browserSessionEmptyInput = {
+    type: "object",
+    additionalProperties: false,
+    properties: {}
+  };
+  var browserSessionsApi = defineStreamApi({
+    id: BROWSER_SESSIONS,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [BROWSER_SESSIONS],
+        inputSchema: browserSessionEmptyInput,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["metadata", "presentation", "commands"],
+          properties: {
+            metadata: {
+              type: "object",
+              additionalProperties: false,
+              required: ["supported"],
+              properties: { supported: { const: true } }
+            },
+            presentation: {
+              type: "object",
+              additionalProperties: false,
+              required: ["supported"],
+              properties: {
+                supported: { type: "boolean" },
+                reason: { enum: ["desktop-required"] }
+              }
+            },
+            commands: {
+              type: "array",
+              maxItems: BROWSER_SESSION_COMMANDS.length,
+              uniqueItems: true,
+              items: { enum: [...BROWSER_SESSION_COMMANDS] }
+            }
+          }
+        }
+      },
+      {
+        name: "list",
+        effect: "read",
+        requiredGrants: [BROWSER_SESSIONS],
+        inputSchema: browserSessionEmptyInput,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["serverEpoch", "revision", "sessions"],
+          properties: {
+            serverEpoch: browserSessionEpoch,
+            revision: browserSessionRevision,
+            sessions: {
+              type: "array",
+              maxItems: BROWSER_SESSION_LIMIT,
+              items: browserSessionObject
+            }
+          }
+        }
+      },
+      {
+        name: "open",
+        effect: "write",
+        requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            url: browserSessionUrl,
+            viewport: browserSessionViewport,
+            profileId: { type: "string", minLength: 1, maxLength: 64 }
+          }
+        },
+        outputSchema: browserSessionReceipt
+      },
+      {
+        name: "navigate",
+        effect: "write",
+        requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["tabId", "serverEpoch", "url", "expectedEngineGeneration"],
+          properties: { ...browserSessionCommandGuard, url: browserSessionUrl }
+        },
+        outputSchema: browserSessionReceipt
+      },
+      {
+        name: "close",
+        effect: "write",
+        requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["tabId", "serverEpoch"],
+          properties: { tabId: browserSessionTabId, serverEpoch: browserSessionEpoch }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["outcome", "serverEpoch", "revision"],
+          properties: {
+            outcome: { enum: ["closed", "already-closed"] },
+            serverEpoch: browserSessionEpoch,
+            revision: browserSessionRevision
+          }
+        }
+      },
+      browserSessionCommandMethod("back"),
+      browserSessionCommandMethod("forward"),
+      browserSessionCommandMethod("reload"),
+      browserSessionCommandMethod("hardReload"),
+      browserSessionCommandMethod("resize", { viewport: browserSessionViewport }, ["viewport"]),
+      browserSessionCommandMethod("zoom", { zoomFactor: { enum: [...BROWSER_SESSION_ZOOM_LEVELS] } }, ["zoomFactor"]),
+      browserSessionCommandMethod("setAppearance", { appearance: { enum: ["system", "light", "dark"] } }, ["appearance"]),
+      browserSessionCommandMethod("setAudioMuted", { muted: { type: "boolean" } }, ["muted"])
+    ],
+    streams: [
+      {
+        name: "events",
+        requiredGrants: [BROWSER_SESSIONS],
+        inputSchema: browserSessionEmptyInput,
+        eventSchema: {
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "snapshotId", "serverEpoch", "revision", "sessionCount"],
+              properties: {
+                kind: { const: "snapshot-start" },
+                snapshotId: { type: "string", minLength: 1, maxLength: 64 },
+                serverEpoch: browserSessionEpoch,
+                revision: browserSessionRevision,
+                sessionCount: { type: "integer", minimum: 0, maximum: BROWSER_SESSION_LIMIT }
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "snapshotId", "chunkIndex", "sessions"],
+              properties: {
+                kind: { const: "snapshot-chunk" },
+                snapshotId: { type: "string", minLength: 1, maxLength: 64 },
+                chunkIndex: { type: "integer", minimum: 0 },
+                sessions: {
+                  type: "array",
+                  maxItems: BROWSER_SESSION_LIMIT,
+                  items: browserSessionObject
+                }
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "snapshotId", "serverEpoch", "revision", "sessionCount"],
+              properties: {
+                kind: { const: "snapshot-complete" },
+                snapshotId: { type: "string", minLength: 1, maxLength: 64 },
+                serverEpoch: browserSessionEpoch,
+                revision: browserSessionRevision,
+                sessionCount: { type: "integer", minimum: 0, maximum: BROWSER_SESSION_LIMIT }
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "revision", "session"],
+              properties: {
+                kind: { const: "session-upsert" },
+                revision: browserSessionRevision,
+                session: browserSessionObject
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "revision", "tabId", "reason"],
+              properties: {
+                kind: { const: "session-removed" },
+                revision: browserSessionRevision,
+                tabId: browserSessionTabId,
+                reason: { enum: ["user-closed", "thread-deleted"] }
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "reason"],
+              properties: {
+                kind: { const: "closed" },
+                reason: {
+                  enum: [
+                    "epoch-changed",
+                    "host-disconnected",
+                    "scope-invalidated",
+                    "grant-revoked",
+                    "installation-changed",
+                    "overflow",
+                    "source-unavailable"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    ]
+  });
+  var BROWSER_SESSIONS_API = browserSessionsApi.definition;
   var COMPOSER_CONTEXT = "t3.composer/context";
   var COMPOSER_WRITE = "t3.composer/write";
   var MESSAGES_ENRICHMENT = "t3.messages/enrichment";
@@ -3592,12 +5612,522 @@ var __t3Client = (() => {
   });
   var COMPOSER_CONTEXT_API = composerContextApi.definition;
   var MESSAGES_ENRICHMENT_API = messagesEnrichmentApi.definition;
+  var UI_THEME = "t3.ui/theme";
+  var UI_THEME_READ = "t3.ui/theme.read";
+  var UI_THEME_WRITE = "t3.ui/theme.write";
+  var UI_KEYBINDINGS = "t3.ui/keybindings";
+  var UI_NOTIFY = "t3.ui/notify";
+  var UI_PANELS = "t3.ui/panels";
+  var uiClientTargetSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["connectionId", "providers", "connectedAt"],
+    properties: {
+      connectionId: { type: "string", minLength: 1, maxLength: 160 },
+      announcedOrigin: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          surface: { type: "string", maxLength: 80 },
+          appVersion: { type: "string", maxLength: 80 },
+          os: { type: "string", maxLength: 120 },
+          deviceType: { type: "string", maxLength: 80 },
+          connectionMethod: { type: "string", maxLength: 40 }
+        }
+      },
+      providers: {
+        type: "array",
+        maxItems: 16,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "version"],
+          properties: {
+            id: { type: "string", maxLength: 80 },
+            version: { type: "string", maxLength: 40 }
+          }
+        }
+      },
+      connectedAt: { type: "string", maxLength: 80 }
+    }
+  };
+  var uiCapabilitiesOutput = (operations) => ({
+    type: "object",
+    additionalProperties: false,
+    required: ["adapter", "operations", "clients"],
+    properties: {
+      adapter: { type: "string", maxLength: 64 },
+      operations: {
+        type: "object",
+        additionalProperties: false,
+        required: [...operations],
+        properties: Object.fromEntries(operations.map((name) => [name, { type: "boolean" }]))
+      },
+      clients: { type: "array", maxItems: 64, items: uiClientTargetSchema }
+    }
+  });
+  var uiThemeApi = defineApi({
+    id: UI_THEME,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput([
+          "getState",
+          "getTokens",
+          "setPreference",
+          "subscribeState",
+          "getTerminalAppearance",
+          "subscribeTerminalAppearance"
+        ])
+      },
+      {
+        name: "getState",
+        effect: "read",
+        requiredGrants: [UI_THEME_READ],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: themeProviderStateSchema
+      },
+      {
+        name: "getTokens",
+        effect: "read",
+        requiredGrants: [UI_THEME_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: { appearance: { enum: ["light", "dark"] } }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["tokens", "cssVars"],
+          properties: {
+            tokens: { type: "object", additionalProperties: { type: "string", maxLength: 400 } },
+            cssVars: { type: "object", additionalProperties: { type: "string", maxLength: 80 } }
+          }
+        }
+      },
+      {
+        name: "setPreference",
+        effect: "write",
+        requiredGrants: [UI_THEME_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["mode"],
+          properties: {
+            theme: { type: "string", minLength: 1, maxLength: 160 },
+            appearanceMode: { enum: ["light", "dark", "system"] },
+            themeHalves: themeHalvesSchema,
+            mode: { enum: ["persist", "session"] },
+            clear: { type: "boolean" }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: {
+            applied: { type: "boolean" },
+            reason: { type: "string", maxLength: 200 },
+            propagatedTo: { enum: ["storage-origin", "connection"] }
+          }
+        }
+      },
+      {
+        name: "getTerminalAppearance",
+        effect: "read",
+        requiredGrants: [UI_THEME_READ],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: terminalAppearanceSchema
+      }
+    ],
+    streams: [
+      {
+        name: "subscribeState",
+        inputSchema: composerEmptyInputSchema,
+        eventSchema: themeProviderStateSchema,
+        requiredGrants: [UI_THEME_READ]
+      },
+      {
+        name: "subscribeTerminalAppearance",
+        inputSchema: composerEmptyInputSchema,
+        eventSchema: terminalAppearanceSchema,
+        requiredGrants: [UI_THEME_READ]
+      }
+    ]
+  });
+  var uiKeybindingsApi = defineApi({
+    id: UI_KEYBINDINGS,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput([
+          "registerCommands",
+          "unregisterCommands",
+          "listConflicts"
+        ])
+      },
+      {
+        name: "registerCommands",
+        effect: "write",
+        requiredGrants: [UI_KEYBINDINGS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["commands"],
+          properties: {
+            commands: {
+              type: "array",
+              minItems: 1,
+              maxItems: 64,
+              items: commandDescriptorSchema
+            }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["commandSetToken", "results"],
+          properties: {
+            commandSetToken: { type: "string", minLength: 1, maxLength: 160 },
+            results: { type: "array", maxItems: 64, items: commandResultSchema }
+          }
+        }
+      },
+      {
+        name: "unregisterCommands",
+        effect: "write",
+        requiredGrants: [UI_KEYBINDINGS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["commandSetToken"],
+          properties: {
+            commandSetToken: { type: "string", minLength: 1, maxLength: 160 }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["unregistered"],
+          properties: { unregistered: { type: "boolean" } }
+        }
+      },
+      {
+        name: "listConflicts",
+        effect: "read",
+        requiredGrants: [UI_KEYBINDINGS],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["conflicts"],
+          properties: {
+            conflicts: {
+              type: "array",
+              maxItems: 256,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["command", "key", "winner", "loser"],
+                properties: {
+                  command: { type: "string", maxLength: 256 },
+                  key: { type: "string", maxLength: 64 },
+                  winner: { enum: ["user", "native", "plugin"] },
+                  loser: { type: "string", maxLength: 256 }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  });
+  var uiNotificationActionSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["id", "label"],
+    properties: {
+      id: { type: "string", minLength: 1, maxLength: 80 },
+      label: { type: "string", minLength: 1, maxLength: 80 },
+      variant: { enum: ["default", "primary", "destructive"] }
+    }
+  };
+  var uiNotificationsApi = defineApi({
+    id: "t3.ui/notifications",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput(["notify", "update", "dismiss", "awaitAction"])
+      },
+      {
+        name: "notify",
+        effect: "write",
+        requiredGrants: [UI_NOTIFY],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["severity", "title"],
+          properties: {
+            severity: { enum: ["info", "success", "warning", "error", "loading"] },
+            title: { type: "string", minLength: 1, maxLength: 200 },
+            body: { type: "string", maxLength: 2e3 },
+            threadId: { type: "string", maxLength: 128 },
+            projectId: { type: "string", maxLength: 128 },
+            anchor: { enum: ["global", "thread"] },
+            dismissible: { type: "boolean" },
+            durationMs: { type: "integer", minimum: 0, maximum: 6e4 },
+            actions: { type: "array", maxItems: 3, items: uiNotificationActionSchema }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["notificationId"],
+          properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } }
+        }
+      },
+      {
+        name: "update",
+        effect: "write",
+        requiredGrants: [UI_NOTIFY],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["notificationId"],
+          properties: {
+            notificationId: { type: "string", minLength: 1, maxLength: 160 },
+            severity: { enum: ["info", "success", "warning", "error", "loading"] },
+            title: { type: "string", minLength: 1, maxLength: 200 },
+            body: { type: "string", maxLength: 2e3 },
+            dismissible: { type: "boolean" }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: { applied: { type: "boolean" } }
+        }
+      },
+      {
+        name: "dismiss",
+        effect: "write",
+        requiredGrants: [UI_NOTIFY],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["notificationId"],
+          properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["dismissed"],
+          properties: { dismissed: { type: "boolean" } }
+        }
+      },
+      {
+        name: "awaitAction",
+        effect: "read",
+        requiredGrants: [UI_NOTIFY],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["notificationId"],
+          properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } }
+        },
+        outputSchema: {
+          anyOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["actionId"],
+              properties: { actionId: { type: "string", minLength: 1, maxLength: 80 } }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["dismissed"],
+              properties: { dismissed: { const: true } }
+            }
+          ]
+        }
+      }
+    ]
+  });
+  var uiPanelsApi = defineApi({
+    id: "t3.ui/panels",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput([
+          "openSurface",
+          "activateSurface",
+          "closeSurface",
+          "listSurfaces",
+          "hideDock",
+          "showDock"
+        ])
+      },
+      {
+        name: "openSurface",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaceId"],
+          properties: {
+            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+            title: { type: "string", minLength: 1, maxLength: 200 },
+            placement: { enum: ["side-panel", "bottom-dock"] },
+            threadId: { type: "string", maxLength: 128 }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaceId"],
+          properties: { surfaceId: { type: "string", maxLength: 160 } }
+        }
+      },
+      {
+        name: "activateSurface",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaceId"],
+          properties: {
+            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+            threadId: { type: "string", maxLength: 128 }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: { applied: { type: "boolean" } }
+        }
+      },
+      {
+        name: "closeSurface",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaceId"],
+          properties: {
+            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+            threadId: { type: "string", maxLength: 128 }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: { applied: { type: "boolean" } }
+        }
+      },
+      {
+        name: "listSurfaces",
+        effect: "read",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["threadId"],
+          properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaces"],
+          properties: {
+            surfaces: {
+              type: "array",
+              maxItems: 64,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["id", "title", "placement", "active"],
+                properties: {
+                  id: { type: "string", maxLength: 160 },
+                  title: { type: "string", maxLength: 200 },
+                  placement: { enum: ["side-panel", "bottom-dock"] },
+                  active: { type: "boolean" }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        name: "hideDock",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["threadId"],
+          properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: { applied: { type: "boolean" } }
+        }
+      },
+      {
+        name: "showDock",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["threadId"],
+          properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: { applied: { type: "boolean" } }
+        }
+      }
+    ]
+  });
+  var UI_THEME_API = uiThemeApi.definition;
+  var UI_KEYBINDINGS_API = uiKeybindingsApi.definition;
+  var UI_NOTIFICATIONS_API = uiNotificationsApi.definition;
+  var UI_PANELS_API = uiPanelsApi.definition;
   var orchestrationStatusApi = defineOrchestrationStatusApi(vcsDiffPreviewStreamEventSchema);
   var ORCHESTRATION_STATUS_API = orchestrationStatusApi.definition;
   var GENERIC_API_CATALOGUE = [
     orchestrationStatusApi.definition,
     orchestrationControlApi.definition,
     browserLocalServersApi.definition,
+    browserSessionsApi.definition,
     workspaceFilesApi.definition,
     workspaceTreeApi.definition,
     workspaceSearchApi.definition,
@@ -3617,11 +6147,18 @@ var __t3Client = (() => {
     vcsRepositoryApi.definition,
     vcsRepositoryApiV1.definition,
     vcsDiffApiV1.definition,
+    vcsActionsApi.definition,
     resourcesLeaseApi.definition,
     resourcesLeaseApiV1.definition,
+    workspaceResourcesApi.definition,
     prsReadApi.definition,
+    prsWriteApi.definition,
     composerContextApi.definition,
-    messagesEnrichmentApi.definition
+    messagesEnrichmentApi.definition,
+    uiThemeApi.definition,
+    uiKeybindingsApi.definition,
+    uiNotificationsApi.definition,
+    uiPanelsApi.definition
   ];
   function canonical(value) {
     if (Array.isArray(value))
@@ -3647,7 +6184,7 @@ var __t3Client = (() => {
   var TERMINAL_OUTPUT_EVENTS_API = terminalOutputEventsApi.definition;
   var TERMINAL_CONTROL_API = terminalControlApi.definition;
 
-  // ../../extension-sdk/dist/environment.js
+  // node_modules/@t3tools/extension-sdk/dist/environment.js
   var ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
   var ENVIRONMENT_ASSET_MEDIA_TYPES = [
     "application/wasm",
@@ -3785,7 +6322,7 @@ var __t3Client = (() => {
     return { ...pkg, manifest };
   }
 
-  // ../../extension-sdk/dist/authoring.js
+  // node_modules/@t3tools/extension-sdk/dist/authoring.js
   var statePreview = (state2) => {
     const encoded = JSON.stringify(state2);
     return encoded.length > 200 ? encoded.slice(0, 200) + "\u2026" : encoded;
@@ -3837,13 +6374,14 @@ var __t3Client = (() => {
       id: source.id,
       version: source.version,
       apiVersion: 1,
-      surfaces: surfaces.map(({ name, title, scope, placements, clients, capabilities, stateVersion }) => ({
+      surfaces: surfaces.map(({ name, title, scope, placements, clients, capabilities, claimsTerminalFocus, stateVersion }) => ({
         id: source.id + "/" + name,
         title,
         scope,
         placements: placements ?? ["side-panel"],
         clients: clients ?? ["web", "desktop"],
         capabilities: capabilities ?? [],
+        ...claimsTerminalFocus === true ? { claimsTerminalFocus: true } : {},
         stateVersion: stateVersion ?? 1
       }))
     };
@@ -3885,7 +6423,242 @@ var __t3Client = (() => {
   // extension.tsx
   var import_react = __toESM(require_react(), 1);
 
-  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/constants.js
+  // uiContracts.ts
+  var DIFF_SURFACE_ID = "t3.diff/view";
+  var DIFF_TOGGLE_COMMAND_ID = "toggle";
+  function themeVar(tokens, name, role, fallback) {
+    return `var(${name}, ${tokens?.[role] ?? fallback})`;
+  }
+  function panelTheme(tokens) {
+    const muted = themeVar(tokens, "--muted-foreground", "mutedForeground", "#667085");
+    const border = themeVar(tokens, "--border", "border", "#dfe3e8");
+    const accent = themeVar(tokens, "--accent", "accentSurface", "#e8eef7");
+    const accentOutline = themeVar(tokens, "--accent", "accentSurface", "#b7cff0");
+    const destructive = themeVar(tokens, "--destructive", "error", "#cf222e");
+    const background = themeVar(tokens, "--background", "canvas", "#fff");
+    const foreground = themeVar(tokens, "--foreground", "text", "#20252d");
+    const mutedSurface = themeVar(tokens, "--muted", "muted", "#f4f5f7");
+    const control = {
+      padding: "4px 8px",
+      border: `1px solid ${border}`,
+      borderRadius: 5,
+      background: "transparent",
+      color: "inherit",
+      font: "inherit",
+      fontSize: 12,
+      cursor: "pointer"
+    };
+    const rowBase = {
+      display: "flex",
+      fontFamily: "var(--font-mono, ui-monospace, monospace)",
+      fontSize: 11,
+      lineHeight: "18px",
+      whiteSpace: "pre"
+    };
+    const gutter = {
+      width: 40,
+      flexShrink: 0,
+      textAlign: "right",
+      paddingRight: 8,
+      color: muted,
+      userSelect: "none"
+    };
+    const iconButton = {
+      ...control,
+      padding: "2px 6px",
+      fontSize: 11
+    };
+    return {
+      control,
+      rowBase,
+      gutter,
+      iconButton,
+      muted,
+      border,
+      accent,
+      accentOutline,
+      destructive,
+      background,
+      foreground,
+      mutedSurface
+    };
+  }
+  var DIFF_TOGGLE_GLOBAL_COMMANDS = [
+    {
+      id: DIFF_TOGGLE_COMMAND_ID,
+      title: "Toggle Diff",
+      description: "Show or hide the diff panel",
+      defaultKey: "mod+d",
+      when: "!terminalFocus",
+      scope: "global",
+      activation: { surfaceId: DIFF_SURFACE_ID, placement: "side-panel" }
+    }
+  ];
+  var DIFF_TOGGLE_VIEW_COMMANDS = [
+    {
+      id: DIFF_TOGGLE_COMMAND_ID,
+      title: "Toggle Diff",
+      description: "Hide the diff panel",
+      scope: "thread"
+    }
+  ];
+  var PANEL_TOGGLE_OPERATIONS = [
+    "listSurfaces",
+    "openSurface",
+    "activateSurface",
+    "closeSurface"
+  ];
+  var PANEL_ACCESS_DENIED = /capability denied: t3\.ui\/panels/;
+  function diffToggleAction(surfaces) {
+    const existing = surfaces.find((surface) => surface.id === DIFF_SURFACE_ID);
+    if (existing === void 0) return "open";
+    return existing.active ? "close" : "activate";
+  }
+  async function toggleDiffSurface(host, context) {
+    const threadId = context.resource.threadId;
+    if (threadId === void 0) return null;
+    const signal = AbortSignal.timeout(1e4);
+    const api = bindApi(uiPanelsApi, host, context);
+    try {
+      const capabilities = await api.invoke("getCapabilities", {}, signal);
+      if (!PANEL_TOGGLE_OPERATIONS.every((operation) => capabilities.operations?.[operation] === true))
+        return "unavailable";
+      const { surfaces } = await api.invoke("listSurfaces", { threadId }, signal);
+      const action = diffToggleAction(surfaces);
+      if (action === "open") {
+        await api.invoke(
+          "openSurface",
+          { surfaceId: DIFF_SURFACE_ID, placement: "side-panel", threadId },
+          signal
+        );
+      } else if (action === "activate") {
+        await api.invoke("activateSurface", { surfaceId: DIFF_SURFACE_ID, threadId }, signal);
+      } else {
+        await api.invoke("closeSurface", { surfaceId: DIFF_SURFACE_ID, threadId }, signal);
+      }
+      return action;
+    } catch (error) {
+      if (error instanceof Error && PANEL_ACCESS_DENIED.test(error.message)) return "unavailable";
+      throw error;
+    }
+  }
+  var reportToggleFailure = (host, context, error) => {
+    const detail = error instanceof Error ? error.message : String(error);
+    const threadId = context.resource.threadId;
+    void bindApi(uiNotificationsApi, host, context).invoke(
+      "notify",
+      {
+        severity: "error",
+        title: "Could not toggle the diff panel",
+        body: detail.slice(0, 500),
+        dismissible: true,
+        durationMs: 8e3,
+        ...threadId ? { threadId, anchor: "thread" } : { anchor: "global" }
+      },
+      AbortSignal.timeout(1e4)
+    ).catch(() => {
+      console.warn(`t3.diff/${DIFF_TOGGLE_COMMAND_ID} dispatch failed:`, error);
+    });
+  };
+  var reportToggleUnavailable = (host, context) => {
+    const threadId = context.resource.threadId;
+    void bindApi(uiNotificationsApi, host, context).invoke(
+      "notify",
+      {
+        severity: "error",
+        title: "The diff panel toggle is unavailable",
+        body: "The t3.ui/panels capability is not granted or its provider is gone; the toggle command has been withdrawn.",
+        dismissible: true,
+        durationMs: 8e3,
+        ...threadId ? { threadId, anchor: "thread" } : { anchor: "global" }
+      },
+      AbortSignal.timeout(1e4)
+    ).catch(() => {
+      console.warn(`t3.diff/${DIFF_TOGGLE_COMMAND_ID} is unavailable: t3.ui/panels access lost`);
+    });
+  };
+  var dispatchToggle = (host, context, commandSetToken) => {
+    void toggleDiffSurface(host, context).then(async (result) => {
+      if (result !== "unavailable") return;
+      reportToggleUnavailable(host, context);
+      if (commandSetToken === void 0) return;
+      await bindApi(uiKeybindingsApi, host, context).invoke("unregisterCommands", { commandSetToken }, AbortSignal.timeout(1e4)).catch(() => {
+      });
+    }).catch((error) => reportToggleFailure(host, context, error));
+  };
+  function stageDiffCommands(host) {
+    const handle = host.registerGlobalCommands?.(
+      DIFF_TOGGLE_GLOBAL_COMMANDS,
+      ({ commandId, context }) => {
+        if (commandId !== DIFF_TOGGLE_COMMAND_ID) return;
+        dispatchToggle(host, context, handle?.token);
+      }
+    );
+  }
+  function bindDiffViewCommands(host, session) {
+    const threadId = session.context.resource.threadId;
+    if (threadId === void 0) return;
+    const keybindings = bindApi(uiKeybindingsApi, host, session.context);
+    const panels = bindApi(uiPanelsApi, host, session.context);
+    void panels.invoke("listSurfaces", { threadId }, session.signal).then(
+      () => {
+        if (session.signal.aborted) return;
+        void keybindings.invoke("registerCommands", { commands: DIFF_TOGGLE_VIEW_COMMANDS }, session.signal).then(
+          ({ commandSetToken, results }) => {
+            if (session.signal.aborted) return;
+            session.onDispose(() => {
+              void keybindings.invoke("unregisterCommands", { commandSetToken }, AbortSignal.timeout(1e4)).catch(() => {
+              });
+            });
+            if (!results.every((result) => result.status === "registered")) return;
+            try {
+              session.bindCommands(commandSetToken, ({ commandId, context }) => {
+                if (commandId !== DIFF_TOGGLE_COMMAND_ID) return;
+                dispatchToggle(host, context, commandSetToken);
+              });
+            } catch {
+            }
+          },
+          () => {
+          }
+        );
+      },
+      () => {
+      }
+    );
+  }
+  function watchThemeTokens(host, context, signal, onTokens) {
+    const api = bindApi(uiThemeApi, host, context);
+    let alive = true;
+    let latest = 0;
+    const refresh = () => {
+      const seq = ++latest;
+      return api.invoke("getTokens", {}, signal).then(
+        (result) => {
+          if (!signal.aborted && alive && seq === latest) onTokens(result.tokens);
+        },
+        () => {
+          if (!signal.aborted && seq === latest) onTokens(null);
+        }
+      );
+    };
+    const markDead = () => {
+      alive = false;
+      latest += 1;
+      if (!signal.aborted) onTokens(null);
+    };
+    void refresh();
+    void (async () => {
+      const stream = bindStreamApi(uiThemeApi, host, context).subscribe("subscribeState", {}, signal);
+      for await (const frame of stream) {
+        if (signal.aborted || frame.type === "closed") break;
+        void refresh();
+      }
+      markDead();
+    })().catch(markDead);
+  }
+
+  // node_modules/@pierre/diffs/dist/constants.js
   var DIFFS_DEVELOPMENT_BUILD = (() => {
     try {
       return true;
@@ -3914,7 +6687,7 @@ var __t3Client = (() => {
     fromEnd: 0
   });
 
-  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/cleanLastNewline.js
+  // node_modules/@pierre/diffs/dist/utils/cleanLastNewline.js
   function cleanLastNewline(contents2) {
     let end = contents2.length;
     if (contents2.charCodeAt(end - 1) === 10) {
@@ -3924,7 +6697,7 @@ var __t3Client = (() => {
     return contents2.slice(0, end);
   }
 
-  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/detachString.js
+  // node_modules/@pierre/diffs/dist/utils/detachString.js
   var stringDetachEncoder = new TextEncoder();
   var stringDetachDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
   var SURROGATE_CODE_UNIT_PATTERN = /[\uD800-\uDFFF]/;
@@ -3942,7 +6715,7 @@ var __t3Client = (() => {
     return stringDetachDecoder.decode(stringDetachBuffer.subarray(0, written));
   }
 
-  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/realignChangeContent.js
+  // node_modules/@pierre/diffs/dist/utils/realignChangeContent.js
   var MAX_ALIGNMENT_COMPARISONS = 4096;
   var MIN_IMPROVEMENT_PER_PAIR = 0.5;
   function realignChangeContentBySimilarity(diff) {
@@ -4061,7 +6834,7 @@ var __t3Client = (() => {
     return (prefix + suffix) / maxLength;
   }
 
-  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/parsePatchFiles.js
+  // node_modules/@pierre/diffs/dist/utils/parsePatchFiles.js
   function processPatch(data, cacheKeyPrefix, throwOnError) {
     try {
       return _processPatch(data, cacheKeyPrefix, throwOnError);
@@ -4664,6 +7437,7 @@ ${prefix}`;
       } else if (hunk.collapsedBefore > 0) {
         rows.push({ ordinal: rows.length, kind: "gap", count: hunk.collapsedBefore });
       }
+      const firstRowIndex = rows.length;
       let additionIndex = expanded ? Math.max(hunk.additionStart - 1, 0) : hunk.additionLineIndex;
       let deletionIndex = expanded ? Math.max(hunk.deletionStart - 1, 0) : hunk.deletionLineIndex;
       let newLine = hunk.additionStart;
@@ -4706,6 +7480,8 @@ ${prefix}`;
           newLine += content.additions;
         }
       }
+      if (rows.length > firstRowIndex)
+        rows[firstRowIndex] = { ...rows[firstRowIndex], hunkStart: true };
       lastAdditionEnd = hunk.additionStart + hunk.additionCount - 1;
       lastDeletionEnd = hunk.deletionStart + hunk.deletionCount - 1;
     }
@@ -4714,6 +7490,48 @@ ${prefix}`;
       if (tail > 0) pushGap(lastDeletionEnd, lastAdditionEnd, tail);
     }
     return rows;
+  }
+  function splitRows(rows) {
+    const out = [];
+    let oldRun = [];
+    let newRun = [];
+    const flush = () => {
+      const height = Math.max(oldRun.length, newRun.length);
+      for (let index = 0; index < height; index += 1) {
+        const old = oldRun[index];
+        const current = newRun[index];
+        out.push({
+          ordinal: out.length,
+          kind: "sides",
+          old: old === void 0 ? { kind: "empty" } : { kind: "deletion", text: old.text, line: old.line },
+          new: current === void 0 ? { kind: "empty" } : { kind: "addition", text: current.text, line: current.line }
+        });
+      }
+      oldRun = [];
+      newRun = [];
+    };
+    for (const row of rows) {
+      if (row.hunkStart === true && (oldRun.length > 0 || newRun.length > 0)) flush();
+      if (row.kind === "gap") {
+        flush();
+        out.push({ ordinal: out.length, kind: "gap", count: row.count });
+      } else if (row.kind === "deletion") {
+        if (newRun.length > 0) flush();
+        oldRun.push({ text: row.text, line: row.oldLine });
+      } else if (row.kind === "addition") {
+        newRun.push({ text: row.text, line: row.newLine });
+      } else {
+        flush();
+        out.push({
+          ordinal: out.length,
+          kind: "sides",
+          old: { kind: "context", text: row.text, line: row.oldLine },
+          new: { kind: "context", text: row.text, line: row.newLine }
+        });
+      }
+    }
+    flush();
+    return out;
   }
   function canExpandFile(row) {
     return !row.binary && !row.textless && (row.changeType === "change" || row.changeType === "rename-changed");
@@ -5271,6 +8089,14 @@ ${prefix}`;
   function describePresentation(result) {
     return `opens in ${result.surfaceId} \xB7 ${result.placement}`;
   }
+  function restoreDiffState(value) {
+    if (value === null) return true;
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+    const record = value;
+    return Object.keys(record).every(
+      (key) => key === "mode" || key === "sourceId" || key === "fileKey" || key === "baseRef" || key === "ignoreWhitespace" || key === "turnId" || key === "layout"
+    ) && (record.mode === void 0 || record.mode === "workspace" || record.mode === "turns") && (record.sourceId === void 0 || typeof record.sourceId === "string") && (record.fileKey === void 0 || typeof record.fileKey === "string") && (record.baseRef === void 0 || typeof record.baseRef === "string") && (record.ignoreWhitespace === void 0 || typeof record.ignoreWhitespace === "boolean") && (record.turnId === void 0 || typeof record.turnId === "string") && (record.layout === void 0 || record.layout === "unified" || record.layout === "split");
+  }
   var CONNECTING_AGENTS = {
     revision: 0,
     streamEpoch: null,
@@ -5377,14 +8203,6 @@ ${prefix}`;
     if (patchParseCache.size >= 16) patchParseCache.clear();
     patchParseCache.set(diffHash, value);
     return value;
-  }
-  function restoreState(value) {
-    if (value === null) return true;
-    if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-    const record = value;
-    return Object.keys(record).every(
-      (key) => key === "mode" || key === "sourceId" || key === "fileKey" || key === "baseRef" || key === "ignoreWhitespace" || key === "turnId"
-    ) && (record.mode === void 0 || record.mode === "workspace" || record.mode === "turns") && (record.sourceId === void 0 || typeof record.sourceId === "string") && (record.fileKey === void 0 || typeof record.fileKey === "string") && (record.baseRef === void 0 || typeof record.baseRef === "string") && (record.ignoreWhitespace === void 0 || typeof record.ignoreWhitespace === "boolean") && (record.turnId === void 0 || typeof record.turnId === "string");
   }
   function useCapabilities(host, session, visible, tick) {
     const [result, setResult] = (0, import_react.useState)(null);
@@ -5644,46 +8462,35 @@ ${prefix}`;
       pending: enabled && selectionKey !== null && result?.key !== requestKey
     };
   }
-  var control = {
-    padding: "4px 8px",
-    border: "1px solid var(--border, #dfe3e8)",
-    borderRadius: 5,
-    background: "transparent",
-    color: "inherit",
-    font: "inherit",
-    fontSize: 12,
-    cursor: "pointer"
-  };
-  var rowBase = {
-    display: "flex",
-    fontFamily: "var(--font-mono, ui-monospace, monospace)",
-    fontSize: 11,
-    lineHeight: "18px",
-    whiteSpace: "pre"
-  };
-  var gutter = {
-    width: 40,
-    flexShrink: 0,
-    textAlign: "right",
-    paddingRight: 8,
-    color: "var(--muted-foreground, #667085)",
-    userSelect: "none"
-  };
-  var iconButton = {
-    ...control,
-    padding: "2px 6px",
-    fontSize: 11
-  };
-  function DiffRow({ row, wrap }) {
+  function useThemeTokens(host, session, enabled) {
+    const [tokens, setTokens] = (0, import_react.useState)(null);
+    (0, import_react.useEffect)(() => {
+      if (!enabled) return;
+      const controller = new AbortController();
+      watchThemeTokens(
+        host,
+        session.context,
+        AbortSignal.any([controller.signal, session.signal]),
+        setTokens
+      );
+      return () => controller.abort();
+    }, [host, session, enabled]);
+    return tokens;
+  }
+  function DiffRow({
+    row,
+    wrap,
+    ui
+  }) {
     if (row.kind === "gap") {
       return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
         "div",
         {
           style: {
-            ...rowBase,
+            ...ui.rowBase,
             justifyContent: "center",
-            color: "var(--muted-foreground, #667085)",
-            background: "var(--muted, #f4f5f7)",
+            color: ui.muted,
+            background: ui.mutedSurface,
             fontStyle: "italic"
           },
           children: [
@@ -5700,16 +8507,84 @@ ${prefix}`;
       "div",
       {
         style: {
-          ...rowBase,
+          ...ui.rowBase,
           whiteSpace: wrap ? "pre-wrap" : "pre",
           wordBreak: wrap ? "break-all" : void 0,
-          background: addition ? "color-mix(in srgb, var(--success, #2da44e) 14%, transparent)" : deletion ? "color-mix(in srgb, var(--destructive, #cf222e) 12%, transparent)" : "transparent"
+          background: addition ? (
+            // No theme role covers success green; --success is a static host variable.
+            "color-mix(in srgb, var(--success, #2da44e) 14%, transparent)"
+          ) : deletion ? `color-mix(in srgb, ${ui.destructive} 12%, transparent)` : "transparent"
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: gutter, children: deletion || row.kind === "context" ? row.oldLine ?? "" : "" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: gutter, children: addition || row.kind === "context" ? row.newLine ?? "" : "" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: "var(--muted-foreground, #667085)", userSelect: "none", width: 14 }, children: addition ? "+" : deletion ? "\u2212" : " " }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: ui.gutter, children: deletion || row.kind === "context" ? row.oldLine ?? "" : "" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: ui.gutter, children: addition || row.kind === "context" ? row.newLine ?? "" : "" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: ui.muted, userSelect: "none", width: 14 }, children: addition ? "+" : deletion ? "\u2212" : " " }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { overflow: "hidden", textOverflow: "ellipsis" }, children: row.text })
+        ]
+      }
+    );
+  }
+  function SplitCell({
+    cell,
+    wrap,
+    separator,
+    ui
+  }) {
+    const addition = cell.kind === "addition";
+    const deletion = cell.kind === "deletion";
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+      "div",
+      {
+        style: {
+          display: "flex",
+          minWidth: 0,
+          whiteSpace: wrap ? "pre-wrap" : "pre",
+          wordBreak: wrap ? "break-all" : void 0,
+          ...separator ? { borderRight: `1px solid ${ui.border}` } : {},
+          background: addition ? (
+            // Same success-green mix as unified additions; no theme role covers it.
+            "color-mix(in srgb, var(--success, #2da44e) 14%, transparent)"
+          ) : deletion ? `color-mix(in srgb, ${ui.destructive} 12%, transparent)` : "transparent"
+        },
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: ui.gutter, children: cell.kind === "empty" ? "" : cell.line }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: ui.muted, userSelect: "none", width: 14 }, children: addition ? "+" : deletion ? "\u2212" : " " }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }, children: cell.kind === "empty" ? "" : cell.text })
+        ]
+      }
+    );
+  }
+  function SplitRow({ row, wrap, ui }) {
+    if (row.kind === "gap") {
+      return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+        "div",
+        {
+          style: {
+            ...ui.rowBase,
+            justifyContent: "center",
+            color: ui.muted,
+            background: ui.mutedSurface,
+            fontStyle: "italic"
+          },
+          children: [
+            row.count,
+            " unmodified line",
+            row.count === 1 ? "" : "s"
+          ]
+        }
+      );
+    }
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+      "div",
+      {
+        style: {
+          ...ui.rowBase,
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)"
+        },
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SplitCell, { cell: row.old, wrap, separator: true, ui }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SplitCell, { cell: row.new, wrap, separator: false, ui })
         ]
       }
     );
@@ -5718,6 +8593,7 @@ ${prefix}`;
     row,
     selected,
     collapsed,
+    layout,
     wrap,
     expansion,
     expandable,
@@ -5726,22 +8602,24 @@ ${prefix}`;
     onExpand,
     onOpen,
     onCopy,
-    registerSection
+    registerSection,
+    ui
   }) {
-    const muted = "var(--muted-foreground, #667085)";
+    const muted = ui.muted;
     const expanded = expansion?.status === "loaded" ? expansion.contents : void 0;
     const rows = (0, import_react.useMemo)(
       () => collapsed || row.binary || row.textless ? [] : fileRows(row, expanded),
       [collapsed, row, expanded]
     );
+    const paired = (0, import_react.useMemo)(() => layout === "split" ? splitRows(rows) : null, [layout, rows]);
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "section",
       {
         ref: registerSection,
         "aria-label": displayPath(row),
         style: {
-          borderBottom: "1px solid var(--border, #dfe3e8)",
-          outline: selected ? "1px solid var(--accent, #b7cff0)" : void 0,
+          borderBottom: `1px solid ${ui.border}`,
+          outline: selected ? `1px solid ${ui.accentOutline}` : void 0,
           outlineOffset: -1
         },
         children: [
@@ -5756,7 +8634,7 @@ ${prefix}`;
                 fontSize: 12,
                 position: "sticky",
                 top: 0,
-                background: "var(--background, #fff)",
+                background: ui.background,
                 zIndex: 1
               },
               children: [
@@ -5767,7 +8645,7 @@ ${prefix}`;
                     "aria-expanded": !collapsed,
                     "aria-label": `${collapsed ? "Expand" : "Collapse"} ${displayPath(row)}`,
                     onClick: () => onToggleCollapsed(row.key),
-                    style: { ...iconButton, width: 20, textAlign: "center" },
+                    style: { ...ui.iconButton, width: 20, textAlign: "center" },
                     children: collapsed ? "\u25B8" : "\u25BE"
                   }
                 ),
@@ -5796,14 +8674,14 @@ ${prefix}`;
                   "button",
                   {
                     type: "button",
-                    style: iconButton,
+                    style: ui.iconButton,
                     disabled: expansion?.status === "loading",
                     onClick: () => onExpand(row),
                     children: expansion?.status === "loaded" ? "Context loaded" : "Full context"
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: iconButton, onClick: () => onOpen(row), children: "Open" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: iconButton, onClick: () => onCopy(row), children: "Copy path" })
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: ui.iconButton, onClick: () => onOpen(row), children: "Open" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: ui.iconButton, onClick: () => onCopy(row), children: "Copy path" })
               ]
             }
           ),
@@ -5824,7 +8702,7 @@ ${prefix}`;
             displayPath(row),
             "."
           ] }),
-          !collapsed && rows.map((line) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DiffRow, { row: line, wrap }, line.ordinal)),
+          !collapsed && (layout === "split" ? paired?.map((line) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SplitRow, { row: line, wrap, ui }, line.ordinal)) : rows.map((line) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DiffRow, { row: line, wrap, ui }, line.ordinal))),
           !collapsed && expansion?.status === "loading" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { padding: "4px 10px", color: muted, fontSize: 11, margin: 0 }, children: "Loading file contents\u2026" }),
           !collapsed && expansion?.status === "error" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { padding: "4px 10px", color: muted, fontSize: 11, margin: 0 }, children: expansion.detail }),
           !collapsed && expansion?.status === "loaded" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { padding: "4px 10px", color: muted, fontSize: 11, margin: 0 }, children: "Full file context loaded via t3.vcs/diff." })
@@ -5837,6 +8715,8 @@ ${prefix}`;
     const [visible, setVisible] = (0, import_react.useState)(session.visible);
     const [tick, setTick] = (0, import_react.useState)(0);
     (0, import_react.useEffect)(() => session.onVisibility(setVisible), [session]);
+    const tokens = useThemeTokens(host, session, visible);
+    const ui = panelTheme(tokens);
     const restored = session.restoreState && typeof session.restoreState === "object" && !Array.isArray(session.restoreState) ? session.restoreState : null;
     const [mode, setMode] = (0, import_react.useState)(restored?.mode === "turns" ? "turns" : "workspace");
     const [turnWanted, setTurnWanted] = (0, import_react.useState)(
@@ -5847,6 +8727,9 @@ ${prefix}`;
     const [baseRef, setBaseRef] = (0, import_react.useState)(restored?.baseRef ?? "");
     const [ignoreWhitespace, setIgnoreWhitespace] = (0, import_react.useState)(
       restored?.ignoreWhitespace ?? false
+    );
+    const [layout, setLayout] = (0, import_react.useState)(
+      restored?.layout === "split" ? "split" : "unified"
     );
     const [wrap, setWrap] = (0, import_react.useState)(false);
     const [collapsedFiles, setCollapsedFiles] = (0, import_react.useState)(/* @__PURE__ */ new Set());
@@ -5940,7 +8823,8 @@ ${prefix}`;
         ...next.fileKey !== null ? { fileKey: next.fileKey } : {},
         ...next.baseRef !== "" ? { baseRef: next.baseRef } : {},
         ...next.ignoreWhitespace ? { ignoreWhitespace: true } : {},
-        ...next.turnId !== void 0 ? { turnId: next.turnId } : {}
+        ...next.turnId !== void 0 ? { turnId: next.turnId } : {},
+        ...next.layout === "split" ? { layout: "split" } : {}
       });
     };
     const persistSelection = (next) => persist({
@@ -5949,7 +8833,8 @@ ${prefix}`;
       fileKey: next.fileKey,
       baseRef: next.baseRef,
       ignoreWhitespace: next.ignoreWhitespace,
-      turnId: next.mode === "turns" && turnSelection?.kind === "turn" ? turnSelection.turnId : void 0
+      turnId: next.mode === "turns" && turnSelection?.kind === "turn" ? turnSelection.turnId : void 0,
+      layout: next.layout
     });
     const chooseMode = (nextMode) => {
       if (nextMode === mode) return;
@@ -5961,7 +8846,8 @@ ${prefix}`;
         sourceId: source?.id ?? null,
         fileKey: null,
         baseRef,
-        ignoreWhitespace
+        ignoreWhitespace,
+        layout
       });
     };
     const chooseTurn = (selection) => {
@@ -5974,13 +8860,14 @@ ${prefix}`;
         fileKey: null,
         baseRef,
         ignoreWhitespace,
-        turnId: selection.kind === "turn" ? selection.turnId : void 0
+        turnId: selection.kind === "turn" ? selection.turnId : void 0,
+        layout
       });
     };
     const chooseSource = (id2) => {
       setSourceId(id2);
       setFileKey(null);
-      persistSelection({ mode, sourceId: id2, fileKey: null, baseRef, ignoreWhitespace });
+      persistSelection({ mode, sourceId: id2, fileKey: null, baseRef, ignoreWhitespace, layout });
     };
     const revealFile = (row) => {
       setCollapsedFiles((current) => {
@@ -5996,7 +8883,8 @@ ${prefix}`;
         sourceId: source?.id ?? null,
         fileKey: row.key,
         baseRef,
-        ignoreWhitespace
+        ignoreWhitespace,
+        layout
       });
     };
     const chooseBaseRef = (value) => {
@@ -6006,7 +8894,8 @@ ${prefix}`;
         sourceId: source?.id ?? null,
         fileKey,
         baseRef: value,
-        ignoreWhitespace
+        ignoreWhitespace,
+        layout
       });
     };
     const chooseWhitespace = (value) => {
@@ -6016,7 +8905,20 @@ ${prefix}`;
         sourceId: source?.id ?? null,
         fileKey,
         baseRef,
-        ignoreWhitespace: value
+        ignoreWhitespace: value,
+        layout
+      });
+    };
+    const chooseLayout = (value) => {
+      if (value === layout) return;
+      setLayout(value);
+      persistSelection({
+        mode,
+        sourceId: source?.id ?? null,
+        fileKey,
+        baseRef,
+        ignoreWhitespace,
+        layout: value
       });
     };
     const confirmRevert = (choice) => {
@@ -6143,7 +9045,7 @@ ${prefix}`;
         })
       );
     };
-    const muted = "var(--muted-foreground, #667085)";
+    const muted = ui.muted;
     const sources = preview.kind === "ready" ? preview.result.sources : [];
     const filteredBaseChoices = filterBaseRefChoices(baseRefChoices, baseRef);
     const revertCapable = orchGate.kind === "ready" && orchGate.operations["checkpoint.revert"] === true;
@@ -6156,8 +9058,8 @@ ${prefix}`;
           display: "flex",
           flexDirection: "column",
           minHeight: 0,
-          color: "var(--foreground, #20252d)",
-          background: "var(--background, #fff)",
+          color: ui.foreground,
+          background: ui.background,
           fontFamily: "var(--font-sans, system-ui, sans-serif)",
           fontSize: 13
         },
@@ -6169,13 +9071,13 @@ ${prefix}`;
                 display: "flex",
                 gap: 6,
                 padding: 8,
-                borderBottom: "1px solid var(--border, #dfe3e8)",
+                borderBottom: `1px solid ${ui.border}`,
                 flexShrink: 0,
                 alignItems: "center",
                 flexWrap: "wrap"
               },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", onClick: () => setTick((value) => value + 1), style: control, children: "Refresh" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", onClick: () => setTick((value) => value + 1), style: ui.control, children: "Refresh" }),
                 ["workspace", "turns"].map((value) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                   "button",
                   {
@@ -6183,9 +9085,9 @@ ${prefix}`;
                     "aria-current": mode === value ? "true" : void 0,
                     onClick: () => chooseMode(value),
                     style: {
-                      ...control,
+                      ...ui.control,
                       fontWeight: mode === value ? 600 : 400,
-                      background: mode === value ? "var(--accent, #e8eef7)" : "transparent"
+                      background: mode === value ? ui.accent : "transparent"
                     },
                     children: value === "workspace" ? "Workspace" : "Turns"
                   },
@@ -6198,9 +9100,9 @@ ${prefix}`;
                     "aria-current": source?.id === item.id ? "true" : void 0,
                     onClick: () => chooseSource(item.id),
                     style: {
-                      ...control,
+                      ...ui.control,
                       fontWeight: source?.id === item.id ? 600 : 400,
-                      background: source?.id === item.id ? "var(--accent, #e8eef7)" : "transparent"
+                      background: source?.id === item.id ? ui.accent : "transparent"
                     },
                     children: describeSource(item)
                   },
@@ -6218,9 +9120,9 @@ ${prefix}`;
                         turnCount: choice.turnCount
                       }),
                       style: {
-                        ...control,
+                        ...ui.control,
                         fontWeight: turnSelection?.kind === "turn" && turnSelection.turnId === choice.turnId ? 600 : 400,
-                        background: turnSelection?.kind === "turn" && turnSelection.turnId === choice.turnId ? "var(--accent, #e8eef7)" : "transparent"
+                        background: turnSelection?.kind === "turn" && turnSelection.turnId === choice.turnId ? ui.accent : "transparent"
                       },
                       children: [
                         choice.label,
@@ -6236,9 +9138,9 @@ ${prefix}`;
                       "aria-current": turnSelection?.kind === "thread" ? "true" : void 0,
                       onClick: () => chooseTurn({ kind: "thread" }),
                       style: {
-                        ...control,
+                        ...ui.control,
                         fontWeight: turnSelection?.kind === "thread" ? 600 : 400,
-                        background: turnSelection?.kind === "thread" ? "var(--accent, #e8eef7)" : "transparent"
+                        background: turnSelection?.kind === "thread" ? ui.accent : "transparent"
                       },
                       children: "All turns"
                     }
@@ -6247,7 +9149,7 @@ ${prefix}`;
                     "button",
                     {
                       type: "button",
-                      style: { ...control, color: "var(--destructive, #cf222e)" },
+                      style: { ...ui.control, color: ui.destructive },
                       disabled: revert?.status === "pending",
                       onClick: () => confirmRevert(revertChoice),
                       children: [
@@ -6267,7 +9169,7 @@ ${prefix}`;
                       list: "t3-diff-base-refs",
                       value: baseRef,
                       onChange: (event) => chooseBaseRef(event.target.value),
-                      style: { ...control, width: 140 }
+                      style: { ...ui.control, width: 140 }
                     }
                   ),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("datalist", { id: "t3-diff-base-refs", children: filteredBaseChoices.map((choice) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: choice.refName, children: choice.label }, choice.id)) }),
@@ -6283,6 +9185,21 @@ ${prefix}`;
                     "Ignore whitespace"
                   ] })
                 ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { role: "group", "aria-label": "Diff layout", style: { display: "flex" }, children: ["unified", "split"].map((value) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "button",
+                  {
+                    type: "button",
+                    "aria-pressed": layout === value,
+                    onClick: () => chooseLayout(value),
+                    style: {
+                      ...ui.control,
+                      fontWeight: layout === value ? 600 : 400,
+                      background: layout === value ? ui.accent : "transparent"
+                    },
+                    children: value === "unified" ? "Unified" : "Split"
+                  },
+                  value
+                )) }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { style: { display: "flex", alignItems: "center", gap: 4, fontSize: 12 }, children: [
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                     "input",
@@ -6298,7 +9215,7 @@ ${prefix}`;
                   "button",
                   {
                     type: "button",
-                    style: control,
+                    style: ui.control,
                     onClick: () => setCollapsedFiles(toggleAllDiffFiles(fileKeys, collapsedFiles)),
                     children: allCollapsed ? "Expand all" : "Collapse all"
                   }
@@ -6346,17 +9263,17 @@ ${prefix}`;
                 gap: 6,
                 alignItems: "center",
                 padding: "6px 10px",
-                color: revert.status === "error" ? "var(--destructive, #cf222e)" : muted,
+                color: revert.status === "error" ? ui.destructive : muted,
                 fontSize: 12,
                 margin: 0,
-                borderBottom: "1px solid var(--border, #dfe3e8)",
+                borderBottom: `1px solid ${ui.border}`,
                 flexShrink: 0
               },
               children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flex: 1 }, children: revert.detail }),
                 revert.status === "confirming" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: iconButton, onClick: runRevert, children: "Confirm revert" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: iconButton, onClick: () => setRevert(null), children: "Cancel" })
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: ui.iconButton, onClick: runRevert, children: "Confirm revert" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: ui.iconButton, onClick: () => setRevert(null), children: "Cancel" })
                 ] })
               ]
             }
@@ -6383,7 +9300,7 @@ ${prefix}`;
                   padding: "6px 10px",
                   fontSize: 11,
                   color: muted,
-                  borderBottom: "1px solid var(--border, #dfe3e8)",
+                  borderBottom: `1px solid ${ui.border}`,
                   flexShrink: 0
                 },
                 children: "This diff was truncated because it exceeded the preview limit. The changes shown are incomplete."
@@ -6400,7 +9317,7 @@ ${prefix}`;
                     padding: 8,
                     fontSize: 11,
                     fontFamily: "var(--font-mono, ui-monospace, monospace)",
-                    border: "1px solid var(--border, #dfe3e8)",
+                    border: `1px solid ${ui.border}`,
                     borderRadius: 6,
                     overflow: "auto"
                   },
@@ -6420,7 +9337,7 @@ ${prefix}`;
                     overflow: "auto",
                     flexShrink: 0,
                     maxHeight: "34%",
-                    borderBottom: "1px solid var(--border, #dfe3e8)"
+                    borderBottom: `1px solid ${ui.border}`
                   },
                   children: treeRows.map(
                     (row) => row.kind === "dir" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
@@ -6471,8 +9388,8 @@ ${prefix}`;
                           border: "1px solid transparent",
                           borderRadius: 5,
                           cursor: "pointer",
-                          color: "var(--foreground, #20252d)",
-                          background: selected?.key === row.row.key ? "var(--accent, #e8eef7)" : "transparent",
+                          color: ui.foreground,
+                          background: selected?.key === row.row.key ? ui.accent : "transparent",
                           overflow: "hidden",
                           textOverflow: "ellipsis",
                           whiteSpace: "nowrap"
@@ -6499,10 +9416,12 @@ ${prefix}`;
                     row,
                     selected: selected?.key === row.key,
                     collapsed: collapsedFiles.has(row.key),
+                    layout,
                     wrap,
                     expansion: expansions.get(`${source.diffHash}:${row.key}`),
                     expandable: mode === "workspace",
                     action,
+                    ui,
                     onToggleCollapsed: (key) => setCollapsedFiles(toggleCollapsedKey(collapsedFiles, key)),
                     onExpand: expandFile,
                     onOpen: openInEditor,
@@ -6525,19 +9444,19 @@ ${prefix}`;
                 padding: "6px 10px",
                 color: muted,
                 fontSize: 11,
-                borderTop: "1px solid var(--border, #dfe3e8)",
+                borderTop: `1px solid ${ui.border}`,
                 flexShrink: 0
               },
-              children: "Read-only diff on t3.vcs/diff 1.1 + t3.orchestration: unary small previews, sha256-verified streams for large payloads and turn diffs, status-driven refresh. Checkpoint diffs are view-only \u2014 revert runs through t3.orchestration/control. Split view and diff-line comments are deferred slices."
+              children: "Read-only diff on t3.vcs/diff 1.1 + t3.orchestration: unary small previews, sha256-verified streams for large payloads and turn diffs, status-driven refresh. Checkpoint diffs are view-only \u2014 revert runs through t3.orchestration/control. Diff-line comments are a deferred slice."
             }
           )
         ]
       }
     );
   }
-  var extension_default = defineExtension({
+  var authored = defineExtension({
     id: manifestId,
-    version: "0.3.0",
+    version: "0.4.0",
     requires: [
       requireApi(vcsDiffApi),
       requireApi(vcsRepositoryApi),
@@ -6545,7 +9464,11 @@ ${prefix}`;
       requireApi(vcsRefsApi),
       requireApi(filePresentationApi),
       requireApi(orchestrationStatusApi),
-      requireApi(orchestrationControlApi)
+      requireApi(orchestrationControlApi),
+      requireApi(uiThemeApi),
+      requireApi(uiKeybindingsApi),
+      requireApi(uiPanelsApi),
+      requireApi(uiNotificationsApi)
     ],
     surfaces: [
       {
@@ -6554,15 +9477,28 @@ ${prefix}`;
         scope: "thread",
         placements: ["side-panel"],
         clients: ["web", "desktop"],
+        // SurfaceDescriptor.capabilities declares consumed host services; the
+        // installed path exposes none, so this stays empty (design F4).
         capabilities: [],
         stateVersion: 1,
-        validateRestore: restoreState,
+        validateRestore: restoreDiffState,
         createView(host, session) {
+          bindDiffViewCommands(host, session);
           return { renderer: () => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DiffPanelView, { host, session }) };
         }
       }
     ]
   });
+  var extension_default = {
+    ...authored,
+    // The factory stages the installation-scoped `ext.t3.diff.toggle` set; the
+    // seam flushes it once the installation commits on a live provider
+    // connection. Absent `registerGlobalCommands` means a host without the seam.
+    client(host) {
+      stageDiffCommands(host);
+      return authored.client(host);
+    }
+  };
 
   // extension.ts
   var extension_default2 = extension_default;

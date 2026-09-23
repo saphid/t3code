@@ -47,8 +47,11 @@ export type ThreadToastData = {
   onClose?: (() => void) | undefined;
   dismissAfterVisibleMs?: number;
   hideCopyButton?: boolean;
+  /** `false` hides the dismiss control; used by extension notifications with `dismissible: false`. */
+  dismissible?: boolean;
   additionalActions?: ReadonlyArray<{
     id: string;
+    variant?: ThreadToastData["secondaryActionVariant"];
     props: ComponentPropsWithoutRef<"button">;
   }>;
   secondaryActionProps?: ComponentPropsWithoutRef<"button">;
@@ -345,35 +348,35 @@ function ToastBodyContent({
 
   return (
     <>
-      <div className={cn("flex min-w-0 gap-2", !stackedActionLayout && "flex-1")}>
-        {leadingIcon ? (
-          <div
-            className="flex h-lh w-4 shrink-0 items-center justify-center"
-            data-slot="toast-icon"
-          >
-            {leadingIcon}
-          </div>
-        ) : Icon ? (
-          <div
-            className="[&>svg]:h-lh [&>svg]:w-4 [&_svg]:pointer-events-none [&_svg]:shrink-0"
-            data-slot="toast-icon"
-          >
-            <Icon className="in-data-[type=error]:text-destructive in-data-[type=info]:text-info in-data-[type=success]:text-success in-data-[type=warning]:text-warning in-data-[type=loading]:opacity-80" />
-          </div>
-        ) : null}
-        <div
-          className={cn(
-            "flex min-h-0 min-w-0 flex-1 flex-col gap-0.5",
-            stackedActionLayout && "pr-5",
-          )}
-        >
+      <div
+        className={cn(
+          "flex min-h-0 min-w-0 flex-col gap-0.5",
+          stackedActionLayout ? "pr-5" : "flex-1",
+        )}
+      >
+        <div className="flex min-w-0 gap-2">
+          {leadingIcon ? (
+            <div
+              className="flex h-lh w-4 shrink-0 items-center justify-center"
+              data-slot="toast-icon"
+            >
+              {leadingIcon}
+            </div>
+          ) : Icon ? (
+            <div
+              className="[&>svg]:h-lh [&>svg]:w-4 [&_svg]:pointer-events-none [&_svg]:shrink-0"
+              data-slot="toast-icon"
+            >
+              <Icon className="in-data-[type=error]:text-destructive in-data-[type=info]:text-info in-data-[type=success]:text-success in-data-[type=warning]:text-warning in-data-[type=loading]:opacity-80" />
+            </div>
+          ) : null}
           <Toast.Title className="min-w-0 wrap-break-word font-medium" data-slot="toast-title" />
-          <ToastDescriptionAndExpandable
-            toastData={toastData}
-            toastDescription={toastDescription}
-            toastType={toastType}
-          />
         </div>
+        <ToastDescriptionAndExpandable
+          toastData={toastData}
+          toastDescription={toastDescription}
+          toastType={toastType}
+        />
       </div>
       {hasTrailingControls ? (
         <div
@@ -383,14 +386,14 @@ function ToastBodyContent({
           )}
         >
           {copyErrorText !== null ? <CopyErrorButton text={copyErrorText} /> : null}
-          {additionalActions.map(({ id, props: { className, ...props } }) => (
+          {additionalActions.map(({ id, variant, props: { className, ...props } }) => (
             <Button
               {...props}
               className={className}
               key={id}
               size="xs"
               type="button"
-              variant={secondaryActionVariant}
+              variant={variant ?? secondaryActionVariant}
             />
           ))}
           {secondaryActionProps ? (
@@ -560,7 +563,7 @@ function Toasts({ position }: { position: ToastPosition }) {
     <Toast.Portal data-slot="toast-portal">
       <Toast.Viewport
         className={cn(
-          "fixed z-100 mx-auto flex w-[calc(100%-var(--toast-inset)*2)] max-w-90 [--toast-header-offset:52px] [--toast-inset:--spacing(4)] sm:[--toast-inset:--spacing(8)]",
+          "fixed z-100 mx-auto flex w-[calc(100%-var(--toast-inset)*2)] max-w-90 [--toast-header-offset:var(--workspace-topbar-height)] [--toast-inset:--spacing(4)] sm:[--toast-inset:--spacing(8)]",
           // Vertical positioning
           "data-[position*=top]:top-[calc(var(--toast-inset)+var(--toast-header-offset))]",
           "data-[position*=bottom]:bottom-(--toast-inset)",
@@ -661,19 +664,21 @@ function Toasts({ position }: { position: ToastPosition }) {
                 dismissAfterVisibleMs={toast.data?.dismissAfterVisibleMs}
                 toastId={toast.id}
               />
-              <div className={toastCornerDismissClass}>
-                <button
-                  aria-label="Dismiss notification"
-                  className={toastCornerOrbClass}
-                  data-slot="toast-close"
-                  onClick={() =>
-                    handleToastDismissClick(toastManager, toast.id, toast.data?.onClose)
-                  }
-                  type="button"
-                >
-                  <XIcon className="size-3" strokeWidth={2.25} />
-                </button>
-              </div>
+              {toast.data?.dismissible !== false ? (
+                <div className={toastCornerDismissClass}>
+                  <button
+                    aria-label="Dismiss notification"
+                    className={toastCornerOrbClass}
+                    data-slot="toast-close"
+                    onClick={() =>
+                      handleToastDismissClick(toastManager, toast.id, toast.data?.onClose)
+                    }
+                    type="button"
+                  >
+                    <XIcon className="size-3" strokeWidth={2.25} />
+                  </button>
+                </div>
+              ) : null}
               <Toast.Content
                 className={cn(
                   // `overflow-x: clip` avoids the CSS quirk where pairing `hidden` + `y: visible`
@@ -752,23 +757,25 @@ function AnchoredToasts() {
                     </Toast.Content>
                   ) : (
                     <>
-                      <div className={toastCornerDismissClass}>
-                        <button
-                          aria-label="Dismiss notification"
-                          className={toastCornerOrbClass}
-                          data-slot="toast-close"
-                          onClick={() =>
-                            handleToastDismissClick(
-                              anchoredToastManager,
-                              toast.id,
-                              toast.data?.onClose,
-                            )
-                          }
-                          type="button"
-                        >
-                          <XIcon className="size-3" strokeWidth={2.25} />
-                        </button>
-                      </div>
+                      {toast.data?.dismissible !== false ? (
+                        <div className={toastCornerDismissClass}>
+                          <button
+                            aria-label="Dismiss notification"
+                            className={toastCornerOrbClass}
+                            data-slot="toast-close"
+                            onClick={() =>
+                              handleToastDismissClick(
+                                anchoredToastManager,
+                                toast.id,
+                                toast.data?.onClose,
+                              )
+                            }
+                            type="button"
+                          >
+                            <XIcon className="size-3" strokeWidth={2.25} />
+                          </button>
+                        </div>
+                      ) : null}
                       <Toast.Content
                         className={cn(
                           "pointer-events-auto min-h-0 overflow-y-visible pl-3.5 text-sm [overflow-x:clip]",

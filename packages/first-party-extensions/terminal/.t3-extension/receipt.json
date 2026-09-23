@@ -2,10 +2,16 @@
   "kind": "package-check",
   "installed": false,
   "packageId": "t3.terminal",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "hashes": {
-    "t3-extension.json": "33c908e3f58082a2c2bf4763da6c79393a043451fc7cec1cd44ed85ea4dc77a7",
-    "client.mjs": "a17aa1d2a6b4ee041c8fae8fac5830fe9ebdb64cdb852522755ff944d3c12ceb"
+    "t3-extension.json": "eefff644871487bed183dddf1146a303caa269d471a546e09717b8deda1619b3",
+    "client.mjs": "284418f3d14e5a8f91c5cfb054e02c65d5bfc585044be0481c50f27a2ea55042",
+    "assets/ghostty-vt.wasm": "51b016a6aa3c29ead71c7c8acf8c01d43b064bae19957a9c9f9e2bf469267629",
+    "assets/ghostty-write-pty.wasm": "75cb147e98ede3f85f3cd6236a30f6d12565b0b237e1d8db941f5f3e8ad3d903",
+    "assets/SymbolsNerdFontMono-Regular.woff2": "a8e2fc5ae3c2525812151b95da80c5beab0befa84aca84fc33aaed94317502df",
+    "assets/SymbolsNerdFontMono-LICENSE.txt": "84a7a98c82140fb12c37fe42b93805baa16024cb3e5acc599b7ffe612c55d847",
+    "assets/libghostty-vt-LICENSE.txt": "386211873e5b7a02f663ae4d7adf96285999f91608f8f9f31fecfd0f4095e6f1",
+    "assets/libghostty-vt-VERSION.txt": "3fc03e29c86b5100e6738d20cb1c97c3969ab1044debbe8a4cd7d49cdc9cf321"
   },
   "generator": "t3-extension",
   "sourceEntrySha256": "fb20f105ee5f533a9f4e318318e5684b06a72b91698d80a7e6451c11a824d5cb"

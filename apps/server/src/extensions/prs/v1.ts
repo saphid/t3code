@@ -2,16 +2,11 @@
 import {
   AuthOrchestrationReadScope,
   ExtensionOperationError,
-  ProjectId,
   PullRequestOperationError,
   PullRequestUnavailableError,
-  pullRequestHostOf,
   type PullRequestActivity as NativePullRequestActivity,
   type PullRequestDetail as NativePullRequestDetail,
   type PullRequestListResult as NativePullRequestListResult,
-  type PullRequestRef as NativePullRequestRef,
-  type RepositoryIdentity,
-  type SourceControlProviderKind,
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import {
@@ -44,7 +39,6 @@ import type {
 } from "@t3tools/extension-runtime";
 import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -52,10 +46,6 @@ import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import {
-  detectSourceControlProviderFromRemoteUrl,
-  sourceControlRepositorySelector,
-} from "@t3tools/shared/sourceControl";
 import { PullRequestService, type PullRequestError } from "../../pullRequest/PullRequestService.ts";
 import type {
   PullRequestProviderApi,
@@ -64,6 +54,7 @@ import type {
 import { PullRequestProviderRegistry } from "../../pullRequest/PullRequestProviderRegistry.ts";
 import { listLinkedPullRequestThreads } from "../../pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "../../pullRequest/pullRequestSyncKey.ts";
+import { makePrsBinding } from "./binding.ts";
 import { makeExtensionScopeResolver } from "../scope.ts";
 
 /**
@@ -364,142 +355,7 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
     principal.environmentId === dependencies.environmentId &&
     principal.scopes.includes(AuthOrchestrationReadScope);
 
-  const projectIdOf = (scope: Scope) => ProjectId.make(scope.context.resource.projectId!);
-
-  /**
-   * The granted project's repository identity, resolved server-side. Every
-   * reference-taking operation binds to this: plugin-supplied `host` and
-   * `repository` are validated against it and never forwarded, so a
-   * reference cannot make the native service route to another project's
-   * credentials.
-   */
-  interface BoundRepository {
-    readonly projectId: ProjectId;
-    readonly identity: RepositoryIdentity | null;
-    readonly workspaceRoot: string | null;
-    /** Null when the remote's provider cannot be identified server-side. */
-    readonly kind: SourceControlProviderKind | null;
-    readonly host: string | null;
-    readonly repository: string | null;
-    readonly api: PullRequestProviderApi | null;
-  }
-
-  const bindRepository = Effect.fn("PrsApi.bindRepository")(function* (scope: Scope) {
-    const projectId = projectIdOf(scope);
-    const shell = yield* dependencies.projectionSnapshotQuery.getProjectShellById(projectId).pipe(
-      Effect.mapError(
-        (cause) =>
-          new PullRequestOperationError({
-            operation: "resolveRepository",
-            detail: "The granted project could not be read.",
-            cause,
-          }),
-      ),
-    );
-    const resolved = Option.getOrNull(shell);
-    const identity = resolved?.repositoryIdentity ?? null;
-    if (identity === null || resolved === null) {
-      return {
-        projectId,
-        identity,
-        workspaceRoot: resolved?.workspaceRoot ?? null,
-        kind: null,
-        host: null,
-        repository: null,
-        api: null,
-      };
-    }
-    let kind = identity.provider as SourceControlProviderKind | undefined;
-    if (kind === "unknown") {
-      kind =
-        detectSourceControlProviderFromRemoteUrl(identity.locator.remoteUrl)?.kind ?? "unknown";
-    }
-    const known = kind === undefined || kind === "unknown" ? null : kind;
-    return {
-      projectId,
-      identity,
-      workspaceRoot: resolved.workspaceRoot,
-      kind: known,
-      host: pullRequestHostOf(identity, kind ?? "unknown"),
-      repository: sourceControlRepositorySelector(identity),
-      api: known === null ? null : dependencies.prRegistry.get(known),
-    };
-  });
-
-  type HostedRepository = BoundRepository & {
-    readonly workspaceRoot: string;
-    readonly repository: string;
-    readonly host: string;
-    readonly api: PullRequestProviderApi;
-  };
-
-  /**
-   * Host-bound operations require the granted project to resolve to a
-   * repository identity served by a registered provider. Anything less is
-   * `provider-unsupported` by name — never an empty stand-in result.
-   */
-  const requireHosted = (
-    bound: BoundRepository,
-  ): Effect.Effect<HostedRepository, PullRequestError> =>
-    bound.api === null ||
-    bound.repository === null ||
-    bound.host === null ||
-    bound.workspaceRoot === null
-      ? Effect.fail(new PullRequestUnavailableError({ reason: "provider-unsupported" }))
-      : Effect.succeed({
-          ...bound,
-          workspaceRoot: bound.workspaceRoot,
-          repository: bound.repository,
-          host: bound.host,
-          api: bound.api,
-        });
-
-  /**
-   * The native `PullRequestRef` a plugin ref may become: the granted
-   * project's own repository selector and the requested number, with NO
-   * host. Inside `requireProject` a hostless ref can only ever resolve to
-   * the project itself — the cross-project host fallback is unreachable —
-   * and a ref naming any other repository or host is refused before the
-   * native service is invoked.
-   */
-  const boundRef = (
-    bound: {
-      readonly projectId: ProjectId;
-      readonly repository: string;
-      readonly host: string;
-    },
-    ref: {
-      readonly host?: string | undefined;
-      readonly repository: string;
-      readonly number: number;
-    },
-  ): Effect.Effect<NativePullRequestRef, PullRequestError> =>
-    ref.repository.trim().toLowerCase() !== bound.repository.toLowerCase() ||
-    (ref.host !== undefined && ref.host.trim().toLowerCase() !== bound.host)
-      ? Effect.fail(
-          new PullRequestOperationError({
-            operation: "resolveRepository",
-            detail: "The change request does not belong to the granted project.",
-          }),
-        )
-      : Effect.succeed({
-          projectId: bound.projectId,
-          repository: bound.repository,
-          number: ref.number,
-        } satisfies NativePullRequestRef);
-
-  const bindRef = (
-    scope: Scope,
-    ref: {
-      readonly host?: string | undefined;
-      readonly repository: string;
-      readonly number: number;
-    },
-  ) =>
-    bindRepository(scope).pipe(
-      Effect.flatMap(requireHosted),
-      Effect.flatMap((hosted) => boundRef(hosted, ref)),
-    );
+  const { bindRepository, requireHosted, boundRef, bindRef } = makePrsBinding(dependencies);
 
   /** Halving that always terminates: floor(1/2) is 0, so a length-one
       collection reaches empty in one step and no loop can stall on a single

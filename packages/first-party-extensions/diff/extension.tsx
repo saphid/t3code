@@ -2,6 +2,10 @@ import {
   filePresentationApi,
   orchestrationControlApi,
   orchestrationStatusApi,
+  uiKeybindingsApi,
+  uiNotificationsApi,
+  uiPanelsApi,
+  uiThemeApi,
   vcsDiffApi,
   vcsRefsApi,
   vcsRepositoryApi,
@@ -14,11 +18,22 @@ import {
   type VcsDiffPreviewResult,
   type VcsListRefsResult,
 } from "@t3tools/extension-sdk/catalogue";
-import { defineExtension, requireApi } from "@t3tools/extension-sdk/authoring";
+import {
+  defineExtension,
+  requireApi,
+  type AuthoredExtension,
+} from "@t3tools/extension-sdk/authoring";
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  bindDiffViewCommands,
+  panelTheme,
+  stageDiffCommands,
+  watchThemeTokens,
+  type ThemeTokens,
+} from "./uiContracts.js";
 
 import {
   areAllDiffFilesCollapsed,
@@ -49,17 +64,23 @@ import {
   previewState,
   reconcileTurnSelection,
   renderableFromPatch,
+  restoreDiffState,
   retainFileSelection,
   revertTarget,
   selectSource,
+  splitRows,
   toggleAllDiffFiles,
   toggleCollapsedKey,
   turnChoices,
   CONNECTING_AGENTS,
   type AgentsModel,
   type DiffFileRow,
+  type DiffLayout,
   type DiffMode,
+  type DiffSplitRow,
   type DiffStatusRefresh,
+  type RestoredState,
+  type SplitSide,
   type TurnChoice,
   type TurnSelection,
 } from "./viewModel.js";
@@ -80,39 +101,6 @@ function renderableFor(diffHash: string, diff: string) {
   if (patchParseCache.size >= 16) patchParseCache.clear();
   patchParseCache.set(diffHash, value);
   return value;
-}
-
-interface RestoredState {
-  readonly mode?: string;
-  readonly sourceId?: string;
-  readonly fileKey?: string;
-  readonly baseRef?: string;
-  readonly ignoreWhitespace?: boolean;
-  /** Persisted turn selection — `turnId` for a turn pick, absent + mode "turns" for the whole thread. */
-  readonly turnId?: string;
-}
-
-function restoreState(value: unknown): value is RestoredState | null {
-  if (value === null) return true;
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  return (
-    Object.keys(record).every(
-      (key) =>
-        key === "mode" ||
-        key === "sourceId" ||
-        key === "fileKey" ||
-        key === "baseRef" ||
-        key === "ignoreWhitespace" ||
-        key === "turnId",
-    ) &&
-    (record.mode === undefined || record.mode === "workspace" || record.mode === "turns") &&
-    (record.sourceId === undefined || typeof record.sourceId === "string") &&
-    (record.fileKey === undefined || typeof record.fileKey === "string") &&
-    (record.baseRef === undefined || typeof record.baseRef === "string") &&
-    (record.ignoreWhitespace === undefined || typeof record.ignoreWhitespace === "boolean") &&
-    (record.turnId === undefined || typeof record.turnId === "string")
-  );
 }
 
 /** One-shot capability read; the repository gate decides what the panel may show. */
@@ -476,49 +464,47 @@ type Expansion =
   | { readonly status: "error"; readonly detail: string }
   | { readonly status: "loaded"; readonly contents: VcsDiffFileContentsResult };
 
-const control = {
-  padding: "4px 8px",
-  border: "1px solid var(--border, #dfe3e8)",
-  borderRadius: 5,
-  background: "transparent",
-  color: "inherit",
-  font: "inherit",
-  fontSize: 12,
-  cursor: "pointer",
-} as const;
+type PanelTheme = ReturnType<typeof panelTheme>;
 
-const rowBase = {
-  display: "flex",
-  fontFamily: "var(--font-mono, ui-monospace, monospace)",
-  fontSize: 11,
-  lineHeight: "18px",
-  whiteSpace: "pre",
-} as const;
+/**
+ * `t3.ui/theme` over the seam: `getTokens` resolves the effective values
+ * (stored preference, session overlay, external preview) and `subscribeState`
+ * events re-resolve on change. `null` means the contract is unavailable —
+ * every themed value then keeps its static fallback.
+ */
+function useThemeTokens(host: ClientHost, session: ViewSession, enabled: boolean) {
+  const [tokens, setTokens] = useState<ThemeTokens | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    const controller = new AbortController();
+    watchThemeTokens(
+      host,
+      session.context,
+      AbortSignal.any([controller.signal, session.signal]),
+      setTokens,
+    );
+    return () => controller.abort();
+  }, [host, session, enabled]);
+  return tokens;
+}
 
-const gutter = {
-  width: 40,
-  flexShrink: 0,
-  textAlign: "right" as const,
-  paddingRight: 8,
-  color: "var(--muted-foreground, #667085)",
-  userSelect: "none" as const,
-};
-
-const iconButton = {
-  ...control,
-  padding: "2px 6px",
-  fontSize: 11,
-} as const;
-
-function DiffRow({ row, wrap }: { row: ReturnType<typeof fileRows>[number]; wrap: boolean }) {
+function DiffRow({
+  row,
+  wrap,
+  ui,
+}: {
+  row: ReturnType<typeof fileRows>[number];
+  wrap: boolean;
+  ui: PanelTheme;
+}) {
   if (row.kind === "gap") {
     return (
       <div
         style={{
-          ...rowBase,
+          ...ui.rowBase,
           justifyContent: "center",
-          color: "var(--muted-foreground, #667085)",
-          background: "var(--muted, #f4f5f7)",
+          color: ui.muted,
+          background: ui.mutedSurface,
           fontStyle: "italic",
         }}
       >
@@ -531,22 +517,98 @@ function DiffRow({ row, wrap }: { row: ReturnType<typeof fileRows>[number]; wrap
   return (
     <div
       style={{
-        ...rowBase,
+        ...ui.rowBase,
         whiteSpace: wrap ? "pre-wrap" : "pre",
         wordBreak: wrap ? "break-all" : undefined,
         background: addition
-          ? "color-mix(in srgb, var(--success, #2da44e) 14%, transparent)"
+          ? // No theme role covers success green; --success is a static host variable.
+            "color-mix(in srgb, var(--success, #2da44e) 14%, transparent)"
           : deletion
-            ? "color-mix(in srgb, var(--destructive, #cf222e) 12%, transparent)"
+            ? `color-mix(in srgb, ${ui.destructive} 12%, transparent)`
             : "transparent",
       }}
     >
-      <span style={gutter}>{deletion || row.kind === "context" ? (row.oldLine ?? "") : ""}</span>
-      <span style={gutter}>{addition || row.kind === "context" ? (row.newLine ?? "") : ""}</span>
-      <span style={{ color: "var(--muted-foreground, #667085)", userSelect: "none", width: 14 }}>
+      <span style={ui.gutter}>{deletion || row.kind === "context" ? (row.oldLine ?? "") : ""}</span>
+      <span style={ui.gutter}>{addition || row.kind === "context" ? (row.newLine ?? "") : ""}</span>
+      <span style={{ color: ui.muted, userSelect: "none", width: 14 }}>
         {addition ? "+" : deletion ? "−" : " "}
       </span>
       <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{row.text}</span>
+    </div>
+  );
+}
+
+function SplitCell({
+  cell,
+  wrap,
+  separator,
+  ui,
+}: {
+  cell: SplitSide;
+  wrap: boolean;
+  separator: boolean;
+  ui: PanelTheme;
+}) {
+  const addition = cell.kind === "addition";
+  const deletion = cell.kind === "deletion";
+  return (
+    <div
+      style={{
+        display: "flex",
+        minWidth: 0,
+        whiteSpace: wrap ? "pre-wrap" : "pre",
+        wordBreak: wrap ? "break-all" : undefined,
+        ...(separator ? { borderRight: `1px solid ${ui.border}` } : {}),
+        background: addition
+          ? // Same success-green mix as unified additions; no theme role covers it.
+            "color-mix(in srgb, var(--success, #2da44e) 14%, transparent)"
+          : deletion
+            ? `color-mix(in srgb, ${ui.destructive} 12%, transparent)`
+            : "transparent",
+      }}
+    >
+      <span style={ui.gutter}>{cell.kind === "empty" ? "" : cell.line}</span>
+      <span style={{ color: ui.muted, userSelect: "none", width: 14 }}>
+        {addition ? "+" : deletion ? "−" : " "}
+      </span>
+      <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+        {cell.kind === "empty" ? "" : cell.text}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * A split row is one grid row, so paired old/new cells can never drift out of
+ * vertical alignment, and the file keeps its single scroll container — the
+ * panes cannot horizontally desync because neither pane scrolls on its own.
+ */
+function SplitRow({ row, wrap, ui }: { row: DiffSplitRow; wrap: boolean; ui: PanelTheme }) {
+  if (row.kind === "gap") {
+    return (
+      <div
+        style={{
+          ...ui.rowBase,
+          justifyContent: "center",
+          color: ui.muted,
+          background: ui.mutedSurface,
+          fontStyle: "italic",
+        }}
+      >
+        {row.count} unmodified line{row.count === 1 ? "" : "s"}
+      </div>
+    );
+  }
+  return (
+    <div
+      style={{
+        ...ui.rowBase,
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+      }}
+    >
+      <SplitCell cell={row.old} wrap={wrap} separator ui={ui} />
+      <SplitCell cell={row.new} wrap={wrap} separator={false} ui={ui} />
     </div>
   );
 }
@@ -555,6 +617,7 @@ function FileSection({
   row,
   selected,
   collapsed,
+  layout,
   wrap,
   expansion,
   expandable,
@@ -564,10 +627,12 @@ function FileSection({
   onOpen,
   onCopy,
   registerSection,
+  ui,
 }: {
   row: DiffFileRow;
   selected: boolean;
   collapsed: boolean;
+  layout: DiffLayout;
   wrap: boolean;
   expansion: Expansion | undefined;
   expandable: boolean;
@@ -577,20 +642,23 @@ function FileSection({
   onOpen: (row: DiffFileRow) => void;
   onCopy: (row: DiffFileRow) => void;
   registerSection: (el: HTMLElement | null) => void;
+  ui: PanelTheme;
 }) {
-  const muted = "var(--muted-foreground, #667085)";
+  const muted = ui.muted;
   const expanded = expansion?.status === "loaded" ? expansion.contents : undefined;
   const rows = useMemo(
     () => (collapsed || row.binary || row.textless ? [] : fileRows(row, expanded)),
     [collapsed, row, expanded],
   );
+  // Pairing is pure and row-count-bounded; memoized so unrelated renders don't re-pair.
+  const paired = useMemo(() => (layout === "split" ? splitRows(rows) : null), [layout, rows]);
   return (
     <section
       ref={registerSection}
       aria-label={displayPath(row)}
       style={{
-        borderBottom: "1px solid var(--border, #dfe3e8)",
-        outline: selected ? "1px solid var(--accent, #b7cff0)" : undefined,
+        borderBottom: `1px solid ${ui.border}`,
+        outline: selected ? `1px solid ${ui.accentOutline}` : undefined,
         outlineOffset: -1,
       }}
     >
@@ -603,7 +671,7 @@ function FileSection({
           fontSize: 12,
           position: "sticky",
           top: 0,
-          background: "var(--background, #fff)",
+          background: ui.background,
           zIndex: 1,
         }}
       >
@@ -612,7 +680,7 @@ function FileSection({
           aria-expanded={!collapsed}
           aria-label={`${collapsed ? "Expand" : "Collapse"} ${displayPath(row)}`}
           onClick={() => onToggleCollapsed(row.key)}
-          style={{ ...iconButton, width: 20, textAlign: "center" }}
+          style={{ ...ui.iconButton, width: 20, textAlign: "center" }}
         >
           {collapsed ? "▸" : "▾"}
         </button>
@@ -635,17 +703,17 @@ function FileSection({
         {expandable && canExpandFile(row) && !collapsed && (
           <button
             type="button"
-            style={iconButton}
+            style={ui.iconButton}
             disabled={expansion?.status === "loading"}
             onClick={() => onExpand(row)}
           >
             {expansion?.status === "loaded" ? "Context loaded" : "Full context"}
           </button>
         )}
-        <button type="button" style={iconButton} onClick={() => onOpen(row)}>
+        <button type="button" style={ui.iconButton} onClick={() => onOpen(row)}>
           Open
         </button>
-        <button type="button" style={iconButton} onClick={() => onCopy(row)}>
+        <button type="button" style={ui.iconButton} onClick={() => onCopy(row)}>
           Copy path
         </button>
       </header>
@@ -667,7 +735,10 @@ function FileSection({
           No textual changes in the patch for {displayPath(row)}.
         </p>
       )}
-      {!collapsed && rows.map((line) => <DiffRow key={line.ordinal} row={line} wrap={wrap} />)}
+      {!collapsed &&
+        (layout === "split"
+          ? paired?.map((line) => <SplitRow key={line.ordinal} row={line} wrap={wrap} ui={ui} />)
+          : rows.map((line) => <DiffRow key={line.ordinal} row={line} wrap={wrap} ui={ui} />))}
       {!collapsed && expansion?.status === "loading" && (
         <p style={{ padding: "4px 10px", color: muted, fontSize: 11, margin: 0 }}>
           Loading file contents…
@@ -692,6 +763,8 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
   const [visible, setVisible] = useState(session.visible);
   const [tick, setTick] = useState(0);
   useEffect(() => session.onVisibility(setVisible), [session]);
+  const tokens = useThemeTokens(host, session, visible);
+  const ui = panelTheme(tokens);
 
   const restored =
     session.restoreState &&
@@ -712,6 +785,11 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
   const [baseRef, setBaseRef] = useState<string>(restored?.baseRef ?? "");
   const [ignoreWhitespace, setIgnoreWhitespace] = useState<boolean>(
     restored?.ignoreWhitespace ?? false,
+  );
+  // Per-view layout (the plugin cannot reach the host's client settings);
+  // wrap stays session-local — native's wordWrap toggle is unpersisted too.
+  const [layout, setLayout] = useState<DiffLayout>(
+    restored?.layout === "split" ? "split" : "unified",
   );
   const [wrap, setWrap] = useState(false);
   const [collapsedFiles, setCollapsedFiles] = useState<ReadonlySet<string>>(new Set());
@@ -851,6 +929,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
     readonly baseRef: string;
     readonly ignoreWhitespace: boolean;
     readonly turnId?: string;
+    readonly layout: DiffLayout;
   }) => {
     session.save({
       mode: next.mode,
@@ -859,6 +938,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
       ...(next.baseRef !== "" ? { baseRef: next.baseRef } : {}),
       ...(next.ignoreWhitespace ? { ignoreWhitespace: true } : {}),
       ...(next.turnId !== undefined ? { turnId: next.turnId } : {}),
+      ...(next.layout === "split" ? { layout: "split" } : {}),
     });
   };
   // Every field the caller just changed is passed explicitly — reading the
@@ -869,6 +949,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
     readonly fileKey: string | null;
     readonly baseRef: string;
     readonly ignoreWhitespace: boolean;
+    readonly layout: DiffLayout;
   }) =>
     persist({
       mode: next.mode,
@@ -878,6 +959,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
       ignoreWhitespace: next.ignoreWhitespace,
       turnId:
         next.mode === "turns" && turnSelection?.kind === "turn" ? turnSelection.turnId : undefined,
+      layout: next.layout,
     });
   const chooseMode = (nextMode: DiffMode) => {
     if (nextMode === mode) return;
@@ -890,6 +972,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
       fileKey: null,
       baseRef,
       ignoreWhitespace,
+      layout,
     });
   };
   const chooseTurn = (selection: TurnSelection) => {
@@ -903,12 +986,13 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
       baseRef,
       ignoreWhitespace,
       turnId: selection.kind === "turn" ? selection.turnId : undefined,
+      layout,
     });
   };
   const chooseSource = (id: string) => {
     setSourceId(id);
     setFileKey(null);
-    persistSelection({ mode, sourceId: id, fileKey: null, baseRef, ignoreWhitespace });
+    persistSelection({ mode, sourceId: id, fileKey: null, baseRef, ignoreWhitespace, layout });
   };
   const revealFile = (row: DiffFileRow) => {
     setCollapsedFiles((current) => {
@@ -925,6 +1009,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
       fileKey: row.key,
       baseRef,
       ignoreWhitespace,
+      layout,
     });
   };
   const chooseBaseRef = (value: string) => {
@@ -935,6 +1020,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
       fileKey,
       baseRef: value,
       ignoreWhitespace,
+      layout,
     });
   };
   const chooseWhitespace = (value: boolean) => {
@@ -945,6 +1031,19 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
       fileKey,
       baseRef,
       ignoreWhitespace: value,
+      layout,
+    });
+  };
+  const chooseLayout = (value: DiffLayout) => {
+    if (value === layout) return;
+    setLayout(value);
+    persistSelection({
+      mode,
+      sourceId: source?.id ?? null,
+      fileKey,
+      baseRef,
+      ignoreWhitespace,
+      layout: value,
     });
   };
 
@@ -1087,7 +1186,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
     );
   };
 
-  const muted = "var(--muted-foreground, #667085)";
+  const muted = ui.muted;
   const sources = preview.kind === "ready" ? preview.result.sources : [];
   const filteredBaseChoices = filterBaseRefChoices(baseRefChoices, baseRef);
   const revertCapable =
@@ -1100,8 +1199,8 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
         display: "flex",
         flexDirection: "column",
         minHeight: 0,
-        color: "var(--foreground, #20252d)",
-        background: "var(--background, #fff)",
+        color: ui.foreground,
+        background: ui.background,
         fontFamily: "var(--font-sans, system-ui, sans-serif)",
         fontSize: 13,
       }}
@@ -1111,13 +1210,13 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
           display: "flex",
           gap: 6,
           padding: 8,
-          borderBottom: "1px solid var(--border, #dfe3e8)",
+          borderBottom: `1px solid ${ui.border}`,
           flexShrink: 0,
           alignItems: "center",
           flexWrap: "wrap",
         }}
       >
-        <button type="button" onClick={() => setTick((value) => value + 1)} style={control}>
+        <button type="button" onClick={() => setTick((value) => value + 1)} style={ui.control}>
           Refresh
         </button>
         {(["workspace", "turns"] as const).map((value) => (
@@ -1127,9 +1226,9 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
             aria-current={mode === value ? "true" : undefined}
             onClick={() => chooseMode(value)}
             style={{
-              ...control,
+              ...ui.control,
               fontWeight: mode === value ? 600 : 400,
-              background: mode === value ? "var(--accent, #e8eef7)" : "transparent",
+              background: mode === value ? ui.accent : "transparent",
             }}
           >
             {value === "workspace" ? "Workspace" : "Turns"}
@@ -1143,9 +1242,9 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
               aria-current={source?.id === item.id ? "true" : undefined}
               onClick={() => chooseSource(item.id)}
               style={{
-                ...control,
+                ...ui.control,
                 fontWeight: source?.id === item.id ? 600 : 400,
-                background: source?.id === item.id ? "var(--accent, #e8eef7)" : "transparent",
+                background: source?.id === item.id ? ui.accent : "transparent",
               }}
             >
               {describeSource(item)}
@@ -1170,14 +1269,14 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
                   })
                 }
                 style={{
-                  ...control,
+                  ...ui.control,
                   fontWeight:
                     turnSelection?.kind === "turn" && turnSelection.turnId === choice.turnId
                       ? 600
                       : 400,
                   background:
                     turnSelection?.kind === "turn" && turnSelection.turnId === choice.turnId
-                      ? "var(--accent, #e8eef7)"
+                      ? ui.accent
                       : "transparent",
                 }}
               >
@@ -1193,10 +1292,9 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
                 aria-current={turnSelection?.kind === "thread" ? "true" : undefined}
                 onClick={() => chooseTurn({ kind: "thread" })}
                 style={{
-                  ...control,
+                  ...ui.control,
                   fontWeight: turnSelection?.kind === "thread" ? 600 : 400,
-                  background:
-                    turnSelection?.kind === "thread" ? "var(--accent, #e8eef7)" : "transparent",
+                  background: turnSelection?.kind === "thread" ? ui.accent : "transparent",
                 }}
               >
                 All turns
@@ -1205,7 +1303,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
             {revertChoice !== null && revertCapable && (
               <button
                 type="button"
-                style={{ ...control, color: "var(--destructive, #cf222e)" }}
+                style={{ ...ui.control, color: ui.destructive }}
                 disabled={revert?.status === "pending"}
                 onClick={() => confirmRevert(revertChoice)}
               >
@@ -1223,7 +1321,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
               list="t3-diff-base-refs"
               value={baseRef}
               onChange={(event) => chooseBaseRef(event.target.value)}
-              style={{ ...control, width: 140 }}
+              style={{ ...ui.control, width: 140 }}
             />
             <datalist id="t3-diff-base-refs">
               {filteredBaseChoices.map((choice) => (
@@ -1242,6 +1340,23 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
             </label>
           </>
         )}
+        <div role="group" aria-label="Diff layout" style={{ display: "flex" }}>
+          {(["unified", "split"] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={layout === value}
+              onClick={() => chooseLayout(value)}
+              style={{
+                ...ui.control,
+                fontWeight: layout === value ? 600 : 400,
+                background: layout === value ? ui.accent : "transparent",
+              }}
+            >
+              {value === "unified" ? "Unified" : "Split"}
+            </button>
+          ))}
+        </div>
         <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
           <input
             type="checkbox"
@@ -1253,7 +1368,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
         {files.length > 0 && (
           <button
             type="button"
-            style={control}
+            style={ui.control}
             onClick={() => setCollapsedFiles(toggleAllDiffFiles(fileKeys, collapsedFiles))}
           >
             {allCollapsed ? "Expand all" : "Collapse all"}
@@ -1327,20 +1442,20 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
             gap: 6,
             alignItems: "center",
             padding: "6px 10px",
-            color: revert.status === "error" ? "var(--destructive, #cf222e)" : muted,
+            color: revert.status === "error" ? ui.destructive : muted,
             fontSize: 12,
             margin: 0,
-            borderBottom: "1px solid var(--border, #dfe3e8)",
+            borderBottom: `1px solid ${ui.border}`,
             flexShrink: 0,
           }}
         >
           <span style={{ flex: 1 }}>{revert.detail}</span>
           {revert.status === "confirming" && (
             <>
-              <button type="button" style={iconButton} onClick={runRevert}>
+              <button type="button" style={ui.iconButton} onClick={runRevert}>
                 Confirm revert
               </button>
-              <button type="button" style={iconButton} onClick={() => setRevert(null)}>
+              <button type="button" style={ui.iconButton} onClick={() => setRevert(null)}>
                 Cancel
               </button>
             </>
@@ -1391,7 +1506,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
                 padding: "6px 10px",
                 fontSize: 11,
                 color: muted,
-                borderBottom: "1px solid var(--border, #dfe3e8)",
+                borderBottom: `1px solid ${ui.border}`,
                 flexShrink: 0,
               }}
             >
@@ -1413,7 +1528,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
                   padding: 8,
                   fontSize: 11,
                   fontFamily: "var(--font-mono, ui-monospace, monospace)",
-                  border: "1px solid var(--border, #dfe3e8)",
+                  border: `1px solid ${ui.border}`,
                   borderRadius: 6,
                   overflow: "auto",
                 }}
@@ -1433,7 +1548,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
                   overflow: "auto",
                   flexShrink: 0,
                   maxHeight: "34%",
-                  borderBottom: "1px solid var(--border, #dfe3e8)",
+                  borderBottom: `1px solid ${ui.border}`,
                 }}
               >
                 {treeRows.map((row) =>
@@ -1479,11 +1594,8 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
                           border: "1px solid transparent",
                           borderRadius: 5,
                           cursor: "pointer",
-                          color: "var(--foreground, #20252d)",
-                          background:
-                            selected?.key === row.row.key
-                              ? "var(--accent, #e8eef7)"
-                              : "transparent",
+                          color: ui.foreground,
+                          background: selected?.key === row.row.key ? ui.accent : "transparent",
                           overflow: "hidden",
                           textOverflow: "ellipsis",
                           whiteSpace: "nowrap",
@@ -1514,10 +1626,12 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
                       row={row}
                       selected={selected?.key === row.key}
                       collapsed={collapsedFiles.has(row.key)}
+                      layout={layout}
                       wrap={wrap}
                       expansion={expansions.get(`${source.diffHash}:${row.key}`)}
                       expandable={mode === "workspace"}
                       action={action}
+                      ui={ui}
                       onToggleCollapsed={(key) =>
                         setCollapsedFiles(toggleCollapsedKey(collapsedFiles, key))
                       }
@@ -1542,22 +1656,22 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
           padding: "6px 10px",
           color: muted,
           fontSize: 11,
-          borderTop: "1px solid var(--border, #dfe3e8)",
+          borderTop: `1px solid ${ui.border}`,
           flexShrink: 0,
         }}
       >
         Read-only diff on t3.vcs/diff 1.1 + t3.orchestration: unary small previews, sha256-verified
         streams for large payloads and turn diffs, status-driven refresh. Checkpoint diffs are
-        view-only — revert runs through t3.orchestration/control. Split view and diff-line comments
-        are deferred slices.
+        view-only — revert runs through t3.orchestration/control. Diff-line comments are a deferred
+        slice.
       </output>
     </section>
   );
 }
 
-export default defineExtension({
+const authored = defineExtension({
   id: manifestId,
-  version: "0.3.0",
+  version: "0.4.0",
   requires: [
     requireApi(vcsDiffApi),
     requireApi(vcsRepositoryApi),
@@ -1566,6 +1680,10 @@ export default defineExtension({
     requireApi(filePresentationApi),
     requireApi(orchestrationStatusApi),
     requireApi(orchestrationControlApi),
+    requireApi(uiThemeApi),
+    requireApi(uiKeybindingsApi),
+    requireApi(uiPanelsApi),
+    requireApi(uiNotificationsApi),
   ],
   surfaces: [
     {
@@ -1574,12 +1692,26 @@ export default defineExtension({
       scope: "thread",
       placements: ["side-panel"],
       clients: ["web", "desktop"],
+      // SurfaceDescriptor.capabilities declares consumed host services; the
+      // installed path exposes none, so this stays empty (design F4).
       capabilities: [],
       stateVersion: 1,
-      validateRestore: restoreState,
+      validateRestore: restoreDiffState,
       createView(host, session) {
+        bindDiffViewCommands(host, session);
         return { renderer: () => <DiffPanelView host={host} session={session} /> };
       },
     },
   ],
 });
+
+export default {
+  ...authored,
+  // The factory stages the installation-scoped `ext.t3.diff.toggle` set; the
+  // seam flushes it once the installation commits on a live provider
+  // connection. Absent `registerGlobalCommands` means a host without the seam.
+  client(host: ClientHost) {
+    stageDiffCommands(host);
+    return authored.client!(host);
+  },
+} satisfies AuthoredExtension;

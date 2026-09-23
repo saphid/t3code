@@ -2,7 +2,6 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 import {
   PRS_LIST_LIMIT,
-  PRS_MUTATIONS_DEFERRED,
   applyPrsDiffStreamEvent,
   binaryPathsFromPatch,
   changeTypeLabel,
@@ -17,6 +16,7 @@ import {
   prsActorLabel,
   prsChecksLabel,
   prsChecksSummary,
+  prsDraftKey,
   prsGate,
   prsListHasMore,
   prsListInput,
@@ -26,6 +26,7 @@ import {
   prsRefKey,
   prsRefreshClosedLabel,
   prsReviewLabel,
+  prsReviewVerdict,
   prsReviewVerdictLabel,
   prsRowMeta,
   prsStackLabel,
@@ -34,8 +35,14 @@ import {
   prsThreadMoreLabel,
   prsThreadStateLabel,
   prsUnavailableLabel,
+  prsWriteActionLabel,
+  prsWriteActionOffers,
+  prsWriteGate,
+  prsWriteUnavailableNote,
+  prsWriteVerdictOptions,
   renderableFromPatch,
   resolveDiffPath,
+  settlePrsDraft,
   verifyPrsDiffAssembly,
 } from "./prsViewModel.ts";
 
@@ -533,8 +540,187 @@ NodeTest.test("paths and labels: prefixes stripped, renames shown, change types 
   NodeAssert.equal(displayPath({ prevPath: null, path: "new.ts" }), "new.ts");
 });
 
-NodeTest.test("the deferred-mutations notice names what is not shipped", () => {
-  NodeAssert.match(PRS_MUTATIONS_DEFERRED, /deferred/i);
-  NodeAssert.match(PRS_MUTATIONS_DEFERRED, /merge/i);
-  NodeAssert.match(PRS_MUTATIONS_DEFERRED, /review/i);
+/* ---------------- writes (t3.prs/write) ---------------- */
+
+const ALL_ACTIONS = [
+  "merge",
+  "ready",
+  "draft",
+  "close",
+  "reopen",
+  "update-branch",
+  "enable-auto-merge",
+  "disable-auto-merge",
+  "revert",
+  "approve-workflows",
+];
+
+const writeCaps = (overrides = {}) => ({
+  hosted: true,
+  reason: null,
+  detail: null,
+  operations: {
+    "prs.runAction": true,
+    "prs.update": true,
+    "prs.comment": true,
+    "prs.updateComment": true,
+    "prs.submitReview": true,
+    "prs.replyToThread": true,
+    "prs.setThreadResolution": true,
+    "prs.setReaction": true,
+    "prs.requestReviewers": true,
+    "prs.setLabels": true,
+  },
+  actions: ALL_ACTIONS,
+  mergeMethods: ["merge", "squash", "rebase"],
+  updateMethods: ["merge", "rebase"],
+  verdicts: ["comment", "approve", "request-changes"],
+  ...overrides,
+});
+
+NodeTest.test("prsWriteGate: loading, error, unavailable, ready", () => {
+  NodeAssert.deepEqual(prsWriteGate(null, null), { kind: "loading" });
+  NodeAssert.deepEqual(prsWriteGate(null, "API capability denied: t3.prs/write"), {
+    kind: "error",
+    detail: "API capability denied: t3.prs/write",
+  });
+  const unhosted = prsWriteGate(
+    writeCaps({ hosted: false, reason: "cli-missing", detail: "gh not found" }),
+    null,
+  );
+  NodeAssert.deepEqual(unhosted, {
+    kind: "unavailable",
+    reason: "cli-missing",
+    detail: "gh not found",
+  });
+  const ready = prsWriteGate(writeCaps(), null);
+  NodeAssert.equal(ready.kind, "ready");
+  NodeAssert.deepEqual(ready.actions, ALL_ACTIONS);
+  NodeAssert.deepEqual(ready.verdicts, ["comment", "approve", "request-changes"]);
+});
+
+NodeTest.test("prsWriteActionOffers: state decides, host declares", () => {
+  const write = {
+    actions: ALL_ACTIONS,
+    mergeMethods: ["merge", "squash", "rebase"],
+    updateMethods: ["merge", "rebase"],
+  };
+  const open = prsWriteActionOffers(
+    { state: "open", isDraft: false, baseComparison: "behind", autoMergeEnabled: false },
+    write,
+  ).map((offer) => offer.action);
+  NodeAssert.deepEqual(open, ["merge", "draft", "update-branch", "enable-auto-merge", "close"]);
+  const draft = prsWriteActionOffers({ state: "open", isDraft: true }, write).map(
+    (offer) => offer.action,
+  );
+  NodeAssert.deepEqual(draft, ["ready", "close"]);
+  NodeAssert.deepEqual(
+    prsWriteActionOffers({ state: "closed", isDraft: false }, write).map((o) => o.action),
+    ["reopen"],
+  );
+  NodeAssert.deepEqual(
+    prsWriteActionOffers({ state: "merged", isDraft: false }, write).map((o) => o.action),
+    ["revert"],
+  );
+  NodeAssert.deepEqual(
+    prsWriteActionOffers(
+      { state: "open", isDraft: false, workflowApprovalsRequired: 2 },
+      write,
+    ).map((o) => o.action),
+    ["merge", "draft", "close", "approve-workflows"],
+  );
+  // A host that declares nothing offers nothing — never a dead button.
+  NodeAssert.deepEqual(
+    prsWriteActionOffers(
+      { state: "open", isDraft: false },
+      {
+        actions: [],
+        mergeMethods: [],
+        updateMethods: [],
+      },
+    ),
+    [],
+  );
+  // The host's declared list wins over what state alone would suggest.
+  NodeAssert.deepEqual(
+    prsWriteActionOffers(
+      { state: "open", isDraft: false },
+      { actions: ["close"], mergeMethods: [], updateMethods: [] },
+    ).map((o) => o.action),
+    ["close"],
+  );
+});
+
+NodeTest.test("prsWriteActionOffers: merge carries the declared methods", () => {
+  const [merge] = prsWriteActionOffers(
+    { state: "open", isDraft: false },
+    { actions: ["merge"], mergeMethods: ["squash"], updateMethods: [] },
+  );
+  NodeAssert.deepEqual(merge.methods, ["squash"]);
+});
+
+NodeTest.test("prsWriteVerdictOptions: only declared verdicts, native order", () => {
+  NodeAssert.deepEqual(
+    prsWriteVerdictOptions(["comment", "approve", "request-changes"]).map((o) => o.value),
+    ["comment", "approve", "request-changes"],
+  );
+  NodeAssert.deepEqual(
+    prsWriteVerdictOptions(["approve"]).map((o) => o.value),
+    ["approve"],
+  );
+  NodeAssert.deepEqual(prsWriteVerdictOptions([]), []);
+});
+
+NodeTest.test("prsWriteActionLabel and prsWriteUnavailableNote name the states", () => {
+  NodeAssert.equal(prsWriteActionLabel("merge"), "Merge");
+  NodeAssert.equal(prsWriteActionLabel("reopen"), "Reopen");
+  NodeAssert.equal(prsWriteUnavailableNote({ kind: "ready" }), null);
+  NodeAssert.match(
+    prsWriteUnavailableNote({ kind: "error", detail: "API capability denied: t3.prs/write" }),
+    /denied/,
+  );
+  NodeAssert.match(
+    prsWriteUnavailableNote({ kind: "unavailable", reason: "cli-missing", detail: null }),
+    /CLI/,
+  );
+});
+
+NodeTest.test("prsDraftKey scopes a draft to its PR and composer", () => {
+  NodeAssert.equal(prsDraftKey("github:o/r#1", "comment"), "github:o/r#1\ncomment");
+  NodeAssert.notEqual(prsDraftKey("github:o/r#1", "review"), prsDraftKey("github:o/r#2", "review"));
+  NodeAssert.equal(prsDraftKey(null, "comment"), "-\ncomment");
+});
+
+NodeTest.test("settlePrsDraft clears only the submitted version", () => {
+  const drafts = {
+    "pr1\ncomment": "posted comment",
+    "pr1\nreview": "half-written review",
+    "pr1\nreply:t7": "reply draft",
+  };
+  // A successful comment write drops ITS draft and leaves the rest —
+  // this is the state a refresh reprobe must not have destroyed.
+  const settled = settlePrsDraft(drafts, "pr1\ncomment", "posted comment");
+  NodeAssert.deepEqual(settled, {
+    "pr1\nreview": "half-written review",
+    "pr1\nreply:t7": "reply draft",
+  });
+  // Edits typed while the request was in flight are newer work — the
+  // success must not discard them.
+  const edited = { ...drafts, "pr1\ncomment": "posted comment — and more" };
+  NodeAssert.equal(settlePrsDraft(edited, "pr1\ncomment", "posted comment"), edited);
+  // A failed or unrelated write never clears anything.
+  NodeAssert.equal(settlePrsDraft(drafts, "pr1\ncomment", "different text"), drafts);
+});
+
+NodeTest.test("prsReviewVerdict keeps a stored pick across remounts", () => {
+  const options = prsWriteVerdictOptions(["comment", "approve", "request-changes"]);
+  // A "Request changes" pick survives the remount a refresh causes —
+  // the bug this guards was a silent downgrade back to "comment".
+  NodeAssert.equal(prsReviewVerdict("request-changes", options), "request-changes");
+  // An unset draft defaults to the first declared option.
+  NodeAssert.equal(prsReviewVerdict("", options), "comment");
+  // A draft the host no longer declares can't come back through it.
+  const approveOnly = prsWriteVerdictOptions(["approve"]);
+  NodeAssert.equal(prsReviewVerdict("request-changes", approveOnly), "approve");
+  NodeAssert.equal(prsReviewVerdict("", []), "comment");
 });
