@@ -490,9 +490,9 @@ export const ProjectIconGenerationInput = Schema.Struct({
 export type ProjectIconGenerationInput = typeof ProjectIconGenerationInput.Type;
 
 /**
- * Absolute paths on the server host to the generated icon files, ordered left
- * to right as they appeared in the generated grid. Clients save one as the
- * project's `faviconPath`.
+ * Absolute paths on the server host to the generated icon variants (one to
+ * three; failed variants are dropped). Clients save one as the project's
+ * `faviconPath`.
  */
 export const ProjectIconGenerationResult = Schema.Struct({
   iconPaths: Schema.Array(Schema.String),

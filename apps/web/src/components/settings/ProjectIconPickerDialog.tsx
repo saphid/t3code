@@ -54,13 +54,12 @@ function iconLabel(name: string): string {
     .join(" ");
 }
 
-/** The icon description the user starts from; the server adds the grid framing. */
+/** The icon subject the user starts from; the server adds the icon constraints. */
 function buildDefaultPrompt(projectName: string): string {
   const trimmed = projectName.trim();
-  return [
-    `A flat vector app icon for${trimmed ? ` “${trimmed}”` : " a project"}.`,
-    "One clear focal symbol that captures what the project does: bold simple shapes, high contrast, centered composition, solid background color, no text or borders.",
-  ].join(" ");
+  return trimmed
+    ? `An icon for the software project “${trimmed}”.`
+    : "An icon for a software project.";
 }
 
 const isCapableImageProvider = (provider: ServerProvider): boolean =>
@@ -72,12 +71,14 @@ const isCapableImageProvider = (provider: ServerProvider): boolean =>
 
 function GeneratedIconTile({
   path,
+  index,
   environmentId,
   workspaceRoot,
   selected,
   onSelect,
 }: {
   readonly path: string;
+  readonly index: number;
   readonly environmentId: EnvironmentId;
   readonly workspaceRoot: string;
   readonly selected: boolean;
@@ -89,7 +90,7 @@ function GeneratedIconTile({
   return (
     <button
       type="button"
-      aria-label={`Generated icon ${path.split("/").at(-1) ?? path}`}
+      aria-label={`Generated icon ${index + 1}`}
       aria-pressed={selected}
       className={cn(
         "flex size-24 items-center justify-center overflow-hidden rounded-lg border border-transparent outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -175,7 +176,6 @@ export function ProjectIconPickerDialog({
       setGenerationError(null);
     }
     previousOpenRef.current = open;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current, open, automatic.color, automatic.monogram, projectName]);
 
   const icons = useMemo(() => filterProjectIconNames(query), [query]);
@@ -388,10 +388,11 @@ export function ProjectIconPickerDialog({
                     <div>
                       <div className="mb-2 text-xs font-medium text-muted-foreground">Pick one</div>
                       <div className="flex gap-2">
-                        {generatedPaths.map((path) => (
+                        {generatedPaths.map((path, index) => (
                           <GeneratedIconTile
                             key={path}
                             path={path}
+                            index={index}
                             environmentId={environmentId!}
                             workspaceRoot={workspaceRoot}
                             selected={selectedIconPath === path}
@@ -400,6 +401,11 @@ export function ProjectIconPickerDialog({
                         ))}
                       </div>
                     </div>
+                  ) : null}
+                  {generating ? (
+                    <p className="text-xs text-muted-foreground">
+                      Generating takes a minute or two.
+                    </p>
                   ) : null}
                   {generationError ? (
                     <p className="text-xs text-destructive" role="alert">

@@ -31,8 +31,8 @@ export class ImageGeneration extends Context.Service<
   ImageGeneration,
   {
     /**
-     * Generate three icon tiles from one prompt. The provider produces a
-     * single image holding all three variants; the adapter slices it.
+     * Generate up to three icon variants from one prompt. Variants that fail
+     * are dropped; the call fails only when none succeed.
      */
     readonly generateProjectIcons: (
       input: ProjectIconGenerationInput,
@@ -41,36 +41,35 @@ export class ImageGeneration extends Context.Service<
 >()("t3/imageGeneration/ImageGeneration") {}
 
 const isUsableSnapshot = (snapshot: ServerProvider): boolean =>
-  snapshot.installed && snapshot.status === "ready" && isProviderAvailable(snapshot);
+  snapshot.installed &&
+  snapshot.status === "ready" &&
+  snapshot.supportsImageGeneration === true &&
+  isProviderAvailable(snapshot);
 
 export const makeImageGenerationFromRegistry = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
 ): ImageGeneration["Service"] =>
   ImageGeneration.of({
     generateProjectIcons: (input) =>
-      Effect.flatMap(registry.listInstances, (instances) => {
-        const instance = instances.find(
-          (candidate) => candidate.enabled && candidate.imageGeneration,
+      Effect.gen(function* () {
+        const candidates = (yield* registry.listInstances).filter(
+          (instance) => instance.enabled && instance.imageGeneration,
         );
-        if (!instance?.imageGeneration) {
-          return Effect.fail(
-            new ProjectIconGenerationError({
-              reason: "unsupported",
-              message:
-                "No provider with image generation is available. Add and sign in to a provider that supports it, such as Codex.",
-            }),
-          );
+        // Use the first instance whose account can actually make images
+        // right now, not merely the first one wired for it.
+        for (const instance of candidates) {
+          const snapshot = yield* instance.snapshot.getSnapshot;
+          if (isUsableSnapshot(snapshot)) {
+            return yield* instance.imageGeneration!.generateProjectIcons(input);
+          }
         }
-        return Effect.flatMap(instance.snapshot.getSnapshot, (snapshot) =>
-          isUsableSnapshot(snapshot)
-            ? instance.imageGeneration!.generateProjectIcons(input)
-            : Effect.fail(
-                new ProjectIconGenerationError({
-                  reason: "unsupported",
-                  message: `${snapshot.displayName ?? "The provider"} is available but not ready. Check its status in Settings → Connections.`,
-                }),
-              ),
-        );
+        return yield* new ProjectIconGenerationError({
+          reason: "unsupported",
+          message:
+            candidates.length === 0
+              ? "No provider with image generation is available. Add and sign in to a provider that supports it, such as Codex."
+              : "No provider that supports image generation is ready. Check its status in Settings → Connections.",
+        });
       }),
   });
 

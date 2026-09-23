@@ -40,7 +40,7 @@ export interface ServerDerivedPaths {
   readonly providerStatusCacheDir: string;
   readonly worktreesDir: string;
   readonly attachmentsDir: string;
-  /** AI-generated project icon tiles, one directory per generation. */
+  /** AI-generated project icons, one directory per generation. */
   readonly generatedIconsDir: string;
   /** Screenshots the agent asks the collaborative browser to keep for the user. */
   readonly browserArtifactsDir: string;
