@@ -6403,7 +6403,9 @@ export default function ChatView(props: ChatViewProps) {
       ? "Choose a project before compacting"
       : !manualCompactionProviderAvailable
         ? "Compaction is unavailable for this provider"
-        : "Compacting is unavailable right now"
+        : isCompacting
+          ? "Compaction in progress"
+          : "Compacting is unavailable right now"
     : null;
   const resumeCompactionBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (
@@ -6414,7 +6416,8 @@ export default function ChatView(props: ChatViewProps) {
       resumeCompactionPermanentlyDismissed ||
       nativeResumeCompactionDismissed ||
       pendingUserInputs.length > 0 ||
-      phase === "running" ||
+      // Stay up while our own compaction runs so its button can report progress.
+      (phase === "running" && !isCompacting) ||
       !shouldOfferResumeCompaction({
         provider: selectedProvider,
         usedTokens: activeContextWindow.usedTokens,
@@ -6437,7 +6440,7 @@ export default function ChatView(props: ChatViewProps) {
           composerRef.current?.compactContext();
         }}
       >
-        Compact
+        {isCompacting ? "Compacting…" : "Compact"}
       </Button>
     );
     return {
@@ -6464,6 +6467,7 @@ export default function ChatView(props: ChatViewProps) {
     compactDisabledReason,
     composerRef,
     dismissedResumeCompactionKeys,
+    isCompacting,
     nativeResumeCompactionDismissed,
     nowMinute,
     pendingUserInputs.length,
