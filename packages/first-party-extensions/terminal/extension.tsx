@@ -14,7 +14,16 @@ import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { useEffect, useId, useMemo, useReducer, useRef, useState, type RefObject } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 
 import { isMacPlatform } from "./ghostty/platform.ts";
 import { loadGhosttyRuntime, type GhosttyRuntime } from "./ghostty/runtime.ts";
@@ -218,7 +227,10 @@ function useSessionsStream(
   panel: TerminalPanel,
   visible: boolean,
 ) {
-  useEffect(() => {
+  // Layout effect on purpose: child pane effects run before the parent's
+  // passive effects, and the panes would spend the whole stream budget
+  // before the fixed feeds register — the feeds must pre-charge it.
+  useLayoutEffect(() => {
     if (!visible) return;
     // The thread's session list is placement-independent — every visible
     // placement of the same thread joins ONE shared subscription (see
@@ -303,7 +315,9 @@ function useThemeVars(
   visible: boolean,
 ): Record<string, string> | null {
   const [vars, setVars] = useState<Record<string, string> | null>(null);
-  useEffect(() => {
+  // Layout effect like the sessions feed — fixed feeds pre-charge the
+  // budget before pane effects (see useSessionsStream).
+  useLayoutEffect(() => {
     if (!visible) return;
     // The host's theme is environment-global — one shared feed per
     // environment serves every placement (stream budget, see streamHub).
@@ -338,7 +352,9 @@ function useTerminalAppearanceVars(
   visible: boolean,
 ): Record<string, string> | null {
   const [vars, setVars] = useState<Record<string, string> | null>(null);
-  useEffect(() => {
+  // Layout effect like the sessions feed — fixed feeds pre-charge the
+  // budget before pane effects (see useSessionsStream).
+  useLayoutEffect(() => {
     if (!visible) return;
     // Shared per environment like the theme feed — the terminal appearance
     // is one host-wide fact, not a per-placement one.

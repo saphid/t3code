@@ -432,6 +432,76 @@ NodeTest.test("dock + panel with a split in each stays inside the cap", () => {
   NodeAssert.equal(hub.paneSlotAvailable(), true); // one slot still spare
 });
 
+NodeTest.test(
+  "fixed feeds evict optional pane slots when panes registered first (cold restore)",
+  () => {
+    // The r3 finding-1 shape: a cold eight-session restore runs pane effects
+    // before the view's fixed-feed effects, so hidden panes take optional
+    // slots first. Pre-fix, the sessions/theme/appearance subscriptions then
+    // started over the cap and the broker rejected them all.
+    const { hub, advance } = clockHub();
+    const evicted = [];
+    NodeAssert.ok(hub.acquirePaneStream("active", { mandatory: true, onEvicted() {} }) !== null);
+    for (let index = 1; index <= 7; index += 1) {
+      NodeAssert.ok(
+        hub.acquirePaneStream(`hidden${index}`, {
+          mandatory: false,
+          onEvicted: () => evicted.push(`hidden${index}`),
+        }) !== null,
+      );
+      advance();
+    }
+    for (const key of ["sessions:e:t", "theme:e", "appearance:e"]) {
+      hub.acquireFixedFeed(key, { onFrame() {}, onStatus() {} }, () => {});
+    }
+    // Each feed admission reclaimed one least-recently-demoted optional slot.
+    NodeAssert.deepEqual(evicted, ["hidden1", "hidden2", "hidden3"]);
+    NodeAssert.equal(hub.paneStreamBudget(), 5);
+    // Five panes still hold slots and a new terminal can still be allocated.
+    NodeAssert.equal(hub.paneSlotAvailable(), true);
+    NodeAssert.ok(hub.acquirePaneStream("split", { mandatory: true, onEvicted() {} }) !== null);
+    NodeAssert.deepEqual(evicted, ["hidden1", "hidden2", "hidden3", "hidden4"]);
+  },
+);
+
+NodeTest.test("a new thread's fixed feed evicts optional panes from a full pool", () => {
+  // The reviewer's NEW_THREAD_FIXED_FEED probe: adding a second thread's
+  // sessions feed to an already-full installation must reclaim an optional
+  // pane slot rather than start over the cap.
+  const { hub, advance } = clockHub();
+  for (const key of ["sessions:A", "theme", "appearance"]) {
+    hub.acquireFixedFeed(key, { onFrame() {}, onStatus() {} }, () => {});
+  }
+  const evicted = [];
+  NodeAssert.ok(hub.acquirePaneStream("p0", { mandatory: true, onEvicted() {} }) !== null);
+  for (let index = 1; index <= 4; index += 1) {
+    hub.acquirePaneStream(`p${index}`, {
+      mandatory: false,
+      onEvicted: () => evicted.push(`p${index}`),
+    });
+    advance();
+  }
+  NodeAssert.equal(hub.paneStreamBudget(), 5);
+  hub.acquireFixedFeed("sessions:B", { onFrame() {}, onStatus() {} }, () => {});
+  NodeAssert.deepEqual(evicted, ["p1"]);
+  NodeAssert.equal(hub.paneStreamBudget(), 4); // 4 feeds + 4 panes = 8
+});
+
+NodeTest.test("fixed feeds never evict mandatory pane slots", () => {
+  const { hub } = clockHub();
+  const evicted = [];
+  for (let index = 0; index < BROKER_STREAM_CAP; index += 1) {
+    hub.acquirePaneStream(`m${index}`, {
+      mandatory: true,
+      onEvicted: () => evicted.push(`m${index}`),
+    });
+  }
+  hub.acquireFixedFeed("sessions:e:t", { onFrame() {}, onStatus() {} }, () => {});
+  // A fully mandatory pool is the disclosed multi-client limit — the feed
+  // starts anyway and the broker may reject it, but pinned panes survive.
+  NodeAssert.deepEqual(evicted, []);
+});
+
 NodeTest.test("a nested acquire inside onEvicted cannot steal the evicted slot", () => {
   const { hub, advance } = clockHub();
   let stolen = null;

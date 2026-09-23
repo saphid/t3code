@@ -19,7 +19,9 @@
  * - Pane output streams come from a slot pool sized to what the budget has
  *   left. Visible panes hold mandatory slots; hidden panes may keep an
  *   optional slot (parser/query continuity across a group switch) that any
- *   newly-visible pane can preempt — least-recently-demoted first. When the
+ *   newly-visible pane can preempt — least-recently-demoted first — and a
+ *   newly-registered fixed feed preempts the same way, so pane effects that
+ *   ran first on a cold restore cannot starve the shared feeds. When the
  *   pool is exhausted by mandatory slots, acquisition fails and the caller
  *   surfaces an honest waiting state instead of a rejected subscription.
  *
@@ -155,6 +157,24 @@ export class TerminalStreamHub {
   ): () => void {
     let feed = this.#feeds.get(key);
     if (feed === undefined) {
+      // Fixed feeds outrank optional pane slots: on a cold restored mount
+      // the pane effects run first and hidden panes take optional slots,
+      // so without reclaiming, a normal eight-session restore fills every
+      // slot and the sessions/theme/appearance subscriptions start over
+      // the cap — the broker rejects them and New stays disabled. Evict
+      // least-recently-demoted optional panes until the new feed fits;
+      // mandatory slots keep their ground (a fully mandatory pool is the
+      // disclosed multi-client limit, unchanged).
+      let evictedAny = false;
+      while (this.#panes.size + this.#feeds.size >= BROKER_STREAM_CAP) {
+        const victim = this.#evictablePane();
+        if (victim === null) break;
+        // Same discipline as pane eviction: the slot is removed before
+        // onEvicted runs so the synchronous teardown's release no-ops.
+        this.#panes.delete(victim.key);
+        victim.state.onEvicted();
+        evictedAny = true;
+      }
       feed = {
         controller: new AbortController(),
         listeners: new Set(),
@@ -179,7 +199,19 @@ export class TerminalStreamHub {
           for (const listener of entry.listeners) listener.onStatus(status, message);
         },
       };
-      driver(sink, feed.controller.signal);
+      const start = () => {
+        if (entry.controller.signal.aborted || this.#feeds.get(key) !== entry) return;
+        driver(sink, entry.controller.signal);
+      };
+      if (evictedAny) {
+        // An evicted pane's host-level unsubscribe resolves on the
+        // microtask queue; starting the replacement subscription in the
+        // same synchronous block would race it to the broker. Let the
+        // victim's teardown drain first.
+        queueMicrotask(start);
+      } else {
+        start();
+      }
     }
     const entry = feed;
     const bound = listener as TerminalSharedFeedListener<unknown>;
@@ -219,6 +251,11 @@ export class TerminalStreamHub {
     }
     let evicted: (() => void) | null = null;
     if (this.#panes.size >= this.paneStreamBudget()) {
+      // A hidden pane has no claim on another hidden pane's continuity
+      // slot — only a newly-visible pane preempts. Failing the optional
+      // acquirer honestly avoids churning evictions (and subscription
+      // teardowns) between panes that are never visible together.
+      if (!options.mandatory) return null;
       const victim = this.#evictablePane();
       if (victim === null) return null;
       // Remove the victim and insert the new state BEFORE its onEvicted

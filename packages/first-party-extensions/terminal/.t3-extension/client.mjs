@@ -9740,6 +9740,14 @@ var __t3Client = (() => {
     acquireFixedFeed(key, listener, driver, replayPolicy) {
       let feed = this.#feeds.get(key);
       if (feed === void 0) {
+        let evictedAny = false;
+        while (this.#panes.size + this.#feeds.size >= BROKER_STREAM_CAP) {
+          const victim = this.#evictablePane();
+          if (victim === null) break;
+          this.#panes.delete(victim.key);
+          victim.state.onEvicted();
+          evictedAny = true;
+        }
         feed = {
           controller: new AbortController(),
           listeners: /* @__PURE__ */ new Set(),
@@ -9761,7 +9769,15 @@ var __t3Client = (() => {
             for (const listener2 of entry2.listeners) listener2.onStatus(status, message);
           }
         };
-        driver(sink, feed.controller.signal);
+        const start = () => {
+          if (entry2.controller.signal.aborted || this.#feeds.get(key) !== entry2) return;
+          driver(sink, entry2.controller.signal);
+        };
+        if (evictedAny) {
+          queueMicrotask(start);
+        } else {
+          start();
+        }
       }
       const entry = feed;
       const bound = listener;
@@ -9794,6 +9810,7 @@ var __t3Client = (() => {
       }
       let evicted = null;
       if (this.#panes.size >= this.paneStreamBudget()) {
+        if (!options.mandatory) return null;
         const victim = this.#evictablePane();
         if (victim === null) return null;
         this.#panes.delete(victim.key);
@@ -11839,7 +11856,7 @@ var __t3Client = (() => {
     return state2;
   }
   function useSessionsStream(host, session, panel, visible) {
-    (0, import_react.useEffect)(() => {
+    (0, import_react.useLayoutEffect)(() => {
       if (!visible) return;
       const environmentId = session.context.resource.environmentId ?? "";
       const threadId = session.context.resource.threadId ?? "";
@@ -11899,7 +11916,7 @@ var __t3Client = (() => {
   }
   function useThemeVars(host, session, visible) {
     const [vars, setVars] = (0, import_react.useState)(null);
-    (0, import_react.useEffect)(() => {
+    (0, import_react.useLayoutEffect)(() => {
       if (!visible) return;
       return streamHub.acquireFixedFeed(
         `theme:${session.context.resource.environmentId ?? ""}`,
@@ -11919,7 +11936,7 @@ var __t3Client = (() => {
   }
   function useTerminalAppearanceVars(host, session, visible) {
     const [vars, setVars] = (0, import_react.useState)(null);
-    (0, import_react.useEffect)(() => {
+    (0, import_react.useLayoutEffect)(() => {
       if (!visible) return;
       return streamHub.acquireFixedFeed(
         `appearance:${session.context.resource.environmentId ?? ""}`,
