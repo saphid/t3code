@@ -16,9 +16,11 @@
  * pending candidate per session. An upgrade while an incumbent is
  * bound/live/closing parks as the pending candidate (latest arrival wins —
  * a parked candidate is closed `superseded` when a newer upgrade lands) and
- * guarded-binds only after the incumbent's held-input cleanup settles. A
- * same-lease upgrade carrying an older `x-t3-ticket-seq` never seizes the
- * slot: it binds as a shadow that dispatches and expires but owns nothing.
+ * guarded-binds only after the incumbent's held-input cleanup settles,
+ * keeping its reservation through the final config read. A same-lease
+ * upgrade carrying an `x-t3-ticket-seq` older than the newest accepted
+ * ticket — incumbent or pending — never seizes the slot: it binds as a
+ * shadow that dispatches and expires but owns nothing.
  *
  * Actions never cross this surface: input packets map onto CDP `Input.*`
  * through the Manager's human lane only.
@@ -343,6 +345,12 @@ const make = Effect.gen(function* () {
    * engine-generation pin still matching `remoteFrameConfig`. Pass → `bound`
    * (with `cleanupIncomplete` when the incumbent's release failed or hit the
    * deadline); fail → closed, slot empty.
+   *
+   * The candidate KEEPS its pending reservation through the whole config
+   * read: an upgrade landing mid-read must find and supersede it rather
+   * than seeing an empty slot and binding a second owner. Reservation and
+   * deadline are revalidated immediately before the synchronous ownership
+   * transition, so a superseded or expired candidate never binds.
    */
   const bindPending = (
     runtimeTabId: string,
@@ -351,26 +359,35 @@ const make = Effect.gen(function* () {
     const activity = activities.get(runtimeTabId);
     const candidate = activity?.pending ?? null;
     if (activity === undefined || candidate === null) return;
-    activity.pending = null;
-    clearTimeout(candidate.expiryTimer);
+    const drop = (reason: string): void => {
+      if (activity.pending === candidate) activity.pending = null;
+      clearTimeout(candidate.expiryTimer);
+      tryClose(candidate.ws, reason);
+    };
     if (
       candidate.cancelled ||
       candidate.ws.readyState !== WebSocket.OPEN ||
       Date.now() >= candidate.expiresAt
     ) {
-      tryClose(candidate.ws, "expired");
+      drop("expired");
       return;
     }
     void runPromise(manager.remoteFrameConfig(runtimeTabId))
       .then((config) => {
-        if (candidate.ws.readyState !== WebSocket.OPEN || candidate.cancelled) return;
+        if (activity.pending !== candidate || candidate.cancelled) return;
+        if (candidate.ws.readyState !== WebSocket.OPEN || Date.now() >= candidate.expiresAt) {
+          drop("expired");
+          return;
+        }
         if (
           candidate.engineGeneration !== null &&
           config.engineGeneration !== candidate.engineGeneration
         ) {
-          tryClose(candidate.ws, "replaced");
+          drop("replaced");
           return;
         }
+        activity.pending = null;
+        clearTimeout(candidate.expiryTimer);
         bindInputSocket(
           candidate.ws,
           candidate.asserted,
@@ -382,7 +399,7 @@ const make = Effect.gen(function* () {
           cleanup !== null && cleanup.failed > 0,
         );
       })
-      .catch(() => tryClose(candidate.ws, "closing"));
+      .catch(() => drop("closing"));
   };
 
   /**
@@ -909,12 +926,20 @@ const make = Effect.gen(function* () {
           const activity = activityFor(asserted.runtimeTabId);
           const incumbent =
             activity.input !== null && activity.input.state !== "ended" ? activity.input : null;
-          // A same-lease ticket older than the incumbent's is a valid
-          // credential but may not seize the slot or reset its state: it
+          // A same-lease ticket older than the newest the hub has already
+          // accepted — incumbent OR parked pending — is a valid credential
+          // but may not seize the slot or evict the newer candidate: it
           // binds immediately as a shadow and never runs lease cleanup.
-          const supersedes =
-            incumbent === null || incumbent.leaseId !== leaseId || ticketSeq >= incumbent.ticketSeq;
-          if (incumbent !== null && !supersedes) {
+          let newestSameLeaseSeq: number | null = null;
+          for (const held of [incumbent, activity.pending] as const) {
+            if (held !== null && held.leaseId === leaseId) {
+              newestSameLeaseSeq =
+                newestSameLeaseSeq === null
+                  ? held.ticketSeq
+                  : Math.max(newestSameLeaseSeq, held.ticketSeq);
+            }
+          }
+          if (newestSameLeaseSeq !== null && ticketSeq < newestSameLeaseSeq) {
             bindInputSocket(
               ws,
               asserted,

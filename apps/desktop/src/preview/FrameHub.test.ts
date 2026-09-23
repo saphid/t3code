@@ -549,6 +549,179 @@ describe("BrowserFrameHub", () => {
     );
   });
 
+  it("binds only the newest candidate when one arrives during the pending bind's config read", async () => {
+    let enterRelease: (() => void) | null = null;
+    let finishRelease: (() => void) | null = null;
+    let bindConfigEntered: (() => void) | null = null;
+    let releaseBindConfig: (() => void) | null = null;
+    const enteredRelease = new Promise<void>((resolve) => {
+      enterRelease = resolve;
+    });
+    const releaseGate = new Promise<void>((resolve) => {
+      finishRelease = resolve;
+    });
+    const bindConfigStarted = new Promise<void>((resolve) => {
+      bindConfigEntered = resolve;
+    });
+    const bindConfigGate = new Promise<void>((resolve) => {
+      releaseBindConfig = resolve;
+    });
+    let armBindGate = false;
+    let bindGateConsumed = false;
+    const { stub, layer: managerLayer } = makeManagerStub((manager) => {
+      manager.releaseRemoteInput = () =>
+        Effect.promise(async () => {
+          enterRelease!();
+          await releaseGate;
+          return { attempted: 0, failed: 0 };
+        });
+      manager.remoteFrameConfig = () =>
+        Effect.promise(async () => {
+          // The first config read after the incumbent's release settles is
+          // the pending candidate's own bind read — hold it so a newer
+          // upgrade can arrive while the reservation is still in flight.
+          if (armBindGate && !bindGateConsumed) {
+            bindGateConsumed = true;
+            bindConfigEntered!();
+            await bindConfigGate;
+          }
+          return {
+            engineGeneration: "gen-1",
+            viewportCss: { width: 100, height: 100 },
+            zoomFactor: 1,
+          };
+        });
+    });
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const hub = yield* BrowserFrameHub;
+          yield* Effect.promise(async () => {
+            const wsA = await openInput(hub.origin, hub.secret, {
+              ...baseInputParams,
+              "x-t3-lease": "lease-a",
+            });
+            await waitNotice(wsA, "bound");
+            const closedA = waitClosed(wsA);
+
+            // B upgrades and parks behind A's gated cleanup.
+            const wsB = await openInput(hub.origin, hub.secret, {
+              ...baseInputParams,
+              "x-t3-lease": "lease-b",
+            });
+            await enteredRelease;
+            const closedB = waitClosed(wsB);
+
+            // Let A's cleanup settle; the first config read after that is
+            // B's bind read — held open by the gate.
+            armBindGate = true;
+            finishRelease!();
+            expect(await closedA).toMatchObject({ code: 4000 });
+            await bindConfigStarted;
+
+            // C arrives while B still holds the pending reservation
+            // mid-read: it must supersede B, not bind a second owner.
+            const wsC = await openInput(hub.origin, hub.secret, {
+              ...baseInputParams,
+              "x-t3-lease": "lease-c",
+            });
+            const boundC = await waitNotice(wsC, "bound");
+            expect(boundC.leaseId).toBe("lease-c");
+            expect(await closedB).toMatchObject({ code: 4000, reason: "superseded" });
+
+            // B's held config read settles now; B must not bind a second
+            // owner alongside C.
+            releaseBindConfig!();
+            wsC.send(
+              JSON.stringify({
+                seq: 1,
+                geometrySeq: boundC.geometrySeq ?? 0,
+                event: { type: "text", text: "c" },
+              }),
+            );
+            await vi.waitFor(() => expect(stub.dispatched).toHaveLength(1));
+            expect(stub.dispatched.map((entry) => entry.leaseId)).toEqual(["lease-c"]);
+            expect(wsB.readyState).toBe(WebSocket.CLOSED);
+            wsA.terminate();
+            wsB.terminate();
+            wsC.terminate();
+          });
+        }),
+      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
+    );
+  });
+
+  it("keeps the newer pending same-lease ticket when an older in-flight ticket arrives", async () => {
+    let enterRelease: (() => void) | null = null;
+    let finishRelease: (() => void) | null = null;
+    const enteredRelease = new Promise<void>((resolve) => {
+      enterRelease = resolve;
+    });
+    const releaseGate = new Promise<void>((resolve) => {
+      finishRelease = resolve;
+    });
+    const { stub, layer: managerLayer } = makeManagerStub((manager, stubRef) => {
+      manager.releaseRemoteInput = (tabId: string) =>
+        Effect.promise(async () => {
+          enterRelease!();
+          await releaseGate;
+          stubRef.released.push(tabId);
+          return { attempted: 0, failed: 0 };
+        });
+    });
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const hub = yield* BrowserFrameHub;
+          yield* Effect.promise(async () => {
+            const params = (ticketSeq: string) => ({
+              ...baseInputParams,
+              "x-t3-lease": "lease-a",
+              "x-t3-ticket-seq": ticketSeq,
+            });
+            const wsA = await openInput(hub.origin, hub.secret, params("1"));
+            await waitNotice(wsA, "bound");
+            const closedA = waitClosed(wsA);
+
+            // Ticket 3 upgrades and parks behind A's gated cleanup.
+            const ws3 = await openInput(hub.origin, hub.secret, params("3"));
+            await enteredRelease;
+
+            // Ticket 2 — issued before 3 but arriving late — is older than
+            // the newest accepted ticket: it binds as a shadow and must
+            // not evict the parked 3.
+            const ws2 = await openInput(hub.origin, hub.secret, params("2"));
+            await waitNotice(ws2, "bound");
+            finishRelease!();
+
+            const bound3 = await waitNotice(ws3, "bound");
+            expect(bound3.leaseId).toBe("lease-a");
+            expect(await closedA).toMatchObject({ code: 4000 });
+            ws3.send(
+              JSON.stringify({
+                seq: 1,
+                geometrySeq: bound3.geometrySeq ?? 0,
+                event: { type: "text", text: "three" },
+              }),
+            );
+            await vi.waitFor(() => expect(stub.dispatched).toHaveLength(1));
+
+            // The shadow's close runs no lease release; the owner's does.
+            ws2.close();
+            await waitClosed(ws2);
+            expect(stub.released).toHaveLength(1);
+            ws3.close();
+            await waitClosed(ws3);
+            await vi.waitFor(() => expect(stub.released).toHaveLength(2));
+            wsA.terminate();
+            ws2.terminate();
+            ws3.terminate();
+          });
+        }),
+      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
+    );
+  });
+
   it("binds a same-lease older ticket as a shadow that cannot seize the slot", async () => {
     const { stub, layer: managerLayer } = makeManagerStub();
     await Effect.runPromise(
