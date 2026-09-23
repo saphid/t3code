@@ -235,10 +235,7 @@ const heldClaimSatisfied = (
   const key = browserFrameAuthorityKey(authority);
   const tuple = sessionKey(session);
   for (const claim of state.heldClaims.values()) {
-    if (
-      browserFrameAuthorityKey(claim.authority) === key &&
-      sessionKey(claim.session) === tuple
-    ) {
+    if (browserFrameAuthorityKey(claim.authority) === key && sessionKey(claim.session) === tuple) {
       return true;
     }
   }

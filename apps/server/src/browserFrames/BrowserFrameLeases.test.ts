@@ -397,9 +397,10 @@ describe("BrowserFrameLeases", () => {
       const authority = sessionAuthority("sess-a", "conn-doomed");
       const entered = yield* Deferred.make<void>();
       const resume = yield* Deferred.make<void>();
-      const outcome = yield* Deferred.make<
-        Option.Option<{ readonly ticket: string; readonly expiresAt: number }>
-      >();
+      const outcome =
+        yield* Deferred.make<
+          Option.Option<{ readonly ticket: string; readonly expiresAt: number }>
+        >();
       // The mint suspends inside withRetainedConnection — the window where a
       // real provider's async work would run — while the connection is
       // revoked and enough later revocations land to fill the marker cap.

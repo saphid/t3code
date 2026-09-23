@@ -2795,65 +2795,66 @@ const makeWsRpcLayer = (
             browserFrameLeases.withRetainedConnection(
               wsConnectionId,
               Effect.gen(function* () {
-              const details = yield* previewManager.listDetails({ threadId: input.threadId });
-              const session = details.sessions.find(
-                (detail) => detail.snapshot.tabId === input.tabId,
-              );
-              if (!session || details.serverEpoch !== input.serverEpoch) {
-                return yield* new BrowserFramesError({
-                  reason: "session-not-found",
-                  message: "No live browser session matches the requested tuple.",
+                const details = yield* previewManager.listDetails({ threadId: input.threadId });
+                const session = details.sessions.find(
+                  (detail) => detail.snapshot.tabId === input.tabId,
+                );
+                if (!session || details.serverEpoch !== input.serverEpoch) {
+                  return yield* new BrowserFramesError({
+                    reason: "session-not-found",
+                    message: "No live browser session matches the requested tuple.",
+                  });
+                }
+                const hubs = yield* previewAutomationBroker.frameHubs;
+                const candidates = hubs.filter((hub) => hub.environmentId === input.environmentId);
+                if (candidates.length === 0) {
+                  return yield* new BrowserFramesError({
+                    reason: "engine-unavailable",
+                    message: "No connected engine host serves browser frames.",
+                  });
+                }
+                if (candidates.length > 1) {
+                  return yield* new BrowserFramesError({
+                    reason: "engine-unavailable",
+                    message: "More than one engine host serves this environment; refusing to bind.",
+                  });
+                }
+                const host = candidates[0]!;
+                const minted = yield* browserFrameLeases.issueInputLease({
+                  authority: {
+                    kind: "session",
+                    sessionId: currentSession.sessionId,
+                    subject: currentSession.subject,
+                    connectionId: wsConnectionId,
+                    grants: [AuthOrchestrationOperateScope],
+                  },
+                  authorityExpiresAt: currentSession.credentialExpiresAt?.epochMilliseconds,
+                  session: {
+                    environmentId: input.environmentId,
+                    threadId: input.threadId,
+                    serverEpoch: input.serverEpoch,
+                    tabId: input.tabId,
+                  },
+                  engineGeneration: input.engineGeneration ?? null,
+                  hostClientId: host.clientId,
+                  hostConnectionId: host.connectionId,
                 });
-              }
-              const hubs = yield* previewAutomationBroker.frameHubs;
-              const candidates = hubs.filter((hub) => hub.environmentId === input.environmentId);
-              if (candidates.length === 0) {
-                return yield* new BrowserFramesError({
-                  reason: "engine-unavailable",
-                  message: "No connected engine host serves browser frames.",
+                return yield* Option.match(minted, {
+                  onNone: () =>
+                    Effect.fail(
+                      new BrowserFramesError({
+                        reason: "unauthorized",
+                        message:
+                          "The named lease is not owned by this connection for this session.",
+                      }),
+                    ),
+                  onSome: (issued) =>
+                    Effect.succeed({
+                      leaseId: issued.leaseId,
+                      inputTicket: issued.inputTicket,
+                      expiresAt: issued.expiresAt,
+                    } satisfies BrowserFramesOpenInputResult),
                 });
-              }
-              if (candidates.length > 1) {
-                return yield* new BrowserFramesError({
-                  reason: "engine-unavailable",
-                  message: "More than one engine host serves this environment; refusing to bind.",
-                });
-              }
-              const host = candidates[0]!;
-              const minted = yield* browserFrameLeases.issueInputLease({
-                authority: {
-                  kind: "session",
-                  sessionId: currentSession.sessionId,
-                  subject: currentSession.subject,
-                  connectionId: wsConnectionId,
-                  grants: [AuthOrchestrationOperateScope],
-                },
-                authorityExpiresAt: currentSession.credentialExpiresAt?.epochMilliseconds,
-                session: {
-                  environmentId: input.environmentId,
-                  threadId: input.threadId,
-                  serverEpoch: input.serverEpoch,
-                  tabId: input.tabId,
-                },
-                engineGeneration: input.engineGeneration ?? null,
-                hostClientId: host.clientId,
-                hostConnectionId: host.connectionId,
-              });
-              return yield* Option.match(minted, {
-                onNone: () =>
-                  Effect.fail(
-                    new BrowserFramesError({
-                      reason: "unauthorized",
-                      message: "The named lease is not owned by this connection for this session.",
-                    }),
-                  ),
-                onSome: (issued) =>
-                  Effect.succeed({
-                    leaseId: issued.leaseId,
-                    inputTicket: issued.inputTicket,
-                    expiresAt: issued.expiresAt,
-                  } satisfies BrowserFramesOpenInputResult),
-              });
               }),
             ),
             { "rpc.aggregate": "browser-frames" },
