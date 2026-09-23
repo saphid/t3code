@@ -28,6 +28,7 @@ import type {
 } from "@t3tools/extension-runtime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -58,6 +59,7 @@ import {
   BrowserFrameLeases,
   browserFrameAuthorityKey,
   type BrowserFrameAuthority,
+  type BrowserFrameSessionTuple,
 } from "../browserFrames/BrowserFrameLeases.ts";
 import { makeExtensionScopeResolver } from "./scope.ts";
 
@@ -445,6 +447,20 @@ export function createResourcesLeaseApiProvider(
         );
 
       let issued: { readonly relativeUrl: string; readonly expiresAt: number };
+      /**
+       * A browser-surface claim pending held-claim registration. The mint
+       * happens in the branch below, but the claim is only recorded once
+       * every abortible check has passed — see the registration site after
+       * `postChecks` for the lifecycle.
+       */
+      let browserSurface:
+        | {
+            readonly token: string;
+            readonly slotId: string;
+            readonly session: BrowserFrameSessionTuple;
+            readonly expiresAt: number;
+          }
+        | undefined;
       if (resource._tag === "workspace-file") {
         const thread = yield* dependencies.threads
           .getById({ threadId: resource.threadId })
@@ -571,40 +587,24 @@ export function createResourcesLeaseApiProvider(
           })
           .pipe(Effect.mapError(operationError(operation)));
         issued = surfaceMint;
-        // Held-claim registration: the frames mint only honors tokens that
-        // passed through this path under the same authority and tuple. The
-        // slot identity is the claim's server-owned slotId — never the
-        // bearer token — so simultaneous mints never share a slot.
+        // Held-claim registration is deferred past `postChecks`: the frames
+        // mint only honors tokens recorded under this authority and tuple,
+        // but a claim whose URL never reached the caller must not be left
+        // held. The slot identity is the claim's server-owned slotId —
+        // never the bearer token — so simultaneous mints never share a slot.
         const heldToken = surfaceTokenFromUrl(surfaceMint.relativeUrl);
         if (heldToken !== null) {
-          const recorded = yield* dependencies.leases
-            .recordHeldSurfaceClaim({
-              token: heldToken,
-              session: {
-                environmentId: EnvironmentId.make(dependencies.environmentId),
-                threadId: resource.threadId,
-                serverEpoch: listed.serverEpoch,
-                tabId: resource.tabId,
-              },
-              allowedCommands: resource.allowedCommands,
-              expiresAt: surfaceMint.expiresAt,
-              authority: callerAuthority(
-                principal,
-                metadata,
-                grant,
-                scope.context,
-                surfaceMint.slotId,
-              ),
-            })
-            .pipe(Effect.mapError(operationError(operation)));
-          // The root connection died between revalidation and registration —
-          // the just-minted claim must not be returned as usable.
-          if (!recorded) {
-            return yield* bindingDenied(
-              operation,
-              "the minting root connection was revoked before the claim could be held.",
-            );
-          }
+          browserSurface = {
+            token: heldToken,
+            slotId: surfaceMint.slotId,
+            session: {
+              environmentId: EnvironmentId.make(dependencies.environmentId),
+              threadId: resource.threadId,
+              serverEpoch: listed.serverEpoch,
+              tabId: resource.tabId,
+            },
+            expiresAt: surfaceMint.expiresAt,
+          };
         }
       } else {
         // Every remaining union member (attachment today) has a declared grant
@@ -624,6 +624,54 @@ export function createResourcesLeaseApiProvider(
         kind: resource._tag,
         grant,
       });
+
+      // Held-claim registration runs only after every abortible check has
+      // passed, and the onExit compensation retires the claim if
+      // interruption still lands before the URL is delivered — an aborted
+      // acquisition can never learn the token, so nothing else could ever
+      // release it. The compensation matches the claim record by its exact
+      // token, so an unrelated replacement claim is never swept with it.
+      if (browserSurface !== undefined) {
+        const claim = browserSurface;
+        return yield* Effect.gen(function* () {
+          const recorded = yield* dependencies.leases
+            .recordHeldSurfaceClaim({
+              token: claim.token,
+              session: claim.session,
+              allowedCommands: resource.allowedCommands,
+              expiresAt: claim.expiresAt,
+              authority: callerAuthority(
+                principal,
+                metadata,
+                grant,
+                scope.context,
+                claim.slotId,
+              ),
+            })
+            .pipe(Effect.mapError(operationError(operation)));
+          // The root connection died between revalidation and registration —
+          // the just-minted claim must not be returned as usable.
+          if (!recorded) {
+            return yield* bindingDenied(
+              operation,
+              "the minting root connection was revoked before the claim could be held.",
+            );
+          }
+          return {
+            url: issued.relativeUrl,
+            expiresAt: issued.expiresAt,
+            kind,
+          } satisfies ResourceLeasePresentationUrl;
+        }).pipe(
+          Effect.onExit((exit) =>
+            Exit.isSuccess(exit)
+              ? Effect.void
+              : dependencies.leases.revokeWhere(
+                  (record) => "token" in record && record.token === claim.token,
+                ),
+          ),
+        );
+      }
       return {
         url: issued.relativeUrl,
         expiresAt: issued.expiresAt,

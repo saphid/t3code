@@ -12,6 +12,7 @@ import type { HostApiProvider } from "@t3tools/extension-runtime";
 import { it, expect, describe } from "@effect/vitest";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -1003,6 +1004,48 @@ describe("t3.resources/lease adapter", () => {
       )) as { released: boolean };
       expect(denied).toEqual({ released: false });
       expect(Option.isSome(yield* leases.heldSurfaceClaim(urlToken(minted.url)))).toBe(true);
+    }).pipe(Effect.provide(LeasesLive)),
+  );
+
+  it.effect("an aborted browser-surface acquisition leaves no held claim behind", () =>
+    Effect.gen(function* () {
+      const leases = yield* BrowserFrameLeases;
+      let markSuspended: (() => void) | undefined;
+      const suspended = new Promise<void>((resolve) => {
+        markSuspended = resolve;
+      });
+      const provider = createResourcesLeaseApiProvider(
+        makeDeps({
+          issueBrowserSurface: () =>
+            Effect.succeed({
+              relativeUrl: fakeUrl("browser-surface", "browser-surface", { slotId: "slot-1" }),
+              expiresAt: 4_102_444_800_000,
+              slotId: "slot-1",
+            }),
+          leases,
+        }),
+      );
+      // The post-mint authority re-check is the abortible tail of an
+      // acquisition — suspend it so the caller's abort lands while the claim
+      // could otherwise be held with a URL nobody will ever receive.
+      const controller = new AbortController();
+      const invocation = provider.invoke(
+        "createPresentationUrl",
+        releaseInput,
+        makeContext(),
+        controller.signal,
+        meta(provider, [], async () => {
+          markSuspended?.();
+          await new Promise<never>(() => {});
+        }),
+      );
+      yield* Effect.promise(() => suspended);
+      controller.abort();
+      const exit = yield* Effect.exit(Effect.promise(() => invocation));
+      expect(Exit.isSuccess(exit)).toBe(false);
+      // The claim's token never reached the caller, so nothing may stay held.
+      const token = urlToken(fakeUrl("browser-surface", "browser-surface", { slotId: "slot-1" }));
+      expect(Option.isNone(yield* leases.heldSurfaceClaim(token))).toBe(true);
     }).pipe(Effect.provide(LeasesLive)),
   );
 });
