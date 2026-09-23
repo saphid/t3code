@@ -101,6 +101,93 @@ NodeTest.describe("useEditorSelection", () => {
     }
   });
 
+  // r3 item 2 (review F-r2-2): select L2-3, sync to different bytes (dead
+  // at read), then sync back to byte-identical contents — === is value
+  // equality, so a pin retired only on path change would re-match here and
+  // re-arm offsets nobody is holding. The pin must retire on EITHER input's
+  // mismatch.
+  NodeTest.it(
+    "a contents-invalidated selection stays dead on a byte-identical revert",
+    async () => {
+      let root;
+      try {
+        await act(async () => {
+          root = create(
+            e(Probe, { selected: "a.ts", surface: editableSurface("a.ts", makeContents()) }),
+          );
+        });
+        await act(async () => {
+          latest.setSelection({ path: "a.ts", start: 6, end: 12 });
+        });
+        NodeAssert.deepEqual(latest.selectionRange, { startLine: 2, endLine: 3 });
+
+        // Sync replaces the buffer under the held selection — dead at read,
+        // and now retired in render rather than lingering.
+        await act(async () => {
+          root.update(
+            e(Probe, {
+              selected: "a.ts",
+              surface: editableSurface("a.ts", ["alpha", "beta shifted", "gamma"].join("\n")),
+            }),
+          );
+        });
+        NodeAssert.equal(latest.selectionRange, null);
+
+        // The revert: a fresh string with the same bytes. A lingering pin
+        // would re-match its contents pin and resurrect the dead selection.
+        await act(async () => {
+          root.update(
+            e(Probe, { selected: "a.ts", surface: editableSurface("a.ts", makeContents()) }),
+          );
+        });
+        NodeAssert.equal(latest.selectionRange, null);
+      } finally {
+        if (root) await act(async () => root.unmount());
+      }
+    },
+  );
+
+  // Same resurrection through the non-editable dip: the open path resolves
+  // non-editable (surface contents ""), then a later open is editable again
+  // with byte-identical contents — the pin must already be retired.
+  NodeTest.it("a selection does not resurrect through a non-editable dip", async () => {
+    let root;
+    try {
+      const contents = makeContents();
+      await act(async () => {
+        root = create(e(Probe, { selected: "a.ts", surface: editableSurface("a.ts", contents) }));
+      });
+      await act(async () => {
+        latest.setSelection({ path: "a.ts", start: 6, end: 12 });
+      });
+      NodeAssert.deepEqual(latest.selectionRange, { startLine: 2, endLine: 3 });
+
+      await act(async () => {
+        root.update(
+          e(Probe, {
+            selected: "a.ts",
+            surface: {
+              path: "a.ts",
+              open: { editable: false },
+              contents: "",
+              saveState: { kind: "saved" },
+            },
+          }),
+        );
+      });
+      NodeAssert.equal(latest.selectionRange, null);
+
+      await act(async () => {
+        root.update(
+          e(Probe, { selected: "a.ts", surface: editableSurface("a.ts", makeContents()) }),
+        );
+      });
+      NodeAssert.equal(latest.selectionRange, null);
+    } finally {
+      if (root) await act(async () => root.unmount());
+    }
+  });
+
   // Re-selecting the open file's row keeps the same buffer; the view clears
   // through clearSelection there (select() fires with unchanged deps).
   NodeTest.it("clearSelection drops a held selection on an unchanged buffer", async () => {

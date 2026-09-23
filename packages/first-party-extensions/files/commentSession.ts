@@ -53,14 +53,16 @@ export function useEditorSelection(
   }>({ contents: null, selected: null, selection: null });
   const contents = surface?.contents ?? null;
   // The pin is on the contents string, not the surface object: a save-state
-  // flip swaps the object while the string keeps its identity.
+  // flip swaps the object while the string value still compares equal.
   const editorSelection =
     pinned.contents === contents && pinned.selected === selected ? pinned.selection : null;
-  if (pinned.selection !== null && pinned.selected !== selected) {
-    // The selection's file was left — even away and back. Retire the pin in
-    // render (React's adjust-state-when-props-change shape) so a reopen with
-    // byte-identical contents — which this V8 dedupes to the same string
-    // identity — cannot re-arm offsets nobody is holding.
+  if (pinned.selection !== null && (pinned.selected !== selected || pinned.contents !== contents)) {
+    // The selection's file or buffer was left — even away and back. Retire
+    // the pin in render (React's adjust-state-when-props-change shape) on
+    // EITHER input's mismatch: `===` on string primitives is value equality,
+    // so a byte-identical reopen or revert would re-match a lingering pin
+    // and re-arm offsets nobody is holding. The pin is already dead at read
+    // on a contents mismatch, so retiring it there is free.
     setPinned({ contents: null, selected, selection: null });
   }
   // Drag-select re-renders on every mousemove while a selection is held, and
