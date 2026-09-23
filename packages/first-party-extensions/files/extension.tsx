@@ -1,5 +1,6 @@
 import {
   filePresentationApi,
+  messagesEnrichmentApi,
   resourcesLeaseApi,
   textEditsApi,
   uiKeybindingsApi,
@@ -9,6 +10,7 @@ import {
   workspaceResourcesApi,
   workspaceSearchApi,
   workspaceTreeApi,
+  type MessagesEnrichmentCapabilities,
   type WorkspaceTreeEvent,
 } from "@t3tools/extension-sdk/catalogue";
 import { defineExtension, requireApi } from "@t3tools/extension-sdk/authoring";
@@ -28,6 +30,14 @@ import {
   resolveCenteredFileLineScrollTop,
   resolveWorkspaceLink,
 } from "./fileNavigation.js";
+import {
+  COMMENT_EXCERPT_MAX_CHARS,
+  buildCommentExcerpt,
+  commentUnavailableReason,
+  formatCommentRangeLabel,
+  selectionLineRange,
+  type FileCommentRange,
+} from "./fileComments.js";
 import { parseMarkdown, type MarkdownBlock, type MarkdownInline } from "./markdown.js";
 import {
   FILE_SAVE_DEBOUNCE_MS,
@@ -1196,6 +1206,116 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   // Rendered-vs-source is a preference, not a property of one file — the same
   // shape as the native panel's localStorage flag, kept in view state only.
   const [renderMarkdown, setRenderMarkdown] = useState(false);
+
+  // Row 14: review comments on file lines. The textarea's character selection
+  // expands to full lines; submit lands a real composer draft review comment
+  // through the grant-gated `t3.messages/enrichment.attachAnnotation` seam.
+  // The draft form captures its range + excerpt when opened, so a collapsing
+  // selection (the button click blurs the editor) never retargets it.
+  const commentThreadId = session.context.resource.threadId;
+  const [commentCapabilities, setCommentCapabilities] =
+    useState<MessagesEnrichmentCapabilities | null>(null);
+  const [editorSelection, setEditorSelection] = useState<{
+    path: string;
+    start: number;
+    end: number;
+  } | null>(null);
+  const [commentDraft, setCommentDraft] = useState<{
+    path: string;
+    range: FileCommentRange;
+    excerpt: string;
+    truncated: boolean;
+  } | null>(null);
+  const [commentBody, setCommentBody] = useState("");
+  const [commentSubmit, setCommentSubmit] = useState<{
+    busy: boolean;
+    error: string | null;
+  }>({ busy: false, error: null });
+  const [postedComments, setPostedComments] = useState<
+    readonly { path: string; annotationId: string; rangeLabel: string; text: string }[]
+  >([]);
+  // The grant-free probe names a client-less host before any selection UI is
+  // offered; a denied write grant can only surface as the invoke's named error
+  // at submit, which the form shows inline.
+  useEffect(() => {
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    void bindApi(messagesEnrichmentApi, host, session.context)
+      .invoke("getCapabilities", {}, signal)
+      .then(
+        (capabilities) => {
+          if (!signal.aborted) setCommentCapabilities(capabilities);
+        },
+        () => {},
+      );
+    return () => controller.abort();
+  }, [host, session]);
+  const commentBlockReason =
+    commentCapabilities === null
+      ? "Checking comment support with the host…"
+      : commentUnavailableReason(commentCapabilities, commentThreadId);
+  const commentSurface = editor.surface?.path === selected ? editor.surface : null;
+  const selectionRange =
+    editorSelection !== null &&
+    editorSelection.path === selected &&
+    commentSurface !== null &&
+    commentSurface.open.editable
+      ? selectionLineRange(commentSurface.contents, editorSelection.start, editorSelection.end)
+      : null;
+  const openCommentDraft = (range: FileCommentRange) => {
+    if (selected === null || commentSurface === null) return;
+    const { excerpt, truncated } = buildCommentExcerpt(commentSurface.contents, range);
+    setCommentDraft({ path: selected, range, excerpt, truncated });
+    setCommentBody("");
+    setCommentSubmit({ busy: false, error: null });
+  };
+  const closeCommentDraft = () => {
+    setCommentDraft(null);
+    setCommentBody("");
+    setCommentSubmit({ busy: false, error: null });
+  };
+  const submitCommentDraft = () => {
+    const draft = commentDraft;
+    const body = commentBody.trim();
+    if (draft === null || body === "" || commentSubmit.busy) return;
+    setCommentSubmit({ busy: true, error: null });
+    void bindApi(messagesEnrichmentApi, host, session.context)
+      .invoke(
+        "attachAnnotation",
+        {
+          ...(commentThreadId !== undefined ? { threadId: commentThreadId } : {}),
+          annotation: {
+            filePath: draft.path,
+            startLine: draft.range.startLine,
+            endLine: draft.range.endLine,
+            body,
+            excerpt: draft.excerpt,
+          },
+        },
+        session.signal,
+      )
+      .then(
+        (result) => {
+          setPostedComments((previous) => [
+            ...previous,
+            {
+              path: draft.path,
+              annotationId: result.annotationId,
+              rangeLabel: formatCommentRangeLabel(draft.range.startLine, draft.range.endLine),
+              text: body,
+            },
+          ]);
+          closeCommentDraft();
+        },
+        (error) => {
+          setCommentSubmit({
+            busy: false,
+            error: error instanceof Error ? error.message : "Comment could not be attached",
+          });
+        },
+      );
+  };
+
   useEffect(() => {
     const needle = query.trim();
     if (!needle || !visible) return;
@@ -1842,28 +1962,148 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           {markdownBlocks !== null ? (
             <RenderedMarkdown blocks={markdownBlocks} links={linkActions} />
           ) : (
-            <textarea
-              ref={editorRef}
-              aria-label="File editor"
-              value={editorSurface.contents}
-              onChange={(event) => editor.change(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") event.currentTarget.blur();
-              }}
-              spellCheck={false}
+            <>
+              {commentDraft !== null && commentDraft.path === selected ? (
+                <div
+                  role="group"
+                  aria-label={`Comment on ${formatCommentRangeLabel(commentDraft.range.startLine, commentDraft.range.endLine)}`}
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 6,
+                    padding: "6px 10px",
+                    borderBottom: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
+                    flexShrink: 0,
+                  }}
+                >
+                  <span style={{ fontSize: 11, color: muted }}>
+                    Comment on{" "}
+                    {formatCommentRangeLabel(
+                      commentDraft.range.startLine,
+                      commentDraft.range.endLine,
+                    )}
+                    {commentDraft.truncated
+                      ? ` — excerpt truncated to ${COMMENT_EXCERPT_MAX_CHARS} characters`
+                      : ""}
+                  </span>
+                  <textarea
+                    aria-label="Comment text"
+                    value={commentBody}
+                    onChange={(event) => setCommentBody(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") closeCommentDraft();
+                    }}
+                    rows={3}
+                    style={{
+                      resize: "vertical",
+                      border: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
+                      padding: 6,
+                      color: "inherit",
+                      background: "transparent",
+                      fontFamily: "inherit",
+                      fontSize: 12,
+                    }}
+                  />
+                  {commentSubmit.error !== null && (
+                    <span role="alert" style={{ fontSize: 11, color: "#b42318" }}>
+                      {commentSubmit.error}
+                    </span>
+                  )}
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button
+                      type="button"
+                      disabled={commentBody.trim() === "" || commentSubmit.busy}
+                      onClick={submitCommentDraft}
+                    >
+                      {commentSubmit.busy ? "Submitting…" : "Submit comment"}
+                    </button>
+                    <button type="button" disabled={commentSubmit.busy} onClick={closeCommentDraft}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : selectionRange !== null ? (
+                <div
+                  role="toolbar"
+                  aria-label="File comment"
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    alignItems: "center",
+                    padding: "4px 10px",
+                    borderBottom: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
+                    flexShrink: 0,
+                    fontSize: 11,
+                  }}
+                >
+                  {commentBlockReason === null ? (
+                    <button type="button" onClick={() => openCommentDraft(selectionRange)}>
+                      Comment on{" "}
+                      {formatCommentRangeLabel(selectionRange.startLine, selectionRange.endLine)}
+                    </button>
+                  ) : (
+                    <span style={{ color: muted }}>
+                      Commenting unavailable — {commentBlockReason}
+                    </span>
+                  )}
+                </div>
+              ) : null}
+              <textarea
+                ref={editorRef}
+                aria-label="File editor"
+                value={editorSurface.contents}
+                onChange={(event) => editor.change(event.target.value)}
+                onSelect={(event) => {
+                  if (selected !== null)
+                    setEditorSelection({
+                      path: selected,
+                      start: event.currentTarget.selectionStart,
+                      end: event.currentTarget.selectionEnd,
+                    });
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") event.currentTarget.blur();
+                }}
+                spellCheck={false}
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  resize: "none",
+                  border: "none",
+                  outline: "none",
+                  padding: 12,
+                  color: "inherit",
+                  background: "transparent",
+                  fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace)",
+                  fontSize: 12,
+                }}
+              />
+            </>
+          )}
+          {postedComments.some((comment) => comment.path === selected) && (
+            <section
+              aria-label="Review comments added here"
               style={{
-                flex: 1,
-                minHeight: 0,
-                resize: "none",
-                border: "none",
-                outline: "none",
-                padding: 12,
-                color: "inherit",
-                background: "transparent",
-                fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace)",
-                fontSize: 12,
+                padding: "6px 10px",
+                borderTop: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
+                flexShrink: 0,
+                fontSize: 11,
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
               }}
-            />
+            >
+              {postedComments
+                .filter((comment) => comment.path === selected)
+                .map((comment) => (
+                  <span key={comment.annotationId}>
+                    {comment.rangeLabel} — {comment.text}
+                  </span>
+                ))}
+              <span style={{ color: muted }}>
+                Removal is from the composer chip — this view cannot remove comments.
+              </span>
+            </section>
           )}
           {editorSurface.saveState.kind === "conflict" && (
             <div
@@ -2006,7 +2246,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
 
 export default defineExtension({
   id: manifestId,
-  version: "0.6.0",
+  version: "0.7.0",
   provides: [filePresentationApi.definition],
   assets: [{ path: PREVIEW_ASSET_PATH, mediaType: "application/octet-stream" }],
   serverEntry: "server.ts",
@@ -2020,6 +2260,7 @@ export default defineExtension({
     requireApi(uiThemeApi),
     requireApi(uiKeybindingsApi),
     requireApi(uiNotificationsApi),
+    requireApi(messagesEnrichmentApi),
   ],
   surfaces: [
     {
