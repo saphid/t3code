@@ -59,6 +59,7 @@ import {
   resolveDesktopUpdateButtonAction,
 } from "../../components/desktopUpdate.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { isRecommendedComposerControls } from "../chat/composerControlsPreference";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -1144,11 +1145,7 @@ export function AppearanceSettingsPanel() {
     "--settings-slider-progress": `${panelAnimationDurationRatio * 100}%`,
     "--settings-slider-fill-offset": `${0.5 - panelAnimationDurationRatio}rem`,
   } as CSSProperties;
-  // Only user-placed or non-pinned placements count as customized; "pinned"
-  // alone is the recommended arrangement for the ids the strip already shows.
-  const composerControlsCustomized =
-    settings.composerControls.order.length > 0 ||
-    Object.values(settings.composerControls.placements).some((placement) => placement !== "pinned");
+  const composerControlsCustomized = !isRecommendedComposerControls(settings.composerControls);
   const threadRowsCustomized =
     settings.sidebarThreadRowDensity !== "comfortable" || settings.sidebarThreadRowFields !== null;
 

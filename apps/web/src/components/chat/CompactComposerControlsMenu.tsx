@@ -4,6 +4,7 @@ import { EllipsisIcon } from "lucide-react";
 import {
   Menu,
   MenuPopup,
+  MenuItem,
   MenuRadioGroup,
   MenuRadioItem,
   MenuSeparator as MenuDivider,
@@ -29,6 +30,8 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
    * open menu closes when its trigger hides.
    */
   hidden?: boolean;
+  /** Renders a trailing "Customize composer…" entry when provided. */
+  onCustomize?: () => void;
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
@@ -90,6 +93,12 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
             </MenuRadioItem>
           ))}
         </MenuRadioGroup>
+        {props.onCustomize ? (
+          <>
+            <MenuDivider />
+            <MenuItem onClick={props.onCustomize}>Customize composer…</MenuItem>
+          </>
+        ) : null}
       </MenuPopup>
     </Menu>
   );

@@ -21,6 +21,7 @@ import type {
   AssistantCitation,
   ChatAttachment as ContractChatAttachment,
   ChatFileAttachment,
+  ComposerControlsPreference,
   EnvironmentId,
   ModelSelection,
   ProjectId,
@@ -38,6 +39,7 @@ import type {
   SnapShotSource,
 } from "@t3tools/contracts";
 import {
+  DEFAULT_COMPOSER_CONTROLS_PREFERENCE,
   ProviderDriverKind,
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -1071,11 +1073,19 @@ import {
   BotIcon,
   CircleAlertIcon,
   PaperclipIcon,
+  PencilIcon,
   PencilRulerIcon,
   PlayIcon,
   ShieldIcon,
   XIcon,
 } from "lucide-react";
+import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import {
+  useCustomizeSession,
+  useRegisterCustomizeSurface,
+} from "../../personalization/customizeSession";
+import { ComposerCustomizeEditor } from "./ComposerCustomizeEditor";
+import { resolveComposerControls } from "./composerControlsPreference";
 import { proposedPlanTitle } from "../../proposedPlan";
 import { hasProviderSetup } from "./ProviderStatusBanner";
 import {
@@ -2886,6 +2896,34 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     controlsVisible: restingControlsVisible,
   } = useRestingComposerControlsLayout(restingControlsHost ?? inlineRestingControlsHost);
   const expandedControlsLayout = useRestingComposerControlsLayout(null, true);
+  // ------------------------------------------------------------------
+  // Composer controls customization (placement, order, ellipsis routing)
+  // ------------------------------------------------------------------
+  useRegisterCustomizeSurface("composer");
+  const savedComposerControls = useClientSettings((s) => s.composerControls);
+  const updateClientSettings = useUpdateClientSettings();
+  // Draft preference while the customize editor is open, so the strip
+  // previews the pending arrangement live; null means "use saved".
+  const [composerControlsDraft, setComposerControlsDraft] =
+    useState<ComposerControlsPreference | null>(null);
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const composerControlsPref = composerControlsDraft ?? savedComposerControls;
+  const openComposerCustomize = useCallback(() => {
+    setComposerControlsDraft(savedComposerControls);
+    setCustomizeOpen(true);
+  }, [savedComposerControls]);
+  const closeComposerCustomize = useCallback(() => {
+    setComposerControlsDraft(null);
+    setCustomizeOpen(false);
+  }, []);
+  const composerCustomizeAnchorRef = useRef<HTMLElement | null>(null);
+  const composerCustomizeOverflowRef = useRef<HTMLDivElement | null>(null);
+  const composerCustomizePendingOpen = useCustomizeSession((s) => s.pendingOpen);
+  useEffect(() => {
+    if (composerCustomizePendingOpen !== "composer") return;
+    useCustomizeSession.getState().consumePendingOpen("composer");
+    openComposerCustomize();
+  }, [composerCustomizePendingOpen, openComposerCustomize]);
   const pendingPrimaryAction = useMemo(
     () =>
       activePendingProgress
@@ -5269,15 +5307,31 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const iconOnlyBlockCount = composerControlsCollapsed
     ? restingControlsIconOnlyBlockCount
     : expandedControlsLayout.iconOnlyBlockCount;
+  const hasComposerTraitsBlock = Boolean(providerTraitsPicker);
+  const availableComposerControlIds = useMemo(
+    () => new Set(hasComposerTraitsBlock ? ["traits", "mode"] : ["mode"]),
+    [hasComposerTraitsBlock],
+  );
+  const composerResolvedControls = useMemo(
+    () => resolveComposerControls(composerControlsPref, availableComposerControlIds),
+    [composerControlsPref, availableComposerControlIds],
+  );
+  // Width overflow hides the trailing pinned blocks, whatever order the user chose.
+  const overflowedPinnedControlIds = composerResolvedControls.pinned.slice(
+    composerResolvedControls.pinned.length - restingHiddenBlockCount,
+  );
   const restingProviderTraitsPicker = renderProviderTraitsPicker({
     ...providerTraitsPickerInput,
     size: composerControlsCollapsed ? "xs" : "sm",
-    hidden: composerControlsHidden || restingHiddenBlockCount > 1,
+    hidden:
+      composerControlsHidden ||
+      overflowedPinnedControlIds.includes("traits") ||
+      !composerResolvedControls.pinned.includes("traits"),
   });
-  const restingBlockDefs = [
+  const restingControlDefsById: Record<string, { id: string; content: ReactNode }> = {
     ...(providerTraitsPicker
-      ? [
-          {
+      ? {
+          traits: {
             id: "traits",
             content: (
               <>
@@ -5286,9 +5340,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               </>
             ),
           },
-        ]
-      : []),
-    {
+        }
+      : {}),
+    mode: {
       id: "mode",
       content: (
         <ComposerFooterModeControls
@@ -5297,16 +5351,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           runtimeMode={compatibleRuntimeMode}
           runtimeModeOptions={compatibleRuntimeModeOptions}
           size={composerControlsCollapsed ? "xs" : "sm"}
-          hidden={composerControlsHidden || restingHiddenBlockCount > 0}
+          hidden={
+            composerControlsHidden ||
+            overflowedPinnedControlIds.includes("mode") ||
+            !composerResolvedControls.pinned.includes("mode")
+          }
           onToggleInteractionMode={toggleInteractionMode}
           onRuntimeModeChange={handleRuntimeModeChange}
         />
       ),
     },
+  };
+  // The inline strip shows only pinned, available blocks, in the effective
+  // order; width overflow still hides the trailing ones via index math.
+  const restingBlockDefs = composerResolvedControls.pinned
+    .map((id) => restingControlDefsById[id])
+    .filter((def) => def !== undefined);
+  const hiddenRestingBlockIds = overflowedPinnedControlIds;
+  const composerOverflowMenuIds = [
+    ...new Set([...hiddenRestingBlockIds, ...composerResolvedControls.more]),
   ];
-  const hiddenRestingBlockIds = restingBlockDefs
-    .slice(restingBlockDefs.length - restingHiddenBlockCount)
-    .map((def) => def.id);
   const composerControls = showProviderUnavailable ? (
     <Button
       type="button"
@@ -5448,12 +5512,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           );
         })}
         <div
+          ref={composerCustomizeOverflowRef}
           data-resting-controls-overflow
-          aria-hidden={hiddenRestingBlockIds.length === 0 || undefined}
-          inert={hiddenRestingBlockIds.length === 0 || undefined}
+          aria-hidden={composerOverflowMenuIds.length === 0 || undefined}
+          inert={composerOverflowMenuIds.length === 0 || undefined}
           className={cn(
             "min-w-0 shrink-0",
-            hiddenRestingBlockIds.length === 0 && "pointer-events-none invisible absolute",
+            composerOverflowMenuIds.length === 0 && "pointer-events-none invisible absolute",
           )}
         >
           <CompactComposerControlsMenu
@@ -5461,15 +5526,35 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             runtimeMode={compatibleRuntimeMode}
             runtimeModeOptions={compatibleRuntimeModeOptions}
             size={composerControlsCollapsed ? "xs" : "sm"}
-            hidden={composerControlsHidden || hiddenRestingBlockIds.length === 0}
-            showInteractionModeToggle={planModeUiEnabled && hiddenRestingBlockIds.includes("mode")}
-            traitsMenuContent={
-              hiddenRestingBlockIds.includes("traits") ? providerTraitsMenuContent : undefined
+            hidden={composerControlsHidden || composerOverflowMenuIds.length === 0}
+            showInteractionModeToggle={
+              planModeUiEnabled && composerOverflowMenuIds.includes("mode")
             }
+            traitsMenuContent={
+              composerOverflowMenuIds.includes("traits") ? providerTraitsMenuContent : undefined
+            }
+            onCustomize={openComposerCustomize}
             onToggleInteractionMode={toggleInteractionMode}
             onRuntimeModeChange={handleRuntimeModeChange}
           />
         </div>
+        {composerControlsCollapsed ? null : (
+          <span
+            className="flex shrink-0 opacity-0 focus-within:opacity-100 group-focus-within/composer-controls:opacity-100 group-hover/composer-controls:opacity-100"
+            data-composer-customize-trigger="true"
+            data-resting-controls-ignore="true"
+          >
+            <ComposerControl
+              ref={(node: HTMLButtonElement | null) => {
+                composerCustomizeAnchorRef.current = node;
+              }}
+              aria-label="Customize composer"
+              onClick={openComposerCustomize}
+            >
+              <PencilIcon className="size-4" />
+            </ComposerControl>
+          </span>
+        )}
       </>
     </>
   );
@@ -7360,7 +7445,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   data-chat-composer-controls="left"
                   data-chat-composer-footer-controls="true"
                   className={cn(
-                    "relative -m-1 -ms-3.5 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 ps-3.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+                    "group/composer-controls relative -m-1 -ms-3.5 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 ps-3.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
                     isComposerResting && "hidden",
                   )}
                 >
@@ -7486,6 +7571,30 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             ) : null}
           </div>
         </ComposerSurface.Main>
+        <ComposerCustomizeEditor
+          anchor={
+            composerControlsCollapsed ? composerCustomizeOverflowRef : composerCustomizeAnchorRef
+          }
+          availableIds={availableComposerControlIds}
+          open={customizeOpen}
+          value={composerControlsDraft ?? savedComposerControls}
+          onCancel={closeComposerCustomize}
+          onChange={setComposerControlsDraft}
+          onDone={() => {
+            // The settings store applies the patch optimistically, so closing
+            // now cannot flash the old arrangement or race a reopened editor.
+            void updateClientSettings({
+              composerControls: composerControlsDraft ?? DEFAULT_COMPOSER_CONTROLS_PREFERENCE,
+            });
+            closeComposerCustomize();
+          }}
+          onOpenChange={(open) => {
+            // Escape and outside clicks discard, matching Cancel, so an
+            // accidental dismissal never persists a half-finished arrangement.
+            if (!open) closeComposerCustomize();
+          }}
+          onReset={() => setComposerControlsDraft(DEFAULT_COMPOSER_CONTROLS_PREFERENCE)}
+        />
       </div>
     </form>
   );
