@@ -80,8 +80,8 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "d235584a17a2993c42b7dbf5c988b96e344ef796",
-      "name": "test(server): await settled ACP prompts before interruption"
+      "sha": "b0ad145784ff8886bcab7902845753a2c6c7f7af",
+      "name": "test(server): await ACP prompt settlement before soft-steer interrupts"
     },
     {
       "type": "commit",
