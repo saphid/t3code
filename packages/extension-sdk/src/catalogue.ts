@@ -2704,7 +2704,12 @@ export const resourcesLeaseApi = defineApi<{
     },
     {
       name: "releasePresentation",
-      effect: "write",
+      // Acquired under the same read-scoped grant as `createPresentationUrl`;
+      // releasing your own held claim is not a write of host state beyond what
+      // the read grant already entitles the caller to hold. A `write` effect
+      // would require a write-scope the minting caller never had, making the
+      // release unreachable through the broker for the only callers it serves.
+      effect: "read",
       // Only a held `browser-surface` claim can be released, and only by the
       // authority that holds it — enforced inside the host adapter.
       requiredGrants: [],

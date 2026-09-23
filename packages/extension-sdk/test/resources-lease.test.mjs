@@ -47,11 +47,10 @@ NodeTest.test("methods are closed-schema with no method-level grant list", () =>
         : ["createPresentationUrl", "getCapabilities"],
     );
     for (const [name, method] of Object.entries(methods)) {
-      NodeAssert.equal(
-        method.effect,
-        name === "releasePresentation" ? "write" : "read",
-        `${definition.version}:${name}`,
-      );
+      // Every method stays read-scoped: releasePresentation must remain
+      // reachable by the same read authority that minted the claim, or the
+      // broker's `effect === "write" && !allowWrite` gate rejects it.
+      NodeAssert.equal(method.effect, "read", `${definition.version}:${name}`);
       NodeAssert.equal(method.inputSchema.additionalProperties, false, name);
       // Per-kind grants cannot live on the method — the host adapter enforces
       // RESOURCE_LEASE_KIND_GRANTS at mint time for every caller.
