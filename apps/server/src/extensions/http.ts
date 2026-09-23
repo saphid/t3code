@@ -17,6 +17,7 @@ import {
   type ExtensionManageInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import type { HostApiRootAuthority } from "@t3tools/extension-runtime";
 import { SessionStore } from "../auth/SessionStore.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
@@ -123,7 +124,24 @@ export const extensionsHttpApiLayer = HttpApiBuilder.group(
     const environment = yield* ServerEnvironment;
     const environmentId = yield* environment.getEnvironmentId;
     const operations = makeOperations(yield* EnvironmentExtensions, (session, scope, writeScope) =>
-      makeSessionApiAuthority(session, environmentId, scope, sessions, writeScope),
+      // HTTP requests carry no transport connection of their own — the
+      // authority adopts the session's live root connection (registered by
+      // the ws upgrade) so connection-scoped revocation reaches mints made
+      // through this path too, matching the subscribeApi root's semantics.
+      sessions
+        .activeConnectionId(session.sessionId)
+        .pipe(
+          Effect.flatMap((connectionId) =>
+            makeSessionApiAuthority(
+              session,
+              environmentId,
+              scope,
+              sessions,
+              writeScope,
+              Option.getOrUndefined(connectionId),
+            ),
+          ),
+        ),
     );
     return handlers
       .handle("invokeApi", (args) =>

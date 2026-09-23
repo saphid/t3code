@@ -3219,14 +3219,17 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           ),
         );
         return yield* Effect.acquireUseRelease(
-          sessions.markConnected(session.sessionId),
+          // The session's active-connection binding follows the newest ws
+          // upgrade: HTTP-path mints (which carry no connection identity of
+          // their own) adopt it so revocation still reaches them.
+          sessions.markConnected(session.sessionId, wsConnectionId),
           () => rpcWebSocketHttpEffect,
           // Viewer root disconnect terminates everything this connection
           // minted — leases, held claims, and bound input sockets die with
           // the ws connection, not just at ticket expiry.
           () =>
             sessions
-              .markDisconnected(session.sessionId)
+              .markDisconnected(session.sessionId, wsConnectionId)
               .pipe(Effect.andThen(browserFrameLeases.revokeConnection(wsConnectionId))),
         );
       }).pipe(

@@ -9,6 +9,8 @@ import {
   EnvironmentId,
   EnvironmentAuthenticatedPrincipal,
   ExtensionInvokeInput,
+  ThreadId,
+  PreviewTabId,
   type AuthEnvironmentScope,
   type ExtensionApiInvokeInput,
 } from "@t3tools/contracts";
@@ -287,6 +289,7 @@ import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentHttpApi, AuthAdministrativeScopes } from "@t3tools/contracts";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as Etag from "effect/unstable/http/Etag";
@@ -296,6 +299,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as BrowserFrameLeases from "../browserFrames/BrowserFrameLeases.ts";
 import { environmentAuthenticatedAuthLayer } from "../auth/http.ts";
 import { extensionsHttpApiLayer } from "./http.ts";
 
@@ -513,6 +517,137 @@ it.live(
         "install",
       ]);
     }).pipe(Effect.provide(realAuthLayer)),
+);
+it.live(
+  "invokeApi adopts the session's live root connection so disconnect revocation reaches HTTP mints",
+  () =>
+    Effect.gen(function* () {
+      const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore;
+      const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
+      const leases = yield* BrowserFrameLeases.BrowserFrameLeases;
+      const f = fixture([]);
+      const routes = HttpApiBuilder.layer(ExtensionTestApi).pipe(
+        Layer.provide(extensionsHttpApiLayer),
+        Layer.provide(environmentAuthenticatedAuthLayer),
+        Layer.provide(Layer.succeed(EnvironmentAuth.EnvironmentAuth, auth)),
+        Layer.provide(Layer.succeed(SessionStore, sessions)),
+        Layer.provide(
+          Layer.succeed(ServerEnvironment.ServerEnvironment, {
+            getEnvironmentId: environment.getEnvironmentId,
+            getDescriptor: Effect.die("unused descriptor"),
+          }),
+        ),
+        Layer.provide(Layer.succeed(EnvironmentExtensions, f.service)),
+        Layer.provide(NodeHttpPlatform.layer),
+        Layer.provide(Etag.layer),
+        Layer.provide(NodeServices.layer),
+      );
+      const web = yield* Effect.acquireRelease(
+        Effect.sync(() => HttpRouter.toWebHandler(routes, { disableLogger: true })),
+        (web) => Effect.promise(web.dispose),
+      );
+      const request = (endpoint: string, payload: unknown, token?: string) =>
+        encodePayload(payload).pipe(
+          Effect.flatMap((body) =>
+            Effect.promise(() =>
+              web.handler(
+                new Request(`http://fixture/api/extensions/${endpoint}`, {
+                  method: "POST",
+                  headers: {
+                    "content-type": "application/json",
+                    ...(token ? { authorization: `Bearer ${token}` } : {}),
+                  },
+                  body,
+                }),
+              ),
+            ),
+          ),
+        );
+      const metadata = {
+        deviceType: "desktop" as const,
+        os: "Linux",
+        browser: "fixture",
+        ipAddress: "127.0.0.1",
+      };
+      const grant = yield* auth.issuePairingCredential({
+        scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+      });
+      const token = yield* auth.exchangeBootstrapCredentialForAccessToken(
+        grant.credential,
+        undefined,
+        metadata,
+      );
+      const apiInvoke = {
+        installationId: "fixture",
+        expectedContentHash: "a".repeat(64),
+        request: {
+          id: "t3.workspace/files",
+          versionRange: "^1.0.0",
+          method: "listEntries",
+          input: { relativePath: "" },
+          context: {
+            resource: { namespace: "fixture", id: "a", environmentId: "env" },
+            client: "web",
+          },
+        },
+      };
+      // Without a registered root connection the authority falls back to
+      // session-only identity.
+      expect((yield* request("api/invoke", apiInvoke, token.access_token)).status).toBe(200);
+      expect(f.roots[0]?.connectionId).toBeUndefined();
+      // The ws upgrade registers the session's live root connection; an HTTP
+      // invocation then adopts it as authority connection identity.
+      const session = (yield* sessions.listActive())[0];
+      expect(session).toBeDefined();
+      yield* sessions.markConnected(session!.sessionId, "conn-root-1");
+      expect((yield* request("api/invoke", apiInvoke, token.access_token)).status).toBe(200);
+      expect(f.roots[1]?.connectionId).toBe("conn-root-1");
+      // A record minted under that authority dies when the root connection is
+      // revoked — the teardown path the ws lifecycle already runs.
+      const root = f.roots[1];
+      expect(root).toBeDefined();
+      const minted = yield* leases.issueInputLease({
+        authority: {
+          kind: "extension",
+          principalKind: "environment-session",
+          principalId: root!.principal.id,
+          rootCallerId: "fixture-ext",
+          callerId: "fixture-ext",
+          callerGenerations: [],
+          rootConnectionId: "conn-root-1",
+          context: null,
+          grants: [],
+        },
+        session: {
+          environmentId: yield* environment.getEnvironmentId,
+          threadId: ThreadId.make("thread-a"),
+          serverEpoch: "epoch-1",
+          tabId: PreviewTabId.make("tab-a"),
+        },
+      });
+      expect(Option.isSome(minted)).toBe(true);
+      const ticket = Option.getOrThrow(minted).inputTicket;
+      expect(Option.isSome(yield* leases.verify(ticket))).toBe(true);
+      yield* sessions.markDisconnected(session!.sessionId, "conn-root-1");
+      yield* leases.revokeConnection("conn-root-1");
+      expect(Option.isNone(yield* leases.verify(ticket))).toBe(true);
+      // A stale teardown must not clear a newer connection's binding.
+      yield* sessions.markConnected(session!.sessionId, "conn-root-2");
+      yield* sessions.markDisconnected(session!.sessionId, "conn-root-1");
+      expect((yield* sessions.activeConnectionId(session!.sessionId)).pipe(Option.isSome)).toBe(
+        true,
+      );
+      expect((yield* request("api/invoke", apiInvoke, token.access_token)).status).toBe(200);
+      expect(f.roots[2]?.connectionId).toBe("conn-root-2");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          realAuthLayer,
+          BrowserFrameLeases.layer.pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+    ),
 );
 
 it.effect("asset bytes require read scope and carry no-store/nosniff headers", () =>

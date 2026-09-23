@@ -427,8 +427,32 @@ export class SessionStore extends Context.Service<
     readonly revokeAllExcept: (
       sessionId: AuthSessionId,
     ) => Effect.Effect<number, SessionCredentialInternalError>;
-    readonly markConnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
-    readonly markDisconnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
+    readonly markConnected: (
+      sessionId: AuthSessionId,
+      /**
+       * Identity of the transport connection being registered (the ws
+       * connection id). The newest registration wins: HTTP-path mints bind
+       * their authority to the session's currently live connection.
+       */
+      connectionId?: string,
+    ) => Effect.Effect<void, never>;
+    readonly markDisconnected: (
+      sessionId: AuthSessionId,
+      /**
+       * Clears the session's active-connection binding only when it still
+       * names this connection — an older socket's teardown must not erase a
+       * newer connection's identity.
+       */
+      connectionId?: string,
+    ) => Effect.Effect<void, never>;
+    /**
+     * The transport connection currently bound to the session, when any.
+     * Extension invocations on transports that carry no connection identity
+     * (HTTP) adopt it so connection-scoped revocation still reaches them.
+     */
+    readonly activeConnectionId: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<Option.Option<string>, never>;
     readonly recordClientConnection: (
       sessionId: AuthSessionId,
       client: {
@@ -507,6 +531,7 @@ export const make = Effect.gen(function* () {
   const authSessions = yield* AuthSessions.AuthSessionRepository;
   const signingSecret = yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
   const connectedSessionsRef = yield* Ref.make(new Map<AuthSessionId, number>());
+  const activeConnectionsRef = yield* Ref.make(new Map<AuthSessionId, string>());
   const changesPubSub = yield* PubSub.unbounded<SessionCredentialChange>();
   const cookieInput = {
     mode: serverConfig.mode,
@@ -559,13 +584,21 @@ export const make = Effect.gen(function* () {
       );
     });
 
-  const markConnected: SessionStore["Service"]["markConnected"] = (sessionId) =>
-    Ref.modify(connectedSessionsRef, (current) => {
+  const markConnected: SessionStore["Service"]["markConnected"] = (sessionId, connectionId) =>
+    Ref.update(activeConnectionsRef, (current) => {
+      if (connectionId === undefined) return current;
       const next = new Map(current);
-      const wasDisconnected = !next.has(sessionId);
-      next.set(sessionId, (next.get(sessionId) ?? 0) + 1);
-      return [wasDisconnected, next] as const;
+      next.set(sessionId, connectionId);
+      return next;
     }).pipe(
+      Effect.andThen(
+        Ref.modify(connectedSessionsRef, (current) => {
+          const next = new Map(current);
+          const wasDisconnected = !next.has(sessionId);
+          next.set(sessionId, (next.get(sessionId) ?? 0) + 1);
+          return [wasDisconnected, next] as const;
+        }),
+      ),
       Effect.flatMap((wasDisconnected) =>
         wasDisconnected
           ? DateTime.now.pipe(
@@ -615,17 +648,27 @@ export const make = Effect.gen(function* () {
             Effect.withSpan("SessionStore.recordClientConnection"),
           );
 
-  const markDisconnected: SessionStore["Service"]["markDisconnected"] = (sessionId) =>
-    Ref.update(connectedSessionsRef, (current) => {
-      const next = new Map(current);
-      const remaining = (next.get(sessionId) ?? 0) - 1;
-      if (remaining > 0) {
-        next.set(sessionId, remaining);
-      } else {
-        next.delete(sessionId);
+  const markDisconnected: SessionStore["Service"]["markDisconnected"] = (sessionId, connectionId) =>
+    Ref.update(activeConnectionsRef, (current) => {
+      if (connectionId === undefined || current.get(sessionId) !== connectionId) {
+        return current;
       }
+      const next = new Map(current);
+      next.delete(sessionId);
       return next;
     }).pipe(
+      Effect.andThen(
+        Ref.update(connectedSessionsRef, (current) => {
+          const next = new Map(current);
+          const remaining = (next.get(sessionId) ?? 0) - 1;
+          if (remaining > 0) {
+            next.set(sessionId, remaining);
+          } else {
+            next.delete(sessionId);
+          }
+          return next;
+        }),
+      ),
       Effect.flatMap(() => loadActiveSession(sessionId)),
       Effect.flatMap((session) =>
         Option.isSome(session) ? emitUpsert(session.value) : emitRemoved(sessionId),
@@ -639,6 +682,11 @@ export const make = Effect.gen(function* () {
         ),
       ),
       Effect.withSpan("SessionStore.markDisconnected"),
+    );
+
+  const activeConnectionId: SessionStore["Service"]["activeConnectionId"] = (sessionId) =>
+    Ref.get(activeConnectionsRef).pipe(
+      Effect.map((current) => Option.fromNullishOr(current.get(sessionId))),
     );
 
   const encodeClaims = Schema.encodeEffect(Schema.fromJsonString(SessionClaims));
@@ -1042,6 +1090,7 @@ export const make = Effect.gen(function* () {
     revokeAllExcept,
     markConnected,
     markDisconnected,
+    activeConnectionId,
     recordClientConnection,
   });
 });
