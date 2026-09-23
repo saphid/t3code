@@ -29,6 +29,26 @@ The controls retreat as the composer docks after you send the first message.
 Turn on **Composer context** to keep those controls visible after the thread starts. This preference
 applies to the web and desktop clients.
 
+## Customize what surfaces show
+
+On web and desktop, several surfaces can be rearranged: the composer control strip, sidebar thread
+rows, and the thread details panel. Hover or focus a surface to reveal its pencil button and open
+its editor, or use the surface's own menu item. The command palette also lists **Customize
+composer**, **Customize thread rows**, and **Customize thread details panel** while their editors
+are available.
+
+The editor previews changes live as you make them. Choose **Done** to keep them, or **Cancel**,
+press Escape, or click outside the editor to discard them. **Reset to recommended** returns the
+surface to its recommended arrangement.
+
+**Settings → Appearance → Customize** shows whether each surface still uses the recommended
+arrangement and offers a reset for the ones that do not. Resetting shows an **Undo** action for a
+few seconds in case you reset by mistake.
+
+Choosing **hidden** for a control or detail means it is not shown in that place; it still works
+wherever it appears elsewhere. Customize preferences are saved separately on each device or
+browser.
+
 ## Motion
 
 The main sidebar, right panel, and terminal drawer open and close immediately by default. Move the

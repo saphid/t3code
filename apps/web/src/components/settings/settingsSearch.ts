@@ -267,6 +267,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
+    id: "customize-composer",
+    title: "Composer controls",
+    to: "/settings/appearance",
+    searchTerms: ["customize personalize layout pinned more hidden controls strip"],
+  },
+  {
+    id: "customize-thread-rows",
+    title: "Thread rows",
+    to: "/settings/appearance",
+    searchTerms: [
+      "customize personalize layout density compact comfortable details fields sidebar",
+    ],
+  },
+  {
     id: "project-grouping",
     title: "Project grouping",
     to: "/settings/general",

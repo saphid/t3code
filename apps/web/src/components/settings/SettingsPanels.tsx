@@ -21,6 +21,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  DEFAULT_COMPOSER_CONTROLS_PREFERENCE,
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
   type DiffLayout,
@@ -1143,6 +1144,34 @@ export function AppearanceSettingsPanel() {
     "--settings-slider-progress": `${panelAnimationDurationRatio * 100}%`,
     "--settings-slider-fill-offset": `${0.5 - panelAnimationDurationRatio}rem`,
   } as CSSProperties;
+  // Only user-placed or non-pinned placements count as customized; "pinned"
+  // alone is the recommended arrangement for the ids the strip already shows.
+  const composerControlsCustomized =
+    settings.composerControls.order.length > 0 ||
+    Object.values(settings.composerControls.placements).some((placement) => placement !== "pinned");
+  const threadRowsCustomized =
+    settings.sidebarThreadRowDensity !== "comfortable" || settings.sidebarThreadRowFields !== null;
+
+  const resetWithUndo = (input: {
+    patch: Parameters<typeof updateSettings>[0];
+    previousPatch: Parameters<typeof updateSettings>[0];
+    title: string;
+  }) => {
+    updateSettings(input.patch);
+    toastManager.add(
+      stackedThreadToast({
+        type: "success",
+        title: input.title,
+        timeout: 5_000,
+        actionProps: {
+          children: "Undo",
+          onClick: () => {
+            updateSettings(input.previousPatch);
+          },
+        },
+      }),
+    );
+  };
 
   return (
     <SettingsPageContainer>
@@ -1379,6 +1408,64 @@ export function AppearanceSettingsPanel() {
             />
           }
         />
+      </SettingsSection>
+
+      <SettingsSection id="customize" title="Customize">
+        <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
+          Choose what each surface shows. Open an editor from the surface&apos;s pencil, its menu,
+          or the command palette. Reset here if a surface ever looks wrong.
+        </p>
+        <SettingsRow
+          {...searchableSetting("customize-composer")}
+          description={composerControlsCustomized ? "Customized" : "Recommended"}
+          resetAction={
+            composerControlsCustomized ? (
+              <SettingResetButton
+                label="composer controls"
+                onClick={() => {
+                  resetWithUndo({
+                    patch: { composerControls: DEFAULT_COMPOSER_CONTROLS_PREFERENCE },
+                    previousPatch: { composerControls: settings.composerControls },
+                    title: "Composer controls reset",
+                  });
+                }}
+              />
+            ) : null
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("customize-thread-rows")}
+          description={
+            threadRowsCustomized
+              ? settings.sidebarThreadRowDensity === "compact"
+                ? "Customized · Compact"
+                : "Customized"
+              : "Recommended"
+          }
+          resetAction={
+            threadRowsCustomized ? (
+              <SettingResetButton
+                label="thread rows"
+                onClick={() => {
+                  resetWithUndo({
+                    patch: {
+                      sidebarThreadRowDensity: DEFAULT_UNIFIED_SETTINGS.sidebarThreadRowDensity,
+                      sidebarThreadRowFields: DEFAULT_UNIFIED_SETTINGS.sidebarThreadRowFields,
+                    },
+                    previousPatch: {
+                      sidebarThreadRowDensity: settings.sidebarThreadRowDensity,
+                      sidebarThreadRowFields: settings.sidebarThreadRowFields,
+                    },
+                    title: "Thread rows reset",
+                  });
+                }}
+              />
+            ) : null
+          }
+        >
+          <p className="text-xs text-muted-foreground">Applies to the standard sidebar.</p>
+        </SettingsRow>
+        {/* Thread details panel row is added with the panel integration. */}
       </SettingsSection>
 
       <SettingsSection id="motion" title="Motion">

@@ -93,6 +93,14 @@ rename a thread, regenerate its title, or link and unlink a pull request. These 
 appear on web, desktop, and mobile without requiring the originating browser to remain
 open.
 
+## Row density and details
+
+On web and desktop, active and pinned threads can use **Comfortable** or **Compact** rows.
+Comfortable rows show the details you choose, such as branch, pull request or provider, in the
+order you set. Compact rows keep one line with status and icons; everything else stays in the
+row's hover details. Open the editor with **Customize thread rows** in the command palette. See
+[Customize what surfaces show](./appearance.md#customize-what-surfaces-show).
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list

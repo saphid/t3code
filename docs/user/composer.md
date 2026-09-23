@@ -63,6 +63,14 @@ messages while disconnected. Uploads resume when you reconnect. Drafts and queue
 messages survive app restarts. Signing out of T3 Connect keeps that work on your
 device until you sign back into the same account.
 
+## Arrange the controls
+
+On web and desktop, controls such as Effort can stay pinned in the strip below the composer, move
+into the **More** menu, or be hidden. Access mode can move into **More** but is never hidden. In a
+narrow window the last pinned controls still move into **More** so the strip never overflows. Open
+the editor from the composer's **More** menu or with **Customize composer** in the command palette.
+See [Customize what surfaces show](./appearance.md#customize-what-surfaces-show).
+
 ## Custom models
 
 On web and desktop, use Settings → Providers → **Models** to add an unlisted model with a custom

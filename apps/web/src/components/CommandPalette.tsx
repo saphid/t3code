@@ -52,6 +52,7 @@ import {
   MonitorIcon,
   MoonIcon,
   PaletteIcon,
+  PencilIcon,
   SettingsIcon,
   SquarePenIcon,
   SunIcon,
@@ -127,6 +128,7 @@ import {
   newProjectId,
 } from "../lib/utils";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
+import { useCustomizeSession } from "../personalization/customizeSession";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
 import { useAvailableSettingsSearchItems } from "./settings/useAvailableSettingsSearchItems";
 import {
@@ -1721,6 +1723,14 @@ function OpenCommandPaletteDialog(props: {
     pushPaletteView,
   ]);
 
+  const composerCustomizeAvailable = useCustomizeSession((state) => state.available.composer);
+  const threadRowsCustomizeAvailable = useCustomizeSession(
+    (state) => state.available["thread-rows"],
+  );
+  const threadDetailsCustomizeAvailable = useCustomizeSession(
+    (state) => state.available["thread-details"],
+  );
+
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
   if (projects.length > 0) {
@@ -1986,6 +1996,48 @@ function OpenCommandPaletteDialog(props: {
       });
     },
   });
+
+  if (composerCustomizeAvailable) {
+    actionItems.push({
+      kind: "action",
+      value: "action:customize:composer",
+      searchTerms: ["customize", "personalize", "layout", "composer", "controls", "strip"],
+      title: "Customize composer",
+      description: "Choose which controls stay in the strip",
+      icon: <PencilIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        useCustomizeSession.getState().requestOpen("composer");
+      },
+    });
+  }
+
+  if (threadRowsCustomizeAvailable) {
+    actionItems.push({
+      kind: "action",
+      value: "action:customize:thread-rows",
+      searchTerms: ["customize", "personalize", "layout", "thread", "rows", "density", "details"],
+      title: "Customize thread rows",
+      description: "Row density and details",
+      icon: <PencilIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        useCustomizeSession.getState().requestOpen("thread-rows");
+      },
+    });
+  }
+
+  if (threadDetailsCustomizeAvailable) {
+    actionItems.push({
+      kind: "action",
+      value: "action:customize:thread-details",
+      searchTerms: ["customize", "personalize", "layout", "thread", "details", "panel", "sections"],
+      title: "Customize thread details panel",
+      description: "Sections and when they show",
+      icon: <PencilIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        useCustomizeSession.getState().requestOpen("thread-details");
+      },
+    });
+  }
 
   if (
     environments.some(

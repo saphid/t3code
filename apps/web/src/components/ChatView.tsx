@@ -396,6 +396,7 @@ import { resolveTimelineIsAtEnd, worktreeSetupAgentStarted } from "./chat/Messag
 import { resolveComposerTimelineInset, resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
 import { useRemoteOpenState } from "~/remoteOpen";
+import { useCustomizeSession } from "~/personalization/customizeSession";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
 import {
@@ -7302,6 +7303,22 @@ export default function ChatView(props: ChatViewProps) {
         event.stopPropagation();
         if (!threadPanelOpen) toggleThreadPanel();
         setThreadPanelCustomizeRequested(true);
+        return;
+      }
+
+      if (command === "composer.customize") {
+        event.preventDefault();
+        event.stopPropagation();
+        const session = useCustomizeSession.getState();
+        if (session.available.composer) session.requestOpen("composer");
+        return;
+      }
+
+      if (command === "sidebar.customizeThreadRows") {
+        event.preventDefault();
+        event.stopPropagation();
+        const session = useCustomizeSession.getState();
+        if (session.available["thread-rows"]) session.requestOpen("thread-rows");
         return;
       }
 
