@@ -294,4 +294,58 @@ describe("serializeLegacyContextMessage", () => {
       diff: hostile.diff,
     });
   });
+
+  // Comment text is user-supplied prose: entity spellings like `&lt;/review_comment>` are
+  // documentation, not markup, and must survive the round trip byte-identical alongside raw
+  // delimiters, uppercase variants, entities inside attribute-looking text, and `&amp;lt;`
+  // controls.
+  const literalBodies = [
+    "Use &lt;/review_comment> literally.",
+    "Use &lt;/review_comment&gt; literally.",
+    'Use &lt;review_comment attribute="value"> literally.',
+    "Use &LT;/REVIEW_COMMENT&gt; literally.",
+    "</review_comment> then &lt;/review_comment> then </review_comment>",
+    '<review_comment note="&lt;/review_comment>">',
+    "<review_comment&gt; then </review_comment&gt;",
+    "&lt;div> &amp;lt;/review_comment> &lt;review_comments> &gt; &amp;",
+  ];
+
+  it.each(literalBodies)(
+    "preserves literal entity spellings byte-identical in comment text: %s",
+    (text) => {
+      const record = { ...review, text } satisfies ComposerContextRecord;
+      const upgraded = upgradeLegacyContextMessage(
+        serializeLegacyContextMessage({ text: "Review", records: [record] }),
+      );
+
+      expect(upgraded.records).toHaveLength(1);
+      expect(upgraded.records[0]).toMatchObject({ text, diff: review.diff });
+    },
+  );
+
+  it.each(literalBodies)(
+    "preserves literal entity spellings byte-identical in the fenced diff: %s",
+    (diff) => {
+      const record = { ...review, diff } satisfies ComposerContextRecord;
+      const upgraded = upgradeLegacyContextMessage(
+        serializeLegacyContextMessage({ text: "Review", records: [record] }),
+      );
+
+      expect(upgraded.records).toHaveLength(1);
+      expect(upgraded.records[0]).toMatchObject({ text: review.text, diff });
+    },
+  );
+
+  it("marks encoded bodies and shields its own escape spelling", () => {
+    const record = {
+      ...review,
+      text: "Keep &lt;/review_comment> literal.",
+    } satisfies ComposerContextRecord;
+    const legacy = serializeLegacyContextMessage({ text: "Review", records: [record] });
+
+    // The marker tells readers this body went through the codec, and a literal `&lt;` travels
+    // as `&amp;lt;` so it can never be mistaken for a written escape.
+    expect(legacy).toContain('bodyEncoding="escaped-tags"');
+    expect(legacy).toContain("Keep &amp;lt;/review_comment> literal.");
+  });
 });

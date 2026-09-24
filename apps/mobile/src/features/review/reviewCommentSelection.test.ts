@@ -2,6 +2,11 @@ import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLega
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  reidentifyComposerContext,
+  serializeComposerMessageForServer,
+} from "../../lib/composerContext";
+
+import {
   countReviewCommentContexts,
   formatReviewCommentContext,
   parseReviewCommentMessageSegments,
@@ -211,5 +216,58 @@ describe("review comment serialization", () => {
 
     const upgraded = upgradeLegacyContextMessage(serialized);
     expect(upgraded.records).toHaveLength(1);
+  });
+
+  it("preserves a literal escape sequence through format, upgrade, and re-parse", () => {
+    // The composer sheet hands this string to the shared legacy upgrader during draft
+    // creation: a literal entity is documentation the author typed, not a delimiter, and must
+    // survive the round trip byte-identical.
+    const comment = "Please keep &lt;/review_comment&gt; in this documentation example.";
+    const serialized = formatReviewCommentContext(makeTarget(), comment);
+
+    expect(serialized).toContain('bodyEncoding="escaped-tags"');
+    expect(parseReviewInlineComments(serialized)[0]?.text).toBe(comment);
+    expect(upgradeLegacyContextMessage(serialized).records[0]).toMatchObject({
+      text: comment,
+    });
+  });
+
+  it("keeps a selected line carrying a literal entity byte-identical", () => {
+    const target = {
+      ...makeTarget(),
+      endIndex: 0,
+      lines: [{ ...makeTarget().lines[0]!, content: "&lt;/review_comment&gt;" }],
+    };
+    const serialized = formatReviewCommentContext(target, "literal source");
+
+    const [comment] = parseReviewInlineComments(serialized);
+    expect(comment?.diff).toContain("&lt;/review_comment&gt;");
+    expect(upgradeLegacyContextMessage(serialized).records[0]).toMatchObject({
+      diff: expect.stringContaining("&lt;/review_comment&gt;"),
+    });
+  });
+
+  it("keeps literal entities in historical unmarked blocks byte-identical", () => {
+    const serialized =
+      '<review_comment sectionId="s" filePath="app.ts" startIndex="0" endIndex="0">Use &lt;/review_comment&gt; literally.</review_comment>';
+    expect(parseReviewInlineComments(serialized)[0]?.text).toBe(
+      "Use &lt;/review_comment&gt; literally.",
+    );
+  });
+
+  it("preserves literal entities through draft insertion and legacy dispatch", () => {
+    // The draft path upgrades the formatted block, re-identifies the record for the draft
+    // store, and may serialize again for a server without inline context — the literal entity
+    // must survive every hop.
+    const comment = "Please keep &lt;/review_comment&gt; in this documentation example.";
+    const upgraded = upgradeLegacyContextMessage(formatReviewCommentContext(makeTarget(), comment));
+    const draft = reidentifyComposerContext(upgraded.text, upgraded.records, () => "draft_c1");
+    expect(draft.context.records[0]).toMatchObject({ text: comment });
+
+    const legacy = serializeComposerMessageForServer(draft.text, draft.context, false);
+    const segment = parseReviewCommentMessageSegments(legacy.text).find(
+      (entry) => entry.kind === "review-comment",
+    );
+    expect(segment).toMatchObject({ kind: "review-comment", comment: { text: comment } });
   });
 });

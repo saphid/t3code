@@ -541,11 +541,51 @@ describe("upgradeLegacyContextMessage", () => {
         startIndex: 4,
         endIndex: 6,
         rangeLabel: "L4-L6",
-        text: "Why? </review_comment> still text",
+        text: "Why? &lt;/review_comment&gt; still text",
         diff: "+ const x = 1;",
         fenceLanguage: "diff",
       },
     ]);
+  });
+
+  // Bodies written before the escaping codec carry no marker: their `&lt;` spellings are the
+  // literal text the author saved, and reinterpreting them as escapes rewrites history.
+  it.each([
+    "Use &lt;/review_comment> literally.",
+    "Use &lt;/review_comment&gt; literally.",
+    "Use &LT;/REVIEW_COMMENT&gt; literally.",
+    "&lt;div> &amp;lt;/review_comment> &lt;review_comments> &gt; &amp;",
+    '<review_comment note="&lt;/review_comment>">',
+    "<review_comment&gt; stays literal &gt; too",
+  ])("keeps literal entities in unmarked legacy bodies byte-identical: %s", (body) => {
+    const text = `<review_comment sectionId="s" filePath="f.ts" startIndex="1" endIndex="1">\n${body}\n</review_comment>`;
+    expect(upgradeLegacyContextMessage(text).records[0]).toMatchObject({ text: body });
+  });
+
+  it("keeps literal entities in unmarked legacy diffs byte-identical", () => {
+    const diff = "&lt;/review_comment&gt; quoted source &gt;";
+    const text = `<review_comment sectionId="s" filePath="f.ts" startIndex="1" endIndex="1">\nNote\n\`\`\`diff\n${diff}\n\`\`\`\n</review_comment>`;
+    expect(upgradeLegacyContextMessage(text).records[0]).toMatchObject({ text: "Note", diff });
+  });
+
+  it("decodes escaped entities only inside marked bodies", () => {
+    // The same wire spelling means different things: inside a marked body `&lt;` is a written
+    // escape for `<`; inside an unmarked body it is the historical literal text.
+    const unmarked = `<review_comment sectionId="s" filePath="f.ts" startIndex="1" endIndex="1">\nA &lt;/review_comment> B\n</review_comment>`;
+    expect(upgradeLegacyContextMessage(unmarked).records[0]).toMatchObject({
+      text: "A &lt;/review_comment> B",
+    });
+
+    const marked = `<review_comment sectionId="s" filePath="f.ts" startIndex="1" endIndex="1" bodyEncoding="escaped-tags">\nA &lt;/review_comment> B\n</review_comment>`;
+    expect(upgradeLegacyContextMessage(marked).records[0]).toMatchObject({
+      text: "A </review_comment> B",
+    });
+
+    // The writer shields a source `&lt;` as `&amp;lt;`, which decodes back to the literal.
+    const shielded = `<review_comment sectionId="s" filePath="f.ts" startIndex="1" endIndex="1" bodyEncoding="escaped-tags">\nA &amp;lt;/review_comment> B\n</review_comment>`;
+    expect(upgradeLegacyContextMessage(shielded).records[0]).toMatchObject({
+      text: "A &lt;/review_comment> B",
+    });
   });
 
   it("appends trailing review blocks after the other trailing blocks", () => {
