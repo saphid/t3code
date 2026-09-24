@@ -600,6 +600,23 @@ export function stackedActionInput(input: {
 }
 
 /**
+ * The reason beside the stacked chooser's Run. A blocked offer names its
+ * own; a receipt follow-up clicked while another mutation holds the
+ * single-flight runner selects its action without running, so the chooser
+ * says why until that mutation settles.
+ */
+export function stackedChooserReason(
+  offer: StackedActionOffer,
+  deferredFollowUp: VcsActionKind | null,
+  busy: boolean,
+): string | null {
+  if (offer.disabled !== null) return offer.disabled;
+  return busy && deferredFollowUp === offer.action
+    ? "Another action is running — run this once it finishes"
+    : null;
+}
+
+/**
  * Native's `requiresDefaultBranchConfirmation` — every action except a
  * plain commit needs an explicit continue/feature-ref decision before it
  * runs on the default ref. Picking "new feature branch" IS the native
@@ -1207,7 +1224,7 @@ export interface FollowUpNotifications {
       readonly variant: "primary";
     }[];
   }) => Promise<{ readonly notificationId: string }>;
-  readonly dismiss: (notificationId: string) => void;
+  readonly dismiss: (notificationId: string) => Promise<void>;
   readonly awaitAction: (
     notificationId: string,
   ) => Promise<{ readonly actionId: string } | { readonly dismissed: true }>;
@@ -1216,9 +1233,11 @@ export interface FollowUpNotifications {
 /**
  * Settles a loading toast into a receipt that carries a follow-up button.
  * `update` cannot add actions, so the receipt is a fresh `notify`; the
- * loading toast is retracted only once it lands, so a failed post leaves
- * the caller its in-place `update` path (resolves false). Resolves true
- * once the receipt is up; `run` fires if the user clicks its button.
+ * loading toast is retracted only once the receipt is fully armed, so any
+ * failure — a rejected post, a throwing hook or `awaitAction`, or a loading
+ * dismiss that did not land — retracts the receipt and leaves the caller
+ * its in-place `update` path (resolves false). Never rejects. Resolves true
+ * once the receipt alone is up; `run` fires if the user clicks its button.
  */
 export async function postFollowUpReceipt(
   notifications: FollowUpNotifications,
@@ -1240,14 +1259,25 @@ export async function postFollowUpReceipt(
   } catch {
     return false;
   }
-  notifications.dismiss(loadingId);
-  hooks.onPosted(receiptId);
-  void notifications.awaitAction(receiptId).then(
-    (outcome) => {
-      if ("actionId" in outcome && outcome.actionId === FOLLOW_UP_ACTION_ID)
-        hooks.run(followUp.action);
-    },
-    () => {},
-  );
-  return true;
+  try {
+    void notifications.awaitAction(receiptId).then(
+      (outcome) => {
+        if ("actionId" in outcome && outcome.actionId === FOLLOW_UP_ACTION_ID)
+          hooks.run(followUp.action);
+      },
+      () => {},
+    );
+    hooks.onPosted(receiptId);
+    // A user-dismissed loading toast is already gone — that is the goal.
+    await notifications.dismiss(loadingId).catch((error: unknown) => {
+      if (!isNotificationDismissal(error)) throw error;
+    });
+    return true;
+  } catch {
+    // Retract the receipt so the in-place update is the only outcome shown.
+    try {
+      await notifications.dismiss(receiptId);
+    } catch {}
+    return false;
+  }
 }

@@ -1018,12 +1018,6 @@ export function describeContentSearch(
  * --------------------------------------------------------------------- */
 
 /**
- * Safety check before `t3.file/presentation.open`: the path must be
- * workspace-relative — reject absolute, empty, `..` and backslash segments.
- * Same predicate the diff panel ported; kept package-local because the
- * sibling package's view model is not a shared contract.
- */
-/**
  * The file a restored view selects. `t3.file/presentation.open` with an empty
  * path (the host's plain Files panel) restores `{ relativePath: "" }`, which
  * means "no file"; selecting it would read the workspace root as a file.
@@ -1034,6 +1028,12 @@ export function restoredSelection(restoreState: unknown): string | null {
   return typeof path === "string" && path !== "" ? path : null;
 }
 
+/**
+ * Safety check before `t3.file/presentation.open`: the path must be
+ * workspace-relative — reject absolute, empty, `..` and backslash segments.
+ * Same predicate the diff panel ported; kept package-local because the
+ * sibling package's view model is not a shared contract.
+ */
 export function presentationPath(path: string): string | null {
   if (
     path.length === 0 ||

@@ -7156,6 +7156,10 @@ var __t3Client = (() => {
       ...commits && input.stagedPaths.length > 0 ? { paths: input.stagedPaths } : {}
     };
   }
+  function stackedChooserReason(offer, deferredFollowUp, busy) {
+    if (offer.disabled !== null) return offer.disabled;
+    return busy && deferredFollowUp === offer.action ? "Another action is running \u2014 run this once it finishes" : null;
+  }
   function stackedActionNeedsConfirm(action, local, featureBranch) {
     if (local?.isDefaultRef !== true || action === "commit") return false;
     return !(featureBranch && stackedActionCommits(action));
@@ -7457,17 +7461,27 @@ var __t3Client = (() => {
     } catch {
       return false;
     }
-    notifications.dismiss(loadingId);
-    hooks.onPosted(receiptId);
-    void notifications.awaitAction(receiptId).then(
-      (outcome) => {
-        if ("actionId" in outcome && outcome.actionId === FOLLOW_UP_ACTION_ID)
-          hooks.run(followUp.action);
-      },
-      () => {
+    try {
+      void notifications.awaitAction(receiptId).then(
+        (outcome) => {
+          if ("actionId" in outcome && outcome.actionId === FOLLOW_UP_ACTION_ID)
+            hooks.run(followUp.action);
+        },
+        () => {
+        }
+      );
+      hooks.onPosted(receiptId);
+      await notifications.dismiss(loadingId).catch((error) => {
+        if (!isNotificationDismissal(error)) throw error;
+      });
+      return true;
+    } catch {
+      try {
+        await notifications.dismiss(receiptId);
+      } catch {
       }
-    );
-    return true;
+      return false;
+    }
   }
 
   // prsPanel.tsx
@@ -10594,13 +10608,11 @@ ${thread.id}`) === activity,
       if (!toastsLive || dead.current) return null;
       const api = bindApi(uiNotificationsApi, host, session.context);
       const resource = session.context.resource;
+      const dismissOrReject = (notificationId) => api.invoke("dismiss", { notificationId }, session.signal).then(() => {
+      });
       const dismiss = (notificationId) => {
-        void api.invoke("dismiss", { notificationId }, session.signal).then(
-          () => {
-          },
-          () => {
-          }
-        );
+        void dismissOrReject(notificationId).catch(() => {
+        });
       };
       const target = {
         ...resource.threadId !== void 0 ? { anchor: "thread", threadId: resource.threadId } : {},
@@ -10665,7 +10677,7 @@ ${thread.id}`) === activity,
               const replaced = await postFollowUpReceipt(
                 {
                   notify: (input) => api.invoke("notify", { ...input, ...target }, session.signal),
-                  dismiss,
+                  dismiss: dismissOrReject,
                   awaitAction: (id2) => api.invoke("awaitAction", { notificationId: id2 }, session.signal)
                 },
                 notificationId,
@@ -10712,6 +10724,7 @@ ${thread.id}`) === activity,
     const [stackedChoice, setStackedChoice] = (0, import_react2.useState)(null);
     const [featureBranch, setFeatureBranch] = (0, import_react2.useState)(false);
     const [pendingConfirm, setPendingConfirm] = (0, import_react2.useState)(null);
+    const [deferredFollowUp, setDeferredFollowUp] = (0, import_react2.useState)(null);
     const [stacked, setStacked] = (0, import_react2.useState)(null);
     const [newRefName, setNewRefName] = (0, import_react2.useState)("");
     const [newWorktreeName, setNewWorktreeName] = (0, import_react2.useState)("");
@@ -10811,6 +10824,7 @@ ${thread.id}`) === activity,
       label: stackedActionLabel("commit"),
       disabled: "Repository status pending"
     };
+    const chooserReason = stackedChooserReason(chosenOffer, deferredFollowUp, busy);
     const create = planRefCreate(newRefName, rows);
     const currentBranch = rows.find((row) => row.current && row.remote === null)?.name ?? null;
     const pull = pullState(status.local, status.remote);
@@ -10819,6 +10833,7 @@ ${thread.id}`) === activity,
     const runMutation = (op, label, invoke) => {
       if (inFlight.current) return;
       inFlight.current = true;
+      setDeferredFollowUp(null);
       const toast = beginToast(label, () => setMutation(releaseMutationReceipt(op)));
       setMutation(
         (phase) => startMutation(phase, op, label, toast === null ? "inline" : "notification") ?? phase
@@ -11030,6 +11045,10 @@ ${thread.id}`) === activity,
         setPendingConfirm(null);
         const offer = stackedOffers.find((entry) => entry.action === action);
         if (offer === void 0 || offer.disabled !== null) return;
+        if (inFlight.current) {
+          setDeferredFollowUp(action);
+          return;
+        }
         if (stackedActionNeedsConfirm(action, status.local, featureBranch)) setPendingConfirm(action);
         else runStacked(offer);
       };
@@ -11430,7 +11449,7 @@ ${thread.id}`) === activity,
                           ]
                         }
                       ),
-                      chosenOffer.disabled !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 11 }, children: chosenOffer.disabled })
+                      chooserReason !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 11 }, children: chooserReason })
                     ]
                   }
                 ),
