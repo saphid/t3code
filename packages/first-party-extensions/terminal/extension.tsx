@@ -1,4 +1,5 @@
 import {
+  composerContextApi,
   terminalControlApi,
   terminalOutputApi,
   terminalOutputEventsApi,
@@ -14,6 +15,7 @@ import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
+import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
   useEffect,
   useId,
@@ -36,7 +38,7 @@ import {
   terminalDeleteShortcutData,
   terminalNavigationShortcutData,
 } from "./surfaceKeys.ts";
-import { useTerminalSelectionMenu } from "./selectionMenu.tsx";
+import { useTerminalSelectionMenu, type TerminalChatSink } from "./selectionMenu.tsx";
 import { readAssetWithRetry, sharedLoad, type ReadAsset } from "./assetLoader.ts";
 import { TerminalStreamHub, type TerminalPaneLease } from "./streamHub.ts";
 import { terminalFontFromVars, terminalThemeFromApp } from "./terminalTheme.ts";
@@ -449,6 +451,32 @@ function writeSystemMessage(surface: Pick<GhosttyTerminalSurface, "write">, mess
 }
 
 /**
+ * "Add to chat" through `t3.composer/context`: the server forwards to the
+ * composer of the client that invoked it, so a remote browser fills its own
+ * draft. Without a thread there is no chat to add to, as in native.
+ */
+function composerChatSink(
+  host: ClientHost,
+  session: ViewSession,
+  panel: TerminalPanel,
+  terminalId: string,
+): TerminalChatSink | undefined {
+  if (session.context.resource.threadId === undefined) return undefined;
+  const composer = bindApi(composerContextApi, host, session.context);
+  return {
+    terminalId,
+    terminalLabel: () =>
+      panel.snapshot.tabs.find((tab) => tab.terminalId === terminalId)?.label ??
+      getTerminalLabel(terminalId),
+    probe: async () => {
+      const capabilities = await composer.invoke("getCapabilities", {}, session.signal);
+      return capabilities.transport === "client" && capabilities.operations.insertTerminalContext;
+    },
+    insert: (selection) => composer.invoke("insertTerminalContext", selection, session.signal),
+  };
+}
+
+/**
  * Surface-local key intercepts the plugin owns: readline-style navigation,
  * line delete, and screen clear. The focused terminal chords are captured at
  * the view root (resolved by the host keymap — see terminalChordAction), so
@@ -514,10 +542,12 @@ function TerminalPane(props: {
   );
   const mountRef = useRef<HTMLDivElement | null>(null);
   const surfaceRef = useRef<GhosttyTerminalSurface | null>(null);
+  const [chatSink] = useState(() => composerChatSink(host, session, panel, terminalId));
   const selectionMenu = useTerminalSelectionMenu({
     mountRef,
     surfaceRef,
     reportError: writeSystemMessage,
+    ...(chatSink ? { chat: chatSink } : {}),
   });
   const shownRef = useRef(shown && visible);
   // Latest active/shown state for the async surface creation: a surface
@@ -1535,6 +1565,9 @@ const authored = defineExtension({
     requireApi(terminalOutputApi),
     requireApi(terminalOutputEventsApi),
     requireApi(terminalControlApi),
+    // "Add to chat" (insertTerminalContext is 1.1.0). The host provider is
+    // always registered; getCapabilities reports whether a composer is there.
+    requireApi(composerContextApi),
     // Mandatory requirements — the broker only authorizes invocations for
     // declared APIs, so the t3.ui/* contracts must be declared even though
     // the panel degrades per-call. A host without these providers resolves

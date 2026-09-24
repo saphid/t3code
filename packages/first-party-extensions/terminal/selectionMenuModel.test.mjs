@@ -2,10 +2,16 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 
 import {
+  TERMINAL_CHAT_TEXT_MAX_CHARS,
+  TerminalChatTarget,
   TerminalSelectionMenuFlow,
+  addTerminalSelectionToChat,
+  buildTerminalChatSelection,
   clampMenuToViewport,
   resolveSelectionActionPosition,
+  terminalChatSelectionError,
   terminalContextMenuItems,
+  terminalSelectionLineRange,
   terminalSelectionMenuItems,
 } from "./selectionMenuModel.ts";
 
@@ -45,7 +51,7 @@ NodeTest.describe("menu items (native parity, canAddToChat=false)", () => {
     );
   });
 
-  NodeTest.it("the flow never offers Add to chat", () => {
+  NodeTest.it("the flow omits Add to chat without a chat target", () => {
     const { flow } = makeFlow();
     const popup = flow.openSelectionPopup({ selectionText: "hello", position: at });
     NodeAssert.deepEqual(
@@ -84,6 +90,7 @@ NodeTest.describe("TerminalSelectionMenuFlow supersession", () => {
       action: "paste",
       requestId: context.requestId,
       clipboardText: null,
+      chatSelection: null,
     });
     NodeAssert.equal(flow.menu, null);
     // The action is still in flight: it may report and refocus...
@@ -127,6 +134,7 @@ NodeTest.describe("TerminalSelectionMenuFlow supersession", () => {
       action: "copy",
       requestId: context.requestId,
       clipboardText: "line one\r\n",
+      chatSelection: null,
     });
   });
 
@@ -223,5 +231,313 @@ NodeTest.describe("positioning", () => {
       }),
       { x: 4, y: 4 },
     );
+  });
+});
+
+const excerpt = {
+  terminalId: "term-1",
+  terminalLabel: "Terminal 1",
+  lineStart: 3,
+  lineEnd: 4,
+  text: "$ ls\nsrc",
+};
+
+function makeChatFlow(canAddToChat = () => true) {
+  return new TerminalSelectionMenuFlow(() => {}, { canAddToChat });
+}
+
+NodeTest.describe("Add to chat (native parity with a chat target)", () => {
+  NodeTest.it("the popup offers Add to chat then Copy; the right-click adds Paste", () => {
+    const flow = makeChatFlow();
+    const popup = flow.openSelectionPopup({
+      selectionText: "$ ls\nsrc",
+      chatSelection: excerpt,
+      position: at,
+    });
+    NodeAssert.deepEqual(popup.items, [
+      { id: "add-to-chat", label: "Add to chat" },
+      { id: "copy", label: "Copy" },
+    ]);
+    const context = flow.openContextMenu({
+      selectionText: "$ ls\nsrc",
+      chatSelection: excerpt,
+      position: at,
+    });
+    NodeAssert.deepEqual(context.items, [
+      { id: "add-to-chat", label: "Add to chat", disabled: false },
+      { id: "copy", label: "Copy", disabled: false },
+      { id: "paste", label: "Paste" },
+    ]);
+  });
+
+  NodeTest.it("choosing it hands over the excerpt captured when the menu opened", () => {
+    const flow = makeChatFlow();
+    const context = flow.openContextMenu({
+      selectionText: "$ ls\nsrc",
+      chatSelection: excerpt,
+      position: at,
+    });
+    NodeAssert.deepEqual(flow.choose(context.requestId, "add-to-chat"), {
+      action: "add-to-chat",
+      requestId: context.requestId,
+      clipboardText: "$ ls\nsrc",
+      chatSelection: excerpt,
+    });
+  });
+
+  NodeTest.it("an empty selection disables it on the right-click menu", () => {
+    const flow = makeChatFlow();
+    const context = flow.openContextMenu({ selectionText: null, position: at });
+    NodeAssert.deepEqual(
+      context.items.map((item) => [item.id, item.disabled === true]),
+      [
+        ["add-to-chat", true],
+        ["copy", true],
+        ["paste", false],
+      ],
+    );
+    NodeAssert.equal(flow.choose(context.requestId, "add-to-chat"), null);
+  });
+
+  NodeTest.it("a newline-only selection ignores a stray excerpt and opens no popup", () => {
+    const flow = makeChatFlow();
+    const context = flow.openContextMenu({
+      selectionText: "\r\n",
+      chatSelection: excerpt,
+      position: at,
+    });
+    NodeAssert.equal(context.chatSelection, null);
+    NodeAssert.equal(flow.choose(context.requestId, "add-to-chat"), null);
+    NodeAssert.equal(
+      flow.openSelectionPopup({ selectionText: "\n", chatSelection: excerpt, position: at }),
+      null,
+    );
+  });
+
+  NodeTest.it("a selection without a line range keeps Copy but disables Add to chat", () => {
+    const flow = makeChatFlow();
+    const popup = flow.openSelectionPopup({ selectionText: "hello", position: at });
+    NodeAssert.deepEqual(
+      popup.items.map((item) => [item.id, item.disabled === true]),
+      [
+        ["add-to-chat", true],
+        ["copy", false],
+      ],
+    );
+    NodeAssert.equal(flow.choose(popup.requestId, "add-to-chat"), null);
+  });
+
+  NodeTest.it("the chat target is read when each menu opens", () => {
+    let available = false;
+    const flow = makeChatFlow(() => available);
+    const before = flow.openContextMenu({
+      selectionText: "x",
+      chatSelection: excerpt,
+      position: at,
+    });
+    NodeAssert.equal(before.items[0].id, "copy");
+    available = true;
+    const after = flow.openContextMenu({
+      selectionText: "x",
+      chatSelection: excerpt,
+      position: at,
+    });
+    NodeAssert.equal(after.items[0].id, "add-to-chat");
+  });
+});
+
+NodeTest.describe("buildTerminalChatSelection", () => {
+  const position = { start: { x: 0, y: 2 }, end: { x: 3, y: 5 } };
+
+  NodeTest.it("keeps multi-line text, folds CRLF, and trims only outer blank lines", () => {
+    NodeAssert.deepEqual(
+      buildTerminalChatSelection({
+        terminalId: "term-2",
+        terminalLabel: " Terminal 2 ",
+        text: "\r\n$ make\r\n  error: x\r\n\r\n  at y\r\n\r\n",
+        position,
+      }),
+      {
+        terminalId: "term-2",
+        terminalLabel: "Terminal 2",
+        lineStart: 3,
+        lineEnd: 6,
+        text: "$ make\n  error: x\n\n  at y",
+      },
+    );
+  });
+
+  NodeTest.it("maps 0-based screen rows to native's 1-based line range", () => {
+    NodeAssert.deepEqual(terminalSelectionLineRange({ start: { y: 0 }, end: { y: 0 } }), {
+      lineStart: 1,
+      lineEnd: 1,
+    });
+    NodeAssert.deepEqual(terminalSelectionLineRange({ start: { y: 4 }, end: { y: 1 } }), {
+      lineStart: 5,
+      lineEnd: 5,
+    });
+  });
+
+  NodeTest.it("is null for newline-only text or a missing position", () => {
+    const base = { terminalId: "term-1", terminalLabel: "Terminal 1" };
+    NodeAssert.equal(buildTerminalChatSelection({ ...base, text: "\r\n\n", position }), null);
+    NodeAssert.equal(buildTerminalChatSelection({ ...base, text: "ok", position: null }), null);
+  });
+
+  NodeTest.it("keeps the label inside the contract bound", () => {
+    const blank = buildTerminalChatSelection({
+      terminalId: "term-1",
+      terminalLabel: "  ",
+      text: "ok",
+      position,
+    });
+    NodeAssert.equal(blank.terminalLabel, "Terminal");
+    const long = buildTerminalChatSelection({
+      terminalId: "term-1",
+      terminalLabel: "\u{1F600}".repeat(200),
+      text: "ok",
+      position,
+    });
+    NodeAssert.equal([...long.terminalLabel].length, 128);
+  });
+});
+
+NodeTest.describe("terminalChatSelectionError", () => {
+  NodeTest.it("allows the contract maximum and refuses one more character", () => {
+    const at = (text) => terminalChatSelectionError({ ...excerpt, text });
+    NodeAssert.equal(at("a".repeat(TERMINAL_CHAT_TEXT_MAX_CHARS)), null);
+    NodeAssert.match(at("a".repeat(TERMINAL_CHAT_TEXT_MAX_CHARS + 1)), /too long/);
+  });
+
+  NodeTest.it("counts code points, as the host schema does", () => {
+    const astral = "\u{1F600}".repeat(TERMINAL_CHAT_TEXT_MAX_CHARS);
+    NodeAssert.equal(astral.length, TERMINAL_CHAT_TEXT_MAX_CHARS * 2);
+    NodeAssert.equal(terminalChatSelectionError({ ...excerpt, text: astral }), null);
+  });
+});
+
+function recordingChatAction(overrides = {}) {
+  const calls = [];
+  let current = true;
+  const options = {
+    selection: excerpt,
+    insert: async (selection) => {
+      calls.push(["insert", selection]);
+      return { inserted: true, target: "env:thread" };
+    },
+    isCurrent: () => current,
+    clearSelection: () => calls.push(["clearSelection"]),
+    focusTerminal: () => calls.push(["focusTerminal"]),
+    reportError: (message) => calls.push(["reportError", message]),
+    ...overrides,
+  };
+  return {
+    calls,
+    supersede: () => {
+      current = false;
+    },
+    run: () => addTerminalSelectionToChat(options),
+  };
+}
+
+NodeTest.describe("addTerminalSelectionToChat", () => {
+  NodeTest.it("inserts, then clears the selection and leaves focus to the composer", async () => {
+    const action = recordingChatAction();
+    await action.run();
+    NodeAssert.deepEqual(action.calls, [["insert", excerpt], ["clearSelection"]]);
+  });
+
+  NodeTest.it("a duplicate still clears the selection silently, as native", async () => {
+    const action = recordingChatAction({
+      insert: async () => ({ inserted: false, reason: "duplicate", target: "env:thread" }),
+    });
+    await action.run();
+    NodeAssert.deepEqual(action.calls, [["clearSelection"]]);
+  });
+
+  NodeTest.it("a failure is reported in the terminal and keeps the selection", async () => {
+    const action = recordingChatAction({
+      insert: async () => {
+        throw new Error("composer.context.insertTerminalContext: permission denied");
+      },
+    });
+    await action.run();
+    NodeAssert.deepEqual(action.calls, [
+      ["reportError", "composer.context.insertTerminalContext: permission denied"],
+      ["focusTerminal"],
+    ]);
+  });
+
+  NodeTest.it("an oversized excerpt is refused before any insert", async () => {
+    const action = recordingChatAction({
+      selection: { ...excerpt, text: "a".repeat(TERMINAL_CHAT_TEXT_MAX_CHARS + 1) },
+    });
+    await action.run();
+    NodeAssert.equal(action.calls.length, 2);
+    NodeAssert.equal(action.calls[0][0], "reportError");
+    NodeAssert.match(action.calls[0][1], /too long/);
+    NodeAssert.deepEqual(action.calls[1], ["focusTerminal"]);
+  });
+
+  NodeTest.it("a superseded completion touches neither the selection nor focus", async () => {
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const ok = recordingChatAction({ insert: () => gate });
+    const running = ok.run();
+    ok.supersede();
+    release({ inserted: true, target: "env:thread" });
+    await running;
+    NodeAssert.deepEqual(ok.calls, []);
+
+    const failed = recordingChatAction({
+      insert: async () => {
+        failed.supersede();
+        throw new Error("gone");
+      },
+    });
+    await failed.run();
+    NodeAssert.deepEqual(failed.calls, []);
+  });
+});
+
+NodeTest.describe("TerminalChatTarget", () => {
+  NodeTest.it("re-probes until the composer is there, one probe at a time", async () => {
+    const answers = [false, true];
+    let probes = 0;
+    let settle;
+    const target = new TerminalChatTarget(() => {
+      probes += 1;
+      return new Promise((resolve) => {
+        settle = () => resolve(answers.shift());
+      });
+    });
+    target.refresh();
+    target.refresh();
+    NodeAssert.equal(probes, 1, "no overlapping probe");
+    settle();
+    await new Promise((resolve) => setImmediate(resolve));
+    NodeAssert.equal(target.available, false);
+    target.refresh();
+    NodeAssert.equal(probes, 2);
+    settle();
+    await new Promise((resolve) => setImmediate(resolve));
+    NodeAssert.equal(target.available, true);
+    target.refresh();
+    NodeAssert.equal(probes, 2, "a yes is final");
+  });
+
+  NodeTest.it("a failed probe leaves it unavailable and retryable", async () => {
+    let probes = 0;
+    const target = new TerminalChatTarget(async () => {
+      probes += 1;
+      throw new Error("host unavailable");
+    });
+    target.refresh();
+    await new Promise((resolve) => setImmediate(resolve));
+    NodeAssert.equal(target.available, false);
+    target.refresh();
+    NodeAssert.equal(probes, 2);
   });
 });

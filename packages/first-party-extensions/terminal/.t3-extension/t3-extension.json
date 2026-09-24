@@ -44,6 +44,10 @@
       "versionRange": "^1.0.0"
     },
     {
+      "id": "t3.composer/context",
+      "versionRange": "^1.1.0"
+    },
+    {
       "id": "t3.ui/theme",
       "versionRange": "^1.0.0"
     },

@@ -1495,6 +1495,7 @@ NodeTest.describe("package requirements — t3.ui/* adoption policy", () => {
         "t3.terminal/output",
         "t3.terminal/output-events",
         "t3.terminal/control",
+        "t3.composer/context",
         "t3.ui/theme",
         "t3.ui/keybindings",
         "t3.ui/panels",
