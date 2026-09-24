@@ -18,7 +18,7 @@ import { createOrchestrationApiProviders } from "./v1.ts";
 
 export const context = {
   resource: {
-    namespace: "p12.proof",
+    namespace: "orchestration.fixture",
     id: "agents",
     environmentId: "env",
     projectId: "project",
@@ -36,7 +36,7 @@ export const makeSnapshot = () =>
     thread: {
       id: "thread",
       projectId: "project",
-      title: "P12 fixture",
+      title: "Orchestration fixture",
       modelSelection: { instanceId: "codex", model: "gpt-6" },
       runtimeMode: "full-access",
       interactionMode: "default",

@@ -1,7 +1,6 @@
 /**
  * Per-project URL history for the Browser panel — the package-owned port of
- * the native browserHistoryStore's semantics (binding table row #8 in
- * docs/internals/extensions/browser-binding-disposition.md).
+ * the native browserHistoryStore's semantics.
  *
  * Native keeps one localStorage blob keyed `byProjectKey` with pending
  * per-thread buffers; the plugin instead persists through the surface's

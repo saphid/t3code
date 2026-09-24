@@ -1,5 +1,5 @@
 /**
- * Pure view-model for the Diff panel skeleton (P11-A). Owns the read-side
+ * Pure view-model for the Diff panel. Owns the read-side
  * model the view renders over the public `t3.vcs/diff` +
  * `t3.vcs/repository` contracts: patch → file rows, binary detection from
  * the delivered patch text, per-file hunk rows, gap expansion over
@@ -11,9 +11,7 @@
  * `hydratePartialDiff` is not a public subpath, so gap expansion is
  * re-derived here over the delivered full-file contents.
  *
- * Dispositions covered: vcs-diff-binding-disposition.md rows 30, 34, 35.
- * Turn/checkpoint diffs (rows 36/37) ride the P12 `t3.orchestration/*`
- * contracts below; diff-line comments wait on t3.messages/enrichment.
+ * Turn/checkpoint diffs ride the `t3.orchestration/*` contracts below; diff-line comments wait on t3.messages/enrichment.
  */
 import type { FileDiffMetadata } from "@pierre/diffs/types";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";

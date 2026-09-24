@@ -1,9 +1,8 @@
 /**
  * Component-level regressions over the REAL extension.tsx tree, bundled by
  * esbuild with the Ghostty surface replaced by a recording stub. These pin
- * the reviewers' probe shapes as tests: cold-restore stream budget,
- * group-switch waiter wake, and focused-chord capture against the real
- * host keymap resolver.
+ * these regression shapes as tests: cold-restore stream budget, group-switch
+ * waiter wake, and focused-chord capture against the real host keymap resolver.
  *
  * The bundle is written to the system tmpdir, never into the package, so
  * the shipped tree stays free of test-only builds.
@@ -163,14 +162,14 @@ function paneStreamHost() {
   return { host, active };
 }
 
-NodeTest.describe("cold restore stream budget (r3 finding 1)", () => {
+NodeTest.describe("cold restore stream budget", () => {
   NodeTest.test(
     "eight-session restore admits sessions/theme/appearance inside the cap",
     async () => {
-      // The reviewer's COLD_RESTORE_STREAM_CAP probe: pane effects run before
-      // the view's fixed-feed effects, hidden panes take optional slots, and
-      // pre-fix the three fixed subscriptions were rejected over the cap —
-      // the panel never went live and New stayed disabled.
+      // Cold restore: pane effects run before the view's fixed-feed effects,
+      // hidden panes take optional slots, and pre-fix the three fixed
+      // subscriptions were rejected over the cap — the panel never went live
+      // and New stayed disabled.
       const active = new Set();
       const attempts = [];
       const rejects = [];
@@ -266,16 +265,15 @@ NodeTest.describe("cold restore stream budget (r3 finding 1)", () => {
   );
 });
 
-NodeTest.describe("group switch waiter wake (r3 finding 2)", () => {
+NodeTest.describe("group switch waiter wake", () => {
   NodeTest.test(
     "a group switch connects the newly visible pane after demotions drain",
     async () => {
-      // The reviewer's GROUP_SWITCH_WAIT probe, on real TerminalPane
-      // components: three fixed feeds plus a1..a4/c fill the pool, b is
-      // hidden and unallocated. Reorder b first and show only b and c —
-      // pre-fix, b's failed acquire never retried because the later
-      // demotions of a1..a4 did not wake waiters, leaving the visible pane
-      // disconnected despite evictable streams.
+      // Group switch, on real TerminalPane components: three fixed feeds plus
+      // a1..a4/c fill the pool, b is hidden and unallocated. Reorder b first
+      // and show only b and c — pre-fix, b's failed acquire never retried
+      // because the later demotions of a1..a4 did not wake waiters, leaving the
+      // visible pane disconnected despite evictable streams.
       const { host, active } = paneStreamHost();
       const session = {
         signal: new AbortController().signal,
@@ -350,14 +348,13 @@ NodeTest.describe("group switch waiter wake (r3 finding 2)", () => {
   );
 });
 
-NodeTest.describe("hidden waiters retry at current visibility (r4 finding 1)", () => {
+NodeTest.describe("hidden waiters retry at current visibility", () => {
   NodeTest.test("refused hidden waiters cannot seize demoted slots as mandatory", async () => {
-    // The reviewer's HIDDEN_WAITERS_STEAL_DEMOTED_SLOTS probe: five
-    // visible panes fill the pool, four hidden panes and b are refused
-    // and wait. Switching to [b, c] demotes a1..a4 — pre-fix, every
-    // hidden waiter's retry acquired MANDATORY, so the demotions handed
-    // h1..h4 permanent mandatory slots and the newly visible b starved
-    // behind "Stream budget" with nothing left to evict.
+    // Five visible panes fill the pool, four hidden panes and b are refused and
+    // wait. Switching to [b, c] demotes a1..a4 — pre-fix, every hidden waiter's
+    // retry acquired MANDATORY, so the demotions handed h1..h4 permanent
+    // mandatory slots and the newly visible b starved behind "Stream budget"
+    // with nothing left to evict.
     const { host, active } = paneStreamHost();
     const session = {
       signal: new AbortController().signal,
@@ -434,14 +431,13 @@ NodeTest.describe("hidden waiters retry at current visibility (r4 finding 1)", (
   });
 });
 
-NodeTest.describe("two full views sidebar switch (r4 finding 1)", () => {
+NodeTest.describe("two full views sidebar switch", () => {
   NodeTest.test("the selected pane wins the stream budget in both placements", async () => {
-    // The reviewer's TWO_FULL_VIEWS_SIDEBAR_SWITCH probe: two complete
-    // TerminalView placements for one thread, eleven restored sessions.
-    // Selecting b through its real sidebar callback demotes a1..a4 in the
-    // left placement — pre-fix, the left placement's earlier refused
-    // hidden waiters re-acquired MANDATORY slots on those demotions, the
-    // streams stayed on c/h2..h5, and the visible b showed "Stream budget".
+    // Two complete TerminalView placements for one thread, eleven restored
+    // sessions. Selecting b through its real sidebar callback demotes a1..a4 in
+    // the left placement — pre-fix, the left placement's earlier refused hidden
+    // waiters re-acquired MANDATORY slots on those demotions, the streams
+    // stayed on c/h2..h5, and the visible b showed "Stream budget".
     const active = new Map();
     let counter = 0;
     const host = {
@@ -532,10 +528,10 @@ NodeTest.describe("two full views sidebar switch (r4 finding 1)", () => {
 
 /**
  * A full TerminalView over one restored, live pane, with the capture →
- * VT-target traversal the reviewers' probes ran. The ChatView host-capture
- * step lives outside this package; `press` starts at the event it yields.
- * `encoded` is the byte sequence the packaged Ghostty encoder produced for
- * that event in the r5–r7 probes — what reaches the PTY if nothing claims it.
+ * VT-target traversal a real key press takes. The ChatView host-capture step
+ * lives outside this package; `press` starts at the event it yields. `encoded`
+ * is the byte sequence the packaged Ghostty encoder produced for that event —
+ * what reaches the PTY if nothing claims it.
  */
 async function mountKeyView({ keybindings, invokeKeymap }) {
   const invokes = [];

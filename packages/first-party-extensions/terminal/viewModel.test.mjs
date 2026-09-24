@@ -536,7 +536,7 @@ NodeTest.describe("terminal panel — input, resize, lifecycle", () => {
   });
 
   NodeTest.it(
-    "StrictMode replay revives input: dispose + beginListStream does not leave dead queues (P2)",
+    "StrictMode replay revives input: dispose + beginListStream does not leave dead queues",
     async () => {
       const control = fakeControl();
       const panel = new TerminalPanel({
@@ -1055,7 +1055,7 @@ NodeTest.describe("t3.ui/keybindings — registration + dispatch", () => {
   });
 });
 
-NodeTest.describe("t3.ui/keybindings — focused-chord resolution (r2 item 4)", () => {
+NodeTest.describe("t3.ui/keybindings — focused-chord resolution", () => {
   const keyEvent = (overrides = {}) => ({
     key: "d",
     metaKey: false,

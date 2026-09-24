@@ -1,8 +1,8 @@
 # @t3tools/extension-version-control
 
 The first-party Version Control panel (`t3.version-control`) as an
-installable SDK extension — P10-A reads + P10-B mutations + P10-C
-repository ops on the `t3.vcs/*` contracts (P09, repository at 1.1.0),
+installable SDK extension — reads, mutations and repository ops on the
+`t3.vcs/*` contracts (repository at 1.1.0),
 plus a read-only pull-request browser on `t3.prs/read@^1.0.0`.
 
 The PR browser consumes the `t3.prs/read` grant:
@@ -127,8 +127,8 @@ Still deferred: PR mutations (a later `t3.prs/*` control contract),
 publish/clone flows (no remote-creation contract — `sourceControl.*`
 provisioning is host-side), stash (no native binding exists to mirror),
 branch rename/delete (internal driver methods only), working-tree diff
-rendering (P11's `t3.vcs/diff` surface), AI commit text (no contract),
-discard/revert and checkpoint diffs (P12 orchestration boundary).
+rendering (the Diff panel's `t3.vcs/diff` surface), AI commit text (no
+contract), discard/revert and checkpoint diffs (orchestration contracts).
 
 ```sh
 pnpm --filter @t3tools/extension-version-control test

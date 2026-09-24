@@ -817,7 +817,7 @@ const verifySignedAssetClaims = Effect.fn("AssetAccess.verifySignedAssetClaims")
 });
 
 /**
- * The browser attachment channel's gate (consumed by the P08-B sessions
+ * The browser attachment channel's gate (consumed by the browser sessions
  * adapter): verifies a `browser-surface` lease's signature, expiry, and
  * field-exact session binding. A lease minted for one session or epoch never
  * verifies against another — the binding is equality, never re-binding.

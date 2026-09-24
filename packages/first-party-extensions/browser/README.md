@@ -1,7 +1,7 @@
 # @t3tools/extension-browser
 
-First-party Browser panel (`t3.browser`) as an installable SDK extension —
-P08-A skeleton, P08-D presentation lease.
+First-party Browser panel (`t3.browser`) as an installable SDK extension,
+with a host presentation lease for the live engine view.
 
 The panel renders through public contracts only:
 
@@ -49,7 +49,7 @@ Package-owned helpers ported from the native panel (`historyStore.ts`,
 the persisted URL history is **per view record** (per thread), not
 per-project like the native `byProjectKey` store. `session.save` cannot
 aggregate across threads, so project-shared history is a named deferral
-(P08-HISTORY-PERSISTENCE) — the stored list is provisional behavior for a
+— the stored list is provisional behavior for a
 single surface, useful groundwork, not parity for that row.
 
 ```sh

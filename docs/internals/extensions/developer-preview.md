@@ -72,7 +72,7 @@ The [native registry](../../../apps/web/src/extensions/nativePanels.tsx) resolve
 | Terminal        | Thread panels and bottom docks bind existing terminal state. Retained docks resolve their own thread context, not the foreground project's context.                                                                                     |
 | Agents          | Thread-scoped tree/status presentation retains existing observation and navigation. It gains no orchestration control authority.                                                                                                        |
 
-Native restore state remains owned by existing stores; those adapters accept `null` SDK restoration state. Web and desktop use these React adapters. React Native and SwiftUI require separate native renderers/integration and are not implemented by this bridge.
+Native restore state remains owned by existing stores; those adapters accept `null` SDK restoration state. Web and desktop use these React adapters. React Native mobile requires a separate native renderer and integration, and is not implemented by this bridge.
 
 ## Deliberately later phases
 

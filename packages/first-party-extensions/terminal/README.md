@@ -213,4 +213,4 @@ explicit resume rather than replay. Host-side op-id fencing remains unsolved.
 - `pnpm test` — view-model, VT conformance (real WASM), input-transport,
   attach/recovery, PTY-fixture, and surface-level byte-transport oracle
   suites
-- `pnpm run audit` — Gate-4 private-import audit
+- `pnpm run audit` — private-import audit

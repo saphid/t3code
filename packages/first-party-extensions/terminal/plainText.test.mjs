@@ -6,7 +6,7 @@ const ESC = "\x1b";
 
 NodeTest.describe("plainTerminalText (plain-text fallback view)", () => {
   NodeTest.it("drops SGR colour codes from a zsh/starship prompt", () => {
-    // The cert-a4 capture: `[1;36mvca4-workspace [0m on …` printed raw.
+    // A captured prompt that printed raw: `[1;36mvca4-workspace [0m on …`.
     const prompt = `${ESC}[1;36mvca4-workspace ${ESC}[0m on ${ESC}[1;35mvca-visual${ESC}[0m\r\n$ `;
     NodeAssert.equal(plainTerminalText(prompt), "vca4-workspace  on vca-visual\n$ ");
   });

@@ -255,7 +255,9 @@ it.effect(
         ],
       });
       expect(built.code, built.stderr).toBe(0);
-      const temp = yield* fs.makeTempDirectoryScoped({ prefix: "p08-installed-" });
+      const temp = yield* fs.makeTempDirectoryScoped({
+        prefix: "browser-local-servers-installed-",
+      });
       const rootDir = yield* fs.realPath(temp);
       const runtime = yield* Effect.promise(() =>
         createExtensionRuntime({

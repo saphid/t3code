@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Gate-4 import audit for first-party extension packages.
+ * Private-import audit for first-party extension packages.
  *
  * Scans a package's source tree and its built .t3-extension bundle and FAILS
  * on any binding to app-private modules:

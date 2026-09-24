@@ -206,10 +206,10 @@ NodeTest.describe("buildPreviewAnnotationPrompt", () => {
   });
 
   NodeTest.it("bounds the JSON-serialized size — the unit the SDK envelope measures", () => {
-    // Round-2 review repro: the cap must account for JSON escaping — a
-    // NUL-heavy payload is ~6× larger once serialized, and raw-byte
-    // measurement let copyJson reject the prompt. Every escaped-glyph
-    // class must serialize under the cap and pass the real SDK gate.
+    // The cap must account for JSON escaping — a NUL-heavy payload is ~6×
+    // larger once serialized, and raw-byte measurement let copyJson reject the
+    // prompt. Every escaped-glyph class must serialize under the cap and pass
+    // the real SDK gate.
     const serializedBytes = (value) => new TextEncoder().encode(JSON.stringify(value)).length;
     const heavy = (ch) => ({
       ...annotation,

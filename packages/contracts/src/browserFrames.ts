@@ -5,8 +5,6 @@
  * The frame channel carries JPEG frames plus a validated human-input
  * backchannel. Actions never ride this contract: automation stays on
  * `t3.browser/sessions` and no raw CDP surface is exposed through it.
- *
- * Design: `design/remote-frames.md` (device-stream architecture).
  */
 import * as Schema from "effect/Schema";
 

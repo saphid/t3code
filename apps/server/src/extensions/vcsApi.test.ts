@@ -1259,7 +1259,7 @@ it.layer(NodeServices.layer)("t3.vcs/diff adapter", (it) => {
           const injected = yield* invokeError(
             diff,
             "getPreview",
-            { baseRef: "--output=/tmp/p09-escape" },
+            { baseRef: "--output=/tmp/vcs-escape" },
             context,
           );
           expect(injected.detail).toContain("Invalid");
@@ -1269,7 +1269,7 @@ it.layer(NodeServices.layer)("t3.vcs/diff adapter", (it) => {
             {
               sourceKind: "branch-range",
               changeType: "change",
-              baseRef: "--output=/tmp/p09-escape",
+              baseRef: "--output=/tmp/vcs-escape",
               headRef: "HEAD",
               oldPath: "a.txt",
               newPath: "a.txt",

@@ -1,10 +1,9 @@
-// Pane-level contract regression: the published `--t3-terminal-*`
-// appearance vars must reach the real VT surface — font at creation via
-// `options.font`, live updates through `setFont`, and a reset back to the
-// packaged defaults when the feed clears. Bundles the real TerminalPane
-// with a recording GhosttyTerminalSurface boundary (the reviewer's probe
-// shape); no browser is involved. Also proves the local Ghostty editing
-// intercepts exist: Ctrl+L writes U+000C to the PTY.
+// Pane-level contract regression: the published `--t3-terminal-*` appearance
+// vars must reach the real VT surface — font at creation via `options.font`,
+// live updates through `setFont`, and a reset back to the packaged defaults
+// when the feed clears. Bundles the real TerminalPane with a recording
+// GhosttyTerminalSurface boundary; no browser is involved. Also proves the
+// local Ghostty editing intercepts exist: Ctrl+L writes U+000C to the PTY.
 
 import * as NodeAssert from "node:assert/strict";
 import * as NodeFS from "node:fs";
@@ -324,12 +323,11 @@ NodeTest.test("local Ghostty editing intercepts exist: Ctrl+L writes FF to the P
   NodeAssert.deepEqual(recorded.input.at(-1), { id: "terminal-1", data: "\f" });
 });
 
-// r2 item 1 (BLOCKER): a pane that is active+shown at mount — the fresh
-// split case — must receive focus once its async surface creation
-// completes. The [active, shown, visible] effect runs before the create
-// resolves and its deps never change again for that pane, so without the
-// creation-time reconciliation the new pane never takes focus and
-// keystrokes land in the old pane's PTY.
+// A pane that is active+shown at mount — the fresh split case — must receive
+// focus once its async surface creation completes. The [active, shown, visible]
+// effect runs before the create resolves and its deps never change again for
+// that pane, so without the creation-time reconciliation the new pane never
+// takes focus and keystrokes land in the old pane's PTY.
 NodeTest.test("active pane takes focus when its surface creation completes", async () => {
   resetRecorded();
   recorded.delay = true;

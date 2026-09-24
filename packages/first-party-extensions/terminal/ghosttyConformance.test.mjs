@@ -228,7 +228,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   );
 
   NodeTest.it(
-    "clearScreen erases viewport + scrollback but preserves negotiated modes (P1)",
+    "clearScreen erases viewport + scrollback but preserves negotiated modes",
     async () => {
       // Seed application-cursor + bracketed-paste, clear,
       // then paste — the bracketed wrapper must survive. An RIS reset would
@@ -250,7 +250,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   );
 
   NodeTest.it(
-    "resetAndWrite DOES drop modes — proving clearScreen is the correct primitive (P1)",
+    "resetAndWrite DOES drop modes — proving clearScreen is the correct primitive",
     async () => {
       const { core } = await makeCore();
       core.write("\x1b[?2004h");
@@ -261,7 +261,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
     },
   );
 
-  NodeTest.it("a remount replay does not re-send terminal query replies (P2)", async () => {
+  NodeTest.it("a remount replay does not re-send terminal query replies", async () => {
     // The first mount answers a DSR once. On remount the attachment
     // replays base + retained tail into a fresh parser — the replayed
     // query must not emit a second reply the process never re-asked for.
@@ -311,7 +311,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
     second.core.dispose();
   });
 
-  NodeTest.it("queries buffered while detached get exactly one reply on mount (P2)", async () => {
+  NodeTest.it("queries buffered while detached get exactly one reply on mount", async () => {
     // Live output arrived before any surface existed — the DSR was
     // never answered; the first mount must emit its reply, not
     // suppress it as if an earlier parser had answered.
@@ -358,7 +358,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   });
 
   NodeTest.it(
-    "a resubscribe snapshot extending past an unanswered query still answers it (P2)",
+    "a resubscribe snapshot extending past an unanswered query still answers it",
     async () => {
       // A live DSR arrives while detached, then a
       // same-epoch resubscribe snapshot returns retained contents that
@@ -417,64 +417,61 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
     },
   );
 
-  NodeTest.it(
-    "unanswered runs separated by resubscribe output each get their reply (P2)",
-    async () => {
-      // The single-claim case generalizes: unanswered live bytes before a
-      // resubscribe snapshot AND more live bytes after it form two
-      // disjoint ranges of the replay stream — both must answer.
-      const attachment = new TerminalVtAttachment("term-1");
-      const snap = (
-        contents,
-        boundarySequence,
-        retainedByteLength = contents.length,
-        contentsUnitStart = 0,
-      ) => ({
-        kind: "snapshot",
-        terminalId: "term-1",
-        streamEpoch: "epoch-1",
-        status: "running",
-        contents,
-        retainedByteLength,
-        truncated: false,
-        clearGeneration: 0,
-        contentsUnitStart,
-        boundarySequence,
-      });
-      const output = (sequence, data) => ({
-        kind: "output",
-        terminalId: "term-1",
-        streamEpoch: "epoch-1",
-        sequence,
-        chunkIndex: 0,
-        chunkCount: 1,
-        data,
-      });
-      const closed = {
-        kind: "closed",
-        terminalId: "term-1",
-        streamEpoch: "epoch-1",
-        reason: "overflow",
-      };
-      attachment.applyFrame({ streamId: "s", sequence: 1 }, snap("", 0, 0));
-      attachment.applyFrame({ streamId: "s", sequence: 2 }, output(1, "\x1b[6n"));
-      attachment.applyFrame({ streamId: "s", sequence: 3 }, closed);
-      attachment.beginStream();
-      attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap("\x1b[6nbetween", 2));
-      // Still detached: a second DSR lands after the snapshot — two
-      // disjoint unanswered runs in the replay stream.
-      attachment.applyFrame({ streamId: "s2", sequence: 2 }, output(3, "\x1b[6n"));
-      const { core, writes } = await makeCore();
-      attachment.attach(core);
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      NodeAssert.equal(writes.length, 2);
-      for (const reply of writes) NodeAssert.match(reply, /\[\d+;\d+R/);
-      core.dispose();
-    },
-  );
+  NodeTest.it("unanswered runs separated by resubscribe output each get their reply", async () => {
+    // The single-claim case generalizes: unanswered live bytes before a
+    // resubscribe snapshot AND more live bytes after it form two
+    // disjoint ranges of the replay stream — both must answer.
+    const attachment = new TerminalVtAttachment("term-1");
+    const snap = (
+      contents,
+      boundarySequence,
+      retainedByteLength = contents.length,
+      contentsUnitStart = 0,
+    ) => ({
+      kind: "snapshot",
+      terminalId: "term-1",
+      streamEpoch: "epoch-1",
+      status: "running",
+      contents,
+      retainedByteLength,
+      truncated: false,
+      clearGeneration: 0,
+      contentsUnitStart,
+      boundarySequence,
+    });
+    const output = (sequence, data) => ({
+      kind: "output",
+      terminalId: "term-1",
+      streamEpoch: "epoch-1",
+      sequence,
+      chunkIndex: 0,
+      chunkCount: 1,
+      data,
+    });
+    const closed = {
+      kind: "closed",
+      terminalId: "term-1",
+      streamEpoch: "epoch-1",
+      reason: "overflow",
+    };
+    attachment.applyFrame({ streamId: "s", sequence: 1 }, snap("", 0, 0));
+    attachment.applyFrame({ streamId: "s", sequence: 2 }, output(1, "\x1b[6n"));
+    attachment.applyFrame({ streamId: "s", sequence: 3 }, closed);
+    attachment.beginStream();
+    attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap("\x1b[6nbetween", 2));
+    // Still detached: a second DSR lands after the snapshot — two
+    // disjoint unanswered runs in the replay stream.
+    attachment.applyFrame({ streamId: "s2", sequence: 2 }, output(3, "\x1b[6n"));
+    const { core, writes } = await makeCore();
+    attachment.attach(core);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    NodeAssert.equal(writes.length, 2);
+    for (const reply of writes) NodeAssert.match(reply, /\[\d+;\d+R/);
+    core.dispose();
+  });
 
   NodeTest.it(
-    "a repeated query in a resubscribe snapshot answers at its OWN position (P2)",
+    "a repeated query in a resubscribe snapshot answers at its OWN position",
     async () => {
       // The resnapshot holds TWO identical DSRs — the live one
       // we received (position 0) and a newer history-only copy emitted
@@ -518,11 +515,10 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       attachment.applyFrame({ streamId: "s", sequence: 2 }, output(1, "\x1b[6n"));
       attachment.applyFrame({ streamId: "s", sequence: 3 }, closed);
       attachment.beginStream();
-      // Retained contents: our live DSR, newer output, then ANOTHER DSR
-      // the process emitted while we were gone. Since r2 item 3 the
-      // gap-emitted copy earns its own reply too — nothing parsed it with
-      // the reply writer attached — so BOTH queries answer, each at its
-      // own cursor position.
+      // Retained contents: our live DSR, newer output, then ANOTHER DSR the
+      // process emitted while we were gone. The gap-emitted copy earns its own
+      // reply too — nothing parsed it with the reply writer attached — so BOTH
+      // queries answer, each at its own cursor position.
       attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap("\x1b[6nlater\x1b[6n", 2));
       const { core, writes } = await makeCore();
       attachment.attach(core);
@@ -533,7 +529,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   );
 
   NodeTest.it(
-    "repeated queries around a resubscribe boundary each answer at their own position (P2)",
+    "repeated queries around a resubscribe boundary each answer at their own position",
     async () => {
       // Same collision, plus a second live DSR after the snapshot: the
       // replay owes TWO replies at distinct cursor positions.
@@ -584,124 +580,118 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
     },
   );
 
-  NodeTest.it(
-    "an evicted unanswered query cannot migrate to a newer identical query (P2)",
-    async () => {
-      // The original query falls entirely outside the retained
-      // tail while a NEWER identical query lands inside the resnapshot.
-      // The pending reply must drop with its bytes — never re-anchor to
-      // the coincidental copy. The newer copy is r2 item 3's gap bytes
-      // though: nothing parsed it with the reply writer attached, so it
-      // answers at ITS own position (after the CSI H + "later" → col 6).
-      const attachment = new TerminalVtAttachment("term-1");
-      const snap = (
-        contents,
-        boundarySequence,
-        truncated,
-        retainedByteLength,
-        contentsUnitStart = 0,
-      ) => ({
-        kind: "snapshot",
-        terminalId: "term-1",
-        streamEpoch: "epoch-1",
-        status: "running",
-        contents,
-        retainedByteLength,
-        truncated,
-        clearGeneration: 0,
-        contentsUnitStart,
-        boundarySequence,
-      });
-      const output = (sequence, data) => ({
-        kind: "output",
-        terminalId: "term-1",
-        streamEpoch: "epoch-1",
-        sequence,
-        chunkIndex: 0,
-        chunkCount: 1,
-        data,
-      });
-      const closed = {
-        kind: "closed",
-        terminalId: "term-1",
-        streamEpoch: "epoch-1",
-        reason: "overflow",
-      };
-      attachment.applyFrame({ streamId: "s", sequence: 1 }, snap("", 0, false, 0));
-      attachment.applyFrame({ streamId: "s", sequence: 2 }, output(1, "\x1b[6n"));
-      attachment.applyFrame({ streamId: "s", sequence: 3 }, closed);
-      attachment.beginStream();
-      // 8192 bytes emitted while disconnected: the original query is fully
-      // evicted, and the retained tail ends with a DIFFERENT ESC[6n.
-      const contents = `${"x".repeat(8180)}\x1b[Hlater\x1b[6n`;
-      attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap(contents, 2, true, 8196, 4));
-      const { core, writes } = await makeCore();
-      attachment.attach(core);
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      NodeAssert.deepEqual(writes, ["\x1b[1;6R"]);
-      core.dispose();
-    },
-  );
+  NodeTest.it("an evicted unanswered query cannot migrate to a newer identical query", async () => {
+    // The original query falls entirely outside the retained tail while a
+    // NEWER identical query lands inside the resnapshot. The pending reply
+    // must drop with its bytes — never re-anchor to the coincidental copy.
+    // The newer copy is gap bytes, though: nothing parsed it with the reply
+    // writer attached, so it answers at ITS own position (after the CSI H +
+    // "later" → col 6).
+    const attachment = new TerminalVtAttachment("term-1");
+    const snap = (
+      contents,
+      boundarySequence,
+      truncated,
+      retainedByteLength,
+      contentsUnitStart = 0,
+    ) => ({
+      kind: "snapshot",
+      terminalId: "term-1",
+      streamEpoch: "epoch-1",
+      status: "running",
+      contents,
+      retainedByteLength,
+      truncated,
+      clearGeneration: 0,
+      contentsUnitStart,
+      boundarySequence,
+    });
+    const output = (sequence, data) => ({
+      kind: "output",
+      terminalId: "term-1",
+      streamEpoch: "epoch-1",
+      sequence,
+      chunkIndex: 0,
+      chunkCount: 1,
+      data,
+    });
+    const closed = {
+      kind: "closed",
+      terminalId: "term-1",
+      streamEpoch: "epoch-1",
+      reason: "overflow",
+    };
+    attachment.applyFrame({ streamId: "s", sequence: 1 }, snap("", 0, false, 0));
+    attachment.applyFrame({ streamId: "s", sequence: 2 }, output(1, "\x1b[6n"));
+    attachment.applyFrame({ streamId: "s", sequence: 3 }, closed);
+    attachment.beginStream();
+    // 8192 bytes emitted while disconnected: the original query is fully
+    // evicted, and the retained tail ends with a DIFFERENT ESC[6n.
+    const contents = `${"x".repeat(8180)}\x1b[Hlater\x1b[6n`;
+    attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap(contents, 2, true, 8196, 4));
+    const { core, writes } = await makeCore();
+    attachment.attach(core);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    NodeAssert.deepEqual(writes, ["\x1b[1;6R"]);
+    core.dispose();
+  });
+
+  NodeTest.it("a same-boundary resnapshot keeps provably-retained unanswered queries", async () => {
+    // The retention boundary itself can prove survival: with no newer
+    // events (boundary === watermark) the contents MUST end at our last
+    // received byte, so a contents suffix match pins both ends — here
+    // the server evicted our leading output but the query survived.
+    const attachment = new TerminalVtAttachment("term-1");
+    const snap = (
+      contents,
+      boundarySequence,
+      retainedByteLength = contents.length,
+      contentsUnitStart = 0,
+    ) => ({
+      kind: "snapshot",
+      terminalId: "term-1",
+      streamEpoch: "epoch-1",
+      status: "running",
+      contents,
+      retainedByteLength,
+      truncated: false,
+      clearGeneration: 0,
+      contentsUnitStart,
+      boundarySequence,
+    });
+    const output = (sequence, data) => ({
+      kind: "output",
+      terminalId: "term-1",
+      streamEpoch: "epoch-1",
+      sequence,
+      chunkIndex: 0,
+      chunkCount: 1,
+      data,
+    });
+    const closed = {
+      kind: "closed",
+      terminalId: "term-1",
+      streamEpoch: "epoch-1",
+      reason: "overflow",
+    };
+    attachment.applyFrame({ streamId: "s", sequence: 1 }, snap("", 0, 0));
+    attachment.applyFrame({ streamId: "s", sequence: 2 }, output(1, "AAAA"));
+    attachment.applyFrame({ streamId: "s", sequence: 3 }, output(2, "\x1b[6n"));
+    attachment.applyFrame({ streamId: "s", sequence: 4 }, closed);
+    attachment.beginStream();
+    // Same boundary — nothing newer. Retained contents are just the
+    // surviving tail: the DSR itself, its position proven by the pinned
+    // end of the stream.
+    attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap("\x1b[6n", 2, 4, 4));
+    const { core, writes } = await makeCore();
+    attachment.attach(core);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    NodeAssert.deepEqual(writes, ["\x1b[1;1R"]);
+    core.dispose();
+  });
 
   NodeTest.it(
-    "a same-boundary resnapshot keeps provably-retained unanswered queries (P2)",
-    async () => {
-      // The retention boundary itself can prove survival: with no newer
-      // events (boundary === watermark) the contents MUST end at our last
-      // received byte, so a contents suffix match pins both ends — here
-      // the server evicted our leading output but the query survived.
-      const attachment = new TerminalVtAttachment("term-1");
-      const snap = (
-        contents,
-        boundarySequence,
-        retainedByteLength = contents.length,
-        contentsUnitStart = 0,
-      ) => ({
-        kind: "snapshot",
-        terminalId: "term-1",
-        streamEpoch: "epoch-1",
-        status: "running",
-        contents,
-        retainedByteLength,
-        truncated: false,
-        clearGeneration: 0,
-        contentsUnitStart,
-        boundarySequence,
-      });
-      const output = (sequence, data) => ({
-        kind: "output",
-        terminalId: "term-1",
-        streamEpoch: "epoch-1",
-        sequence,
-        chunkIndex: 0,
-        chunkCount: 1,
-        data,
-      });
-      const closed = {
-        kind: "closed",
-        terminalId: "term-1",
-        streamEpoch: "epoch-1",
-        reason: "overflow",
-      };
-      attachment.applyFrame({ streamId: "s", sequence: 1 }, snap("", 0, 0));
-      attachment.applyFrame({ streamId: "s", sequence: 2 }, output(1, "AAAA"));
-      attachment.applyFrame({ streamId: "s", sequence: 3 }, output(2, "\x1b[6n"));
-      attachment.applyFrame({ streamId: "s", sequence: 4 }, closed);
-      attachment.beginStream();
-      // Same boundary — nothing newer. Retained contents are just the
-      // surviving tail: the DSR itself, its position proven by the pinned
-      // end of the stream.
-      attachment.applyFrame({ streamId: "s2", sequence: 1 }, snap("\x1b[6n", 2, 4, 4));
-      const { core, writes } = await makeCore();
-      attachment.attach(core);
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      NodeAssert.deepEqual(writes, ["\x1b[1;1R"]);
-      core.dispose();
-    },
-  );
-
-  NodeTest.it(
-    "a pending reply is dropped when mounting before the replacement snapshot (P2)",
+    "a pending reply is dropped when mounting before the replacement snapshot",
     async () => {
       // Identity-changed invalidates the pending reply AT the
       // close — a renderer that finishes mounting before the replacement
@@ -754,7 +744,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   );
 
   NodeTest.it(
-    "a mount in the resubscribe gap holds the reply until the epoch re-proves (P2)",
+    "a mount in the resubscribe gap holds the reply until the epoch re-proves",
     async () => {
       // Overflow (not identity-changed): the same incarnation keeps
       // running, so its pending reply is legitimate — but while the epoch
@@ -815,7 +805,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   );
 
   NodeTest.it(
-    "a pending reply dies when a missed clear bumped the snapshot generation (P2)",
+    "a pending reply dies when a missed clear bumped the snapshot generation",
     async () => {
       // A history clear does not end the epoch, so an overflow
       // resubscription can miss the reset entirely. The next untruncated
@@ -870,7 +860,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   );
 
   NodeTest.it(
-    "a gap mount cannot release a reply whose generation was cleared mid-gap (P2)",
+    "a gap mount cannot release a reply whose generation was cleared mid-gap",
     async () => {
       // Same missed clear as above, opposite mount order: the renderer
       // attaches INSIDE the beginStream→snapshot gap. The epoch fence
@@ -924,7 +914,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
     },
   );
 
-  NodeTest.it("a pending reply does not cross a terminal incarnation change (P2)", async () => {
+  NodeTest.it("a pending reply does not cross a terminal incarnation change", async () => {
     // A query queued against epoch e must not deliver into
     // epoch e+1 — the new process's retained history never earned it,
     // even when identical bytes appear there.
@@ -970,38 +960,35 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
     core.dispose();
   });
 
-  NodeTest.it(
-    "a query inside snapshot history stays suppressed — documented drop (P2)",
-    async () => {
-      // Snapshot contents are retained history, not live output: a query
-      // embedded in them is treated as already-rendered history and never
-      // answered — the explicit drop semantics (native resetAndWrite
-      // parity). Only live output the attachment saw go undelivered earns
-      // a reply.
-      const attachment = new TerminalVtAttachment("term-1");
-      const snap = {
-        kind: "snapshot",
-        terminalId: "term-1",
-        streamEpoch: "epoch-1",
-        status: "running",
-        contents: "\x1b[6n",
-        retainedByteLength: 4,
-        truncated: false,
-        clearGeneration: 0,
-        contentsUnitStart: 0,
-        boundarySequence: 7,
-      };
-      attachment.applyFrame({ streamId: "s", sequence: 1 }, snap);
-      const { core, writes } = await makeCore();
-      attachment.attach(core);
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      NodeAssert.equal(writes.length, 0);
-      core.dispose();
-    },
-  );
+  NodeTest.it("a query inside snapshot history stays suppressed — documented drop", async () => {
+    // Snapshot contents are retained history, not live output: a query
+    // embedded in them is treated as already-rendered history and never
+    // answered — the explicit drop semantics (native resetAndWrite
+    // parity). Only live output the attachment saw go undelivered earns
+    // a reply.
+    const attachment = new TerminalVtAttachment("term-1");
+    const snap = {
+      kind: "snapshot",
+      terminalId: "term-1",
+      streamEpoch: "epoch-1",
+      status: "running",
+      contents: "\x1b[6n",
+      retainedByteLength: 4,
+      truncated: false,
+      clearGeneration: 0,
+      contentsUnitStart: 0,
+      boundarySequence: 7,
+    };
+    attachment.applyFrame({ streamId: "s", sequence: 1 }, snap);
+    const { core, writes } = await makeCore();
+    attachment.attach(core);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    NodeAssert.equal(writes.length, 0);
+    core.dispose();
+  });
 
   NodeTest.it(
-    "default line retention cannot migrate an evicted query's claim — mount after snapshot (P2)",
+    "default line retention cannot migrate an evicted query's claim — mount after snapshot",
     async () => {
       // The host's 5000-line retention evicts the original
       // query line while the retained tail still fits under the 8 KiB
@@ -1040,11 +1027,11 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
       attachment.applyFrame({ streamId: "s", sequence: 2 }, output(1, "\x1b[6n\n"));
       attachment.applyFrame({ streamId: "s", sequence: 3 }, closed);
       attachment.beginStream();
-      // While disconnected: a NEW ESC[6n plus 5000 LFs arrive (seq 2).
-      // Line retention evicts the original query line entirely — the
-      // retained tail starts at window unit 5, still under the byte cap.
-      // The original claim drops by position; the gap-emitted query earns
-      // its own reply (r2 item 3), answered before the LFs scroll.
+      // While disconnected: a NEW ESC[6n plus 5000 LFs arrive (seq 2). Line
+      // retention evicts the original query line entirely — the retained tail
+      // starts at window unit 5, still under the byte cap. The original claim
+      // drops by position; the gap-emitted query earns its own reply, answered
+      // before the LFs scroll.
       attachment.applyFrame(
         { streamId: "s2", sequence: 1 },
         snap("\x1b[6n" + "\n".repeat(5000), 2, 5),
@@ -1058,7 +1045,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   );
 
   NodeTest.it(
-    "default line retention cannot migrate an evicted query's claim — mount in the gap (P2)",
+    "default line retention cannot migrate an evicted query's claim — mount in the gap",
     async () => {
       // Same r8 line-eviction repro, opposite mount order: the renderer
       // attaches inside the beginStream→snapshot gap; the epoch fence
@@ -1115,7 +1102,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   );
 
   NodeTest.it(
-    "a first attach after a host history clear is degraded — sink before snapshot (P2)",
+    "a first attach after a host history clear is degraded — sink before snapshot",
     async () => {
       // A fresh attachment's FIRST snapshot already shows
       // clearGeneration 1 — the process negotiated modes before history
@@ -1145,7 +1132,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   );
 
   NodeTest.it(
-    "a first attach after a host history clear is degraded — snapshot before sink (P2)",
+    "a first attach after a host history clear is degraded — snapshot before sink",
     async () => {
       // Opposite ordering: the post-clear snapshot lands first, then the
       // renderer mounts. The attach emit must still flag degraded.
@@ -1172,7 +1159,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   );
 
   NodeTest.it(
-    "a query surviving line eviction still answers at its absolute position (P2)",
+    "a query surviving line eviction still answers at its absolute position",
     async () => {
       // Matrix row — evicted-lines with surviving bytes: the retained
       // window moved forward past other output, but the query itself is
@@ -1222,7 +1209,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   );
 
   NodeTest.it(
-    "a query surviving byte-tail truncation still answers at its absolute position (P2)",
+    "a query surviving byte-tail truncation still answers at its absolute position",
     async () => {
       // Matrix row — evicted-bytes with surviving bytes: the resnapshot's
       // 8 KiB tail starts mid-window (truncated:true), but the claim's
@@ -1284,7 +1271,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   );
 
   NodeTest.it(
-    "a post-clear claim re-anchored by the reset frame survives a resnapshot (P2)",
+    "a post-clear claim re-anchored by the reset frame survives a resnapshot",
     async () => {
       // Matrix row — observed clear: the reset frame names the new
       // window ({epoch, generation:1}) and re-anchors the stream at unit
@@ -1344,7 +1331,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   );
 
   NodeTest.it(
-    "a first snapshot with an evicted head is degraded even without truncation (P2)",
+    "a first snapshot with an evicted head is degraded even without truncation",
     async () => {
       // Matrix row — fidelity under evicted-lines: contentsUnitStart > 0
       // proves retained bytes were dropped ahead of the tail even though
@@ -1375,7 +1362,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   );
 });
 
-NodeTest.describe("attachment retention gap (r3 finding 6)", () => {
+NodeTest.describe("attachment retention gap", () => {
   const snap = (contents, extra = {}) => ({
     kind: "snapshot",
     terminalId: "t",
@@ -1393,10 +1380,9 @@ NodeTest.describe("attachment retention gap (r3 finding 6)", () => {
   NodeTest.it(
     "an unobserved retention hole degrades instead of preserving stale modes",
     async () => {
-      // The reviewer's VT_UNOBSERVED_RETENTION_GAP probe: a hidden pane's
-      // stream drops mid-history while the program disables application
-      // cursor keys and floods output past the 8192-byte retention tail.
-      // Pre-fix, the caught-up check looked only at the snapshot END, so
+      // A hidden pane's stream drops mid-history while the program disables
+      // application cursor keys and floods output past the 8192-byte retention
+      // tail. Pre-fix, the caught-up check looked only at the snapshot END, so
       // the surviving parser kept the obsolete mode with degraded=false —
       // arrows would encode with the wrong mode and no indication.
       const { core, writes } = await makeCore();

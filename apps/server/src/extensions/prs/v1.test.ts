@@ -1132,7 +1132,7 @@ it.layer(NodeServices.layer)("t3.prs/read adapter", (it) => {
     () =>
       Effect.gen(function* () {
         /**
-         * The round-2 reproduction: a provider whose stats call fails with
+         * A provider whose stats call fails with
          * an unusable-host reason must NOT produce `{stats: []}` — the
          * native service's best-effort page semantics — but fail
          * `prs.listStats` with cli-unauthenticated / cli-missing named.

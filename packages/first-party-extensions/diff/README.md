@@ -1,8 +1,8 @@
 # @t3tools/extension-diff
 
-First-party Diff panel (`t3.diff`) as an installable SDK extension —
-P11-A skeleton + P11-B stream adoption and B-slice parity, plus the
-P12 turn/checkpoint mode, on `t3.vcs/*` and `t3.orchestration/*`.
+First-party Diff panel (`t3.diff`) as an installable SDK extension,
+with streamed diffs and a turn/checkpoint mode, on `t3.vcs/*` and
+`t3.orchestration/*`.
 
 This is a read-oriented panel. It consumes `t3.vcs/read` plus the
 `t3.file/open` grant (open-in-editor resolution):

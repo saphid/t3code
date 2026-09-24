@@ -30,9 +30,9 @@ NodeTest.describe("useEditorSelection", () => {
     return null;
   }
 
-  // r2 finding 1: select L2–L3 in a.ts, open b.ts, reopen a.ts — the toolbar
-  // must not re-offer the dead selection over whichever lines now sit at the
-  // old offsets.
+  // Select L2–L3 in a.ts, open b.ts, reopen a.ts — the toolbar must not
+  // re-offer the dead selection over whichever lines now sit at the old
+  // offsets.
   NodeTest.it("a selection does not survive a file switch and back", async () => {
     let root;
     try {
@@ -75,9 +75,9 @@ NodeTest.describe("useEditorSelection", () => {
     }
   });
 
-  // r2 finding 1, same-path half: an external sync or reload replaces the
-  // buffer under a held selection — the offsets are dead even though the
-  // path still matches.
+  // Same-path half of the case above: an external sync or reload replaces the
+  // buffer under a held selection — the offsets are dead even though the path
+  // still matches.
   NodeTest.it("a selection does not survive replaced contents on the same file", async () => {
     let root;
     try {
@@ -101,11 +101,10 @@ NodeTest.describe("useEditorSelection", () => {
     }
   });
 
-  // r3 item 2 (review F-r2-2): select L2-3, sync to different bytes (dead
-  // at read), then sync back to byte-identical contents — === is value
-  // equality, so a pin retired only on path change would re-match here and
-  // re-arm offsets nobody is holding. The pin must retire on EITHER input's
-  // mismatch.
+  // Select L2-3, sync to different bytes (dead at read), then sync back to
+  // byte-identical contents — === is value equality, so a pin retired only on
+  // path change would re-match here and re-arm offsets nobody is holding. The
+  // pin must retire on EITHER input's mismatch.
   NodeTest.it(
     "a contents-invalidated selection stays dead on a byte-identical revert",
     async () => {
@@ -227,11 +226,10 @@ NodeTest.describe("useCommentDraft", () => {
   const bigContents = (...extra) =>
     [...Array.from({ length: 80 }, (_, index) => `line ${index + 1}`), ...extra].join("\n");
 
-  // r3 item 1 (review F-r2-1): open a draft on L40-42, then let the buffer
-  // drift under it (typing or an external sync). The captured offsets are
-  // dead at read — the form goes stale and submit has nothing live to ship,
-  // so attachAnnotation can never receive offsets captured against
-  // different bytes.
+  // Open a draft on L40-42, then let the buffer drift under it (typing or an
+  // external sync). The captured offsets are dead at read — the form goes stale
+  // and submit has nothing live to ship, so attachAnnotation can never receive
+  // offsets captured against different bytes.
   NodeTest.it(
     "a draft whose buffer drifted goes stale instead of shipping stale offsets",
     async () => {
@@ -277,10 +275,9 @@ NodeTest.describe("useCommentDraft", () => {
     },
   );
 
-  // r3 item 1, navigation probe: a draft dies with navigation the way a held
-  // selection does — select() closes it, and the pin retires on a path
-  // change so an away-and-back reopen on byte-identical contents cannot
-  // re-arm it.
+  // Navigation: a draft dies with navigation the way a held selection does —
+  // select() closes it, and the pin retires on a path change so an
+  // away-and-back reopen on byte-identical contents cannot re-arm it.
   NodeTest.it("a draft does not survive navigation away and back", async () => {
     let root;
     try {
@@ -330,10 +327,10 @@ NodeTest.describe("useEditorSelection memoization", () => {
     return null;
   }
 
-  // r2 finding 3: while a selection is held, unrelated re-renders (drag
-  // mousemove, theme ticks, save-state flips) must not rescan the buffer —
-  // selectionLineRange builds a fresh object per call, so a held reference
-  // across renders is the observable proof the memo held.
+  // While a selection is held, unrelated re-renders (drag mousemove, theme
+  // ticks, save-state flips) must not rescan the buffer — selectionLineRange
+  // builds a fresh object per call, so a held reference across renders is the
+  // observable proof the memo held.
   NodeTest.it("holds one line-range object across unrelated renders", async () => {
     renders = 0;
     const contents = Array.from({ length: 200 }, (_, index) => `line ${index + 1}`).join("\n");
@@ -413,8 +410,8 @@ NodeTest.describe("useCommentBlockReason", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     });
 
-  // r2 finding 4: a rejected capability probe must land as a named degraded
-  // transport reason, not a "Checking…" state that outlives the probe.
+  // A rejected capability probe must land as a named degraded transport reason,
+  // not a "Checking…" state that outlives the probe.
   NodeTest.it("a rejected probe names the failure, never a permanent checking state", async () => {
     let failProbe;
     const host = {

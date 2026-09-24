@@ -44,7 +44,7 @@ The generic catalog/call tools avoid changing a provider's cached MCP tool list 
 
 Files, Diff, Version Control, Browser, Terminal and Agents use the same view lifecycle, but remain bundled first-party integrations with their existing engines and backend commands. Their private React bindings are not public SDK services. An external extension cannot assume that a terminal, browser, forge or orchestration control API exists merely because its corresponding native panel uses the SDK.
 
-Web and desktop support React extension views. Installed React views are not supported by React Native mobile or SwiftUI mobile; both need separate native renderers and host integration. Generic side panels and bottom docks are implemented; full-page and compact-detail descriptors do not imply those destinations are available in every client. Composer context and message cards remain bounded text contributions.
+Web and desktop support React extension views. Installed React views are not supported by React Native mobile; it needs a separate native renderer and host integration. Generic side panels and bottom docks are implemented; full-page and compact-detail descriptors do not imply those destinations are available in every client. Composer context and message cards remain bounded text contributions.
 
 This integration targets Orchestra V1. Environment/resource identity and package metadata are reusable for V2; execution, admission and orchestration adapters require separate implementation and verification. Device simulator, live issue tracker and non-Git source-control providers remain separate extension implementations.
 
