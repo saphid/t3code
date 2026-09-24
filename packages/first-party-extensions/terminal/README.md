@@ -101,10 +101,9 @@ support still works: the panel falls back to a bounded `<pre>` text view
 that drops escape sequences and honors the same `--t3-terminal-*` contract
 variables and `::selection` styling.
 
-The committed `.t3-extension/` bundle inlines SDK and shared code, and
-`t3-extension check` only compares it with its own receipt.
-`bundleFreshness.test.mjs` rebuilds the source and fails when the bundle is
-stale; run `vp run build` here after SDK or source changes.
+The `.t3-extension/` bundle inlines SDK and shared code, and
+`t3-extension check` only compares it with its own receipt, so check cannot
+see a stale bundle; run `vp run build` here after SDK or source changes.
 
 Vendoring deviations from `apps/web/src/terminal/ghostty/` (all mechanical,
 none change VT semantics): imports repointed to package-local helpers;
