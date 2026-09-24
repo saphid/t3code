@@ -35,6 +35,7 @@ const clientFailure = (operation: string) => (cause: unknown) =>
 const boundedString = (max: number) =>
   Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(max));
 const lineSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000_000 }));
+const diffIndexSchema = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1_000_000 }));
 const threadIdField = { threadId: Schema.optional(boundedString(128)) } as const;
 
 const insertInput = Schema.decodeUnknownSync(
@@ -51,20 +52,66 @@ const insertInput = Schema.decodeUnknownSync(
   }),
   { onExcessProperty: "error" },
 );
+const mentionInput = Schema.decodeUnknownSync(
+  Schema.Struct({
+    ...threadIdField,
+    paths: Schema.Array(boundedString(512)).check(Schema.isMinLength(1), Schema.isMaxLength(8)),
+  }),
+  { onExcessProperty: "error" },
+);
+const terminalContextInput = Schema.decodeUnknownSync(
+  Schema.Struct({
+    ...threadIdField,
+    terminalId: boundedString(128),
+    terminalLabel: boundedString(128),
+    lineStart: lineSchema,
+    lineEnd: lineSchema,
+    // 10,000 chars keeps the worst-case escaped frame (~62 KB) inside the
+    // broker's 64 KiB envelope; see the catalogue bounds comment.
+    text: boundedString(10_000),
+  }),
+  { onExcessProperty: "error" },
+);
 const draftInput = Schema.decodeUnknownSync(Schema.Struct({ ...threadIdField }), {
   onExcessProperty: "error",
 });
+const annotationSelection = Schema.Struct({
+  start: lineSchema,
+  side: Schema.Literals(["additions", "deletions"]),
+  end: lineSchema,
+  endSide: Schema.Literals(["additions", "deletions"]),
+});
+// `kind` absent selects the 1.0.0 file variant; `kind: "diff"` carries what
+// buildDiffReviewComment produces. The union errors on anything else.
 const annotationInput = Schema.decodeUnknownSync(
   Schema.Struct({
     ...threadIdField,
-    annotation: Schema.Struct({
-      filePath: boundedString(512),
-      startLine: lineSchema,
-      endLine: lineSchema,
-      body: boundedString(4096),
-      excerpt: Schema.optional(Schema.String.check(Schema.isMaxLength(4096))),
-    }),
+    annotation: Schema.Union([
+      Schema.Struct({
+        filePath: boundedString(512),
+        startLine: lineSchema,
+        endLine: lineSchema,
+        body: boundedString(4096),
+        excerpt: Schema.optional(Schema.String.check(Schema.isMaxLength(4096))),
+      }),
+      Schema.Struct({
+        kind: Schema.Literal("diff"),
+        filePath: boundedString(512),
+        sectionId: boundedString(512),
+        sectionTitle: boundedString(256),
+        rangeLabel: boundedString(128),
+        diff: boundedString(4096),
+        selection: annotationSelection,
+        startIndex: Schema.optional(diffIndexSchema),
+        endIndex: Schema.optional(diffIndexSchema),
+        body: boundedString(4096),
+      }),
+    ]),
   }),
+  { onExcessProperty: "error" },
+);
+const removeAnnotationInput = Schema.decodeUnknownSync(
+  Schema.Struct({ ...threadIdField, annotationId: boundedString(256) }),
   { onExcessProperty: "error" },
 );
 
@@ -151,6 +198,8 @@ export function createComposerApiProviders(
       return yield* composerCapabilities("host.composer", {
         insertContext: true,
         getDraftState: true,
+        insertMention: true,
+        insertTerminalContext: true,
       });
     }
     const operation = `composer.context.${method}`;
@@ -185,6 +234,51 @@ export function createComposerApiProviders(
         catch: clientFailure(operation),
       });
     }
+    if (method === "insertMention") {
+      const safe = yield* Effect.try({
+        try: () => mentionInput(input),
+        catch: invalid(operation),
+      });
+      const threadId = yield* scopedThread(operation, safe.threadId, scope.context);
+      yield* resolve(scope.context);
+      return yield* Effect.tryPromise({
+        try: () =>
+          forward(
+            "insertMention",
+            { threadId, paths: safe.paths } as Json,
+            scope.context,
+            signal,
+            metadata,
+          ),
+        catch: clientFailure(operation),
+      });
+    }
+    if (method === "insertTerminalContext") {
+      const safe = yield* Effect.try({
+        try: () => terminalContextInput(input),
+        catch: invalid(operation),
+      });
+      const threadId = yield* scopedThread(operation, safe.threadId, scope.context);
+      yield* resolve(scope.context);
+      return yield* Effect.tryPromise({
+        try: () =>
+          forward(
+            "insertTerminalContext",
+            {
+              threadId,
+              terminalId: safe.terminalId,
+              terminalLabel: safe.terminalLabel,
+              lineStart: safe.lineStart,
+              lineEnd: safe.lineEnd,
+              text: safe.text,
+            } as Json,
+            scope.context,
+            signal,
+            metadata,
+          ),
+        catch: clientFailure(operation),
+      });
+    }
     return yield* failure("composer.context", "Composer context API method is unavailable.");
   });
 
@@ -198,7 +292,11 @@ export function createComposerApiProviders(
     const scope = yield* resolve(context);
     if (method === "getCapabilities") {
       yield* resolve(scope.context);
-      return yield* composerCapabilities("host.messages", { attachAnnotation: true });
+      return yield* composerCapabilities("host.messages", {
+        attachAnnotation: true,
+        listAnnotations: true,
+        removeAnnotation: true,
+      });
     }
     const operation = `messages.enrichment.${method}`;
     if (method === "attachAnnotation") {
@@ -213,6 +311,38 @@ export function createComposerApiProviders(
           forward(
             "attachAnnotation",
             { threadId, annotation: safe.annotation } as Json,
+            scope.context,
+            signal,
+            metadata,
+          ),
+        catch: clientFailure(operation),
+      });
+    }
+    if (method === "listAnnotations") {
+      const safe = yield* Effect.try({
+        try: () => draftInput(input),
+        catch: invalid(operation),
+      });
+      const threadId = yield* scopedThread(operation, safe.threadId, scope.context);
+      yield* resolve(scope.context);
+      return yield* Effect.tryPromise({
+        try: () =>
+          forward("listAnnotations", { threadId } as Json, scope.context, signal, metadata),
+        catch: clientFailure(operation),
+      });
+    }
+    if (method === "removeAnnotation") {
+      const safe = yield* Effect.try({
+        try: () => removeAnnotationInput(input),
+        catch: invalid(operation),
+      });
+      const threadId = yield* scopedThread(operation, safe.threadId, scope.context);
+      yield* resolve(scope.context);
+      return yield* Effect.tryPromise({
+        try: () =>
+          forward(
+            "removeAnnotation",
+            { threadId, annotationId: safe.annotationId } as Json,
             scope.context,
             signal,
             metadata,

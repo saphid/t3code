@@ -29,6 +29,8 @@ import { installedSurfaceRecord, installedWorkspaceContext } from "./installedCo
 import { readProject, readThreadShell } from "../state/entities";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { buildFileReviewComment } from "../reviewCommentContext";
+import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import { normalizeTerminalContextText, type TerminalContextDraft } from "../lib/terminalContext";
 import {
   authorizeCaller,
   ClientProviderOpError,
@@ -728,6 +730,55 @@ function composerThread(call: ClientProviderInvokeCall, threadId: string): Scope
   );
 }
 
+/** Appends `serializeComposerFileLink(path) + " "` with a leading boundary — the byte-exact reduction of the Files panel's `insertTextAtEnd(…, {ensureLeadingBoundary: true})` at the end position. */
+function appendMention(prompt: string, path: string): string {
+  const boundary = prompt.length > 0 && !/\s/.test(prompt[prompt.length - 1] ?? "") ? " " : "";
+  return `${prompt}${boundary}${serializeComposerFileLink(path)} `;
+}
+
+/** `normalizeTerminalContextSelection` from lib/terminalContext, expressed on the exported text normalizer (that function is module-private). */
+function normalizeTerminalSelection(input: {
+  terminalId: string;
+  terminalLabel: string;
+  lineStart: number;
+  lineEnd: number;
+  text: string;
+}): {
+  terminalId: string;
+  terminalLabel: string;
+  lineStart: number;
+  lineEnd: number;
+  text: string;
+} {
+  const text = normalizeTerminalContextText(input.text);
+  const terminalId = input.terminalId.trim();
+  const terminalLabel = input.terminalLabel.trim();
+  if (text.length === 0 || terminalId.length === 0 || terminalLabel.length === 0)
+    throw new ClientProviderOpError("provider-rejected", "Invalid terminal context");
+  const lineStart = Math.max(1, Math.floor(input.lineStart));
+  const lineEnd = Math.max(lineStart, Math.floor(input.lineEnd));
+  return { terminalId, terminalLabel, lineStart, lineEnd, text };
+}
+
+function readAnnotationSelection(value: unknown) {
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    throw new ClientProviderOpError("provider-rejected", "Invalid selection");
+  const record = value as Record<string, unknown>;
+  const side = (key: string): "additions" | "deletions" => {
+    const entry = record[key];
+    if (entry !== "additions" && entry !== "deletions")
+      throw new ClientProviderOpError("provider-rejected", `Invalid selection ${key}`);
+    return entry;
+  };
+  const line = (key: string): number => {
+    const entry = record[key];
+    if (typeof entry !== "number" || !Number.isInteger(entry) || entry < 1 || entry > 1_000_000)
+      throw new ClientProviderOpError("provider-rejected", `Invalid selection ${key}`);
+    return entry;
+  };
+  return { start: line("start"), side: side("side"), end: line("end"), endSide: side("endSide") };
+}
+
 export function createComposerClientProvider(deps: ClientProviderDeps): ClientLocalProvider {
   return {
     invoke(call) {
@@ -766,6 +817,61 @@ export function createComposerClientProvider(deps: ClientProviderDeps): ClientLo
             target: `${ref.environmentId}:${ref.threadId}`,
           } as unknown as Json;
         }
+        case "insertMention": {
+          authorizeCaller(deps, call.caller, call.context, ["t3.composer/write"]);
+          const threadId = readInputString(input, "threadId")!;
+          const ref = composerThread(call, threadId);
+          const paths = input.paths;
+          if (!Array.isArray(paths) || paths.length === 0 || paths.length > 8)
+            throw new ClientProviderOpError("provider-rejected", "paths must be 1-8 entries");
+          for (const path of paths) {
+            if (typeof path !== "string" || !path || path.length > 512)
+              throw new ClientProviderOpError("provider-rejected", "Invalid path");
+          }
+          const store = useComposerDraftStore.getState();
+          let prompt = store.getComposerDraft(ref)?.prompt ?? "";
+          for (const path of paths) prompt = appendMention(prompt, path);
+          store.setPrompt(ref, prompt);
+          return {
+            inserted: paths.length,
+            target: `${ref.environmentId}:${ref.threadId}`,
+          } as unknown as Json;
+        }
+        case "insertTerminalContext": {
+          authorizeCaller(deps, call.caller, call.context, ["t3.composer/write"]);
+          const threadId = readInputString(input, "threadId")!;
+          const ref = composerThread(call, threadId);
+          const lineStart = input.lineStart;
+          const lineEnd = input.lineEnd;
+          if (typeof lineStart !== "number" || typeof lineEnd !== "number")
+            throw new ClientProviderOpError("provider-rejected", "Invalid line range");
+          const selection = normalizeTerminalSelection({
+            terminalId: readInputString(input, "terminalId")!,
+            terminalLabel: readInputString(input, "terminalLabel")!,
+            lineStart,
+            lineEnd,
+            text: readInputString(input, "text")!,
+          });
+          const store = useComposerDraftStore.getState();
+          // The store dedupes on (terminalId, lineStart, lineEnd); say so
+          // instead of reporting an insert it silently dropped.
+          const duplicate = (store.getComposerDraft(ref)?.terminalContexts ?? []).some(
+            (context) =>
+              context.terminalId === selection.terminalId &&
+              context.lineStart === selection.lineStart &&
+              context.lineEnd === selection.lineEnd,
+          );
+          const target = `${ref.environmentId}:${ref.threadId}`;
+          if (duplicate) return { inserted: false, reason: "duplicate", target } as unknown as Json;
+          const context: TerminalContextDraft = {
+            id: randomUUID(),
+            threadId: ThreadId.make(threadId),
+            createdAt: new Date().toISOString(),
+            ...selection,
+          };
+          store.addTerminalContext(ref, context);
+          return { inserted: true, target } as unknown as Json;
+        }
         case "getDraftState": {
           authorizeCaller(deps, call.caller, call.context, ["t3.composer/write"]);
           const threadId = readInputString(input, "threadId")!;
@@ -794,13 +900,45 @@ export function createComposerClientProvider(deps: ClientProviderDeps): ClientLo
           const threadId = readInputString(input, "threadId")!;
           const ref = composerThread(call, threadId);
           const annotation = readInputObject(input.annotation ?? null);
+          if (annotation.kind !== undefined && annotation.kind !== "diff")
+            throw new ClientProviderOpError("provider-rejected", "Invalid annotation kind");
+          const annotationId = `annotation:${call.caller.installationId}:${randomUUID()}`;
+          const store = useComposerDraftStore.getState();
+          if (annotation.kind === "diff") {
+            // The record `buildDiffReviewComment` returns, rendered back inline
+            // by AnnotatableCodeView through its `selection`.
+            const annotationIndex = (value: unknown): number => {
+              if (value === undefined) return 0;
+              if (
+                typeof value !== "number" ||
+                !Number.isInteger(value) ||
+                value < 0 ||
+                value > 1_000_000
+              )
+                throw new ClientProviderOpError("provider-rejected", "Invalid annotation index");
+              return value;
+            };
+            store.addReviewComment(ref, {
+              id: annotationId,
+              sectionId: readInputString(annotation, "sectionId")!,
+              sectionTitle: readInputString(annotation, "sectionTitle")!,
+              filePath: readInputString(annotation, "filePath")!,
+              startIndex: annotationIndex(annotation.startIndex),
+              endIndex: annotationIndex(annotation.endIndex),
+              rangeLabel: readInputString(annotation, "rangeLabel")!,
+              text: readInputString(annotation, "body")!.trim(),
+              diff: readInputString(annotation, "diff")!,
+              fenceLanguage: "diff",
+              selection: readAnnotationSelection(annotation.selection),
+            });
+            return { annotationId } as unknown as Json;
+          }
           const filePath = readInputString(annotation, "filePath")!;
           const startLine = typeof annotation.startLine === "number" ? annotation.startLine : 1;
           const endLine = typeof annotation.endLine === "number" ? annotation.endLine : startLine;
           const body = readInputString(annotation, "body")!;
           const excerpt = typeof annotation.excerpt === "string" ? annotation.excerpt : "";
-          const annotationId = `annotation:${call.caller.installationId}:${randomUUID()}`;
-          useComposerDraftStore.getState().addReviewComment(
+          store.addReviewComment(
             ref,
             buildFileReviewComment({
               id: annotationId,
@@ -812,6 +950,47 @@ export function createComposerClientProvider(deps: ClientProviderDeps): ClientLo
             }),
           );
           return { annotationId } as unknown as Json;
+        }
+        case "listAnnotations": {
+          authorizeCaller(deps, call.caller, call.context, ["t3.messages/write"]);
+          const threadId = readInputString(input, "threadId")!;
+          const ref = composerThread(call, threadId);
+          // Own ids only: the prefix minted by attachAnnotation above. Native
+          // comments and other installations' annotations stay unlisted.
+          const prefix = `annotation:${call.caller.installationId}:`;
+          const comments =
+            useComposerDraftStore.getState().getComposerDraft(ref)?.reviewComments ?? [];
+          const annotations = comments
+            .filter((entry) => entry.id.startsWith(prefix))
+            .slice(0, 8)
+            .map((entry) => ({
+              annotationId: entry.id,
+              // File comments never carry a selection; diff ones always do.
+              kind: entry.selection !== undefined ? "diff" : "file",
+              filePath: entry.filePath,
+              rangeLabel: entry.rangeLabel,
+              sectionTitle: entry.sectionTitle,
+            }));
+          return { annotations } as unknown as Json;
+        }
+        case "removeAnnotation": {
+          authorizeCaller(deps, call.caller, call.context, ["t3.messages/write"]);
+          const threadId = readInputString(input, "threadId")!;
+          const ref = composerThread(call, threadId);
+          const annotationId = readInputString(input, "annotationId")!;
+          if (!annotationId.startsWith(`annotation:${call.caller.installationId}:`))
+            throw new ClientProviderOpError(
+              "client-target-denied",
+              "Annotation belongs to another installation",
+            );
+          const store = useComposerDraftStore.getState();
+          const present = (store.getComposerDraft(ref)?.reviewComments ?? []).some(
+            (entry) => entry.id === annotationId,
+          );
+          // Also strips the inline reference from the prompt, like the native
+          // removeReviewComment path. An already-gone own id is idempotent.
+          if (present) store.removeReviewComment(ref, annotationId);
+          return { removed: present } as unknown as Json;
         }
         default:
           throw new ClientProviderOpError(
@@ -919,7 +1098,7 @@ export const CLIENT_PROVIDER_DESCRIPTORS = [
   { id: "t3.client/notifications", version: "1.0.0" },
   { id: "t3.client/keybindings", version: "1.0.0" },
   { id: "t3.client/panels", version: "1.0.0" },
-  { id: "t3.client/composer", version: "1.0.0" },
+  { id: "t3.client/composer", version: "1.1.0" },
   { id: "t3.client/terminal-appearance", version: "1.0.0" },
 ] as const;
 

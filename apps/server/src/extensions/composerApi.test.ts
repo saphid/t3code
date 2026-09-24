@@ -127,7 +127,12 @@ it.effect("reports the transport gap honestly through getCapabilities", () =>
       adapter: "host.composer",
       transport: "unavailable",
       detail: expect.stringContaining("client-local"),
-      operations: { insertContext: false, getDraftState: false },
+      operations: {
+        insertContext: false,
+        getDraftState: false,
+        insertMention: false,
+        insertTerminalContext: false,
+      },
     });
     const messageCaps = (await call(
       messages,
@@ -136,7 +141,11 @@ it.effect("reports the transport gap honestly through getCapabilities", () =>
     )) as MessagesEnrichmentCapabilities;
     expect(messageCaps.adapter).toBe("host.messages");
     expect(messageCaps.transport).toBe("unavailable");
-    expect(messageCaps.operations).toEqual({ attachAnnotation: false });
+    expect(messageCaps.operations).toEqual({
+      attachAnnotation: false,
+      listAnnotations: false,
+      removeAnnotation: false,
+    });
   }),
 );
 
@@ -157,6 +166,50 @@ it.effect("fails state ops with a named unsupported error after valid scope and 
     await expectNamedError(
       call(messages, "attachAnnotation", {
         annotation: { filePath: "src/a.ts", startLine: 1, endLine: 2, body: "rename this" },
+      }),
+      "messages.enrichment.attachAnnotation",
+      /unavailable.*client-local/,
+    );
+    // The 1.1.0 shapes decode cleanly and hit the same honest transport gap.
+    await expectNamedError(
+      call(composer, "insertMention", { paths: ["src/a.ts"] }),
+      "composer.context.insertMention",
+      /unavailable.*client-local/,
+    );
+    await expectNamedError(
+      call(composer, "insertTerminalContext", {
+        terminalId: "term-1",
+        terminalLabel: "zsh",
+        lineStart: 3,
+        lineEnd: 5,
+        text: "npm test",
+      }),
+      "composer.context.insertTerminalContext",
+      /unavailable.*client-local/,
+    );
+    await expectNamedError(
+      call(messages, "listAnnotations", {}),
+      "messages.enrichment.listAnnotations",
+      /unavailable.*client-local/,
+    );
+    await expectNamedError(
+      call(messages, "removeAnnotation", { annotationId: "annotation:x:y" }),
+      "messages.enrichment.removeAnnotation",
+      /unavailable.*client-local/,
+    );
+    // A diff-kind annotation decodes through the union variant.
+    await expectNamedError(
+      call(messages, "attachAnnotation", {
+        annotation: {
+          kind: "diff",
+          filePath: "src/a.ts",
+          sectionId: "diff:src/a.ts",
+          sectionTitle: "Changes",
+          rangeLabel: "+3",
+          diff: "@@ -1,1 +1,1 @@\n-old\n+new",
+          selection: { start: 3, side: "additions", end: 3, endSide: "additions" },
+          body: "this breaks",
+        },
       }),
       "messages.enrichment.attachAnnotation",
       /unavailable.*client-local/,
@@ -187,10 +240,81 @@ it.effect("rejects malformed and over-bounds payloads with a named error, not a 
       { annotation: { filePath: "a", startLine: 1, endLine: 2, body: "" } },
       { annotation: { filePath: "a", startLine: 1, endLine: 2, body: "x", extra: 1 } },
       { annotation: null },
+      // 1.1.0 diff variant: closed schema, required fields, bounded selection.
+      { annotation: { kind: "diff", filePath: "a", body: "x", diff: "+new", rangeLabel: "+1" } },
+      {
+        annotation: {
+          kind: "diff",
+          filePath: "a",
+          body: "x",
+          diff: "+new",
+          rangeLabel: "+1",
+          sectionId: "s",
+          sectionTitle: "t",
+          selection: { start: 0, side: "additions", end: 1, endSide: "additions" },
+        },
+      },
+      {
+        annotation: {
+          kind: "diff",
+          filePath: "a",
+          body: "x",
+          diff: "+new",
+          rangeLabel: "+1",
+          sectionId: "s",
+          sectionTitle: "t",
+          selection: { start: 1, side: "middle", end: 1, endSide: "additions" },
+        },
+      },
+      {
+        annotation: {
+          kind: "not-diff",
+          filePath: "a",
+          body: "x",
+        },
+      },
     ]) {
       await expectNamedError(
         call(messages, "attachAnnotation", input as Json),
         "messages.enrichment.attachAnnotation",
+        /Invalid/,
+      );
+    }
+    for (const input of [
+      { paths: [] },
+      { paths: Array.from({ length: 9 }, () => "a") },
+      { paths: ["a".repeat(513)] },
+      { paths: [42] },
+      { paths: ["a"], extra: true },
+    ]) {
+      await expectNamedError(
+        call(composer, "insertMention", input as Json),
+        "composer.context.insertMention",
+        /Invalid/,
+      );
+    }
+    for (const input of [
+      { terminalId: "t", terminalLabel: "l", lineStart: 1, lineEnd: 1 },
+      {
+        terminalId: "t",
+        terminalLabel: "l",
+        lineStart: 1,
+        lineEnd: 1,
+        text: "\u0000".repeat(10_001),
+      },
+      { terminalId: "t", terminalLabel: "l", lineStart: 0, lineEnd: 1, text: "x" },
+      { terminalId: "t", terminalLabel: "l", lineStart: 1, lineEnd: 1, text: "x", extra: 1 },
+    ]) {
+      await expectNamedError(
+        call(composer, "insertTerminalContext", input as Json),
+        "composer.context.insertTerminalContext",
+        /Invalid/,
+      );
+    }
+    for (const input of [{ annotationId: "" }, { extra: true }, "not-an-object"]) {
+      await expectNamedError(
+        call(messages, "removeAnnotation", input as Json),
+        "messages.enrichment.removeAnnotation",
         /Invalid/,
       );
     }
@@ -237,6 +361,37 @@ it.effect("rejects foreign threads, foreign environments, and thread-less contex
       call(composer, "sendMessage", { text: "hi" }),
       "composer.context",
       /unavailable/,
+    );
+    // Every 1.1.0 op applies the same thread scoping as the 1.0.0 ops.
+    await expectNamedError(
+      call(composer, "insertMention", { threadId: "other-thread", paths: ["a"] }),
+      "composer.context.insertMention",
+      /outside the granted thread scope/,
+    );
+    await expectNamedError(
+      call(composer, "insertTerminalContext", {
+        threadId: "other-thread",
+        terminalId: "t",
+        terminalLabel: "l",
+        lineStart: 1,
+        lineEnd: 1,
+        text: "x",
+      }),
+      "composer.context.insertTerminalContext",
+      /outside the granted thread scope/,
+    );
+    await expectNamedError(
+      call(messages, "listAnnotations", { threadId: "other-thread" }),
+      "messages.enrichment.listAnnotations",
+      /outside the granted thread scope/,
+    );
+    await expectNamedError(
+      call(messages, "removeAnnotation", {
+        threadId: "other-thread",
+        annotationId: "annotation:x:y",
+      }),
+      "messages.enrichment.removeAnnotation",
+      /outside the granted thread scope/,
     );
   }),
 );
