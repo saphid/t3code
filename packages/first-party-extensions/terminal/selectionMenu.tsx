@@ -10,9 +10,13 @@ import {
 import type { GhosttyTerminalSurface } from "@t3tools/ghostty-terminal/surface";
 import { SELECTION_MULTI_CLICK_INTERVAL_MS } from "@t3tools/ghostty-terminal/selection";
 import {
+  TerminalChatTarget,
   TerminalSelectionMenuFlow,
+  addTerminalSelectionToChat,
+  buildTerminalChatSelection,
   clampMenuToViewport,
   resolveSelectionActionPosition,
+  type TerminalChatSelection,
   type TerminalMenuAction,
   type TerminalMenuPoint,
   type TerminalMenuState,
@@ -23,20 +27,34 @@ type MenuSurface = Pick<
   | "focus"
   | "hasSelection"
   | "getSelection"
+  | "getSelectionPosition"
   | "getSelectionEndClientRect"
+  | "clearSelection"
   | "pasteFromClipboard"
   | "write"
 >;
+
+/** The composer seam behind "Add to chat"; absent means the item is never offered. */
+export interface TerminalChatSink {
+  /** Resolves whether the composer this client hosts accepts terminal excerpts. */
+  readonly probe: () => Promise<boolean>;
+  /** Inserts the excerpt as a terminal chip; a duplicate resolves without inserting. */
+  readonly insert: (selection: TerminalChatSelection) => Promise<unknown>;
+  /** The pane's current tab label, as native reads it when the menu opens. */
+  readonly terminalLabel: () => string;
+  readonly terminalId: string;
+}
 
 interface ControllerDeps {
   readonly getMount: () => HTMLElement | null;
   readonly getSurface: () => MenuSurface | null;
   readonly reportError: (surface: MenuSurface, message: string) => void;
+  readonly chat?: TerminalChatSink | undefined;
 }
 
 /**
  * DOM half of the selection popup and right-click menu: gesture tracking,
- * dismissal, and the Copy/Paste actions. Supersession lives in
+ * dismissal, and the Add to chat/Copy/Paste actions. Supersession lives in
  * `TerminalSelectionMenuFlow`; every async completion checks its request id.
  */
 class TerminalSelectionMenuController {
@@ -46,10 +64,14 @@ class TerminalSelectionMenuController {
   private timer: number | null = null;
   private frame: number | null = null;
   private gestureActive = false;
+  private readonly chatTarget: TerminalChatTarget | null;
 
   constructor(deps: ControllerDeps, onChange: (menu: TerminalMenuState | null) => void) {
     this.deps = deps;
-    this.flow = new TerminalSelectionMenuFlow(onChange);
+    this.chatTarget = deps.chat ? new TerminalChatTarget(deps.chat.probe) : null;
+    this.flow = new TerminalSelectionMenuFlow(onChange, {
+      canAddToChat: () => this.chatTarget?.available === true,
+    });
   }
 
   /** Ref callback for the rendered menu, used by the outside-click test. */
@@ -73,8 +95,11 @@ class TerminalSelectionMenuController {
     // back: the menu never holds it, and typing (or Escape) after the menu
     // must still reach the terminal.
     surface.focus();
+    this.chatTarget?.refresh();
+    const selectionText = surface.hasSelection() ? surface.getSelection() : null;
     this.flow.openContextMenu({
-      selectionText: surface.hasSelection() ? surface.getSelection() : null,
+      selectionText,
+      chatSelection: this.readChatSelection(surface, selectionText),
       position: { x: event.clientX, y: event.clientY },
     });
   };
@@ -96,6 +121,17 @@ class TerminalSelectionMenuController {
         this.deps.reportError(surface, error instanceof Error ? error.message : fallback);
       }
     };
+    if (choice.action === "add-to-chat" && choice.chatSelection !== null && this.deps.chat) {
+      await addTerminalSelectionToChat({
+        selection: choice.chatSelection,
+        insert: this.deps.chat.insert,
+        isCurrent: () => this.flow.isCurrent(requestId),
+        clearSelection: () => surface.clearSelection(),
+        focusTerminal: () => surface.focus(),
+        reportError: (message) => this.deps.reportError(surface, message),
+      });
+      return;
+    }
     if (choice.action === "copy" && choice.clipboardText !== null) {
       try {
         await copyText(choice.clipboardText, surface);
@@ -117,6 +153,7 @@ class TerminalSelectionMenuController {
   };
 
   install(mount: HTMLElement): () => void {
+    this.chatTarget?.refresh();
     const document = mount.ownerDocument;
     const view = document.defaultView!;
     const insideMenu = (event: Event) =>
@@ -223,14 +260,31 @@ class TerminalSelectionMenuController {
       return;
     }
     const hasSelection = surface.hasSelection();
+    const selectionText = hasSelection ? surface.getSelection() : null;
+    this.chatTarget?.refresh();
     this.flow.openSelectionPopup({
-      selectionText: hasSelection ? surface.getSelection() : null,
+      selectionText,
+      chatSelection: this.readChatSelection(surface, selectionText),
       position: resolveSelectionActionPosition({
         bounds: mount.getBoundingClientRect(),
         selectionRect: hasSelection ? surface.getSelectionEndClientRect() : null,
         pointer,
         viewport: { width: window.innerWidth, height: window.innerHeight },
       }),
+    });
+  }
+
+  private readChatSelection(
+    surface: MenuSurface,
+    selectionText: string | null,
+  ): TerminalChatSelection | null {
+    const chat = this.deps.chat;
+    if (!chat || selectionText === null) return null;
+    return buildTerminalChatSelection({
+      terminalId: chat.terminalId,
+      terminalLabel: chat.terminalLabel(),
+      text: selectionText,
+      position: surface.getSelectionPosition(),
     });
   }
 
@@ -282,12 +336,14 @@ export function useTerminalSelectionMenu(options: {
   mountRef: RefObject<HTMLElement | null>;
   surfaceRef: RefObject<MenuSurface | null>;
   reportError: (surface: MenuSurface, message: string) => void;
+  /** Read once: like `reportError`, the sink lives for the pane's lifetime. */
+  chat?: TerminalChatSink;
 }): {
   onContextMenu: (event: MouseEvent) => void;
   onSelectionChange: () => void;
   menu: ReactNode;
 } {
-  const { mountRef, surfaceRef, reportError } = options;
+  const { mountRef, surfaceRef, reportError, chat } = options;
   const [menu, setMenu] = useState<TerminalMenuState | null>(null);
   // Refs are stable, so the controller (and the callbacks the surface keeps)
   // lives for the pane's lifetime; `reportError` must be stable too.
@@ -298,6 +354,7 @@ export function useTerminalSelectionMenu(options: {
           getMount: () => mountRef.current,
           getSurface: () => surfaceRef.current,
           reportError,
+          chat,
         },
         setMenu,
       ),

@@ -4,9 +4,9 @@
  * `terminalContextMenuItems`, and its request-id supersession). The DOM half
  * lives in `selectionMenu.tsx`.
  *
- * "Add to chat" is not offered: the only composer seam (`insertContext`)
- * files a review comment, not the native terminal-context chip, so every
- * builder here runs with `canAddToChat: false`.
+ * "Add to chat" is offered only while the composer this client hosts accepts
+ * terminal excerpts (`t3.composer/context.insertTerminalContext`), the
+ * plugin's equivalent of the native drawer having a chat target.
  */
 
 export type TerminalMenuAction = "add-to-chat" | "copy" | "paste";
@@ -51,6 +51,134 @@ export function terminalContextMenuItems(options: {
     })),
     { id: "paste", label: "Paste" },
   ];
+}
+
+/** The excerpt "Add to chat" sends: the native `TerminalContextSelection`. */
+export interface TerminalChatSelection {
+  readonly terminalId: string;
+  readonly terminalLabel: string;
+  readonly lineStart: number;
+  readonly lineEnd: number;
+  readonly text: string;
+}
+
+/**
+ * `t3.composer/context.insertTerminalContext` input bounds, in UTF-16 code
+ * units: the server adapter's schema checks `string.length`, which is stricter
+ * than the broker's code-point count for astral text.
+ */
+export const TERMINAL_CHAT_TEXT_MAX_CHARS = 10_000;
+export const TERMINAL_CHAT_LABEL_MAX_CHARS = 128;
+
+/** 1-based line range of a selection given in 0-based screen rows, as in native. */
+export function terminalSelectionLineRange(position: {
+  start: { y: number };
+  end: { y: number };
+}): { lineStart: number; lineEnd: number } {
+  const lineStart = position.start.y + 1;
+  return { lineStart, lineEnd: Math.max(lineStart, position.end.y + 1) };
+}
+
+/**
+ * The excerpt for the live selection, normalized as native does (CRLF folded,
+ * leading/trailing blank lines dropped; inner lines and indentation kept).
+ * Null when there is no position or nothing but newlines was selected.
+ */
+export function buildTerminalChatSelection(input: {
+  terminalId: string;
+  terminalLabel: string;
+  text: string;
+  position: { start: { y: number }; end: { y: number } } | null;
+}): TerminalChatSelection | null {
+  const text = normalizeSelectionText(input.text);
+  if (input.position === null || text.length === 0) return null;
+  const label = input.terminalLabel.trim() || "Terminal";
+  return {
+    terminalId: input.terminalId,
+    terminalLabel: truncateUtf16(label, TERMINAL_CHAT_LABEL_MAX_CHARS),
+    ...terminalSelectionLineRange(input.position),
+    text,
+  };
+}
+
+/**
+ * Native sends any length; the composer contract caps an excerpt at 10,000
+ * and a label at 128, counted in UTF-16 units as the server adapter's schema
+ * counts them. Refuse rather than cut, so a chip never claims lines it does
+ * not hold and the limit is named here instead of in a generic host rejection.
+ */
+export function terminalChatSelectionError(selection: TerminalChatSelection): string | null {
+  if (selection.text.length > TERMINAL_CHAT_TEXT_MAX_CHARS) {
+    return "Selection is too long to add to chat (10,000 characters at most).";
+  }
+  if (selection.terminalLabel.length > TERMINAL_CHAT_LABEL_MAX_CHARS) {
+    return "Terminal name is too long to add to chat (128 characters at most).";
+  }
+  return null;
+}
+
+/**
+ * Runs a chosen "Add to chat". Native clears the selection once the excerpt is
+ * in the chat, duplicate or not, and leaves focus to the composer, which takes
+ * it after its insert. A failure is reported in the terminal and focus stays
+ * there. Once a newer flow is current (it may own a newer selection) the
+ * completion does nothing at all.
+ */
+export async function addTerminalSelectionToChat(options: {
+  selection: TerminalChatSelection;
+  insert: (selection: TerminalChatSelection) => Promise<unknown>;
+  isCurrent: () => boolean;
+  clearSelection: () => void;
+  focusTerminal: () => void;
+  reportError: (message: string) => void;
+}): Promise<void> {
+  try {
+    const tooLong = terminalChatSelectionError(options.selection);
+    if (tooLong !== null) throw new Error(tooLong);
+    await options.insert(options.selection);
+  } catch (error) {
+    if (!options.isCurrent()) return;
+    options.reportError(
+      error instanceof Error ? error.message : "Unable to add the terminal selection to chat",
+    );
+    options.focusTerminal();
+    return;
+  }
+  if (options.isCurrent()) options.clearSelection();
+}
+
+/**
+ * Whether the composer this client hosts accepts terminal excerpts. Probes
+ * again on each `refresh()` until the answer is yes, so a composer that
+ * connects after the pane mounted is picked up by the next menu.
+ */
+export class TerminalChatTarget {
+  private availableValue = false;
+  private probing = false;
+  private readonly probe: () => Promise<boolean>;
+
+  constructor(probe: () => Promise<boolean>) {
+    this.probe = probe;
+  }
+
+  get available(): boolean {
+    return this.availableValue;
+  }
+
+  refresh(): void {
+    if (this.availableValue || this.probing) return;
+    this.probing = true;
+    void this.probe()
+      .then(
+        (available) => {
+          this.availableValue = available;
+        },
+        () => {},
+      )
+      .finally(() => {
+        this.probing = false;
+      });
+  }
 }
 
 /** Popup anchor: the release pointer, else the selection end, kept inside the pane. */
@@ -101,12 +229,21 @@ export interface TerminalMenuState {
   readonly position: TerminalMenuPoint;
   /** Selection captured when the menu opened; Copy writes this, like native. */
   readonly clipboardText: string | null;
+  /** Excerpt captured when the menu opened; Add to chat sends this, like native. */
+  readonly chatSelection: TerminalChatSelection | null;
 }
 
 export interface TerminalMenuChoice {
   readonly action: TerminalMenuAction;
   readonly requestId: number;
   readonly clipboardText: string | null;
+  readonly chatSelection: TerminalChatSelection | null;
+}
+
+interface TerminalMenuOpenInput {
+  readonly selectionText: string | null;
+  readonly chatSelection?: TerminalChatSelection | null;
+  readonly position: TerminalMenuPoint;
 }
 
 /**
@@ -119,9 +256,14 @@ export class TerminalSelectionMenuFlow {
   private requestId = 0;
   private open: TerminalMenuState | null = null;
   private readonly onChange: (menu: TerminalMenuState | null) => void;
+  private readonly canAddToChat: () => boolean;
 
-  constructor(onChange: (menu: TerminalMenuState | null) => void = () => {}) {
+  constructor(
+    onChange: (menu: TerminalMenuState | null) => void = () => {},
+    options?: { canAddToChat?: () => boolean },
+  ) {
     this.onChange = onChange;
+    this.canAddToChat = options?.canAddToChat ?? (() => false);
   }
 
   get menu(): TerminalMenuState | null {
@@ -133,20 +275,22 @@ export class TerminalSelectionMenuFlow {
   }
 
   /** A right-click supersedes a pending or open popup and any in-flight action. */
-  openContextMenu(input: {
-    selectionText: string | null;
-    position: TerminalMenuPoint;
-  }): TerminalMenuState {
+  openContextMenu(input: TerminalMenuOpenInput): TerminalMenuState {
     const selectionText = nonEmpty(input.selectionText);
+    const chatSelection = selectionText === null ? null : (input.chatSelection ?? null);
     return this.show({
       requestId: ++this.requestId,
       kind: "context",
-      items: terminalContextMenuItems({
-        hasSelection: selectionText !== null,
-        canAddToChat: false,
-      }),
+      items: withChatAvailability(
+        terminalContextMenuItems({
+          hasSelection: selectionText !== null,
+          canAddToChat: this.canAddToChat(),
+        }),
+        chatSelection,
+      ),
       position: input.position,
       clipboardText: selectionText,
+      chatSelection,
     });
   }
 
@@ -154,22 +298,24 @@ export class TerminalSelectionMenuFlow {
    * Opens the post-selection popup. A current popup stays as is (a repeated
    * selection-end must not reopen it); an empty selection opens nothing.
    */
-  openSelectionPopup(input: {
-    selectionText: string | null;
-    position: TerminalMenuPoint;
-  }): TerminalMenuState | null {
+  openSelectionPopup(input: TerminalMenuOpenInput): TerminalMenuState | null {
     if (this.ownsOpenMenu("selection")) return this.open;
     const selectionText = nonEmpty(input.selectionText);
     if (selectionText === null) {
       this.supersede();
       return null;
     }
+    const chatSelection = input.chatSelection ?? null;
     return this.show({
       requestId: ++this.requestId,
       kind: "selection",
-      items: terminalSelectionMenuItems({ canAddToChat: false }),
+      items: withChatAvailability(
+        terminalSelectionMenuItems({ canAddToChat: this.canAddToChat() }),
+        chatSelection,
+      ),
       position: input.position,
       clipboardText: selectionText,
+      chatSelection,
     });
   }
 
@@ -186,7 +332,13 @@ export class TerminalSelectionMenuFlow {
     this.close();
     if (!item || item.disabled === true) return null;
     if (action !== "paste" && menu.clipboardText === null) return null;
-    return { action, requestId, clipboardText: menu.clipboardText };
+    if (action === "add-to-chat" && menu.chatSelection === null) return null;
+    return {
+      action,
+      requestId,
+      clipboardText: menu.clipboardText,
+      chatSelection: menu.chatSelection,
+    };
   }
 
   /**
@@ -232,8 +384,32 @@ export class TerminalSelectionMenuFlow {
   }
 }
 
+/**
+ * A selection with no resolvable line range cannot be sent; its Add to chat is
+ * disabled. Native opens no popup at all for such a selection, and disables
+ * Copy with it in the right-click menu; the plugin keeps Copy usable.
+ */
+function withChatAvailability(
+  items: TerminalMenuItem[],
+  chatSelection: TerminalChatSelection | null,
+): TerminalMenuItem[] {
+  if (chatSelection !== null) return items;
+  return items.map((item) => (item.id === "add-to-chat" ? { ...item, disabled: true } : item));
+}
+
+/** Cuts to `max` UTF-16 units without leaving half a surrogate pair. */
+function truncateUtf16(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
+}
+
+function normalizeSelectionText(text: string): string {
+  return text.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "");
+}
+
 function nonEmpty(text: string | null): string | null {
   if (text === null) return null;
   // Native gates on the trimmed text but copies the raw selection.
-  return text.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "").length > 0 ? text : null;
+  return normalizeSelectionText(text).length > 0 ? text : null;
 }

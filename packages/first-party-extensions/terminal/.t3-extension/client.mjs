@@ -6926,6 +6926,30 @@ var __t3Client = (() => {
     return env;
   }
 
+  // node_modules/@t3tools/shared/src/terminalLabels.ts
+  function getTerminalLabel(terminalId) {
+    const numericSuffix = /^term(?:inal)?-(\d+)$/i.exec(terminalId)?.[1];
+    if (numericSuffix) {
+      return `Terminal ${numericSuffix}`;
+    }
+    return terminalId;
+  }
+  function resolveTerminalSessionLabel(terminalId, summary) {
+    const trimmed = summary?.label?.trim();
+    if (trimmed && trimmed.length > 0) {
+      return trimmed;
+    }
+    return getTerminalLabel(terminalId);
+  }
+  function nextTerminalId(existingTerminalIds) {
+    const usedIds = new Set(existingTerminalIds.filter((id2) => id2.trim().length > 0));
+    let nextIndex = 1;
+    while (usedIds.has(`term-${nextIndex}`)) {
+      nextIndex += 1;
+    }
+    return `term-${nextIndex}`;
+  }
+
   // extension.tsx
   var import_react2 = __toESM(require_react(), 1);
 
@@ -10255,6 +10279,71 @@ var __t3Client = (() => {
       { id: "paste", label: "Paste" }
     ];
   }
+  var TERMINAL_CHAT_TEXT_MAX_CHARS = 1e4;
+  var TERMINAL_CHAT_LABEL_MAX_CHARS = 128;
+  function terminalSelectionLineRange(position) {
+    const lineStart = position.start.y + 1;
+    return { lineStart, lineEnd: Math.max(lineStart, position.end.y + 1) };
+  }
+  function buildTerminalChatSelection(input) {
+    const text = normalizeSelectionText(input.text);
+    if (input.position === null || text.length === 0) return null;
+    const label = input.terminalLabel.trim() || "Terminal";
+    return {
+      terminalId: input.terminalId,
+      terminalLabel: truncateUtf16(label, TERMINAL_CHAT_LABEL_MAX_CHARS),
+      ...terminalSelectionLineRange(input.position),
+      text
+    };
+  }
+  function terminalChatSelectionError(selection) {
+    if (selection.text.length > TERMINAL_CHAT_TEXT_MAX_CHARS) {
+      return "Selection is too long to add to chat (10,000 characters at most).";
+    }
+    if (selection.terminalLabel.length > TERMINAL_CHAT_LABEL_MAX_CHARS) {
+      return "Terminal name is too long to add to chat (128 characters at most).";
+    }
+    return null;
+  }
+  async function addTerminalSelectionToChat(options) {
+    try {
+      const tooLong = terminalChatSelectionError(options.selection);
+      if (tooLong !== null) throw new Error(tooLong);
+      await options.insert(options.selection);
+    } catch (error) {
+      if (!options.isCurrent()) return;
+      options.reportError(
+        error instanceof Error ? error.message : "Unable to add the terminal selection to chat"
+      );
+      options.focusTerminal();
+      return;
+    }
+    if (options.isCurrent()) options.clearSelection();
+  }
+  var TerminalChatTarget = class {
+    availableValue = false;
+    probing = false;
+    probe;
+    constructor(probe) {
+      this.probe = probe;
+    }
+    get available() {
+      return this.availableValue;
+    }
+    refresh() {
+      if (this.availableValue || this.probing) return;
+      this.probing = true;
+      void this.probe().then(
+        (available) => {
+          this.availableValue = available;
+        },
+        () => {
+        }
+      ).finally(() => {
+        this.probing = false;
+      });
+    }
+  };
   function resolveSelectionActionPosition(options) {
     const { bounds, selectionRect, pointer, viewport } = options;
     const preferred = pointer ?? {
@@ -10286,9 +10375,11 @@ var __t3Client = (() => {
     requestId = 0;
     open = null;
     onChange;
+    canAddToChat;
     constructor(onChange = () => {
-    }) {
+    }, options) {
       this.onChange = onChange;
+      this.canAddToChat = options?.canAddToChat ?? (() => false);
     }
     get menu() {
       return this.open;
@@ -10299,15 +10390,20 @@ var __t3Client = (() => {
     /** A right-click supersedes a pending or open popup and any in-flight action. */
     openContextMenu(input) {
       const selectionText = nonEmpty(input.selectionText);
+      const chatSelection = selectionText === null ? null : input.chatSelection ?? null;
       return this.show({
         requestId: ++this.requestId,
         kind: "context",
-        items: terminalContextMenuItems({
-          hasSelection: selectionText !== null,
-          canAddToChat: false
-        }),
+        items: withChatAvailability(
+          terminalContextMenuItems({
+            hasSelection: selectionText !== null,
+            canAddToChat: this.canAddToChat()
+          }),
+          chatSelection
+        ),
         position: input.position,
-        clipboardText: selectionText
+        clipboardText: selectionText,
+        chatSelection
       });
     }
     /**
@@ -10321,12 +10417,17 @@ var __t3Client = (() => {
         this.supersede();
         return null;
       }
+      const chatSelection = input.chatSelection ?? null;
       return this.show({
         requestId: ++this.requestId,
         kind: "selection",
-        items: terminalSelectionMenuItems({ canAddToChat: false }),
+        items: withChatAvailability(
+          terminalSelectionMenuItems({ canAddToChat: this.canAddToChat() }),
+          chatSelection
+        ),
         position: input.position,
-        clipboardText: selectionText
+        clipboardText: selectionText,
+        chatSelection
       });
     }
     /**
@@ -10342,7 +10443,13 @@ var __t3Client = (() => {
       this.close();
       if (!item || item.disabled === true) return null;
       if (action !== "paste" && menu.clipboardText === null) return null;
-      return { action, requestId, clipboardText: menu.clipboardText };
+      if (action === "add-to-chat" && menu.chatSelection === null) return null;
+      return {
+        action,
+        requestId,
+        clipboardText: menu.clipboardText,
+        chatSelection: menu.chatSelection
+      };
     }
     /**
      * Passive cancellation (Escape, outside click, scroll, blur): closes the
@@ -10381,9 +10488,21 @@ var __t3Client = (() => {
       this.onChange(null);
     }
   };
+  function withChatAvailability(items, chatSelection) {
+    if (chatSelection !== null) return items;
+    return items.map((item) => item.id === "add-to-chat" ? { ...item, disabled: true } : item);
+  }
+  function truncateUtf16(text, max) {
+    if (text.length <= max) return text;
+    const cut = text.slice(0, max);
+    return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
+  }
+  function normalizeSelectionText(text) {
+    return text.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "");
+  }
   function nonEmpty(text) {
     if (text === null) return null;
-    return text.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "").length > 0 ? text : null;
+    return normalizeSelectionText(text).length > 0 ? text : null;
   }
 
   // selectionMenu.tsx
@@ -10395,9 +10514,13 @@ var __t3Client = (() => {
     timer = null;
     frame = null;
     gestureActive = false;
+    chatTarget;
     constructor(deps, onChange) {
       this.deps = deps;
-      this.flow = new TerminalSelectionMenuFlow(onChange);
+      this.chatTarget = deps.chat ? new TerminalChatTarget(deps.chat.probe) : null;
+      this.flow = new TerminalSelectionMenuFlow(onChange, {
+        canAddToChat: () => this.chatTarget?.available === true
+      });
     }
     /** Ref callback for the rendered menu, used by the outside-click test. */
     setMenuElement = (element) => {
@@ -10411,8 +10534,11 @@ var __t3Client = (() => {
       const surface = this.deps.getSurface();
       if (surface === null) return;
       surface.focus();
+      this.chatTarget?.refresh();
+      const selectionText = surface.hasSelection() ? surface.getSelection() : null;
       this.flow.openContextMenu({
-        selectionText: surface.hasSelection() ? surface.getSelection() : null,
+        selectionText,
+        chatSelection: this.readChatSelection(surface, selectionText),
         position: { x: event.clientX, y: event.clientY }
       });
     };
@@ -10432,6 +10558,17 @@ var __t3Client = (() => {
           this.deps.reportError(surface, error instanceof Error ? error.message : fallback);
         }
       };
+      if (choice.action === "add-to-chat" && choice.chatSelection !== null && this.deps.chat) {
+        await addTerminalSelectionToChat({
+          selection: choice.chatSelection,
+          insert: this.deps.chat.insert,
+          isCurrent: () => this.flow.isCurrent(requestId),
+          clearSelection: () => surface.clearSelection(),
+          focusTerminal: () => surface.focus(),
+          reportError: (message) => this.deps.reportError(surface, message)
+        });
+        return;
+      }
       if (choice.action === "copy" && choice.clipboardText !== null) {
         try {
           await copyText(choice.clipboardText, surface);
@@ -10449,6 +10586,7 @@ var __t3Client = (() => {
       if (this.flow.isCurrent(requestId)) surface.focus();
     };
     install(mount) {
+      this.chatTarget?.refresh();
       const document2 = mount.ownerDocument;
       const view = document2.defaultView;
       const insideMenu = (event) => this.menuElement !== null && event.composedPath().includes(this.menuElement);
@@ -10539,14 +10677,27 @@ var __t3Client = (() => {
         return;
       }
       const hasSelection = surface.hasSelection();
+      const selectionText = hasSelection ? surface.getSelection() : null;
+      this.chatTarget?.refresh();
       this.flow.openSelectionPopup({
-        selectionText: hasSelection ? surface.getSelection() : null,
+        selectionText,
+        chatSelection: this.readChatSelection(surface, selectionText),
         position: resolveSelectionActionPosition({
           bounds: mount.getBoundingClientRect(),
           selectionRect: hasSelection ? surface.getSelectionEndClientRect() : null,
           pointer,
           viewport: { width: window.innerWidth, height: window.innerHeight }
         })
+      });
+    }
+    readChatSelection(surface, selectionText) {
+      const chat = this.deps.chat;
+      if (!chat || selectionText === null) return null;
+      return buildTerminalChatSelection({
+        terminalId: chat.terminalId,
+        terminalLabel: chat.terminalLabel(),
+        text: selectionText,
+        position: surface.getSelectionPosition()
       });
     }
     cancelPending() {
@@ -10580,14 +10731,15 @@ var __t3Client = (() => {
     return clipboard.readText();
   }
   function useTerminalSelectionMenu(options) {
-    const { mountRef, surfaceRef, reportError } = options;
+    const { mountRef, surfaceRef, reportError, chat } = options;
     const [menu, setMenu] = (0, import_react.useState)(null);
     const [controller] = (0, import_react.useState)(
       () => new TerminalSelectionMenuController(
         {
           getMount: () => mountRef.current,
           getSurface: () => surfaceRef.current,
-          reportError
+          reportError,
+          chat
         },
         setMenu
       )
@@ -11029,30 +11181,6 @@ var __t3Client = (() => {
       family: family === void 0 || family === "" || family.startsWith("var(") ? void 0 : family,
       size: sizeMatch === null ? void 0 : Number.parseFloat(sizeMatch[1] ?? "")
     };
-  }
-
-  // node_modules/@t3tools/shared/src/terminalLabels.ts
-  function getTerminalLabel(terminalId) {
-    const numericSuffix = /^term(?:inal)?-(\d+)$/i.exec(terminalId)?.[1];
-    if (numericSuffix) {
-      return `Terminal ${numericSuffix}`;
-    }
-    return terminalId;
-  }
-  function resolveTerminalSessionLabel(terminalId, summary) {
-    const trimmed = summary?.label?.trim();
-    if (trimmed && trimmed.length > 0) {
-      return trimmed;
-    }
-    return getTerminalLabel(terminalId);
-  }
-  function nextTerminalId(existingTerminalIds) {
-    const usedIds = new Set(existingTerminalIds.filter((id2) => id2.trim().length > 0));
-    let nextIndex = 1;
-    while (usedIds.has(`term-${nextIndex}`)) {
-      nextIndex += 1;
-    }
-    return `term-${nextIndex}`;
   }
 
   // inputQueue.ts
@@ -13053,6 +13181,19 @@ var __t3Client = (() => {
 [terminal] ${message}\r
 `);
   }
+  function composerChatSink(host, session, panel, terminalId) {
+    if (session.context.resource.threadId === void 0) return void 0;
+    const composer = bindApi(composerContextApi, host, session.context);
+    return {
+      terminalId,
+      terminalLabel: () => panel.snapshot.tabs.find((tab) => tab.terminalId === terminalId)?.label ?? getTerminalLabel(terminalId),
+      probe: async () => {
+        const capabilities = await composer.invoke("getCapabilities", {}, session.signal);
+        return capabilities.transport === "client" && capabilities.operations.insertTerminalContext;
+      },
+      insert: (selection) => composer.invoke("insertTerminalContext", selection, session.signal)
+    };
+  }
   function handleBeforeKey(event, panel, terminalId) {
     const navigationData = terminalNavigationShortcutData(event);
     if (navigationData !== null) {
@@ -13096,10 +13237,12 @@ var __t3Client = (() => {
     );
     const mountRef = (0, import_react2.useRef)(null);
     const surfaceRef = (0, import_react2.useRef)(null);
+    const [chatSink] = (0, import_react2.useState)(() => composerChatSink(host, session, panel, terminalId));
     const selectionMenu = useTerminalSelectionMenu({
       mountRef,
       surfaceRef,
-      reportError: writeSystemMessage
+      reportError: writeSystemMessage,
+      ...chatSink ? { chat: chatSink } : {}
     });
     const shownRef = (0, import_react2.useRef)(shown && visible);
     const activeRef = (0, import_react2.useRef)(active);
@@ -14010,6 +14153,9 @@ var __t3Client = (() => {
       requireApi(terminalOutputApi),
       requireApi(terminalOutputEventsApi),
       requireApi(terminalControlApi),
+      // "Add to chat" (insertTerminalContext is 1.1.0). The host provider is
+      // always registered; getCapabilities reports whether a composer is there.
+      requireApi(composerContextApi),
       // Mandatory requirements — the broker only authorizes invocations for
       // declared APIs, so the t3.ui/* contracts must be declared even though
       // the panel degrades per-call. A host without these providers resolves
