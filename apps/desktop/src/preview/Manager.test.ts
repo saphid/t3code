@@ -4901,6 +4901,92 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect(
+    "action re-press takes over a lease's held key and owes no duplicate release",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const preview = makeFaviconWebContents({ id: 42 });
+          const nativeEvents: Array<unknown> = [];
+          Object.assign(preview.webContents, {
+            focus: vi.fn(),
+            mainFrame: { framesInSubtree: [{ executeJavaScript: vi.fn(async () => true) }] },
+            sendInputEvent: vi.fn((event: unknown) => nativeEvents.push(event)),
+          });
+          fromId.mockReturnValue(preview.webContents);
+          const remoteTabId = '["env-a","thread-a","epoch-1","tab-1"]';
+          yield* manager.createTab(remoteTabId);
+          yield* manager.registerWebview(remoteTabId, 42);
+          const sendCommand = (
+            preview.webContents as { debugger: { sendCommand: ReturnType<typeof vi.fn> } }
+          ).debugger.sendCommand;
+          // The focused element is not an iframe, so the press dispatches
+          // through the native sendInputEvent path against the guest widget.
+          sendCommand.mockImplementation(async (method: string) =>
+            method === "Runtime.evaluate" ? { result: { subtype: "null" } } : undefined,
+          );
+          const viewport = { width: 100, height: 100 };
+
+          // The remote lease holds Shift; the action's press re-presses and
+          // releases the same physical key.
+          yield* manager.dispatchRemoteInput(
+            remoteTabId,
+            "held",
+            "42",
+            { type: "key", phase: "down", key: "Shift", code: "ShiftLeft" },
+            viewport,
+            null,
+          );
+          yield* manager.automationPress(remoteTabId, { key: "Shift" });
+
+          yield* manager.dispatchRemoteInput(
+            remoteTabId,
+            "held",
+            "42",
+            { type: "pointer", phase: "move", x: 0, y: 0 },
+            viewport,
+            null,
+          );
+          yield* manager.dispatchRemoteInput(
+            remoteTabId,
+            "held",
+            "42",
+            { type: "wheel", deltaX: 0, deltaY: 10, x: 0, y: 0 },
+            viewport,
+            null,
+          );
+
+          const mouseEvents = sendCommand.mock.calls.filter(
+            (call) => call[0] === "Input.dispatchMouseEvent",
+          );
+          const moved = mouseEvents.filter(
+            (call) => (call[1] as { type?: string }).type === "mouseMoved",
+          );
+          const wheels = mouseEvents.filter(
+            (call) => (call[1] as { type?: string }).type === "mouseWheel",
+          );
+          // The action's Shift up released the modifier for real: pointer and
+          // wheel packets must mirror a mask of 0, not the lease's stale 8.
+          expect(moved).toHaveLength(1);
+          expect(moved[0]?.[1]).toMatchObject({ modifiers: 0 });
+          expect(wheels).toHaveLength(1);
+          expect(wheels[0]?.[1]).toMatchObject({ modifiers: 0 });
+
+          const keyUps = () =>
+            sendCommand.mock.calls.filter(
+              (call) =>
+                call[0] === "Input.dispatchKeyEvent" &&
+                (call[1] as { type?: string }).type === "keyUp",
+            );
+          const keyUpsBefore = keyUps().length;
+          // The action owns the held entry now: lease cleanup sends nothing.
+          const release = yield* manager.releaseRemoteInput(remoteTabId, "held");
+          expect(release).toEqual({ attempted: 0, failed: 0 });
+          expect(keyUps()).toHaveLength(keyUpsBefore);
+        }),
+      ),
+  );
+
   effectIt.effect("resize during capture drops the unstable frame", () =>
     withManager((manager) =>
       Effect.gen(function* () {

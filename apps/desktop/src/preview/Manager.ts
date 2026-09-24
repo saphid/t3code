@@ -4475,6 +4475,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const keySequence = makePreviewAutomationNativeKeySequence(input, {
       isMac: hostPlatform === "darwin",
     });
+    const keyCdpSequence = makePreviewAutomationKeySequence(input, {
+      isMac: hostPlatform === "darwin",
+    });
     const recording = (yield* SynchronizedRef.get(frameCaptureSessionsRef)).get(tabId);
     if (recording?.consumers.has("recording") && recording.recordingInputOptions?.showKeyPresses) {
       yield* attempt({ operation: "recording.key", tabId, webContentsId: wc.id }, () =>
@@ -4496,6 +4499,30 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     // other, so neither can interleave an emulation toggle into the other's
     // still-running claim.
     const actionLedger = yield* remoteGuestLedgerFor(tabId, String(wc.id));
+    // A press that re-presses a key another lane holds takes over its ledger
+    // entry before the keyDown sends (latest presser owns, §3.7); the action's
+    // keyUp then clears only its own claim and recomputes the modifier mask,
+    // so a stale lease entry never mirrors onto later remote pointer/wheel
+    // packets or owes a duplicate release at lease cleanup.
+    const heldKey =
+      keyCdpSequence.keyDown.code.length > 0
+        ? keyCdpSequence.keyDown.code
+        : keyCdpSequence.keyDown.key;
+    const recordHeldKey = () => {
+      if (heldKey.length === 0) return;
+      actionLedger.keys.set(heldKey, {
+        keyUp: keyCdpSequence.keyUp,
+        owner: { kind: "action", id: ownerToken },
+      });
+      actionLedger.heldModifiers = ledgerModifiers(actionLedger);
+    };
+    const clearHeldKey = Effect.sync(() => {
+      const entry = actionLedger.keys.get(heldKey);
+      if (entry?.owner.kind === "action" && entry.owner.id === ownerToken) {
+        actionLedger.keys.delete(heldKey);
+        actionLedger.heldModifiers = ledgerModifiers(actionLedger);
+      }
+    });
     const releaseInput = actionLedger.lane.withPermits(1)(
       Effect.gen(function* () {
         const owner = (yield* Ref.get(inputStateOwnerRef)).get(tabId);
@@ -4528,7 +4555,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
       // Only descendant renderer sessions bypass Chromium's desktop focus lookup.
       if (sessionId) {
-        const keys = makePreviewAutomationKeySequence(input, { isMac: hostPlatform === "darwin" });
         yield* Effect.acquireRelease(Effect.void, () =>
           sendCleanup("Emulation.setFocusEmulationEnabled", { enabled: false }, sessionId).pipe(
             Effect.ignore,
@@ -4536,9 +4562,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         );
         yield* send("Emulation.setFocusEmulationEnabled", { enabled: true }, sessionId);
         yield* Effect.acquireRelease(Effect.void, () =>
-          sendCleanup("Input.dispatchKeyEvent", keys.keyUp, sessionId).pipe(Effect.ignore),
+          clearHeldKey.pipe(
+            Effect.andThen(sendCleanup("Input.dispatchKeyEvent", keyCdpSequence.keyUp, sessionId)),
+            Effect.ignore,
+          ),
         );
-        yield* send("Input.dispatchKeyEvent", keys.keyDown, sessionId);
+        recordHeldKey();
+        yield* send("Input.dispatchKeyEvent", keyCdpSequence.keyDown, sessionId);
         return;
       }
       if (keySequence.commands?.length) {
@@ -4627,6 +4657,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc,
         Effect.gen(function* () {
           yield* expectAgentInput(tabId, keySequence.signal);
+          recordHeldKey();
           yield* attempt(
             { operation: "automationPress.sendInputEvent", tabId, webContentsId: wc.id },
             () => {
@@ -4638,7 +4669,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               }
             },
           );
-        }),
+        }).pipe(Effect.ensuring(clearHeldKey)),
         checkControl,
       );
     }).pipe(Effect.scoped);
