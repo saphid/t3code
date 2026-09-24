@@ -62,9 +62,13 @@ export interface TerminalChatSelection {
   readonly text: string;
 }
 
-/** `t3.composer/context.insertTerminalContext` input bounds. */
+/**
+ * `t3.composer/context.insertTerminalContext` input bounds, in UTF-16 code
+ * units: the server adapter's schema checks `string.length`, which is stricter
+ * than the broker's code-point count for astral text.
+ */
 export const TERMINAL_CHAT_TEXT_MAX_CHARS = 10_000;
-const TERMINAL_CHAT_LABEL_MAX_CHARS = 128;
+export const TERMINAL_CHAT_LABEL_MAX_CHARS = 128;
 
 /** 1-based line range of a selection given in 0-based screen rows, as in native. */
 export function terminalSelectionLineRange(position: {
@@ -91,7 +95,7 @@ export function buildTerminalChatSelection(input: {
   const label = input.terminalLabel.trim() || "Terminal";
   return {
     terminalId: input.terminalId,
-    terminalLabel: [...label].slice(0, TERMINAL_CHAT_LABEL_MAX_CHARS).join(""),
+    terminalLabel: truncateUtf16(label, TERMINAL_CHAT_LABEL_MAX_CHARS),
     ...terminalSelectionLineRange(input.position),
     text,
   };
@@ -99,13 +103,18 @@ export function buildTerminalChatSelection(input: {
 
 /**
  * Native sends any length; the composer contract caps an excerpt at 10,000
- * characters (code points, as the host's schema counts them). Refuse rather
- * than cut, so a chip never claims lines it does not hold.
+ * and a label at 128, counted in UTF-16 units as the server adapter's schema
+ * counts them. Refuse rather than cut, so a chip never claims lines it does
+ * not hold and the limit is named here instead of in a generic host rejection.
  */
 export function terminalChatSelectionError(selection: TerminalChatSelection): string | null {
-  if (selection.text.length <= TERMINAL_CHAT_TEXT_MAX_CHARS) return null;
-  if ([...selection.text].length <= TERMINAL_CHAT_TEXT_MAX_CHARS) return null;
-  return "Selection is too long to add to chat (10,000 characters at most).";
+  if (selection.text.length > TERMINAL_CHAT_TEXT_MAX_CHARS) {
+    return "Selection is too long to add to chat (10,000 characters at most).";
+  }
+  if (selection.terminalLabel.length > TERMINAL_CHAT_LABEL_MAX_CHARS) {
+    return "Terminal name is too long to add to chat (128 characters at most).";
+  }
+  return null;
 }
 
 /**
@@ -375,13 +384,24 @@ export class TerminalSelectionMenuFlow {
   }
 }
 
-/** A selection with no resolvable line range cannot be sent; its Add to chat is disabled. */
+/**
+ * A selection with no resolvable line range cannot be sent; its Add to chat is
+ * disabled. Native opens no popup at all for such a selection, and disables
+ * Copy with it in the right-click menu; the plugin keeps Copy usable.
+ */
 function withChatAvailability(
   items: TerminalMenuItem[],
   chatSelection: TerminalChatSelection | null,
 ): TerminalMenuItem[] {
   if (chatSelection !== null) return items;
   return items.map((item) => (item.id === "add-to-chat" ? { ...item, disabled: true } : item));
+}
+
+/** Cuts to `max` UTF-16 units without leaving half a surrogate pair. */
+function truncateUtf16(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
 }
 
 function normalizeSelectionText(text: string): string {

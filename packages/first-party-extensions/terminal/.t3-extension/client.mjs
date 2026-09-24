@@ -10291,15 +10291,19 @@ var __t3Client = (() => {
     const label = input.terminalLabel.trim() || "Terminal";
     return {
       terminalId: input.terminalId,
-      terminalLabel: [...label].slice(0, TERMINAL_CHAT_LABEL_MAX_CHARS).join(""),
+      terminalLabel: truncateUtf16(label, TERMINAL_CHAT_LABEL_MAX_CHARS),
       ...terminalSelectionLineRange(input.position),
       text
     };
   }
   function terminalChatSelectionError(selection) {
-    if (selection.text.length <= TERMINAL_CHAT_TEXT_MAX_CHARS) return null;
-    if ([...selection.text].length <= TERMINAL_CHAT_TEXT_MAX_CHARS) return null;
-    return "Selection is too long to add to chat (10,000 characters at most).";
+    if (selection.text.length > TERMINAL_CHAT_TEXT_MAX_CHARS) {
+      return "Selection is too long to add to chat (10,000 characters at most).";
+    }
+    if (selection.terminalLabel.length > TERMINAL_CHAT_LABEL_MAX_CHARS) {
+      return "Terminal name is too long to add to chat (128 characters at most).";
+    }
+    return null;
   }
   async function addTerminalSelectionToChat(options) {
     try {
@@ -10487,6 +10491,11 @@ var __t3Client = (() => {
   function withChatAvailability(items, chatSelection) {
     if (chatSelection !== null) return items;
     return items.map((item) => item.id === "add-to-chat" ? { ...item, disabled: true } : item);
+  }
+  function truncateUtf16(text, max) {
+    if (text.length <= max) return text;
+    const cut = text.slice(0, max);
+    return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
   }
   function normalizeSelectionText(text) {
     return text.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "");

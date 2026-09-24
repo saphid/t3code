@@ -2,6 +2,7 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 
 import {
+  TERMINAL_CHAT_LABEL_MAX_CHARS,
   TERMINAL_CHAT_TEXT_MAX_CHARS,
   TerminalChatTarget,
   TerminalSelectionMenuFlow,
@@ -392,13 +393,14 @@ NodeTest.describe("buildTerminalChatSelection", () => {
       position,
     });
     NodeAssert.equal(blank.terminalLabel, "Terminal");
-    const long = buildTerminalChatSelection({
-      terminalId: "term-1",
-      terminalLabel: "\u{1F600}".repeat(200),
-      text: "ok",
-      position,
-    });
-    NodeAssert.equal([...long.terminalLabel].length, 128);
+    const label = (terminalLabel) =>
+      buildTerminalChatSelection({ terminalId: "term-1", terminalLabel, text: "ok", position })
+        .terminalLabel;
+    NodeAssert.equal(label("a".repeat(200)), "a".repeat(TERMINAL_CHAT_LABEL_MAX_CHARS));
+    // 200 astral code points are 400 UTF-16 units; the bound counts units.
+    NodeAssert.equal(label("\u{1F600}".repeat(200)), "\u{1F600}".repeat(64));
+    // A cut that would split a surrogate pair drops the whole pair.
+    NodeAssert.equal(label(`a${"\u{1F600}".repeat(200)}`), `a${"\u{1F600}".repeat(63)}`);
   });
 });
 
@@ -409,10 +411,22 @@ NodeTest.describe("terminalChatSelectionError", () => {
     NodeAssert.match(at("a".repeat(TERMINAL_CHAT_TEXT_MAX_CHARS + 1)), /too long/);
   });
 
-  NodeTest.it("counts code points, as the host schema does", () => {
-    const astral = "\u{1F600}".repeat(TERMINAL_CHAT_TEXT_MAX_CHARS);
-    NodeAssert.equal(astral.length, TERMINAL_CHAT_TEXT_MAX_CHARS * 2);
-    NodeAssert.equal(terminalChatSelectionError({ ...excerpt, text: astral }), null);
+  NodeTest.it("counts UTF-16 units, as the server adapter's schema does", () => {
+    const at = (text) => terminalChatSelectionError({ ...excerpt, text });
+    const half = TERMINAL_CHAT_TEXT_MAX_CHARS / 2;
+    NodeAssert.equal(at("\u{1F600}".repeat(half)), null);
+    NodeAssert.match(at("\u{1F600}".repeat(half + 1)), /10,000 characters at most/);
+    // 10,000 code points, 10,001 UTF-16 units.
+    const mixed = `${"a".repeat(TERMINAL_CHAT_TEXT_MAX_CHARS - 1)}\u{1F600}`;
+    NodeAssert.equal([...mixed].length, TERMINAL_CHAT_TEXT_MAX_CHARS);
+    NodeAssert.match(at(mixed), /10,000 characters at most/);
+  });
+
+  NodeTest.it("refuses a label over 128 UTF-16 units", () => {
+    const at = (terminalLabel) => terminalChatSelectionError({ ...excerpt, terminalLabel });
+    NodeAssert.equal(at("a".repeat(TERMINAL_CHAT_LABEL_MAX_CHARS)), null);
+    NodeAssert.equal(at("\u{1F600}".repeat(64)), null);
+    NodeAssert.match(at("\u{1F600}".repeat(65)), /128 characters at most/);
   });
 });
 
@@ -475,8 +489,40 @@ NodeTest.describe("addTerminalSelectionToChat", () => {
     await action.run();
     NodeAssert.equal(action.calls.length, 2);
     NodeAssert.equal(action.calls[0][0], "reportError");
-    NodeAssert.match(action.calls[0][1], /too long/);
+    NodeAssert.match(action.calls[0][1], /10,000 characters at most/);
     NodeAssert.deepEqual(action.calls[1], ["focusTerminal"]);
+  });
+
+  NodeTest.it(
+    "an astral excerpt within 10,000 code points but over 10,000 UTF-16 units is refused before any insert",
+    async () => {
+      const text = "\u{1F600}".repeat(TERMINAL_CHAT_TEXT_MAX_CHARS / 2 + 1);
+      NodeAssert.ok([...text].length <= TERMINAL_CHAT_TEXT_MAX_CHARS);
+      const action = recordingChatAction({ selection: { ...excerpt, text } });
+      await action.run();
+      NodeAssert.deepEqual(action.calls, [
+        ["reportError", "Selection is too long to add to chat (10,000 characters at most)."],
+        ["focusTerminal"],
+      ]);
+    },
+  );
+
+  NodeTest.it("an excerpt of exactly 10,000 UTF-16 units is inserted", async () => {
+    const selection = { ...excerpt, text: "\u{1F600}".repeat(TERMINAL_CHAT_TEXT_MAX_CHARS / 2) };
+    const action = recordingChatAction({ selection });
+    await action.run();
+    NodeAssert.deepEqual(action.calls, [["insert", selection], ["clearSelection"]]);
+  });
+
+  NodeTest.it("an astral label over 128 UTF-16 units is refused before any insert", async () => {
+    const action = recordingChatAction({
+      selection: { ...excerpt, terminalLabel: "\u{1F600}".repeat(65) },
+    });
+    await action.run();
+    NodeAssert.deepEqual(action.calls, [
+      ["reportError", "Terminal name is too long to add to chat (128 characters at most)."],
+      ["focusTerminal"],
+    ]);
   });
 
   NodeTest.it("a superseded completion touches neither the selection nor focus", async () => {
