@@ -6616,6 +6616,27 @@ export type ComposerDraftStateResult = {
     };
   } | null;
 };
+export type ComposerTerminalContextInsertInput = {
+  readonly threadId?: string;
+  readonly terminalId: string;
+  readonly terminalLabel: string;
+  readonly lineStart: number;
+  readonly lineEnd: number;
+  readonly text: string;
+};
+export type ComposerTerminalContextInsertResult = {
+  readonly inserted: boolean;
+  readonly reason?: "duplicate";
+  readonly target: string;
+};
+export type ComposerMentionInsertInput = {
+  readonly threadId?: string;
+  readonly paths: readonly string[];
+};
+export type ComposerMentionInsertResult = {
+  readonly inserted: number;
+  readonly target: string;
+};
 export type ComposerCapabilities = {
   readonly adapter: string;
   readonly transport: "server" | "client" | "unavailable";
@@ -6623,15 +6644,37 @@ export type ComposerCapabilities = {
   readonly operations: {
     readonly insertContext: boolean;
     readonly getDraftState: boolean;
+    readonly insertMention: boolean;
+    readonly insertTerminalContext: boolean;
   };
 };
-export type MessagesEnrichmentAnnotation = {
+export type MessagesFileAnnotation = {
   readonly filePath: string;
   readonly startLine: number;
   readonly endLine: number;
   readonly body: string;
   readonly excerpt?: string;
 };
+/** Mirrors what `buildDiffReviewComment` produces for a native diff comment. */
+export type MessagesDiffAnnotation = {
+  readonly kind: "diff";
+  readonly filePath: string;
+  readonly sectionId: string;
+  readonly sectionTitle: string;
+  readonly rangeLabel: string;
+  /** Hunk text with leading +/-/space markers per line. */
+  readonly diff: string;
+  readonly selection: {
+    readonly start: number;
+    readonly side: "additions" | "deletions";
+    readonly end: number;
+    readonly endSide: "additions" | "deletions";
+  };
+  readonly startIndex?: number;
+  readonly endIndex?: number;
+  readonly body: string;
+};
+export type MessagesEnrichmentAnnotation = MessagesFileAnnotation | MessagesDiffAnnotation;
 export type MessagesAttachAnnotationInput = {
   readonly threadId?: string;
   readonly annotation: MessagesEnrichmentAnnotation;
@@ -6639,12 +6682,34 @@ export type MessagesAttachAnnotationInput = {
 export type MessagesAttachAnnotationResult = {
   readonly annotationId: string;
 };
+export type MessagesListAnnotationsInput = {
+  readonly threadId?: string;
+};
+export type MessagesListedAnnotation = {
+  readonly annotationId: string;
+  readonly kind: "file" | "diff";
+  readonly filePath: string;
+  readonly rangeLabel: string;
+  readonly sectionTitle: string;
+};
+export type MessagesListAnnotationsResult = {
+  readonly annotations: readonly MessagesListedAnnotation[];
+};
+export type MessagesRemoveAnnotationInput = {
+  readonly threadId?: string;
+  readonly annotationId: string;
+};
+export type MessagesRemoveAnnotationResult = {
+  readonly removed: boolean;
+};
 export type MessagesEnrichmentCapabilities = {
   readonly adapter: string;
   readonly transport: "server" | "client" | "unavailable";
   readonly detail: string | null;
   readonly operations: {
     readonly attachAnnotation: boolean;
+    readonly listAnnotations: boolean;
+    readonly removeAnnotation: boolean;
   };
 };
 
@@ -6685,14 +6750,69 @@ const composerEmptyInputSchema = {
   additionalProperties: false,
   properties: {},
 } as const;
+const composerTerminalIdInput = { type: "string", minLength: 1, maxLength: 128 } as const;
+// 10,000 chars worst-case encodes to 60,000 UTF-8 bytes (6/char for C0
+// escapes); with both ids at 128 chars the whole serialized invoke stays
+// under the broker's 64 KiB copyJson envelope.
+const composerTerminalTextInput = { type: "string", minLength: 1, maxLength: 10000 } as const;
+const composerInsertResultOutput = {
+  type: "object",
+  additionalProperties: false,
+  required: ["inserted", "target"],
+  properties: {
+    inserted: { type: "integer", minimum: 0, maximum: 8 },
+    target: { type: "string", minLength: 1, maxLength: 256 },
+  },
+} as const;
+const annotationSelectionSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["start", "side", "end", "endSide"],
+  properties: {
+    start: composerLineInput,
+    side: { enum: ["additions", "deletions"] },
+    end: composerLineInput,
+    endSide: { enum: ["additions", "deletions"] },
+  },
+} as const;
+const diffAnnotationSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "kind",
+    "filePath",
+    "sectionId",
+    "sectionTitle",
+    "rangeLabel",
+    "diff",
+    "selection",
+    "body",
+  ],
+  properties: {
+    kind: { const: "diff" },
+    filePath: { type: "string", minLength: 1, maxLength: 512 },
+    sectionId: { type: "string", minLength: 1, maxLength: 512 },
+    sectionTitle: { type: "string", minLength: 1, maxLength: 256 },
+    rangeLabel: { type: "string", minLength: 1, maxLength: 128 },
+    diff: { type: "string", minLength: 1, maxLength: 4096 },
+    selection: annotationSelectionSchema,
+    startIndex: { type: "integer", minimum: 0, maximum: 1_000_000 },
+    endIndex: { type: "integer", minimum: 0, maximum: 1_000_000 },
+    body: { type: "string", minLength: 1, maxLength: 4096 },
+  },
+} as const;
 
 /**
- * Composer draft context. The draft store is client-local, so `insertContext`
- * and `getDraftState` apply only once a client-adapter transport exists; until
- * then the host adapter reports them unsupported through `getCapabilities` and
- * fails invocations with a named error rather than silently no-opping.
- * Free-form send stays with `t3.orchestration/control` — this contract only
- * ever mutates draft content.
+ * Composer draft context. The draft store is client-local, so the insert
+ * operations and `getDraftState` apply only once a client-adapter transport
+ * exists; until then the host adapter reports them unsupported through
+ * `getCapabilities` and fails invocations with a named error rather than
+ * silently no-opping. Free-form send stays with `t3.orchestration/control` —
+ * this contract only ever mutates draft content.
+ *
+ * 1.1.0 adds the two insert shapes the native panels use: file mentions
+ * (`insertMention`, byte-identical to Files "Add to chat") and terminal
+ * context chips (`insertTerminalContext`, the Terminal drawer's selection).
  */
 export const composerContextApi = defineApi<{
   getCapabilities: { input: Record<string, never>; output: ComposerCapabilities };
@@ -6701,9 +6821,14 @@ export const composerContextApi = defineApi<{
     output: ComposerContextInsertResult;
   };
   getDraftState: { input: { threadId?: string }; output: ComposerDraftStateResult };
+  insertMention: { input: ComposerMentionInsertInput; output: ComposerMentionInsertResult };
+  insertTerminalContext: {
+    input: ComposerTerminalContextInsertInput;
+    output: ComposerTerminalContextInsertResult;
+  };
 }>({
   id: COMPOSER_CONTEXT,
-  version: "1.0.0",
+  version: "1.1.0",
   methods: [
     {
       name: "getCapabilities",
@@ -6712,7 +6837,12 @@ export const composerContextApi = defineApi<{
       // apart from "no grant" — authority gates the mutations, not the report.
       requiredGrants: [],
       inputSchema: composerEmptyInputSchema,
-      outputSchema: composerTransportOutput(["insertContext", "getDraftState"]),
+      outputSchema: composerTransportOutput([
+        "insertContext",
+        "getDraftState",
+        "insertMention",
+        "insertTerminalContext",
+      ]),
     },
     {
       name: "insertContext",
@@ -6794,6 +6924,54 @@ export const composerContextApi = defineApi<{
         },
       },
     },
+    {
+      name: "insertMention",
+      effect: "write",
+      requiredGrants: [COMPOSER_WRITE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["paths"],
+        properties: {
+          threadId: composerThreadIdInput,
+          paths: {
+            type: "array",
+            minItems: 1,
+            maxItems: 8,
+            items: { type: "string", minLength: 1, maxLength: 512 },
+          },
+        },
+      },
+      outputSchema: composerInsertResultOutput,
+    },
+    {
+      name: "insertTerminalContext",
+      effect: "write",
+      requiredGrants: [COMPOSER_WRITE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["terminalId", "terminalLabel", "lineStart", "lineEnd", "text"],
+        properties: {
+          threadId: composerThreadIdInput,
+          terminalId: composerTerminalIdInput,
+          terminalLabel: composerTerminalIdInput,
+          lineStart: composerLineInput,
+          lineEnd: composerLineInput,
+          text: composerTerminalTextInput,
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["inserted", "target"],
+        properties: {
+          inserted: { type: "boolean" },
+          reason: { enum: ["duplicate"] },
+          target: { type: "string", minLength: 1, maxLength: 256 },
+        },
+      },
+    },
   ],
 });
 
@@ -6803,6 +6981,10 @@ export const composerContextApi = defineApi<{
  * and annotations serialize into the next sent message. There is no
  * message-level annotation entity, so turn/sent-message enrichment is not
  * expressible and stays deferred.
+ *
+ * 1.1.0 adds the diff kind the diff viewer inserts (`buildDiffReviewComment`
+ * records, `fenceLanguage: "diff"`), plus own-ids-only list/remove so an
+ * installation can enumerate and retract what it attached.
  */
 export const messagesEnrichmentApi = defineApi<{
   getCapabilities: { input: Record<string, never>; output: MessagesEnrichmentCapabilities };
@@ -6810,16 +6992,28 @@ export const messagesEnrichmentApi = defineApi<{
     input: MessagesAttachAnnotationInput;
     output: MessagesAttachAnnotationResult;
   };
+  listAnnotations: {
+    input: MessagesListAnnotationsInput;
+    output: MessagesListAnnotationsResult;
+  };
+  removeAnnotation: {
+    input: MessagesRemoveAnnotationInput;
+    output: MessagesRemoveAnnotationResult;
+  };
 }>({
   id: MESSAGES_ENRICHMENT,
-  version: "1.0.0",
+  version: "1.1.0",
   methods: [
     {
       name: "getCapabilities",
       effect: "read",
       requiredGrants: [],
       inputSchema: composerEmptyInputSchema,
-      outputSchema: composerTransportOutput(["attachAnnotation"]),
+      outputSchema: composerTransportOutput([
+        "attachAnnotation",
+        "listAnnotations",
+        "removeAnnotation",
+      ]),
     },
     {
       name: "attachAnnotation",
@@ -6832,18 +7026,23 @@ export const messagesEnrichmentApi = defineApi<{
         properties: {
           threadId: composerThreadIdInput,
           annotation: {
-            type: "object",
-            additionalProperties: false,
-            required: ["filePath", "startLine", "endLine", "body"],
-            properties: {
-              filePath: { type: "string", minLength: 1, maxLength: 512 },
-              startLine: composerLineInput,
-              endLine: composerLineInput,
-              // body + excerpt at 4,096 chars each keep the worst-case
-              // encoded request (~53 KB) inside the 64 KiB invoke envelope.
-              body: { type: "string", minLength: 1, maxLength: 4096 },
-              excerpt: { type: "string", maxLength: 4096 },
-            },
+            oneOf: [
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["filePath", "startLine", "endLine", "body"],
+                properties: {
+                  filePath: { type: "string", minLength: 1, maxLength: 512 },
+                  startLine: composerLineInput,
+                  endLine: composerLineInput,
+                  // body + excerpt at 4,096 chars each keep the worst-case
+                  // encoded request (~53 KB) inside the 64 KiB invoke envelope.
+                  body: { type: "string", minLength: 1, maxLength: 4096 },
+                  excerpt: { type: "string", maxLength: 4096 },
+                },
+              },
+              diffAnnotationSchema,
+            ],
           },
         },
       },
@@ -6854,6 +7053,63 @@ export const messagesEnrichmentApi = defineApi<{
         properties: {
           annotationId: { type: "string", minLength: 1, maxLength: 256 },
         },
+      },
+    },
+    {
+      name: "listAnnotations",
+      effect: "read",
+      // Lists the caller's own unsent annotations only, but the draft itself
+      // is the user's unsent words — same write-authority stance as
+      // getDraftState on the composer contract.
+      requiredGrants: [MESSAGES_WRITE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        properties: { threadId: composerThreadIdInput },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["annotations"],
+        properties: {
+          annotations: {
+            // 8 entries at field maxima stay inside the 64 KiB frame envelope.
+            type: "array",
+            maxItems: 8,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["annotationId", "kind", "filePath", "rangeLabel", "sectionTitle"],
+              properties: {
+                annotationId: { type: "string", minLength: 1, maxLength: 256 },
+                kind: { enum: ["file", "diff"] },
+                filePath: { type: "string", minLength: 1, maxLength: 512 },
+                rangeLabel: { type: "string", minLength: 1, maxLength: 128 },
+                sectionTitle: { type: "string", minLength: 1, maxLength: 256 },
+              },
+            },
+          },
+        },
+      },
+    },
+    {
+      name: "removeAnnotation",
+      effect: "write",
+      requiredGrants: [MESSAGES_WRITE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["annotationId"],
+        properties: {
+          threadId: composerThreadIdInput,
+          annotationId: { type: "string", minLength: 1, maxLength: 256 },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["removed"],
+        properties: { removed: { type: "boolean" } },
       },
     },
   ],

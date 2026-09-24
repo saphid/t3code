@@ -1,14 +1,17 @@
 import { ClientProvidersError, ExtensionOperationError } from "@t3tools/contracts";
 import { COMPOSER_CONTEXT_API, MESSAGES_ENRICHMENT_API } from "@t3tools/extension-sdk/catalogue";
+import { CLIENT_COMPOSER_V11_RANGE } from "@t3tools/extension-sdk/clientProviders";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { HostApiInvocationMetadata, HostApiProvider } from "@t3tools/extension-runtime";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import { satisfiesSemverRange } from "@t3tools/shared/semver";
 
 import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
 import { ProjectionThreadRepository } from "../persistence/Services/ProjectionThreads.ts";
 import type { ClientApiProviders } from "./ClientApiProviders.ts";
-import { invokeClient } from "./uiClientApis.ts";
+import { invokeClient, resolveConnectionId } from "./uiClientApis.ts";
 import { makeExtensionScopeResolver } from "./scope.ts";
 
 /**
@@ -35,6 +38,7 @@ const clientFailure = (operation: string) => (cause: unknown) =>
 const boundedString = (max: number) =>
   Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(max));
 const lineSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000_000 }));
+const diffIndexSchema = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1_000_000 }));
 const threadIdField = { threadId: Schema.optional(boundedString(128)) } as const;
 
 const insertInput = Schema.decodeUnknownSync(
@@ -51,20 +55,66 @@ const insertInput = Schema.decodeUnknownSync(
   }),
   { onExcessProperty: "error" },
 );
+const mentionInput = Schema.decodeUnknownSync(
+  Schema.Struct({
+    ...threadIdField,
+    paths: Schema.Array(boundedString(512)).check(Schema.isMinLength(1), Schema.isMaxLength(8)),
+  }),
+  { onExcessProperty: "error" },
+);
+const terminalContextInput = Schema.decodeUnknownSync(
+  Schema.Struct({
+    ...threadIdField,
+    terminalId: boundedString(128),
+    terminalLabel: boundedString(128),
+    lineStart: lineSchema,
+    lineEnd: lineSchema,
+    // 10,000 chars keeps the worst-case escaped frame (~62 KB) inside the
+    // broker's 64 KiB envelope; see the catalogue bounds comment.
+    text: boundedString(10_000),
+  }),
+  { onExcessProperty: "error" },
+);
 const draftInput = Schema.decodeUnknownSync(Schema.Struct({ ...threadIdField }), {
   onExcessProperty: "error",
 });
+const annotationSelection = Schema.Struct({
+  start: lineSchema,
+  side: Schema.Literals(["additions", "deletions"]),
+  end: lineSchema,
+  endSide: Schema.Literals(["additions", "deletions"]),
+});
+// `kind` absent selects the 1.0.0 file variant; `kind: "diff"` carries what
+// buildDiffReviewComment produces. The union errors on anything else.
 const annotationInput = Schema.decodeUnknownSync(
   Schema.Struct({
     ...threadIdField,
-    annotation: Schema.Struct({
-      filePath: boundedString(512),
-      startLine: lineSchema,
-      endLine: lineSchema,
-      body: boundedString(4096),
-      excerpt: Schema.optional(Schema.String.check(Schema.isMaxLength(4096))),
-    }),
+    annotation: Schema.Union([
+      Schema.Struct({
+        filePath: boundedString(512),
+        startLine: lineSchema,
+        endLine: lineSchema,
+        body: boundedString(4096),
+        excerpt: Schema.optional(Schema.String.check(Schema.isMaxLength(4096))),
+      }),
+      Schema.Struct({
+        kind: Schema.Literal("diff"),
+        filePath: boundedString(512),
+        sectionId: boundedString(512),
+        sectionTitle: boundedString(256),
+        rangeLabel: boundedString(128),
+        diff: boundedString(4096),
+        selection: annotationSelection,
+        startIndex: Schema.optional(diffIndexSchema),
+        endIndex: Schema.optional(diffIndexSchema),
+        body: boundedString(4096),
+      }),
+    ]),
   }),
+  { onExcessProperty: "error" },
+);
+const removeAnnotationInput = Schema.decodeUnknownSync(
+  Schema.Struct({ ...threadIdField, annotationId: boundedString(256) }),
   { onExcessProperty: "error" },
 );
 
@@ -98,23 +148,59 @@ export function createComposerApiProviders(
 ): readonly HostApiProvider[] {
   const resolve = makeExtensionScopeResolver(dependencies);
 
-  const transport = Effect.gen(function* () {
-    const available = yield* bridge.clientApiProviders.hasProvider(
-      bridge.environmentId,
-      CLIENT_COMPOSER,
+  /** The composer version one connection declares, or undefined when it does not host the provider. */
+  const composerVersionOf = (connectionId: string) =>
+    Effect.map(
+      bridge.clientApiProviders.listTargets(bridge.environmentId),
+      (targets) =>
+        targets
+          .find((target) => target.connectionId === connectionId)
+          ?.providers.find((provider) => provider.id === CLIENT_COMPOSER)?.version,
     );
-    return { available };
-  });
-  const composerCapabilities = (adapter: string, operations: Record<string, boolean>) =>
-    Effect.map(transport, ({ available }) => {
-      const ops = Object.fromEntries(Object.keys(operations).map((name) => [name, available]));
+
+  /** The composer version the caller's frames would be forwarded to; target errors surface like forwarded ones. */
+  const targetedComposerVersion = (metadata: HostApiInvocationMetadata) =>
+    Effect.flatMap(resolveConnectionId(bridge, metadata), composerVersionOf);
+
+  /**
+   * Capabilities describe the connection this caller's ops would actually
+   * reach: a client still on `t3.client/composer@1.0.x` reports the 1.1.0-only
+   * operations as unsupported instead of promising methods its dispatch would
+   * silently degrade. `v11Only` marks each operation that requires the 1.1.0
+   * surface; everything else is the 1.0.0 method set.
+   */
+  const composerCapabilities = (
+    adapter: string,
+    v11Only: Record<string, boolean>,
+    metadata: HostApiInvocationMetadata,
+  ) =>
+    Effect.gen(function* () {
+      const unavailable = (detail: string) => ({
+        adapter,
+        transport: "unavailable",
+        detail,
+        operations: Object.fromEntries(Object.keys(v11Only).map((name) => [name, false])),
+      });
+      const outcome = yield* Effect.result(targetedComposerVersion(metadata));
+      if (!Result.isSuccess(outcome)) {
+        return unavailable(`${outcome.failure.code}: ${outcome.failure.detail}`) satisfies Json;
+      }
+      const version = outcome.success;
+      if (version === undefined) {
+        return unavailable(
+          "Composer draft state is client-local; no connected client hosts the composer provider.",
+        ) satisfies Json;
+      }
+      const v11 = satisfiesSemverRange(version, CLIENT_COMPOSER_V11_RANGE);
       return {
         adapter,
-        transport: available ? "client" : "unavailable",
-        detail: available
+        transport: "client",
+        detail: v11
           ? null
-          : "Composer draft state is client-local; no connected client hosts the composer provider.",
-        operations: ops,
+          : `Connected client declares ${CLIENT_COMPOSER}@${version}; 1.1.0-only operations report false.`,
+        operations: Object.fromEntries(
+          Object.entries(v11Only).map(([name, required]) => [name, !required || v11]),
+        ),
       } satisfies Json;
     });
 
@@ -124,6 +210,7 @@ export function createComposerApiProviders(
     context: ViewContext,
     signal: AbortSignal,
     metadata: HostApiInvocationMetadata,
+    connectionId?: string,
   ) =>
     Effect.runPromise(
       invokeClient(bridge, {
@@ -134,9 +221,36 @@ export function createComposerApiProviders(
         metadata,
         signal,
         timeoutMs: COMPOSER_TIMEOUT_MS,
+        ...(connectionId !== undefined ? { connectionId } : {}),
       }),
       { signal },
     );
+
+  /**
+   * Resolves the caller's target connection and refuses a 1.1.0-only op with a
+   * named error before any mutation when that connection still declares a
+   * 1.0.x composer. Returns the resolved connectionId so the gate and the
+   * forward that follows cannot split across two different connections.
+   */
+  const requireComposerV11 = (
+    operation: string,
+    metadata: HostApiInvocationMetadata,
+  ): Effect.Effect<string, ExtensionOperationError> =>
+    Effect.gen(function* () {
+      const resolved = yield* Effect.result(resolveConnectionId(bridge, metadata));
+      if (!Result.isSuccess(resolved)) {
+        return yield* Effect.fail(clientFailure(operation)(resolved.failure));
+      }
+      const connectionId = resolved.success;
+      const version = yield* composerVersionOf(connectionId);
+      if (version !== undefined && !satisfiesSemverRange(version, CLIENT_COMPOSER_V11_RANGE)) {
+        return yield* failure(
+          operation,
+          `client-provider-unsupported-version: The targeted client declares ${CLIENT_COMPOSER}@${version}, which does not satisfy ${CLIENT_COMPOSER_V11_RANGE}.`,
+        );
+      }
+      return connectionId;
+    });
 
   const composerInvoke = Effect.fn("ComposerApi.invoke")(function* (
     method: string,
@@ -148,10 +262,16 @@ export function createComposerApiProviders(
     const scope = yield* resolve(context);
     if (method === "getCapabilities") {
       yield* resolve(scope.context);
-      return yield* composerCapabilities("host.composer", {
-        insertContext: true,
-        getDraftState: true,
-      });
+      return yield* composerCapabilities(
+        "host.composer",
+        {
+          insertContext: false,
+          getDraftState: false,
+          insertMention: true,
+          insertTerminalContext: true,
+        },
+        metadata,
+      );
     }
     const operation = `composer.context.${method}`;
     if (method === "insertContext") {
@@ -185,6 +305,55 @@ export function createComposerApiProviders(
         catch: clientFailure(operation),
       });
     }
+    if (method === "insertMention") {
+      const safe = yield* Effect.try({
+        try: () => mentionInput(input),
+        catch: invalid(operation),
+      });
+      const threadId = yield* scopedThread(operation, safe.threadId, scope.context);
+      yield* resolve(scope.context);
+      const connectionId = yield* requireComposerV11(operation, metadata);
+      return yield* Effect.tryPromise({
+        try: () =>
+          forward(
+            "insertMention",
+            { threadId, paths: safe.paths } as Json,
+            scope.context,
+            signal,
+            metadata,
+            connectionId,
+          ),
+        catch: clientFailure(operation),
+      });
+    }
+    if (method === "insertTerminalContext") {
+      const safe = yield* Effect.try({
+        try: () => terminalContextInput(input),
+        catch: invalid(operation),
+      });
+      const threadId = yield* scopedThread(operation, safe.threadId, scope.context);
+      yield* resolve(scope.context);
+      const connectionId = yield* requireComposerV11(operation, metadata);
+      return yield* Effect.tryPromise({
+        try: () =>
+          forward(
+            "insertTerminalContext",
+            {
+              threadId,
+              terminalId: safe.terminalId,
+              terminalLabel: safe.terminalLabel,
+              lineStart: safe.lineStart,
+              lineEnd: safe.lineEnd,
+              text: safe.text,
+            } as Json,
+            scope.context,
+            signal,
+            metadata,
+            connectionId,
+          ),
+        catch: clientFailure(operation),
+      });
+    }
     return yield* failure("composer.context", "Composer context API method is unavailable.");
   });
 
@@ -198,7 +367,17 @@ export function createComposerApiProviders(
     const scope = yield* resolve(context);
     if (method === "getCapabilities") {
       yield* resolve(scope.context);
-      return yield* composerCapabilities("host.messages", { attachAnnotation: true });
+      return yield* composerCapabilities(
+        "host.messages",
+        {
+          // The file variant is the 1.0.0 surface; the diff variant is gated
+          // at attachAnnotation below.
+          attachAnnotation: false,
+          listAnnotations: true,
+          removeAnnotation: true,
+        },
+        metadata,
+      );
     }
     const operation = `messages.enrichment.${method}`;
     if (method === "attachAnnotation") {
@@ -208,6 +387,12 @@ export function createComposerApiProviders(
       });
       const threadId = yield* scopedThread(operation, safe.threadId, scope.context);
       yield* resolve(scope.context);
+      // Only the diff variant rides the 1.1.0 surface; the 1.0.0 file comment
+      // keeps flowing to old clients unchanged.
+      const connectionId =
+        "kind" in safe.annotation && safe.annotation.kind === "diff"
+          ? yield* requireComposerV11(operation, metadata)
+          : undefined;
       return yield* Effect.tryPromise({
         try: () =>
           forward(
@@ -216,6 +401,49 @@ export function createComposerApiProviders(
             scope.context,
             signal,
             metadata,
+            connectionId,
+          ),
+        catch: clientFailure(operation),
+      });
+    }
+    if (method === "listAnnotations") {
+      const safe = yield* Effect.try({
+        try: () => draftInput(input),
+        catch: invalid(operation),
+      });
+      const threadId = yield* scopedThread(operation, safe.threadId, scope.context);
+      yield* resolve(scope.context);
+      const connectionId = yield* requireComposerV11(operation, metadata);
+      return yield* Effect.tryPromise({
+        try: () =>
+          forward(
+            "listAnnotations",
+            { threadId } as Json,
+            scope.context,
+            signal,
+            metadata,
+            connectionId,
+          ),
+        catch: clientFailure(operation),
+      });
+    }
+    if (method === "removeAnnotation") {
+      const safe = yield* Effect.try({
+        try: () => removeAnnotationInput(input),
+        catch: invalid(operation),
+      });
+      const threadId = yield* scopedThread(operation, safe.threadId, scope.context);
+      yield* resolve(scope.context);
+      const connectionId = yield* requireComposerV11(operation, metadata);
+      return yield* Effect.tryPromise({
+        try: () =>
+          forward(
+            "removeAnnotation",
+            { threadId, annotationId: safe.annotationId } as Json,
+            scope.context,
+            signal,
+            metadata,
+            connectionId,
           ),
         catch: clientFailure(operation),
       });

@@ -18,7 +18,8 @@ import {
   persistClientSettingsPatch,
 } from "../hooks/useSettings";
 import { toastManager } from "../components/ui/toast";
-import { useComposerDraftStore } from "../composerDraftStore";
+import { formatInlineContextReference } from "../lib/composerContextReferences";
+import { useComposerDraftStore, type ComposerContextInsertionHandler } from "../composerDraftStore";
 import {
   createClientProviders,
   createComposerClientProvider,
@@ -804,6 +805,444 @@ describe("composer provider", () => {
       .getComposerDraft(scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a")));
     const bare = next?.reviewComments.find((comment) => comment.filePath === "src/e.ts");
     expect(bare?.diff).toBe("");
+  });
+
+  it("insertMention appends byte-exact file links with a leading boundary", () => {
+    const provider = createComposerClientProvider(makeDeps(["t3.composer/write"]));
+    const ref = scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a"));
+    const readPrompt = () => useComposerDraftStore.getState().getComposerDraft(ref)?.prompt ?? "";
+    // Empty draft: no leading boundary.
+    provider.invoke(invokeCall("insertMention", { threadId: "thread-a", paths: ["src/a.ts"] }));
+    expect(readPrompt()).toBe("[a.ts](src/a.ts) ");
+    // Non-whitespace tail: exactly one boundary space. The link bytes match
+    // serializeComposerFileLink, including URL-escaped spaces and parens.
+    provider.invoke(
+      invokeCall("insertMention", { threadId: "thread-a", paths: ["src/a b(c).ts"] }),
+    );
+    expect(readPrompt()).toBe("[a.ts](src/a.ts) [a b(c).ts](src/a%20b%28c%29.ts) ");
+    // Whitespace tail: no double space.
+    provider.invoke(invokeCall("insertMention", { threadId: "thread-a", paths: ["z.ts"] }));
+    expect(readPrompt()).toBe("[a.ts](src/a.ts) [a b(c).ts](src/a%20b%28c%29.ts) [z.ts](z.ts) ");
+    // Multiple paths in one call append in order, boundary only where needed.
+    useComposerDraftStore.getState().clearDraftThread(ref);
+    provider.invoke(
+      invokeCall("insertMention", { threadId: "thread-a", paths: ["one.ts", "two.ts"] }),
+    );
+    expect(readPrompt()).toBe("[one.ts](one.ts) [two.ts](two.ts) ");
+  });
+
+  it("insertMention rejects bad shapes, foreign threads, and missing grants", () => {
+    const provider = createComposerClientProvider(makeDeps(["t3.composer/write"]));
+    expectDenied(
+      () => provider.invoke(invokeCall("insertMention", { threadId: "thread-a", paths: [] })),
+      "provider-rejected",
+    );
+    expectDenied(
+      () =>
+        provider.invoke(
+          invokeCall("insertMention", { threadId: "thread-a", paths: ["a".repeat(513)] }),
+        ),
+      "provider-rejected",
+    );
+    expectDenied(() =>
+      provider.invoke(invokeCall("insertMention", { threadId: "thread-b", paths: ["a.ts"] })),
+    );
+    const ungranted = createComposerClientProvider(makeDeps([]));
+    expectDenied(() =>
+      ungranted.invoke(invokeCall("insertMention", { threadId: "thread-a", paths: ["a.ts"] })),
+    );
+  });
+
+  it("insertTerminalContext normalizes like the native selection path and lands unmounted", () => {
+    const provider = createComposerClientProvider(makeDeps(["t3.composer/write"]));
+    const ref = scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a"));
+    const result = provider.invoke(
+      invokeCall("insertTerminalContext", {
+        threadId: "thread-a",
+        terminalId: " term-1 ",
+        terminalLabel: "zsh",
+        lineStart: 3.7,
+        lineEnd: 1.2,
+        text: "\r\n$ npm test\r\nok\r\n\n",
+      }),
+    ) as { inserted: boolean; target: string };
+    expect(result.inserted).toBe(true);
+    expect(result.target).toBe(`${ENV}:thread-a`);
+    const draft = useComposerDraftStore.getState().getComposerDraft(ref)!;
+    // Same normalization as normalizeTerminalContextSelection: CRLF folded,
+    // edges stripped, ids trimmed, lines clamped (lineEnd floors above start).
+    expect(draft.terminalContexts).toHaveLength(1);
+    expect(draft.terminalContexts[0]).toMatchObject({
+      terminalId: "term-1",
+      terminalLabel: "zsh",
+      lineStart: 3,
+      lineEnd: 3,
+      text: "$ npm test\nok",
+    });
+    // No mounted composer: the store itself appends the inline chip reference.
+    expect(draft.prompt).toContain("t3-context://v1/terminal/");
+    expect(draft.prompt).toContain("zsh line 3");
+  });
+
+  it("insertTerminalContext consults a mounted composer's insertion handler", () => {
+    const provider = createComposerClientProvider(makeDeps(["t3.composer/write"]));
+    const ref = scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a"));
+    const handler: ReturnType<typeof vi.fn> & ComposerContextInsertionHandler = vi.fn(() => true);
+    const unregister = useComposerDraftStore.getState().setContextInsertionHandler(ref, handler);
+    try {
+      const result = provider.invoke(
+        invokeCall("insertTerminalContext", {
+          threadId: "thread-a",
+          terminalId: "term-2",
+          terminalLabel: "bash",
+          lineStart: 10,
+          lineEnd: 12,
+          text: "echo hi",
+        }),
+      ) as { inserted: boolean };
+      expect(result.inserted).toBe(true);
+      // The mounted path is the handler the real ChatComposer registers —
+      // the store asked it to place the reference instead of appending.
+      expect(handler).toHaveBeenCalledOnce();
+      const references = handler.mock.calls[0]![0] as { kind: string }[];
+      expect(references).toHaveLength(1);
+      expect(references[0]!.kind).toBe("terminal");
+      const draft = useComposerDraftStore.getState().getComposerDraft(ref)!;
+      expect(draft.terminalContexts).toHaveLength(1);
+      // Handler reported success, so the store did not append its own copy.
+      expect(draft.prompt).not.toContain("t3-context://v1/terminal/");
+    } finally {
+      unregister?.();
+    }
+  });
+
+  it("batched mention+terminal-context inserts survive the mounted stale-ref window", () => {
+    const provider = createComposerClientProvider(makeDeps(["t3.composer/write"]));
+    const ref = scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a"));
+    const store = useComposerDraftStore.getState();
+    // The mounted composer's promptRef and the draft store agree at rest.
+    store.setPrompt(ref, "original");
+    const promptRef: { current: string } = { current: "original" };
+
+    // Mirrors ChatComposer's insertion seam: the store dispatches context to
+    // the registered handler, whose insertComposerText body syncs promptRef
+    // from the store draft before building the next prompt — a passive effect
+    // alone cannot cover a store-only write that has not flushed yet.
+    const handler: ComposerContextInsertionHandler = (references) => {
+      const draftPrompt = useComposerDraftStore.getState().getComposerDraft(ref)?.prompt;
+      if (draftPrompt !== undefined && draftPrompt !== promptRef.current) {
+        promptRef.current = draftPrompt;
+      }
+      const prompt = promptRef.current;
+      const boundary = prompt.length > 0 && !/\s/.test(prompt[prompt.length - 1] ?? "") ? " " : "";
+      const next = `${prompt}${boundary}${references.map(formatInlineContextReference).join(" ")} `;
+      promptRef.current = next;
+      store.setPrompt(ref, next);
+      return true;
+    };
+    const unregister = store.setContextInsertionHandler(ref, handler);
+    try {
+      // Both ops arrive in one batch, before any effect flushes the ref.
+      const mention = provider.invoke(
+        invokeCall("insertMention", { threadId: "thread-a", paths: ["keep.ts"] }),
+      ) as { inserted: number };
+      const terminal = provider.invoke(
+        invokeCall("insertTerminalContext", {
+          threadId: "thread-a",
+          terminalId: "term-1",
+          terminalLabel: "zsh",
+          lineStart: 1,
+          lineEnd: 2,
+          text: "npm test",
+        }),
+      ) as { inserted: boolean };
+      expect(mention.inserted).toBe(1);
+      expect(terminal.inserted).toBe(true);
+      const draft = useComposerDraftStore.getState().getComposerDraft(ref)!;
+      expect(draft.terminalContexts).toHaveLength(1);
+      // Both writes survive in order: the mention the first op wrote through
+      // the store, and the terminal chip the handler appended to it.
+      expect(draft.prompt.indexOf("[keep.ts](keep.ts)")).toBeGreaterThanOrEqual(0);
+      const terminalAt = draft.prompt.indexOf("t3-context://v1/terminal/");
+      expect(terminalAt).toBeGreaterThanOrEqual(0);
+      expect(terminalAt).toBeGreaterThan(draft.prompt.indexOf("[keep.ts](keep.ts)"));
+      expect(draft.prompt).toContain("zsh lines 1-2");
+    } finally {
+      unregister?.();
+    }
+  });
+
+  it("insertTerminalContext reports the store's dedupe key as a duplicate", () => {
+    const provider = createComposerClientProvider(makeDeps(["t3.composer/write"]));
+    const base = {
+      threadId: "thread-a",
+      terminalId: "term-3",
+      terminalLabel: "zsh",
+      lineStart: 5,
+      lineEnd: 6,
+    };
+    const first = provider.invoke(
+      invokeCall("insertTerminalContext", { ...base, text: "ls -la" }),
+    ) as { inserted: boolean; reason?: string };
+    expect(first.inserted).toBe(true);
+    const second = provider.invoke(
+      invokeCall("insertTerminalContext", { ...base, text: "different text, same range" }),
+    ) as { inserted: boolean; reason?: string };
+    expect(second).toMatchObject({ inserted: false, reason: "duplicate" });
+    const draft = useComposerDraftStore
+      .getState()
+      .getComposerDraft(scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a")))!;
+    expect(draft.terminalContexts).toHaveLength(1);
+  });
+
+  it("insertTerminalContext rejects empty-after-normalization fields and bad ranges", () => {
+    const provider = createComposerClientProvider(makeDeps(["t3.composer/write"]));
+    const base = {
+      threadId: "thread-a",
+      terminalId: "t",
+      terminalLabel: "l",
+      lineStart: 1,
+      lineEnd: 1,
+    };
+    expectDenied(
+      () => provider.invoke(invokeCall("insertTerminalContext", { ...base, text: "\n\n\n" })),
+      "provider-rejected",
+    );
+    expectDenied(
+      () =>
+        provider.invoke(
+          invokeCall("insertTerminalContext", { ...base, text: "x", terminalId: "  " }),
+        ),
+      "provider-rejected",
+    );
+    expectDenied(
+      () =>
+        provider.invoke(
+          invokeCall("insertTerminalContext", { ...base, text: "x", lineStart: "3" }),
+        ),
+      "provider-rejected",
+    );
+    expectDenied(() =>
+      provider.invoke(
+        invokeCall("insertTerminalContext", { ...base, text: "x", threadId: "thread-b" }),
+      ),
+    );
+  });
+
+  it("attachAnnotation diff kind stores a buildDiffReviewComment-shaped record", () => {
+    const provider = createComposerClientProvider(makeDeps(["t3.messages/write"]));
+    const result = provider.invoke(
+      invokeCall("attachAnnotation", {
+        threadId: "thread-a",
+        annotation: {
+          kind: "diff",
+          filePath: "src/app.ts",
+          sectionId: "diff:src/app.ts",
+          sectionTitle: "Changes",
+          rangeLabel: "+12",
+          diff: "@@ -10,2 +10,2 @@\n context\n-old\n+new",
+          selection: { start: 12, side: "additions", end: 12, endSide: "additions" },
+          body: "  this breaks on windows",
+        },
+      }),
+    ) as { annotationId: string };
+    const draft = useComposerDraftStore
+      .getState()
+      .getComposerDraft(scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a")))!;
+    const entry = draft.reviewComments.find((comment) => comment.id === result.annotationId)!;
+    expect(entry).toMatchObject({
+      sectionId: "diff:src/app.ts",
+      sectionTitle: "Changes",
+      filePath: "src/app.ts",
+      startIndex: 0,
+      endIndex: 0,
+      rangeLabel: "+12",
+      text: "this breaks on windows",
+      diff: "@@ -10,2 +10,2 @@\n context\n-old\n+new",
+      fenceLanguage: "diff",
+      selection: { start: 12, side: "additions", end: 12, endSide: "additions" },
+    });
+    // The diff reference rides inline so the comment serializes on send.
+    expect(draft.prompt).toContain("t3-context:");
+  });
+
+  it("attachAnnotation diff kind rejects malformed selections and unknown kinds", () => {
+    const provider = createComposerClientProvider(makeDeps(["t3.messages/write"]));
+    const diff = {
+      kind: "diff",
+      filePath: "a.ts",
+      sectionId: "s",
+      sectionTitle: "t",
+      rangeLabel: "+1",
+      diff: "+new",
+      body: "x",
+    };
+    expectDenied(
+      () =>
+        provider.invoke(
+          invokeCall("attachAnnotation", {
+            threadId: "thread-a",
+            annotation: {
+              ...diff,
+              selection: { start: 1, side: "up", end: 1, endSide: "up" },
+            },
+          }),
+        ),
+      "provider-rejected",
+    );
+    expectDenied(
+      () =>
+        provider.invoke(
+          invokeCall("attachAnnotation", {
+            threadId: "thread-a",
+            annotation: {
+              ...diff,
+              selection: { start: 0, side: "additions", end: 1, endSide: "additions" },
+            },
+          }),
+        ),
+      "provider-rejected",
+    );
+    expectDenied(
+      () =>
+        provider.invoke(
+          invokeCall("attachAnnotation", {
+            threadId: "thread-a",
+            annotation: { ...diff, kind: "span" },
+          }),
+        ),
+      "provider-rejected",
+    );
+  });
+
+  it("listAnnotations returns only the caller's own annotations, kind-tagged", () => {
+    const provider = createComposerClientProvider(
+      makeDeps(["t3.composer/write", "t3.messages/write"]),
+    );
+    const ref = scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a"));
+    const file = provider.invoke(
+      invokeCall("attachAnnotation", {
+        threadId: "thread-a",
+        annotation: { filePath: "src/f.ts", startLine: 2, endLine: 2, body: "file note" },
+      }),
+    ) as { annotationId: string };
+    const diff = provider.invoke(
+      invokeCall("attachAnnotation", {
+        threadId: "thread-a",
+        annotation: {
+          kind: "diff",
+          filePath: "src/g.ts",
+          sectionId: "diff:src/g.ts",
+          sectionTitle: "Changes",
+          rangeLabel: "+1",
+          diff: "+new",
+          selection: { start: 1, side: "additions", end: 1, endSide: "additions" },
+          body: "diff note",
+        },
+      }),
+    ) as { annotationId: string };
+    // Foreign records: another installation's annotation and an insertContext ref.
+    useComposerDraftStore.getState().addReviewComment(ref, {
+      id: "annotation:ext.b:foreign",
+      sectionId: "file:other.ts",
+      sectionTitle: "File comment",
+      filePath: "other.ts",
+      startIndex: 0,
+      endIndex: 0,
+      rangeLabel: "L1",
+      text: "not yours",
+      diff: "",
+    });
+    provider.invoke(
+      invokeCall("insertContext", { threadId: "thread-a", refs: [{ path: "src/h.ts" }] }),
+    );
+    const listed = provider.invoke(invokeCall("listAnnotations", { threadId: "thread-a" })) as {
+      annotations: { annotationId: string; kind: string; filePath: string }[];
+    };
+    expect(listed.annotations.map((entry) => entry.annotationId)).toEqual([
+      file.annotationId,
+      diff.annotationId,
+    ]);
+    expect(listed.annotations[0]).toMatchObject({ kind: "file", filePath: "src/f.ts" });
+    expect(listed.annotations[1]).toMatchObject({ kind: "diff", filePath: "src/g.ts" });
+    // A different installation sees none of ext.a's annotations.
+    const other = installation(["t3.messages/write"], { id: "ext.b", contentHash: "hash-b" });
+    const foreign = createComposerClientProvider({
+      environmentId: EnvironmentId.make(ENV),
+      client: "web",
+      emit: vi.fn(),
+      installations: () => [other],
+    });
+    const foreignListed = foreign.invoke(
+      invokeCall(
+        "listAnnotations",
+        { threadId: "thread-a" },
+        {
+          caller: caller({ installationId: "ext.b", contentHash: "hash-b" }),
+        },
+      ),
+    ) as { annotations: { annotationId: string }[] };
+    // ext.b sees exactly its own seeded annotation — none of ext.a's.
+    expect(foreignListed.annotations.map((entry) => entry.annotationId)).toEqual([
+      "annotation:ext.b:foreign",
+    ]);
+    // Grant enforcement and thread scoping.
+    expectDenied(() =>
+      createComposerClientProvider(makeDeps([])).invoke(
+        invokeCall("listAnnotations", { threadId: "thread-a" }),
+      ),
+    );
+    expectDenied(() => provider.invoke(invokeCall("listAnnotations", { threadId: "thread-b" })));
+  });
+
+  it("removeAnnotation removes only the caller's own annotation and its reference", () => {
+    const provider = createComposerClientProvider(makeDeps(["t3.messages/write"]));
+    const ref = scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a"));
+    const own = provider.invoke(
+      invokeCall("attachAnnotation", {
+        threadId: "thread-a",
+        annotation: { filePath: "src/r.ts", startLine: 1, endLine: 1, body: "remove me" },
+      }),
+    ) as { annotationId: string };
+    const draftWithReference = useComposerDraftStore.getState().getComposerDraft(ref)!;
+    expect(draftWithReference.reviewComments).toHaveLength(1);
+    expect(draftWithReference.prompt).toContain("t3-context:");
+    // A foreign id is a named denial, not a silent no-op.
+    expectDenied(() =>
+      provider.invoke(
+        invokeCall("removeAnnotation", {
+          threadId: "thread-a",
+          annotationId: "annotation:ext.b:x",
+        }),
+      ),
+    );
+    // The caller's ext-context refs are not annotations either.
+    expectDenied(() =>
+      provider.invoke(
+        invokeCall("removeAnnotation", {
+          threadId: "thread-a",
+          annotationId: `ext-context:${INSTALL}:x`,
+        }),
+      ),
+    );
+    const removed = provider.invoke(
+      invokeCall("removeAnnotation", { threadId: "thread-a", annotationId: own.annotationId }),
+    ) as { removed: boolean };
+    expect(removed.removed).toBe(true);
+    const after = useComposerDraftStore.getState().getComposerDraft(ref);
+    expect(after?.reviewComments ?? []).toHaveLength(0);
+    // The inline reference went with the record.
+    expect(after?.prompt ?? "").not.toContain("t3-context:");
+    // Removing an already-gone own id stays honest and idempotent.
+    const again = provider.invoke(
+      invokeCall("removeAnnotation", { threadId: "thread-a", annotationId: own.annotationId }),
+    ) as { removed: boolean };
+    expect(again.removed).toBe(false);
+    expectDenied(() =>
+      provider.invoke(
+        invokeCall("removeAnnotation", { threadId: "thread-b", annotationId: own.annotationId }),
+      ),
+    );
   });
 });
 

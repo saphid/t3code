@@ -516,9 +516,68 @@ const composerRefSchema = {
   },
 } as const;
 
+// Both annotation variants the public t3.messages/enrichment@1.1.0 accepts;
+// `kind` absent is the 1.0.0 file comment, `kind: "diff"` the review comment.
+const composerAnnotationSchema = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["filePath", "startLine", "endLine", "body"],
+      properties: {
+        filePath: { type: "string", minLength: 1, maxLength: 512 },
+        startLine: { type: "integer", minimum: 1, maximum: 1_000_000 },
+        endLine: { type: "integer", minimum: 1, maximum: 1_000_000 },
+        body: { type: "string", minLength: 1, maxLength: 4096 },
+        excerpt: { type: "string", maxLength: 4096 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "kind",
+        "filePath",
+        "sectionId",
+        "sectionTitle",
+        "rangeLabel",
+        "diff",
+        "selection",
+        "body",
+      ],
+      properties: {
+        kind: { const: "diff" },
+        filePath: { type: "string", minLength: 1, maxLength: 512 },
+        sectionId: { type: "string", minLength: 1, maxLength: 512 },
+        sectionTitle: { type: "string", minLength: 1, maxLength: 256 },
+        rangeLabel: { type: "string", minLength: 1, maxLength: 128 },
+        diff: { type: "string", minLength: 1, maxLength: 4096 },
+        selection: {
+          type: "object",
+          additionalProperties: false,
+          required: ["start", "side", "end", "endSide"],
+          properties: {
+            start: { type: "integer", minimum: 1, maximum: 1_000_000 },
+            side: { enum: ["additions", "deletions"] },
+            end: { type: "integer", minimum: 1, maximum: 1_000_000 },
+            endSide: { enum: ["additions", "deletions"] },
+          },
+        },
+        startIndex: { type: "integer", minimum: 0, maximum: 1_000_000 },
+        endIndex: { type: "integer", minimum: 0, maximum: 1_000_000 },
+        body: { type: "string", minLength: 1, maxLength: 4096 },
+      },
+    },
+  ],
+} as const;
+
+const composerThreadIdInput = {
+  threadId: { type: "string", minLength: 1, maxLength: 128 },
+} as const;
+
 export const CLIENT_COMPOSER_API = validateApiDefinition({
   id: "t3.client/composer",
-  version: "1.0.0",
+  version: "1.1.0",
   methods: [
     {
       name: "insertContext",
@@ -570,19 +629,8 @@ export const CLIENT_COMPOSER_API = validateApiDefinition({
       requiredGrants: [],
       inputSchema: withTarget(
         {
-          threadId: { type: "string", minLength: 1, maxLength: 128 },
-          annotation: {
-            type: "object",
-            additionalProperties: false,
-            required: ["filePath", "startLine", "endLine", "body"],
-            properties: {
-              filePath: { type: "string", minLength: 1, maxLength: 512 },
-              startLine: { type: "integer", minimum: 1, maximum: 1_000_000 },
-              endLine: { type: "integer", minimum: 1, maximum: 1_000_000 },
-              body: { type: "string", minLength: 1, maxLength: 4096 },
-              excerpt: { type: "string", maxLength: 4096 },
-            },
-          },
+          ...composerThreadIdInput,
+          annotation: composerAnnotationSchema,
         },
         ["threadId", "annotation"],
       ),
@@ -591,6 +639,108 @@ export const CLIENT_COMPOSER_API = validateApiDefinition({
         additionalProperties: false,
         required: ["annotationId"],
         properties: { annotationId: { type: "string", minLength: 1, maxLength: 256 } },
+      },
+    },
+    {
+      name: "insertMention",
+      effect: "write",
+      requiredGrants: [],
+      inputSchema: withTarget(
+        {
+          ...composerThreadIdInput,
+          paths: {
+            type: "array",
+            minItems: 1,
+            maxItems: 8,
+            items: { type: "string", minLength: 1, maxLength: 512 },
+          },
+        },
+        ["threadId", "paths"],
+      ),
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["inserted", "target"],
+        properties: {
+          inserted: { type: "integer", minimum: 0, maximum: 8 },
+          target: { type: "string", minLength: 1, maxLength: 256 },
+        },
+      },
+    },
+    {
+      name: "insertTerminalContext",
+      effect: "write",
+      requiredGrants: [],
+      inputSchema: withTarget(
+        {
+          ...composerThreadIdInput,
+          terminalId: { type: "string", minLength: 1, maxLength: 128 },
+          terminalLabel: { type: "string", minLength: 1, maxLength: 128 },
+          // 10,000 chars keeps the worst-case escaped frame inside the 64 KiB
+          // broker envelope; matches the public catalogue bound.
+          lineStart: { type: "integer", minimum: 1, maximum: 1_000_000 },
+          lineEnd: { type: "integer", minimum: 1, maximum: 1_000_000 },
+          text: { type: "string", minLength: 1, maxLength: 10000 },
+        },
+        ["threadId", "terminalId", "terminalLabel", "lineStart", "lineEnd", "text"],
+      ),
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["inserted", "target"],
+        properties: {
+          inserted: { type: "boolean" },
+          target: { type: "string", minLength: 1, maxLength: 256 },
+          reason: { type: "string", maxLength: 64 },
+        },
+      },
+    },
+    {
+      name: "listAnnotations",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: withTarget({ ...composerThreadIdInput }, ["threadId"]),
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["annotations"],
+        properties: {
+          annotations: {
+            type: "array",
+            // 8 entries at field maxima stay inside the 64 KiB frame envelope.
+            maxItems: 8,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["annotationId", "kind", "filePath", "rangeLabel", "sectionTitle"],
+              properties: {
+                annotationId: { type: "string", minLength: 1, maxLength: 256 },
+                kind: { enum: ["file", "diff"] },
+                filePath: { type: "string", minLength: 1, maxLength: 512 },
+                rangeLabel: { type: "string", maxLength: 128 },
+                sectionTitle: { type: "string", maxLength: 256 },
+              },
+            },
+          },
+        },
+      },
+    },
+    {
+      name: "removeAnnotation",
+      effect: "write",
+      requiredGrants: [],
+      inputSchema: withTarget(
+        {
+          ...composerThreadIdInput,
+          annotationId: { type: "string", minLength: 1, maxLength: 256 },
+        },
+        ["threadId", "annotationId"],
+      ),
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["removed"],
+        properties: { removed: { type: "boolean" } },
       },
     },
   ],
@@ -635,3 +785,13 @@ export const CLIENT_PROVIDER_APIS: ReadonlyMap<string, ApiDefinition> = new Map(
  * a version inside the range for the area it declares.
  */
 export const CLIENT_PROVIDER_SUPPORTED_RANGE = "^1.0.0";
+
+/**
+ * The composer range that carries the 1.1.0 operations: `insertMention`,
+ * `insertTerminalContext`, `listAnnotations`, `removeAnnotation`, and the
+ * `kind: "diff"` annotation variant. A connection still declaring a 1.0.x
+ * composer keeps exactly its 1.0.0 surface — `^1.0.0` registration accepts it,
+ * so adapters must gate these ops on the targeted connection satisfying this
+ * range instead of trusting registration alone.
+ */
+export const CLIENT_COMPOSER_V11_RANGE = "^1.1.0";
