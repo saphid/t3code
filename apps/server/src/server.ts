@@ -33,6 +33,8 @@ import {
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
 import { fixPath } from "./os-jank.ts";
 import { websocketRpcRouteLayer } from "./ws.ts";
+import { browserFrameProxyRouteLayer } from "./browserFrames/BrowserFrameProxy.ts";
+import { layer as BrowserFrameLeasesLayer } from "./browserFrames/BrowserFrameLeases.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
 import { pullRequestHttpApiLayer } from "./pullRequest/http.ts";
@@ -593,6 +595,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     otlpTracesProxyRouteLayer,
     assetRouteLayer,
     attachmentUploadRouteLayer,
+    browserFrameProxyRouteLayer,
     deviceHubProxyRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
@@ -603,6 +606,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(PullRequestServiceLive),
   Layer.provide(PreviewAutomationBroker.layer),
+  Layer.provide(BrowserFrameLeasesLayer),
   Layer.provide(
     EnvironmentExtensions.layer.pipe(
       Layer.provide([
@@ -823,6 +827,13 @@ const makeServerLayer = Layer.unwrap(
     );
 
     return serverApplicationLayer.pipe(
+      // Route-handler requirements (`HttpRouter.Request` markers) surface
+      // through `serve` as ambient requirements, so the broker and lease
+      // authority must be ambient services — same mechanism that feeds
+      // EnvironmentAuth and HttpClient to route handlers. One build shares a
+      // memo map, so the instances here are the same ones the makeRoutesLayer
+      // provides hand to EnvironmentExtensions and the ws layer.
+      Layer.provideMerge(Layer.mergeAll(PreviewAutomationBroker.layer, BrowserFrameLeasesLayer)),
       Layer.provideMerge(runtimeServicesLive),
       Layer.provide(activationLayer),
       Layer.provideMerge(serverRelayBrokerTracingLayer),

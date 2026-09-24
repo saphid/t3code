@@ -17,6 +17,7 @@ import {
   type ExtensionManageInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import type { HostApiRootAuthority } from "@t3tools/extension-runtime";
 import { SessionStore } from "../auth/SessionStore.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
@@ -33,11 +34,18 @@ export function makeOperations(
     session: EnvironmentSessionPrincipalShape,
     scope: AuthEnvironmentScope,
     writeScope?: AuthEnvironmentScope,
+    /**
+     * The client runtime instance id echoed from the request's
+     * `x-t3-client-instance` header — resolves to that client's live ws
+     * connection so HTTP mints bind to the correct root connection.
+     */
+    clientInstanceId?: string,
   ) => Effect.Effect<HostApiRootAuthority, ExtensionOperationError>,
 ) {
   return {
     invokeApi: Effect.fn("environment.extensions.invokeApi")(function* (
       input: ExtensionApiInvokeInput,
+      clientInstanceId?: string,
     ) {
       // Domain scopes decide write capability: an ordinary paired session with
       // orchestration:operate gets a write-capable root without any
@@ -49,7 +57,12 @@ export function makeOperations(
         ? AuthOrchestrationOperateScope
         : AuthOrchestrationReadScope;
       const session = yield* requireEnvironmentScope(requiredScope);
-      const root = yield* makeAuthority(session, requiredScope, AuthOrchestrationOperateScope);
+      const root = yield* makeAuthority(
+        session,
+        requiredScope,
+        AuthOrchestrationOperateScope,
+        clientInstanceId,
+      );
       return { result: yield* extensions.invokeApi(input, root) };
     }),
     discoverApis: Effect.fn("environment.extensions.discoverApis")(function* (
@@ -122,13 +135,51 @@ export const extensionsHttpApiLayer = HttpApiBuilder.group(
     const sessions = yield* SessionStore;
     const environment = yield* ServerEnvironment;
     const environmentId = yield* environment.getEnvironmentId;
-    const operations = makeOperations(yield* EnvironmentExtensions, (session, scope, writeScope) =>
-      makeSessionApiAuthority(session, environmentId, scope, sessions, writeScope),
+    const operations = makeOperations(
+      yield* EnvironmentExtensions,
+      (session, scope, writeScope, clientInstanceId) =>
+        // HTTP requests carry no transport connection of their own, but the
+        // client echoes the same instance id it announced on its ws upgrade.
+        // Resolving it binds the authority to THAT client's live socket —
+        // never a session-global newest. An absent header keeps the
+        // documented connectionless mode (pure-HTTP callers depend on it),
+        // but a supplied instance id that resolves to nothing is a stale
+        // identity: downgrading it silently would mint records no root
+        // connection revocation could ever reach, so it fails by name.
+        Effect.gen(function* () {
+          if (clientInstanceId === undefined) {
+            return yield* makeSessionApiAuthority(
+              session,
+              environmentId,
+              scope,
+              sessions,
+              writeScope,
+            );
+          }
+          const connectionId = yield* sessions.connectionIdForClientInstance(
+            session.sessionId,
+            clientInstanceId,
+          );
+          if (Option.isNone(connectionId)) {
+            return yield* new ExtensionOperationError({
+              operation: "api.invoke",
+              detail: `ExtensionClientInstanceError: client instance '${clientInstanceId}' has no live connection on this session.`,
+            });
+          }
+          return yield* makeSessionApiAuthority(
+            session,
+            environmentId,
+            scope,
+            sessions,
+            writeScope,
+            connectionId.value,
+          );
+        }),
     );
     return handlers
       .handle("invokeApi", (args) =>
         annotateEnvironmentRequest(args.endpoint.name).pipe(
-          Effect.andThen(operations.invokeApi(args.payload)),
+          Effect.andThen(operations.invokeApi(args.payload, args.headers["x-t3-client-instance"])),
         ),
       )
       .handle("discoverApis", (args) =>

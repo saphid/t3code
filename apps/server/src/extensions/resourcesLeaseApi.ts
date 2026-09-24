@@ -4,9 +4,11 @@ import {
   AssetWorkspaceContextResolutionError,
   AssetWorkspaceRootNormalizationError,
   AuthOrchestrationReadScope,
+  EnvironmentId,
   ExtensionOperationError,
   PreviewTabId,
   ProjectId,
+  type BrowserFrameSessionTuple,
   type PreviewListResult,
   ThreadId,
   TrimmedNonEmptyString,
@@ -27,11 +29,13 @@ import type {
 } from "@t3tools/extension-runtime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import {
+  ASSET_ROUTE_PREFIX,
   BrowserSurfaceIssueError,
   issueAssetUrl,
   issueBrowserSurfaceUrl,
@@ -52,6 +56,11 @@ import {
 } from "../persistence/Services/ProjectionThreads.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import {
+  BrowserFrameLeases,
+  browserFrameAuthorityKey,
+  type BrowserFrameAuthority,
+} from "../browserFrames/BrowserFrameLeases.ts";
 import { makeExtensionScopeResolver } from "./scope.ts";
 
 type LeaseIssueResult = Effect.Success<ReturnType<typeof issueAssetUrl>>;
@@ -118,6 +127,13 @@ const decodeResource = Schema.decodeUnknownSync(
   },
 );
 
+const decodeReleasePresentationInput = Schema.decodeUnknownSync(
+  Schema.Struct({ presentationUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)) }),
+  {
+    onExcessProperty: "error",
+  },
+);
+
 /** The claim kind minted, read back out of the signed payload — the honest value. */
 const KNOWN_CLAIM_KINDS = new Set<ResourceLeaseClaimKind>([
   "workspace-file",
@@ -126,6 +142,23 @@ const KNOWN_CLAIM_KINDS = new Set<ResourceLeaseClaimKind>([
   "project-favicon-external",
   "browser-surface",
 ]);
+
+/** Token segment of `/api/assets/<token>/browser-surface` — held-claim key. */
+const surfaceTokenFromUrl = (relativeUrl: string): string | null => {
+  const suffix = relativeUrl.slice("/api/assets/".length);
+  const slash = suffix.indexOf("/");
+  return slash === -1 ? null : suffix.slice(0, slash);
+};
+
+/** The claim token a release names — the minted URL form or the bare token. */
+const surfaceTokenFromPresentation = (value: string): string | null => {
+  const trimmed = value.trim();
+  const prefixed = `${ASSET_ROUTE_PREFIX}/`;
+  const body = trimmed.startsWith(prefixed) ? trimmed.slice(prefixed.length) : trimmed;
+  const slash = body.indexOf("/");
+  const token = slash === -1 ? body : body.slice(0, slash);
+  return token.length > 0 ? token : null;
+};
 
 const mintedClaimKind = (relativeUrl: string): ResourceLeaseClaimKind | null => {
   try {
@@ -191,8 +224,18 @@ interface ResourcesLeaseApiDependencies {
     readonly serverEpoch: string;
     readonly allowedCommands: ReadonlyArray<"attach" | "present" | "release">;
   }) => Effect.Effect<
-    { readonly relativeUrl: string; readonly expiresAt: number },
+    { readonly relativeUrl: string; readonly expiresAt: number; readonly slotId: string },
     BrowserSurfaceIssueError
+  >;
+  /**
+   * The held-claim registry the frames mint consults. `t3.browser/frames`
+   * only accepts tokens recorded here — a signed claim that never passed
+   * this gate cannot open a frame channel — and `releasePresentation`
+   * retires the claim together with every ticket minted under its slot.
+   */
+  readonly leases: Pick<
+    BrowserFrameLeases["Service"],
+    "recordHeldSurfaceClaim" | "heldSurfaceClaim" | "revokeWhere" | "withRetainedConnection"
   >;
   /**
    * The broker's per-caller authorize check, reachable by installation id:
@@ -214,6 +257,33 @@ export function createResourcesLeaseApiProvider(
     principal !== undefined &&
     principal.environmentId === dependencies.environmentId &&
     principal.scopes.includes(AuthOrchestrationReadScope);
+
+  /**
+   * The held-claim authority shape — the same key the frames mint binds its
+   * records to. `heldSlot` is the claim's server-owned slotId, never the
+   * bearer token: two claims for one session never share a presentation slot.
+   */
+  const callerAuthority = (
+    principal: HostApiPrincipal,
+    metadata: HostApiInvocationMetadata,
+    grant: string,
+    context: ViewContext,
+    heldSlot?: string,
+  ): BrowserFrameAuthority => ({
+    kind: "extension",
+    principalKind: principal.kind,
+    principalId: principal.id,
+    ...(principal.subject !== undefined ? { subject: principal.subject } : {}),
+    rootCallerId: metadata.rootCallerId,
+    callerId: metadata.callerId,
+    callerGenerations: metadata.callerGenerations,
+    ...(metadata.rootConnectionId !== undefined
+      ? { rootConnectionId: metadata.rootConnectionId }
+      : {}),
+    ...(heldSlot !== undefined ? { heldSlot } : {}),
+    context,
+    grants: [grant],
+  });
 
   /**
    * Every caller in the chain must hold the kind's grant — the broker's
@@ -281,15 +351,62 @@ export function createResourcesLeaseApiProvider(
     Effect.gen(function* () {
       signal.throwIfAborted();
       const operation = `resources.lease.${method}`;
-      if (!authorized(metadata.principal)) {
+      if (!authorized(metadata.principal) || metadata.principal === undefined) {
         return yield* failure(operation, "Resource lease authority is unavailable.");
       }
+      const principal = metadata.principal;
       const scope = yield* resolve(context);
       if (method === "getCapabilities") {
         yield* postChecks(operation, context, scope.context, metadata, signal);
         return {
           supportedKinds: [...RESOURCE_LEASE_SUPPORTED_KINDS],
         } satisfies ResourceLeaseCapabilities;
+      }
+      if (method === "releasePresentation") {
+        const safe = yield* Effect.try({
+          try: () => decodeReleasePresentationInput(input),
+          catch: () => failure(operation, "Invalid resource lease release input."),
+        });
+        // Releasing a browser-surface claim rides on the same grant as the
+        // mint — a caller that lost it cannot retire claims it once held.
+        const releaseGrant = RESOURCE_LEASE_KIND_GRANTS["browser-surface"];
+        if (releaseGrant === undefined || releaseGrant === null) {
+          return yield* kindDenied(
+            operation,
+            "browser-surface",
+            "has no declared mint grant in this build.",
+          );
+        }
+        yield* requireKindGrant(operation, "browser-surface", releaseGrant, context, metadata);
+        const token = surfaceTokenFromPresentation(safe.presentationUrl);
+        if (token === null) {
+          return { released: false };
+        }
+        const held = yield* dependencies.leases.heldSurfaceClaim(token);
+        if (Option.isNone(held)) {
+          return { released: false };
+        }
+        // Only the claim's holder may retire it: the caller's authority must
+        // equal the recorded one — the slot binding is copied from the claim
+        // itself, so this reduces to the same caller, context, connection.
+        const expected = callerAuthority(
+          principal,
+          metadata,
+          releaseGrant,
+          scope.context,
+          held.value.authority.kind === "extension" ? held.value.authority.heldSlot : undefined,
+        );
+        if (
+          browserFrameAuthorityKey(held.value.authority) !== browserFrameAuthorityKey(expected) ||
+          !held.value.allowedCommands.includes("release")
+        ) {
+          return { released: false };
+        }
+        const claimKey = browserFrameAuthorityKey(held.value.authority);
+        yield* dependencies.leases.revokeWhere(
+          (record) => browserFrameAuthorityKey(record.authority) === claimKey,
+        );
+        return { released: true };
       }
       if (method !== "createPresentationUrl") {
         return yield* failure(operation, "Resource lease API method is unavailable.");
@@ -330,6 +447,21 @@ export function createResourcesLeaseApiProvider(
         );
 
       let issued: { readonly relativeUrl: string; readonly expiresAt: number };
+      /**
+       * A browser-surface claim pending held-claim registration. The mint
+       * happens in the branch below, but the claim is only recorded once
+       * every abortible check has passed — see the registration site after
+       * `postChecks` for the lifecycle.
+       */
+      let browserSurface:
+        | {
+            readonly token: string;
+            readonly slotId: string;
+            readonly session: BrowserFrameSessionTuple;
+            readonly allowedCommands: ReadonlyArray<string>;
+            readonly expiresAt: number;
+          }
+        | undefined;
       if (resource._tag === "workspace-file") {
         const thread = yield* dependencies.threads
           .getById({ threadId: resource.threadId })
@@ -446,7 +578,7 @@ export function createResourcesLeaseApiProvider(
             `session '${resource.tabId}' does not exist on the claimed thread.`,
           );
         }
-        issued = yield* dependencies
+        const surfaceMint = yield* dependencies
           .issueBrowserSurface({
             environmentId: dependencies.environmentId,
             threadId: resource.threadId,
@@ -455,6 +587,27 @@ export function createResourcesLeaseApiProvider(
             allowedCommands: resource.allowedCommands,
           })
           .pipe(Effect.mapError(operationError(operation)));
+        issued = surfaceMint;
+        // Held-claim registration is deferred past `postChecks`: the frames
+        // mint only honors tokens recorded under this authority and tuple,
+        // but a claim whose URL never reached the caller must not be left
+        // held. The slot identity is the claim's server-owned slotId —
+        // never the bearer token — so simultaneous mints never share a slot.
+        const heldToken = surfaceTokenFromUrl(surfaceMint.relativeUrl);
+        if (heldToken !== null) {
+          browserSurface = {
+            token: heldToken,
+            slotId: surfaceMint.slotId,
+            session: {
+              environmentId: EnvironmentId.make(dependencies.environmentId),
+              threadId: resource.threadId,
+              serverEpoch: listed.serverEpoch,
+              tabId: resource.tabId,
+            },
+            allowedCommands: resource.allowedCommands,
+            expiresAt: surfaceMint.expiresAt,
+          };
+        }
       } else {
         // Every remaining union member (attachment today) has a declared grant
         // check above but no mint implementation in v1 — fail closed by name.
@@ -473,6 +626,48 @@ export function createResourcesLeaseApiProvider(
         kind: resource._tag,
         grant,
       });
+
+      // Held-claim registration runs only after every abortible check has
+      // passed, and the onExit compensation retires the claim if
+      // interruption still lands before the URL is delivered — an aborted
+      // acquisition can never learn the token, so nothing else could ever
+      // release it. The compensation matches the claim record by its exact
+      // token, so an unrelated replacement claim is never swept with it.
+      if (browserSurface !== undefined) {
+        const claim = browserSurface;
+        return yield* Effect.gen(function* () {
+          const recorded = yield* dependencies.leases
+            .recordHeldSurfaceClaim({
+              token: claim.token,
+              session: claim.session,
+              allowedCommands: claim.allowedCommands,
+              expiresAt: claim.expiresAt,
+              authority: callerAuthority(principal, metadata, grant, scope.context, claim.slotId),
+            })
+            .pipe(Effect.mapError(operationError(operation)));
+          // The root connection died between revalidation and registration —
+          // the just-minted claim must not be returned as usable.
+          if (!recorded) {
+            return yield* bindingDenied(
+              operation,
+              "the minting root connection was revoked before the claim could be held.",
+            );
+          }
+          return {
+            url: issued.relativeUrl,
+            expiresAt: issued.expiresAt,
+            kind,
+          } satisfies ResourceLeasePresentationUrl;
+        }).pipe(
+          Effect.onExit((exit) =>
+            Exit.isSuccess(exit)
+              ? Effect.void
+              : dependencies.leases.revokeWhere(
+                  (record) => "token" in record && record.token === claim.token,
+                ),
+          ),
+        );
+      }
       return {
         url: issued.relativeUrl,
         expiresAt: issued.expiresAt,
@@ -485,7 +680,16 @@ export function createResourcesLeaseApiProvider(
     definition: RESOURCES_LEASE_API,
     requiresRootAuthority: true,
     invoke: (method, input, context, signal, metadata) =>
-      Effect.runPromise(invoke(method, input, context, signal, metadata), { signal }),
+      Effect.runPromise(
+        // Claim registration suspends across the abortible checks; a root
+        // connection revoked in between must still have its dead-marker when
+        // the registry's atomic check runs, so pin it for the invocation.
+        dependencies.leases.withRetainedConnection(
+          metadata.rootConnectionId,
+          invoke(method, input, context, signal, metadata),
+        ),
+        { signal },
+      ),
   };
 }
 
@@ -514,7 +718,9 @@ export const makeResourcesLeaseApiProvider = Effect.fn("ResourcesLeaseApi.make")
   const issueBrowserSurface: ResourcesLeaseApiDependencies["issueBrowserSurface"] = (input) =>
     issueBrowserSurfaceUrl(input).pipe(
       Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
+      Effect.provideService(Crypto.Crypto, crypto),
     );
+  const frameLeases = yield* BrowserFrameLeases;
   return createResourcesLeaseApiProvider({
     environmentId: yield* environment.getEnvironmentId,
     projects: yield* ProjectionProjectRepository,
@@ -523,6 +729,7 @@ export const makeResourcesLeaseApiProvider = Effect.fn("ResourcesLeaseApi.make")
     normalizeWorkspaceRoot: workspacePaths.normalizeWorkspaceRoot,
     issueUrl,
     issueBrowserSurface,
+    leases: frameLeases,
     authorizeGrant,
   });
 });

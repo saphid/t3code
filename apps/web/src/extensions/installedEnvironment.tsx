@@ -42,6 +42,7 @@ import {
 
 import { registerInstalledApiClient, setInstalledApiPolicy } from "./installedApiClients";
 import { createBrowserSurfaceBridge } from "./browserSurfaceBridge";
+import { createBrowserFramesBridge } from "./browserFramesBridge";
 import {
   CLIENT_PROVIDER_CLIENT_TAG,
   CLIENT_PROVIDER_DESCRIPTORS,
@@ -433,6 +434,7 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
       policyChanged: (policy) => setInstalledApiPolicy(environmentId, policy),
       load: importInstalledClient,
       browserSurface: createBrowserSurfaceBridge(environmentId),
+      browserFrames: createBrowserFramesBridge(environmentId),
       register: (extension, client) => {
         const unregister = registerWorkspaceExtension(
           extension,

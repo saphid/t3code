@@ -150,6 +150,10 @@ const AssetClaimsSchema = Schema.Union([
     threadId: Schema.String,
     tabId: Schema.String,
     serverEpoch: Schema.String,
+    // Server-owned acquisition identity: unique per mint so two simultaneous
+    // presentations of the same session never sign the same claim or share a
+    // presentation slot.
+    slotId: Schema.String,
     allowedCommands: Schema.Array(Schema.Literals(["attach", "present", "release"])),
     expiresAt: Schema.Number,
   }),
@@ -761,6 +765,10 @@ export const issueBrowserSurfaceUrl = Effect.fn("AssetAccess.issueBrowserSurface
     const signingSecret = yield* secretStore
       .getOrCreateRandom(SIGNING_SECRET_NAME, 32)
       .pipe(Effect.mapError((cause) => new BrowserSurfaceIssueError({ cause })));
+    const crypto = yield* Crypto.Crypto;
+    const slotId = yield* crypto.randomUUIDv4.pipe(
+      Effect.mapError((cause) => new BrowserSurfaceIssueError({ cause })),
+    );
     const claims: BrowserSurfaceClaims = {
       version: 1,
       kind: "browser-surface",
@@ -768,7 +776,9 @@ export const issueBrowserSurfaceUrl = Effect.fn("AssetAccess.issueBrowserSurface
       threadId: input.threadId,
       tabId: input.tabId,
       serverEpoch: input.serverEpoch,
-      // Sorted + deduplicated so equal rights mint byte-identical claims.
+      slotId,
+      // Sorted + deduplicated so equal rights carry the same command set —
+      // the claims still differ by slotId, which is the point.
       allowedCommands: [...new Set(input.allowedCommands)].sort(),
       expiresAt,
     };
@@ -777,6 +787,7 @@ export const issueBrowserSurfaceUrl = Effect.fn("AssetAccess.issueBrowserSurface
     return {
       relativeUrl: `${ASSET_ROUTE_PREFIX}/${token}/browser-surface`,
       expiresAt,
+      slotId,
     };
   },
 );

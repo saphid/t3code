@@ -22,6 +22,7 @@ import * as Stream from "effect/Stream";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AuthAccessStreamError,
+  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   type AuthAccessStreamEvent,
   type AuthEnvironmentScope,
@@ -70,6 +71,8 @@ import {
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   RpcClientId,
+  BrowserFramesError,
+  type BrowserFramesOpenInputResult,
   EnvironmentAuthorizationError,
   ThreadId,
   type TerminalAttachStreamEvent,
@@ -131,6 +134,7 @@ import type { ClientApiProviders } from "./extensions/ClientApiProviders.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
+import * as BrowserFrameLeases from "./browserFrames/BrowserFrameLeases.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -433,6 +437,17 @@ const isClientWebDeployment = Schema.is(ClientWebDeployment);
 const MAX_CLIENT_APP_VERSION_LENGTH = 64;
 const MAX_CLIENT_BROWSER_LENGTH = 64;
 const MAX_CLIENT_DEVICE_MODEL_LENGTH = 80;
+const MAX_CLIENT_INSTANCE_ID_LENGTH = 128;
+
+// The client runtime's per-instance identity, announced on the /ws upgrade
+// URL and echoed on environment HTTP requests. Optional and lenient like the
+// origin params — older clients never send it.
+function readClientInstanceId(request: HttpServerRequest.HttpServerRequest): string | undefined {
+  const url = HttpServerRequest.toURL(request);
+  if (Option.isNone(url)) return undefined;
+  const value = url.value.searchParams.get("clientInstanceId")?.trim() ?? "";
+  return value !== "" && value.length <= MAX_CLIENT_INSTANCE_ID_LENGTH ? value : undefined;
+}
 
 // Optional client identity announced on the /ws upgrade URL next to wsTicket.
 // Lenient by design: absent or malformed values degrade to {} so a connection
@@ -505,6 +520,9 @@ const makeWsRpcLayer = (
   clientOrigin: OrchestrationClientOrigin,
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  // One id per ws connection: leases minted on this connection are
+  // authority-separated from other connections sharing the session.
+  wsConnectionId: string,
   clientApiProviders: ClientApiProviders["Service"],
 ) =>
   WsRpcGroup.toLayer(
@@ -674,6 +692,7 @@ const makeWsRpcLayer = (
       const pullRequests = yield* PullRequestService.PullRequestService;
       const extensionCatalogueChanges = yield* ExtensionCatalogueChanges;
       const environmentExtensions = yield* EnvironmentExtensions;
+      const browserFrameLeases = yield* BrowserFrameLeases.BrowserFrameLeases;
       const withPullRequestViewer = pullRequests.withRoutingCredential;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
@@ -3532,6 +3551,100 @@ const makeWsRpcLayer = (
             previewAutomationBroker.focusHost(input),
             { "rpc.aggregate": "preview-automation" },
           ),
+        [WS_METHODS.browserFramesOpenInput]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.browserFramesOpenInput,
+            // The session listing and hub reads suspend before the mint's
+            // atomic dead-connection check — pin this socket's marker so the
+            // fence is still there when the mint resumes.
+            browserFrameLeases.withRetainedConnection(
+              wsConnectionId,
+              Effect.gen(function* () {
+                const details = yield* previewManager.listDetails({ threadId: input.threadId });
+                const session = details.sessions.find(
+                  (detail) => detail.snapshot.tabId === input.tabId,
+                );
+                if (!session || details.serverEpoch !== input.serverEpoch) {
+                  return yield* new BrowserFramesError({
+                    reason: "session-not-found",
+                    message: "No live browser session matches the requested tuple.",
+                  });
+                }
+                const hubs = yield* previewAutomationBroker.frameHubs;
+                const candidates = hubs.filter((hub) => hub.environmentId === input.environmentId);
+                if (candidates.length === 0) {
+                  return yield* new BrowserFramesError({
+                    reason: "engine-unavailable",
+                    message: "No connected engine host serves browser frames.",
+                  });
+                }
+                if (candidates.length > 1) {
+                  return yield* new BrowserFramesError({
+                    reason: "engine-unavailable",
+                    message: "More than one engine host serves this environment; refusing to bind.",
+                  });
+                }
+                const host = candidates[0]!;
+                const minted = yield* browserFrameLeases.issueInputLease({
+                  authority: {
+                    kind: "session",
+                    sessionId: currentSession.sessionId,
+                    subject: currentSession.subject,
+                    connectionId: wsConnectionId,
+                    grants: [AuthOrchestrationOperateScope],
+                  },
+                  authorityExpiresAt: currentSession.credentialExpiresAt?.epochMilliseconds,
+                  session: {
+                    environmentId: input.environmentId,
+                    threadId: input.threadId,
+                    serverEpoch: input.serverEpoch,
+                    tabId: input.tabId,
+                  },
+                  engineGeneration: input.engineGeneration ?? null,
+                  hostClientId: host.clientId,
+                  hostConnectionId: host.connectionId,
+                });
+                return yield* Option.match(minted, {
+                  onNone: () =>
+                    Effect.fail(
+                      new BrowserFramesError({
+                        reason: "unauthorized",
+                        message:
+                          "The named lease is not owned by this connection for this session.",
+                      }),
+                    ),
+                  onSome: (issued) =>
+                    Effect.succeed({
+                      leaseId: issued.leaseId,
+                      inputTicket: issued.inputTicket,
+                      expiresAt: issued.expiresAt,
+                    } satisfies BrowserFramesOpenInputResult),
+                });
+              }),
+            ),
+            { "rpc.aggregate": "browser-frames" },
+          ),
+        [WS_METHODS.browserFramesCloseInput]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.browserFramesCloseInput,
+            browserFrameLeases.resolveLease(input.leaseId).pipe(
+              Effect.flatMap(
+                Option.match({
+                  onNone: () => Effect.void,
+                  onSome: (lease) =>
+                    // Ownership is the full authority binding plus the
+                    // resolved tuple — a same-session connection or another
+                    // environment's lease cannot be closed from here.
+                    lease.session.environmentId === input.environmentId &&
+                    BrowserFrameLeases.browserFrameAuthorityKey(lease.authority) ===
+                      `sess:${currentSession.sessionId}:${wsConnectionId}`
+                      ? browserFrameLeases.revokeLease(input.leaseId).pipe(Effect.asVoid)
+                      : Effect.void,
+                }),
+              ),
+            ),
+            { "rpc.aggregate": "browser-frames" },
+          ),
         [WS_METHODS.extensionsClientProvidersConnect]: (input) =>
           observeRpcStreamEffect(
             WS_METHODS.extensionsClientProvidersConnect,
@@ -3774,6 +3887,11 @@ const makeWsRpcLayer = (
                   environmentId,
                   AuthOrchestrationReadScope,
                   sessions,
+                  undefined,
+                  // Extension authorities minted under this root carry the
+                  // connection identity so disconnect revokes them (and two
+                  // connections sharing a session never share a record).
+                  wsConnectionId,
                 );
                 return guardExtensionSessionStream(
                   environmentExtensions.subscribeApi(input, root),
@@ -3925,6 +4043,10 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         );
         const clientOrigin = readClientConnectionOrigin(request);
         const clientAnalyticsProps = readClientAnalyticsProps(request);
+        const clientInstanceId = readClientInstanceId(request);
+        const crypto = yield* Crypto.Crypto;
+        const wsConnectionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+        const browserFrameLeases = yield* BrowserFrameLeases.BrowserFrameLeases;
         yield* sessions.recordClientConnection(session.sessionId, clientOrigin);
         yield* analytics.record("client.connected", clientAnalyticsProps);
         const rpcWebSocketHttpEffect = yield* Effect.gen(function* () {
@@ -3942,6 +4064,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               clientOrigin,
               clientAnalyticsProps,
               previewAutomationBroker,
+              wsConnectionId,
               clientApiProviders,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
@@ -3979,9 +4102,19 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           ),
         );
         return yield* Effect.acquireUseRelease(
-          sessions.markConnected(session.sessionId),
+          // Register this socket's liveness and its client's instance id:
+          // HTTP requests echoing the same instance id resolve to THIS
+          // connection rather than a session-global newest, and connection-
+          // scoped revocation stays attribution-exact per client instance.
+          sessions.markConnected(session.sessionId, wsConnectionId, clientInstanceId),
           () => rpcWebSocketHttpEffect,
-          () => sessions.markDisconnected(session.sessionId),
+          // Viewer root disconnect terminates everything this connection
+          // minted — leases, held claims, and bound input sockets die with
+          // the ws connection, not just at ticket expiry.
+          () =>
+            sessions
+              .markDisconnected(session.sessionId, wsConnectionId)
+              .pipe(Effect.andThen(browserFrameLeases.revokeConnection(wsConnectionId))),
         );
       }).pipe(
         Effect.catchTags({

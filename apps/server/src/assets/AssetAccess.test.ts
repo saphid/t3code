@@ -1166,6 +1166,25 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("simultaneous equivalent mints never share a slot or a token", () =>
+    Effect.gen(function* () {
+      // Deterministic claims once made simultaneous mints sign identical
+      // tokens — the two presentations then shared one held identity and
+      // superseded each other's leases. slotId must differ on every mint.
+      const [a, b] = yield* Effect.all(
+        [issueBrowserSurfaceUrl(surface), issueBrowserSurfaceUrl(surface)],
+        { concurrency: 2 },
+      );
+      expect(a.relativeUrl).not.toBe(b.relativeUrl);
+      expect(a.slotId).not.toBe(b.slotId);
+      // The slotId returned to the registrar is the one signed into the claim.
+      const claimsA = yield* verifyBrowserSurfaceClaims(surfaceToken(a.relativeUrl), surface);
+      const claimsB = yield* verifyBrowserSurfaceClaims(surfaceToken(b.relativeUrl), surface);
+      expect(claimsA?.slotId).toBe(a.slotId);
+      expect(claimsB?.slotId).toBe(b.slotId);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("rejects tampered and expired browser-surface leases", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(1_000_000);

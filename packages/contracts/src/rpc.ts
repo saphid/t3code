@@ -231,6 +231,12 @@ import {
   PreviewAutomationStreamEvent,
 } from "./previewAutomation.ts";
 import {
+  BrowserFramesCloseInput,
+  BrowserFramesError,
+  BrowserFramesOpenInput,
+  BrowserFramesOpenInputResult,
+} from "./browserFrames.ts";
+import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
   ServerConfig,
@@ -362,6 +368,8 @@ export const WS_METHODS = {
   previewAutomationConnect: "previewAutomation.connect",
   previewAutomationRespond: "previewAutomation.respond",
   previewAutomationFocusHost: "previewAutomation.focusHost",
+  browserFramesOpenInput: "browserFrames.openInput",
+  browserFramesCloseInput: "browserFrames.closeInput",
 
   // Device methods
   deviceConfigure: "device.configure",
@@ -1223,6 +1231,17 @@ const WsPreviewAutomationFocusHostRpc = Rpc.make(WS_METHODS.previewAutomationFoc
   error: EnvironmentAuthorizationError,
 });
 
+const WsBrowserFramesOpenInputRpc = Rpc.make(WS_METHODS.browserFramesOpenInput, {
+  payload: BrowserFramesOpenInput,
+  success: BrowserFramesOpenInputResult,
+  error: Schema.Union([BrowserFramesError, EnvironmentAuthorizationError]),
+});
+
+const WsBrowserFramesCloseInputRpc = Rpc.make(WS_METHODS.browserFramesCloseInput, {
+  payload: BrowserFramesCloseInput,
+  error: Schema.Union([BrowserFramesError, EnvironmentAuthorizationError]),
+});
+
 const WsExtensionsClientProvidersConnectRpc = Rpc.make(
   WS_METHODS.extensionsClientProvidersConnect,
   {
@@ -1571,6 +1590,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewAutomationConnectRpc,
   WsPreviewAutomationRespondRpc,
   WsPreviewAutomationFocusHostRpc,
+  WsBrowserFramesOpenInputRpc,
+  WsBrowserFramesCloseInputRpc,
   WsExtensionsClientProvidersConnectRpc,
   WsExtensionsClientProvidersRespondRpc,
   WsExtensionsClientProvidersEmitRpc,
