@@ -324,7 +324,7 @@ var __t3Client = (() => {
     agentProps[key] = nullable(num);
   var approval = obj({
     requestId: id,
-    requestKind: { enum: ["command", "file-read", "file-change", "mcp-elicitation"] },
+    requestKind: { enum: ["command", "file-read", "file-change", "mcp-elicitation", "permission"] },
     createdAt: str,
     detail: str,
     appName: str,
@@ -895,6 +895,705 @@ var __t3Client = (() => {
   });
   var WORKSPACE_RESOURCES_API = workspaceResourcesApi.definition;
 
+  // node_modules/@t3tools/extension-sdk/dist/clientProviders.js
+  var targetSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["kind"],
+    properties: {
+      kind: { enum: ["self", "connection"] },
+      connectionId: { type: "string", minLength: 1, maxLength: 160 }
+    }
+  };
+  var withTarget = (properties, required = []) => ({
+    type: "object",
+    additionalProperties: false,
+    required: ["target", ...required],
+    properties: { target: targetSchema, ...properties }
+  });
+  var okOutput = {
+    type: "object",
+    additionalProperties: false,
+    required: ["applied"],
+    properties: { applied: { type: "boolean" } }
+  };
+  var themeAppearance = { enum: ["light", "dark"] };
+  var themeHalvesSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      light: { type: "string", maxLength: 160 },
+      dark: { type: "string", maxLength: 160 }
+    }
+  };
+  var themeProviderStateSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "theme",
+      "resolvedTheme",
+      "systemDark",
+      "followSystem",
+      "appearanceMode",
+      "themeHalves",
+      "effectiveTheme",
+      "sessionOverlay"
+    ],
+    properties: {
+      theme: { type: "string", maxLength: 160 },
+      resolvedTheme: themeAppearance,
+      systemDark: { type: "boolean" },
+      followSystem: { type: "boolean" },
+      appearanceMode: { enum: ["light", "dark", "system"] },
+      themeHalves: { anyOf: [themeHalvesSchema, { type: "null" }] },
+      effectiveTheme: {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind"],
+        properties: {
+          kind: { enum: ["stored", "session-overlay", "external-preview"] },
+          theme: { type: "string", maxLength: 160 },
+          writer: { type: "string", maxLength: 160 },
+          tokens: {
+            type: "object",
+            additionalProperties: { type: "string", maxLength: 400 }
+          }
+        }
+      },
+      sessionOverlay: {
+        anyOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["theme", "writer"],
+            properties: {
+              theme: { type: "string", maxLength: 160 },
+              appearanceMode: { enum: ["light", "dark", "system"] },
+              themeHalves: themeHalvesSchema,
+              writer: { type: "string", minLength: 1, maxLength: 160 }
+            }
+          },
+          { type: "null" }
+        ]
+      }
+    }
+  };
+  var themeTokensOutput = {
+    type: "object",
+    additionalProperties: false,
+    required: ["tokens", "cssVars"],
+    properties: {
+      tokens: { type: "object", additionalProperties: { type: "string", maxLength: 400 } },
+      cssVars: { type: "object", additionalProperties: { type: "string", maxLength: 80 } }
+    }
+  };
+  var terminalAppearanceSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["theme", "font", "appearance"],
+    properties: {
+      theme: {
+        type: "object",
+        additionalProperties: false,
+        required: ["background", "foreground", "cursor"],
+        properties: {
+          background: { type: "string", maxLength: 400 },
+          foreground: { type: "string", maxLength: 400 },
+          cursor: { type: "string", maxLength: 400 },
+          selectionBackground: { type: "string", maxLength: 400 }
+        }
+      },
+      font: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          family: { type: "string", maxLength: 400 },
+          size: { type: "number", minimum: 1, maximum: 128 },
+          lineHeight: { type: "number", minimum: 0.1, maximum: 10 },
+          ligatures: { type: "boolean" }
+        }
+      },
+      appearance: themeAppearance
+    }
+  };
+  var CLIENT_THEME_API = validateApiDefinition({
+    id: "t3.client/theme",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getState",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({}),
+        outputSchema: themeProviderStateSchema
+      },
+      {
+        name: "resolveTokens",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({ appearance: themeAppearance }),
+        outputSchema: themeTokensOutput
+      },
+      {
+        name: "applyPreference",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          writer: { type: "string", minLength: 1, maxLength: 160 },
+          preference: {
+            type: "object",
+            additionalProperties: false,
+            required: ["mode"],
+            properties: {
+              theme: { type: "string", minLength: 1, maxLength: 160 },
+              appearanceMode: { enum: ["light", "dark", "system"] },
+              themeHalves: themeHalvesSchema,
+              mode: { enum: ["persist", "session"] },
+              clear: { type: "boolean" }
+            }
+          }
+        }, ["writer", "preference"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: {
+            applied: { type: "boolean" },
+            reason: { type: "string", maxLength: 200 },
+            propagatedTo: { enum: ["storage-origin", "connection"] }
+          }
+        }
+      }
+    ],
+    streams: [
+      {
+        name: "watchState",
+        inputSchema: withTarget({}),
+        eventSchema: themeProviderStateSchema,
+        requiredGrants: []
+      }
+    ]
+  });
+  var notificationActionSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["id", "label"],
+    properties: {
+      id: { type: "string", minLength: 1, maxLength: 80 },
+      label: { type: "string", minLength: 1, maxLength: 80 },
+      variant: { enum: ["default", "primary", "destructive"] }
+    }
+  };
+  var notificationBodySchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["notificationId", "severity", "title"],
+    properties: {
+      notificationId: { type: "string", minLength: 1, maxLength: 160 },
+      severity: { enum: ["info", "success", "warning", "error", "loading"] },
+      title: { type: "string", minLength: 1, maxLength: 200 },
+      body: { type: "string", maxLength: 2e3 },
+      threadId: { type: "string", maxLength: 128 },
+      projectId: { type: "string", maxLength: 128 },
+      anchor: { enum: ["global", "thread"] },
+      dismissible: { type: "boolean" },
+      durationMs: { type: "integer", minimum: 0, maximum: 6e4 },
+      actions: {
+        type: "array",
+        maxItems: 3,
+        items: notificationActionSchema
+      }
+    }
+  };
+  var CLIENT_NOTIFICATIONS_API = validateApiDefinition({
+    id: "t3.client/notifications",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "notify",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({ notification: notificationBodySchema }, ["notification"]),
+        outputSchema: okOutput
+      },
+      {
+        name: "update",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          notificationId: { type: "string", minLength: 1, maxLength: 160 },
+          patch: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              severity: { enum: ["info", "success", "warning", "error", "loading"] },
+              title: { type: "string", minLength: 1, maxLength: 200 },
+              body: { type: "string", maxLength: 2e3 },
+              dismissible: { type: "boolean" }
+            }
+          }
+        }, ["notificationId", "patch"]),
+        outputSchema: okOutput
+      },
+      {
+        name: "dismiss",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({ notificationId: { type: "string", minLength: 1, maxLength: 160 } }, ["notificationId"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["dismissed"],
+          properties: { dismissed: { type: "boolean" } }
+        }
+      }
+    ]
+  });
+  var commandDescriptorSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["id", "title", "scope"],
+    properties: {
+      id: { type: "string", minLength: 1, maxLength: 80 },
+      title: { type: "string", minLength: 1, maxLength: 200 },
+      description: { type: "string", maxLength: 1e3 },
+      defaultKey: { type: "string", minLength: 1, maxLength: 64 },
+      when: { type: "string", minLength: 1, maxLength: 256 },
+      scope: { enum: ["surface", "thread", "global"] },
+      activation: {
+        type: "object",
+        additionalProperties: false,
+        required: ["surfaceId", "placement"],
+        properties: {
+          surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+          placement: { enum: ["side-panel", "bottom-dock"] }
+        }
+      }
+    }
+  };
+  var commandResultSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["commandId", "status"],
+    properties: {
+      commandId: { type: "string", minLength: 1, maxLength: 80 },
+      status: { enum: ["registered", "rejected"] },
+      reason: { type: "string", maxLength: 400 }
+    }
+  };
+  var CLIENT_KEYBINDINGS_API = validateApiDefinition({
+    id: "t3.client/keybindings",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "registerCommands",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          installationScoped: { type: "boolean" },
+          commands: {
+            type: "array",
+            minItems: 1,
+            maxItems: 64,
+            items: commandDescriptorSchema
+          }
+        }, ["commands"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["commandSetToken", "results"],
+          properties: {
+            commandSetToken: { type: "string", minLength: 1, maxLength: 160 },
+            results: { type: "array", maxItems: 64, items: commandResultSchema }
+          }
+        }
+      },
+      {
+        name: "unregisterCommands",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({ commandSetToken: { type: "string", minLength: 1, maxLength: 160 } }, ["commandSetToken"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["unregistered"],
+          properties: { unregistered: { type: "boolean" } }
+        }
+      },
+      {
+        name: "listConflicts",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({}),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["conflicts"],
+          properties: {
+            conflicts: {
+              type: "array",
+              maxItems: 256,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["command", "key", "winner", "loser"],
+                properties: {
+                  command: { type: "string", maxLength: 256 },
+                  key: { type: "string", maxLength: 64 },
+                  winner: { enum: ["user", "native", "plugin"] },
+                  loser: { type: "string", maxLength: 256 }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  });
+  var panelThreadInput = {
+    threadId: { type: "string", minLength: 1, maxLength: 128 }
+  };
+  var CLIENT_PANELS_API = validateApiDefinition({
+    id: "t3.client/panels",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "openSurface",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget(
+          {
+            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+            title: { type: "string", minLength: 1, maxLength: 200 },
+            placement: { enum: ["side-panel", "bottom-dock"] },
+            ...panelThreadInput
+          },
+          // Optional fields mirror the public contract: the client fills them
+          // from the surface's own declared metadata when omitted.
+          ["surfaceId", "threadId"]
+        ),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaceId"],
+          properties: { surfaceId: { type: "string", maxLength: 160 } }
+        }
+      },
+      {
+        name: "activateSurface",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+          ...panelThreadInput
+        }, ["surfaceId", "threadId"]),
+        outputSchema: okOutput
+      },
+      {
+        name: "closeSurface",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+          ...panelThreadInput
+        }, ["surfaceId", "threadId"]),
+        outputSchema: okOutput
+      },
+      {
+        name: "listSurfaces",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({ ...panelThreadInput }, ["threadId"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaces"],
+          properties: {
+            surfaces: {
+              type: "array",
+              maxItems: 64,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["id", "title", "placement", "active"],
+                properties: {
+                  id: { type: "string", maxLength: 160 },
+                  title: { type: "string", maxLength: 200 },
+                  placement: { enum: ["side-panel", "bottom-dock"] },
+                  active: { type: "boolean" }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        name: "hideDock",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({ ...panelThreadInput }, ["threadId"]),
+        outputSchema: okOutput
+      },
+      {
+        name: "showDock",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({ ...panelThreadInput }, ["threadId"]),
+        outputSchema: okOutput
+      }
+    ]
+  });
+  var composerRefSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["path"],
+    properties: {
+      path: { type: "string", minLength: 1, maxLength: 512 },
+      startLine: { type: "integer", minimum: 1, maximum: 1e6 },
+      endLine: { type: "integer", minimum: 1, maximum: 1e6 },
+      excerpt: { type: "string", maxLength: 512 }
+    }
+  };
+  var composerAnnotationSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["filePath", "startLine", "endLine", "body"],
+        properties: {
+          filePath: { type: "string", minLength: 1, maxLength: 512 },
+          startLine: { type: "integer", minimum: 1, maximum: 1e6 },
+          endLine: { type: "integer", minimum: 1, maximum: 1e6 },
+          body: { type: "string", minLength: 1, maxLength: 4096 },
+          excerpt: { type: "string", maxLength: 4096 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "kind",
+          "filePath",
+          "sectionId",
+          "sectionTitle",
+          "rangeLabel",
+          "diff",
+          "selection",
+          "body"
+        ],
+        properties: {
+          kind: { const: "diff" },
+          filePath: { type: "string", minLength: 1, maxLength: 512 },
+          sectionId: { type: "string", minLength: 1, maxLength: 512 },
+          sectionTitle: { type: "string", minLength: 1, maxLength: 256 },
+          rangeLabel: { type: "string", minLength: 1, maxLength: 128 },
+          diff: { type: "string", minLength: 1, maxLength: 4096 },
+          selection: {
+            type: "object",
+            additionalProperties: false,
+            required: ["start", "side", "end", "endSide"],
+            properties: {
+              start: { type: "integer", minimum: 1, maximum: 1e6 },
+              side: { enum: ["additions", "deletions"] },
+              end: { type: "integer", minimum: 1, maximum: 1e6 },
+              endSide: { enum: ["additions", "deletions"] }
+            }
+          },
+          startIndex: { type: "integer", minimum: 0, maximum: 1e6 },
+          endIndex: { type: "integer", minimum: 0, maximum: 1e6 },
+          body: { type: "string", minLength: 1, maxLength: 4096 }
+        }
+      }
+    ]
+  };
+  var composerThreadIdInput = {
+    threadId: { type: "string", minLength: 1, maxLength: 128 }
+  };
+  var CLIENT_COMPOSER_API = validateApiDefinition({
+    id: "t3.client/composer",
+    version: "1.1.0",
+    methods: [
+      {
+        name: "insertContext",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          threadId: { type: "string", minLength: 1, maxLength: 128 },
+          refs: { type: "array", minItems: 1, maxItems: 8, items: composerRefSchema }
+        }, ["threadId", "refs"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["inserted", "target"],
+          properties: {
+            inserted: { type: "integer", minimum: 0, maximum: 8 },
+            target: { type: "string", minLength: 1, maxLength: 256 }
+          }
+        }
+      },
+      {
+        name: "getDraftState",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({ threadId: { type: "string", minLength: 1, maxLength: 128 } }, [
+          "threadId"
+        ]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["draft"],
+          properties: {
+            draft: {
+              type: ["object", "null"],
+              properties: {
+                prompt: { type: "string", maxLength: 1e4 },
+                promptTruncated: { type: "boolean" },
+                contextCounts: { type: "object" }
+              }
+            }
+          }
+        }
+      },
+      {
+        name: "attachAnnotation",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          ...composerThreadIdInput,
+          annotation: composerAnnotationSchema
+        }, ["threadId", "annotation"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["annotationId"],
+          properties: { annotationId: { type: "string", minLength: 1, maxLength: 256 } }
+        }
+      },
+      {
+        name: "insertMention",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          ...composerThreadIdInput,
+          paths: {
+            type: "array",
+            minItems: 1,
+            maxItems: 8,
+            items: { type: "string", minLength: 1, maxLength: 512 }
+          }
+        }, ["threadId", "paths"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["inserted", "target"],
+          properties: {
+            inserted: { type: "integer", minimum: 0, maximum: 8 },
+            target: { type: "string", minLength: 1, maxLength: 256 }
+          }
+        }
+      },
+      {
+        name: "insertTerminalContext",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          ...composerThreadIdInput,
+          terminalId: { type: "string", minLength: 1, maxLength: 128 },
+          terminalLabel: { type: "string", minLength: 1, maxLength: 128 },
+          // 10,000 chars keeps the worst-case escaped frame inside the 64 KiB
+          // broker envelope; matches the public catalogue bound.
+          lineStart: { type: "integer", minimum: 1, maximum: 1e6 },
+          lineEnd: { type: "integer", minimum: 1, maximum: 1e6 },
+          text: { type: "string", minLength: 1, maxLength: 1e4 }
+        }, ["threadId", "terminalId", "terminalLabel", "lineStart", "lineEnd", "text"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["inserted", "target"],
+          properties: {
+            inserted: { type: "boolean" },
+            target: { type: "string", minLength: 1, maxLength: 256 },
+            reason: { type: "string", maxLength: 64 }
+          }
+        }
+      },
+      {
+        name: "listAnnotations",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({ ...composerThreadIdInput }, ["threadId"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["annotations"],
+          properties: {
+            annotations: {
+              type: "array",
+              // 8 entries at field maxima stay inside the 64 KiB frame envelope.
+              maxItems: 8,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["annotationId", "kind", "filePath", "rangeLabel", "sectionTitle"],
+                properties: {
+                  annotationId: { type: "string", minLength: 1, maxLength: 256 },
+                  kind: { enum: ["file", "diff"] },
+                  filePath: { type: "string", minLength: 1, maxLength: 512 },
+                  rangeLabel: { type: "string", maxLength: 128 },
+                  sectionTitle: { type: "string", maxLength: 256 }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        name: "removeAnnotation",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          ...composerThreadIdInput,
+          annotationId: { type: "string", minLength: 1, maxLength: 256 }
+        }, ["threadId", "annotationId"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["removed"],
+          properties: { removed: { type: "boolean" } }
+        }
+      }
+    ]
+  });
+  var CLIENT_TERMINAL_APPEARANCE_API = validateApiDefinition({
+    id: "t3.client/terminal-appearance",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getAppearance",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({}),
+        outputSchema: terminalAppearanceSchema
+      }
+    ],
+    streams: [
+      {
+        name: "watchAppearance",
+        inputSchema: withTarget({}),
+        eventSchema: terminalAppearanceSchema,
+        requiredGrants: []
+      }
+    ]
+  });
+  var CLIENT_PROVIDER_APIS = new Map([
+    CLIENT_THEME_API,
+    CLIENT_NOTIFICATIONS_API,
+    CLIENT_KEYBINDINGS_API,
+    CLIENT_PANELS_API,
+    CLIENT_COMPOSER_API,
+    CLIENT_TERMINAL_APPEARANCE_API
+  ].map((definition) => [definition.id, definition]));
+
   // node_modules/@t3tools/extension-sdk/dist/catalogue.js
   var BROWSER_LOCAL_SERVERS = "t3.browser/local-servers";
   var BROWSER_READ_LOCAL_SERVERS = "t3.browser/read-local-servers";
@@ -1381,6 +2080,8 @@ var __t3Client = (() => {
           "contents",
           "retainedByteLength",
           "truncated",
+          "clearGeneration",
+          "contentsUnitStart",
           "boundarySequence"
         ],
         properties: {
@@ -1391,6 +2092,12 @@ var __t3Client = (() => {
           contents: { type: "string", maxLength: 8192 },
           retainedByteLength: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
           truncated: { type: "boolean" },
+          clearGeneration: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+          contentsUnitStart: {
+            type: "integer",
+            minimum: 0,
+            maximum: Number.MAX_SAFE_INTEGER
+          },
           boundarySequence: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER }
         }
       },
@@ -1419,12 +2126,13 @@ var __t3Client = (() => {
       {
         type: "object",
         additionalProperties: false,
-        required: ["kind", "terminalId", "streamEpoch", "sequence", "reason"],
+        required: ["kind", "terminalId", "streamEpoch", "sequence", "clearGeneration", "reason"],
         properties: {
           kind: { const: "reset" },
           terminalId: { type: "string", minLength: 1, maxLength: 128 },
           streamEpoch: { type: "string", minLength: 1, maxLength: 128 },
           sequence: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+          clearGeneration: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
           reason: { const: "history-cleared" }
         }
       },
@@ -1746,7 +2454,7 @@ var __t3Client = (() => {
         additionalProperties: false,
         required: ["kind", "name", "baseUrl"],
         properties: {
-          kind: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+          kind: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"] },
           name: { type: "string", minLength: 1, maxLength: 256 },
           baseUrl: { type: "string", maxLength: 2048 }
         }
@@ -2669,6 +3377,34 @@ var __t3Client = (() => {
         }
       },
       {
+        name: "releasePresentation",
+        // Acquired under the same read-scoped grant as `createPresentationUrl`;
+        // releasing your own held claim is not a write of host state beyond what
+        // the read grant already entitles the caller to hold. A `write` effect
+        // would require a write-scope the minting caller never had, making the
+        // release unreachable through the broker for the only callers it serves.
+        effect: "read",
+        // Only a held `browser-surface` claim can be released, and only by the
+        // authority that holds it — enforced inside the host adapter.
+        requiredGrants: [],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["presentationUrl"],
+          properties: {
+            // The value `createPresentationUrl` returned (`/api/assets/<token>/…`)
+            // or the bare signed token.
+            presentationUrl: { type: "string", minLength: 1, maxLength: 4096 }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["released"],
+          properties: { released: { type: "boolean" } }
+        }
+      },
+      {
         name: "getCapabilities",
         effect: "read",
         requiredGrants: [],
@@ -2851,7 +3587,7 @@ var __t3Client = (() => {
     required: ["host", "kind", "searchesOnHost", "projectCount", "configured", "detail"],
     properties: {
       host: prsHostField,
-      kind: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+      kind: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"] },
       searchesOnHost: { type: "boolean" },
       projectCount: { type: "integer", minimum: 1 },
       configured: { type: "boolean" },
@@ -2895,7 +3631,7 @@ var __t3Client = (() => {
           base: { type: "string", minLength: 1, maxLength: 1024 }
         }
       },
-      provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+      provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"] },
       host: prsHostField,
       projectId: { type: "string", minLength: 1, maxLength: 160 },
       projectTitle: { type: "string", minLength: 1, maxLength: 512 },
@@ -3077,7 +3813,7 @@ var __t3Client = (() => {
       "mergeCapabilities"
     ],
     properties: {
-      provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+      provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"] },
       capabilities: prsCapabilitiesSchema,
       viewerPermissions: prsViewerPermissionsSchema,
       projectId: { type: "string", minLength: 1, maxLength: 160 },
@@ -3225,7 +3961,7 @@ var __t3Client = (() => {
       "updatedAt"
     ],
     properties: {
-      provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+      provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"] },
       projectId: { type: "string", minLength: 1, maxLength: 160 },
       repository: prsRepositoryField,
       number: { type: "integer", minimum: 1 },
@@ -3693,6 +4429,756 @@ var __t3Client = (() => {
     ]
   });
   var PRS_READ_API = prsReadApi.definition;
+  var VCS_ACTIONS = "t3.vcs/actions";
+  var vcsActionKindSchema = {
+    enum: ["commit", "push", "create_pr", "commit_push", "commit_push_pr"]
+  };
+  var vcsActionPhaseSchema = { enum: ["branch", "commit", "push", "pr"] };
+  var vcsActionMessageSourceSchema = { enum: ["caller", "generated", "not_applicable"] };
+  var vcsActionContentSourceSchema = {
+    enum: ["caller", "generated", "existing", "not_applicable"]
+  };
+  var vcsActionResultSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["action", "branch", "commit", "push", "pr", "toast"],
+    properties: {
+      action: vcsActionKindSchema,
+      branch: {
+        type: "object",
+        additionalProperties: false,
+        required: ["status"],
+        properties: {
+          status: { enum: ["created", "skipped_not_requested"] },
+          name: { type: "string", minLength: 1, maxLength: 4096 }
+        }
+      },
+      commit: {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "messageSource"],
+        properties: {
+          status: { enum: ["created", "skipped_no_changes", "skipped_not_requested"] },
+          commitSha: { type: "string", minLength: 1, maxLength: 128 },
+          subject: { type: "string", minLength: 1, maxLength: 4096 },
+          messageSource: vcsActionMessageSourceSchema
+        }
+      },
+      push: {
+        type: "object",
+        additionalProperties: false,
+        required: ["status"],
+        properties: {
+          status: { enum: ["pushed", "skipped_not_requested", "skipped_up_to_date"] },
+          branch: { type: "string", minLength: 1, maxLength: 4096 },
+          upstreamBranch: { type: "string", minLength: 1, maxLength: 4096 },
+          setUpstream: { type: "boolean" }
+        }
+      },
+      pr: {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "contentSource"],
+        properties: {
+          status: { enum: ["created", "opened_existing", "skipped_not_requested"] },
+          url: { type: "string", minLength: 1, maxLength: 4096 },
+          number: { type: "integer", minimum: 1 },
+          baseBranch: { type: "string", minLength: 1, maxLength: 4096 },
+          headBranch: { type: "string", minLength: 1, maxLength: 4096 },
+          title: { type: "string", minLength: 1, maxLength: 2048 },
+          contentSource: vcsActionContentSourceSchema
+        }
+      },
+      toast: {
+        type: "object",
+        additionalProperties: false,
+        required: ["title", "cta"],
+        properties: {
+          title: { type: "string", minLength: 1, maxLength: 512 },
+          description: { type: "string", minLength: 1, maxLength: 1024 },
+          cta: {
+            oneOf: [
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind"],
+                properties: { kind: { const: "none" } }
+              },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind", "label", "url"],
+                properties: {
+                  kind: { const: "open_pr" },
+                  label: { type: "string", minLength: 1, maxLength: 256 },
+                  url: { type: "string", maxLength: 4096 }
+                }
+              },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind", "label", "action"],
+                properties: {
+                  kind: { const: "run_action" },
+                  label: { type: "string", minLength: 1, maxLength: 256 },
+                  action: {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["kind"],
+                    properties: { kind: vcsActionKindSchema }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  };
+  var vcsActionEventBase = {
+    action: vcsActionKindSchema
+  };
+  var vcsActionProgressEventSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "phases"],
+        properties: {
+          kind: { const: "action_started" },
+          ...vcsActionEventBase,
+          phases: { type: "array", maxItems: 4, items: vcsActionPhaseSchema }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "phase", "label"],
+        properties: {
+          kind: { const: "phase_started" },
+          ...vcsActionEventBase,
+          phase: vcsActionPhaseSchema,
+          label: { type: "string", minLength: 1, maxLength: 1024 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "hookName"],
+        properties: {
+          kind: { const: "hook_started" },
+          ...vcsActionEventBase,
+          hookName: { type: "string", minLength: 1, maxLength: 512 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "hookName", "stream", "text"],
+        properties: {
+          kind: { const: "hook_output" },
+          ...vcsActionEventBase,
+          hookName: { type: ["string", "null"], minLength: 1, maxLength: 512 },
+          stream: { enum: ["stdout", "stderr"] },
+          // Native bounds hook lines at 500 chars; keep slack for future raises.
+          text: { type: "string", minLength: 1, maxLength: 4096 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "hookName", "exitCode", "durationMs"],
+        properties: {
+          kind: { const: "hook_finished" },
+          ...vcsActionEventBase,
+          hookName: { type: "string", minLength: 1, maxLength: 512 },
+          exitCode: { type: ["integer", "null"] },
+          durationMs: { type: ["integer", "null"], minimum: 0 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "result"],
+        properties: {
+          kind: { const: "action_finished" },
+          ...vcsActionEventBase,
+          result: vcsActionResultSchema
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "action", "phase", "message"],
+        properties: {
+          kind: { const: "action_failed" },
+          ...vcsActionEventBase,
+          phase: { type: ["string", "null"], enum: ["branch", "commit", "push", "pr", null] },
+          message: { type: "string", minLength: 1, maxLength: 4096 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "reason"],
+        properties: {
+          kind: { const: "closed" },
+          reason: { enum: ["overflow", "authorization-revoked"] }
+        }
+      }
+    ]
+  };
+  var vcsActionResolvedPullRequestSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["number", "title", "url", "baseBranch", "headBranch", "state"],
+    properties: {
+      number: { type: "integer", minimum: 1 },
+      title: { type: "string", minLength: 1, maxLength: 2048 },
+      url: { type: "string", maxLength: 4096 },
+      baseBranch: { type: "string", minLength: 1, maxLength: 4096 },
+      headBranch: { type: "string", minLength: 1, maxLength: 4096 },
+      state: { enum: ["open", "closed", "merged"] }
+    }
+  };
+  var vcsActionReferenceInputSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["reference"],
+    properties: {
+      reference: { type: "string", minLength: 1, maxLength: 2048 }
+    }
+  };
+  var vcsActionsOperationsSupportSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "actions.run",
+      "actions.resolvePullRequest",
+      "actions.preparePullRequestThread",
+      "actions.publishRepository",
+      "actions.actionProgress"
+    ],
+    properties: {
+      "actions.run": { type: "boolean" },
+      "actions.resolvePullRequest": { type: "boolean" },
+      "actions.preparePullRequestThread": { type: "boolean" },
+      "actions.publishRepository": { type: "boolean" },
+      "actions.actionProgress": { type: "boolean" }
+    }
+  };
+  var vcsActionsCapabilitiesResultSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["detected", "kind", "detail", "driver", "operations"],
+    properties: {
+      detected: { type: "boolean" },
+      kind: { type: ["string", "null"], enum: ["git", "jj", "unknown", null] },
+      detail: { type: ["string", "null"], maxLength: 512 },
+      driver: vcsDriverCapabilitiesSchema,
+      operations: vcsActionsOperationsSupportSchema
+    }
+  };
+  var vcsActionsApi = defineStreamApi({
+    id: VCS_ACTIONS,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [VCS_READ],
+        inputSchema: prsEmptyInputSchema,
+        outputSchema: vcsActionsCapabilitiesResultSchema
+      },
+      {
+        name: "run",
+        effect: "write",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["action"],
+          properties: {
+            action: vcsActionKindSchema,
+            commitMessage: { type: "string", maxLength: 1e4 },
+            featureBranch: { type: "boolean" },
+            paths: {
+              type: "array",
+              minItems: 1,
+              maxItems: 100,
+              items: { type: "string", minLength: 1, maxLength: 512 }
+            }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["actionId"],
+          properties: { actionId: { type: "string", minLength: 1, maxLength: 128 } }
+        }
+      },
+      {
+        name: "resolvePullRequest",
+        // Read-shaped but Operate-gated: it shells the provider CLI, matching
+        // the native RPC's Operate scope (design: `t3.vcs/mutate`).
+        effect: "read",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: vcsActionReferenceInputSchema,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["pullRequest"],
+          properties: { pullRequest: vcsActionResolvedPullRequestSchema }
+        }
+      },
+      {
+        name: "preparePullRequestThread",
+        effect: "write",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["reference", "mode"],
+          properties: {
+            reference: { type: "string", minLength: 1, maxLength: 2048 },
+            mode: { enum: ["local", "worktree"] }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["pullRequest", "branch", "worktreePath", "isOnPullRequestHead"],
+          properties: {
+            pullRequest: vcsActionResolvedPullRequestSchema,
+            branch: { type: "string", minLength: 1, maxLength: 4096 },
+            worktreePath: { type: ["string", "null"], minLength: 1, maxLength: 32768 },
+            isOnPullRequestHead: { type: "boolean" }
+          }
+        }
+      },
+      {
+        name: "publishRepository",
+        // Declared `t3.vcs/mutate`; the adapter additionally requires every
+        // caller in the chain to hold `t3.prs/write` (P-a conjunctive under
+        // G3 — a comment-only grant must never reach pushCurrentBranch).
+        effect: "write",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["provider", "repository", "visibility"],
+          properties: {
+            provider: {
+              enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"]
+            },
+            repository: { type: "string", minLength: 1, maxLength: 512 },
+            visibility: { enum: ["private", "public"] },
+            remoteName: { type: "string", minLength: 1, maxLength: 256 },
+            protocol: { enum: ["auto", "ssh", "https"] }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "remoteName", "remoteUrl", "branch", "status"],
+          properties: {
+            repository: {
+              type: "object",
+              additionalProperties: false,
+              required: ["provider", "nameWithOwner", "url", "sshUrl"],
+              properties: {
+                provider: {
+                  enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"]
+                },
+                nameWithOwner: { type: "string", minLength: 1, maxLength: 512 },
+                url: { type: "string", minLength: 1, maxLength: 4096 },
+                sshUrl: { type: "string", minLength: 1, maxLength: 4096 }
+              }
+            },
+            remoteName: { type: "string", minLength: 1, maxLength: 256 },
+            remoteUrl: { type: "string", minLength: 1, maxLength: 4096 },
+            branch: { type: "string", minLength: 1, maxLength: 4096 },
+            upstreamBranch: { type: "string", minLength: 1, maxLength: 4096 },
+            status: { enum: ["pushed", "remote_added"] }
+          }
+        }
+      }
+    ],
+    streams: [
+      {
+        name: "actionProgress",
+        requiredGrants: [VCS_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["actionId"],
+          properties: { actionId: { type: "string", minLength: 1, maxLength: 128 } }
+        },
+        eventSchema: vcsActionProgressEventSchema
+      }
+    ]
+  });
+  var VCS_ACTIONS_API = vcsActionsApi.definition;
+  var PRS_WRITE = "t3.prs/write";
+  var prsWriteBodySchema = { type: "string", minLength: 1, maxLength: 65536 };
+  var prsWriteOperationsSupportSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "prs.runAction",
+      "prs.update",
+      "prs.comment",
+      "prs.updateComment",
+      "prs.submitReview",
+      "prs.replyToThread",
+      "prs.setThreadResolution",
+      "prs.setReaction",
+      "prs.requestReviewers",
+      "prs.setLabels"
+    ],
+    properties: {
+      "prs.runAction": { type: "boolean" },
+      "prs.update": { type: "boolean" },
+      "prs.comment": { type: "boolean" },
+      "prs.updateComment": { type: "boolean" },
+      "prs.submitReview": { type: "boolean" },
+      "prs.replyToThread": { type: "boolean" },
+      "prs.setThreadResolution": { type: "boolean" },
+      "prs.setReaction": { type: "boolean" },
+      "prs.requestReviewers": { type: "boolean" },
+      "prs.setLabels": { type: "boolean" }
+    }
+  };
+  var prsWriteActionKindSchema = {
+    enum: [
+      "merge",
+      "ready",
+      "draft",
+      "close",
+      "reopen",
+      "update-branch",
+      "enable-auto-merge",
+      "disable-auto-merge",
+      "revert",
+      "approve-workflows"
+    ]
+  };
+  var prsWriteMergeMethodSchema = { enum: ["merge", "squash", "rebase"] };
+  var prsWriteVerdictSchema = { enum: ["comment", "approve", "request-changes"] };
+  var prsWriteCapabilitiesResultSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "hosted",
+      "reason",
+      "detail",
+      "operations",
+      "actions",
+      "mergeMethods",
+      "updateMethods",
+      "verdicts"
+    ],
+    properties: {
+      hosted: { type: "boolean" },
+      reason: {
+        enum: ["cli-missing", "cli-unauthenticated", "provider-unsupported", null]
+      },
+      detail: { type: ["string", "null"], maxLength: 1024 },
+      operations: prsWriteOperationsSupportSchema,
+      actions: { type: "array", maxItems: 16, items: prsWriteActionKindSchema },
+      mergeMethods: { type: "array", maxItems: 8, items: prsWriteMergeMethodSchema },
+      updateMethods: {
+        type: "array",
+        maxItems: 4,
+        items: { enum: ["merge", "rebase"] }
+      },
+      verdicts: { type: "array", maxItems: 8, items: prsWriteVerdictSchema }
+    }
+  };
+  var prsWriteActionInputSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["repository", "number", "action"],
+    properties: {
+      host: prsHostField,
+      repository: prsRepositoryField,
+      number: { type: "integer", minimum: 1 },
+      action: prsWriteActionKindSchema,
+      mergeMethod: prsWriteMergeMethodSchema,
+      updateMethod: { enum: ["merge", "rebase"] },
+      stackNumber: { type: "integer", minimum: 1 },
+      expectedStackHeads: {
+        type: "array",
+        maxItems: 100,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["number", "headSha"],
+          properties: {
+            number: { type: "integer", minimum: 1 },
+            headSha: { type: "string", minLength: 1, maxLength: 128 }
+          }
+        }
+      }
+    }
+  };
+  var prsWriteReviewCommentDraftSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["path", "position", "body"],
+    properties: {
+      path: { type: "string", minLength: 1, maxLength: 1024 },
+      oldPath: { type: "string", minLength: 1, maxLength: 1024 },
+      position: {
+        oneOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "newLine"],
+            properties: {
+              kind: { const: "added" },
+              newLine: { type: "integer", minimum: 1 }
+            }
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "oldLine"],
+            properties: {
+              kind: { const: "deleted" },
+              oldLine: { type: "integer", minimum: 1 }
+            }
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "oldLine", "newLine", "side"],
+            properties: {
+              kind: { const: "context" },
+              oldLine: { type: "integer", minimum: 1 },
+              newLine: { type: "integer", minimum: 1 },
+              side: { enum: ["left", "right"] }
+            }
+          }
+        ]
+      },
+      body: prsWriteBodySchema
+    }
+  };
+  var prsWriteApi = defineApi({
+    id: PRS_WRITE,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: prsEmptyInputSchema,
+        outputSchema: prsWriteCapabilitiesResultSchema
+      },
+      {
+        name: "runAction",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: prsWriteActionInputSchema,
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "update",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            title: { type: "string", minLength: 1, maxLength: 1024 },
+            body: { type: "string", maxLength: 65536 }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "comment",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "body"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            body: prsWriteBodySchema
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "updateComment",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "commentId", "kind", "body"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            commentId: { type: "string", minLength: 1, maxLength: 512 },
+            kind: { enum: ["issue-comment", "review-comment"] },
+            body: prsWriteBodySchema
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "submitReview",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "verdict", "body", "comments"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            verdict: { enum: ["comment", "approve", "request-changes"] },
+            body: { type: "string", maxLength: 65536 },
+            comments: { type: "array", maxItems: 100, items: prsWriteReviewCommentDraftSchema }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "replyToThread",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "threadId", "body"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            threadId: { type: "string", minLength: 1, maxLength: 512 },
+            body: prsWriteBodySchema
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "setThreadResolution",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "threadId", "resolved"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            threadId: { type: "string", minLength: 1, maxLength: 512 },
+            resolved: { type: "boolean" }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "setReaction",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "content", "reacted"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            subjectId: { type: "string", minLength: 1, maxLength: 512 },
+            content: {
+              enum: [
+                "thumbs-up",
+                "thumbs-down",
+                "laugh",
+                "hooray",
+                "confused",
+                "heart",
+                "rocket",
+                "eyes"
+              ]
+            },
+            reacted: { type: "boolean" }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "requestReviewers",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "reviewers", "requested"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            reviewers: {
+              type: "array",
+              minItems: 1,
+              maxItems: 25,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["id", "kind"],
+                properties: {
+                  id: { type: "string", minLength: 1, maxLength: 512 },
+                  kind: { enum: ["user", "team"] }
+                }
+              }
+            },
+            requested: { type: "boolean" }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      },
+      {
+        name: "setLabels",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "labels", "applied"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            labels: {
+              type: "array",
+              minItems: 1,
+              maxItems: 25,
+              items: { type: "string", minLength: 1, maxLength: 512 }
+            },
+            applied: { type: "boolean" }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      }
+    ]
+  });
+  var PRS_WRITE_API = prsWriteApi.definition;
   var BROWSER_OPERATE = "t3.browser/operate";
   var BROWSER_SESSION_COMMANDS = [
     "back",
@@ -4088,11 +5574,165 @@ var __t3Client = (() => {
     ]
   });
   var BROWSER_SESSIONS_API = browserSessionsApi.definition;
+  var BROWSER_FRAMES = "t3.browser/frames";
+  var BROWSER_FRAMES_VERSION = "1.0.0";
+  var browserFrameSessionIdentity = {
+    type: "object",
+    additionalProperties: false,
+    required: ["environmentId", "threadId", "serverEpoch", "tabId", "engineGeneration"],
+    properties: {
+      environmentId: { type: "string", minLength: 1, maxLength: 128 },
+      threadId: { type: "string", minLength: 1, maxLength: 128 },
+      serverEpoch: { type: "string", minLength: 1, maxLength: 128 },
+      tabId: browserSessionTabId,
+      engineGeneration: { type: ["string", "null"], minLength: 1, maxLength: 128 }
+    }
+  };
+  var browserFrameTarget = {
+    type: "object",
+    additionalProperties: false,
+    required: ["tabId", "serverEpoch", "surfaceLease"],
+    properties: {
+      tabId: browserSessionTabId,
+      serverEpoch: browserSessionEpoch,
+      expectedEngineGeneration: { type: ["string", "null"], minLength: 1, maxLength: 128 },
+      /**
+       * Held-presentation evidence: a `browser-surface` claim token minted
+       * through `t3.resources/lease` `createPresentationUrl` for this exact
+       * session tuple. Minting a frame ticket without one is denied.
+       */
+      surfaceLease: { type: "string", minLength: 1, maxLength: 4096 }
+    }
+  };
+  var browserFrameStreamDescriptor = {
+    type: "object",
+    additionalProperties: false,
+    required: ["session", "hostId", "paths", "ticket", "expiresAt"],
+    properties: {
+      session: browserFrameSessionIdentity,
+      hostId: { type: ["string", "null"], minLength: 1, maxLength: 128 },
+      paths: {
+        type: "object",
+        additionalProperties: false,
+        required: ["stream", "snapshot", "config"],
+        properties: {
+          stream: { type: "string", minLength: 1, maxLength: 512 },
+          snapshot: { type: "string", minLength: 1, maxLength: 512 },
+          config: { type: "string", minLength: 1, maxLength: 512 }
+        }
+      },
+      ticket: { type: "string", minLength: 1, maxLength: 256 },
+      expiresAt: { type: "integer", minimum: 1 }
+    }
+  };
+  var browserFrameInputLease = {
+    type: "object",
+    additionalProperties: false,
+    required: ["leaseId", "inputTicket", "expiresAt", "paths"],
+    properties: {
+      leaseId: { type: "string", minLength: 1, maxLength: 128 },
+      inputTicket: { type: "string", minLength: 1, maxLength: 256 },
+      expiresAt: { type: "integer", minimum: 1 },
+      paths: {
+        type: "object",
+        additionalProperties: false,
+        required: ["input"],
+        properties: { input: { type: "string", minLength: 1, maxLength: 512 } }
+      }
+    }
+  };
+  var browserFramesApi = defineApi({
+    id: BROWSER_FRAMES,
+    version: BROWSER_FRAMES_VERSION,
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [BROWSER_FRAMES],
+        inputSchema: browserSessionEmptyInput,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["metadata", "stream", "input"],
+          properties: {
+            metadata: {
+              type: "object",
+              additionalProperties: false,
+              required: ["supported"],
+              properties: { supported: { const: true } }
+            },
+            stream: {
+              oneOf: [
+                {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["supported"],
+                  properties: { supported: { const: true } }
+                },
+                {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["supported", "reason"],
+                  properties: {
+                    supported: { const: false },
+                    reason: { enum: ["engine-unavailable"] }
+                  }
+                }
+              ]
+            },
+            input: {
+              type: "object",
+              additionalProperties: false,
+              required: ["supported"],
+              properties: { supported: { type: "boolean" } }
+            }
+          }
+        }
+      },
+      {
+        name: "openStream",
+        effect: "read",
+        requiredGrants: [BROWSER_SESSIONS, BROWSER_FRAMES],
+        inputSchema: browserFrameTarget,
+        outputSchema: browserFrameStreamDescriptor
+      },
+      {
+        name: "openInput",
+        effect: "write",
+        requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE, BROWSER_FRAMES],
+        inputSchema: browserFrameTarget,
+        outputSchema: browserFrameInputLease
+      },
+      {
+        name: "closeInput",
+        effect: "write",
+        requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE, BROWSER_FRAMES],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["leaseId"],
+          properties: {
+            leaseId: { type: "string", minLength: 1, maxLength: 128 },
+            // The closing slot's own presentation claim — leases are keyed to
+            // the slot that minted them, so a close without it names no slot.
+            surfaceLease: { type: "string", minLength: 1, maxLength: 2048 }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["closed"],
+          properties: { closed: { type: "boolean" } }
+        }
+      }
+    ]
+  });
+  var BROWSER_FRAMES_API = browserFramesApi.definition;
   var COMPOSER_CONTEXT = "t3.composer/context";
   var COMPOSER_WRITE = "t3.composer/write";
   var MESSAGES_ENRICHMENT = "t3.messages/enrichment";
   var MESSAGES_WRITE = "t3.messages/write";
-  var composerThreadIdInput = { type: "string", minLength: 1, maxLength: 128 };
+  var composerThreadIdInput2 = { type: "string", minLength: 1, maxLength: 128 };
   var composerLineInput = { type: "integer", minimum: 1, maximum: 1e6 };
   var composerContextRefSchema = {
     type: "object",
@@ -4128,9 +5768,57 @@ var __t3Client = (() => {
     additionalProperties: false,
     properties: {}
   };
+  var composerTerminalIdInput = { type: "string", minLength: 1, maxLength: 128 };
+  var composerTerminalTextInput = { type: "string", minLength: 1, maxLength: 1e4 };
+  var composerInsertResultOutput = {
+    type: "object",
+    additionalProperties: false,
+    required: ["inserted", "target"],
+    properties: {
+      inserted: { type: "integer", minimum: 0, maximum: 8 },
+      target: { type: "string", minLength: 1, maxLength: 256 }
+    }
+  };
+  var annotationSelectionSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["start", "side", "end", "endSide"],
+    properties: {
+      start: composerLineInput,
+      side: { enum: ["additions", "deletions"] },
+      end: composerLineInput,
+      endSide: { enum: ["additions", "deletions"] }
+    }
+  };
+  var diffAnnotationSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "kind",
+      "filePath",
+      "sectionId",
+      "sectionTitle",
+      "rangeLabel",
+      "diff",
+      "selection",
+      "body"
+    ],
+    properties: {
+      kind: { const: "diff" },
+      filePath: { type: "string", minLength: 1, maxLength: 512 },
+      sectionId: { type: "string", minLength: 1, maxLength: 512 },
+      sectionTitle: { type: "string", minLength: 1, maxLength: 256 },
+      rangeLabel: { type: "string", minLength: 1, maxLength: 128 },
+      diff: { type: "string", minLength: 1, maxLength: 4096 },
+      selection: annotationSelectionSchema,
+      startIndex: { type: "integer", minimum: 0, maximum: 1e6 },
+      endIndex: { type: "integer", minimum: 0, maximum: 1e6 },
+      body: { type: "string", minLength: 1, maxLength: 4096 }
+    }
+  };
   var composerContextApi = defineApi({
     id: COMPOSER_CONTEXT,
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
       {
         name: "getCapabilities",
@@ -4139,7 +5827,12 @@ var __t3Client = (() => {
         // apart from "no grant" — authority gates the mutations, not the report.
         requiredGrants: [],
         inputSchema: composerEmptyInputSchema,
-        outputSchema: composerTransportOutput(["insertContext", "getDraftState"])
+        outputSchema: composerTransportOutput([
+          "insertContext",
+          "getDraftState",
+          "insertMention",
+          "insertTerminalContext"
+        ])
       },
       {
         name: "insertContext",
@@ -4150,7 +5843,7 @@ var __t3Client = (() => {
           additionalProperties: false,
           required: ["refs"],
           properties: {
-            threadId: composerThreadIdInput,
+            threadId: composerThreadIdInput2,
             refs: {
               type: "array",
               minItems: 1,
@@ -4178,7 +5871,7 @@ var __t3Client = (() => {
         inputSchema: {
           type: "object",
           additionalProperties: false,
-          properties: { threadId: composerThreadIdInput }
+          properties: { threadId: composerThreadIdInput2 }
         },
         outputSchema: {
           type: "object",
@@ -4220,19 +5913,71 @@ var __t3Client = (() => {
             }
           }
         }
+      },
+      {
+        name: "insertMention",
+        effect: "write",
+        requiredGrants: [COMPOSER_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["paths"],
+          properties: {
+            threadId: composerThreadIdInput2,
+            paths: {
+              type: "array",
+              minItems: 1,
+              maxItems: 8,
+              items: { type: "string", minLength: 1, maxLength: 512 }
+            }
+          }
+        },
+        outputSchema: composerInsertResultOutput
+      },
+      {
+        name: "insertTerminalContext",
+        effect: "write",
+        requiredGrants: [COMPOSER_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["terminalId", "terminalLabel", "lineStart", "lineEnd", "text"],
+          properties: {
+            threadId: composerThreadIdInput2,
+            terminalId: composerTerminalIdInput,
+            terminalLabel: composerTerminalIdInput,
+            lineStart: composerLineInput,
+            lineEnd: composerLineInput,
+            text: composerTerminalTextInput
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["inserted", "target"],
+          properties: {
+            inserted: { type: "boolean" },
+            reason: { enum: ["duplicate"] },
+            target: { type: "string", minLength: 1, maxLength: 256 }
+          }
+        }
       }
     ]
   });
   var messagesEnrichmentApi = defineApi({
     id: MESSAGES_ENRICHMENT,
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
       {
         name: "getCapabilities",
         effect: "read",
         requiredGrants: [],
         inputSchema: composerEmptyInputSchema,
-        outputSchema: composerTransportOutput(["attachAnnotation"])
+        outputSchema: composerTransportOutput([
+          "attachAnnotation",
+          "listAnnotations",
+          "removeAnnotation"
+        ])
       },
       {
         name: "attachAnnotation",
@@ -4243,20 +5988,25 @@ var __t3Client = (() => {
           additionalProperties: false,
           required: ["annotation"],
           properties: {
-            threadId: composerThreadIdInput,
+            threadId: composerThreadIdInput2,
             annotation: {
-              type: "object",
-              additionalProperties: false,
-              required: ["filePath", "startLine", "endLine", "body"],
-              properties: {
-                filePath: { type: "string", minLength: 1, maxLength: 512 },
-                startLine: composerLineInput,
-                endLine: composerLineInput,
-                // body + excerpt at 4,096 chars each keep the worst-case
-                // encoded request (~53 KB) inside the 64 KiB invoke envelope.
-                body: { type: "string", minLength: 1, maxLength: 4096 },
-                excerpt: { type: "string", maxLength: 4096 }
-              }
+              oneOf: [
+                {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["filePath", "startLine", "endLine", "body"],
+                  properties: {
+                    filePath: { type: "string", minLength: 1, maxLength: 512 },
+                    startLine: composerLineInput,
+                    endLine: composerLineInput,
+                    // body + excerpt at 4,096 chars each keep the worst-case
+                    // encoded request (~53 KB) inside the 64 KiB invoke envelope.
+                    body: { type: "string", minLength: 1, maxLength: 4096 },
+                    excerpt: { type: "string", maxLength: 4096 }
+                  }
+                },
+                diffAnnotationSchema
+              ]
             }
           }
         },
@@ -4268,11 +6018,578 @@ var __t3Client = (() => {
             annotationId: { type: "string", minLength: 1, maxLength: 256 }
           }
         }
+      },
+      {
+        name: "listAnnotations",
+        effect: "read",
+        // Lists the caller's own unsent annotations only, but the draft itself
+        // is the user's unsent words — same write-authority stance as
+        // getDraftState on the composer contract.
+        requiredGrants: [MESSAGES_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: { threadId: composerThreadIdInput2 }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["annotations"],
+          properties: {
+            annotations: {
+              // 8 entries at field maxima stay inside the 64 KiB frame envelope.
+              type: "array",
+              maxItems: 8,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["annotationId", "kind", "filePath", "rangeLabel", "sectionTitle"],
+                properties: {
+                  annotationId: { type: "string", minLength: 1, maxLength: 256 },
+                  kind: { enum: ["file", "diff"] },
+                  filePath: { type: "string", minLength: 1, maxLength: 512 },
+                  rangeLabel: { type: "string", minLength: 1, maxLength: 128 },
+                  sectionTitle: { type: "string", minLength: 1, maxLength: 256 }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        name: "removeAnnotation",
+        effect: "write",
+        requiredGrants: [MESSAGES_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["annotationId"],
+          properties: {
+            threadId: composerThreadIdInput2,
+            annotationId: { type: "string", minLength: 1, maxLength: 256 }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["removed"],
+          properties: { removed: { type: "boolean" } }
+        }
       }
     ]
   });
   var COMPOSER_CONTEXT_API = composerContextApi.definition;
   var MESSAGES_ENRICHMENT_API = messagesEnrichmentApi.definition;
+  var UI_THEME = "t3.ui/theme";
+  var UI_THEME_READ = "t3.ui/theme.read";
+  var UI_THEME_WRITE = "t3.ui/theme.write";
+  var UI_KEYBINDINGS = "t3.ui/keybindings";
+  var UI_KEYBINDINGS_VERSION = "1.1.0";
+  var UI_NOTIFY = "t3.ui/notify";
+  var UI_PANELS = "t3.ui/panels";
+  var uiClientTargetSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["connectionId", "providers", "connectedAt"],
+    properties: {
+      connectionId: { type: "string", minLength: 1, maxLength: 160 },
+      announcedOrigin: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          surface: { type: "string", maxLength: 80 },
+          appVersion: { type: "string", maxLength: 80 },
+          os: { type: "string", maxLength: 120 },
+          deviceType: { type: "string", maxLength: 80 },
+          connectionMethod: { type: "string", maxLength: 40 }
+        }
+      },
+      providers: {
+        type: "array",
+        maxItems: 16,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "version"],
+          properties: {
+            id: { type: "string", maxLength: 80 },
+            version: { type: "string", maxLength: 40 }
+          }
+        }
+      },
+      connectedAt: { type: "string", maxLength: 80 }
+    }
+  };
+  var uiCapabilitiesOutput = (operations) => ({
+    type: "object",
+    additionalProperties: false,
+    required: ["adapter", "operations", "clients"],
+    properties: {
+      adapter: { type: "string", maxLength: 64 },
+      operations: {
+        type: "object",
+        additionalProperties: false,
+        required: [...operations],
+        properties: Object.fromEntries(operations.map((name) => [name, { type: "boolean" }]))
+      },
+      clients: { type: "array", maxItems: 64, items: uiClientTargetSchema }
+    }
+  });
+  var uiThemeApi = defineApi({
+    id: UI_THEME,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput([
+          "getState",
+          "getTokens",
+          "setPreference",
+          "subscribeState",
+          "getTerminalAppearance",
+          "subscribeTerminalAppearance"
+        ])
+      },
+      {
+        name: "getState",
+        effect: "read",
+        requiredGrants: [UI_THEME_READ],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: themeProviderStateSchema
+      },
+      {
+        name: "getTokens",
+        effect: "read",
+        requiredGrants: [UI_THEME_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: { appearance: { enum: ["light", "dark"] } }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["tokens", "cssVars"],
+          properties: {
+            tokens: { type: "object", additionalProperties: { type: "string", maxLength: 400 } },
+            cssVars: { type: "object", additionalProperties: { type: "string", maxLength: 80 } }
+          }
+        }
+      },
+      {
+        name: "setPreference",
+        effect: "write",
+        requiredGrants: [UI_THEME_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["mode"],
+          properties: {
+            theme: { type: "string", minLength: 1, maxLength: 160 },
+            appearanceMode: { enum: ["light", "dark", "system"] },
+            themeHalves: themeHalvesSchema,
+            mode: { enum: ["persist", "session"] },
+            clear: { type: "boolean" }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: {
+            applied: { type: "boolean" },
+            reason: { type: "string", maxLength: 200 },
+            propagatedTo: { enum: ["storage-origin", "connection"] }
+          }
+        }
+      },
+      {
+        name: "getTerminalAppearance",
+        effect: "read",
+        requiredGrants: [UI_THEME_READ],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: terminalAppearanceSchema
+      }
+    ],
+    streams: [
+      {
+        name: "subscribeState",
+        inputSchema: composerEmptyInputSchema,
+        eventSchema: themeProviderStateSchema,
+        requiredGrants: [UI_THEME_READ]
+      },
+      {
+        name: "subscribeTerminalAppearance",
+        inputSchema: composerEmptyInputSchema,
+        eventSchema: terminalAppearanceSchema,
+        requiredGrants: [UI_THEME_READ]
+      }
+    ]
+  });
+  var uiKeybindingsApi = defineApi({
+    id: UI_KEYBINDINGS,
+    version: UI_KEYBINDINGS_VERSION,
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput([
+          "registerCommands",
+          "unregisterCommands",
+          "listConflicts"
+        ])
+      },
+      {
+        name: "registerCommands",
+        effect: "write",
+        requiredGrants: [UI_KEYBINDINGS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["commands"],
+          properties: {
+            commands: {
+              type: "array",
+              minItems: 1,
+              maxItems: 64,
+              items: commandDescriptorSchema
+            }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["commandSetToken", "results"],
+          properties: {
+            commandSetToken: { type: "string", minLength: 1, maxLength: 160 },
+            results: { type: "array", maxItems: 64, items: commandResultSchema }
+          }
+        }
+      },
+      {
+        name: "unregisterCommands",
+        effect: "write",
+        requiredGrants: [UI_KEYBINDINGS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["commandSetToken"],
+          properties: {
+            commandSetToken: { type: "string", minLength: 1, maxLength: 160 }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["unregistered"],
+          properties: { unregistered: { type: "boolean" } }
+        }
+      },
+      {
+        name: "listConflicts",
+        effect: "read",
+        requiredGrants: [UI_KEYBINDINGS],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["conflicts"],
+          properties: {
+            conflicts: {
+              type: "array",
+              maxItems: 256,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["command", "key", "winner", "loser"],
+                properties: {
+                  command: { type: "string", maxLength: 256 },
+                  key: { type: "string", maxLength: 64 },
+                  winner: { enum: ["user", "native", "plugin"] },
+                  loser: { type: "string", maxLength: 256 }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  });
+  var uiNotificationActionSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["id", "label"],
+    properties: {
+      id: { type: "string", minLength: 1, maxLength: 80 },
+      label: { type: "string", minLength: 1, maxLength: 80 },
+      variant: { enum: ["default", "primary", "destructive"] }
+    }
+  };
+  var uiNotificationsApi = defineApi({
+    id: "t3.ui/notifications",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput(["notify", "update", "dismiss", "awaitAction"])
+      },
+      {
+        name: "notify",
+        effect: "write",
+        requiredGrants: [UI_NOTIFY],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["severity", "title"],
+          properties: {
+            severity: { enum: ["info", "success", "warning", "error", "loading"] },
+            title: { type: "string", minLength: 1, maxLength: 200 },
+            body: { type: "string", maxLength: 2e3 },
+            threadId: { type: "string", maxLength: 128 },
+            projectId: { type: "string", maxLength: 128 },
+            anchor: { enum: ["global", "thread"] },
+            dismissible: { type: "boolean" },
+            durationMs: { type: "integer", minimum: 0, maximum: 6e4 },
+            actions: { type: "array", maxItems: 3, items: uiNotificationActionSchema }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["notificationId"],
+          properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } }
+        }
+      },
+      {
+        name: "update",
+        effect: "write",
+        requiredGrants: [UI_NOTIFY],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["notificationId"],
+          properties: {
+            notificationId: { type: "string", minLength: 1, maxLength: 160 },
+            severity: { enum: ["info", "success", "warning", "error", "loading"] },
+            title: { type: "string", minLength: 1, maxLength: 200 },
+            body: { type: "string", maxLength: 2e3 },
+            dismissible: { type: "boolean" }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: { applied: { type: "boolean" } }
+        }
+      },
+      {
+        name: "dismiss",
+        effect: "write",
+        requiredGrants: [UI_NOTIFY],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["notificationId"],
+          properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["dismissed"],
+          properties: { dismissed: { type: "boolean" } }
+        }
+      },
+      {
+        name: "awaitAction",
+        effect: "read",
+        requiredGrants: [UI_NOTIFY],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["notificationId"],
+          properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } }
+        },
+        outputSchema: {
+          anyOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["actionId"],
+              properties: { actionId: { type: "string", minLength: 1, maxLength: 80 } }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["dismissed"],
+              properties: { dismissed: { const: true } }
+            }
+          ]
+        }
+      }
+    ]
+  });
+  var uiPanelsApi = defineApi({
+    id: "t3.ui/panels",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput([
+          "openSurface",
+          "activateSurface",
+          "closeSurface",
+          "listSurfaces",
+          "hideDock",
+          "showDock"
+        ])
+      },
+      {
+        name: "openSurface",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaceId"],
+          properties: {
+            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+            title: { type: "string", minLength: 1, maxLength: 200 },
+            placement: { enum: ["side-panel", "bottom-dock"] },
+            threadId: { type: "string", maxLength: 128 }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaceId"],
+          properties: { surfaceId: { type: "string", maxLength: 160 } }
+        }
+      },
+      {
+        name: "activateSurface",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaceId"],
+          properties: {
+            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+            threadId: { type: "string", maxLength: 128 }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: { applied: { type: "boolean" } }
+        }
+      },
+      {
+        name: "closeSurface",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaceId"],
+          properties: {
+            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+            threadId: { type: "string", maxLength: 128 }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: { applied: { type: "boolean" } }
+        }
+      },
+      {
+        name: "listSurfaces",
+        effect: "read",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["threadId"],
+          properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaces"],
+          properties: {
+            surfaces: {
+              type: "array",
+              maxItems: 64,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["id", "title", "placement", "active"],
+                properties: {
+                  id: { type: "string", maxLength: 160 },
+                  title: { type: "string", maxLength: 200 },
+                  placement: { enum: ["side-panel", "bottom-dock"] },
+                  active: { type: "boolean" }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        name: "hideDock",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["threadId"],
+          properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: { applied: { type: "boolean" } }
+        }
+      },
+      {
+        name: "showDock",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["threadId"],
+          properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: { applied: { type: "boolean" } }
+        }
+      }
+    ]
+  });
+  var UI_THEME_API = uiThemeApi.definition;
+  var UI_KEYBINDINGS_API = uiKeybindingsApi.definition;
+  var UI_NOTIFICATIONS_API = uiNotificationsApi.definition;
+  var UI_PANELS_API = uiPanelsApi.definition;
   var orchestrationStatusApi = defineOrchestrationStatusApi(vcsDiffPreviewStreamEventSchema);
   var ORCHESTRATION_STATUS_API = orchestrationStatusApi.definition;
   var GENERIC_API_CATALOGUE = [
@@ -4280,6 +6597,7 @@ var __t3Client = (() => {
     orchestrationControlApi.definition,
     browserLocalServersApi.definition,
     browserSessionsApi.definition,
+    browserFramesApi.definition,
     workspaceFilesApi.definition,
     workspaceTreeApi.definition,
     workspaceSearchApi.definition,
@@ -4299,12 +6617,18 @@ var __t3Client = (() => {
     vcsRepositoryApi.definition,
     vcsRepositoryApiV1.definition,
     vcsDiffApiV1.definition,
+    vcsActionsApi.definition,
     resourcesLeaseApi.definition,
     resourcesLeaseApiV1.definition,
     workspaceResourcesApi.definition,
     prsReadApi.definition,
+    prsWriteApi.definition,
     composerContextApi.definition,
-    messagesEnrichmentApi.definition
+    messagesEnrichmentApi.definition,
+    uiThemeApi.definition,
+    uiKeybindingsApi.definition,
+    uiNotificationsApi.definition,
+    uiPanelsApi.definition
   ];
   function canonical(value) {
     if (Array.isArray(value))

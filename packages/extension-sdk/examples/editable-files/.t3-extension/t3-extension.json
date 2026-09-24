@@ -27,7 +27,7 @@
   "requires": [
     {
       "id": "t3.workspace/text-edits",
-      "versionRange": "^1.0.0"
+      "versionRange": "^1.1.0"
     }
   ],
   "dependencies": []
