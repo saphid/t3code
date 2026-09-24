@@ -10364,8 +10364,8 @@ var __t3Client = (() => {
      * current — a pending popup timer, or the open popup. A right-click menu
      * keeps the text it captured.
      */
-    shouldClearOnEmptySelection(actionPending) {
-      return actionPending || this.ownsOpenMenu("selection");
+    shouldClearOnEmptySelection(popupPending) {
+      return popupPending || this.ownsOpenMenu("selection");
     }
     ownsOpenMenu(kind) {
       return this.open?.kind === kind && this.isCurrent(this.open.requestId);
@@ -10458,7 +10458,9 @@ var __t3Client = (() => {
         this.gestureActive = event.button === 0 && !event.defaultPrevented;
       };
       const onDocumentPointerDown = (event) => {
-        if (!insideMenu(event)) this.flow.dismiss();
+        if (insideMenu(event)) return;
+        this.cancelPending();
+        this.flow.dismiss();
       };
       const onMouseUp = (event) => {
         if (event.button !== 0 || !this.gestureActive) return;
@@ -10521,6 +10523,10 @@ var __t3Client = (() => {
     get pending() {
       return this.timer !== null || this.frame !== null;
     }
+    // Timers and viewport reads use the global `window`, while install() binds
+    // listeners through the mount's own document and view. Surfaces render
+    // in-document, so both are one realm; a cross-document surface would need
+    // these moved to the mount's defaultView.
     schedule(pointer, delay) {
       this.cancelPending();
       this.timer = window.setTimeout(() => {
