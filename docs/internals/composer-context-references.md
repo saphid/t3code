@@ -78,11 +78,14 @@ Messages sent before this feature carry trailing `<terminal_context>`, `<element
 
 - Review blocks become references in place. Blocks that trailed the original text are appended
   last, matching the old send order.
-- `<review_comment>` bodies are written with `&lt;` in place of `<` before any `review_comment`
-  tag, in text and diff alike, so a comment's own words (or PR-supplied text) can never close or
-  forge a record on readers that stop at the first closing tag. The upgrader decodes the same
-  pattern after the record boundary is fixed, so the round-trip stays byte-identical. Writers
-  must keep this contract; the parser stays lenient toward pre-fix payloads.
+- `<review_comment>` bodies written today carry `bodyEncoding="escaped-tags"` and encode `&` as
+  `&amp;` plus `<` before any `review_comment` tag as `&lt;`, in text and diff alike, so a
+  comment's own words (or PR-supplied text) can never close or forge a record on readers that
+  stop at the first closing tag. Readers decode that exact pattern — and only inside a marked
+  body, after the record boundary is fixed — so new writes round-trip byte-identical while
+  historical unmarked bodies keep their bytes, literal `&lt;` spellings included. The parser's
+  leniency toward pre-fix payloads is boundary leniency, not proof that historical entity
+  content was ever preserved; the marker is what guarantees it. Writers must keep this contract.
 - Trailing blocks peel off the end in reverse send order (preview, element, terminal).
 - Placeholders bind to terminal entries in order; entries without a placeholder are appended.
 - Ids are deterministic (`legacy_<kind>_<n>`) so re-running the upgrade is idempotent.
