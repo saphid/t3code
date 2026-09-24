@@ -14,6 +14,7 @@ import {
   messagesEnrichmentApi,
 } from "../dist/catalogue.js";
 import { validateApiDefinition } from "../dist/capabilities.js";
+import { CLIENT_COMPOSER_API } from "../dist/clientProviders.js";
 
 const methodsOf = (definition) =>
   Object.fromEntries((definition.methods ?? []).map((m) => [m.name, m]));
@@ -161,6 +162,49 @@ NodeTest.test("insertMention and insertTerminalContext inputs are closed and bou
   const listing = methodsOf(MESSAGES_ENRICHMENT_API).listAnnotations.inputSchema;
   NodeAssert.equal(listing.additionalProperties, false);
   NodeAssert.equal(listing.properties.annotationId, undefined);
+});
+
+NodeTest.test("the private client-provider seam carries every 1.1.0 op", () => {
+  // The broker's METHOD_SCHEMAS table is built from this definition — an op
+  // missing here can never cross to the client, whatever the public contract
+  // or web provider support.
+  NodeAssert.equal(CLIENT_COMPOSER_API.id, "t3.client/composer");
+  NodeAssert.equal(CLIENT_COMPOSER_API.version, "1.1.0");
+  NodeAssert.deepEqual(methodsOf(CLIENT_COMPOSER_API).insertMention.inputSchema.required, [
+    "target",
+    "threadId",
+    "paths",
+  ]);
+  const seam = methodsOf(CLIENT_COMPOSER_API);
+  for (const name of [
+    "insertContext",
+    "getDraftState",
+    "attachAnnotation",
+    "insertMention",
+    "insertTerminalContext",
+    "listAnnotations",
+    "removeAnnotation",
+  ]) {
+    NodeAssert.ok(seam[name], name);
+    // Every frame carries the adapter-set target; plugin envelopes never do.
+    NodeAssert.ok(seam[name].inputSchema.required.includes("target"), name);
+  }
+  const seamAnnotation = seam.attachAnnotation.inputSchema.properties.annotation;
+  NodeAssert.equal(seamAnnotation.oneOf.length, 2);
+  NodeAssert.equal(seamAnnotation.oneOf[0].properties.kind, undefined);
+  NodeAssert.deepEqual(seamAnnotation.oneOf[1].properties.kind, { const: "diff" });
+  NodeAssert.deepEqual(seamAnnotation.oneOf[1].properties.selection.properties.side.enum, [
+    "additions",
+    "deletions",
+  ]);
+  NodeAssert.equal(seam.insertMention.inputSchema.properties.paths.maxItems, 8);
+  NodeAssert.equal(seam.insertTerminalContext.inputSchema.properties.text.maxLength, 10000);
+  NodeAssert.equal(seam.listAnnotations.outputSchema.properties.annotations.maxItems, 8);
+  NodeAssert.deepEqual(
+    seam.listAnnotations.outputSchema.properties.annotations.items.properties.kind.enum,
+    ["file", "diff"],
+  );
+  NodeAssert.equal(seam.removeAnnotation.inputSchema.properties.annotationId.maxLength, 256);
 });
 
 NodeTest.test("capability honesty output names per-op support and transport", () => {
