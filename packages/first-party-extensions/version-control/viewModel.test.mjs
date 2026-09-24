@@ -1,6 +1,10 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 import {
+  COMMIT_FOLLOW_UP,
+  FOLLOW_UP_ACTION_ID,
+  postFollowUpReceipt,
+  stackedFollowUp,
   CHANGE_LANES,
   CONNECTING_STATUS,
   EMPTY_LANES,
@@ -1265,6 +1269,111 @@ NodeTest.describe("mutation toasts", () => {
         title: "Pushing failed",
         body: "rejected: non-fast-forward",
       },
+    );
+  });
+});
+
+// Native's commit toast offers Push (GitManager cta); the plugin's receipts
+// carry the same follow-up and run it through the stacked runner.
+NodeTest.describe("mutation follow-ups", () => {
+  const result = (cta) => ({ toast: { title: "t", cta } });
+
+  NodeTest.it("offers native's server-decided run_action CTA, nothing else", () => {
+    NodeAssert.deepEqual(COMMIT_FOLLOW_UP, { label: "Push", action: "push" });
+    NodeAssert.deepEqual(
+      stackedFollowUp(result({ kind: "run_action", label: "Push", action: { kind: "push" } })),
+      { label: "Push", action: "push" },
+    );
+    NodeAssert.deepEqual(
+      stackedFollowUp(
+        result({ kind: "run_action", label: "Create PR", action: { kind: "create_pr" } }),
+      ),
+      { label: "Create PR", action: "create_pr" },
+    );
+    NodeAssert.equal(stackedFollowUp(result({ kind: "none" })), null);
+    NodeAssert.equal(
+      stackedFollowUp(result({ kind: "open_pr", label: "View PR", url: "https://x/1" })),
+      null,
+    );
+  });
+
+  const fakeNotifications = (outcome, options = {}) => {
+    const calls = [];
+    return {
+      calls,
+      api: {
+        notify: (input) => {
+          calls.push(["notify", input]);
+          return options.rejectNotify
+            ? Promise.reject(new Error("denied"))
+            : Promise.resolve({ notificationId: "receipt" });
+        },
+        dismiss: (id) => calls.push(["dismiss", id]),
+        awaitAction: (id) => {
+          calls.push(["awaitAction", id]);
+          return Promise.resolve(outcome);
+        },
+      },
+    };
+  };
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+  NodeTest.it(
+    "replaces the loading toast with a receipt whose button runs the action",
+    async () => {
+      const { calls, api } = fakeNotifications({ actionId: FOLLOW_UP_ACTION_ID });
+      const posted = [];
+      const ran = [];
+      const replaced = await postFollowUpReceipt(
+        api,
+        "loading",
+        "Committed abc",
+        COMMIT_FOLLOW_UP,
+        {
+          onPosted: (id) => posted.push(id),
+          run: (action) => ran.push(action),
+        },
+      );
+      await flush();
+      NodeAssert.equal(replaced, true);
+      NodeAssert.deepEqual(calls, [
+        [
+          "notify",
+          {
+            severity: "success",
+            title: "Committed abc",
+            actions: [{ id: FOLLOW_UP_ACTION_ID, label: "Push", variant: "primary" }],
+          },
+        ],
+        ["dismiss", "loading"],
+        ["awaitAction", "receipt"],
+      ]);
+      NodeAssert.deepEqual(posted, ["receipt"]);
+      NodeAssert.deepEqual(ran, ["push"]);
+    },
+  );
+
+  NodeTest.it("a dismissed receipt runs nothing", async () => {
+    const { api } = fakeNotifications({ dismissed: true });
+    const ran = [];
+    await postFollowUpReceipt(api, "loading", "Committed abc", COMMIT_FOLLOW_UP, {
+      onPosted: () => {},
+      run: (action) => ran.push(action),
+    });
+    await flush();
+    NodeAssert.deepEqual(ran, []);
+  });
+
+  NodeTest.it("a failed post keeps the loading toast for the in-place update", async () => {
+    const { calls, api } = fakeNotifications({ dismissed: true }, { rejectNotify: true });
+    const replaced = await postFollowUpReceipt(api, "loading", "Committed abc", COMMIT_FOLLOW_UP, {
+      onPosted: () => NodeAssert.fail("no receipt was posted"),
+      run: () => NodeAssert.fail("nothing to run"),
+    });
+    NodeAssert.equal(replaced, false);
+    NodeAssert.deepEqual(
+      calls.map(([method]) => method),
+      ["notify"],
     );
   });
 });

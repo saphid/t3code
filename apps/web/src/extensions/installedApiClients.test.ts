@@ -182,3 +182,38 @@ it("does not await an unrelated hung discovery for an explicitly selected provid
     setInstalledApiPolicy("api-env", null);
   }
 });
+
+it("falls back when the only provider is disabled and nothing was selected", async () => {
+  const missing = { code: "missing-api", detail: "No available API provider", relatedIds: [] };
+  const disabledEnv = { ...context, resource: { ...context.resource, environmentId: "gone-env" } };
+  setInstalledApiPolicy("gone-env", {
+    apiSelections: [],
+    apiResolution: [{ id: selected.id, reason: missing }],
+  });
+  // An unrelated enabled plugin still discovers the disabled provider's entry.
+  const stop = registerInstalledApiClient(
+    "gone-env",
+    "other",
+    client([{ ...selected, health: "unavailable", selected: false, reason: missing }]),
+  );
+  try {
+    expect(
+      await resolveInstalledApiProvider(selected.id, disabledEnv, new AbortController().signal),
+    ).toBeNull();
+    stop();
+    expect(
+      await resolveInstalledApiProvider(selected.id, disabledEnv, new AbortController().signal),
+    ).toBeNull();
+    // An explicit selection stays honest rather than silently falling back.
+    setInstalledApiPolicy("gone-env", {
+      apiSelections: [{ id: selected.id, providerId: "example.files", fallbackProviderIds: [] }],
+      apiResolution: [{ id: selected.id, reason: missing }],
+    });
+    await expect(
+      resolveInstalledApiProvider(selected.id, disabledEnv, new AbortController().signal),
+    ).rejects.toThrow("No available API provider");
+  } finally {
+    stop();
+    setInstalledApiPolicy("gone-env", null);
+  }
+});

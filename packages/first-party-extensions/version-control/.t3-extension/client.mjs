@@ -7136,6 +7136,35 @@ var __t3Client = (() => {
   function mutationToastSettle(label, result) {
     return result.ok ? { severity: "success", title: result.detail } : { severity: "error", title: `${label} failed`, body: result.detail };
   }
+  var COMMIT_FOLLOW_UP = { label: "Push", action: "push" };
+  function stackedFollowUp(result) {
+    const cta = result.toast.cta;
+    return cta.kind === "run_action" ? { label: cta.label, action: cta.action.kind } : null;
+  }
+  var FOLLOW_UP_ACTION_ID = "follow-up";
+  async function postFollowUpReceipt(notifications, loadingId, detail, followUp, hooks) {
+    let receiptId;
+    try {
+      ({ notificationId: receiptId } = await notifications.notify({
+        severity: "success",
+        title: detail,
+        actions: [{ id: FOLLOW_UP_ACTION_ID, label: followUp.label, variant: "primary" }]
+      }));
+    } catch {
+      return false;
+    }
+    notifications.dismiss(loadingId);
+    hooks.onPosted(receiptId);
+    void notifications.awaitAction(receiptId).then(
+      (outcome) => {
+        if ("actionId" in outcome && outcome.actionId === FOLLOW_UP_ACTION_ID)
+          hooks.run(followUp.action);
+      },
+      () => {
+      }
+    );
+    return true;
+  }
 
   // prsPanel.tsx
   var import_react = __toESM(require_react(), 1);
@@ -10230,8 +10259,9 @@ ${thread.id}`) === activity,
     }, [host, session, visible]);
     return vars;
   }
-  function useMutationToasts(host, session, enabled) {
+  function useMutationToasts(host, session, enabled, runFollowUp) {
     const [toastsLive, setToastsLive] = (0, import_react2.useState)(false);
+    const [followUpsLive, setFollowUpsLive] = (0, import_react2.useState)(false);
     const dead = (0, import_react2.useRef)(false);
     (0, import_react2.useEffect)(() => {
       if (!enabled) return;
@@ -10239,10 +10269,12 @@ ${thread.id}`) === activity,
       const signal = AbortSignal.any([controller.signal, session.signal]);
       void bindApi(uiNotificationsApi, host, session.context).invoke("getCapabilities", {}, signal).then(
         (capabilities) => {
-          if (!signal.aborted && !dead.current)
+          if (!signal.aborted && !dead.current) {
             setToastsLive(
               capabilities.operations.notify === true && capabilities.operations.update === true
             );
+            setFollowUpsLive(capabilities.operations.awaitAction === true);
+          }
         },
         () => {
         }
@@ -10266,18 +10298,11 @@ ${thread.id}`) === activity,
           }
         );
       };
-      const posted = api.invoke(
-        "notify",
-        {
-          ...mutationToastStart(label),
-          // A thread-anchored toast paints only while its thread is active —
-          // the native threadToastData behavior. Targeting fields may only
-          // name this context's own scope.
-          ...resource.threadId !== void 0 ? { anchor: "thread", threadId: resource.threadId } : {},
-          ...resource.projectId !== void 0 ? { projectId: resource.projectId } : {}
-        },
-        session.signal
-      ).then(
+      const target = {
+        ...resource.threadId !== void 0 ? { anchor: "thread", threadId: resource.threadId } : {},
+        ...resource.projectId !== void 0 ? { projectId: resource.projectId } : {}
+      };
+      const posted = api.invoke("notify", { ...mutationToastStart(label), ...target }, session.signal).then(
         (result) => {
           if (dead.current) dismiss(result.notificationId);
           return result.notificationId;
@@ -10305,37 +10330,55 @@ ${thread.id}`) === activity,
           };
         }
       };
+      const settleInPlace = (notificationId, result) => void api.invoke("update", { notificationId, ...mutationToastSettle(label, result) }, session.signal).then(
+        ({ applied }) => {
+          if (!applied) {
+            onReceiptLost();
+            return;
+          }
+          if (result.ok)
+            dismissReceiptAfterSeen(
+              receiptSeen,
+              MUTATION_TOAST_DISMISS_MS,
+              () => dismiss(notificationId)
+            );
+        },
+        (error) => {
+          onReceiptLost();
+          if (!isNotificationDismissal(error)) markDead();
+        }
+      );
       return {
-        settle(result) {
-          void posted.then((notificationId) => {
+        settle(result, followUp) {
+          void posted.then(async (notificationId) => {
             if (notificationId === null) return;
             if (dead.current) {
               onReceiptLost();
               dismiss(notificationId);
               return;
             }
-            void api.invoke(
-              "update",
-              { notificationId, ...mutationToastSettle(label, result) },
-              session.signal
-            ).then(
-              ({ applied }) => {
-                if (!applied) {
-                  onReceiptLost();
-                  return;
-                }
-                if (result.ok)
-                  dismissReceiptAfterSeen(
+            if (result.ok && followUp && followUpsLive) {
+              const replaced = await postFollowUpReceipt(
+                {
+                  notify: (input) => api.invoke("notify", { ...input, ...target }, session.signal),
+                  dismiss,
+                  awaitAction: (id2) => api.invoke("awaitAction", { notificationId: id2 }, session.signal)
+                },
+                notificationId,
+                result.detail,
+                followUp,
+                {
+                  onPosted: (receiptId) => dismissReceiptAfterSeen(
                     receiptSeen,
                     MUTATION_TOAST_DISMISS_MS,
-                    () => dismiss(notificationId)
-                  );
-              },
-              (error) => {
-                onReceiptLost();
-                if (!isNotificationDismissal(error)) markDead();
-              }
-            );
+                    () => dismiss(receiptId)
+                  ),
+                  run: runFollowUp
+                }
+              );
+              if (replaced) return;
+            }
+            settleInPlace(notificationId, result);
           });
         }
       };
@@ -10396,7 +10439,14 @@ ${thread.id}`) === activity,
       session.save(next);
     };
     const repositoryVisible = visible && view === "repository";
-    const { begin: beginToast } = useMutationToasts(host, session, repositoryVisible);
+    const runFollowUpRef = (0, import_react2.useRef)(() => {
+    });
+    const { begin: beginToast } = useMutationToasts(
+      host,
+      session,
+      repositoryVisible,
+      (action) => runFollowUpRef.current(action)
+    );
     const { capabilities, error: capsError } = useCapabilities(
       host,
       session,
@@ -10472,9 +10522,10 @@ ${thread.id}`) === activity,
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       invoke(signal).then(
-        (detail) => {
+        (settled) => {
+          const { detail, followUp } = typeof settled === "string" ? { detail: settled, followUp: null } : settled;
           setMutation((phase) => settleMutation(phase, op, { ok: true, detail }));
-          toast?.settle({ ok: true, detail });
+          toast?.settle({ ok: true, detail }, followUp);
         },
         (error) => {
           const detail = error instanceof Error ? error.message : "operation unavailable";
@@ -10510,7 +10561,11 @@ ${thread.id}`) === activity,
           signal
         ).then((result) => {
           setCommitMessage("");
-          return `Committed ${result.commitSha.slice(0, 12)}${result.refName !== null ? ` on ${result.refName}` : ""}`;
+          return {
+            detail: `Committed ${result.commitSha.slice(0, 12)}${result.refName !== null ? ` on ${result.refName}` : ""}`,
+            // The follow-up runs through the stacked runner, as native's does.
+            followUp: canRunActions ? COMMIT_FOLLOW_UP : null
+          };
         })
       );
     };
@@ -10557,7 +10612,10 @@ ${thread.id}`) === activity,
         if (model.result === null) throw new Error("Action progress ended before the action settled");
         if (stackedActionCommits(offer.action))
           setCommitMessage((current) => current === commitMessage ? "" : current);
-        return describeStackedResult(model.result);
+        return {
+          detail: describeStackedResult(model.result),
+          followUp: stackedFollowUp(model.result)
+        };
       });
     };
     const runCreateRef = () => {
@@ -10661,6 +10719,17 @@ ${thread.id}`) === activity,
       setView(next);
       persist({ view: next });
     };
+    (0, import_react2.useEffect)(() => {
+      runFollowUpRef.current = (action) => {
+        switchView("repository");
+        setStackedChoice(action);
+        setPendingConfirm(null);
+        const offer = stackedOffers.find((entry) => entry.action === action);
+        if (offer === void 0 || offer.disabled !== null) return;
+        if (stackedActionNeedsConfirm(action, status.local, featureBranch)) setPendingConfirm(action);
+        else runStacked(offer);
+      };
+    });
     return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
       "section",
       {

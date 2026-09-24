@@ -1023,6 +1023,17 @@ export function describeContentSearch(
  * Same predicate the diff panel ported; kept package-local because the
  * sibling package's view model is not a shared contract.
  */
+/**
+ * The file a restored view selects. `t3.file/presentation.open` with an empty
+ * path (the host's plain Files panel) restores `{ relativePath: "" }`, which
+ * means "no file"; selecting it would read the workspace root as a file.
+ */
+export function restoredSelection(restoreState: unknown): string | null {
+  if (!restoreState || typeof restoreState !== "object" || Array.isArray(restoreState)) return null;
+  const path = (restoreState as { readonly relativePath?: unknown }).relativePath;
+  return typeof path === "string" && path !== "" ? path : null;
+}
+
 export function presentationPath(path: string): string | null {
   if (
     path.length === 0 ||

@@ -81,6 +81,16 @@ export function registerInstalledApiClient(
   };
 }
 
+/**
+ * No provider can serve the API and none was chosen — e.g. the only provider's
+ * plugin is disabled. That is the same as no installation naming the API, so
+ * the caller's in-tree fallback renders instead of an error.
+ */
+const noProvider = (
+  reason: ApiUnavailableReason | undefined,
+  selection: ApiSelection | undefined,
+) => reason?.code === "missing-api" && selection === undefined;
+
 /** Selection is host policy. Registration order never chooses an API provider. */
 export async function resolveInstalledApiProvider(
   id: string,
@@ -92,6 +102,7 @@ export async function resolveInstalledApiProvider(
   const selection = policy?.apiSelections.find((item) => item.id === id);
   const environment = clients.get(context.resource.environmentId);
   if (!environment?.size) {
+    if (noProvider(resolution?.reason, selection)) return null;
     if (resolution?.reason) throw new Error(resolution.reason.detail);
     if (resolution?.providerId || selection)
       throw new Error("Selected API provider client is unavailable");
@@ -121,6 +132,7 @@ export async function resolveInstalledApiProvider(
   const selected = available.find((item) => item.id === id && item.selected);
   if (!selected) {
     const reason = available.find((item) => item.id === id)?.reason ?? resolution?.reason;
+    if (noProvider(reason, selection)) return null;
     if (reason) throw new Error(reason.detail);
     if (resolution?.providerId || selection)
       throw new Error("Selected API provider is unavailable");
