@@ -346,7 +346,7 @@ var __t3Client = (() => {
     agentProps[key] = nullable(num);
   var approval = obj({
     requestId: id,
-    requestKind: { enum: ["command", "file-read", "file-change", "mcp-elicitation"] },
+    requestKind: { enum: ["command", "file-read", "file-change", "mcp-elicitation", "permission"] },
     createdAt: str,
     detail: str,
     appName: str,
@@ -2339,7 +2339,7 @@ var __t3Client = (() => {
         additionalProperties: false,
         required: ["kind", "name", "baseUrl"],
         properties: {
-          kind: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+          kind: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"] },
           name: { type: "string", minLength: 1, maxLength: 256 },
           baseUrl: { type: "string", maxLength: 2048 }
         }
@@ -3262,6 +3262,34 @@ var __t3Client = (() => {
         }
       },
       {
+        name: "releasePresentation",
+        // Acquired under the same read-scoped grant as `createPresentationUrl`;
+        // releasing your own held claim is not a write of host state beyond what
+        // the read grant already entitles the caller to hold. A `write` effect
+        // would require a write-scope the minting caller never had, making the
+        // release unreachable through the broker for the only callers it serves.
+        effect: "read",
+        // Only a held `browser-surface` claim can be released, and only by the
+        // authority that holds it — enforced inside the host adapter.
+        requiredGrants: [],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["presentationUrl"],
+          properties: {
+            // The value `createPresentationUrl` returned (`/api/assets/<token>/…`)
+            // or the bare signed token.
+            presentationUrl: { type: "string", minLength: 1, maxLength: 4096 }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["released"],
+          properties: { released: { type: "boolean" } }
+        }
+      },
+      {
         name: "getCapabilities",
         effect: "read",
         requiredGrants: [],
@@ -3444,7 +3472,7 @@ var __t3Client = (() => {
     required: ["host", "kind", "searchesOnHost", "projectCount", "configured", "detail"],
     properties: {
       host: prsHostField,
-      kind: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+      kind: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"] },
       searchesOnHost: { type: "boolean" },
       projectCount: { type: "integer", minimum: 1 },
       configured: { type: "boolean" },
@@ -3488,7 +3516,7 @@ var __t3Client = (() => {
           base: { type: "string", minLength: 1, maxLength: 1024 }
         }
       },
-      provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+      provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"] },
       host: prsHostField,
       projectId: { type: "string", minLength: 1, maxLength: 160 },
       projectTitle: { type: "string", minLength: 1, maxLength: 512 },
@@ -3670,7 +3698,7 @@ var __t3Client = (() => {
       "mergeCapabilities"
     ],
     properties: {
-      provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+      provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"] },
       capabilities: prsCapabilitiesSchema,
       viewerPermissions: prsViewerPermissionsSchema,
       projectId: { type: "string", minLength: 1, maxLength: 160 },
@@ -3818,7 +3846,7 @@ var __t3Client = (() => {
       "updatedAt"
     ],
     properties: {
-      provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+      provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"] },
       projectId: { type: "string", minLength: 1, maxLength: 160 },
       repository: prsRepositoryField,
       number: { type: "integer", minimum: 1 },
@@ -4625,7 +4653,9 @@ var __t3Client = (() => {
           additionalProperties: false,
           required: ["provider", "repository", "visibility"],
           properties: {
-            provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+            provider: {
+              enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"]
+            },
             repository: { type: "string", minLength: 1, maxLength: 512 },
             visibility: { enum: ["private", "public"] },
             remoteName: { type: "string", minLength: 1, maxLength: 256 },
@@ -4642,7 +4672,9 @@ var __t3Client = (() => {
               additionalProperties: false,
               required: ["provider", "nameWithOwner", "url", "sshUrl"],
               properties: {
-                provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+                provider: {
+                  enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"]
+                },
                 nameWithOwner: { type: "string", minLength: 1, maxLength: 512 },
                 url: { type: "string", minLength: 1, maxLength: 4096 },
                 sshUrl: { type: "string", minLength: 1, maxLength: 4096 }
@@ -5427,6 +5459,160 @@ var __t3Client = (() => {
     ]
   });
   var BROWSER_SESSIONS_API = browserSessionsApi.definition;
+  var BROWSER_FRAMES = "t3.browser/frames";
+  var BROWSER_FRAMES_VERSION = "1.0.0";
+  var browserFrameSessionIdentity = {
+    type: "object",
+    additionalProperties: false,
+    required: ["environmentId", "threadId", "serverEpoch", "tabId", "engineGeneration"],
+    properties: {
+      environmentId: { type: "string", minLength: 1, maxLength: 128 },
+      threadId: { type: "string", minLength: 1, maxLength: 128 },
+      serverEpoch: { type: "string", minLength: 1, maxLength: 128 },
+      tabId: browserSessionTabId,
+      engineGeneration: { type: ["string", "null"], minLength: 1, maxLength: 128 }
+    }
+  };
+  var browserFrameTarget = {
+    type: "object",
+    additionalProperties: false,
+    required: ["tabId", "serverEpoch", "surfaceLease"],
+    properties: {
+      tabId: browserSessionTabId,
+      serverEpoch: browserSessionEpoch,
+      expectedEngineGeneration: { type: ["string", "null"], minLength: 1, maxLength: 128 },
+      /**
+       * Held-presentation evidence: a `browser-surface` claim token minted
+       * through `t3.resources/lease` `createPresentationUrl` for this exact
+       * session tuple. Minting a frame ticket without one is denied.
+       */
+      surfaceLease: { type: "string", minLength: 1, maxLength: 4096 }
+    }
+  };
+  var browserFrameStreamDescriptor = {
+    type: "object",
+    additionalProperties: false,
+    required: ["session", "hostId", "paths", "ticket", "expiresAt"],
+    properties: {
+      session: browserFrameSessionIdentity,
+      hostId: { type: ["string", "null"], minLength: 1, maxLength: 128 },
+      paths: {
+        type: "object",
+        additionalProperties: false,
+        required: ["stream", "snapshot", "config"],
+        properties: {
+          stream: { type: "string", minLength: 1, maxLength: 512 },
+          snapshot: { type: "string", minLength: 1, maxLength: 512 },
+          config: { type: "string", minLength: 1, maxLength: 512 }
+        }
+      },
+      ticket: { type: "string", minLength: 1, maxLength: 256 },
+      expiresAt: { type: "integer", minimum: 1 }
+    }
+  };
+  var browserFrameInputLease = {
+    type: "object",
+    additionalProperties: false,
+    required: ["leaseId", "inputTicket", "expiresAt", "paths"],
+    properties: {
+      leaseId: { type: "string", minLength: 1, maxLength: 128 },
+      inputTicket: { type: "string", minLength: 1, maxLength: 256 },
+      expiresAt: { type: "integer", minimum: 1 },
+      paths: {
+        type: "object",
+        additionalProperties: false,
+        required: ["input"],
+        properties: { input: { type: "string", minLength: 1, maxLength: 512 } }
+      }
+    }
+  };
+  var browserFramesApi = defineApi({
+    id: BROWSER_FRAMES,
+    version: BROWSER_FRAMES_VERSION,
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [BROWSER_FRAMES],
+        inputSchema: browserSessionEmptyInput,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["metadata", "stream", "input"],
+          properties: {
+            metadata: {
+              type: "object",
+              additionalProperties: false,
+              required: ["supported"],
+              properties: { supported: { const: true } }
+            },
+            stream: {
+              oneOf: [
+                {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["supported"],
+                  properties: { supported: { const: true } }
+                },
+                {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["supported", "reason"],
+                  properties: {
+                    supported: { const: false },
+                    reason: { enum: ["engine-unavailable"] }
+                  }
+                }
+              ]
+            },
+            input: {
+              type: "object",
+              additionalProperties: false,
+              required: ["supported"],
+              properties: { supported: { type: "boolean" } }
+            }
+          }
+        }
+      },
+      {
+        name: "openStream",
+        effect: "read",
+        requiredGrants: [BROWSER_SESSIONS, BROWSER_FRAMES],
+        inputSchema: browserFrameTarget,
+        outputSchema: browserFrameStreamDescriptor
+      },
+      {
+        name: "openInput",
+        effect: "write",
+        requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE, BROWSER_FRAMES],
+        inputSchema: browserFrameTarget,
+        outputSchema: browserFrameInputLease
+      },
+      {
+        name: "closeInput",
+        effect: "write",
+        requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE, BROWSER_FRAMES],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["leaseId"],
+          properties: {
+            leaseId: { type: "string", minLength: 1, maxLength: 128 },
+            // The closing slot's own presentation claim — leases are keyed to
+            // the slot that minted them, so a close without it names no slot.
+            surfaceLease: { type: "string", minLength: 1, maxLength: 2048 }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["closed"],
+          properties: { closed: { type: "boolean" } }
+        }
+      }
+    ]
+  });
+  var BROWSER_FRAMES_API = browserFramesApi.definition;
   var COMPOSER_CONTEXT = "t3.composer/context";
   var COMPOSER_WRITE = "t3.composer/write";
   var MESSAGES_ENRICHMENT = "t3.messages/enrichment";
@@ -6128,6 +6314,7 @@ var __t3Client = (() => {
     orchestrationControlApi.definition,
     browserLocalServersApi.definition,
     browserSessionsApi.definition,
+    browserFramesApi.definition,
     workspaceFilesApi.definition,
     workspaceTreeApi.definition,
     workspaceSearchApi.definition,
@@ -6947,6 +7134,35 @@ var __t3Client = (() => {
   }
   function mutationToastSettle(label, result) {
     return result.ok ? { severity: "success", title: result.detail } : { severity: "error", title: `${label} failed`, body: result.detail };
+  }
+  var COMMIT_FOLLOW_UP = { label: "Push", action: "push" };
+  function stackedFollowUp(result) {
+    const cta = result.toast.cta;
+    return cta.kind === "run_action" ? { label: cta.label, action: cta.action.kind } : null;
+  }
+  var FOLLOW_UP_ACTION_ID = "follow-up";
+  async function postFollowUpReceipt(notifications, loadingId, detail, followUp, hooks) {
+    let receiptId;
+    try {
+      ({ notificationId: receiptId } = await notifications.notify({
+        severity: "success",
+        title: detail,
+        actions: [{ id: FOLLOW_UP_ACTION_ID, label: followUp.label, variant: "primary" }]
+      }));
+    } catch {
+      return false;
+    }
+    notifications.dismiss(loadingId);
+    hooks.onPosted(receiptId);
+    void notifications.awaitAction(receiptId).then(
+      (outcome) => {
+        if ("actionId" in outcome && outcome.actionId === FOLLOW_UP_ACTION_ID)
+          hooks.run(followUp.action);
+      },
+      () => {
+      }
+    );
+    return true;
   }
 
   // prsPanel.tsx
@@ -10042,8 +10258,9 @@ ${thread.id}`) === activity,
     }, [host, session, visible]);
     return vars;
   }
-  function useMutationToasts(host, session, enabled) {
+  function useMutationToasts(host, session, enabled, runFollowUp) {
     const [toastsLive, setToastsLive] = (0, import_react2.useState)(false);
+    const [followUpsLive, setFollowUpsLive] = (0, import_react2.useState)(false);
     const dead = (0, import_react2.useRef)(false);
     (0, import_react2.useEffect)(() => {
       if (!enabled) return;
@@ -10051,10 +10268,12 @@ ${thread.id}`) === activity,
       const signal = AbortSignal.any([controller.signal, session.signal]);
       void bindApi(uiNotificationsApi, host, session.context).invoke("getCapabilities", {}, signal).then(
         (capabilities) => {
-          if (!signal.aborted && !dead.current)
+          if (!signal.aborted && !dead.current) {
             setToastsLive(
               capabilities.operations.notify === true && capabilities.operations.update === true
             );
+            setFollowUpsLive(capabilities.operations.awaitAction === true);
+          }
         },
         () => {
         }
@@ -10078,18 +10297,11 @@ ${thread.id}`) === activity,
           }
         );
       };
-      const posted = api.invoke(
-        "notify",
-        {
-          ...mutationToastStart(label),
-          // A thread-anchored toast paints only while its thread is active —
-          // the native threadToastData behavior. Targeting fields may only
-          // name this context's own scope.
-          ...resource.threadId !== void 0 ? { anchor: "thread", threadId: resource.threadId } : {},
-          ...resource.projectId !== void 0 ? { projectId: resource.projectId } : {}
-        },
-        session.signal
-      ).then(
+      const target = {
+        ...resource.threadId !== void 0 ? { anchor: "thread", threadId: resource.threadId } : {},
+        ...resource.projectId !== void 0 ? { projectId: resource.projectId } : {}
+      };
+      const posted = api.invoke("notify", { ...mutationToastStart(label), ...target }, session.signal).then(
         (result) => {
           if (dead.current) dismiss(result.notificationId);
           return result.notificationId;
@@ -10117,37 +10329,55 @@ ${thread.id}`) === activity,
           };
         }
       };
+      const settleInPlace = (notificationId, result) => void api.invoke("update", { notificationId, ...mutationToastSettle(label, result) }, session.signal).then(
+        ({ applied }) => {
+          if (!applied) {
+            onReceiptLost();
+            return;
+          }
+          if (result.ok)
+            dismissReceiptAfterSeen(
+              receiptSeen,
+              MUTATION_TOAST_DISMISS_MS,
+              () => dismiss(notificationId)
+            );
+        },
+        (error) => {
+          onReceiptLost();
+          if (!isNotificationDismissal(error)) markDead();
+        }
+      );
       return {
-        settle(result) {
-          void posted.then((notificationId) => {
+        settle(result, followUp) {
+          void posted.then(async (notificationId) => {
             if (notificationId === null) return;
             if (dead.current) {
               onReceiptLost();
               dismiss(notificationId);
               return;
             }
-            void api.invoke(
-              "update",
-              { notificationId, ...mutationToastSettle(label, result) },
-              session.signal
-            ).then(
-              ({ applied }) => {
-                if (!applied) {
-                  onReceiptLost();
-                  return;
-                }
-                if (result.ok)
-                  dismissReceiptAfterSeen(
+            if (result.ok && followUp && followUpsLive) {
+              const replaced = await postFollowUpReceipt(
+                {
+                  notify: (input) => api.invoke("notify", { ...input, ...target }, session.signal),
+                  dismiss,
+                  awaitAction: (id2) => api.invoke("awaitAction", { notificationId: id2 }, session.signal)
+                },
+                notificationId,
+                result.detail,
+                followUp,
+                {
+                  onPosted: (receiptId) => dismissReceiptAfterSeen(
                     receiptSeen,
                     MUTATION_TOAST_DISMISS_MS,
-                    () => dismiss(notificationId)
-                  );
-              },
-              (error) => {
-                onReceiptLost();
-                if (!isNotificationDismissal(error)) markDead();
-              }
-            );
+                    () => dismiss(receiptId)
+                  ),
+                  run: runFollowUp
+                }
+              );
+              if (replaced) return;
+            }
+            settleInPlace(notificationId, result);
           });
         }
       };
@@ -10208,7 +10438,14 @@ ${thread.id}`) === activity,
       session.save(next);
     };
     const repositoryVisible = visible && view === "repository";
-    const { begin: beginToast } = useMutationToasts(host, session, repositoryVisible);
+    const runFollowUpRef = (0, import_react2.useRef)(() => {
+    });
+    const { begin: beginToast } = useMutationToasts(
+      host,
+      session,
+      repositoryVisible,
+      (action) => runFollowUpRef.current(action)
+    );
     const { capabilities, error: capsError } = useCapabilities(
       host,
       session,
@@ -10284,9 +10521,10 @@ ${thread.id}`) === activity,
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       invoke(signal).then(
-        (detail) => {
+        (settled) => {
+          const { detail, followUp } = typeof settled === "string" ? { detail: settled, followUp: null } : settled;
           setMutation((phase) => settleMutation(phase, op, { ok: true, detail }));
-          toast?.settle({ ok: true, detail });
+          toast?.settle({ ok: true, detail }, followUp);
         },
         (error) => {
           const detail = error instanceof Error ? error.message : "operation unavailable";
@@ -10322,7 +10560,11 @@ ${thread.id}`) === activity,
           signal
         ).then((result) => {
           setCommitMessage("");
-          return `Committed ${result.commitSha.slice(0, 12)}${result.refName !== null ? ` on ${result.refName}` : ""}`;
+          return {
+            detail: `Committed ${result.commitSha.slice(0, 12)}${result.refName !== null ? ` on ${result.refName}` : ""}`,
+            // The follow-up runs through the stacked runner, as native's does.
+            followUp: canRunActions ? COMMIT_FOLLOW_UP : null
+          };
         })
       );
     };
@@ -10369,7 +10611,10 @@ ${thread.id}`) === activity,
         if (model.result === null) throw new Error("Action progress ended before the action settled");
         if (stackedActionCommits(offer.action))
           setCommitMessage((current) => current === commitMessage ? "" : current);
-        return describeStackedResult(model.result);
+        return {
+          detail: describeStackedResult(model.result),
+          followUp: stackedFollowUp(model.result)
+        };
       });
     };
     const runCreateRef = () => {
@@ -10473,6 +10718,17 @@ ${thread.id}`) === activity,
       setView(next);
       persist({ view: next });
     };
+    (0, import_react2.useEffect)(() => {
+      runFollowUpRef.current = (action) => {
+        switchView("repository");
+        setStackedChoice(action);
+        setPendingConfirm(null);
+        const offer = stackedOffers.find((entry) => entry.action === action);
+        if (offer === void 0 || offer.disabled !== null) return;
+        if (stackedActionNeedsConfirm(action, status.local, featureBranch)) setPendingConfirm(action);
+        else runStacked(offer);
+      };
+    });
     return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
       "section",
       {

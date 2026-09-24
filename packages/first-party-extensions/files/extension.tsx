@@ -71,6 +71,7 @@ import {
   parentPath,
   presentationPath,
   previewKind,
+  restoredSelection,
   watchThemeVars,
   toggleExpanded,
   visibleRows,
@@ -1150,14 +1151,8 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       | { mode: "names"; results: SearchResults | null; error: string | null }
       | { mode: "contents"; results: ContentSearchResults | null; error: string | null };
   } | null>(null);
-  const restoredPath =
-    session.restoreState &&
-    typeof session.restoreState === "object" &&
-    !Array.isArray(session.restoreState)
-      ? (session.restoreState as { readonly relativePath?: unknown }).relativePath
-      : null;
-  const [selected, setSelected] = useState<string | null>(
-    typeof restoredPath === "string" ? restoredPath : null,
+  const [selected, setSelected] = useState<string | null>(() =>
+    restoredSelection(session.restoreState),
   );
   const [read, setRead] = useState<{
     relativePath: string;

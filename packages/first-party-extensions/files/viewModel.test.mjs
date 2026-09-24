@@ -1,6 +1,7 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeCrypto from "node:crypto";
 import * as NodeTest from "node:test";
+import server from "./server.ts";
 import {
   applyResourceReadEvent,
   collectResourceRead,
@@ -36,6 +37,7 @@ import {
   mediaPreviewNotice,
   parentPath,
   presentationPath,
+  restoredSelection,
   previewKind,
   selectMediaLease,
   sha256HexPortable,
@@ -518,6 +520,19 @@ NodeTest.describe("open in presentation (F1 #17)", () => {
     for (const bad of ["", "/abs/x", "a/../b", "a\\b", "a//b", ".."])
       NodeAssert.equal(presentationPath(bad), null, bad);
     NodeAssert.equal(presentationPath("src/a.ts"), "src/a.ts");
+  });
+
+  // The host's plain Files panel opens with an empty path; the restored view
+  // must select nothing rather than read "" (a 400 from text-edits on mount).
+  NodeTest.it("an empty-path open restores no selection", async () => {
+    const open = server.apis[0].methods.find((method) => method.name === "open");
+    const session = { signal: new AbortController().signal };
+    const root = await open.invoke({ relativePath: "" }, session);
+    NodeAssert.equal(restoredSelection(root.restoreState), null);
+    const file = await open.invoke({ relativePath: "src/a.ts" }, session);
+    NodeAssert.equal(restoredSelection(file.restoreState), "src/a.ts");
+    for (const bad of [null, [], {}, { relativePath: 1 }])
+      NodeAssert.equal(restoredSelection(bad), null);
   });
 
   NodeTest.it("describePresentation reports the resolved descriptor", () => {

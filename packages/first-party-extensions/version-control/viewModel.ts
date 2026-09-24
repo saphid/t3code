@@ -1168,3 +1168,88 @@ export function mutationToastSettle(
     ? { severity: "success", title: result.detail }
     : { severity: "error", title: `${label} failed`, body: result.detail };
 }
+
+/**
+ * A success receipt's follow-up button — native's toast CTA. Clicking it
+ * re-enters the stacked runner with `action`, like native's
+ * `runGitActionWithToast({ action })`.
+ */
+export interface MutationFollowUp {
+  readonly label: string;
+  readonly action: VcsActionKind;
+}
+
+/**
+ * Native's post-commit CTA (GitManager `cta`): a created commit offers Push
+ * with no further condition — whether the push can go through is the push
+ * run's own answer, as it is natively.
+ */
+export const COMMIT_FOLLOW_UP: MutationFollowUp = { label: "Push", action: "push" };
+
+/**
+ * The server-decided CTA on a stacked result — the same `toast.cta` native
+ * renders (Push after a commit, Create PR after a push). `open_pr` needs a
+ * link-opening seam the plugin does not have, so it offers nothing.
+ */
+export function stackedFollowUp(result: VcsActionResult): MutationFollowUp | null {
+  const cta = result.toast.cta;
+  return cta.kind === "run_action" ? { label: cta.label, action: cta.action.kind } : null;
+}
+
+export const FOLLOW_UP_ACTION_ID = "follow-up";
+
+/** The slice of `t3.ui/notifications` a follow-up receipt needs. */
+export interface FollowUpNotifications {
+  readonly notify: (input: {
+    readonly severity: "success";
+    readonly title: string;
+    readonly actions: readonly {
+      readonly id: string;
+      readonly label: string;
+      readonly variant: "primary";
+    }[];
+  }) => Promise<{ readonly notificationId: string }>;
+  readonly dismiss: (notificationId: string) => void;
+  readonly awaitAction: (
+    notificationId: string,
+  ) => Promise<{ readonly actionId: string } | { readonly dismissed: true }>;
+}
+
+/**
+ * Settles a loading toast into a receipt that carries a follow-up button.
+ * `update` cannot add actions, so the receipt is a fresh `notify`; the
+ * loading toast is retracted only once it lands, so a failed post leaves
+ * the caller its in-place `update` path (resolves false). Resolves true
+ * once the receipt is up; `run` fires if the user clicks its button.
+ */
+export async function postFollowUpReceipt(
+  notifications: FollowUpNotifications,
+  loadingId: string,
+  detail: string,
+  followUp: MutationFollowUp,
+  hooks: {
+    readonly onPosted: (receiptId: string) => void;
+    readonly run: (action: VcsActionKind) => void;
+  },
+): Promise<boolean> {
+  let receiptId: string;
+  try {
+    ({ notificationId: receiptId } = await notifications.notify({
+      severity: "success",
+      title: detail,
+      actions: [{ id: FOLLOW_UP_ACTION_ID, label: followUp.label, variant: "primary" }],
+    }));
+  } catch {
+    return false;
+  }
+  notifications.dismiss(loadingId);
+  hooks.onPosted(receiptId);
+  void notifications.awaitAction(receiptId).then(
+    (outcome) => {
+      if ("actionId" in outcome && outcome.actionId === FOLLOW_UP_ACTION_ID)
+        hooks.run(followUp.action);
+    },
+    () => {},
+  );
+  return true;
+}

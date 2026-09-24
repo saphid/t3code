@@ -28,6 +28,7 @@ import {
   CONNECTING_STATUS,
   IDLE_MUTATION,
   IDLE_STACKED_PROGRESS,
+  COMMIT_FOLLOW_UP,
   MUTATION_TOAST_DISMISS_MS,
   applyStackedEvent,
   applyStatusEvent,
@@ -47,6 +48,7 @@ import {
   lanesFromChanges,
   mutationToastSettle,
   mutationToastStart,
+  postFollowUpReceipt,
   nextThemeVars,
   numstatFor,
   planCommit,
@@ -66,6 +68,7 @@ import {
   stackedActionInput,
   stackedActionLabel,
   stackedActionNeedsConfirm,
+  stackedFollowUp,
   stackedActionOffers,
   stackedActionSuggestion,
   startMutation,
@@ -73,6 +76,7 @@ import {
   VCS_PATHS_MAX,
   type ChangeLane,
   type ChangeSelection,
+  type MutationFollowUp,
   type MutationOp,
   type MutationPhase,
   type StackedActionProgress,
@@ -461,19 +465,26 @@ function useThemeVars(
  * rejected or unapplied `update` — hands that mutation's receipt back to the
  * inline row through `onReceiptLost`, and a `notification-expired` update
  * (a user-dismissed loading toast) does so without killing the adapter.
+ * A success with a follow-up (native's toast CTA) posts a fresh receipt
+ * carrying the button instead, since `update` cannot add actions.
  */
 interface MutationToast {
-  readonly settle: (result: { readonly ok: boolean; readonly detail: string }) => void;
+  readonly settle: (
+    result: { readonly ok: boolean; readonly detail: string },
+    followUp?: MutationFollowUp | null,
+  ) => void;
 }
 
 function useMutationToasts(
   host: ClientHost,
   session: ViewSession,
   enabled: boolean,
+  runFollowUp: (action: VcsActionKind) => void,
 ): {
   readonly begin: (label: string, onReceiptLost: () => void) => MutationToast | null;
 } {
   const [toastsLive, setToastsLive] = useState(false);
+  const [followUpsLive, setFollowUpsLive] = useState(false);
   const dead = useRef(false);
   useEffect(() => {
     if (!enabled) return;
@@ -485,10 +496,12 @@ function useMutationToasts(
         (capabilities) => {
           // A latched-dead adapter stays dead across re-probes — a denied
           // grant never recovers within a session.
-          if (!signal.aborted && !dead.current)
+          if (!signal.aborted && !dead.current) {
             setToastsLive(
               capabilities.operations.notify === true && capabilities.operations.update === true,
             );
+            setFollowUpsLive(capabilities.operations.awaitAction === true);
+          }
         },
         () => {},
       );
@@ -511,21 +524,17 @@ function useMutationToasts(
         () => {},
       );
     };
+    // A thread-anchored toast paints only while its thread is active — the
+    // native threadToastData behavior. Targeting fields may only name this
+    // context's own scope.
+    const target = {
+      ...(resource.threadId !== undefined
+        ? { anchor: "thread" as const, threadId: resource.threadId }
+        : {}),
+      ...(resource.projectId !== undefined ? { projectId: resource.projectId } : {}),
+    };
     const posted = api
-      .invoke(
-        "notify",
-        {
-          ...mutationToastStart(label),
-          // A thread-anchored toast paints only while its thread is active —
-          // the native threadToastData behavior. Targeting fields may only
-          // name this context's own scope.
-          ...(resource.threadId !== undefined
-            ? { anchor: "thread" as const, threadId: resource.threadId }
-            : {}),
-          ...(resource.projectId !== undefined ? { projectId: resource.projectId } : {}),
-        },
-        session.signal,
-      )
+      .invoke("notify", { ...mutationToastStart(label), ...target }, session.signal)
       .then(
         (result) => {
           // A resolution landing after the adapter died posts a loading
@@ -566,9 +575,36 @@ function useMutationToasts(
         };
       },
     };
+    const settleInPlace = (
+      notificationId: string,
+      result: { readonly ok: boolean; readonly detail: string },
+    ) =>
+      void api
+        .invoke("update", { notificationId, ...mutationToastSettle(label, result) }, session.signal)
+        .then(
+          ({ applied }) => {
+            if (!applied) {
+              // The notification never took the patch — the outcome
+              // returns to the inline row so it is not silently lost.
+              onReceiptLost();
+              return;
+            }
+            if (result.ok)
+              dismissReceiptAfterSeen(receiptSeen, MUTATION_TOAST_DISMISS_MS, () =>
+                dismiss(notificationId),
+              );
+          },
+          (error) => {
+            onReceiptLost();
+            // A dismissed toast reports notification-expired — the
+            // provider still works, only this receipt goes inline. Any
+            // other rejection is delivery loss and latches the adapter.
+            if (!isNotificationDismissal(error)) markDead();
+          },
+        );
     return {
-      settle(result) {
-        void posted.then((notificationId) => {
+      settle(result, followUp) {
+        void posted.then(async (notificationId) => {
           if (notificationId === null) return;
           if (dead.current) {
             // The adapter died after this toast posted — retract the
@@ -577,33 +613,29 @@ function useMutationToasts(
             dismiss(notificationId);
             return;
           }
-          void api
-            .invoke(
-              "update",
-              { notificationId, ...mutationToastSettle(label, result) },
-              session.signal,
-            )
-            .then(
-              ({ applied }) => {
-                if (!applied) {
-                  // The notification never took the patch — the outcome
-                  // returns to the inline row so it is not silently lost.
-                  onReceiptLost();
-                  return;
-                }
-                if (result.ok)
-                  dismissReceiptAfterSeen(receiptSeen, MUTATION_TOAST_DISMISS_MS, () =>
-                    dismiss(notificationId),
-                  );
+          // Native's success toast carries its CTA (Push after a commit).
+          if (result.ok && followUp && followUpsLive) {
+            const replaced = await postFollowUpReceipt(
+              {
+                notify: (input) => api.invoke("notify", { ...input, ...target }, session.signal),
+                dismiss,
+                awaitAction: (id) =>
+                  api.invoke("awaitAction", { notificationId: id }, session.signal),
               },
-              (error) => {
-                onReceiptLost();
-                // A dismissed toast reports notification-expired — the
-                // provider still works, only this receipt goes inline. Any
-                // other rejection is delivery loss and latches the adapter.
-                if (!isNotificationDismissal(error)) markDead();
+              notificationId,
+              result.detail,
+              followUp,
+              {
+                onPosted: (receiptId) =>
+                  dismissReceiptAfterSeen(receiptSeen, MUTATION_TOAST_DISMISS_MS, () =>
+                    dismiss(receiptId),
+                  ),
+                run: runFollowUp,
               },
             );
+            if (replaced) return;
+          }
+          settleInPlace(notificationId, result);
         });
       },
     };
@@ -696,7 +728,11 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   };
 
   const repositoryVisible = visible && view === "repository";
-  const { begin: beginToast } = useMutationToasts(host, session, repositoryVisible);
+  // A receipt's follow-up click lands later, so it reads the latest render.
+  const runFollowUpRef = useRef<(action: VcsActionKind) => void>(() => {});
+  const { begin: beginToast } = useMutationToasts(host, session, repositoryVisible, (action) =>
+    runFollowUpRef.current(action),
+  );
   const { capabilities, error: capsError } = useCapabilities(
     host,
     session,
@@ -786,7 +822,9 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   const runMutation = (
     op: MutationOp,
     label: string,
-    invoke: (signal: AbortSignal) => Promise<string>,
+    invoke: (
+      signal: AbortSignal,
+    ) => Promise<string | { readonly detail: string; readonly followUp: MutationFollowUp | null }>,
   ) => {
     if (inFlight.current) return;
     inFlight.current = true;
@@ -806,9 +844,11 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
     const signal = AbortSignal.any([controller.signal, session.signal]);
     invoke(signal)
       .then(
-        (detail) => {
+        (settled) => {
+          const { detail, followUp } =
+            typeof settled === "string" ? { detail: settled, followUp: null } : settled;
           setMutation((phase) => settleMutation(phase, op, { ok: true, detail }));
-          toast?.settle({ ok: true, detail });
+          toast?.settle({ ok: true, detail }, followUp);
         },
         (error) => {
           const detail = error instanceof Error ? error.message : "operation unavailable";
@@ -850,9 +890,13 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
         )
         .then((result) => {
           setCommitMessage("");
-          return `Committed ${result.commitSha.slice(0, 12)}${
-            result.refName !== null ? ` on ${result.refName}` : ""
-          }`;
+          return {
+            detail: `Committed ${result.commitSha.slice(0, 12)}${
+              result.refName !== null ? ` on ${result.refName}` : ""
+            }`,
+            // The follow-up runs through the stacked runner, as native's does.
+            followUp: canRunActions ? COMMIT_FOLLOW_UP : null,
+          };
         }),
     );
   };
@@ -919,7 +963,10 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
       // success must not erase an unrelated draft.
       if (stackedActionCommits(offer.action))
         setCommitMessage((current) => (current === commitMessage ? "" : current));
-      return describeStackedResult(model.result);
+      return {
+        detail: describeStackedResult(model.result),
+        followUp: stackedFollowUp(model.result),
+      };
     });
   };
 
@@ -1070,6 +1117,24 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
     setView(next);
     persist({ view: next });
   };
+
+  /**
+   * A receipt's follow-up click — native's CTA re-enters its action runner:
+   * the same default-ref confirmation, then the same stacked run as picking
+   * the action in the chooser. A blocked offer stays selected there, so its
+   * reason shows beside Run instead of the click doing nothing.
+   */
+  useEffect(() => {
+    runFollowUpRef.current = (action) => {
+      switchView("repository");
+      setStackedChoice(action);
+      setPendingConfirm(null);
+      const offer = stackedOffers.find((entry) => entry.action === action);
+      if (offer === undefined || offer.disabled !== null) return;
+      if (stackedActionNeedsConfirm(action, status.local, featureBranch)) setPendingConfirm(action);
+      else runStacked(offer);
+    };
+  });
 
   return (
     <section
