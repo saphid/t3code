@@ -242,8 +242,8 @@ function unescapeAttribute(value: string): string {
 export function unescapeReviewCommentTags(text: string): string {
   return text
     .replace(/&lt;(\/?\w+)/g, (entity, tail: string, offset: number, source: string) =>
-      // The ASCII `\w` capture can stop mid-tag (a `ſ` or `K` suffix is not `\w`), so the
-      // boundary check runs on the real remaining tail with the writer's Unicode `\b`.
+      // The ASCII `\w` capture can stop mid-tag (`ſ` or the Kelvin sign U+212A is not `\w`),
+      // so the boundary check runs on the real remaining tail with the writer's Unicode `\b`.
       /^\/?review_comment\b/iu.test(source.slice(offset + "&lt;".length)) ? `<${tail}` : entity,
     )
     .replace(/&amp;/g, "&");

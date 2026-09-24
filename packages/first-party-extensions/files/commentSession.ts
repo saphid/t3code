@@ -177,7 +177,11 @@ export function useCommentBlockReason(
               error instanceof Error
                 ? error.message
                 : "Comment support could not be checked with the host.",
-            operations: { attachAnnotation: false },
+            operations: {
+              attachAnnotation: false,
+              listAnnotations: false,
+              removeAnnotation: false,
+            },
           });
         },
       );

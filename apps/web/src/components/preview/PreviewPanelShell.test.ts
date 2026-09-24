@@ -59,6 +59,9 @@ describe("getPreviewPanelMaxWidth", () => {
   });
 });
 
+// The mounts below run inside act(); declare the act environment React expects.
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+
 describe("PreviewPanelShell", () => {
   let renderer: ReactTestRenderer | undefined;
 

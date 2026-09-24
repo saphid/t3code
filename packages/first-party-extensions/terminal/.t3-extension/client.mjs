@@ -10471,8 +10471,8 @@ var __t3Client = (() => {
      * current — a pending popup timer, or the open popup. A right-click menu
      * keeps the text it captured.
      */
-    shouldClearOnEmptySelection(actionPending) {
-      return actionPending || this.ownsOpenMenu("selection");
+    shouldClearOnEmptySelection(popupPending) {
+      return popupPending || this.ownsOpenMenu("selection");
     }
     ownsOpenMenu(kind) {
       return this.open?.kind === kind && this.isCurrent(this.open.requestId);
@@ -10596,7 +10596,9 @@ var __t3Client = (() => {
         this.gestureActive = event.button === 0 && !event.defaultPrevented;
       };
       const onDocumentPointerDown = (event) => {
-        if (!insideMenu(event)) this.flow.dismiss();
+        if (insideMenu(event)) return;
+        this.cancelPending();
+        this.flow.dismiss();
       };
       const onMouseUp = (event) => {
         if (event.button !== 0 || !this.gestureActive) return;
@@ -10659,6 +10661,10 @@ var __t3Client = (() => {
     get pending() {
       return this.timer !== null || this.frame !== null;
     }
+    // Timers and viewport reads use the global `window`, while install() binds
+    // listeners through the mount's own document and view. Surfaces render
+    // in-document, so both are one realm; a cross-document surface would need
+    // these moved to the mount's defaultView.
     schedule(pointer, delay) {
       this.cancelPending();
       this.timer = window.setTimeout(() => {
@@ -10845,6 +10851,7 @@ var __t3Client = (() => {
         const delay = delays[attempt];
         if (delay === void 0 || signal.aborted || !isAssetReadLimitError(error)) throw error;
         await wait(delay);
+        if (signal.aborted) throw error;
       }
     }
   }
@@ -11482,10 +11489,10 @@ var __t3Client = (() => {
   };
   var TERMINAL_ESCAPE = (
     // eslint-disable-next-line no-control-regex
-    /\x1b(?:\[[0-?]*[ -/]*[@-~]|[\]PX^_][^\x07\x1b]*(?:\x07|\x1b\\)|[ -/]*[0-~])|\x9b[0-?]*[ -/]*[@-~]/g
+    /\x1b(?:\[[0-?]*[ -/]*[@-~]|[\]PX^_][^\x07\x18\x1a\x1b\x80-\x9f]*(?:\x07|\x1b\\|\x9c|(?=[\x18\x1a\x1b\x80-\x9f])|$)|[ -/]*[0-~])|\x9b[0-?]*[ -/]*[@-~]|[\x90\x98\x9d-\x9f][^\x07\x18\x1a\x1b\x80-\x9f]*(?:\x07|\x1b\\|\x9c|(?=[\x18\x1a\x1b\x80-\x9f])|$)/g
   );
-  var TRAILING_PARTIAL_ESCAPE = /\x1b(?:\[[0-?]*[ -/]*|[\]PX^_][^\x07\x1b]*\x1b?|[ -/]*)$/;
-  var TERMINAL_CONTROL2 = /[\x00-\x07\x0b\x0c\x0e-\x1f\x7f]/g;
+  var TRAILING_PARTIAL_ESCAPE = /(?:\x1b(?:\[[0-?]*[ -/]*|[ -/]*)|\x9b[0-?]*[ -/]*)$/;
+  var TERMINAL_CONTROL2 = /[\x00-\x07\x0b\x0c\x0e-\x1f\x7f-\x9f]/g;
   function overstrikeLine(line) {
     if (!line.includes("\r") && !line.includes("\b")) return line;
     const cells = [];
@@ -14162,7 +14169,10 @@ var __t3Client = (() => {
       // the package missing-api rather than mounting it; the degraded paths
       // cover denied or failing calls and dead streams on a capable host.
       requireApi(uiThemeApi),
-      requireApi(uiKeybindingsApi),
+      // 1.1.0 only adds the optional host.keybindings resolver, which the
+      // panel feature-detects (default chords without it), so a 1.0.0 host
+      // still loads the panel.
+      requireApi(uiKeybindingsApi, "^1.0.0"),
       requireApi(uiPanelsApi)
     ],
     assets: [

@@ -37,6 +37,26 @@ NodeTest.describe("plainTerminalText (plain-text fallback view)", () => {
     NodeAssert.equal(plainTerminalText(`done${ESC}(B`), "done");
   });
 
+  NodeTest.it("drops 8-bit C1 string sequences and a stray ST", () => {
+    // 8-bit OSC title ended by ST, OSC hyperlink ended by BEL, DCS, APC.
+    const raw = "\x9d0;/repo\x9ca\x9d8;;https://t3.codes\x07b\x90q\x1b\\c\x9fapc\x9cd\x9c\n";
+    NodeAssert.equal(plainTerminalText(raw), "abcd\n");
+    NodeAssert.equal(plainTerminalText("done \x9b1;31mred\x9b0m"), "done red");
+  });
+
+  NodeTest.it("drops a malformed unterminated OSC without leaking its payload", () => {
+    // The next escape aborts the OSC, as in the VT parser; the escape still applies.
+    NodeAssert.equal(plainTerminalText(`a${ESC}]0;title${ESC}[31mb\n`), "ab\n");
+    NodeAssert.equal(plainTerminalText("a\x9d0;title\x9b31mb\n"), "ab\n");
+    // CAN aborts it too, and an unterminated string at the end is withheld.
+    NodeAssert.equal(plainTerminalText(`a${ESC}]0;title\x18b\n`), "ab\n");
+    NodeAssert.equal(plainTerminalText("done \x9d0;tit"), "done ");
+  });
+
+  NodeTest.it("holds back an 8-bit CSI split at the end of the buffer", () => {
+    NodeAssert.equal(plainTerminalText("done \x9b1;3"), "done ");
+  });
+
   NodeTest.it("keeps text, tabs and unicode untouched", () => {
     const text = "a\tb — ünïcode 🙂\n[not an escape]\n";
     NodeAssert.equal(plainTerminalText(text), text);

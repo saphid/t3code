@@ -40,6 +40,8 @@ export async function readAssetWithRetry(
       const delay = delays[attempt];
       if (delay === undefined || signal.aborted || !isAssetReadLimitError(error)) throw error;
       await wait(delay);
+      // A cancel during the backoff must not issue one more read.
+      if (signal.aborted) throw error;
     }
   }
 }

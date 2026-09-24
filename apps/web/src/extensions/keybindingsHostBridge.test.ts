@@ -96,6 +96,19 @@ describe("t3.ui/keybindings@1.1.0 client capability", () => {
     second();
   });
 
+  it("answers null instead of throwing through the caller on a malformed chord or keymap", () => {
+    const { host } = bind(DEFAULT_RESOLVED_KEYBINDINGS);
+    const malformed = { ...chord("d"), key: undefined as unknown as string };
+    expect(host?.resolveTerminalFocusKey(malformed)).toBeNull();
+    const broken = createKeybindingsHostBridge({
+      keybindings: () => {
+        throw new Error("keymap unavailable");
+      },
+      platform: "MacIntel",
+    })({ grants: { capabilities: ["t3.ui/keybindings"] }, lifetime: new AbortController().signal });
+    expect(broken?.resolveTerminalFocusKey(chord("d"))).toBeNull();
+  });
+
   it("is absent without the grant and resolves nothing after its lifetime", () => {
     expect(bind(DEFAULT_RESOLVED_KEYBINDINGS, []).host).toBeUndefined();
     const { host, lifetime } = bind(DEFAULT_RESOLVED_KEYBINDINGS);

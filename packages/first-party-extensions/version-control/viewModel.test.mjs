@@ -4,6 +4,7 @@ import {
   COMMIT_FOLLOW_UP,
   FOLLOW_UP_ACTION_ID,
   postFollowUpReceipt,
+  stackedChooserReason,
   stackedFollowUp,
   CHANGE_LANES,
   CONNECTING_STATUS,
@@ -1308,9 +1309,14 @@ NodeTest.describe("mutation follow-ups", () => {
             ? Promise.reject(new Error("denied"))
             : Promise.resolve({ notificationId: "receipt" });
         },
-        dismiss: (id) => calls.push(["dismiss", id]),
+        dismiss: (id) => {
+          calls.push(["dismiss", id]);
+          const failure = options.rejectDismiss?.(id);
+          return failure === undefined ? Promise.resolve() : Promise.reject(failure);
+        },
         awaitAction: (id) => {
           calls.push(["awaitAction", id]);
+          if (options.throwAwaitAction) throw new Error("bridge gone");
           return Promise.resolve(outcome);
         },
       },
@@ -1345,8 +1351,8 @@ NodeTest.describe("mutation follow-ups", () => {
             actions: [{ id: FOLLOW_UP_ACTION_ID, label: "Push", variant: "primary" }],
           },
         ],
-        ["dismiss", "loading"],
         ["awaitAction", "receipt"],
+        ["dismiss", "loading"],
       ]);
       NodeAssert.deepEqual(posted, ["receipt"]);
       NodeAssert.deepEqual(ran, ["push"]);
@@ -1375,6 +1381,94 @@ NodeTest.describe("mutation follow-ups", () => {
       calls.map(([method]) => method),
       ["notify"],
     );
+  });
+});
+
+NodeTest.describe("postFollowUpReceipt — guarded failures", () => {
+  const recorder = (options) => {
+    const calls = [];
+    return {
+      calls,
+      api: {
+        notify: () => Promise.resolve({ notificationId: "receipt" }),
+        dismiss: (id) => {
+          calls.push(id);
+          const failure = options.rejectDismiss?.(id);
+          return failure === undefined ? Promise.resolve() : Promise.reject(failure);
+        },
+        awaitAction: () => {
+          if (options.throwAwaitAction) throw new Error("bridge gone");
+          return new Promise(() => {});
+        },
+      },
+    };
+  };
+  const post = (api, onPosted = () => {}) =>
+    postFollowUpReceipt(api, "loading", "Committed abc", COMMIT_FOLLOW_UP, {
+      onPosted,
+      run: () => NodeAssert.fail("nothing to run"),
+    });
+
+  NodeTest.it("a failed loading dismiss retracts the receipt for the in-place update", async () => {
+    const { calls, api } = recorder({
+      rejectDismiss: (id) => (id === "loading" ? new Error("transport lost") : undefined),
+    });
+    NodeAssert.equal(await post(api), false);
+    NodeAssert.deepEqual(calls, ["loading", "receipt"]);
+  });
+
+  NodeTest.it("a loading toast the user already dismissed still counts as replaced", async () => {
+    const { calls, api } = recorder({
+      rejectDismiss: (id) => (id === "loading" ? new Error("notification-expired") : undefined),
+    });
+    NodeAssert.equal(await post(api), true);
+    NodeAssert.deepEqual(calls, ["loading"]);
+  });
+
+  NodeTest.it("a throwing onPosted keeps the loading toast and retracts the receipt", async () => {
+    const { calls, api } = recorder({});
+    const replaced = await post(api, () => {
+      throw new Error("timer failed");
+    });
+    NodeAssert.equal(replaced, false);
+    NodeAssert.deepEqual(calls, ["receipt"]);
+  });
+
+  NodeTest.it(
+    "a throwing awaitAction invoke keeps the loading toast and retracts the receipt",
+    async () => {
+      const { calls, api } = recorder({ throwAwaitAction: true });
+      NodeAssert.equal(
+        await post(api, () => NodeAssert.fail("an unarmed receipt is not posted")),
+        false,
+      );
+      NodeAssert.deepEqual(calls, ["receipt"]);
+    },
+  );
+
+  NodeTest.it("a failed receipt retraction still resolves false instead of rejecting", async () => {
+    const { calls, api } = recorder({ rejectDismiss: () => new Error("transport lost") });
+    NodeAssert.equal(await post(api), false);
+    NodeAssert.deepEqual(calls, ["loading", "receipt"]);
+  });
+});
+
+NodeTest.describe("stackedChooserReason", () => {
+  const open = { action: "push", label: "Push", disabled: null };
+  NodeTest.it("a blocked offer names its own reason", () => {
+    const blocked = { ...open, disabled: "Behind upstream — pull first" };
+    NodeAssert.equal(stackedChooserReason(blocked, "push", true), "Behind upstream — pull first");
+  });
+  NodeTest.it("a follow-up held back by an in-flight mutation says why", () => {
+    NodeAssert.equal(
+      stackedChooserReason(open, "push", true),
+      "Another action is running — run this once it finishes",
+    );
+  });
+  NodeTest.it("says nothing once the mutation settles or for another action", () => {
+    NodeAssert.equal(stackedChooserReason(open, "push", false), null);
+    NodeAssert.equal(stackedChooserReason(open, "commit_push", true), null);
+    NodeAssert.equal(stackedChooserReason(open, null, true), null);
   });
 });
 

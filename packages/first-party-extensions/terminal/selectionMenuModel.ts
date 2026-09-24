@@ -363,8 +363,8 @@ export class TerminalSelectionMenuFlow {
    * current — a pending popup timer, or the open popup. A right-click menu
    * keeps the text it captured.
    */
-  shouldClearOnEmptySelection(actionPending: boolean): boolean {
-    return actionPending || this.ownsOpenMenu("selection");
+  shouldClearOnEmptySelection(popupPending: boolean): boolean {
+    return popupPending || this.ownsOpenMenu("selection");
   }
 
   private ownsOpenMenu(kind: TerminalMenuState["kind"]): boolean {

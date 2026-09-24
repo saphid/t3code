@@ -1574,7 +1574,10 @@ const authored = defineExtension({
     // the package missing-api rather than mounting it; the degraded paths
     // cover denied or failing calls and dead streams on a capable host.
     requireApi(uiThemeApi),
-    requireApi(uiKeybindingsApi),
+    // 1.1.0 only adds the optional host.keybindings resolver, which the
+    // panel feature-detects (default chords without it), so a 1.0.0 host
+    // still loads the panel.
+    requireApi(uiKeybindingsApi, "^1.0.0"),
     requireApi(uiPanelsApi),
   ],
   assets: [

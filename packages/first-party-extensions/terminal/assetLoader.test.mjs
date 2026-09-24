@@ -117,6 +117,22 @@ NodeTest.describe("terminal asset loading (cold-load read cap)", () => {
     NodeAssert.equal(attempts, 1);
   });
 
+  NodeTest.it("a cancel during the backoff issues no further read", async () => {
+    const controller = new AbortController();
+    let attempts = 0;
+    const capped = async () => {
+      attempts++;
+      throw limit();
+    };
+    await NodeAssert.rejects(
+      readAssetWithRetry(capped, "vt.wasm", controller.signal, [1, 1], async () => {
+        controller.abort();
+      }),
+      /limit/,
+    );
+    NodeAssert.equal(attempts, 1);
+  });
+
   NodeTest.it("recognises both runtime caps and nothing else", () => {
     NodeAssert.equal(isAssetReadLimitError(limit()), true);
     NodeAssert.equal(isAssetReadLimitError(new Error("Asset read limit reached")), true);

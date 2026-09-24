@@ -111,7 +111,9 @@ NodeTest.describe("host wire-frame replay — evicted query claim", () => {
             // The evicted claim is dead: an inert tail earns no reply. A gap
             // query earns exactly its own one DA reply (hidden panes keep VT
             // protocol continuity across the reshow gap), never a second one
-            // transferred from the evicted claim.
+            // transferred from the evicted claim. A transferred reply would be
+            // byte-identical to the gap query's own, so only the count tells
+            // them apart; a stronger signal would need distinct queries.
             NodeAssert.deepEqual(secondWrites, gapQuery ? ["\x1b[?62;22c"] : []);
             // A surface mounted in the gap replayed the attachment's complete
             // base and then received only the gap, so its parser is faithful;

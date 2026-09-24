@@ -49,6 +49,7 @@ import {
   mutationToastSettle,
   mutationToastStart,
   postFollowUpReceipt,
+  stackedChooserReason,
   nextThemeVars,
   numstatFor,
   planCommit,
@@ -518,11 +519,13 @@ function useMutationToasts(
     if (!toastsLive || dead.current) return null;
     const api = bindApi(uiNotificationsApi, host, session.context);
     const resource = session.context.resource;
+    // The follow-up receipt awaits its loading-toast retraction so a failed
+    // dismiss falls back to the in-place update; everything else is
+    // fire-and-forget.
+    const dismissOrReject = (notificationId: string): Promise<void> =>
+      api.invoke("dismiss", { notificationId }, session.signal).then(() => {});
     const dismiss = (notificationId: string) => {
-      void api.invoke("dismiss", { notificationId }, session.signal).then(
-        () => {},
-        () => {},
-      );
+      void dismissOrReject(notificationId).catch(() => {});
     };
     // A thread-anchored toast paints only while its thread is active — the
     // native threadToastData behavior. Targeting fields may only name this
@@ -618,7 +621,7 @@ function useMutationToasts(
             const replaced = await postFollowUpReceipt(
               {
                 notify: (input) => api.invoke("notify", { ...input, ...target }, session.signal),
-                dismiss,
+                dismiss: dismissOrReject,
                 awaitAction: (id) =>
                   api.invoke("awaitAction", { notificationId: id }, session.signal),
               },
@@ -675,6 +678,8 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   // feature-ref decision is on screen; the run fires only from its
   // buttons.
   const [pendingConfirm, setPendingConfirm] = useState<VcsActionKind | null>(null);
+  // A receipt follow-up clicked while another mutation was in flight.
+  const [deferredFollowUp, setDeferredFollowUp] = useState<VcsActionKind | null>(null);
   const [stacked, setStacked] = useState<{
     actionId: string;
     model: StackedActionProgress;
@@ -806,6 +811,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
       label: stackedActionLabel("commit"),
       disabled: "Repository status pending",
     };
+  const chooserReason = stackedChooserReason(chosenOffer, deferredFollowUp, busy);
   const create = planRefCreate(newRefName, rows);
   const currentBranch = rows.find((row) => row.current && row.remote === null)?.name ?? null;
   const pull = pullState(status.local, status.remote);
@@ -828,6 +834,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   ) => {
     if (inFlight.current) return;
     inFlight.current = true;
+    setDeferredFollowUp(null);
     // The toast begins before the phase update so the receipt channel is
     // recorded on the running phase itself: a mutation that could not start
     // a notification keeps the inline row even if the capability probe
@@ -1121,8 +1128,9 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   /**
    * A receipt's follow-up click — native's CTA re-enters its action runner:
    * the same default-ref confirmation, then the same stacked run as picking
-   * the action in the chooser. A blocked offer stays selected there, so its
-   * reason shows beside Run instead of the click doing nothing.
+   * the action in the chooser. A blocked offer — or one held back by another
+   * in-flight mutation — stays selected there, so its reason shows beside
+   * Run instead of the click doing nothing.
    */
   useEffect(() => {
     runFollowUpRef.current = (action) => {
@@ -1131,6 +1139,10 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
       setPendingConfirm(null);
       const offer = stackedOffers.find((entry) => entry.action === action);
       if (offer === undefined || offer.disabled !== null) return;
+      if (inFlight.current) {
+        setDeferredFollowUp(action);
+        return;
+      }
       if (stackedActionNeedsConfirm(action, status.local, featureBranch)) setPendingConfirm(action);
       else runStacked(offer);
     };
@@ -1553,8 +1565,8 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                             New feature branch
                           </label>
                         )}
-                      {chosenOffer.disabled !== null && (
-                        <span style={{ color: muted, fontSize: 11 }}>{chosenOffer.disabled}</span>
+                      {chooserReason !== null && (
+                        <span style={{ color: muted, fontSize: 11 }}>{chooserReason}</span>
                       )}
                     </div>
                   )}

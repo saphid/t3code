@@ -166,8 +166,12 @@ class TerminalSelectionMenuController {
       this.cancelPending();
       this.gestureActive = event.button === 0 && !event.defaultPrevented;
     };
+    // An outside press that does not move focus never reaches onFocusOut,
+    // so it retires a still-pending popup here as well.
     const onDocumentPointerDown = (event: PointerEvent) => {
-      if (!insideMenu(event)) this.flow.dismiss();
+      if (insideMenu(event)) return;
+      this.cancelPending();
+      this.flow.dismiss();
     };
     const onMouseUp = (event: MouseEvent) => {
       if (event.button !== 0 || !this.gestureActive) return;
@@ -241,6 +245,10 @@ class TerminalSelectionMenuController {
     return this.timer !== null || this.frame !== null;
   }
 
+  // Timers and viewport reads use the global `window`, while install() binds
+  // listeners through the mount's own document and view. Surfaces render
+  // in-document, so both are one realm; a cross-document surface would need
+  // these moved to the mount's defaultView.
   private schedule(pointer: TerminalMenuPoint, delay: number): void {
     this.cancelPending();
     this.timer = window.setTimeout(() => {

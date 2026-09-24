@@ -48,10 +48,16 @@ export function createKeybindingsHostBridge(
       version: UI_KEYBINDINGS_VERSION,
       resolveTerminalFocusKey(chord) {
         if (binding.lifetime.aborted) return null;
-        return resolveShortcutCommand(chord, deps.keybindings(), {
-          context: { ...deps.shortcutContext(), terminalFocus: true },
-          ...(deps.platform === undefined ? {} : { platform: deps.platform }),
-        });
+        // Plugins call this from a keydown handler; a malformed chord or
+        // keymap answers "nothing claims it" rather than throwing into them.
+        try {
+          return resolveShortcutCommand(chord, deps.keybindings(), {
+            context: { ...deps.shortcutContext(), terminalFocus: true },
+            ...(deps.platform === undefined ? {} : { platform: deps.platform }),
+          });
+        } catch {
+          return null;
+        }
       },
     };
   };
