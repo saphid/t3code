@@ -465,7 +465,7 @@ export function describeMediaLease(state: MediaLeaseState): string {
 }
 
 /**
- * Editor slice (P05-D): the `t3.workspace/text-edits@1.1.0` snapshot result
+ * Editor: the `t3.workspace/text-edits@1.1.0` snapshot result
  * mapped onto the panel's editing surface. The 24000-byte bound is an API
  * checkpoint; `oversized` names the deferred full-size-editing blocker (#19)
  * instead of pretending a truncated read is editable.

@@ -81,7 +81,7 @@ const grantDenied = (operation: string, kind: string, grant: string) =>
 /**
  * A browser-surface ref names a live engine session: the session must exist
  * at the claimed epoch. Missing and epoch-mismatched sessions are named
- * denials — never silently re-bound (the design's P08-B obligation).
+ * denials — never silently re-bound.
  */
 const bindingDenied = (operation: string, detail: string) =>
   failure(operation, `ResourceLeaseSessionBindingError: ${detail}`);

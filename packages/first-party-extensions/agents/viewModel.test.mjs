@@ -426,7 +426,7 @@ NodeTest.describe("deferred sections", () => {
     const blockers = DEFERRED_SECTIONS.map((section) => section.blocker).join(" | ");
     NodeAssert.match(blockers, /net-new design/);
     const rows = new Set(DEFERRED_SECTIONS.flatMap((section) => section.rows.split(/[–,]\s*/)));
-    // The P12-gated rows moved live; only genuinely unblocked-free rows stay.
+    // Rows the orchestration contracts serve are live; only unserved rows stay.
     for (const row of ["15", "20", "21", "22", "23"])
       NodeAssert.ok(rows.has(row), `deferred sections name parity row ${row}`);
     for (const row of ["2", "3", "4", "5", "6", "9", "14", "16", "19"])

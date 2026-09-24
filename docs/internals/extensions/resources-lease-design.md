@@ -1,6 +1,6 @@
 # t3.resources/lease — promoted binary/media presentation contract
 
-Draft v1. Blocks: P05 media slice, P08-B Browser engine attachment, P16 Devices. Implements
+Draft v1. Media presentation, browser engine attachment and device streams build on it. Implements
 the promoted binary/media lease channel and its ResourceRef+lease requirement: a promoted
 binary or media resource is reached only through a lease-bound presentation URL, never a raw
 path.
@@ -49,9 +49,9 @@ createPresentationUrl(resource: ResourceRef) → { url: string, expiresAt: numbe
     binds engine session id + epoch + allowed command set for its TTL).
   - `ws-stream` — one-shot, short-lived ticket bound to a single upgrade attempt
     (DeviceHubProxy wsTicket semantics). v1 ships NO ws-stream kinds;
-    `device-stream` arrives with P16 with its own decision record.
+    `device-stream` arrives with device streams, with its own decision record.
 - **Grant map (mint-time authority)**: each kind maps to exactly one extension grant —
-  workspace-file → `t3.workspace/resources` read (the deferred P05-B contract; until it
+  workspace-file → `t3.workspace/resources` read (a deferred contract; until it
   lands, workspace-file kinds are unavailable to plugins and the adapter fails closed);
   attachment → the messages/composer read grant when it exists. Mint-time is the only
   grant check; serve-time is token-only (documented, matches native, required by `<img>`).
@@ -68,10 +68,10 @@ createPresentationUrl(resource: ResourceRef) → { url: string, expiresAt: numbe
    `t3.resources/lease.createPresentationUrl` wrapping `issueAssetUrl`, per-kind grant
    enforcement, thread→project→workspaceRoot resolution reused from ws.ts:1700.
 2. Capability honesty: result includes which kinds this server build can mint
-   (`supportedKinds`), so P08-B/P16 absence is a named state, not an error at call time.
-3. (P08-B slice, later) `browser-surface` claim kind: binds engine session id + epoch +
+   (`supportedKinds`), so a kind this build lacks is a named state, not an error at call time.
+3. (Browser engine attachment) `browser-surface` claim kind: binds engine session id + epoch +
    allowed command set; minted only by the browser sessions contract holder.
-4. (P16 slice, later) `device-stream` claim kind: ws-stream class, one-shot.
+4. (Device streams, later) `device-stream` claim kind: ws-stream class, one-shot.
 
 ## Explicit non-goals (v1)
 
@@ -83,20 +83,20 @@ createPresentationUrl(resource: ResourceRef) → { url: string, expiresAt: numbe
   containment check at serve time.
 - No plugin-visible signing key, ever. Plugins hold URLs, not claims.
 
-## Per-consumer proof obligations (gate 3 when each slice ships)
+## Per-consumer proof obligations (checked when each consumer ships)
 
-- **P05 media slice**: disposable runtime; plugin mints a workspace-file URL via the
+- **Media presentation**: disposable runtime; plugin mints a workspace-file URL via the
   contract; independent consumer fetches it WITHOUT session headers and gets the bytes;
   expired/tampered token → 404/401 by name; outside-root path → rejected at mint.
-- **P08-B engine attachment**: lease binds correct principal chain; a lease minted for
+- **Browser engine attachment**: lease binds correct principal chain; a lease minted for
   session A cannot drive session B (epoch mismatch named, not silently re-bound).
-- **P16 device stream**: one-shot wsTicket cannot be replayed after upgrade; hub exec
+- **Device streams**: one-shot wsTicket cannot be replayed after upgrade; hub exec
   route remains unexposed (Julius's invariant).
 
 ## Open questions for the implementing thread
 
 1. Name: `t3.resources/lease` (recommended — spans files/attachments/browser/devices) vs
-   `t3.workspace/resources` (narrower, but P05-B already used that name for the deferred
+   `t3.workspace/resources` (narrower, but already the name of the deferred
    workspace-media grant). If the narrower name is kept for the grant, the contract family
    still wants the broader name.
 2. Does `workspace-file` minting require the thread to be alive (native resolves through

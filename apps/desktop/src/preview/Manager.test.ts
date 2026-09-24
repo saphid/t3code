@@ -495,6 +495,16 @@ const makeFaviconWebContents = (options?: {
   };
 };
 
+// Stalls an Electron mock: signals `entered`, then settles with `value` once `release` opens.
+const holdUntilReleased = <A>(
+  entered: PromiseWithResolvers<void>,
+  release: PromiseWithResolvers<void>,
+  value: A,
+): Promise<A> => {
+  entered.resolve();
+  return release.promise.then(() => value);
+};
+
 const settle = function* (until: () => boolean) {
   for (let attempt = 0; attempt < 30 && !until(); attempt++) {
     yield* Effect.promise(() => Promise.resolve());
@@ -4772,13 +4782,11 @@ describe("PreviewManager", () => {
         const sendCommand = (
           preview.webContents as { debugger: { sendCommand: ReturnType<typeof vi.fn> } }
         ).debugger.sendCommand;
-        const started = yield* Deferred.make<void>();
-        const finish = yield* Deferred.make<void>();
+        const started = Promise.withResolvers<void>();
+        const finish = Promise.withResolvers<void>();
         sendCommand.mockImplementation((method: string, args: { type?: string }) =>
           method === "Input.dispatchMouseEvent" && args.type === "mouseMoved"
-            ? Effect.runPromise(
-                Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(finish))),
-              )
+            ? holdUntilReleased(started, finish, undefined)
             : Promise.resolve(undefined),
         );
         const first = yield* manager
@@ -4791,7 +4799,7 @@ describe("PreviewManager", () => {
             null,
           )
           .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Deferred.await(started);
+        yield* Effect.promise(() => started.promise);
         const second = yield* manager
           .dispatchRemoteInput(
             remoteTabId,
@@ -4805,7 +4813,7 @@ describe("PreviewManager", () => {
         const end = yield* manager
           .releaseRemoteInput(remoteTabId, "l")
           .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Deferred.succeed(finish, undefined);
+        finish.resolve();
         yield* Fiber.join(first);
         yield* Fiber.join(second).pipe(Effect.ignore);
         yield* Fiber.join(end);
@@ -4828,8 +4836,8 @@ describe("PreviewManager", () => {
         const sendCommand = (
           preview.webContents as { debugger: { sendCommand: ReturnType<typeof vi.fn> } }
         ).debugger.sendCommand;
-        const started = yield* Deferred.make<void>();
-        const finish = yield* Deferred.make<void>();
+        const started = Promise.withResolvers<void>();
+        const finish = Promise.withResolvers<void>();
         let disabling = false;
         let overlap = false;
         sendCommand.mockImplementation(
@@ -4858,16 +4866,9 @@ describe("PreviewManager", () => {
               sessionId === undefined
             ) {
               disabling = true;
-              return Effect.runPromise(
-                Deferred.succeed(started, undefined).pipe(
-                  Effect.andThen(Deferred.await(finish)),
-                  Effect.tap(() =>
-                    Effect.sync(() => {
-                      disabling = false;
-                    }),
-                  ),
-                ),
-              );
+              return holdUntilReleased(started, finish, undefined).then(() => {
+                disabling = false;
+              });
             }
             if (
               method === "Emulation.setFocusEmulationEnabled" &&
@@ -4881,7 +4882,7 @@ describe("PreviewManager", () => {
         const action = yield* manager
           .automationPress(remoteTabId, { key: "Shift" })
           .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Deferred.await(started);
+        yield* Effect.promise(() => started.promise);
         const lease = yield* manager
           .dispatchRemoteInput(
             remoteTabId,
@@ -4893,7 +4894,7 @@ describe("PreviewManager", () => {
           )
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Effect.yieldNow;
-        yield* Deferred.succeed(finish, undefined);
+        finish.resolve();
         yield* Fiber.join(action);
         yield* Fiber.join(lease).pipe(Effect.ignore);
         expect(overlap).toBe(false);
@@ -4990,20 +4991,15 @@ describe("PreviewManager", () => {
   effectIt.effect("resize during capture drops the unstable frame", () =>
     withManager((manager) =>
       Effect.gen(function* () {
-        const started = yield* Deferred.make<void>();
-        const finish = yield* Deferred.make<void>();
+        const started = Promise.withResolvers<void>();
+        const finish = Promise.withResolvers<void>();
         let width = 100;
         const frames: Array<unknown> = [];
         const wc = makeTestPreviewWebContents(() =>
-          Effect.runPromise(
-            Deferred.succeed(started, undefined).pipe(
-              Effect.andThen(Deferred.await(finish)),
-              Effect.as({
-                toJPEG: () => Buffer.from("pixels"),
-                getSize: () => ({ width: 100, height: 100 }),
-              }),
-            ),
-          ),
+          holdUntilReleased(started, finish, {
+            toJPEG: () => Buffer.from("pixels"),
+            getSize: () => ({ width: 100, height: 100 }),
+          }),
         );
         wc.executeJavaScript = vi.fn(async () => ({ width, height: 100 }));
         fromId.mockReturnValue(wc as never);
@@ -5018,9 +5014,9 @@ describe("PreviewManager", () => {
         const start = yield* manager
           .startRemoteCapture(remoteTabId)
           .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Deferred.await(started);
+        yield* Effect.promise(() => started.promise);
         width = 200;
-        yield* Deferred.succeed(finish, undefined);
+        finish.resolve();
         yield* Fiber.join(start);
         yield* manager.stopRemoteCapture(remoteTabId);
         expect(frames).toHaveLength(0);
@@ -5033,19 +5029,14 @@ describe("PreviewManager", () => {
     () =>
       withManager((manager) =>
         Effect.gen(function* () {
-          const started = yield* Deferred.make<void>();
-          const finish = yield* Deferred.make<void>();
+          const started = Promise.withResolvers<void>();
+          const finish = Promise.withResolvers<void>();
           let width = 100;
           const capturePage = vi.fn(() =>
-            Effect.runPromise(
-              Deferred.succeed(started, undefined).pipe(
-                Effect.andThen(Deferred.await(finish)),
-                Effect.as({
-                  toJPEG: () => Buffer.from("pixels"),
-                  getSize: () => ({ width: 200, height: 100 }),
-                }),
-              ),
-            ),
+            holdUntilReleased(started, finish, {
+              toJPEG: () => Buffer.from("pixels"),
+              getSize: () => ({ width: 200, height: 100 }),
+            }),
           );
           const wc = makeTestPreviewWebContents(capturePage);
           wc.executeJavaScript = vi.fn(async () => ({ width, height: 100 }));
@@ -5056,9 +5047,9 @@ describe("PreviewManager", () => {
           const capture = yield* manager
             .captureFrameJpeg(remoteTabId)
             .pipe(Effect.forkChild({ startImmediately: true }));
-          yield* Deferred.await(started);
+          yield* Effect.promise(() => started.promise);
           width = 200;
-          yield* Deferred.succeed(finish, undefined);
+          finish.resolve();
           // The unstable first attempt reschedules on the retry delay.
           yield* TestClock.adjust(1_000);
           const frame = yield* Fiber.join(capture);
@@ -5077,8 +5068,8 @@ describe("PreviewManager", () => {
     () =>
       withManager((manager) =>
         Effect.gen(function* () {
-          const entered = yield* Deferred.make<void>();
-          const release = yield* Deferred.make<void>();
+          const entered = Promise.withResolvers<void>();
+          const release = Promise.withResolvers<void>();
           const image = () => ({
             toJPEG: () => Buffer.from("pixels"),
             getSize: () => ({ width: 100, height: 100 }),
@@ -5090,20 +5081,15 @@ describe("PreviewManager", () => {
           yield* manager.createTab(remoteTabId);
           yield* manager.registerWebview(remoteTabId, 42);
           old.executeJavaScript = vi.fn(() =>
-            Effect.runPromise(
-              Deferred.succeed(entered, undefined).pipe(
-                Effect.andThen(Deferred.await(release)),
-                Effect.as({ width: 100, height: 100 }),
-              ),
-            ),
+            holdUntilReleased(entered, release, { width: 100, height: 100 }),
           );
           const read = yield* manager
             .remoteFrameConfig(remoteTabId)
             .pipe(Effect.forkChild({ startImmediately: true }));
-          yield* Deferred.await(entered);
+          yield* Effect.promise(() => entered.promise);
           yield* manager.registerWebview(remoteTabId, 43);
           expect((yield* manager.remoteFrameConfig(remoteTabId)).engineGeneration).toBe("43");
-          yield* Deferred.succeed(release, undefined);
+          release.resolve();
           const outcome = yield* Fiber.await(read);
           expect(Exit.isFailure(outcome)).toBe(true);
         }),
@@ -5115,8 +5101,8 @@ describe("PreviewManager", () => {
     () =>
       withManager((manager) =>
         Effect.gen(function* () {
-          const entered = yield* Deferred.make<void>();
-          const release = yield* Deferred.make<void>();
+          const entered = Promise.withResolvers<void>();
+          const release = Promise.withResolvers<void>();
           const image = () => ({
             toJPEG: () => Buffer.from("pixels"),
             getSize: () => ({ width: 100, height: 100 }),
@@ -5135,21 +5121,16 @@ describe("PreviewManager", () => {
           old.executeJavaScript = vi.fn(() => {
             viewportReads += 1;
             if (viewportReads === 2) {
-              return Effect.runPromise(
-                Deferred.succeed(entered, undefined).pipe(
-                  Effect.andThen(Deferred.await(release)),
-                  Effect.as({ width: 1280, height: 720 }),
-                ),
-              );
+              return holdUntilReleased(entered, release, { width: 1280, height: 720 });
             }
             return Promise.resolve({ width: 1280, height: 720 });
           });
           const capture = yield* manager
             .captureFrameJpeg(remoteTabId)
             .pipe(Effect.forkChild({ startImmediately: true }));
-          yield* Deferred.await(entered);
+          yield* Effect.promise(() => entered.promise);
           yield* manager.registerWebview(remoteTabId, 43);
-          yield* Deferred.succeed(release, undefined);
+          release.resolve();
           // The post-capture read re-validates the guest identity: the
           // superseded-generation attempt reschedules on the retry delay and
           // the retry resolves the live guest — old-guest pixels are never
@@ -5179,13 +5160,11 @@ describe("PreviewManager", () => {
         const sendCommand = (
           preview.webContents as { debugger: { sendCommand: ReturnType<typeof vi.fn> } }
         ).debugger.sendCommand;
-        const started = yield* Deferred.make<void>();
-        const finish = yield* Deferred.make<void>();
+        const started = Promise.withResolvers<void>();
+        const finish = Promise.withResolvers<void>();
         sendCommand.mockImplementation((method: string, args: { type?: string }) =>
           method === "Input.dispatchMouseEvent" && args.type === "mouseMoved"
-            ? Effect.runPromise(
-                Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(finish))),
-              )
+            ? holdUntilReleased(started, finish, undefined)
             : Promise.resolve(undefined),
         );
         const geometryKey = PreviewManager.remoteFrameGeometryKey(
@@ -5203,7 +5182,7 @@ describe("PreviewManager", () => {
             geometryKey,
           )
           .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Deferred.await(started);
+        yield* Effect.promise(() => started.promise);
         // The pointer-down queues behind the stalled move on the guest lane.
         const second = yield* manager
           .dispatchRemoteInput(
@@ -5217,7 +5196,7 @@ describe("PreviewManager", () => {
           .pipe(Effect.forkChild({ startImmediately: true }));
         // The guest resizes while the queued packet waits on the lane.
         width = 200;
-        yield* Deferred.succeed(finish, undefined);
+        finish.resolve();
         yield* Fiber.join(first);
         const outcome = yield* Fiber.await(second);
         expect(Exit.isFailure(outcome)).toBe(true);
@@ -5412,19 +5391,14 @@ describe("PreviewManager", () => {
   effectIt.effect("stopping during initial capture leaves remoteLive false", () =>
     withManager((manager) =>
       Effect.gen(function* () {
-        const started = yield* Deferred.make<void>();
-        const finish = yield* Deferred.make<void>();
+        const started = Promise.withResolvers<void>();
+        const finish = Promise.withResolvers<void>();
         const states: Array<{ remoteLive?: boolean }> = [];
         const wc = makeTestPreviewWebContents(() =>
-          Effect.runPromise(
-            Deferred.succeed(started, undefined).pipe(
-              Effect.andThen(Deferred.await(finish)),
-              Effect.as({
-                toJPEG: () => Buffer.from("pixels"),
-                getSize: () => ({ width: 100, height: 100 }),
-              }),
-            ),
-          ),
+          holdUntilReleased(started, finish, {
+            toJPEG: () => Buffer.from("pixels"),
+            getSize: () => ({ width: 100, height: 100 }),
+          }),
         );
         fromId.mockReturnValue(wc as never);
         const remoteTabId = '["env-a","thread-a","epoch-1","tab-1"]';
@@ -5438,9 +5412,9 @@ describe("PreviewManager", () => {
         const start = yield* manager
           .startRemoteCapture(remoteTabId)
           .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Deferred.await(started);
+        yield* Effect.promise(() => started.promise);
         yield* manager.stopRemoteCapture(remoteTabId);
-        yield* Deferred.succeed(finish, undefined);
+        finish.resolve();
         yield* Fiber.join(start);
         expect(states.at(-1)?.remoteLive).toBe(false);
       }),

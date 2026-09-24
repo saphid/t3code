@@ -2,7 +2,7 @@
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { get, ServerResponse } from "node:http";
+import * as NodeHttp from "node:http";
 import { WebSocket } from "ws";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -53,6 +53,7 @@ const makeManagerStub = (
       listener: (frame: PreviewManager.RemoteLiveFrame) => Effect.Effect<void>,
     ) =>
       Effect.sync(() => {
+        // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- Like the Manager's capture loop, the stub hands frames to the hub's Effect.sync listener synchronously, from plain test callbacks.
         pushFrame = (frame) => Effect.runSync(listener(frame));
       }),
     remoteFrameSessions: () =>
@@ -262,247 +263,236 @@ const liveFrame = (generation = "gen-1", seq = 8, width = 100): PreviewManager.R
 });
 
 describe("BrowserFrameHub", () => {
-  it("rejects unauthenticated requests and hostile upgrade origins", async () => {
+  effectIt.live("rejects unauthenticated requests and hostile upgrade origins", () => {
     const { layer: managerLayer } = makeManagerStub();
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const hub = yield* BrowserFrameHub;
-          yield* Effect.promise(async () => {
-            const unauthed = await fetch(`${hub.origin}/sessions`);
-            expect(unauthed.status).toBe(403);
-            const wrong = await fetch(`${hub.origin}/sessions`, {
-              headers: { "x-t3-hub-auth": "forged" },
-            });
-            expect(wrong.status).toBe(403);
-            const health = await fetch(`${hub.origin}/health`, {
-              headers: { "x-t3-hub-auth": hub.secret },
-            });
-            expect(health.status).toBe(200);
-            expect(await health.json()).toEqual({ service: "t3.browser-frame-hub" });
-
-            // A hostile origin cannot bypass the secret on upgrade either.
-            await expect(
-              new Promise<void>((resolve, reject) => {
-                const ws = new WebSocket(wsUrl(hub.origin, "forged", baseInputParams), {
-                  origin: "https://untrusted.example",
-                });
-                ws.once("open", () => resolve());
-                ws.once("error", reject);
-                ws.once("unexpected-response", (_req, res) =>
-                  res.statusCode === 403 ? reject(new Error("denied")) : reject(new Error("other")),
-                );
-              }),
-            ).rejects.toThrow();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* BrowserFrameHub;
+        yield* Effect.promise(async () => {
+          const unauthed = await fetch(`${hub.origin}/sessions`);
+          expect(unauthed.status).toBe(403);
+          const wrong = await fetch(`${hub.origin}/sessions`, {
+            headers: { "x-t3-hub-auth": "forged" },
           });
-        }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
-  });
-
-  it("enumerates sessions only behind the secret and fences the tuple", async () => {
-    const { layer: managerLayer } = makeManagerStub();
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const hub = yield* BrowserFrameHub;
-          yield* Effect.promise(async () => {
-            const sessions = await authed(hub.origin, "/sessions", hub.secret);
-            expect(sessions.status).toBe(200);
-            const body = (await sessions.json()) as Array<{ tabId: string }>;
-            expect(body).toHaveLength(1);
-            expect(body[0]?.tabId).toBe("tab-1");
-
-            // A forged session binding — path tab does not match the asserted
-            // tuple — is denied before any session data is read.
-            const mismatched = await authed(
-              hub.origin,
-              "/sessions/other-tab/config",
-              hub.secret,
-              `&x-t3-session=${encodeURIComponent(runtimeTabId)}`,
-            );
-            expect(mismatched.status).toBe(403);
+          expect(wrong.status).toBe(403);
+          const health = await fetch(`${hub.origin}/health`, {
+            headers: { "x-t3-hub-auth": hub.secret },
           });
-        }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
-  });
+          expect(health.status).toBe(200);
+          expect(await health.json()).toEqual({ service: "t3.browser-frame-hub" });
 
-  it("binds input sockets exclusively and fences stale seq/geometry", async () => {
-    const { stub, layer: managerLayer } = makeManagerStub();
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const hub = yield* BrowserFrameHub;
-          yield* Effect.promise(async () => {
-            const first = await connectInput(hub.origin, hub.secret, baseInputParams);
-            expect(first.bound.type).toBe("bound");
-            expect(first.bound.leaseId).toBe("lease-a");
-
-            first.ws.send(
-              JSON.stringify({ seq: 1, geometrySeq: 0, event: { type: "text", text: "hi" } }),
-            );
-            await vi.waitFor(() => expect(stub.dispatched).toHaveLength(1));
-            expect(stub.dispatched[0]?.leaseId).toBe("lease-a");
-
-            // Replay of seq 1 is rejected.
-            const replayed = nextNotice(first.ws, "rejected");
-            first.ws.send(
-              JSON.stringify({ seq: 1, geometrySeq: 0, event: { type: "text", text: "no" } }),
-            );
-            expect(await replayed).toMatchObject({ type: "rejected", seq: 1, reason: "replay" });
-            expect(stub.dispatched).toHaveLength(1);
-
-            // Stale geometry is rejected.
-            const stale = nextNotice(first.ws, "rejected");
-            first.ws.send(
-              JSON.stringify({ seq: 2, geometrySeq: 99, event: { type: "text", text: "no" } }),
-            );
-            expect(await stale).toMatchObject({
-              type: "rejected",
-              seq: 2,
-              reason: "stale-geometry",
-            });
-            expect(stub.dispatched).toHaveLength(1);
-
-            // A second lease supersedes the first: the first socket closes and
-            // its held input is released BEFORE the successor binds.
-            const firstClosed = waitClosed(first.ws);
-            const second = await connectInput(hub.origin, hub.secret, {
-              ...baseInputParams,
-              "x-t3-lease": "lease-b",
-            });
-            expect(await firstClosed).toMatchObject({ code: 4000 });
-            expect(second.bound.leaseId).toBe("lease-b");
-            expect(stub.released).toHaveLength(1);
-
-            // The dead socket's late packets are ignored.
-            first.ws.send(
-              JSON.stringify({ seq: 3, geometrySeq: 0, event: { type: "text", text: "x" } }),
-            );
-            second.ws.send(
-              JSON.stringify({ seq: 1, geometrySeq: 0, event: { type: "text", text: "ok" } }),
-            );
-            await vi.waitFor(() => expect(stub.dispatched).toHaveLength(2));
-            expect(stub.dispatched[1]?.leaseId).toBe("lease-b");
-
-            first.ws.terminate();
-            second.ws.terminate();
-          });
-        }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
-  });
-
-  it("refuses an input socket bound to a stale engine generation", async () => {
-    const { layer: managerLayer } = makeManagerStub();
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const hub = yield* BrowserFrameHub;
-          yield* Effect.promise(async () => {
-            const ws = new WebSocket(
-              wsUrl(hub.origin, hub.secret, {
-                ...baseInputParams,
-                "x-t3-engine-generation": "gen-0",
-              }),
-            );
-            const closed = await waitClosed(ws);
-            expect(closed.code).toBe(4000);
-            expect(closed.reason).toBe("replaced");
-          });
-        }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
-  });
-
-  it("ends input sockets at their lease expiry", async () => {
-    const { layer: managerLayer } = makeManagerStub();
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const hub = yield* BrowserFrameHub;
-          yield* Effect.promise(async () => {
-            const ws = new WebSocket(
-              wsUrl(hub.origin, hub.secret, {
-                ...baseInputParams,
-                "x-t3-lease-expires": String(Date.now() + 50),
-              }),
-            );
-            const closed = await waitClosed(ws);
-            expect(closed.code).toBe(4000);
-            expect(closed.reason).toBe("expired");
-          });
-        }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
-  });
-
-  it("streams seeded frames to new viewers and stops capture on the last close", async () => {
-    const { stub, layer: managerLayer } = makeManagerStub();
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const hub = yield* BrowserFrameHub;
-          yield* Effect.promise(async () => {
-            const url =
-              `${hub.origin}/sessions/${encodeURIComponent(tuple.tabId)}/stream.mjpeg?` +
-              new URLSearchParams({
-                "x-t3-hub-auth": hub.secret,
-                "x-t3-session": runtimeTabId,
+          // A hostile origin cannot bypass the secret on upgrade either.
+          await expect(
+            new Promise<void>((resolve, reject) => {
+              const ws = new WebSocket(wsUrl(hub.origin, "forged", baseInputParams), {
+                origin: "https://untrusted.example",
               });
-            const res = await fetch(url);
-            expect(res.status).toBe(200);
-            expect(res.headers.get("content-type")).toContain("multipart/x-mixed-replace");
-            // Seeded from captureFrameJpeg — the first part arrives without a
-            // pushed frame.
-            const reader = res.body!.getReader();
-            const first = await reader.read();
-            expect(first.done).toBe(false);
-            const text = Buffer.from(first.value!).toString("latin1");
-            expect(text).toContain("--t3frame");
-            expect(text).toContain("X-Frame-Seq");
-            await vi.waitFor(() => expect(stub.started).toContain(runtimeTabId));
-
-            // A pushed frame reaches the stream.
-            stub.pushFrame({
-              tabId: runtimeTabId,
-              seq: 7,
-              jpeg: Buffer.from("jpeg-frame-7"),
-              width: 100,
-              height: 100,
-              engineGeneration: "gen-1",
-              geometryKey: PreviewManager.remoteFrameGeometryKey(
-                "gen-1",
-                { width: 100, height: 100 },
-                1,
-              ),
-            });
-            const pushed = await reader.read();
-            expect(Buffer.from(pushed.value!).toString("latin1")).toContain("X-Frame-Seq: 7");
-
-            await reader.cancel();
-            await vi.waitFor(() => expect(stub.stopped).toContain(runtimeTabId));
-          });
-        }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
+              ws.once("open", () => resolve());
+              ws.once("error", reject);
+              ws.once("unexpected-response", (_req, res) =>
+                res.statusCode === 403 ? reject(new Error("denied")) : reject(new Error("other")),
+              );
+            }),
+          ).rejects.toThrow();
+        });
+      }),
+    ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
   });
 
-  it("lets only the last pending candidate bind while incumbent cleanup is blocked", async () => {
-    let finishCleanup: (() => void) | null = null;
-    const cleanupGate = new Promise<void>((resolve) => {
-      finishCleanup = resolve;
-    });
-    const { stub, layer: managerLayer } = makeManagerStub((manager) => {
-      manager.releaseRemoteInput = () =>
-        Effect.promise(async () => {
-          await cleanupGate;
-          return { attempted: 0, failed: 0 };
+  effectIt.live("enumerates sessions only behind the secret and fences the tuple", () => {
+    const { layer: managerLayer } = makeManagerStub();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* BrowserFrameHub;
+        yield* Effect.promise(async () => {
+          const sessions = await authed(hub.origin, "/sessions", hub.secret);
+          expect(sessions.status).toBe(200);
+          const body = (await sessions.json()) as Array<{ tabId: string }>;
+          expect(body).toHaveLength(1);
+          expect(body[0]?.tabId).toBe("tab-1");
+
+          // A forged session binding — path tab does not match the asserted
+          // tuple — is denied before any session data is read.
+          const mismatched = await authed(
+            hub.origin,
+            "/sessions/other-tab/config",
+            hub.secret,
+            `&x-t3-session=${encodeURIComponent(runtimeTabId)}`,
+          );
+          expect(mismatched.status).toBe(403);
         });
-    });
-    await Effect.runPromise(
-      Effect.scoped(
+      }),
+    ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
+  });
+
+  effectIt.live("binds input sockets exclusively and fences stale seq/geometry", () => {
+    const { stub, layer: managerLayer } = makeManagerStub();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* BrowserFrameHub;
+        yield* Effect.promise(async () => {
+          const first = await connectInput(hub.origin, hub.secret, baseInputParams);
+          expect(first.bound.type).toBe("bound");
+          expect(first.bound.leaseId).toBe("lease-a");
+
+          first.ws.send(
+            JSON.stringify({ seq: 1, geometrySeq: 0, event: { type: "text", text: "hi" } }),
+          );
+          await vi.waitFor(() => expect(stub.dispatched).toHaveLength(1));
+          expect(stub.dispatched[0]?.leaseId).toBe("lease-a");
+
+          // Replay of seq 1 is rejected.
+          const replayed = nextNotice(first.ws, "rejected");
+          first.ws.send(
+            JSON.stringify({ seq: 1, geometrySeq: 0, event: { type: "text", text: "no" } }),
+          );
+          expect(await replayed).toMatchObject({ type: "rejected", seq: 1, reason: "replay" });
+          expect(stub.dispatched).toHaveLength(1);
+
+          // Stale geometry is rejected.
+          const stale = nextNotice(first.ws, "rejected");
+          first.ws.send(
+            JSON.stringify({ seq: 2, geometrySeq: 99, event: { type: "text", text: "no" } }),
+          );
+          expect(await stale).toMatchObject({
+            type: "rejected",
+            seq: 2,
+            reason: "stale-geometry",
+          });
+          expect(stub.dispatched).toHaveLength(1);
+
+          // A second lease supersedes the first: the first socket closes and
+          // its held input is released BEFORE the successor binds.
+          const firstClosed = waitClosed(first.ws);
+          const second = await connectInput(hub.origin, hub.secret, {
+            ...baseInputParams,
+            "x-t3-lease": "lease-b",
+          });
+          expect(await firstClosed).toMatchObject({ code: 4000 });
+          expect(second.bound.leaseId).toBe("lease-b");
+          expect(stub.released).toHaveLength(1);
+
+          // The dead socket's late packets are ignored.
+          first.ws.send(
+            JSON.stringify({ seq: 3, geometrySeq: 0, event: { type: "text", text: "x" } }),
+          );
+          second.ws.send(
+            JSON.stringify({ seq: 1, geometrySeq: 0, event: { type: "text", text: "ok" } }),
+          );
+          await vi.waitFor(() => expect(stub.dispatched).toHaveLength(2));
+          expect(stub.dispatched[1]?.leaseId).toBe("lease-b");
+
+          first.ws.terminate();
+          second.ws.terminate();
+        });
+      }),
+    ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
+  });
+
+  effectIt.live("refuses an input socket bound to a stale engine generation", () => {
+    const { layer: managerLayer } = makeManagerStub();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* BrowserFrameHub;
+        yield* Effect.promise(async () => {
+          const ws = new WebSocket(
+            wsUrl(hub.origin, hub.secret, {
+              ...baseInputParams,
+              "x-t3-engine-generation": "gen-0",
+            }),
+          );
+          const closed = await waitClosed(ws);
+          expect(closed.code).toBe(4000);
+          expect(closed.reason).toBe("replaced");
+        });
+      }),
+    ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
+  });
+
+  effectIt.live("ends input sockets at their lease expiry", () => {
+    const { layer: managerLayer } = makeManagerStub();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* BrowserFrameHub;
+        yield* Effect.promise(async () => {
+          const ws = new WebSocket(
+            wsUrl(hub.origin, hub.secret, {
+              ...baseInputParams,
+              "x-t3-lease-expires": String(Date.now() + 50),
+            }),
+          );
+          const closed = await waitClosed(ws);
+          expect(closed.code).toBe(4000);
+          expect(closed.reason).toBe("expired");
+        });
+      }),
+    ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
+  });
+
+  effectIt.live("streams seeded frames to new viewers and stops capture on the last close", () => {
+    const { stub, layer: managerLayer } = makeManagerStub();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* BrowserFrameHub;
+        yield* Effect.promise(async () => {
+          const url =
+            `${hub.origin}/sessions/${encodeURIComponent(tuple.tabId)}/stream.mjpeg?` +
+            new URLSearchParams({
+              "x-t3-hub-auth": hub.secret,
+              "x-t3-session": runtimeTabId,
+            });
+          const res = await fetch(url);
+          expect(res.status).toBe(200);
+          expect(res.headers.get("content-type")).toContain("multipart/x-mixed-replace");
+          // Seeded from captureFrameJpeg — the first part arrives without a
+          // pushed frame.
+          const reader = res.body!.getReader();
+          const first = await reader.read();
+          expect(first.done).toBe(false);
+          const text = Buffer.from(first.value!).toString("latin1");
+          expect(text).toContain("--t3frame");
+          expect(text).toContain("X-Frame-Seq");
+          await vi.waitFor(() => expect(stub.started).toContain(runtimeTabId));
+
+          // A pushed frame reaches the stream.
+          stub.pushFrame({
+            tabId: runtimeTabId,
+            seq: 7,
+            jpeg: Buffer.from("jpeg-frame-7"),
+            width: 100,
+            height: 100,
+            engineGeneration: "gen-1",
+            geometryKey: PreviewManager.remoteFrameGeometryKey(
+              "gen-1",
+              { width: 100, height: 100 },
+              1,
+            ),
+          });
+          const pushed = await reader.read();
+          expect(Buffer.from(pushed.value!).toString("latin1")).toContain("X-Frame-Seq: 7");
+
+          await reader.cancel();
+          await vi.waitFor(() => expect(stub.stopped).toContain(runtimeTabId));
+        });
+      }),
+    ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
+  });
+
+  effectIt.live(
+    "lets only the last pending candidate bind while incumbent cleanup is blocked",
+    () => {
+      let finishCleanup: (() => void) | null = null;
+      const cleanupGate = new Promise<void>((resolve) => {
+        finishCleanup = resolve;
+      });
+      const { stub, layer: managerLayer } = makeManagerStub((manager) => {
+        manager.releaseRemoteInput = () =>
+          Effect.promise(async () => {
+            await cleanupGate;
+            return { attempted: 0, failed: 0 };
+          });
+      });
+      return Effect.scoped(
         Effect.gen(function* () {
           const hub = yield* BrowserFrameHub;
           yield* Effect.promise(async () => {
@@ -551,55 +541,56 @@ describe("BrowserFrameHub", () => {
             wsC.terminate();
           });
         }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
-  });
+      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
+    },
+  );
 
-  it("binds only the newest candidate when one arrives during the pending bind's config read", async () => {
-    let enterRelease: (() => void) | null = null;
-    let finishRelease: (() => void) | null = null;
-    let bindConfigEntered: (() => void) | null = null;
-    let releaseBindConfig: (() => void) | null = null;
-    const enteredRelease = new Promise<void>((resolve) => {
-      enterRelease = resolve;
-    });
-    const releaseGate = new Promise<void>((resolve) => {
-      finishRelease = resolve;
-    });
-    const bindConfigStarted = new Promise<void>((resolve) => {
-      bindConfigEntered = resolve;
-    });
-    const bindConfigGate = new Promise<void>((resolve) => {
-      releaseBindConfig = resolve;
-    });
-    let armBindGate = false;
-    let bindGateConsumed = false;
-    const { stub, layer: managerLayer } = makeManagerStub((manager) => {
-      manager.releaseRemoteInput = () =>
-        Effect.promise(async () => {
-          enterRelease!();
-          await releaseGate;
-          return { attempted: 0, failed: 0 };
-        });
-      manager.remoteFrameConfig = () =>
-        Effect.promise(async () => {
-          // The first config read after the incumbent's release settles is
-          // the pending candidate's own bind read — hold it so a newer
-          // upgrade can arrive while the reservation is still in flight.
-          if (armBindGate && !bindGateConsumed) {
-            bindGateConsumed = true;
-            bindConfigEntered!();
-            await bindConfigGate;
-          }
-          return {
-            engineGeneration: "gen-1",
-            viewportCss: { width: 100, height: 100 },
-            zoomFactor: 1,
-          };
-        });
-    });
-    await Effect.runPromise(
-      Effect.scoped(
+  effectIt.live(
+    "binds only the newest candidate when one arrives during the pending bind's config read",
+    () => {
+      let enterRelease: (() => void) | null = null;
+      let finishRelease: (() => void) | null = null;
+      let bindConfigEntered: (() => void) | null = null;
+      let releaseBindConfig: (() => void) | null = null;
+      const enteredRelease = new Promise<void>((resolve) => {
+        enterRelease = resolve;
+      });
+      const releaseGate = new Promise<void>((resolve) => {
+        finishRelease = resolve;
+      });
+      const bindConfigStarted = new Promise<void>((resolve) => {
+        bindConfigEntered = resolve;
+      });
+      const bindConfigGate = new Promise<void>((resolve) => {
+        releaseBindConfig = resolve;
+      });
+      let armBindGate = false;
+      let bindGateConsumed = false;
+      const { stub, layer: managerLayer } = makeManagerStub((manager) => {
+        manager.releaseRemoteInput = () =>
+          Effect.promise(async () => {
+            enterRelease!();
+            await releaseGate;
+            return { attempted: 0, failed: 0 };
+          });
+        manager.remoteFrameConfig = () =>
+          Effect.promise(async () => {
+            // The first config read after the incumbent's release settles is
+            // the pending candidate's own bind read — hold it so a newer
+            // upgrade can arrive while the reservation is still in flight.
+            if (armBindGate && !bindGateConsumed) {
+              bindGateConsumed = true;
+              bindConfigEntered!();
+              await bindConfigGate;
+            }
+            return {
+              engineGeneration: "gen-1",
+              viewportCss: { width: 100, height: 100 },
+              zoomFactor: 1,
+            };
+          });
+      });
+      return Effect.scoped(
         Effect.gen(function* () {
           const hub = yield* BrowserFrameHub;
           yield* Effect.promise(async () => {
@@ -653,30 +644,31 @@ describe("BrowserFrameHub", () => {
             wsC.terminate();
           });
         }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
-  });
+      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
+    },
+  );
 
-  it("keeps the newer pending same-lease ticket when an older in-flight ticket arrives", async () => {
-    let enterRelease: (() => void) | null = null;
-    let finishRelease: (() => void) | null = null;
-    const enteredRelease = new Promise<void>((resolve) => {
-      enterRelease = resolve;
-    });
-    const releaseGate = new Promise<void>((resolve) => {
-      finishRelease = resolve;
-    });
-    const { stub, layer: managerLayer } = makeManagerStub((manager, stubRef) => {
-      manager.releaseRemoteInput = (tabId: string) =>
-        Effect.promise(async () => {
-          enterRelease!();
-          await releaseGate;
-          stubRef.released.push(tabId);
-          return { attempted: 0, failed: 0 };
-        });
-    });
-    await Effect.runPromise(
-      Effect.scoped(
+  effectIt.live(
+    "keeps the newer pending same-lease ticket when an older in-flight ticket arrives",
+    () => {
+      let enterRelease: (() => void) | null = null;
+      let finishRelease: (() => void) | null = null;
+      const enteredRelease = new Promise<void>((resolve) => {
+        enterRelease = resolve;
+      });
+      const releaseGate = new Promise<void>((resolve) => {
+        finishRelease = resolve;
+      });
+      const { stub, layer: managerLayer } = makeManagerStub((manager, stubRef) => {
+        manager.releaseRemoteInput = (tabId: string) =>
+          Effect.promise(async () => {
+            enterRelease!();
+            await releaseGate;
+            stubRef.released.push(tabId);
+            return { attempted: 0, failed: 0 };
+          });
+      });
+      return Effect.scoped(
         Effect.gen(function* () {
           const hub = yield* BrowserFrameHub;
           yield* Effect.promise(async () => {
@@ -724,73 +716,72 @@ describe("BrowserFrameHub", () => {
             ws3.terminate();
           });
         }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
-  });
+      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
+    },
+  );
 
-  it("binds a same-lease older ticket as a shadow that cannot seize the slot", async () => {
+  effectIt.live("binds a same-lease older ticket as a shadow that cannot seize the slot", () => {
     const { stub, layer: managerLayer } = makeManagerStub();
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const hub = yield* BrowserFrameHub;
-          yield* Effect.promise(async () => {
-            const modern = await connectInput(hub.origin, hub.secret, {
-              ...baseInputParams,
-              "x-t3-lease": "lease-a",
-              "x-t3-ticket-seq": "2",
-            });
-            modern.ws.send(
-              JSON.stringify({ seq: 1, geometrySeq: 0, event: { type: "text", text: "first" } }),
-            );
-            await vi.waitFor(() => expect(stub.dispatched).toHaveLength(1));
-
-            // Same lease, older ticketSeq: binds as a shadow — no `bound`
-            // ownership notice, and the lease's replay high-water mark
-            // survives the rebind.
-            const stale = await openInput(hub.origin, hub.secret, {
-              ...baseInputParams,
-              "x-t3-lease": "lease-a",
-              "x-t3-ticket-seq": "1",
-            });
-            const shadowBound = await waitNotice(stale, "shadow");
-            expect(shadowBound.leaseId).toBe("lease-a");
-
-            // Replaying seq=1 must not re-dispatch what the owner already
-            // sent — the shadow inherits the lease's high-water mark.
-            stale.send(
-              JSON.stringify({ seq: 1, geometrySeq: 0, event: { type: "text", text: "replay" } }),
-            );
-            const rejected = await waitNotice(stale, "rejected");
-            expect(rejected.seq).toBe(1);
-            expect(rejected.reason).toBe("replay");
-            expect(stub.dispatched).toHaveLength(1);
-
-            // A newer packet still dispatches: the shadow shares the lease
-            // lane, it is not frozen.
-            stale.send(
-              JSON.stringify({ seq: 2, geometrySeq: 0, event: { type: "text", text: "second" } }),
-            );
-            await vi.waitFor(() => expect(stub.dispatched).toHaveLength(2));
-            expect(modern.ws.readyState).toBe(WebSocket.OPEN);
-
-            stale.close();
-            await waitClosed(stale);
-            // Shadow teardown released nothing.
-            expect(stub.released).toHaveLength(0);
-            modern.ws.terminate();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* BrowserFrameHub;
+        yield* Effect.promise(async () => {
+          const modern = await connectInput(hub.origin, hub.secret, {
+            ...baseInputParams,
+            "x-t3-lease": "lease-a",
+            "x-t3-ticket-seq": "2",
           });
-        }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
+          modern.ws.send(
+            JSON.stringify({ seq: 1, geometrySeq: 0, event: { type: "text", text: "first" } }),
+          );
+          await vi.waitFor(() => expect(stub.dispatched).toHaveLength(1));
+
+          // Same lease, older ticketSeq: binds as a shadow — no `bound`
+          // ownership notice, and the lease's replay high-water mark
+          // survives the rebind.
+          const stale = await openInput(hub.origin, hub.secret, {
+            ...baseInputParams,
+            "x-t3-lease": "lease-a",
+            "x-t3-ticket-seq": "1",
+          });
+          const shadowBound = await waitNotice(stale, "shadow");
+          expect(shadowBound.leaseId).toBe("lease-a");
+
+          // Replaying seq=1 must not re-dispatch what the owner already
+          // sent — the shadow inherits the lease's high-water mark.
+          stale.send(
+            JSON.stringify({ seq: 1, geometrySeq: 0, event: { type: "text", text: "replay" } }),
+          );
+          const rejected = await waitNotice(stale, "rejected");
+          expect(rejected.seq).toBe(1);
+          expect(rejected.reason).toBe("replay");
+          expect(stub.dispatched).toHaveLength(1);
+
+          // A newer packet still dispatches: the shadow shares the lease
+          // lane, it is not frozen.
+          stale.send(
+            JSON.stringify({ seq: 2, geometrySeq: 0, event: { type: "text", text: "second" } }),
+          );
+          await vi.waitFor(() => expect(stub.dispatched).toHaveLength(2));
+          expect(modern.ws.readyState).toBe(WebSocket.OPEN);
+
+          stale.close();
+          await waitClosed(stale);
+          // Shadow teardown released nothing.
+          expect(stub.released).toHaveLength(0);
+          modern.ws.terminate();
+        });
+      }),
+    ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
   });
 
-  it("flags cleanupIncomplete on the successor's bound notice when incumbent release fails", async () => {
-    const { layer: managerLayer } = makeManagerStub((manager) => {
-      manager.releaseRemoteInput = () => Effect.succeed({ attempted: 1, failed: 1 });
-    });
-    await Effect.runPromise(
-      Effect.scoped(
+  effectIt.live(
+    "flags cleanupIncomplete on the successor's bound notice when incumbent release fails",
+    () => {
+      const { layer: managerLayer } = makeManagerStub((manager) => {
+        manager.releaseRemoteInput = () => Effect.succeed({ attempted: 1, failed: 1 });
+      });
+      return Effect.scoped(
         Effect.gen(function* () {
           const hub = yield* BrowserFrameHub;
           yield* Effect.promise(async () => {
@@ -810,11 +801,11 @@ describe("BrowserFrameHub", () => {
             second.ws.terminate();
           });
         }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
-  });
+      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
+    },
+  );
 
-  it("rejects excess input packets when the dispatch lane stalls", async () => {
+  effectIt.live("rejects excess input packets when the dispatch lane stalls", () => {
     let accepted = 0;
     const { layer: managerLayer } = makeManagerStub((manager) => {
       manager.dispatchRemoteInput = () =>
@@ -822,48 +813,46 @@ describe("BrowserFrameHub", () => {
           accepted += 1;
         }).pipe(Effect.andThen(Effect.never));
     });
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const hub = yield* BrowserFrameHub;
-          yield* Effect.promise(async () => {
-            const { ws } = await connectInput(hub.origin, hub.secret, baseInputParams);
-            let now = Date.now();
-            const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
-            const rejected: number[] = [];
-            ws.on("message", (data) => {
-              const notice = JSON.parse(String(data)) as Record<string, unknown>;
-              if (notice.type === "rejected") rejected.push(notice.seq as number);
-            });
-            try {
-              for (let batch = 0; batch < 4; batch++) {
-                now += 1001;
-                for (let index = 0; index < 60; index++) {
-                  ws.send(
-                    JSON.stringify({
-                      seq: batch * 60 + index + 1,
-                      geometrySeq: 0,
-                      event: { type: "text", text: "blocked" },
-                    }),
-                  );
-                }
-                const pong = new Promise((resolve) => ws.once("pong", resolve));
-                ws.ping();
-                await pong;
-              }
-              await vi.waitFor(() => expect(rejected.length).toBeGreaterThan(60));
-              expect(accepted).toBe(1);
-            } finally {
-              clock.mockRestore();
-              ws.terminate();
-            }
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* BrowserFrameHub;
+        yield* Effect.promise(async () => {
+          const { ws } = await connectInput(hub.origin, hub.secret, baseInputParams);
+          let now = Date.now();
+          const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+          const rejected: number[] = [];
+          ws.on("message", (data) => {
+            const notice = JSON.parse(String(data)) as Record<string, unknown>;
+            if (notice.type === "rejected") rejected.push(notice.seq as number);
           });
-        }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
+          try {
+            for (let batch = 0; batch < 4; batch++) {
+              now += 1001;
+              for (let index = 0; index < 60; index++) {
+                ws.send(
+                  JSON.stringify({
+                    seq: batch * 60 + index + 1,
+                    geometrySeq: 0,
+                    event: { type: "text", text: "blocked" },
+                  }),
+                );
+              }
+              const pong = new Promise((resolve) => ws.once("pong", resolve));
+              ws.ping();
+              await pong;
+            }
+            await vi.waitFor(() => expect(rejected.length).toBeGreaterThan(60));
+            expect(accepted).toBe(1);
+          } finally {
+            clock.mockRestore();
+            ws.terminate();
+          }
+        });
+      }),
+    ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
   });
 
-  it("rejects a queued packet whose geometry was replaced before dispatch", async () => {
+  effectIt.live("rejects a queued packet whose geometry was replaced before dispatch", () => {
     let width = 100;
     let releaseDispatch: (() => void) | null = null;
     const dispatchGate = new Promise<void>((resolve) => {
@@ -890,65 +879,63 @@ describe("BrowserFrameHub", () => {
           if (stubRef.dispatched.length === 1) await dispatchGate;
         });
     });
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const hub = yield* BrowserFrameHub;
-          yield* Effect.promise(async () => {
-            const ws = await openInput(hub.origin, hub.secret, baseInputParams);
-            const bound = await waitNotice(ws, "bound");
-            const geometrySeq = (bound.geometrySeq as number | undefined) ?? 0;
-            ws.send(
-              JSON.stringify({
-                seq: 1,
-                geometrySeq,
-                event: { type: "text", text: "first" },
-              }),
-            );
-            await vi.waitFor(() => expect(stub.dispatched).toHaveLength(1));
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* BrowserFrameHub;
+        yield* Effect.promise(async () => {
+          const ws = await openInput(hub.origin, hub.secret, baseInputParams);
+          const bound = await waitNotice(ws, "bound");
+          const geometrySeq = (bound.geometrySeq as number | undefined) ?? 0;
+          ws.send(
+            JSON.stringify({
+              seq: 1,
+              geometrySeq,
+              event: { type: "text", text: "first" },
+            }),
+          );
+          await vi.waitFor(() => expect(stub.dispatched).toHaveLength(1));
 
-            // Admitted at the old geometry and parked behind the stalled
-            // dispatch — the pong proves the hub consumed it before the bump.
-            ws.send(
-              JSON.stringify({
-                seq: 2,
-                geometrySeq,
-                event: { type: "text", text: "second" },
-              }),
-            );
-            const pong = new Promise((resolve) => ws.once("pong", resolve));
-            ws.ping();
-            await pong;
-
-            width = 200;
-            const config = await fetch(
-              `${hub.origin}/sessions/${encodeURIComponent(tuple.tabId)}/config?` +
-                new URLSearchParams({
-                  "x-t3-hub-auth": hub.secret,
-                  "x-t3-session": runtimeTabId,
-                }),
-            );
-            expect((await config.json()).geometrySeq).toBe(geometrySeq + 1);
-
-            const rejected = waitNotice(ws, "rejected");
-            releaseDispatch!();
-            expect(await rejected).toMatchObject({
-              type: "rejected",
+          // Admitted at the old geometry and parked behind the stalled
+          // dispatch — the pong proves the hub consumed it before the bump.
+          ws.send(
+            JSON.stringify({
               seq: 2,
-              reason: "stale-geometry",
-            });
-            // The stale packet never actuates — and never against the
-            // replacement viewport.
-            expect(stub.dispatched).toHaveLength(1);
-            expect(stub.dispatched[0]?.viewportCss).toMatchObject({ width: 100 });
-            ws.terminate();
+              geometrySeq,
+              event: { type: "text", text: "second" },
+            }),
+          );
+          const pong = new Promise((resolve) => ws.once("pong", resolve));
+          ws.ping();
+          await pong;
+
+          width = 200;
+          const config = await fetch(
+            `${hub.origin}/sessions/${encodeURIComponent(tuple.tabId)}/config?` +
+              new URLSearchParams({
+                "x-t3-hub-auth": hub.secret,
+                "x-t3-session": runtimeTabId,
+              }),
+          );
+          expect((await config.json()).geometrySeq).toBe(geometrySeq + 1);
+
+          const rejected = waitNotice(ws, "rejected");
+          releaseDispatch!();
+          expect(await rejected).toMatchObject({
+            type: "rejected",
+            seq: 2,
+            reason: "stale-geometry",
           });
-        }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
+          // The stale packet never actuates — and never against the
+          // replacement viewport.
+          expect(stub.dispatched).toHaveLength(1);
+          expect(stub.dispatched[0]?.viewportCss).toMatchObject({ width: 100 });
+          ws.terminate();
+        });
+      }),
+    ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
   });
 
-  it("never lets an older config read move advertised geometry backward", async () => {
+  effectIt.live("never lets an older config read move advertised geometry backward", () => {
     let calls = 0;
     let releaseFirst: (() => void) | null = null;
     const firstGate = new Promise<void>((resolve) => {
@@ -974,112 +961,104 @@ describe("BrowserFrameHub", () => {
         });
       };
     });
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const hub = yield* BrowserFrameHub;
-          yield* Effect.promise(async () => {
-            const configUrl =
-              `${hub.origin}/sessions/${encodeURIComponent(tuple.tabId)}/config?` +
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* BrowserFrameHub;
+        yield* Effect.promise(async () => {
+          const configUrl =
+            `${hub.origin}/sessions/${encodeURIComponent(tuple.tabId)}/config?` +
+            new URLSearchParams({
+              "x-t3-hub-auth": hub.secret,
+              "x-t3-session": runtimeTabId,
+            });
+          const stale = fetch(configUrl);
+          await vi.waitFor(() => expect(calls).toBe(1));
+          const fresh = await fetch(configUrl);
+          // The newer read completes first and wins: seq 0 advertises
+          // 200x100.
+          expect((await fresh.json()).geometrySeq).toBe(0);
+
+          releaseFirst!();
+          const staleResponse = await stale;
+          // The superseded read re-issued behind the winner and answered
+          // with the settled pair — it never republished its stale
+          // geometry.
+          expect(staleResponse.status).toBe(200);
+          const staleConfig = (await staleResponse.json()) as {
+            viewport: { cssWidth: number };
+            geometrySeq: number;
+          };
+          expect(staleConfig.viewport.cssWidth).toBe(200);
+          expect(staleConfig.geometrySeq).toBe(0);
+
+          // Advertised geometry never regressed: had the stale read
+          // applied, its 100x100 key would have bumped the seq again.
+          const after = await fetch(configUrl);
+          expect((await after.json()).geometrySeq).toBe(0);
+        });
+      }),
+    ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
+  });
+
+  effectIt.live("closes a fragmented oversized packet with 1009 before parsing", () => {
+    const { layer: managerLayer } = makeManagerStub();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* BrowserFrameHub;
+        yield* Effect.promise(async () => {
+          const { ws } = await connectInput(hub.origin, hub.secret, baseInputParams);
+          const outcome = new Promise<Record<string, unknown>>((resolve) => {
+            ws.once("close", (code) => resolve({ code }));
+            ws.once("message", (data) => resolve(JSON.parse(String(data))));
+          });
+          ws.send("x".repeat(4096), { fin: false });
+          ws.send("x".repeat(4097), { fin: true });
+          expect(await outcome).toMatchObject({ code: 1009 });
+          ws.terminate();
+        });
+      }),
+    ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
+  });
+
+  effectIt.live("refuses a snapshot on a stale engine generation", () => {
+    const { layer: managerLayer } = makeManagerStub();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* BrowserFrameHub;
+        yield* Effect.promise(async () => {
+          const stale = await fetch(
+            `${hub.origin}/sessions/${encodeURIComponent(tuple.tabId)}/snapshot?` +
               new URLSearchParams({
                 "x-t3-hub-auth": hub.secret,
                 "x-t3-session": runtimeTabId,
-              });
-            const stale = fetch(configUrl);
-            await vi.waitFor(() => expect(calls).toBe(1));
-            const fresh = await fetch(configUrl);
-            // The newer read completes first and wins: seq 0 advertises
-            // 200x100.
-            expect((await fresh.json()).geometrySeq).toBe(0);
-
-            releaseFirst!();
-            const staleResponse = await stale;
-            // The superseded read re-issued behind the winner and answered
-            // with the settled pair — it never republished its stale
-            // geometry.
-            expect(staleResponse.status).toBe(200);
-            const staleConfig = (await staleResponse.json()) as {
-              viewport: { cssWidth: number };
-              geometrySeq: number;
-            };
-            expect(staleConfig.viewport.cssWidth).toBe(200);
-            expect(staleConfig.geometrySeq).toBe(0);
-
-            // Advertised geometry never regressed: had the stale read
-            // applied, its 100x100 key would have bumped the seq again.
-            const after = await fetch(configUrl);
-            expect((await after.json()).geometrySeq).toBe(0);
-          });
-        }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
+                "x-t3-engine-generation": "gen-0",
+              }),
+          );
+          expect(stale.status).toBe(409);
+        });
+      }),
+    ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
   });
 
-  it("closes a fragmented oversized packet with 1009 before parsing", async () => {
-    const { layer: managerLayer } = makeManagerStub();
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const hub = yield* BrowserFrameHub;
-          yield* Effect.promise(async () => {
-            const { ws } = await connectInput(hub.origin, hub.secret, baseInputParams);
-            const outcome = new Promise<Record<string, unknown>>((resolve) => {
-              ws.once("close", (code) => resolve({ code }));
-              ws.once("message", (data) => resolve(JSON.parse(String(data))));
-            });
-            ws.send("x".repeat(4096), { fin: false });
-            ws.send("x".repeat(4097), { fin: true });
-            expect(await outcome).toMatchObject({ code: 1009 });
-            ws.terminate();
-          });
-        }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
-  });
-
-  it("refuses a snapshot on a stale engine generation", async () => {
-    const { layer: managerLayer } = makeManagerStub();
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const hub = yield* BrowserFrameHub;
-          yield* Effect.promise(async () => {
-            const stale = await fetch(
-              `${hub.origin}/sessions/${encodeURIComponent(tuple.tabId)}/snapshot?` +
-                new URLSearchParams({
-                  "x-t3-hub-auth": hub.secret,
-                  "x-t3-session": runtimeTabId,
-                  "x-t3-engine-generation": "gen-0",
-                }),
-            );
-            expect(stale.status).toBe(409);
-          });
-        }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
-  });
-
-  it("ends a live stream rather than emitting replacement-generation pixels", async () => {
+  effectIt.live("ends a live stream rather than emitting replacement-generation pixels", () => {
     const { stub, layer: managerLayer } = makeManagerStub();
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const hub = yield* BrowserFrameHub;
-          yield* Effect.promise(async () => {
-            const res = await fetch(streamUrl(hub.origin, hub.secret));
-            expect(res.status).toBe(200);
-            const reader = res.body!.getReader();
-            await reader.read();
-            stub.pushFrame(liveFrame("gen-2", 9));
-            const next = await reader.read();
-            expect(next.done).toBe(true);
-          });
-        }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* BrowserFrameHub;
+        yield* Effect.promise(async () => {
+          const res = await fetch(streamUrl(hub.origin, hub.secret));
+          expect(res.status).toBe(200);
+          const reader = res.body!.getReader();
+          await reader.read();
+          stub.pushFrame(liveFrame("gen-2", 9));
+          const next = await reader.read();
+          expect(next.done).toBe(true);
+        });
+      }),
+    ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
   });
 
-  it("never seeds a new-generation subscriber with cached old-generation pixels", async () => {
+  effectIt.live("never seeds a new-generation subscriber with cached old-generation pixels", () => {
     let generation = "gen-1";
     const { stub, layer: managerLayer } = makeManagerStub((manager) => {
       manager.remoteFrameConfig = () =>
@@ -1089,33 +1068,29 @@ describe("BrowserFrameHub", () => {
           zoomFactor: 1,
         });
     });
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const hub = yield* BrowserFrameHub;
-          yield* Effect.promise(async () => {
-            const first = await fetch(streamUrl(hub.origin, hub.secret));
-            const firstReader = first.body!.getReader();
-            await firstReader.read();
-            stub.pushFrame(liveFrame("gen-1"));
-            await firstReader.read();
-            generation = "gen-2";
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* BrowserFrameHub;
+        yield* Effect.promise(async () => {
+          const first = await fetch(streamUrl(hub.origin, hub.secret));
+          const firstReader = first.body!.getReader();
+          await firstReader.read();
+          stub.pushFrame(liveFrame("gen-1"));
+          await firstReader.read();
+          generation = "gen-2";
 
-            const second = await fetch(streamUrl(hub.origin, hub.secret, "gen-2"));
-            const secondReader = second.body!.getReader();
-            const seeded = await secondReader.read();
-            await firstReader.cancel();
-            await secondReader.cancel();
-            expect(Buffer.from(seeded.value!).toString()).not.toContain(
-              "X-Engine-Generation: gen-1",
-            );
-          });
-        }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
+          const second = await fetch(streamUrl(hub.origin, hub.secret, "gen-2"));
+          const secondReader = second.body!.getReader();
+          const seeded = await secondReader.read();
+          await firstReader.cancel();
+          await secondReader.cancel();
+          expect(Buffer.from(seeded.value!).toString()).not.toContain("X-Engine-Generation: gen-1");
+        });
+      }),
+    ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
   });
 
-  it("seeds a stream with the settled geometry when its capture spans a resize", async () => {
+  effectIt.live("seeds a stream with the settled geometry when its capture spans a resize", () => {
     let width = 100;
     let captureEntered: (() => void) | null = null;
     let releaseCapture: (() => void) | null = null;
@@ -1153,42 +1128,40 @@ describe("BrowserFrameHub", () => {
           };
         });
     });
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const hub = yield* BrowserFrameHub;
-          yield* Effect.promise(async () => {
-            const response = fetch(streamUrl(hub.origin, hub.secret));
-            // The seed capture runs after the stream's initial config read,
-            // so reaching it proves seq 0 (100x100) was already advertised.
-            await captureStarted;
-            width = 200;
-            const config = await fetch(
-              `${hub.origin}/sessions/${encodeURIComponent(tuple.tabId)}/config?` +
-                new URLSearchParams({
-                  "x-t3-hub-auth": hub.secret,
-                  "x-t3-session": runtimeTabId,
-                }),
-            );
-            expect((await config.json()).geometrySeq).toBe(1);
-            releaseCapture!();
-            const res = await response;
-            const reader = res.body!.getReader();
-            const first = await reader.read();
-            const part = Buffer.from(first.value!).toString("latin1");
-            // The seed's settled geometry is the advertised one — a stale
-            // pre-resize stamp would have bumped the seq again and moved the
-            // advertised geometry backward.
-            expect(part).toContain("X-Geometry-Seq: 1");
-            expect(part).toContain("X-Frame-Width: 200");
-            await reader.cancel();
-          });
-        }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* BrowserFrameHub;
+        yield* Effect.promise(async () => {
+          const response = fetch(streamUrl(hub.origin, hub.secret));
+          // The seed capture runs after the stream's initial config read,
+          // so reaching it proves seq 0 (100x100) was already advertised.
+          await captureStarted;
+          width = 200;
+          const config = await fetch(
+            `${hub.origin}/sessions/${encodeURIComponent(tuple.tabId)}/config?` +
+              new URLSearchParams({
+                "x-t3-hub-auth": hub.secret,
+                "x-t3-session": runtimeTabId,
+              }),
+          );
+          expect((await config.json()).geometrySeq).toBe(1);
+          releaseCapture!();
+          const res = await response;
+          const reader = res.body!.getReader();
+          const first = await reader.read();
+          const part = Buffer.from(first.value!).toString("latin1");
+          // The seed's settled geometry is the advertised one — a stale
+          // pre-resize stamp would have bumped the seq again and moved the
+          // advertised geometry backward.
+          expect(part).toContain("X-Geometry-Seq: 1");
+          expect(part).toContain("X-Frame-Width: 200");
+          await reader.cancel();
+        });
+      }),
+    ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
   });
 
-  it("keeps a surviving viewer's capture when a cancelled startup settles late", async () => {
+  effectIt.live("keeps a surviving viewer's capture when a cancelled startup settles late", () => {
     let startCalls = 0;
     let releaseFirstStart: (() => void) | null = null;
     const firstStartGate = new Promise<void>((resolve) => {
@@ -1208,124 +1181,119 @@ describe("BrowserFrameHub", () => {
         });
       };
     });
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const hub = yield* BrowserFrameHub;
-          yield* Effect.promise(async () => {
-            // A's capture startup stalls mid-acquisition.
-            const aAbort = new AbortController();
-            const aFetch = fetch(streamUrl(hub.origin, hub.secret), {
-              signal: aAbort.signal,
-            }).catch(() => null);
-            await vi.waitFor(() => expect(startCalls).toBe(1));
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* BrowserFrameHub;
+        yield* Effect.promise(async () => {
+          // A's capture startup stalls mid-acquisition.
+          const aAbort = new AbortController();
+          const aFetch = fetch(streamUrl(hub.origin, hub.secret), {
+            signal: aAbort.signal,
+          }).catch(() => null);
+          await vi.waitFor(() => expect(startCalls).toBe(1));
 
-            // B attaches while A's start is still in flight — B's startup
-            // resolves and its stream opens.
-            const bRes = await fetch(streamUrl(hub.origin, hub.secret));
-            const bReader = bRes.body!.getReader();
-            await bReader.read();
+          // B attaches while A's start is still in flight — B's startup
+          // resolves and its stream opens.
+          const bRes = await fetch(streamUrl(hub.origin, hub.secret));
+          const bReader = bRes.body!.getReader();
+          await bReader.read();
 
-            // A disconnects; its viewers→1, so no disconnect stop runs.
-            aAbort.abort();
-            await aFetch;
-            // A's late-settling start completes into a session B now owns —
-            // its compensation must not re-stop the capture. The pushed
-            // frame's loopback round-trip gives any stale stop enough turns
-            // to land before the assertion.
-            releaseFirstStart!();
-            stub.pushFrame(liveFrame());
-            const pushed = await bReader.read();
-            expect(Buffer.from(pushed.value!).toString("latin1")).toContain("X-Frame-Seq: 8");
-            expect(stub.stopped).toHaveLength(0);
-            await bReader.cancel();
-          });
-        }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
+          // A disconnects; its viewers→1, so no disconnect stop runs.
+          aAbort.abort();
+          await aFetch;
+          // A's late-settling start completes into a session B now owns —
+          // its compensation must not re-stop the capture. The pushed
+          // frame's loopback round-trip gives any stale stop enough turns
+          // to land before the assertion.
+          releaseFirstStart!();
+          stub.pushFrame(liveFrame());
+          const pushed = await bReader.read();
+          expect(Buffer.from(pushed.value!).toString("latin1")).toContain("X-Frame-Seq: 8");
+          expect(stub.stopped).toHaveLength(0);
+          await bReader.cancel();
+        });
+      }),
+    ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
   });
 
-  it("never writes capture output ahead of the stream's HTTP headers", async () => {
+  effectIt.live("never writes capture output ahead of the stream's HTTP headers", () => {
     const { layer: managerLayer } = makeManagerStub((manager, stubRef) => {
       manager.startRemoteCapture = () =>
         Effect.sync(() => {
           stubRef.pushFrame(liveFrame());
         });
     });
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const hub = yield* BrowserFrameHub;
-          yield* Effect.promise(async () => {
-            const res = await fetch(streamUrl(hub.origin, hub.secret));
-            // If the first frame's bytes beat the response headers, `fetch`
-            // rejects or resolves without a content-type — either is a fail.
-            expect(res.status).toBe(200);
-            expect(res.headers.get("content-type")).toContain("multipart/x-mixed-replace");
-            const reader = res.body!.getReader();
-            const first = await reader.read();
-            expect(first.done).toBe(false);
-            await reader.cancel();
-          });
-        }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* BrowserFrameHub;
+        yield* Effect.promise(async () => {
+          const res = await fetch(streamUrl(hub.origin, hub.secret));
+          // If the first frame's bytes beat the response headers, `fetch`
+          // rejects or resolves without a content-type — either is a fail.
+          expect(res.status).toBe(200);
+          expect(res.headers.get("content-type")).toContain("multipart/x-mixed-replace");
+          const reader = res.body!.getReader();
+          const first = await reader.read();
+          expect(first.done).toBe(false);
+          await reader.cancel();
+        });
+      }),
+    ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
   });
 
-  it("ends a silent stream at the lease deadline, not the session's", async () => {
+  effectIt.live("ends a silent stream at the lease deadline, not the session's", () => {
     const { layer: managerLayer } = makeManagerStub();
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const hub = yield* BrowserFrameHub;
-          yield* Effect.promise(async () => {
-            const deadline = Date.now() + 400;
-            const startedAt = Date.now();
-            const res = await fetch(
-              `${streamUrl(hub.origin, hub.secret)}&x-t3-lease-expires=${deadline}`,
-            );
-            expect(res.status).toBe(200);
-            const reader = res.body!.getReader();
-            let done = false;
-            while (!done) {
-              done = (await reader.read()).done === true;
-            }
-            expect(Date.now() - startedAt).toBeLessThan(3000);
-          });
-        }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* BrowserFrameHub;
+        yield* Effect.promise(async () => {
+          const deadline = Date.now() + 400;
+          const startedAt = Date.now();
+          const res = await fetch(
+            `${streamUrl(hub.origin, hub.secret)}&x-t3-lease-expires=${deadline}`,
+          );
+          expect(res.status).toBe(200);
+          const reader = res.body!.getReader();
+          let done = false;
+          while (!done) {
+            done = (await reader.read()).done === true;
+          }
+          expect(Date.now() - startedAt).toBeLessThan(3000);
+        });
+      }),
+    ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
   });
 
-  it("cancels a stream whose client disconnected while capture was still starting", async () => {
-    let enterStart: (() => void) | null = null;
-    let finishStart: (() => void) | null = null;
-    let reportStop: (() => void) | null = null;
-    const entered = new Promise<void>((resolve) => {
-      enterStart = resolve;
-    });
-    const gate = new Promise<void>((resolve) => {
-      finishStart = resolve;
-    });
-    const didStop = new Promise<void>((resolve) => {
-      reportStop = resolve;
-    });
-    let active = false;
-    const { layer: managerLayer } = makeManagerStub((manager) => {
-      manager.startRemoteCapture = () =>
-        Effect.promise(async () => {
-          enterStart!();
-          await gate;
-          active = true;
-        });
-      manager.stopRemoteCapture = () =>
-        Effect.sync(() => {
-          active = false;
-          reportStop!();
-        });
-    });
-    await Effect.runPromise(
-      Effect.scoped(
+  effectIt.live(
+    "cancels a stream whose client disconnected while capture was still starting",
+    () => {
+      let enterStart: (() => void) | null = null;
+      let finishStart: (() => void) | null = null;
+      let reportStop: (() => void) | null = null;
+      const entered = new Promise<void>((resolve) => {
+        enterStart = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        finishStart = resolve;
+      });
+      const didStop = new Promise<void>((resolve) => {
+        reportStop = resolve;
+      });
+      let active = false;
+      const { layer: managerLayer } = makeManagerStub((manager) => {
+        manager.startRemoteCapture = () =>
+          Effect.promise(async () => {
+            enterStart!();
+            await gate;
+            active = true;
+          });
+        manager.stopRemoteCapture = () =>
+          Effect.sync(() => {
+            active = false;
+            reportStop!();
+          });
+      });
+      return Effect.scoped(
         Effect.gen(function* () {
           const hub = yield* BrowserFrameHub;
           yield* Effect.promise(async () => {
@@ -1333,7 +1301,7 @@ describe("BrowserFrameHub", () => {
               "x-t3-hub-auth": hub.secret,
               "x-t3-session": runtimeTabId,
             });
-            const req = get(
+            const req = NodeHttp.get(
               `${hub.origin}/sessions/${encodeURIComponent(tuple.tabId)}/stream.mjpeg?${query}`,
             );
             req.on("error", () => {});
@@ -1349,16 +1317,16 @@ describe("BrowserFrameHub", () => {
             expect(active).toBe(false);
           });
         }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
-  });
+      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
+    },
+  );
 
-  it("keeps a frame's capture-time geometry when the stream is backpressured", async () => {
+  effectIt.live("keeps a frame's capture-time geometry when the stream is backpressured", () => {
     let width = 100;
-    let stalled: ServerResponse | null = null;
-    const original = ServerResponse.prototype.write;
-    const spy = vi.spyOn(ServerResponse.prototype, "write").mockImplementation(function (
-      this: ServerResponse,
+    let stalled: NodeHttp.ServerResponse | null = null;
+    const original = NodeHttp.ServerResponse.prototype.write;
+    const spy = vi.spyOn(NodeHttp.ServerResponse.prototype, "write").mockImplementation(function (
+      this: NodeHttp.ServerResponse,
       ...args: Array<unknown>
     ) {
       // Deliver the bytes, then report backpressure on the first frame part
@@ -1371,54 +1339,52 @@ describe("BrowserFrameHub", () => {
       }
       return result;
     });
-    try {
-      const { stub, layer: managerLayer } = makeManagerStub((manager) => {
-        manager.remoteFrameConfig = () =>
-          Effect.succeed({
-            engineGeneration: "gen-1",
-            viewportCss: { width, height: 100 },
-            zoomFactor: 1,
+    const { stub, layer: managerLayer } = makeManagerStub((manager) => {
+      manager.remoteFrameConfig = () =>
+        Effect.succeed({
+          engineGeneration: "gen-1",
+          viewportCss: { width, height: 100 },
+          zoomFactor: 1,
+        });
+    });
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* BrowserFrameHub;
+        yield* Effect.promise(async () => {
+          const query = new URLSearchParams({
+            "x-t3-hub-auth": hub.secret,
+            "x-t3-session": runtimeTabId,
+            "x-t3-engine-generation": "gen-1",
           });
-      });
-      await Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const hub = yield* BrowserFrameHub;
-            yield* Effect.promise(async () => {
-              const query = new URLSearchParams({
-                "x-t3-hub-auth": hub.secret,
-                "x-t3-session": runtimeTabId,
-                "x-t3-engine-generation": "gen-1",
-              });
-              const res = await fetch(
-                `${hub.origin}/sessions/${encodeURIComponent(tuple.tabId)}/stream.mjpeg?${query}`,
-              );
-              const reader = res.body!.getReader();
-              await reader.read();
-              stub.pushFrame(liveFrame("gen-1", 2));
-              await vi.waitFor(() => expect(stalled).not.toBeNull());
-              width = 200;
-              const config = await fetch(
-                `${hub.origin}/sessions/${encodeURIComponent(tuple.tabId)}/config?${query}`,
-              );
-              expect((await config.json()).geometrySeq).toBe(1);
-              stalled!.emit("drain");
-              const old = await reader.read();
-              await reader.cancel();
-              expect(Buffer.from(old.value!).toString("latin1")).toContain("X-Geometry-Seq: 0");
-            });
-          }),
-        ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-      );
-    } finally {
-      spy.mockRestore();
-    }
+          const res = await fetch(
+            `${hub.origin}/sessions/${encodeURIComponent(tuple.tabId)}/stream.mjpeg?${query}`,
+          );
+          const reader = res.body!.getReader();
+          await reader.read();
+          stub.pushFrame(liveFrame("gen-1", 2));
+          await vi.waitFor(() => expect(stalled).not.toBeNull());
+          width = 200;
+          const config = await fetch(
+            `${hub.origin}/sessions/${encodeURIComponent(tuple.tabId)}/config?${query}`,
+          );
+          expect((await config.json()).geometrySeq).toBe(1);
+          stalled!.emit("drain");
+          const old = await reader.read();
+          await reader.cancel();
+          expect(Buffer.from(old.value!).toString("latin1")).toContain("X-Geometry-Seq: 0");
+        });
+      }),
+    ).pipe(
+      Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))),
+      Effect.ensuring(Effect.sync(() => spy.mockRestore())),
+    );
   });
 
-  it("reports the lease high-water on bound so a rebind continues the input sequence", async () => {
-    const { stub, layer: managerLayer } = makeManagerStub();
-    await Effect.runPromise(
-      Effect.scoped(
+  effectIt.live(
+    "reports the lease high-water on bound so a rebind continues the input sequence",
+    () => {
+      const { stub, layer: managerLayer } = makeManagerStub();
+      return Effect.scoped(
         Effect.gen(function* () {
           const hub = yield* BrowserFrameHub;
           yield* Effect.promise(async () => {
@@ -1461,31 +1427,32 @@ describe("BrowserFrameHub", () => {
             second.ws.terminate();
           });
         }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
-  });
+      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
+    },
+  );
 
-  it("a stale-seq upgrade completing after the newer socket ends binds as a shadow", async () => {
-    let releaseConfig: (() => void) | null = null;
-    const configGate = new Promise<void>((resolve) => {
-      releaseConfig = resolve;
-    });
-    let configCalls = 0;
-    const { layer: managerLayer } = makeManagerStub((manager) => {
-      const config = {
-        engineGeneration: "gen-1",
-        viewportCss: { width: 100, height: 100 },
-        zoomFactor: 1,
-      };
-      manager.remoteFrameConfig = () => {
-        configCalls += 1;
-        return configCalls === 1
-          ? Effect.promise(() => configGate.then(() => config))
-          : Effect.succeed(config);
-      };
-    });
-    await Effect.runPromise(
-      Effect.scoped(
+  effectIt.live(
+    "a stale-seq upgrade completing after the newer socket ends binds as a shadow",
+    () => {
+      let releaseConfig: (() => void) | null = null;
+      const configGate = new Promise<void>((resolve) => {
+        releaseConfig = resolve;
+      });
+      let configCalls = 0;
+      const { layer: managerLayer } = makeManagerStub((manager) => {
+        const config = {
+          engineGeneration: "gen-1",
+          viewportCss: { width: 100, height: 100 },
+          zoomFactor: 1,
+        };
+        manager.remoteFrameConfig = () => {
+          configCalls += 1;
+          return configCalls === 1
+            ? Effect.promise(() => configGate.then(() => config))
+            : Effect.succeed(config);
+        };
+      });
+      return Effect.scoped(
         Effect.gen(function* () {
           const hub = yield* BrowserFrameHub;
           yield* Effect.promise(async () => {
@@ -1520,31 +1487,32 @@ describe("BrowserFrameHub", () => {
             ws2.terminate();
           });
         }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
-  });
+      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
+    },
+  );
 
-  it("an idle sweep cannot reclaim a session while a stream startup is in flight", async () => {
-    let releaseConfig: (() => void) | null = null;
-    const configGate = new Promise<void>((resolve) => {
-      releaseConfig = resolve;
-    });
-    let configCalls = 0;
-    const { stub, layer: managerLayer } = makeManagerStub((manager) => {
-      const config = {
-        engineGeneration: "gen-1",
-        viewportCss: { width: 100, height: 100 },
-        zoomFactor: 1,
-      };
-      manager.remoteFrameConfig = () => {
-        configCalls += 1;
-        return configCalls === 1
-          ? Effect.promise(() => configGate.then(() => config))
-          : Effect.succeed(config);
-      };
-    });
-    await Effect.runPromise(
-      Effect.scoped(
+  effectIt.live(
+    "an idle sweep cannot reclaim a session while a stream startup is in flight",
+    () => {
+      let releaseConfig: (() => void) | null = null;
+      const configGate = new Promise<void>((resolve) => {
+        releaseConfig = resolve;
+      });
+      let configCalls = 0;
+      const { stub, layer: managerLayer } = makeManagerStub((manager) => {
+        const config = {
+          engineGeneration: "gen-1",
+          viewportCss: { width: 100, height: 100 },
+          zoomFactor: 1,
+        };
+        manager.remoteFrameConfig = () => {
+          configCalls += 1;
+          return configCalls === 1
+            ? Effect.promise(() => configGate.then(() => config))
+            : Effect.succeed(config);
+        };
+      });
+      return Effect.scoped(
         Effect.gen(function* () {
           const hub = yield* BrowserFrameHub;
           yield* Effect.promise(async () => {
@@ -1592,11 +1560,11 @@ describe("BrowserFrameHub", () => {
             }
           });
         }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
-  });
+      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
+    },
+  );
 
-  it("reclaims an idle session's cache and stops its sweep", async () => {
+  effectIt.live("reclaims an idle session's cache and stops its sweep", () => {
     let captures = 0;
     const { stub, layer: managerLayer } = makeManagerStub((manager) => {
       manager.captureFrameJpeg = () => {
@@ -1615,45 +1583,43 @@ describe("BrowserFrameHub", () => {
         });
       };
     });
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const hub = yield* BrowserFrameHub;
-          yield* Effect.promise(async () => {
-            // Install the fake clock first so the activity's own sweep is a
-            // fake timer the test can advance.
-            vi.useFakeTimers();
-            try {
-              const ws = await openInput(hub.origin, hub.secret, baseInputParams);
-              await waitNotice(ws, "bound");
-              // Cache a frame a later viewer could otherwise be seeded with.
-              stub.pushFrame(liveFrame());
-              ws.terminate();
-              await waitClosed(ws);
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* BrowserFrameHub;
+        yield* Effect.promise(async () => {
+          // Install the fake clock first so the activity's own sweep is a
+          // fake timer the test can advance.
+          vi.useFakeTimers();
+          try {
+            const ws = await openInput(hub.origin, hub.secret, baseInputParams);
+            await waitNotice(ws, "bound");
+            // Cache a frame a later viewer could otherwise be seeded with.
+            stub.pushFrame(liveFrame());
+            ws.terminate();
+            await waitClosed(ws);
 
-              // Advance the session's own sweep past the idle window: once the
-              // socket's release lands, the next tick reclaims the activity —
-              // poller, cached frames, and all.
-              await vi.advanceTimersByTimeAsync(61_000 + 2_000);
-              expect(stub.released).toContain(runtimeTabId);
-            } finally {
-              vi.useRealTimers();
-            }
+            // Advance the session's own sweep past the idle window: once the
+            // socket's release lands, the next tick reclaims the activity —
+            // poller, cached frames, and all.
+            await vi.advanceTimersByTimeAsync(61_000 + 2_000);
+            expect(stub.released).toContain(runtimeTabId);
+          } finally {
+            vi.useRealTimers();
+          }
 
-            const res = await fetch(streamUrl(hub.origin, hub.secret));
-            const reader = res.body!.getReader();
-            await reader.read();
-            // The reclaimed session kept no cached seed — the stream's seed
-            // had to capture afresh.
-            expect(captures).toBe(1);
-            await reader.cancel();
-          });
-        }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
+          const res = await fetch(streamUrl(hub.origin, hub.secret));
+          const reader = res.body!.getReader();
+          await reader.read();
+          // The reclaimed session kept no cached seed — the stream's seed
+          // had to capture afresh.
+          expect(captures).toBe(1);
+          await reader.cancel();
+        });
+      }),
+    ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
   });
 
-  it("retains lease ordering and replay state across idle activity reclamation", async () => {
+  effectIt.live("retains lease ordering and replay state across idle activity reclamation", () => {
     let releaseConfig: (() => void) | null = null;
     const configGate = new Promise<void>((resolve) => {
       releaseConfig = resolve;
@@ -1672,103 +1638,101 @@ describe("BrowserFrameHub", () => {
           : Effect.succeed(config);
       };
     });
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const hub = yield* BrowserFrameHub;
-          yield* Effect.promise(async () => {
-            vi.useFakeTimers();
-            try {
-              // Long-lived lease: the lease deadline must outlive the idle
-              // window this test advances past.
-              const leaseParams = {
-                ...baseInputParams,
-                "x-t3-lease": "lease-a",
-                "x-t3-lease-expires": String(Date.now() + 600_000),
-              };
-              // Ticket 2's upgrade stalls inside its first config read.
-              const ws2Promise = openInput(hub.origin, hub.secret, {
-                ...leaseParams,
-                "x-t3-ticket-seq": "2",
-              });
-              for (let i = 0; i < 400 && configCalls === 0; i++) {
-                await vi.advanceTimersByTimeAsync(5);
-              }
-              expect(configCalls).toBe(1);
-              const ws2 = await ws2Promise;
-
-              // Ticket 3 upgrades, binds, admits input seq 50, and ends —
-              // all while ticket 2's upgrade read is still in flight.
-              const ws3 = await openInput(hub.origin, hub.secret, {
-                ...leaseParams,
-                "x-t3-ticket-seq": "3",
-              });
-              const bound3 = await waitNotice(ws3, "bound");
-              ws3.send(
-                JSON.stringify({
-                  seq: 50,
-                  geometrySeq: bound3.geometrySeq ?? 0,
-                  event: { type: "text", text: "fifty" },
-                }),
-              );
-              for (let i = 0; i < 200 && stub.dispatched.length === 0; i++) {
-                await vi.advanceTimersByTimeAsync(10);
-              }
-              expect(stub.dispatched).toHaveLength(1);
-              ws3.close();
-              await waitClosed(ws3);
-
-              // Idle GC reclaims the activity — frame caches, poller, and
-              // all — while ticket 2's upgrade is still parked in config.
-              await vi.advanceTimersByTimeAsync(61_000 + 2_000);
-
-              // Ticket 2's read finally completes: the retained lane orders
-              // it below accepted ticket 3 (shadow, not owner) and keeps the
-              // replay high-water — it must NOT mint a fresh highSeq of 0.
-              releaseConfig!();
-              const shadow = await waitNotice(ws2, "shadow");
-              expect(shadow.type).toBe("shadow");
-              expect(shadow.leaseId).toBe("lease-a");
-              expect(shadow.highSeq).toBe(50);
-              const buffered = noticeBuffers.get(ws2) ?? [];
-              expect(buffered.some((notice) => notice.type === "bound")).toBe(false);
-
-              // A replayed low seq is refused; a packet above the retained
-              // high-water still dispatches through the shared lane.
-              ws2.send(
-                JSON.stringify({
-                  seq: 1,
-                  geometrySeq: shadow.geometrySeq ?? 0,
-                  event: { type: "text", text: "replay" },
-                }),
-              );
-              const rejected = await waitNotice(ws2, "rejected");
-              expect(rejected.seq).toBe(1);
-              expect(rejected.reason).toBe("replay");
-              expect(stub.dispatched).toHaveLength(1);
-
-              ws2.send(
-                JSON.stringify({
-                  seq: 51,
-                  geometrySeq: shadow.geometrySeq ?? 0,
-                  event: { type: "text", text: "fifty-one" },
-                }),
-              );
-              for (let i = 0; i < 200 && stub.dispatched.length < 2; i++) {
-                await vi.advanceTimersByTimeAsync(10);
-              }
-              expect(stub.dispatched).toHaveLength(2);
-              ws2.terminate();
-            } finally {
-              vi.useRealTimers();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* BrowserFrameHub;
+        yield* Effect.promise(async () => {
+          vi.useFakeTimers();
+          try {
+            // Long-lived lease: the lease deadline must outlive the idle
+            // window this test advances past.
+            const leaseParams = {
+              ...baseInputParams,
+              "x-t3-lease": "lease-a",
+              "x-t3-lease-expires": String(Date.now() + 600_000),
+            };
+            // Ticket 2's upgrade stalls inside its first config read.
+            const ws2Promise = openInput(hub.origin, hub.secret, {
+              ...leaseParams,
+              "x-t3-ticket-seq": "2",
+            });
+            for (let i = 0; i < 400 && configCalls === 0; i++) {
+              await vi.advanceTimersByTimeAsync(5);
             }
-          });
-        }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
+            expect(configCalls).toBe(1);
+            const ws2 = await ws2Promise;
+
+            // Ticket 3 upgrades, binds, admits input seq 50, and ends —
+            // all while ticket 2's upgrade read is still in flight.
+            const ws3 = await openInput(hub.origin, hub.secret, {
+              ...leaseParams,
+              "x-t3-ticket-seq": "3",
+            });
+            const bound3 = await waitNotice(ws3, "bound");
+            ws3.send(
+              JSON.stringify({
+                seq: 50,
+                geometrySeq: bound3.geometrySeq ?? 0,
+                event: { type: "text", text: "fifty" },
+              }),
+            );
+            for (let i = 0; i < 200 && stub.dispatched.length === 0; i++) {
+              await vi.advanceTimersByTimeAsync(10);
+            }
+            expect(stub.dispatched).toHaveLength(1);
+            ws3.close();
+            await waitClosed(ws3);
+
+            // Idle GC reclaims the activity — frame caches, poller, and
+            // all — while ticket 2's upgrade is still parked in config.
+            await vi.advanceTimersByTimeAsync(61_000 + 2_000);
+
+            // Ticket 2's read finally completes: the retained lane orders
+            // it below accepted ticket 3 (shadow, not owner) and keeps the
+            // replay high-water — it must NOT mint a fresh highSeq of 0.
+            releaseConfig!();
+            const shadow = await waitNotice(ws2, "shadow");
+            expect(shadow.type).toBe("shadow");
+            expect(shadow.leaseId).toBe("lease-a");
+            expect(shadow.highSeq).toBe(50);
+            const buffered = noticeBuffers.get(ws2) ?? [];
+            expect(buffered.some((notice) => notice.type === "bound")).toBe(false);
+
+            // A replayed low seq is refused; a packet above the retained
+            // high-water still dispatches through the shared lane.
+            ws2.send(
+              JSON.stringify({
+                seq: 1,
+                geometrySeq: shadow.geometrySeq ?? 0,
+                event: { type: "text", text: "replay" },
+              }),
+            );
+            const rejected = await waitNotice(ws2, "rejected");
+            expect(rejected.seq).toBe(1);
+            expect(rejected.reason).toBe("replay");
+            expect(stub.dispatched).toHaveLength(1);
+
+            ws2.send(
+              JSON.stringify({
+                seq: 51,
+                geometrySeq: shadow.geometrySeq ?? 0,
+                event: { type: "text", text: "fifty-one" },
+              }),
+            );
+            for (let i = 0; i < 200 && stub.dispatched.length < 2; i++) {
+              await vi.advanceTimersByTimeAsync(10);
+            }
+            expect(stub.dispatched).toHaveLength(2);
+            ws2.terminate();
+          } finally {
+            vi.useRealTimers();
+          }
+        });
+      }),
+    ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
   });
 
-  it("rejects input sent before authoritative geometry is established", async () => {
+  effectIt.live("rejects input sent before authoritative geometry is established", () => {
     let releaseConfig: (() => void) | null = null;
     const configGate = new Promise<void>((resolve) => {
       releaseConfig = resolve;
@@ -1790,61 +1754,60 @@ describe("BrowserFrameHub", () => {
           : Effect.succeed(config);
       };
     });
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const hub = yield* BrowserFrameHub;
-          yield* Effect.promise(async () => {
-            const ws = await openInput(hub.origin, hub.secret, baseInputParams);
-            // The upgrade and bind reads complete; the bind's geometry
-            // refresh is the third read and stalls.
-            await vi.waitFor(() => expect(configCalls).toBeGreaterThanOrEqual(3));
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const hub = yield* BrowserFrameHub;
+        yield* Effect.promise(async () => {
+          const ws = await openInput(hub.origin, hub.secret, baseInputParams);
+          // The upgrade and bind reads complete; the bind's geometry
+          // refresh is the third read and stalls.
+          await vi.waitFor(() => expect(configCalls).toBeGreaterThanOrEqual(3));
 
-            // A packet arriving before `bound` must not exploit the
-            // no-geometry window: the hub has no authoritative geometry seq
-            // or coordinate space to admit it against.
-            ws.send(
-              JSON.stringify({ seq: 1, geometrySeq: 0, event: { type: "text", text: "early" } }),
-            );
-            const rejected = await waitNotice(ws, "rejected");
-            expect(rejected.seq).toBe(1);
-            expect(rejected.reason).toBe("no-geometry");
-            expect(stub.dispatched).toHaveLength(0);
+          // A packet arriving before `bound` must not exploit the
+          // no-geometry window: the hub has no authoritative geometry seq
+          // or coordinate space to admit it against.
+          ws.send(
+            JSON.stringify({ seq: 1, geometrySeq: 0, event: { type: "text", text: "early" } }),
+          );
+          const rejected = await waitNotice(ws, "rejected");
+          expect(rejected.seq).toBe(1);
+          expect(rejected.reason).toBe("no-geometry");
+          expect(stub.dispatched).toHaveLength(0);
 
-            // Once the refresh lands the client learns the real seq and
-            // input flows.
-            releaseConfig!();
-            const bound = await waitNotice(ws, "bound");
-            ws.send(
-              JSON.stringify({
-                seq: 2,
-                geometrySeq: bound.geometrySeq ?? 0,
-                event: { type: "text", text: "after" },
-              }),
-            );
-            await vi.waitFor(() => expect(stub.dispatched).toHaveLength(1));
-            ws.terminate();
-          });
-        }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
+          // Once the refresh lands the client learns the real seq and
+          // input flows.
+          releaseConfig!();
+          const bound = await waitNotice(ws, "bound");
+          ws.send(
+            JSON.stringify({
+              seq: 2,
+              geometrySeq: bound.geometrySeq ?? 0,
+              event: { type: "text", text: "after" },
+            }),
+          );
+          await vi.waitFor(() => expect(stub.dispatched).toHaveLength(1));
+          ws.terminate();
+        });
+      }),
+    ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
   });
 
-  it("input waits for the config-confirmed viewport of a frame-stamped geometry key", async () => {
-    let width = 100;
-    let configCalls = 0;
-    const { stub, layer: managerLayer } = makeManagerStub((manager) => {
-      manager.remoteFrameConfig = () => {
-        configCalls += 1;
-        return Effect.succeed({
-          engineGeneration: "gen-1",
-          viewportCss: { width, height: 100 },
-          zoomFactor: 1,
-        });
-      };
-    });
-    await Effect.runPromise(
-      Effect.scoped(
+  effectIt.live(
+    "input waits for the config-confirmed viewport of a frame-stamped geometry key",
+    () => {
+      let width = 100;
+      let configCalls = 0;
+      const { stub, layer: managerLayer } = makeManagerStub((manager) => {
+        manager.remoteFrameConfig = () => {
+          configCalls += 1;
+          return Effect.succeed({
+            engineGeneration: "gen-1",
+            viewportCss: { width, height: 100 },
+            zoomFactor: 1,
+          });
+        };
+      });
+      return Effect.scoped(
         Effect.gen(function* () {
           const hub = yield* BrowserFrameHub;
           yield* Effect.promise(async () => {
@@ -1892,9 +1855,9 @@ describe("BrowserFrameHub", () => {
             ws.terminate();
           });
         }),
-      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer)))),
-    );
-  });
+      ).pipe(Effect.provide(BrowserFrameHubLayer.pipe(Layer.provide(managerLayer))));
+    },
+  );
 
   effectIt.live("a stalled renewal's admission deadline survives the lane-cap sweep", () => {
     let configCalls = 0;

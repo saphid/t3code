@@ -1,6 +1,6 @@
 # Environment extensions
 
-Environment extensions add tools and views to T3 Code. Install a package in the environment that owns the projects it will use. Extension views are available in web and desktop; React Native mobile and SwiftUI mobile do not support these views.
+Environment extensions add tools and views to T3 Code. Install a package in the environment that owns the projects it will use. Extension views are available in web and desktop; the mobile app does not support them.
 
 Packages run trusted code in the environment and client. Install only code you trust. Project and capability grants control access to T3-provided services; they do not sandbox the package.
 

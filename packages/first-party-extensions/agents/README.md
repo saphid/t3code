@@ -73,10 +73,8 @@ Thread settled state is not projected by the status contract, so Settle and
 Unsettle are both offered when the provider supports them and the receipt
 reports the outcome.
 
-Proof level: contract-path only. The slice's proofs are development artifacts
-kept outside the repo at
-`~/artifacts/t3-sdk-refinements-devin-20260911/agents-p12/` (alongside the
-package's `logs/`, `progress.json`, and `review-notes.md`):
+Proof level: contract-path only. The installed-path checks below ran from
+development scripts kept outside the repo:
 
 - `install-proof.mjs` → `install-proof.json` installs this exact packed
   bundle through the production `createExtensionRuntime` against the real
@@ -93,11 +91,11 @@ package's `logs/`, `progress.json`, and `review-notes.md`):
   side effect through this package's own workspace grant.
 
 The installed-view host path — menu/right-panel navigation mounting this
-surface — is not yet exercised in a real client, the same standing caveat
-REAL-PARITY.md records for every panel.
+surface — is not yet exercised in a real client, the same standing caveat as every
+first-party panel.
 
 - `pnpm run build` / `check` — pack and validate `.t3-extension/`
 - `pnpm test` — view-model unit tests (script parsing, terminal-id
   allocation, run state machine, roster derivation, stream fold, control
   gating, verified diff reassembly)
-- `pnpm run audit` — Gate-4 private-import audit
+- `pnpm run audit` — private-import audit

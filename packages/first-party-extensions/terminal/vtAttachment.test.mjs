@@ -134,7 +134,7 @@ NodeTest.describe("TerminalVtAttachment — snapshot + attach", () => {
     ]);
   });
 
-  NodeTest.it("history clear erases a live surface WITHOUT resetting parser modes (P1)", () => {
+  NodeTest.it("history clear erases a live surface WITHOUT resetting parser modes", () => {
     // The server's `cleared` event only drops retained history — the
     // process keeps running with its negotiated modes. A live surface gets
     // a mode-preserving erase, not resetAndWrite (an RIS would wipe
@@ -159,7 +159,7 @@ NodeTest.describe("TerminalVtAttachment — snapshot + attach", () => {
   });
 
   NodeTest.it(
-    "history clear after a truncated attach stays degraded — clearing history is not a resync (P1)",
+    "history clear after a truncated attach stays degraded — clearing history is not a resync",
     () => {
       const vt = new TerminalVtAttachment("term-1");
       const s = sink();
@@ -192,7 +192,7 @@ NodeTest.describe("TerminalVtAttachment — snapshot + attach", () => {
   );
 
   NodeTest.it(
-    "history clear with no surface leaves the replay base unfaithful — degraded until a full snapshot (P1)",
+    "history clear with no surface leaves the replay base unfaithful — degraded until a full snapshot",
     () => {
       const vt = new TerminalVtAttachment("term-1");
       vt.beginStream();
@@ -212,7 +212,7 @@ NodeTest.describe("TerminalVtAttachment — snapshot + attach", () => {
   );
 
   NodeTest.it(
-    "a remount after history clear replays without mode history and flags degraded (P1)",
+    "a remount after history clear replays without mode history and flags degraded",
     () => {
       const vt = new TerminalVtAttachment("term-1");
       const s = sink();
@@ -243,7 +243,7 @@ NodeTest.describe("TerminalVtAttachment — snapshot + attach", () => {
   );
 
   NodeTest.it(
-    "a post-clear resubscribe keeps the surviving parser's modes; a remount degrades (P1)",
+    "a post-clear resubscribe keeps the surviving parser's modes; a remount degrades",
     () => {
       // The server reports truncated:false after a clear (retention dropped
       // nothing; history was explicitly cleared). The live pane OBSERVED
@@ -444,7 +444,7 @@ NodeTest.describe("TerminalVtAttachment — failure paths", () => {
     NodeAssert.equal(vt.state.status, "live");
   });
 
-  NodeTest.it("a snapshot arriving after a renderer-start failure cannot hide it (P2)", () => {
+  NodeTest.it("a snapshot arriving after a renderer-start failure cannot hide it", () => {
     const vt = new TerminalVtAttachment("term-1");
     vt.beginStream();
     // The real ordering: WASM/DOM mount fails first, then the stream's
@@ -474,7 +474,7 @@ NodeTest.describe("TerminalVtAttachment — failure paths", () => {
     NodeAssert.equal(vt.state.status, "live");
   });
 
-  NodeTest.it("the replay boundary answers only never-delivered bytes (P2)", () => {
+  NodeTest.it("the replay boundary answers only never-delivered bytes", () => {
     const vt = new TerminalVtAttachment("term-1");
     const s = sink();
     vt.attach(s);
@@ -496,14 +496,14 @@ NodeTest.describe("TerminalVtAttachment — failure paths", () => {
   });
 
   NodeTest.it(
-    "a resubscribe snapshot extending past unanswered bytes keeps their claim mid-stream (P2)",
+    "a resubscribe snapshot extending past unanswered bytes keeps their claim mid-stream",
     () => {
-      // An unanswered run is not necessarily a suffix of the
-      // replay stream — the resubscribe snapshot's retained contents can
-      // append newer output after it. Replay must suppress only the
-      // already-answered/history bytes around the run. Since r2 item 3 the
-      // appended gap bytes ("later") are claimed too — nothing parsed them
-      // with the reply writer attached, so their queries replay answered.
+      // An unanswered run is not necessarily a suffix of the replay stream —
+      // the resubscribe snapshot's retained contents can append newer output
+      // after it. Replay must suppress only the already-answered/history bytes
+      // around the run. The appended gap bytes ("later") are claimed too —
+      // nothing parsed them with the reply writer attached, so their queries
+      // replay answered.
       const vt = new TerminalVtAttachment("term-1");
       vt.beginStream();
       const snap0 = snapshot({ contents: "", retainedByteLength: 0, boundarySequence: 0 });
@@ -535,73 +535,67 @@ NodeTest.describe("TerminalVtAttachment — failure paths", () => {
     },
   );
 
-  NodeTest.it(
-    "a query emitted while hidden is answered on reshow — no RIS re-base (r2 item 3)",
-    () => {
-      // The reviewer's probe: the pane hides, its output stream is dropped,
-      // and the program emits a cursor-position query (CSI 6n). The surface
-      // stays mounted with its parser; on reshow the resubscribe snapshot
-      // carries the gap bytes. The surviving parser must receive exactly the
-      // gap — with the PTY reply writer attached (no suppression bracket) —
-      // and without the RIS reset that would wipe application-cursor mode.
-      const s = bracketedSink();
-      const vt = new TerminalVtAttachment("term-1");
-      vt.attach(s);
-      vt.beginStream();
-      vt.applyFrame(frame(1, snapshot()), snapshot());
-      vt.applyFrame(frame(2, output(10, "[?1h")), output(10, "[?1h"));
-      const before = s.calls.length;
-      // Hidden: the stream is gone and the host retains "\r\nQ" (a DSR the
-      // process is still waiting on) past our last received byte.
-      vt.beginStream();
-      const reshow = snapshot({
-        contents: "prompt$ [?1h\r\nQ",
-        retainedByteLength: 14,
-        boundarySequence: 11,
-      });
-      vt.applyFrame(frame(1, reshow), reshow);
-      // Exactly the gap bytes, bracket-free — replies enabled — and no
-      // resetAndWrite anywhere in the reshow.
-      NodeAssert.deepEqual(s.calls.slice(before), [["write", "\r\nQ"]]);
-      NodeAssert.equal(vt.state.degraded, false);
-      NodeAssert.equal(vt.state.status, "live");
-    },
-  );
+  NodeTest.it("a query emitted while hidden is answered on reshow — no RIS re-base", () => {
+    // The pane hides, its output stream is dropped, and the program emits a
+    // cursor-position query (CSI 6n). The surface stays mounted with its
+    // parser; on reshow the resubscribe snapshot carries the gap bytes. The
+    // surviving parser must receive exactly the gap — with the PTY reply writer
+    // attached (no suppression bracket) — and without the RIS reset that would
+    // wipe application-cursor mode.
+    const s = bracketedSink();
+    const vt = new TerminalVtAttachment("term-1");
+    vt.attach(s);
+    vt.beginStream();
+    vt.applyFrame(frame(1, snapshot()), snapshot());
+    vt.applyFrame(frame(2, output(10, "[?1h")), output(10, "[?1h"));
+    const before = s.calls.length;
+    // Hidden: the stream is gone and the host retains "\r\nQ" (a DSR the
+    // process is still waiting on) past our last received byte.
+    vt.beginStream();
+    const reshow = snapshot({
+      contents: "prompt$ [?1h\r\nQ",
+      retainedByteLength: 14,
+      boundarySequence: 11,
+    });
+    vt.applyFrame(frame(1, reshow), reshow);
+    // Exactly the gap bytes, bracket-free — replies enabled — and no
+    // resetAndWrite anywhere in the reshow.
+    NodeAssert.deepEqual(s.calls.slice(before), [["write", "\r\nQ"]]);
+    NodeAssert.equal(vt.state.degraded, false);
+    NodeAssert.equal(vt.state.status, "live");
+  });
 
-  NodeTest.it(
-    "a truncated reshow snapshot does not wipe the surviving parser's modes (r2 item 3)",
-    () => {
-      // Retention evicted early history, so the reshow snapshot is truncated
-      // — but the pane's parser saw every byte live. The snapshot must not
-      // RIS-re-base it (that would drop application-cursor and friends the
-      // process still expects); only the gap is delivered, the live pane
-      // stays clean, and the unfaithful base degrades the NEXT remount.
-      const s = sink();
-      const vt = new TerminalVtAttachment("term-1");
-      vt.attach(s);
-      vt.beginStream();
-      vt.applyFrame(frame(1, snapshot()), snapshot());
-      vt.applyFrame(frame(2, output(10, "[?1hmode-text")), output(10, "[?1hmode-text"));
-      const before = s.calls.length;
-      vt.beginStream();
-      const reshow = snapshot({
-        contents: "pt$ [?1hmode-textgap",
-        retainedByteLength: 21,
-        truncated: true,
-        contentsUnitStart: 4,
-        boundarySequence: 11,
-      });
-      vt.applyFrame(frame(1, reshow), reshow);
-      NodeAssert.deepEqual(s.calls.slice(before), [["write", "gap"]]);
-      NodeAssert.equal(vt.state.degraded, false);
-      vt.detach();
-      const s2 = sink();
-      vt.attach(s2);
-      NodeAssert.equal(vt.state.degraded, true);
-    },
-  );
+  NodeTest.it("a truncated reshow snapshot does not wipe the surviving parser's modes", () => {
+    // Retention evicted early history, so the reshow snapshot is truncated
+    // — but the pane's parser saw every byte live. The snapshot must not
+    // RIS-re-base it (that would drop application-cursor and friends the
+    // process still expects); only the gap is delivered, the live pane
+    // stays clean, and the unfaithful base degrades the NEXT remount.
+    const s = sink();
+    const vt = new TerminalVtAttachment("term-1");
+    vt.attach(s);
+    vt.beginStream();
+    vt.applyFrame(frame(1, snapshot()), snapshot());
+    vt.applyFrame(frame(2, output(10, "[?1hmode-text")), output(10, "[?1hmode-text"));
+    const before = s.calls.length;
+    vt.beginStream();
+    const reshow = snapshot({
+      contents: "pt$ [?1hmode-textgap",
+      retainedByteLength: 21,
+      truncated: true,
+      contentsUnitStart: 4,
+      boundarySequence: 11,
+    });
+    vt.applyFrame(frame(1, reshow), reshow);
+    NodeAssert.deepEqual(s.calls.slice(before), [["write", "gap"]]);
+    NodeAssert.equal(vt.state.degraded, false);
+    vt.detach();
+    const s2 = sink();
+    vt.attach(s2);
+    NodeAssert.equal(vt.state.degraded, true);
+  });
 
-  NodeTest.it("a throwing attach keeps the renderer failure sticky (P3)", () => {
+  NodeTest.it("a throwing attach keeps the renderer failure sticky", () => {
     const vt = new TerminalVtAttachment("term-1");
     vt.beginStream();
     vt.applyFrame(frame(1, snapshot()), snapshot());

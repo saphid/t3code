@@ -1,7 +1,6 @@
 /**
  * The pull-request browser — the Version Control panel's primary
- * surface (the native surface is a PR browser; rows 18–21 of
- * vcs-diff-binding-disposition.md). Everything here reads through the
+ * surface (the native surface is a PR browser). Everything here reads through the
  * public `t3.prs/read` contract: the capability gate names unavailable
  * states, the list sends state/involvement/search to the host, detail
  * sections load independently so one failing read cannot blank the

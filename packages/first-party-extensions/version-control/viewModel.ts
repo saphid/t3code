@@ -1,15 +1,13 @@
 /**
- * Pure view-model for the Version Control panel (P10-A reads, P10-B
- * mutations). Owns the model the view renders over the public `t3.vcs/*`
+ * Pure view-model for the Version Control panel (reads and mutations).
+ * Owns the model the view renders over the public `t3.vcs/*`
  * contracts: staging-lane grouping from `t3.vcs/changes` porcelain flags,
  * the status stream reduction, branch/upstream/ahead-behind text, refs
  * rows, the repository-capability gate, and the mutation controls —
  * per-row/per-lane stage actions, the commit plan, ref create/switch
  * gating, and the single-flight mutation state.
  *
- * Dispositions covered: vcs-diff-binding-disposition.md rows 1, 2, 3, 4,
- * 5, 7 (message-commit half), 9, 10, 11, 14, 17, 30, 32. Types come from
- * the SDK catalogue; the private wire shapes and client-runtime atoms
+ * Types come from the SDK catalogue; the private wire shapes and client-runtime atoms
  * stay host-side.
  */
 import type {
@@ -350,7 +348,7 @@ export function refSwitchTarget(row: RefRow): string {
   return row.remote === null ? row.name : `${row.remote}/${row.name}`;
 }
 
-/* ---------------- repository sync ops (P10-C rows 7, 8) ---------------- */
+/* ---------------- repository sync ops ---------------- */
 
 export interface SyncControlState {
   /** Why the control is disabled; null when it may run. */
@@ -681,9 +679,9 @@ export function describeStackedProgress(model: StackedActionProgress): string {
 
 /**
  * The settled line for the mutation status row. Success leads with the
- * composite's own toast title; provenance markers (P1) name who wrote the
- * text — `generated` means the host composed the message/body, `existing`
- * an already-open PR's words.
+ * composite's own toast title; provenance markers name who wrote the text —
+ * `generated` means the host composed the message/body, `existing` an
+ * already-open PR's words.
  */
 export function describeStackedResult(result: VcsActionResult): string {
   const parts = [result.toast.title];
@@ -694,7 +692,7 @@ export function describeStackedResult(result: VcsActionResult): string {
   return parts.join(" — ");
 }
 
-/* ---------------- remotes + worktrees (P10-C rows 12, 13) ---------------- */
+/* ---------------- remotes + worktrees ---------------- */
 
 export interface RemoteRow {
   readonly name: string;

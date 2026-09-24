@@ -292,12 +292,11 @@ NodeTest.describe("fixed feed late-joiner replay", () => {
   });
 
   NodeTest.test("a late joiner after 64 upserts goes live via a feed restart", async () => {
-    // The reviewer's LATE_JOIN_AFTER_64_UPSERTS probe: the sessions feed
-    // snapshots only at subscription establishment, and repeated activity
-    // upserts (no new terminals needed) overflowed the replay history.
-    // Pre-fix the overflow discarded everything and the second placement's
-    // panel sat on "connecting" forever — open/split stayed gated even
-    // though its tabs kept receiving live metadata.
+    // The sessions feed snapshots only at subscription establishment, and
+    // repeated activity upserts (no new terminals needed) overflowed the replay
+    // history. Pre-fix the overflow discarded everything and the second
+    // placement's panel sat on "connecting" forever — open/split stayed gated
+    // even though its tabs kept receiving live metadata.
     const { hub } = clockHub();
     const meta = (terminalId, label = "") => ({
       terminalId,
@@ -406,9 +405,8 @@ NodeTest.test("full pool of optional slots evicts least-recently-demoted", () =>
 });
 
 NodeTest.test("demoting a mandatory slot wakes waiters so a visible pane can take it", () => {
-  // The reviewer's WAITING_VISIBLE_AFTER_DEMOTION probe: a group switch
-  // demotes the old group's panes AFTER the newly visible pane already
-  // failed to acquire. Pre-fix, demotion never woke the waiter — the
+  // A group switch demotes the old group's panes AFTER the newly visible pane
+  // already failed to acquire. Pre-fix, demotion never woke the waiter — the
   // visible pane stayed disconnected despite evictable slots.
   const { hub } = clockHub();
   const leases = [];
@@ -535,11 +533,10 @@ NodeTest.test("slot-free waiters fire once per freed slot and re-register on fai
 });
 
 NodeTest.test("dock + panel with a split in each stays inside the cap", () => {
-  // The finding-5 scenario: two placements of the same thread each render a
-  // 2-pane split. Pre-hub, each placement paid its own sessions/theme/
-  // appearance feeds (6) plus 4 pane streams = 10 > 8 — the first split
-  // anywhere hit "Plugin stream limit reached". With shared feeds the math
-  // is 3 + 4 = 7, one slot to spare.
+  // Two placements of the same thread each render a 2-pane split. Pre-hub, each
+  // placement paid its own sessions/theme/ appearance feeds (6) plus 4 pane
+  // streams = 10 > 8 — the first split anywhere hit "Plugin stream limit
+  // reached". With shared feeds the math is 3 + 4 = 7, one slot to spare.
   const { hub } = clockHub();
   for (const key of ["sessions:e1:t1", "theme:e1", "appearance:e1"]) {
     // Both placements join each feed — one subscription per key.
@@ -556,10 +553,10 @@ NodeTest.test("dock + panel with a split in each stays inside the cap", () => {
 NodeTest.test(
   "fixed feeds evict optional pane slots when panes registered first (cold restore)",
   () => {
-    // The r3 finding-1 shape: a cold eight-session restore runs pane effects
-    // before the view's fixed-feed effects, so hidden panes take optional
-    // slots first. Pre-fix, the sessions/theme/appearance subscriptions then
-    // started over the cap and the broker rejected them all.
+    // A cold eight-session restore runs pane effects before the view's
+    // fixed-feed effects, so hidden panes take optional slots first. Pre-fix,
+    // the sessions/theme/appearance subscriptions then started over the cap and
+    // the broker rejected them all.
     const { hub, advance } = clockHub();
     const evicted = [];
     NodeAssert.ok(hub.acquirePaneStream("active", { mandatory: true, onEvicted() {} }) !== null);
@@ -586,9 +583,8 @@ NodeTest.test(
 );
 
 NodeTest.test("a new thread's fixed feed evicts optional panes from a full pool", () => {
-  // The reviewer's NEW_THREAD_FIXED_FEED probe: adding a second thread's
-  // sessions feed to an already-full installation must reclaim an optional
-  // pane slot rather than start over the cap.
+  // Adding a second thread's sessions feed to an already-full installation must
+  // reclaim an optional pane slot rather than start over the cap.
   const { hub, advance } = clockHub();
   for (const key of ["sessions:A", "theme", "appearance"]) {
     hub.acquireFixedFeed(key, { onFrame() {}, onStatus() {} }, () => {});

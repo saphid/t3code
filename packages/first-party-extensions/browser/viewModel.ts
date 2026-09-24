@@ -1,8 +1,6 @@
 /**
- * Pure view-model for the Browser panel skeleton (P08-A). Owns the
- * panel-local navigation state machine and the requested-targets history the
- * chrome row renders (inventory rows #4/#5/#7/#24 in
- * docs/internals/extensions/browser-binding-disposition.md).
+ * Pure view-model for the Browser panel. Owns the panel-local navigation
+ * state machine and the requested-targets history the chrome row renders.
  *
  * Accepted targets are dispatched to a `t3.browser/sessions` session by the
  * view; receipts are dispatch records, never load confirmations — engine and

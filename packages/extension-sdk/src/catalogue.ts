@@ -1208,7 +1208,7 @@ export const workspaceChangesApi = defineStreamApi<{
 });
 
 /* ------------------------------------------------------------------------
- * t3.vcs — backend-neutral source-control / diff contracts (P09).
+ * t3.vcs — backend-neutral source-control / diff contracts.
  *
  * Grant split: `t3.vcs/read` covers every read method and the status stream;
  * `t3.vcs/mutate` is the DISTINCT mutation grant — stage/commit/branch/
@@ -2529,13 +2529,13 @@ export const VCS_REPOSITORY_API_V1 = vcsRepositoryApiV1.definition;
  * Grant map: `workspace-file` and `project-favicon` ride
  * `t3.workspace/resources` — the resource-transfer contract's read grant
  * (a grant id and an API id are distinct registries sharing the string). `browser-surface` rides
- * `t3.browser/sessions` — the deferred P08-B contract's id, declared the same
+ * `t3.browser/sessions` — the browser sessions contract's id, declared the same
  * way: only the browser sessions contract holder may vend presentation
  * leases onto a live engine session. `attachment` stays in the union but
  * carries no grant until the messages/composer read grant exists; the
  * adapter denies it by name. `media-file` (absolute paths are arbitrary-path
  * minting, a spec non-goal) and `native-app-icon` (no consumer) are not in
- * the union. ws-stream-class claims (`device-stream`) arrive with P16 on the
+ * the union. ws-stream-class claims (`device-stream`) arrive with device streams on the
  * existing DeviceHubProxy wsTicket TTL semantics; `browser-surface` is a
  * URL/presentation-class claim, not ws-stream.
  * --------------------------------------------------------------------- */
@@ -5413,7 +5413,7 @@ export const prsWriteApi = defineApi<{
 export const PRS_WRITE_API = prsWriteApi.definition;
 
 /* ------------------------------------------------------------------------
- * t3.browser/sessions — per-thread browser session metadata (P08-B).
+ * t3.browser/sessions — per-thread browser session metadata.
  *
  * Metadata only: the API projects the server's preview-manager state and
  * dispatches the native commands that exist today (open/navigate/close/
@@ -5423,9 +5423,8 @@ export const PRS_WRITE_API = prsWriteApi.definition;
  * authenticated host command routing lands. getCapabilities therefore
  * advertises only `resize`. The API deliberately exposes no reportStatus/
  * registerWebview/createTab/automation path — engine status may only
- * enter through the authenticated engine-host registration that
- * P08-HOST-AUTHORITY owns, and presentation lives behind the separate
- * P08 attach/slot work.
+ * enter through the authenticated engine-host registration, and
+ * presentation lives behind the separate `t3.browser/surface` lease.
  *
  * Grants: `t3.browser/sessions` is the read grant (shared with the
  * `browser-surface` lease mint above). Every write additionally requires
@@ -6283,7 +6282,7 @@ export const BROWSER_FRAMES_API = browserFramesApi.definition;
 
 /* ------------------------------------------------------------------------
  * t3.browser/surface — host-local presentation lease for a browser session
- * (P08-D; engine-attachment row of the binding disposition).
+ * that attaches the engine's view to a host slot.
  *
  * Unlike the brokered APIs above, this contract is a CLIENT HOST capability:
  * `ClientHost.browserSurface`. `present()` runs at ResizeObserver rate and the

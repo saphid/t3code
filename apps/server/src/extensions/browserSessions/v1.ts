@@ -119,8 +119,8 @@ const failureCode = (code: number): BrowserSessionFailureCode => {
 };
 
 /**
- * No authenticated engine-host registration exists in this slice
- * (P08-HOST-AUTHORITY), so the only honest engine state is unavailable.
+ * No authenticated engine-host registration exists yet, so the only honest
+ * engine state is unavailable.
  * Generation is null rather than fabricated.
  */
 const engineUnavailable = (): BrowserSessionEngine => ({
@@ -338,7 +338,7 @@ export function createBrowserSessionsApiProvider(
           // Discovery lists only commands with real dispatch today.
           // back/forward/reload/hardReload/zoom/setAppearance/setAudioMuted
           // stay in the contract but fail by name until an authenticated
-          // host dispatch exists (P08-ENGINE-ATTACH / P08-HOST-AUTHORITY).
+          // host dispatch and engine attachment exist.
           commands: ["resize"],
         } satisfies BrowserSessionCapabilities;
       }

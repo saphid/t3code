@@ -73,7 +73,7 @@ A real application journey must then establish that a newly registered contribut
 
 For native surfaces, preserve resource ownership and presentation identity. In particular, verify same-workspace file navigation does not reset the outer preview merely because a thread or selected path changed; attachments still reset by attachment identity. Retained terminal docks must not acquire the foreground project's context.
 
-Matched baseline/candidate journeys, baseline-noise measurement, fault injection, 100-cycle soaks and raw latency/CPU/memory/wire samples are the acceptance bar for parity claims. Supply actual web/Electron drivers and service receipts; synthetic analyzer fixtures are not substitute journey evidence. Record unsupported macOS, React Native, SwiftUI, provider and connection-mode paths explicitly.
+Matched baseline/candidate journeys, baseline-noise measurement, fault injection, 100-cycle soaks and raw latency/CPU/memory/wire samples are the acceptance bar for parity claims. Supply actual web/Electron drivers and service receipts; synthetic analyzer fixtures are not substitute journey evidence. Record unsupported macOS, React Native, provider and connection-mode paths explicitly.
 
 ## Interpret readiness and resource diagnostics
 

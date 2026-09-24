@@ -798,11 +798,10 @@ NodeTest.test("emitted-label rewriter edits only generated positions", async (t)
 NodeTest.test(
   "production CLI leaves user-authored helper and jsxDEV shapes untouched",
   async () => {
-    // Round-5 provenance negatives, end to end through `t3-extension
-    // build`: user code that resembles generated metadata is data, not a
-    // label position. `dep` exports a jsxDEV-shaped function and lives
-    // outside the package root so its own label canonicalizes — the user
-    // copies must not follow it.
+    // Provenance negatives, end to end through `t3-extension build`: user code
+    // that resembles generated metadata is data, not a label position. `dep`
+    // exports a jsxDEV-shaped function and lives outside the package root so
+    // its own label canonicalizes — the user copies must not follow it.
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-bundler-"));
     const dep = NodePath.join(root, "dep");
     await NodeFSP.mkdir(dep, { recursive: true });
@@ -849,12 +848,11 @@ NodeTest.test(
 };
 `,
     );
-    // Every shape the round-4 review proved reachable: a user var bound to
-    // a helper name whose map keys match (and don't match) bundled inputs,
-    // the same inside a nested function, a dep-exported jsxDEV member, a
-    // filename that opens with `<`, and a hand-authored call into the real
-    // dev runtime — the documented mimicry boundary, asserted as treated
-    // as generated.
+    // Every reachable shape: a user var bound to a helper name whose map keys
+    // match (and don't match) bundled inputs, the same inside a nested
+    // function, a dep-exported jsxDEV member, a filename that opens with `<`,
+    // and a hand-authored call into the real dev runtime — the documented
+    // mimicry boundary, asserted as treated as generated.
     await NodeFSP.writeFile(
       NodePath.join(dir, "server.ts"),
       `// @ts-nocheck
@@ -915,18 +913,18 @@ export default {
 NodeTest.test(
   "production CLI never trusts prologue-position user helpers or look-alike runtime paths",
   async (t) => {
-    // Round-6/7 provenance negatives, end to end. An ESM dep emitting a
-    // top-level `var __esm` puts a user declaration where a no-helper
-    // bundle's prologue would be: the module banner at byte zero must
-    // still bound the prologue, so a later module's banner cannot promote
-    // the user var into a trusted helper — neither its matching-key map
-    // nor its unknown-key map is validated or rewritten. A dep whose file
-    // collides with the dev runtime's path text — `react/jsx-dev-runtime.*`
-    // anywhere, including a nested `node_modules/react/` inside the dep —
-    // is not the runtime: only resolution identity (the file
-    // `react/jsx-dev-runtime` actually selects from this package, or the
-    // controlled host-react namespace) proves the jsxDEV provenance. The
-    // real runtime is installed alongside to make the separation explicit.
+    // More provenance negatives, end to end. An ESM dep emitting a top-level
+    // `var __esm` puts a user declaration where a no-helper bundle's prologue
+    // would be: the module banner at byte zero must still bound the prologue,
+    // so a later module's banner cannot promote the user var into a trusted
+    // helper — neither its matching-key map nor its unknown-key map is
+    // validated or rewritten. A dep whose file collides with the dev runtime's
+    // path text — `react/jsx-dev-runtime.*` anywhere, including a nested
+    // `node_modules/react/` inside the dep — is not the runtime: only
+    // resolution identity (the file `react/jsx-dev-runtime` actually selects
+    // from this package, or the controlled host-react namespace) proves the
+    // jsxDEV provenance. The real runtime is installed alongside to make the
+    // separation explicit.
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-bundler-"));
     t.after(() => NodeFSP.rm(root, { recursive: true, force: true }));
     const w = async (p, s) => {
@@ -1056,10 +1054,10 @@ export default {
 );
 
 NodeTest.test("canonicalization preserves manifest semantics and never degrades", async (t) => {
-  // Round-3 regression pair: a staged rebuild dropped an inherited
-  // package.json `sideEffects` entry, and tsconfig `paths` (or absolute
-  // imports) silently shipped location-dependent labels. The emitted-text
-  // post-process leaves the authoritative compile untouched, so both hold.
+  // Regression pair: a staged rebuild dropped an inherited package.json
+  // `sideEffects` entry, and tsconfig `paths` (or absolute imports) silently
+  // shipped location-dependent labels. The emitted-text post-process leaves the
+  // authoritative compile untouched, so both hold.
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-bundler-"));
   t.after(() => NodeFSP.rm(root, { recursive: true, force: true }));
   const depDir = NodePath.join(root, "shared-deps");

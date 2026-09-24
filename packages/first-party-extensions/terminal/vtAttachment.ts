@@ -576,7 +576,7 @@ export class TerminalVtAttachment {
       const boundaryEnd = value.contentsUnitStart + value.contents.length;
       // Retained coverage of the first unseen byte: the window must start
       // at or before priorEnd, or the bytes between were evicted before
-      // ANY parser saw them (r3 finding 6). An eviction hole can carry
+      // ANY parser saw them. An eviction hole can carry
       // mode changes — a DECRST the process still expects honored — that
       // no intact snapshot end can prove absent.
       const coversPriorEnd = priorEnd !== null && value.contentsUnitStart <= priorEnd;

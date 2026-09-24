@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetch:off -- Loopback HTTP probes exercise the frame-hub readiness check end to end.
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { createServer, type Server } from "node:http";
+import * as NodeHttp from "node:http";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
@@ -1115,7 +1115,7 @@ it.effect("accepts responses only from the host that received the request", () =
   ),
 );
 
-const listen = (server: Server): Promise<string> =>
+const listen = (server: NodeHttp.Server): Promise<string> =>
   new Promise((resolve, reject) => {
     server.listen(0, "127.0.0.1", () => {
       const address = server.address();
@@ -1127,7 +1127,7 @@ const listen = (server: Server): Promise<string> =>
     });
   });
 
-const closeServer = (server: Server) =>
+const closeServer = (server: NodeHttp.Server) =>
   Effect.promise(
     () =>
       new Promise<void>((resolve) => {
@@ -1154,7 +1154,7 @@ it.effect(
     Effect.scoped(
       Effect.gen(function* () {
         const paths: Array<string> = [];
-        const server = createServer((req, res) => {
+        const server = NodeHttp.createServer((req, res) => {
           paths.push(req.url ?? "");
           res.setHeader("content-type", "application/json");
           res.end(JSON.stringify({ service: "t3.browser-frame-hub" }));
@@ -1192,7 +1192,7 @@ it.effect(
 it.effect("stops advertising a frame hub that dies while its automation connection survives", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const server = createServer((_req, res) => {
+      const server = NodeHttp.createServer((_req, res) => {
         res.setHeader("content-type", "application/json");
         res.end(JSON.stringify({ service: "t3.browser-frame-hub" }));
       });
@@ -1325,7 +1325,7 @@ it.effect("the hub health probe never follows a redirect into a private path", (
   Effect.scoped(
     Effect.gen(function* () {
       const paths: Array<string> = [];
-      const server = createServer((req, res) => {
+      const server = NodeHttp.createServer((req, res) => {
         paths.push(req.url ?? "");
         if (req.url === "/health") {
           res.writeHead(302, { location: "/private" });

@@ -56,7 +56,7 @@ The catalogue is data and typed public contracts; the broker has no feature swit
 | terminal                   | PTY create/attach/input/resize/output/replay/close, ownership independent of view visibility                                    |
 | source control             | repository/status/refs/diff and authorized mutations, pluggable backend driver identity                                         |
 
-V1 and V2 implement adapters for the same capability model. Unsupported V2 commands remain unavailable until implemented; run/attempt/session/checkpoint identities are not blindly aliased. Environment/resource identity never embeds hostnames, ports or relay origins. React Native and SwiftUI need separate renderer hosts; their absence remains explicit.
+V1 and V2 implement adapters for the same capability model. Unsupported V2 commands remain unavailable until implemented; run/attempt/session/checkpoint identities are not blindly aliased. Environment/resource identity never embeds hostnames, ports or relay origins. React Native mobile needs a separate renderer host; its absence remains explicit.
 
 ## Implementation order and evidence
 

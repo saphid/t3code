@@ -1,8 +1,8 @@
-import assert from "node:assert/strict";
-import test from "node:test";
-import * as fs from "node:fs/promises";
-import * as os from "node:os";
-import * as path from "node:path";
+import * as NodeAssert from "node:assert/strict";
+import * as NodeTest from "node:test";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { createExtensionRuntime } from "../dist/index.js";
 import { FILE_PRESENTATION_API } from "@t3tools/extension-sdk/catalogue";
 
@@ -73,8 +73,8 @@ function implementation(pkg, expression = '"value"') {
 // Two-phase gate: the staged handshake (no marker) completes normally; the real
 // worker start (marker present) writes `entered` then performs `trap`.
 function gated(pkg, directory, name, trap, expression = '"value"') {
-  const marker = JSON.stringify(path.join(directory, "staged-" + name));
-  const entered = JSON.stringify(path.join(directory, "entered-" + name));
+  const marker = JSON.stringify(NodePath.join(directory, "staged-" + name));
+  const entered = JSON.stringify(NodePath.join(directory, "entered-" + name));
   return (
     'import fs from "node:fs/promises";\n' +
     "try { await fs.stat(" +
@@ -92,10 +92,10 @@ function gated(pkg, directory, name, trap, expression = '"value"') {
 }
 async function waitForFile(directory, name) {
   try {
-    await fs.stat(path.join(directory, name));
+    await NodeFSP.stat(NodePath.join(directory, name));
     return;
   } catch {}
-  const watcher = fs.watch(directory);
+  const watcher = NodeFSP.watch(directory);
   try {
     for await (const event of watcher) if (event.filename === name) return;
   } finally {
@@ -103,10 +103,12 @@ async function waitForFile(directory, name) {
   }
 }
 async function fixture(t, overrides = {}) {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "t3-discovery-isolation-"));
+  const directory = await NodeFSP.mkdtemp(
+    NodePath.join(NodeOS.tmpdir(), "t3-discovery-isolation-"),
+  );
   const catalogue = { count: 0, waiters: [] };
   const options = {
-    rootDir: path.join(directory, "state"),
+    rootDir: NodePath.join(directory, "state"),
     environmentId: "env",
     services: [],
     authorize: () => true,
@@ -120,14 +122,14 @@ async function fixture(t, overrides = {}) {
   let runtime = await createExtensionRuntime(options);
   t.after(async () => {
     await runtime.dispose();
-    await fs.rm(directory, { recursive: true, force: true });
+    await NodeFSP.rm(directory, { recursive: true, force: true });
   });
   let serial = 0;
   const source = async (pkg, code = implementation(pkg)) => {
-    const dir = path.join(directory, "source-" + serial++);
-    await fs.mkdir(dir);
-    await fs.writeFile(path.join(dir, "t3-extension.json"), JSON.stringify(pkg));
-    await fs.writeFile(path.join(dir, "server.mjs"), code);
+    const dir = NodePath.join(directory, "source-" + serial++);
+    await NodeFSP.mkdir(dir);
+    await NodeFSP.writeFile(NodePath.join(dir, "t3-extension.json"), JSON.stringify(pkg));
+    await NodeFSP.writeFile(NodePath.join(dir, "server.mjs"), code);
     return dir;
   };
   const install = async (pkg, code, requested = grants) =>
@@ -155,7 +157,7 @@ async function fixture(t, overrides = {}) {
   };
 }
 
-test("discovery resolves while an unrelated provider is still starting", async (t) => {
+NodeTest.test("discovery resolves while an unrelated provider is still starting", async (t) => {
   const f = await fixture(t);
   const blockedPkg = metadata("test.blocked");
   const blocked = await f.install(
@@ -176,132 +178,144 @@ test("discovery resolves while an unrelated provider is still starting", async (
     discovery.then(() => "resolved"),
     f.nextCatalogue().then(() => "invalidated"),
   ]);
-  assert.equal(winner, "resolved");
+  NodeAssert.equal(winner, "resolved");
   const entries = await discovery;
   const blockedEntry = entries.find((entry) => entry.pluginId === blocked.id);
-  assert.equal(blockedEntry.health, "starting");
+  NodeAssert.equal(blockedEntry.health, "starting");
   const fastEntry = entries.find((entry) => entry.pluginId === fast.id);
-  assert.equal(fastEntry.health, "ready");
-  assert.equal(entries.find((entry) => entry.id === fastPkg.provides[0].id).providerId, fast.id);
-  assert.equal(await f.invokeApi(consumer, fastPkg.provides[0].id), "value");
+  NodeAssert.equal(fastEntry.health, "ready");
+  NodeAssert.equal(
+    entries.find((entry) => entry.id === fastPkg.provides[0].id).providerId,
+    fast.id,
+  );
+  NodeAssert.equal(await f.invokeApi(consumer, fastPkg.provides[0].id), "value");
 });
 
-test("removing an unrelated provider while its start is in flight does not disturb discovery", async (t) => {
-  const f = await fixture(t);
-  const blockedPkg = metadata("test.blocked");
-  const blocked = await f.install(
-    blockedPkg,
-    gated(blockedPkg, f.directory, "blocked", "await new Promise(()=>{});"),
-  );
-  const fastPkg = metadata("test.fast");
-  const fast = await f.install(fastPkg);
-  const consumerPkg = metadata("test.consumer", {
-    provides: [],
-    requires: [{ id: fastPkg.provides[0].id, versionRange: "^1" }],
-  });
-  const consumer = await f.install(consumerPkg);
+NodeTest.test(
+  "removing an unrelated provider while its start is in flight does not disturb discovery",
+  async (t) => {
+    const f = await fixture(t);
+    const blockedPkg = metadata("test.blocked");
+    const blocked = await f.install(
+      blockedPkg,
+      gated(blockedPkg, f.directory, "blocked", "await new Promise(()=>{});"),
+    );
+    const fastPkg = metadata("test.fast");
+    const fast = await f.install(fastPkg);
+    const consumerPkg = metadata("test.consumer", {
+      provides: [],
+      requires: [{ id: fastPkg.provides[0].id, versionRange: "^1" }],
+    });
+    const consumer = await f.install(consumerPkg);
 
-  const discovery = f.discover(consumer);
-  await waitForFile(f.directory, "entered-blocked");
-  const entries = await discovery;
-  assert.equal(entries.find((entry) => entry.pluginId === blocked.id).health, "starting");
-  await f.runtime.remove(blocked.id);
-  assert.equal(
-    f.runtime.catalogue().pluginResolution.some((item) => item.id === blocked.id),
-    false,
-  );
-  const after = await f.discover(consumer);
-  assert.equal(
-    after.some((entry) => entry.pluginId === blocked.id),
-    false,
-  );
-  assert.equal(await f.invokeApi(consumer, fastPkg.provides[0].id), "value");
-});
+    const discovery = f.discover(consumer);
+    await waitForFile(f.directory, "entered-blocked");
+    const entries = await discovery;
+    NodeAssert.equal(entries.find((entry) => entry.pluginId === blocked.id).health, "starting");
+    await f.runtime.remove(blocked.id);
+    NodeAssert.equal(
+      f.runtime.catalogue().pluginResolution.some((item) => item.id === blocked.id),
+      false,
+    );
+    const after = await f.discover(consumer);
+    NodeAssert.equal(
+      after.some((entry) => entry.pluginId === blocked.id),
+      false,
+    );
+    NodeAssert.equal(await f.invokeApi(consumer, fastPkg.provides[0].id), "value");
+  },
+);
 
-test("a selected provider that fails to start is marked failed and discovery falls back", async (t) => {
-  const f = await fixture(t);
-  const make = async (id, code) => {
-    const pkg = metadata(id, { provides: [sharedApi] });
-    return { pkg, record: await f.install(pkg, code ?? implementation(pkg, sharedResult(id))) };
-  };
-  const flakyPkg = metadata("test.flaky", { provides: [sharedApi] });
-  const flaky = {
-    pkg: flakyPkg,
-    record: await f.install(
-      flakyPkg,
-      gated(
+NodeTest.test(
+  "a selected provider that fails to start is marked failed and discovery falls back",
+  async (t) => {
+    const f = await fixture(t);
+    const make = async (id, code) => {
+      const pkg = metadata(id, { provides: [sharedApi] });
+      return { pkg, record: await f.install(pkg, code ?? implementation(pkg, sharedResult(id))) };
+    };
+    const flakyPkg = metadata("test.flaky", { provides: [sharedApi] });
+    const flaky = {
+      pkg: flakyPkg,
+      record: await f.install(
         flakyPkg,
-        f.directory,
-        "flaky",
-        'throw new Error("startup boom");',
-        sharedResult("test.flaky"),
+        gated(
+          flakyPkg,
+          f.directory,
+          "flaky",
+          'throw new Error("startup boom");',
+          sharedResult("test.flaky"),
+        ),
       ),
-    ),
-  };
-  const steady = await make("test.steady");
-  const consumerPkg = metadata("test.consumer", {
-    provides: [],
-    requires: [{ id: sharedApi.id, versionRange: "^1" }],
-  });
-  const consumer = await f.install(consumerPkg);
-  await f.runtime.selectApi({
-    id: sharedApi.id,
-    providerId: flaky.record.id,
-    fallbackProviderIds: [steady.record.id],
-  });
+    };
+    const steady = await make("test.steady");
+    const consumerPkg = metadata("test.consumer", {
+      provides: [],
+      requires: [{ id: sharedApi.id, versionRange: "^1" }],
+    });
+    const consumer = await f.install(consumerPkg);
+    await f.runtime.selectApi({
+      id: sharedApi.id,
+      providerId: flaky.record.id,
+      fallbackProviderIds: [steady.record.id],
+    });
 
-  const discovery = f.discover(consumer);
-  await waitForFile(f.directory, "entered-flaky");
-  const entries = await discovery;
-  assert.equal(
-    f.runtime.catalogue().pluginResolution.find((item) => item.id === flaky.record.id).status,
-    "unavailable",
-  );
-  const resolved = entries.find((entry) => entry.id === sharedApi.id && entry.selected);
-  assert.equal(resolved.providerId, steady.record.id);
-  assert.equal((await invokeShared(f, consumer)).surfaceId, "test.steady/files");
-});
+    const discovery = f.discover(consumer);
+    await waitForFile(f.directory, "entered-flaky");
+    const entries = await discovery;
+    NodeAssert.equal(
+      f.runtime.catalogue().pluginResolution.find((item) => item.id === flaky.record.id).status,
+      "unavailable",
+    );
+    const resolved = entries.find((entry) => entry.id === sharedApi.id && entry.selected);
+    NodeAssert.equal(resolved.providerId, steady.record.id);
+    NodeAssert.equal((await invokeShared(f, consumer)).surfaceId, "test.steady/files");
+  },
+);
 
-test("selection changes apply while an unrelated provider is still starting", async (t) => {
-  const f = await fixture(t);
-  const blockedPkg = metadata("test.blocked");
-  await f.install(
-    blockedPkg,
-    gated(blockedPkg, f.directory, "blocked", "await new Promise(()=>{});"),
-  );
-  const make = async (id) => {
-    const pkg = metadata(id, { provides: [sharedApi] });
-    return f.install(pkg, implementation(pkg, sharedResult(id)));
-  };
-  const first = await make("test.first");
-  const second = await make("test.second");
-  const consumerPkg = metadata("test.consumer", {
-    provides: [],
-    requires: [{ id: sharedApi.id, versionRange: "^1" }],
-  });
-  const consumer = await f.install(consumerPkg);
-  await f.runtime.selectApi({
-    id: sharedApi.id,
-    providerId: first.id,
-    fallbackProviderIds: [second.id],
-  });
+NodeTest.test(
+  "selection changes apply while an unrelated provider is still starting",
+  async (t) => {
+    const f = await fixture(t);
+    const blockedPkg = metadata("test.blocked");
+    await f.install(
+      blockedPkg,
+      gated(blockedPkg, f.directory, "blocked", "await new Promise(()=>{});"),
+    );
+    const make = async (id) => {
+      const pkg = metadata(id, { provides: [sharedApi] });
+      return f.install(pkg, implementation(pkg, sharedResult(id)));
+    };
+    const first = await make("test.first");
+    const second = await make("test.second");
+    const consumerPkg = metadata("test.consumer", {
+      provides: [],
+      requires: [{ id: sharedApi.id, versionRange: "^1" }],
+    });
+    const consumer = await f.install(consumerPkg);
+    await f.runtime.selectApi({
+      id: sharedApi.id,
+      providerId: first.id,
+      fallbackProviderIds: [second.id],
+    });
 
-  const discovery = f.discover(consumer);
-  await waitForFile(f.directory, "entered-blocked");
-  const entries = await discovery;
-  assert.equal(
-    entries.find((entry) => entry.id === sharedApi.id && entry.selected).providerId,
-    first.id,
-  );
-  await f.runtime.selectApi({
-    id: sharedApi.id,
-    providerId: second.id,
-    fallbackProviderIds: [first.id],
-  });
-  const after = await f.discover(consumer);
-  assert.equal(
-    after.find((entry) => entry.id === sharedApi.id && entry.selected).providerId,
-    second.id,
-  );
-  assert.equal((await invokeShared(f, consumer)).surfaceId, "test.second/files");
-});
+    const discovery = f.discover(consumer);
+    await waitForFile(f.directory, "entered-blocked");
+    const entries = await discovery;
+    NodeAssert.equal(
+      entries.find((entry) => entry.id === sharedApi.id && entry.selected).providerId,
+      first.id,
+    );
+    await f.runtime.selectApi({
+      id: sharedApi.id,
+      providerId: second.id,
+      fallbackProviderIds: [first.id],
+    });
+    const after = await f.discover(consumer);
+    NodeAssert.equal(
+      after.find((entry) => entry.id === sharedApi.id && entry.selected).providerId,
+      second.id,
+    );
+    NodeAssert.equal((await invokeShared(f, consumer)).surfaceId, "test.second/files");
+  },
+);
