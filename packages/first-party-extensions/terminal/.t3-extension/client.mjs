@@ -6623,7 +6623,7 @@ var __t3Client = (() => {
   }
 
   // extension.tsx
-  var import_react = __toESM(require_react(), 1);
+  var import_react2 = __toESM(require_react(), 1);
 
   // ghostty/platform.ts
   function isMacPlatform(platform) {
@@ -9892,6 +9892,449 @@ var __t3Client = (() => {
     return null;
   }
 
+  // selectionMenu.tsx
+  var import_react = __toESM(require_react(), 1);
+
+  // selectionMenuModel.ts
+  function terminalSelectionMenuItems(options) {
+    return [
+      ...options?.canAddToChat === false ? [] : [{ id: "add-to-chat", label: "Add to chat" }],
+      { id: "copy", label: "Copy" }
+    ];
+  }
+  function terminalContextMenuItems(options) {
+    const { hasSelection, canAddToChat = true } = options;
+    return [
+      ...terminalSelectionMenuItems({ canAddToChat }).map((item) => ({
+        ...item,
+        disabled: !hasSelection
+      })),
+      { id: "paste", label: "Paste" }
+    ];
+  }
+  function resolveSelectionActionPosition(options) {
+    const { bounds, selectionRect, pointer, viewport } = options;
+    const preferred = pointer ?? {
+      x: selectionRect?.right ?? bounds.left + bounds.width - 140,
+      y: selectionRect ? selectionRect.bottom + 4 : bounds.top + 12
+    };
+    return {
+      x: Math.max(
+        8,
+        Math.min(Math.max(bounds.left, preferred.x), bounds.left + bounds.width, viewport.width - 8)
+      ),
+      y: Math.max(
+        8,
+        Math.min(Math.max(bounds.top, preferred.y), bounds.top + bounds.height, viewport.height - 8)
+      )
+    };
+  }
+  function clampMenuToViewport(options) {
+    const { point, size, viewport, margin = 4 } = options;
+    return {
+      x: Math.min(Math.max(margin, point.x), Math.max(margin, viewport.width - size.width - margin)),
+      y: Math.min(
+        Math.max(margin, point.y),
+        Math.max(margin, viewport.height - size.height - margin)
+      )
+    };
+  }
+  var TerminalSelectionMenuFlow = class {
+    requestId = 0;
+    open = null;
+    onChange;
+    constructor(onChange = () => {
+    }) {
+      this.onChange = onChange;
+    }
+    get menu() {
+      return this.open;
+    }
+    isCurrent(requestId) {
+      return requestId === this.requestId;
+    }
+    /** A right-click supersedes a pending or open popup and any in-flight action. */
+    openContextMenu(input) {
+      const selectionText = nonEmpty(input.selectionText);
+      return this.show({
+        requestId: ++this.requestId,
+        kind: "context",
+        items: terminalContextMenuItems({
+          hasSelection: selectionText !== null,
+          canAddToChat: false
+        }),
+        position: input.position,
+        clipboardText: selectionText
+      });
+    }
+    /**
+     * Opens the post-selection popup. A current popup stays as is (a repeated
+     * selection-end must not reopen it); an empty selection opens nothing.
+     */
+    openSelectionPopup(input) {
+      if (this.ownsOpenMenu("selection")) return this.open;
+      const selectionText = nonEmpty(input.selectionText);
+      if (selectionText === null) {
+        this.supersede();
+        return null;
+      }
+      return this.show({
+        requestId: ++this.requestId,
+        kind: "selection",
+        items: terminalSelectionMenuItems({ canAddToChat: false }),
+        position: input.position,
+        clipboardText: selectionText
+      });
+    }
+    /**
+     * Resolves a click on an item of the menu opened as `requestId`. A stale
+     * menu, a disabled item, or a missing selection resolves to null. The menu
+     * closes but the id stays current, so the action it starts can still report
+     * and return focus unless a newer flow supersedes it.
+     */
+    choose(requestId, action) {
+      const menu = this.open;
+      if (menu === null || menu.requestId !== requestId || !this.isCurrent(requestId)) return null;
+      const item = menu.items.find((candidate) => candidate.id === action);
+      this.close();
+      if (!item || item.disabled === true) return null;
+      if (action !== "paste" && menu.clipboardText === null) return null;
+      return { action, requestId, clipboardText: menu.clipboardText };
+    }
+    /**
+     * Passive cancellation (Escape, outside click, scroll, blur): closes the
+     * open menu. It only invalidates the id when the menu it closes is current,
+     * so it can never cancel a newer flow's in-flight action.
+     */
+    dismiss() {
+      if (this.open === null) return;
+      if (this.isCurrent(this.open.requestId)) this.requestId += 1;
+      this.close();
+    }
+    /** Active cancellation: invalidates every flow, open or in flight. */
+    supersede() {
+      this.requestId += 1;
+      this.close();
+    }
+    /**
+     * An emptied selection may only cancel a selection flow that is still
+     * current — a pending popup timer, or the open popup. A right-click menu
+     * keeps the text it captured.
+     */
+    shouldClearOnEmptySelection(actionPending) {
+      return actionPending || this.ownsOpenMenu("selection");
+    }
+    ownsOpenMenu(kind) {
+      return this.open?.kind === kind && this.isCurrent(this.open.requestId);
+    }
+    show(menu) {
+      this.open = menu;
+      this.onChange(menu);
+      return menu;
+    }
+    close() {
+      if (this.open === null) return;
+      this.open = null;
+      this.onChange(null);
+    }
+  };
+  function nonEmpty(text) {
+    if (text === null) return null;
+    return text.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "").length > 0 ? text : null;
+  }
+
+  // selectionMenu.tsx
+  var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
+  var TerminalSelectionMenuController = class {
+    flow;
+    deps;
+    menuElement = null;
+    timer = null;
+    frame = null;
+    gestureActive = false;
+    constructor(deps, onChange) {
+      this.deps = deps;
+      this.flow = new TerminalSelectionMenuFlow(onChange);
+    }
+    /** Ref callback for the rendered menu, used by the outside-click test. */
+    setMenuElement = (element) => {
+      this.menuElement = element;
+    };
+    /** Surface option: a right-click the running app did not claim through mouse reporting. */
+    onContextMenu = (event) => {
+      event.preventDefault();
+      this.cancelPending();
+      this.gestureActive = false;
+      const surface = this.deps.getSurface();
+      if (surface === null) return;
+      this.flow.openContextMenu({
+        selectionText: surface.hasSelection() ? surface.getSelection() : null,
+        position: { x: event.clientX, y: event.clientY }
+      });
+    };
+    /** Surface option: an emptied selection cancels a still-current popup flow. */
+    onSelectionChange = () => {
+      if (this.deps.getSurface()?.hasSelection()) return;
+      if (!this.flow.shouldClearOnEmptySelection(this.pending)) return;
+      this.cancelPending();
+      this.flow.supersede();
+    };
+    choose = async (requestId, action) => {
+      const choice = this.flow.choose(requestId, action);
+      const surface = this.deps.getSurface();
+      if (choice === null || surface === null) return;
+      const reportIfCurrent = (error, fallback) => {
+        if (this.flow.isCurrent(requestId)) {
+          this.deps.reportError(surface, error instanceof Error ? error.message : fallback);
+        }
+      };
+      if (choice.action === "copy" && choice.clipboardText !== null) {
+        try {
+          await copyText(choice.clipboardText, surface);
+        } catch (error) {
+          reportIfCurrent(error, "Unable to copy terminal selection");
+        }
+      } else if (choice.action === "paste") {
+        try {
+          await surface.pasteFromClipboard(readClipboardText, () => this.flow.isCurrent(requestId));
+        } catch (error) {
+          reportIfCurrent(error, "Unable to read the clipboard");
+          return;
+        }
+      }
+      if (this.flow.isCurrent(requestId)) surface.focus();
+    };
+    install(mount) {
+      const document2 = mount.ownerDocument;
+      const view = document2.defaultView;
+      const insideMenu = (event) => this.menuElement !== null && event.composedPath().includes(this.menuElement);
+      const onMountPointerDown = (event) => {
+        if (!event.isPrimary) return;
+        this.cancelPending();
+        this.gestureActive = event.button === 0 && !event.defaultPrevented;
+      };
+      const onDocumentPointerDown = (event) => {
+        if (!insideMenu(event)) this.flow.dismiss();
+      };
+      const onMouseUp = (event) => {
+        if (event.button !== 0 || !this.gestureActive) return;
+        this.gestureActive = false;
+        const pointer = { x: event.clientX, y: event.clientY };
+        this.schedule(pointer, event.detail >= 2 ? SELECTION_MULTI_CLICK_INTERVAL_MS : 0);
+      };
+      const onKeyDown = (event) => {
+        if (event.key === "Escape" && this.flow.menu !== null) {
+          this.flow.dismiss();
+          if (event.composedPath().includes(mount)) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+          return;
+        }
+        if (!insideMenu(event)) this.cancelPending();
+      };
+      const dismiss = () => {
+        this.cancelPending();
+        this.gestureActive = false;
+        this.flow.dismiss();
+      };
+      const onFocusOut = (event) => {
+        const next = event.relatedTarget;
+        if (next instanceof Node && (mount.contains(next) || this.menuElement?.contains(next)))
+          return;
+        dismiss();
+      };
+      const onScroll = (event) => {
+        const target = event.target;
+        if (target === document2 || target instanceof Node && target.contains(mount)) dismiss();
+      };
+      mount.addEventListener("pointerdown", onMountPointerDown);
+      mount.addEventListener("wheel", dismiss, { passive: true });
+      document2.addEventListener("scroll", onScroll, true);
+      document2.addEventListener("pointerdown", onDocumentPointerDown, true);
+      document2.addEventListener("keydown", onKeyDown, true);
+      mount.addEventListener("focusout", onFocusOut);
+      view.addEventListener("mouseup", onMouseUp);
+      view.addEventListener("pointercancel", dismiss);
+      view.addEventListener("blur", dismiss);
+      view.addEventListener("resize", dismiss);
+      return () => {
+        mount.removeEventListener("pointerdown", onMountPointerDown);
+        mount.removeEventListener("wheel", dismiss);
+        document2.removeEventListener("scroll", onScroll, true);
+        document2.removeEventListener("pointerdown", onDocumentPointerDown, true);
+        document2.removeEventListener("keydown", onKeyDown, true);
+        mount.removeEventListener("focusout", onFocusOut);
+        view.removeEventListener("mouseup", onMouseUp);
+        view.removeEventListener("pointercancel", dismiss);
+        view.removeEventListener("blur", dismiss);
+        view.removeEventListener("resize", dismiss);
+        this.cancelPending();
+        this.gestureActive = false;
+        this.flow.supersede();
+      };
+    }
+    get pending() {
+      return this.timer !== null || this.frame !== null;
+    }
+    schedule(pointer, delay) {
+      this.cancelPending();
+      this.timer = window.setTimeout(() => {
+        this.timer = null;
+        this.frame = window.requestAnimationFrame(() => {
+          this.frame = null;
+          this.showSelectionPopup(pointer);
+        });
+      }, delay);
+    }
+    showSelectionPopup(pointer) {
+      const surface = this.deps.getSurface();
+      const mount = this.deps.getMount();
+      if (surface === null || mount === null) {
+        this.flow.supersede();
+        return;
+      }
+      const hasSelection = surface.hasSelection();
+      this.flow.openSelectionPopup({
+        selectionText: hasSelection ? surface.getSelection() : null,
+        position: resolveSelectionActionPosition({
+          bounds: mount.getBoundingClientRect(),
+          selectionRect: hasSelection ? surface.getSelectionEndClientRect() : null,
+          pointer,
+          viewport: { width: window.innerWidth, height: window.innerHeight }
+        })
+      });
+    }
+    cancelPending() {
+      if (this.timer !== null) window.clearTimeout(this.timer);
+      if (this.frame !== null) window.cancelAnimationFrame(this.frame);
+      this.timer = this.frame = null;
+    }
+  };
+  async function copyText(text, surface) {
+    let failure = new Error("Clipboard writes are unavailable in this browser.");
+    const clipboard = navigator.clipboard;
+    if (typeof clipboard?.writeText === "function") {
+      try {
+        await clipboard.writeText(text);
+        return;
+      } catch (error) {
+        failure = error;
+      }
+    }
+    if (surface.hasSelection() && surface.getSelection() === text) {
+      surface.focus();
+      if (document.execCommand("copy")) return;
+    }
+    throw failure;
+  }
+  async function readClipboardText() {
+    const clipboard = navigator.clipboard;
+    if (typeof clipboard?.readText !== "function") {
+      throw new Error("Clipboard reads are unavailable in this browser.");
+    }
+    return clipboard.readText();
+  }
+  function useTerminalSelectionMenu(options) {
+    const { mountRef, surfaceRef, reportError } = options;
+    const [menu, setMenu] = (0, import_react.useState)(null);
+    const [controller] = (0, import_react.useState)(
+      () => new TerminalSelectionMenuController(
+        {
+          getMount: () => mountRef.current,
+          getSurface: () => surfaceRef.current,
+          reportError
+        },
+        setMenu
+      )
+    );
+    (0, import_react.useEffect)(() => {
+      const mount = mountRef.current;
+      if (mount === null || typeof mount.addEventListener !== "function") return;
+      return controller.install(mount);
+    }, [controller, mountRef]);
+    return {
+      onContextMenu: controller.onContextMenu,
+      onSelectionChange: controller.onSelectionChange,
+      menu: menu === null ? null : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        TerminalMenu,
+        {
+          menu,
+          elementRef: controller.setMenuElement,
+          onChoose: (action) => void controller.choose(menu.requestId, action)
+        },
+        menu.requestId
+      )
+    };
+  }
+  var MENU_STYLE = `
+[data-t3-terminal-menu] button{display:flex;width:100%;align-items:center;min-height:26px;padding:4px 10px;border:0;border-radius:4px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:default}
+[data-t3-terminal-menu] button:not(:disabled):hover,[data-t3-terminal-menu] button:not(:disabled):focus-visible{background:var(--t3-terminal-accent-surface,var(--accent,#e8eef7));outline:none}
+[data-t3-terminal-menu] button:disabled{color:var(--t3-terminal-muted,var(--muted-foreground,#667085));opacity:.64}
+`;
+  function TerminalMenu(props) {
+    const { menu, elementRef, onChoose } = props;
+    const ref = (0, import_react.useRef)(null);
+    (0, import_react.useLayoutEffect)(() => {
+      const element = ref.current;
+      if (element === null) return;
+      element.style.left = `${menu.position.x}px`;
+      element.style.top = `${menu.position.y}px`;
+      const rect = element.getBoundingClientRect();
+      const clamped = clampMenuToViewport({
+        point: menu.position,
+        size: rect,
+        viewport: { width: window.innerWidth, height: window.innerHeight }
+      });
+      element.style.left = `${clamped.x - (rect.left - menu.position.x)}px`;
+      element.style.top = `${clamped.y - (rect.top - menu.position.y)}px`;
+    }, [menu]);
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+      "div",
+      {
+        ref: (element) => {
+          ref.current = element;
+          elementRef(element);
+        },
+        role: "menu",
+        "aria-label": menu.kind === "selection" ? "Selection actions" : "Terminal actions",
+        "data-t3-terminal-menu": menu.kind,
+        onMouseDown: (event) => event.preventDefault(),
+        onContextMenu: (event) => event.preventDefault(),
+        style: {
+          position: "fixed",
+          left: menu.position.x,
+          top: menu.position.y,
+          zIndex: 1e4,
+          minWidth: 120,
+          padding: 4,
+          borderRadius: 6,
+          border: "1px solid var(--t3-terminal-border, var(--border, #dfe3e8))",
+          background: "var(--t3-terminal-canvas, var(--popover, var(--background, #fff)))",
+          color: "var(--t3-terminal-text, var(--foreground, #20252d))",
+          boxShadow: "0 4px 16px rgb(0 0 0 / 0.18)",
+          fontFamily: "var(--font-sans, system-ui, sans-serif)",
+          fontSize: 13,
+          lineHeight: "18px"
+        },
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("style", { children: MENU_STYLE }),
+          menu.items.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "button",
+            {
+              type: "button",
+              role: "menuitem",
+              disabled: item.disabled === true,
+              onClick: () => onChoose(item.id),
+              children: item.label
+            },
+            item.id
+          ))
+        ]
+      }
+    );
+  }
+
   // streamHub.ts
   var BROKER_STREAM_CAP = 8;
   var FEED_REPLAY_MAX_FRAMES = 64;
@@ -11995,7 +12438,7 @@ var __t3Client = (() => {
   }
 
   // extension.tsx
-  var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
+  var import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
   var manifestId = "t3.terminal";
   var streamHub = new TerminalStreamHub();
   var GHOSTTY_VT_ASSET = "assets/ghostty-vt.wasm";
@@ -12028,8 +12471,8 @@ var __t3Client = (() => {
     };
   }
   function useGhosttyAssets(host, session) {
-    const [state2, setState] = (0, import_react.useState)({ kind: "loading" });
-    (0, import_react.useEffect)(() => {
+    const [state2, setState] = (0, import_react2.useState)({ kind: "loading" });
+    (0, import_react2.useEffect)(() => {
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       let symbolsFontUrl = null;
@@ -12073,7 +12516,7 @@ var __t3Client = (() => {
     return state2;
   }
   function useSessionsStream(host, session, panel, visible) {
-    (0, import_react.useLayoutEffect)(() => {
+    (0, import_react2.useLayoutEffect)(() => {
       if (!visible) return;
       const environmentId = session.context.resource.environmentId ?? "";
       const threadId = session.context.resource.threadId ?? "";
@@ -12132,8 +12575,8 @@ var __t3Client = (() => {
     }, [host, session, panel, visible]);
   }
   function useThemeVars(host, session, visible) {
-    const [vars, setVars] = (0, import_react.useState)(null);
-    (0, import_react.useLayoutEffect)(() => {
+    const [vars, setVars] = (0, import_react2.useState)(null);
+    (0, import_react2.useLayoutEffect)(() => {
       if (!visible) return;
       return streamHub.acquireFixedFeed(
         `theme:${session.context.resource.environmentId ?? ""}`,
@@ -12152,8 +12595,8 @@ var __t3Client = (() => {
     return vars;
   }
   function useTerminalAppearanceVars(host, session, visible) {
-    const [vars, setVars] = (0, import_react.useState)(null);
-    (0, import_react.useLayoutEffect)(() => {
+    const [vars, setVars] = (0, import_react2.useState)(null);
+    (0, import_react2.useLayoutEffect)(() => {
       if (!visible) return;
       return streamHub.acquireFixedFeed(
         `appearance:${session.context.resource.environmentId ?? ""}`,
@@ -12182,7 +12625,7 @@ var __t3Client = (() => {
     );
   }
   function usePanelCommands(host, session, panel, visible, actions) {
-    (0, import_react.useEffect)(() => {
+    (0, import_react2.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -12248,23 +12691,28 @@ var __t3Client = (() => {
       themeVars,
       appearanceVars
     } = props;
-    const [, bump] = (0, import_react.useReducer)((value) => value + 1, 0);
-    const [attachment] = (0, import_react.useState)(
+    const [, bump] = (0, import_react2.useReducer)((value) => value + 1, 0);
+    const [attachment] = (0, import_react2.useState)(
       () => new TerminalVtAttachment(terminalId, () => {
         bump();
       })
     );
-    const mountRef = (0, import_react.useRef)(null);
-    const surfaceRef = (0, import_react.useRef)(null);
-    const shownRef = (0, import_react.useRef)(shown && visible);
-    const activeRef = (0, import_react.useRef)(active);
-    activeRef.current = active;
-    const appearanceVarsRef = (0, import_react.useRef)(appearanceVars);
-    appearanceVarsRef.current = appearanceVars;
-    const [streamBlocked, setStreamBlocked] = (0, import_react.useState)(false);
-    const acquireStreamRef = (0, import_react.useRef)((_mandatory) => {
+    const mountRef = (0, import_react2.useRef)(null);
+    const surfaceRef = (0, import_react2.useRef)(null);
+    const selectionMenu = useTerminalSelectionMenu({
+      mountRef,
+      surfaceRef,
+      reportError: writeSystemMessage
     });
-    (0, import_react.useEffect)(() => {
+    const shownRef = (0, import_react2.useRef)(shown && visible);
+    const activeRef = (0, import_react2.useRef)(active);
+    activeRef.current = active;
+    const appearanceVarsRef = (0, import_react2.useRef)(appearanceVars);
+    appearanceVarsRef.current = appearanceVars;
+    const [streamBlocked, setStreamBlocked] = (0, import_react2.useState)(false);
+    const acquireStreamRef = (0, import_react2.useRef)((_mandatory) => {
+    });
+    (0, import_react2.useEffect)(() => {
       if (!visible) return;
       let stopped = false;
       let run = null;
@@ -12334,10 +12782,10 @@ var __t3Client = (() => {
         stopRun();
       };
     }, [host, session, panel, terminalId, attachment, visible, streamKeyPrefix]);
-    (0, import_react.useEffect)(() => {
+    (0, import_react2.useEffect)(() => {
       acquireStreamRef.current(shown && visible);
     }, [shown, visible]);
-    (0, import_react.useEffect)(() => {
+    (0, import_react2.useEffect)(() => {
       const mount = mountRef.current;
       if (mount === null || assets.kind !== "ready") return;
       let cancelled = false;
@@ -12357,8 +12805,8 @@ var __t3Client = (() => {
           },
           onData: (data) => panel.sendInput(terminalId, data),
           onResize: (cols, rows) => panel.resize(terminalId, cols, rows),
-          onSelectionChange: () => {
-          },
+          onSelectionChange: selectionMenu.onSelectionChange,
+          onContextMenu: selectionMenu.onContextMenu,
           beforeKey: (event) => handleBeforeKey(event, panel, terminalId),
           onLinkActivate: () => {
             if (surface) {
@@ -12410,13 +12858,20 @@ var __t3Client = (() => {
         surface?.dispose();
         surfaceRef.current = null;
       };
-    }, [assets, attachment, panel, terminalId]);
-    (0, import_react.useEffect)(() => {
+    }, [
+      assets,
+      attachment,
+      panel,
+      terminalId,
+      selectionMenu.onContextMenu,
+      selectionMenu.onSelectionChange
+    ]);
+    (0, import_react2.useEffect)(() => {
       shownRef.current = shown && visible;
       surfaceRef.current?.setVisible(shown && visible);
       if (active && shown && visible) surfaceRef.current?.focus();
     }, [active, shown, visible]);
-    (0, import_react.useEffect)(() => {
+    (0, import_react2.useEffect)(() => {
       const mount = mountRef.current;
       if (mount !== null) surfaceRef.current?.setTheme(terminalThemeFromApp(mount));
       void surfaceRef.current?.setFont(terminalFontFromVars(appearanceVars)).catch(() => {
@@ -12424,7 +12879,7 @@ var __t3Client = (() => {
     }, [themeVars, appearanceVars]);
     const state2 = attachment.state;
     const muted = "var(--muted-foreground, #667085)";
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
       "div",
       {
         style: {
@@ -12435,7 +12890,7 @@ var __t3Client = (() => {
           minWidth: 0
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
             "output",
             {
               "aria-label": "Output status",
@@ -12447,7 +12902,7 @@ var __t3Client = (() => {
               ]
             }
           ),
-          state2.degraded && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          state2.degraded && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "output",
             {
               "aria-label": "Attach degraded",
@@ -12455,7 +12910,7 @@ var __t3Client = (() => {
               children: "Attached with truncated history \u2014 modes and screen state before the retained tail are unknown, so interactive parity is not claimed until the next full snapshot (B4)."
             }
           ),
-          streamBlocked && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          streamBlocked && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "output",
             {
               "aria-label": "Stream budget",
@@ -12463,7 +12918,7 @@ var __t3Client = (() => {
               children: "Waiting for a free output stream \u2014 close a pane here or in another terminal panel, and this pane attaches as soon as one frees."
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "div",
             {
               ref: mountRef,
@@ -12485,15 +12940,16 @@ var __t3Client = (() => {
                 colorScheme: "var(--t3-terminal-color-scheme, normal)"
               }
             }
-          )
+          ),
+          selectionMenu.menu
         ]
       }
     );
   }
   function useTerminalOutput(host, session, terminalId, visible) {
-    const [state2, setState] = (0, import_react.useState)(null);
-    const pendingRef = (0, import_react.useRef)(null);
-    (0, import_react.useEffect)(() => {
+    const [state2, setState] = (0, import_react2.useState)(null);
+    const pendingRef = (0, import_react2.useRef)(null);
+    (0, import_react2.useEffect)(() => {
       pendingRef.current = null;
       if (!visible || terminalId === null) return;
       const controller = new AbortController();
@@ -12569,7 +13025,7 @@ var __t3Client = (() => {
     return state2?.terminalId === terminalId ? state2.buffer : null;
   }
   function useFitResize(panel, terminalId, ref) {
-    (0, import_react.useEffect)(() => {
+    (0, import_react2.useEffect)(() => {
       const element = ref.current;
       if (!element || terminalId === null || typeof ResizeObserver === "undefined") return;
       const fit = () => {
@@ -12596,9 +13052,9 @@ var __t3Client = (() => {
   };
   function TerminalView(props) {
     const { host, session } = props;
-    const [, bump] = (0, import_react.useReducer)((value) => value + 1, 0);
-    const streamKeyPrefix = (0, import_react.useId)();
-    const [panel] = (0, import_react.useState)(() => {
+    const [, bump] = (0, import_react2.useReducer)((value) => value + 1, 0);
+    const streamKeyPrefix = (0, import_react2.useId)();
+    const [panel] = (0, import_react2.useState)(() => {
       const restored = session.restoreState && typeof session.restoreState === "object" && !Array.isArray(session.restoreState) ? session.restoreState : null;
       const workspace = workspaceLaunchFromRevision(session.context.workspaceRevision);
       const launch = workspace === null ? null : {
@@ -12637,13 +13093,13 @@ var __t3Client = (() => {
       });
       return panel2;
     });
-    const [visible, setVisible] = (0, import_react.useState)(session.visible);
-    const [input, setInput] = (0, import_react.useState)("");
-    const outputRef = (0, import_react.useRef)(null);
-    (0, import_react.useEffect)(() => session.onVisibility(setVisible), [session]);
-    (0, import_react.useEffect)(() => () => panel.dispose(), [panel]);
+    const [visible, setVisible] = (0, import_react2.useState)(session.visible);
+    const [input, setInput] = (0, import_react2.useState)("");
+    const outputRef = (0, import_react2.useRef)(null);
+    (0, import_react2.useEffect)(() => session.onVisibility(setVisible), [session]);
+    (0, import_react2.useEffect)(() => () => panel.dispose(), [panel]);
     useSessionsStream(host, session, panel, visible);
-    const panelActions = (0, import_react.useMemo)(
+    const panelActions = (0, import_react2.useMemo)(
       () => ({
         newTerminal: () => void panel.openTerminal(),
         closeTerminal: () => {
@@ -12690,7 +13146,7 @@ var __t3Client = (() => {
     };
     const muted = "var(--t3-terminal-muted, var(--muted-foreground, #667085))";
     const border = "1px solid var(--t3-terminal-border, var(--border, #dfe3e8))";
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
       "section",
       {
         "aria-label": "Terminal",
@@ -12722,8 +13178,8 @@ var __t3Client = (() => {
           ...appearanceVars
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("style", { children: "[data-t3-terminal-output]::selection{background:var(--t3-terminal-selection,Highlight)}" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("style", { children: "[data-t3-terminal-output]::selection{background:var(--t3-terminal-selection,Highlight)}" }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
             "header",
             {
               style: {
@@ -12735,7 +13191,7 @@ var __t3Client = (() => {
                 alignItems: "center"
               },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                   "button",
                   {
                     type: "button",
@@ -12745,7 +13201,7 @@ var __t3Client = (() => {
                     children: "New terminal"
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                   "button",
                   {
                     type: "button",
@@ -12758,7 +13214,7 @@ var __t3Client = (() => {
                     ]
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                   "button",
                   {
                     type: "button",
@@ -12771,11 +13227,11 @@ var __t3Client = (() => {
                     ]
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, fontSize: 11 }, children: snapshot.stream === "closed" ? "Session list disconnected" : snapshot.stream === "connecting" ? "Connecting\u2026" : "" })
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted, fontSize: 11 }, children: snapshot.stream === "closed" ? "Session list disconnected" : snapshot.stream === "connecting" ? "Connecting\u2026" : "" })
               ]
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "ul",
             {
               "aria-label": "Terminal sessions",
@@ -12788,8 +13244,8 @@ var __t3Client = (() => {
                 flexDirection: "column",
                 gap: 2
               },
-              children: snapshot.groups.map((group) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: { display: "flex", flexDirection: "column", gap: 2 }, children: [
-                showGroupHeaders && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+              children: snapshot.groups.map((group) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("li", { style: { display: "flex", flexDirection: "column", gap: 2 }, children: [
+                showGroupHeaders && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                   "button",
                   {
                     type: "button",
@@ -12812,12 +13268,12 @@ var __t3Client = (() => {
                       background: snapshot.activeGroupId === group.id ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))" : "transparent"
                     },
                     children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flex: 1, minWidth: 0, textAlign: "left" }, children: group.terminalIds.length === 1 ? "Single" : group.splitDirection === "vertical" ? "Stacked" : "Side by side" }),
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { fontSize: 10 }, children: group.terminalIds.length })
+                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { flex: 1, minWidth: 0, textAlign: "left" }, children: group.terminalIds.length === 1 ? "Single" : group.splitDirection === "vertical" ? "Stacked" : "Side by side" }),
+                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { fontSize: 10 }, children: group.terminalIds.length })
                     ]
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                   "ul",
                   {
                     style: {
@@ -12831,12 +13287,12 @@ var __t3Client = (() => {
                     children: group.terminalIds.map((terminalId) => {
                       const tab = tabById.get(terminalId);
                       if (!tab) return null;
-                      return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                      return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                         "li",
                         {
                           style: { display: "flex", gap: 6, alignItems: "center" },
                           children: [
-                            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                               "button",
                               {
                                 type: "button",
@@ -12861,13 +13317,13 @@ var __t3Client = (() => {
                                 children: tab.label
                               }
                             ),
-                            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted, fontSize: 11 }, children: [
+                            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { color: muted, fontSize: 11 }, children: [
                               tab.status,
                               tab.hasRunningSubprocess ? " \xB7 running" : "",
                               tab.queuedInputCount > 0 ? ` \xB7 queued ${tab.queuedInputCount}` : ""
                             ] }),
-                            tab.confirmAction === null ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-                              (tab.status === "exited" || tab.status === "error" || tab.status === "closed") && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                            tab.confirmAction === null ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+                              (tab.status === "exited" || tab.status === "error" || tab.status === "closed") && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                                 "button",
                                 {
                                   type: "button",
@@ -12877,7 +13333,7 @@ var __t3Client = (() => {
                                   children: "Start"
                                 }
                               ),
-                              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                                 "button",
                                 {
                                   type: "button",
@@ -12887,7 +13343,7 @@ var __t3Client = (() => {
                                   children: "Clear"
                                 }
                               ),
-                              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                                 "button",
                                 {
                                   type: "button",
@@ -12897,7 +13353,7 @@ var __t3Client = (() => {
                                   children: "Restart"
                                 }
                               ),
-                              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                                 "button",
                                 {
                                   type: "button",
@@ -12907,9 +13363,9 @@ var __t3Client = (() => {
                                   children: "\xD7"
                                 }
                               )
-                            ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-                              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, fontSize: 11 }, children: tab.confirmAction === "close" ? "Close this terminal?" : tab.confirmAction === "restart" ? "Restart this terminal?" : "Clear history?" }),
-                              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                            ] }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted, fontSize: 11 }, children: tab.confirmAction === "close" ? "Close this terminal?" : tab.confirmAction === "restart" ? "Restart this terminal?" : "Clear history?" }),
+                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                                 "button",
                                 {
                                   type: "button",
@@ -12919,7 +13375,7 @@ var __t3Client = (() => {
                                   children: "Confirm"
                                 }
                               ),
-                              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                                 "button",
                                 {
                                   type: "button",
@@ -12940,8 +13396,8 @@ var __t3Client = (() => {
               ] }, group.id))
             }
           ),
-          snapshot.tabs.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: "No terminals yet. New terminal opens a shell in this workspace." }),
-          snapshot.panelError && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          snapshot.tabs.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: "No terminals yet. New terminal opens a shell in this workspace." }),
+          snapshot.panelError && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "output",
             {
               "aria-label": "Panel status",
@@ -12949,7 +13405,7 @@ var __t3Client = (() => {
               children: snapshot.panelError
             }
           ),
-          activeTab?.inputStopped && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          activeTab?.inputStopped && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
             "div",
             {
               role: "alert",
@@ -12964,8 +13420,8 @@ var __t3Client = (() => {
                 flexShrink: 0
               },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flex: 1, minWidth: 0 }, children: activeTab.inputMessage }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { flex: 1, minWidth: 0 }, children: activeTab.inputMessage }),
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                   "button",
                   {
                     type: "button",
@@ -12977,7 +13433,7 @@ var __t3Client = (() => {
               ]
             }
           ),
-          assets.kind === "loading" && activeId !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          assets.kind === "loading" && activeId !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "output",
             {
               "aria-label": "Renderer status",
@@ -12985,7 +13441,7 @@ var __t3Client = (() => {
               children: "Loading terminal renderer\u2026"
             }
           ),
-          assets.kind === "unavailable" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          assets.kind === "unavailable" && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
             "output",
             {
               "aria-label": "Renderer status",
@@ -12997,7 +13453,7 @@ var __t3Client = (() => {
               ]
             }
           ),
-          !textFallback && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          !textFallback && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "div",
             {
               "aria-label": "Terminal panes",
@@ -13011,7 +13467,7 @@ var __t3Client = (() => {
               children: paneOrder.map((terminalId, index) => {
                 const shown = visibleSet.has(terminalId);
                 const focused = terminalId === activeId;
-                return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                   "div",
                   {
                     "data-t3-terminal-pane": terminalId,
@@ -13027,7 +13483,7 @@ var __t3Client = (() => {
                       borderLeft: splitDirection === "horizontal" && index > 0 ? `1px solid ${focused ? "var(--t3-terminal-border, var(--border, #dfe3e8))" : "var(--t3-terminal-muted, var(--border, #dfe3e8))"}` : void 0,
                       borderTop: splitDirection === "vertical" && index > 0 ? `1px solid ${focused ? "var(--t3-terminal-border, var(--border, #dfe3e8))" : "var(--t3-terminal-muted, var(--border, #dfe3e8))"}` : void 0
                     },
-                    children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                       TerminalPane,
                       {
                         host,
@@ -13049,7 +13505,7 @@ var __t3Client = (() => {
               })
             }
           ),
-          textFallback && activeId !== null && activeTab !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          textFallback && activeId !== null && activeTab !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
             "div",
             {
               style: {
@@ -13060,7 +13516,7 @@ var __t3Client = (() => {
                 borderTop: border
               },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                   "output",
                   {
                     "aria-label": "Output status",
@@ -13073,7 +13529,7 @@ var __t3Client = (() => {
                     ]
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                   "pre",
                   {
                     ref: outputRef,
@@ -13098,7 +13554,7 @@ var __t3Client = (() => {
                     children: output?.contents ?? ""
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                   "div",
                   {
                     style: {
@@ -13109,7 +13565,7 @@ var __t3Client = (() => {
                       flexShrink: 0
                     },
                     children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                         "input",
                         {
                           "aria-label": "Terminal input",
@@ -13128,14 +13584,14 @@ var __t3Client = (() => {
                           }
                         }
                       ),
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", onClick: send, style: control, children: "Send" })
+                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", onClick: send, style: control, children: "Send" })
                     ]
                   }
                 )
               ]
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "output",
             {
               "aria-label": "Slice notice",
@@ -13188,7 +13644,7 @@ var __t3Client = (() => {
         stateVersion: 1,
         validateRestore: restoreState,
         createView(host, session) {
-          return { renderer: () => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(TerminalView, { host, session }) };
+          return { renderer: () => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(TerminalView, { host, session }) };
         }
       }
     ]
