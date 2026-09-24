@@ -348,4 +348,21 @@ describe("serializeLegacyContextMessage", () => {
     expect(legacy).toContain('bodyEncoding="escaped-tags"');
     expect(legacy).toContain("Keep &amp;lt;/review_comment> literal.");
   });
+
+  it("shields non-emitted entity prefixes so they read back literal", () => {
+    // `&LT;` is not a written escape, but its `&` still travels as `&amp;` so readers restore
+    // the spelling byte-identical instead of mistaking it for one.
+    const record = {
+      ...review,
+      text: "Keep &LT;/review_comment> literal.",
+      diff: "&LT;/review_comment>",
+    } satisfies ComposerContextRecord;
+    const legacy = serializeLegacyContextMessage({ text: "Review", records: [record] });
+
+    expect(legacy).toContain("Keep &amp;LT;/review_comment> literal.");
+    expect(upgradeLegacyContextMessage(legacy).records[0]).toMatchObject({
+      text: record.text,
+      diff: record.diff,
+    });
+  });
 });

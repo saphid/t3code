@@ -255,6 +255,28 @@ describe("review comment serialization", () => {
     );
   });
 
+  // The writer emits only lowercase `&lt;`; any other prefix casing is body text the codec
+  // never produced, so it stays literal in text and fenced diff alike.
+  it.each(["&LT;", "&Lt;", "&lT;"])(
+    "keeps the non-emitted entity prefix %s literal in a marked body",
+    (prefix) => {
+      const body = `${prefix}/review_comment> is not a writer-emitted escape`;
+      const serialized = `<review_comment sectionId="s" filePath="app.ts" startIndex="0" endIndex="0" bodyEncoding="escaped-tags">\n${body}\n\`\`\`diff\n${body}\n\`\`\`\n</review_comment>`;
+      expect(parseReviewInlineComments(serialized)).toEqual([
+        expect.objectContaining({ text: body, diff: body }),
+      ]);
+    },
+  );
+
+  it("decodes a lowercase escape before an uppercase tag name", () => {
+    // Case-insensitivity applies to the tag name, not the entity spelling: the writer emits
+    // lowercase `&lt;` for a `<` before any casing of `review_comment`.
+    const serialized = `<review_comment sectionId="s" filePath="app.ts" startIndex="0" endIndex="0" bodyEncoding="escaped-tags">\n&lt;/REVIEW_COMMENT>\n\`\`\`diff\n&lt;REVIEW_COMMENT>\n\`\`\`\n</review_comment>`;
+    expect(parseReviewInlineComments(serialized)).toEqual([
+      expect.objectContaining({ text: "</REVIEW_COMMENT>", diff: "<REVIEW_COMMENT>" }),
+    ]);
+  });
+
   it("preserves literal entities through draft insertion and legacy dispatch", () => {
     // The draft path upgrades the formatted block, re-identifies the record for the draft
     // store, and may serialize again for a server without inline context — the literal entity

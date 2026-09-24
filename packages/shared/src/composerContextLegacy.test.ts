@@ -588,6 +588,39 @@ describe("upgradeLegacyContextMessage", () => {
     });
   });
 
+  // The writer emits only lowercase `&lt;`; any other prefix casing is body text the codec
+  // never produced, so it stays literal in text and fenced diff alike.
+  it.each(["&LT;", "&Lt;", "&lT;"])(
+    "keeps the non-emitted entity prefix %s literal in a marked body",
+    (prefix) => {
+      const body = `${prefix}/review_comment> is not a writer-emitted escape`;
+      const marked = `<review_comment sectionId="s" filePath="f.ts" startIndex="1" endIndex="1" bodyEncoding="escaped-tags">\n${body}\n\`\`\`diff\n${body}\n\`\`\`\n</review_comment>`;
+      expect(upgradeLegacyContextMessage(marked).records[0]).toMatchObject({
+        text: body,
+        diff: body,
+      });
+    },
+  );
+
+  it("decodes a lowercase escape before an uppercase tag name", () => {
+    // Case-insensitivity applies to the tag name, not the entity spelling: the writer emits
+    // lowercase `&lt;` for a `<` before any casing of `review_comment`.
+    const marked = `<review_comment sectionId="s" filePath="f.ts" startIndex="1" endIndex="1" bodyEncoding="escaped-tags">\n&lt;/REVIEW_COMMENT>\n\`\`\`diff\n&lt;REVIEW_COMMENT>\n\`\`\`\n</review_comment>`;
+    expect(upgradeLegacyContextMessage(marked).records[0]).toMatchObject({
+      text: "</REVIEW_COMMENT>",
+      diff: "<REVIEW_COMMENT>",
+    });
+  });
+
+  it("keeps other entity spellings literal inside a marked body", () => {
+    const body = "&gt; &GT; &AMP;lt;/review_comment> &#60;/review_comment>";
+    const marked = `<review_comment sectionId="s" filePath="f.ts" startIndex="1" endIndex="1" bodyEncoding="escaped-tags">\n${body}\n\`\`\`diff\n${body}\n\`\`\`\n</review_comment>`;
+    expect(upgradeLegacyContextMessage(marked).records[0]).toMatchObject({
+      text: body,
+      diff: body,
+    });
+  });
+
   it("appends trailing review blocks after the other trailing blocks", () => {
     const text = [
       "prose",
