@@ -1,3 +1,4 @@
+// @effect-diagnostics globalTimers:off -- The default resubscribe backoff sleeps via a plain Promise in extension-host code, outside any Effect fiber.
 import type {
   TerminalOutputEventsClosed,
   TerminalOutputEventsValue,

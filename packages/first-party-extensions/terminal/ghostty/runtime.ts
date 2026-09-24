@@ -1,3 +1,4 @@
+// @effect-diagnostics globalConsole:off -- The libghostty-vt log callback surfaces wasm diagnostics on the host console, outside any Effect fiber.
 type WasmFunction = (...args: Array<number | bigint>) => number;
 
 interface TypeField {

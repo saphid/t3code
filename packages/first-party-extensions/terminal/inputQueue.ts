@@ -1,3 +1,4 @@
+// @effect-diagnostics globalTimers:off -- The serialized-write deadline races a plain Promise in extension-host code, outside any Effect fiber.
 /**
  * Bounded, ordered PTY input transport.
  *
