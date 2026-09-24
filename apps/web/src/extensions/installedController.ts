@@ -27,7 +27,12 @@ import type { SurfaceRenderer } from "@t3tools/extension-sdk/react";
 import type * as React from "react";
 import type { BrowserSurfaceBinding } from "./browserSurfaceBridge";
 import type { BrowserFramesBinding } from "./browserFramesBridge";
-import type { BrowserFramesHost, BrowserSurfaceHost } from "@t3tools/extension-sdk/catalogue";
+import type { KeybindingsHostBinding } from "./keybindingsHostBridge";
+import type {
+  BrowserFramesHost,
+  BrowserSurfaceHost,
+  UiKeybindingsHost,
+} from "@t3tools/extension-sdk/catalogue";
 import {
   discardStagedGlobalCommands,
   stageGlobalCommands,
@@ -181,6 +186,12 @@ export function createInstalledExtensionController(options: {
    * and detaches its views with the installation lifetime.
    */
   readonly browserFrames?: (binding: BrowserFramesBinding) => BrowserFramesHost;
+  /**
+   * `t3.ui/keybindings@1.1.0` client capability — bound per installation so
+   * `host.keybindings` exists only under that installation's grant and
+   * retires with its lifetime.
+   */
+  readonly keybindings?: (binding: KeybindingsHostBinding) => UiKeybindingsHost | undefined;
 }) {
   const active = new Map<string, { signature: string; stop: () => void }>();
   // One epoch per live registration — a re-registered installation gets a new
@@ -342,6 +353,10 @@ export function createInstalledExtensionController(options: {
               grants: item.grants,
               lifetime: lifetime.signal,
             });
+            const keybindings = options.keybindings?.({
+              grants: item.grants,
+              lifetime: lifetime.signal,
+            });
             const clientHost: ClientHost = {
               React: options.React,
               async invokeApi(request, callerSignal) {
@@ -500,6 +515,7 @@ export function createInstalledExtensionController(options: {
               },
               ...(browserSurface ? { browserSurface } : {}),
               ...(browserFrames ? { browserFrames } : {}),
+              ...(keybindings ? { keybindings } : {}),
             };
             const extension = (factory as ClientFactory)(clientHost);
             if (canonical(extension.manifest) !== canonical(item.package.manifest))

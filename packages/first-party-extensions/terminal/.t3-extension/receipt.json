@@ -4,8 +4,8 @@
   "packageId": "t3.terminal",
   "version": "0.3.0",
   "hashes": {
-    "t3-extension.json": "5b8b0262cb770506d507ea35475551aca5dbd78c70c047f5d738f089d8860b63",
-    "client.mjs": "1e521f5dac1e5d99a8f1744b9bc99870fe170e4cfe80a104ef31b41da7990ca0",
+    "t3-extension.json": "58c67e58c436368efa4abd0faf1b709534753dec40715a0f716f1b253309b4d1",
+    "client.mjs": "f021170750e1fecdcb73ef2e691dc21099c5b899673b9ccba59c509a6436b0fe",
     "assets/ghostty-vt.wasm": "51b016a6aa3c29ead71c7c8acf8c01d43b064bae19957a9c9f9e2bf469267629",
     "assets/ghostty-write-pty.wasm": "75cb147e98ede3f85f3cd6236a30f6d12565b0b237e1d8db941f5f3e8ad3d903",
     "assets/SymbolsNerdFontMono-Regular.woff2": "a8e2fc5ae3c2525812151b95da80c5beab0befa84aca84fc33aaed94317502df",

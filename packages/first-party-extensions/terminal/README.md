@@ -18,13 +18,15 @@ Interactive terminal plugin driven entirely by public contracts:
   overrides so nothing contract-derived outlives its feed. On the VT pane
   the same properties feed `terminalThemeFromApp` → `surface.setTheme`, so
   the canvas and the chrome share one theme pipeline.
-- `t3.ui/keybindings@^1.0.0` — per-view `toggle`/`new`/`close`/`split`/
+- `t3.ui/keybindings@^1.1.0` — per-view `toggle`/`new`/`close`/`split`/
   `splitVertical` commands (default keys mirror the native
   `mod+j`/`mod+n`/`mod+w`/`mod+d`/`mod+shift+d` chords; the host's
   user/native precedence decides who claims them), plus a staged
   installation-scoped `toggle` with a bottom-dock `activation` fallback for
   cold open (`t3.ui/keybindings.global` + `t3.ui/panels` grants). All actions
   are bound per view through `ViewSession.bindCommands` and stay panel-local.
+  The focused chords resolve through the client-local
+  `host.keybindings.resolveTerminalFocusKey` (see below).
 - `t3.ui/panels@^1.0.0` — the dispatched `toggle` closes the hosting surface
   via `closeSurface`; failures surface on the panel status row.
 
@@ -65,10 +67,15 @@ re-attach and resume their retained history when their group is shown.
 The surface declares `claimsTerminalFocus`, so the host tags the frame
 `data-terminal-owner="extension"` and leaves the four focused terminal
 chords untouched instead of routing them to a native terminal. Owning the
-claim means owning the keymap — the host's own rules still resolve the
-chords to `terminal.*` first, so the view captures them at its root
-(`onKeyDownCapture`, ahead of the VT encoder) and dispatches them through
-the same actions the registered `t3.ui/keybindings` commands drive. The
+claim means owning the keymap. The view captures keys at its root
+(`onKeyDownCapture`, ahead of the VT encoder) and asks
+`host.keybindings.resolveTerminalFocusKey` what the host's dispatcher
+resolved. That is the dispatcher's own resolver over the live keymap, so
+user remaps (including `terminalFocus`-guarded ones and chords with no
+default) apply from the first press. The four `terminal.*` commands
+dispatch through the same actions the registered `t3.ui/keybindings`
+commands drive, and every other key is left for the shell. A host without
+the resolver gets the shipped default chords only. The
 `<pre>` fallback for asset-less hosts stays single-pane — the group model
 still applies (sidebar membership and activation), it just does not render
 side-by-side.
@@ -186,6 +193,7 @@ cancellation, or ordering fences to disambiguate it — hence halt + discard +
 explicit resume rather than replay. Host-side op-id fencing remains unsolved.
 
 ## Known limitations
+
 - **Dock sizing (B8):** dock geometry is host-owned; the plugin only sizes
   its own terminal content.
 - **Remote pixels/frames:** out of scope; rendering is local WASM only.

@@ -15,6 +15,7 @@ import {
   assertProvidedApiOwner,
   type BrowserFramesHost,
   type BrowserSurfaceHost,
+  type UiKeybindingsHost,
 } from "./catalogue.js";
 import type * as React from "react";
 import {
@@ -197,6 +198,12 @@ export interface ClientHost {
    * hosts without a remote-frame transport (treat as "host-unavailable").
    */
   readonly browserFrames?: BrowserFramesHost;
+  /**
+   * `t3.ui/keybindings@1.1.0` host capability — synchronous, client-local
+   * keymap resolution. Absent on hosts that predate it or without the
+   * `t3.ui/keybindings` grant (treat as "host-unavailable").
+   */
+  readonly keybindings?: UiKeybindingsHost;
 }
 export type ClientFactory = (host: ClientHost) => Extension<SurfaceRenderer>;
 

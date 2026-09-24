@@ -288,6 +288,7 @@ import {
 import { confirmTerminalClose, isTerminalCloseConfirmPending } from "../lib/terminalCloseConfirm";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { getTerminalFocusOwner, isExtensionClaimedTerminalCommand } from "../lib/terminalFocus";
+import { publishShortcutContext } from "../lib/shortcutContext";
 import { suppressNativeTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
 import {
@@ -6102,6 +6103,9 @@ export default function ChatView(props: ChatViewProps) {
     }),
     [composerRef, previewPanelOpen, terminalUiState.terminalOpen],
   );
+  // Extension terminals resolve their chords against this same context
+  // (the `t3.ui/keybindings` client capability).
+  useEffect(() => publishShortcutContext(getShortcutContext), [getShortcutContext]);
 
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {

@@ -5802,6 +5802,7 @@ var __t3Client = (() => {
   var UI_THEME_READ = "t3.ui/theme.read";
   var UI_THEME_WRITE = "t3.ui/theme.write";
   var UI_KEYBINDINGS = "t3.ui/keybindings";
+  var UI_KEYBINDINGS_VERSION = "1.1.0";
   var UI_NOTIFY = "t3.ui/notify";
   var UI_PANELS = "t3.ui/panels";
   var uiClientTargetSchema = {
@@ -5948,7 +5949,7 @@ var __t3Client = (() => {
   });
   var uiKeybindingsApi = defineApi({
     id: UI_KEYBINDINGS,
-    version: "1.0.0",
+    version: UI_KEYBINDINGS_VERSION,
     methods: [
       {
         name: "getCapabilities",
@@ -11233,11 +11234,6 @@ var __t3Client = (() => {
     ["mod+n", "new"],
     ["mod+w", "close"]
   ]);
-  var TERMINAL_REGISTERED_CHORDS = new Set(
-    TERMINAL_VIEW_COMMANDS.flatMap(
-      (command) => command.defaultKey === void 0 ? [] : [command.defaultKey]
-    )
-  );
   var NATIVE_TERMINAL_CHORD_COMMANDS = /* @__PURE__ */ new Map([
     ["terminal.split", "split"],
     ["terminal.splitVertical", "splitVertical"],
@@ -11250,26 +11246,13 @@ var __t3Client = (() => {
     if (event.key.length !== 1) return null;
     return `mod${event.shiftKey ? "+shift" : ""}+${event.key.toLowerCase()}`;
   }
-  function resolveTerminalChord(chord, conflicts) {
-    if (chord === null) return null;
-    if (conflicts !== null) {
-      const entry = conflicts.find((conflict) => conflict.key === chord);
-      if (entry !== void 0) {
-        const action = NATIVE_TERMINAL_CHORD_COMMANDS.get(entry.command);
-        if (action !== void 0) return action;
-      }
+  function terminalChordAction(event, keybindings, isMac) {
+    if (keybindings !== void 0) {
+      const command = keybindings.resolveTerminalFocusKey(event);
+      return command === null ? null : NATIVE_TERMINAL_CHORD_COMMANDS.get(command) ?? null;
     }
-    return TERMINAL_DEFAULT_CHORDS.get(chord) ?? null;
-  }
-  function isPendingOwnableTerminalChord(chord, conflicts) {
-    if (chord === null) return false;
-    if (TERMINAL_REGISTERED_CHORDS.has(chord)) return true;
-    if (conflicts !== null && conflicts.some(
-      (conflict) => conflict.key === chord && (NATIVE_TERMINAL_CHORD_COMMANDS.has(conflict.command) || NATIVE_TERMINAL_CHORD_COMMANDS.has(conflict.loser))
-    )) {
-      return true;
-    }
-    return conflicts === null && chord.startsWith("mod+shift+") && chord !== "mod+shift+c" && chord !== "mod+shift+v";
+    const chord = terminalChordFromEvent(event, isMac);
+    return chord === null ? null : TERMINAL_DEFAULT_CHORDS.get(chord) ?? null;
   }
   function dispatchTerminalCommand(commandId, actions) {
     switch (commandId) {
@@ -12230,62 +12213,6 @@ var __t3Client = (() => {
 [terminal] ${message}\r
 `);
   }
-  function useTerminalChordConflicts(host, session, visible) {
-    const conflictsRef = (0, import_react.useRef)(null);
-    const conflictsPendingRef = (0, import_react.useRef)(false);
-    const refreshRef = (0, import_react.useRef)(() => {
-    });
-    (0, import_react.useEffect)(() => {
-      if (!visible) return;
-      const controller = new AbortController();
-      const signal = AbortSignal.any([controller.signal, session.signal]);
-      const api = bindApi(uiKeybindingsApi, host, session.context);
-      let lastRefresh = -Infinity;
-      let generation = 0;
-      const apply = (request, conflicts) => {
-        if (signal.aborted || request !== generation) return;
-        conflictsPendingRef.current = false;
-        conflictsRef.current = conflicts;
-      };
-      const invokeList = () => {
-        lastRefresh = Date.now();
-        const request = ++generation;
-        conflictsPendingRef.current = true;
-        void api.invoke("listConflicts", {}, signal).then(
-          (value) => apply(request, value.conflicts),
-          () => apply(request, null)
-        );
-      };
-      const refresh = () => {
-        if (Date.now() - lastRefresh < 1e3) return;
-        invokeList();
-      };
-      refreshRef.current = refresh;
-      conflictsRef.current = null;
-      refresh();
-      let focused = false;
-      const onFocusIn = () => {
-        if (focused) return refresh();
-        focused = true;
-        invokeList();
-      };
-      const onFocusOut = () => {
-        focused = false;
-      };
-      document.addEventListener("focusin", onFocusIn);
-      document.addEventListener("focusout", onFocusOut);
-      return () => {
-        refreshRef.current = () => {
-        };
-        controller.abort();
-        document.removeEventListener("focusin", onFocusIn);
-        document.removeEventListener("focusout", onFocusOut);
-        conflictsRef.current = null;
-        conflictsPendingRef.current = false;
-      };
-    }, [host, session, visible]);
-    return { conflictsRef, conflictsPendingRef, refreshChords: () => refreshRef.current() };
-  }
   function handleBeforeKey(event, panel, terminalId) {
     const navigationData = terminalNavigationShortcutData(event);
     if (navigationData !== null) {
@@ -12731,11 +12658,6 @@ var __t3Client = (() => {
       [panel, host, session]
     );
     usePanelCommands(host, session, panel, visible, panelActions);
-    const { conflictsRef, conflictsPendingRef, refreshChords } = useTerminalChordConflicts(
-      host,
-      session,
-      visible
-    );
     const themeVars = useThemeVars(host, session, visible);
     const appearanceVars = useTerminalAppearanceVars(host, session, visible);
     const assets = useGhosttyAssets(host, session);
@@ -12774,17 +12696,14 @@ var __t3Client = (() => {
         "aria-label": "Terminal",
         onKeyDownCapture: (event) => {
           if (event.defaultPrevented) return;
-          const chord = terminalChordFromEvent(event.nativeEvent, isMacPlatform(navigator.platform));
-          const action = resolveTerminalChord(chord, conflictsRef.current);
-          if (conflictsPendingRef.current && isPendingOwnableTerminalChord(chord, conflictsRef.current)) {
-            event.preventDefault();
-            event.stopPropagation();
-            return;
-          }
+          const action = terminalChordAction(
+            event.nativeEvent,
+            host.keybindings,
+            isMacPlatform(navigator.platform)
+          );
           if (action !== null && dispatchTerminalCommand(action, panelActions)) {
             event.preventDefault();
             event.stopPropagation();
-            refreshChords();
           }
         },
         style: {
