@@ -7,6 +7,7 @@ import {
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import {
   browserFramesApi,
+  browserLocalServersApi,
   browserSessionsApi,
   filePresentationApi,
   resourcesLeaseApi,
@@ -23,6 +24,7 @@ import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useEffect, useRef, useState } from "react";
 
+import { isLeaseUrl, mintWorkspaceFileUrl } from "./fileOpen.js";
 import {
   type BrowserHistoryEntry,
   fitHistoryToSaveBudget,
@@ -31,6 +33,8 @@ import {
   removeHistoryUrl,
   sanitizeHistoryEntries,
 } from "./historyStore.js";
+import { LocalServersSection, NoPreview, RecentlyUsedHeading, useLocalServers } from "./landing.js";
+import { landingModel } from "./localServers.js";
 import {
   BROWSER_GLOBAL_COMMANDS,
   BROWSER_VIEW_COMMANDS,
@@ -44,11 +48,9 @@ import {
   canGoForward,
   currentUrl,
   describeStatus,
-  NO_SESSION_NOTICE,
   goBack,
   goForward,
   initialNavigationState,
-  isBrowserPreviewFile,
   recentTargets,
   reload,
   submitAddress,
@@ -176,12 +178,16 @@ function restoreState(value: unknown): value is PersistedViewState | null {
 function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const { host, session } = props;
   const restored = restoreState(session.restoreState) ? session.restoreState : null;
-  const [state, setState] = useState<NavigationState>(() => {
-    if (restored?.url) return submitAddress(initialNavigationState, restored.url);
-    if (restored?.relativePath && isBrowserPreviewFile(restored.relativePath))
-      return submitAddress(initialNavigationState, restored.relativePath);
-    return initialNavigationState;
-  });
+  const [state, setState] = useState<NavigationState>(() =>
+    restored?.url ? submitAddress(initialNavigationState, restored.url) : initialNavigationState,
+  );
+  // Workspace file this view presents (files row 15b). Its lease URL expires,
+  // so the path — never the minted URL — is what history and restore keep.
+  const [fileSource, setFileSource] = useState<string | null>(
+    restored?.url ? null : (restored?.relativePath ?? null),
+  );
+  const fileSourceRef = useRef(fileSource);
+  const fileRun = useRef<AbortController | null>(null);
   const [address, setAddress] = useState<string>(restored?.url ?? restored?.relativePath ?? "");
   const [history, setHistory] = useState<readonly BrowserHistoryEntry[]>(() =>
     sanitizeHistoryEntries(restored?.history),
@@ -203,6 +209,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const lastRevision = useRef(-1);
   const addressRef = useRef<HTMLInputElement | null>(null);
   const themeVars = useThemeVars(host, session, visible);
+  const localServers = useLocalServers(host, session, visible && held === null);
   useEffect(() => {
     heldRef.current = held;
   }, [held]);
@@ -332,7 +339,13 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       tabId?: string;
       serverEpoch?: string;
     } = {
-      ...(url ? { url } : restored?.relativePath ? { relativePath: restored.relativePath } : {}),
+      ...(fileSourceRef.current
+        ? { relativePath: fileSourceRef.current }
+        : url && !isLeaseUrl(url)
+          ? { url }
+          : restored?.relativePath
+            ? { relativePath: restored.relativePath }
+            : {}),
       ...(heldSession ? { tabId: heldSession.tabId, serverEpoch: heldSession.serverEpoch } : {}),
     };
     session.save({ ...base, history: fitHistoryToSaveBudget(base, entries) });
@@ -341,7 +354,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   /** Commit a navigation state; every landed target is a recorded visit. */
   const commit = (next: NavigationState) => {
     setState(next);
-    if (next.status.kind !== "target") return;
+    if (next.status.kind !== "target" || isLeaseUrl(next.status.url)) return;
     const entries = recordHistoryVisit(history, next.status.url, Date.now());
     setHistory(entries);
     historyRef.current = entries;
@@ -376,8 +389,13 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         setHeld(next);
         setLive(receipt.session);
         setFault(null);
-        const base: { url?: string; tabId: string; serverEpoch: string } = {
-          ...(receipt.session.requestedUrl ? { url: receipt.session.requestedUrl } : {}),
+        const requested = receipt.session.requestedUrl;
+        const base: { url?: string; relativePath?: string; tabId: string; serverEpoch: string } = {
+          ...(fileSourceRef.current
+            ? { relativePath: fileSourceRef.current }
+            : requested && !isLeaseUrl(requested)
+              ? { url: requested }
+              : {}),
           tabId: next.tabId,
           serverEpoch: next.serverEpoch,
         };
@@ -390,15 +408,26 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     );
   };
 
+  const presentFile = (relativePath: string | null) => {
+    fileSourceRef.current = relativePath;
+    setFileSource(relativePath);
+  };
+
   const submit = (raw: string) => {
+    fileRun.current?.abort();
+    presentFile(null);
     const next = submitAddress(state, raw);
     commit(next);
     if (next.status.kind !== "target") return;
-    const url = next.status.url;
+    go(next.status.url);
+  };
+
+  const go = (url: string) => {
     const api = bindApi(browserSessionsApi, host, session.context);
     // An ended lease means the held session is suspect — open fresh rather
     // than navigate a session the host already fenced off.
-    const usable = held && surfaceLease?.state.kind !== "ended" ? held : null;
+    const current = heldRef.current;
+    const usable = current && surfaceLease?.state.kind !== "ended" ? current : null;
     dispatch((signal) =>
       usable
         ? api.invoke(
@@ -415,7 +444,56 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     );
   };
 
+  /**
+   * Files row 15b: mint a `workspace-file` lease, resolve it on this
+   * document's origin, then open/navigate exactly like a typed address —
+   * minus the history visit. Also the file view's Reload: a fresh mint
+   * outlives the previous token's expiry.
+   */
+  const openFile = (relativePath: string) => {
+    fileRun.current?.abort();
+    const controller = new AbortController();
+    fileRun.current = controller;
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    presentFile(relativePath);
+    setAddress(relativePath);
+    setFault(`Opening ${relativePath}…`);
+    const lease = bindApi(resourcesLeaseApi, host, session.context);
+    void mintWorkspaceFileUrl({
+      lease: {
+        getCapabilities: (abort) => lease.invoke("getCapabilities", {}, abort),
+        createPresentationUrl: (resource, abort) =>
+          lease.invoke("createPresentationUrl", { resource }, abort),
+      },
+      threadId: session.context.resource.threadId,
+      relativePath,
+      documentUrl: globalThis.location?.href,
+      fetch: (url, init) => fetch(url, init),
+      signal,
+    }).then(
+      (result) => {
+        if (signal.aborted) return;
+        if (!result.ok) {
+          setFault(result.message);
+          return;
+        }
+        setState((current) => submitAddress(current, result.url));
+        go(result.url);
+      },
+      () => {},
+    );
+  };
+  useEffect(() => {
+    // A presentation open (or a restore whose session is gone) arrives as a
+    // bare path: mint once on mount. A restored live session keeps its page.
+    if (fileSourceRef.current && !heldRef.current) openFile(fileSourceRef.current);
+    return () => fileRun.current?.abort();
+    // Mount-only: later opens are explicit (Reload, a new presentation).
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies
+  }, []);
+
   const command = (method: "back" | "forward" | "reload") => {
+    if (method === "reload" && fileSourceRef.current) return openFile(fileSourceRef.current);
     if (!held) return;
     if (method === "back") commit(goBack(state));
     else if (method === "forward") commit(goForward(state));
@@ -443,7 +521,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   useEffect(() => {
     runViewCommand.current = (commandId) => {
       if (commandId === "reload") {
-        if (held) command("reload");
+        if (held || fileSourceRef.current) command("reload");
         else commit(reload(state));
       } else if (commandId === "focusAddress") {
         focusAddressInput(addressRef.current);
@@ -470,6 +548,12 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       );
     return () => controller.abort();
   }, [host, session, visible]);
+
+  const showRecents = state.status.kind !== "target" && recentHistoryEntries(history).length > 0;
+  const landing = landingModel({
+    recentCount: showRecents ? recentHistoryEntries(history).length : 0,
+    localServers,
+  });
 
   const leaseState = surfaceLease?.state;
   const remoteNotice =
@@ -537,8 +621,8 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         <button
           type="button"
           aria-label="Reload"
-          disabled={state.status.kind !== "target"}
-          onClick={() => (held ? command("reload") : commit(reload(state)))}
+          disabled={state.status.kind !== "target" && fileSource === null}
+          onClick={() => (held || fileSource ? command("reload") : commit(reload(state)))}
           style={buttonStyle}
         >
           ⟳
@@ -611,10 +695,9 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             justifyItems: "start",
           }}
         >
-          <p role="note" style={{ margin: 0, fontSize: 12, color: muted, maxWidth: "36rem" }}>
-            {NO_SESSION_NOTICE}
-          </p>
-          {state.status.kind !== "target" && recentHistoryEntries(history).length > 0 && (
+          {landing.noPreview && <NoPreview {...landing.noPreview} />}
+          {showRecents && <RecentlyUsedHeading />}
+          {showRecents && (
             <ul
               aria-label="Recently used"
               style={{ listStyle: "none", margin: 0, padding: 0, fontSize: 12 }}
@@ -652,6 +735,11 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
               })}
             </ul>
           )}
+          <LocalServersSection
+            servers={landing.serverList}
+            notice={landing.localNotice}
+            onOpen={submit}
+          />
           {recentTargets(state).length > 0 && (
             <ul
               aria-label="Requested targets"
@@ -694,6 +782,7 @@ const authored = defineExtension({
   serverEntry: "server.ts",
   requires: [
     requireApi(browserSessionsApi),
+    requireApi(browserLocalServersApi),
     requireApi(browserFramesApi),
     requireApi(resourcesLeaseApi),
     requireApi(uiThemeApi),
