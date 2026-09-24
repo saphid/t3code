@@ -1,4 +1,6 @@
 import { useSyncExternalStore } from "react";
+import { unescapeReviewCommentTags } from "@t3tools/shared/composerContextLegacy";
+import { neutralizeReviewCommentTags } from "@t3tools/shared/composerContextLegacySend";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 
 import type { ReviewRenderableLineRow } from "./reviewModel";
@@ -202,9 +204,9 @@ function extractReviewCommentBody(rawBody: string): {
   const match = matches.at(-1);
   const fenceIndex = match?.index;
   return {
-    text: rawBody.slice(0, fenceIndex ?? rawBody.length).trim(),
+    text: unescapeReviewCommentTags(rawBody.slice(0, fenceIndex ?? rawBody.length).trim()),
     language: match?.[2]?.trim() || "diff",
-    contents: match?.[3] ?? "",
+    contents: unescapeReviewCommentTags(match?.[3] ?? ""),
   };
 }
 
@@ -256,9 +258,11 @@ export function formatReviewCommentContext(target: ReviewCommentTarget, comment:
       ` rangeLabel="${escapeReviewCommentAttribute(rangeLabel)}"`,
       ">",
     ].join(""),
-    comment.trim(),
+    // The block scan above ends at the first closer without tracking fences, so the
+    // comment's words and the quoted lines both travel neutralized; readers decode them.
+    neutralizeReviewCommentTags(comment.trim()),
     `${fence}diff`,
-    diff,
+    neutralizeReviewCommentTags(diff),
     fence,
     "</review_comment>",
   ].join("\n");

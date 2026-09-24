@@ -228,6 +228,17 @@ function unescapeAttribute(value: string): string {
     .replace(/&amp;/g, "&");
 }
 
+/**
+ * Reverses the serializer's tag neutralization so recovered text matches what was written.
+ * The `&gt;` tail is optional: bodies serialized by older escapes carry it, and decoding runs
+ * after the record boundary is fixed, so a restored `<` can never split a record.
+ */
+export function unescapeReviewCommentTags(text: string): string {
+  return text
+    .replace(/&lt;(\/?review_comment\b)&gt;/giu, "<$1>")
+    .replace(/&lt;(?=\/?review_comment\b)/giu, "<");
+}
+
 function reviewRecord(
   rawAttributes: string,
   rawBody: string,
@@ -259,8 +270,8 @@ function reviewRecord(
     startIndex: Math.min(Number(startIndex), Number(endIndex)),
     endIndex: Math.max(Number(startIndex), Number(endIndex)),
     rangeLabel,
-    text: rawBody.slice(0, fence?.index ?? rawBody.length).trim(),
-    diff: fence?.[3] ?? "",
+    text: unescapeReviewCommentTags(rawBody.slice(0, fence?.index ?? rawBody.length).trim()),
+    diff: unescapeReviewCommentTags(fence?.[3] ?? ""),
     fenceLanguage: fence?.[2]?.trim() || "diff",
   };
 }

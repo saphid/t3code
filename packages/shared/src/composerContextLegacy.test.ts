@@ -541,7 +541,7 @@ describe("upgradeLegacyContextMessage", () => {
         startIndex: 4,
         endIndex: 6,
         rangeLabel: "L4-L6",
-        text: "Why? &lt;/review_comment&gt; still text",
+        text: "Why? </review_comment> still text",
         diff: "+ const x = 1;",
         fenceLanguage: "diff",
       },
