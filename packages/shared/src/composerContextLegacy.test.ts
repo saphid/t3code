@@ -621,10 +621,11 @@ describe("upgradeLegacyContextMessage", () => {
     });
   });
 
-  // The writer's `\b` is Unicode-aware: `ſ` (U+017F) and `K` (U+212A) are word characters to
-  // it, so `<` is never escaped before these tag spellings. Inside a marked body they are
-  // body text, not escapes, and stay literal in text and fenced diff alike.
-  it.each(["ſ", "K"])(
+  // The writer's `\b` is Unicode-aware: `ſ` (U+017F) and the Kelvin sign (U+212A, spelled
+  // as an escape below since its glyph reads as ASCII `K`) are word characters to it, so
+  // `<` is never escaped before these tag spellings. Inside a marked body they are body
+  // text, not escapes, and stay literal in text and fenced diff alike.
+  it.each(["ſ", "\u212A"])(
     "keeps the tag spelling with Unicode suffix %s literal in a marked body",
     (suffix) => {
       const body = `&lt;/review_comment${suffix}> and &lt;review_comment${suffix}> are not writer-emitted escapes`;
