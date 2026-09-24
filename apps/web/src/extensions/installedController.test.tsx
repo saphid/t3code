@@ -1,12 +1,17 @@
 import * as React from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, it, expect, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, type ExtensionInstallation } from "@t3tools/contracts";
 import type { ApiStreamFrame } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { Extension } from "@t3tools/extension-sdk/host";
 import type { SurfaceRenderer } from "@t3tools/extension-sdk/react";
+import type { ViewRecord } from "@t3tools/extension-sdk/contracts";
 import { createCatalogueRefreshQueue } from "./catalogueRefresh";
 import { createInstalledExtensionController, type InstalledSnapshot } from "./installedController";
+import { registerWorkspaceExtension, WorkspaceExtensionSurface } from "./workspaceRegistry";
+
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const manifest = { id: "test.installed", version: "1.0.0", apiVersion: 1 as const, surfaces: [] };
 const installation: ExtensionInstallation = {
@@ -667,3 +672,96 @@ it.each(["named", "selected API"] as const)(
     }
   },
 );
+
+it("rebinds open and newly activated tabs to an updated pack without a reload", async () => {
+  const surface = {
+    id: "test.pack/view",
+    title: "Pack",
+    scope: "project" as const,
+    clients: ["web"],
+    placements: ["side-panel" as const],
+    capabilities: [],
+    stateVersion: 1,
+  };
+  const packManifest = {
+    id: "test.pack",
+    version: "1.0.0",
+    apiVersion: 1 as const,
+    surfaces: [surface],
+  };
+  const pack = (hash: string): ExtensionInstallation => ({
+    id: packManifest.id,
+    contentHash: hash.repeat(64),
+    enabled: true,
+    grants: { capabilities: [], projectIds: [ProjectId.make("project-a")] },
+    package: { format: 1, manifest: packManifest, clientEntry: "client.mjs", tools: [] },
+  });
+  let catalog = [pack("a")];
+  const controller = createInstalledExtensionController({
+    environmentId: "env-rebind",
+    React,
+    list: async () => ({ installations: catalog }),
+    // The module body is the content hash, so the rendered view names the build it came from.
+    client: async (_id, hash) => ({ code: hash.slice(0, 1), contentHash: hash }),
+    load: async (build) => (_host: ClientHost) => ({
+      manifest: packManifest,
+      surfaces: [
+        {
+          id: surface.id,
+          validateRestore: () => true,
+          createView: () => ({ renderer: () => <span>{"build " + build}</span> }),
+        },
+      ],
+    }),
+    invoke: async () => null,
+    register: (extension) =>
+      registerWorkspaceExtension(extension, undefined, { environmentId: "env-rebind" }),
+    changed: () => {},
+  });
+  // The persisted tab record carries no package identity; only the registry resolves it.
+  const record: ViewRecord = {
+    version: 1,
+    surfaceId: surface.id,
+    placement: "side-panel",
+    stateVersion: 1,
+    restoreState: null,
+    fallback: "Pack is unavailable. Check environment extensions in Settings.",
+    context: {
+      client: "web",
+      resource: {
+        namespace: packManifest.id,
+        id: surface.id,
+        environmentId: "env-rebind",
+        projectId: "project-a",
+      },
+    },
+  };
+  const text = (root: ReactTestRenderer) => JSON.stringify(root.toJSON());
+  let open!: ReactTestRenderer;
+  let activatedLater!: ReactTestRenderer;
+  try {
+    await act(async () => {
+      await controller.refresh();
+      open = create(<WorkspaceExtensionSurface record={record} visible />);
+    });
+    expect(text(open)).toContain("build a");
+
+    catalog = [pack("b")];
+    await act(async () => {
+      await controller.refresh();
+    });
+    expect(text(open)).toContain("build b");
+    expect(text(open)).not.toContain("unavailable");
+
+    await act(async () => {
+      activatedLater = create(<WorkspaceExtensionSurface record={record} visible />);
+    });
+    expect(text(activatedLater)).toContain("build b");
+  } finally {
+    await act(async () => {
+      open?.unmount();
+      activatedLater?.unmount();
+      controller.dispose();
+    });
+  }
+});
