@@ -33,6 +33,7 @@ import {
   terminalDeleteShortcutData,
   terminalNavigationShortcutData,
 } from "./ghostty/surfaceKeys.ts";
+import { useTerminalSelectionMenu } from "./selectionMenu.tsx";
 import { TerminalStreamHub, type TerminalPaneLease } from "./streamHub.ts";
 import { terminalFontFromVars, terminalThemeFromApp } from "./terminalTheme.ts";
 import { TerminalVtAttachment, pumpTerminalOutput } from "./vtAttachment.ts";
@@ -506,6 +507,11 @@ function TerminalPane(props: {
   );
   const mountRef = useRef<HTMLDivElement | null>(null);
   const surfaceRef = useRef<GhosttyTerminalSurface | null>(null);
+  const selectionMenu = useTerminalSelectionMenu({
+    mountRef,
+    surfaceRef,
+    reportError: writeSystemMessage,
+  });
   const shownRef = useRef(shown && visible);
   // Latest active/shown state for the async surface creation: a surface
   // finishing after the focus effect last ran must know whether this pane
@@ -638,7 +644,8 @@ function TerminalPane(props: {
         },
         onData: (data) => panel.sendInput(terminalId, data),
         onResize: (cols, rows) => panel.resize(terminalId, cols, rows),
-        onSelectionChange: () => {},
+        onSelectionChange: selectionMenu.onSelectionChange,
+        onContextMenu: selectionMenu.onContextMenu,
         beforeKey: (event) => handleBeforeKey(event, panel, terminalId),
         onLinkActivate: () => {
           // Detection and hover still work; opening needs host contracts
@@ -715,7 +722,14 @@ function TerminalPane(props: {
       surface?.dispose();
       surfaceRef.current = null;
     };
-  }, [assets, attachment, panel, terminalId]);
+  }, [
+    assets,
+    attachment,
+    panel,
+    terminalId,
+    selectionMenu.onContextMenu,
+    selectionMenu.onSelectionChange,
+  ]);
 
   useEffect(() => {
     shownRef.current = shown && visible;
@@ -792,6 +806,7 @@ function TerminalPane(props: {
           colorScheme: "var(--t3-terminal-color-scheme, normal)",
         }}
       />
+      {selectionMenu.menu}
     </div>
   );
 }
