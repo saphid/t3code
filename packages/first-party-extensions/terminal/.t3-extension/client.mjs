@@ -1376,9 +1376,64 @@ var __t3Client = (() => {
       excerpt: { type: "string", maxLength: 512 }
     }
   };
+  var composerAnnotationSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["filePath", "startLine", "endLine", "body"],
+        properties: {
+          filePath: { type: "string", minLength: 1, maxLength: 512 },
+          startLine: { type: "integer", minimum: 1, maximum: 1e6 },
+          endLine: { type: "integer", minimum: 1, maximum: 1e6 },
+          body: { type: "string", minLength: 1, maxLength: 4096 },
+          excerpt: { type: "string", maxLength: 4096 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "kind",
+          "filePath",
+          "sectionId",
+          "sectionTitle",
+          "rangeLabel",
+          "diff",
+          "selection",
+          "body"
+        ],
+        properties: {
+          kind: { const: "diff" },
+          filePath: { type: "string", minLength: 1, maxLength: 512 },
+          sectionId: { type: "string", minLength: 1, maxLength: 512 },
+          sectionTitle: { type: "string", minLength: 1, maxLength: 256 },
+          rangeLabel: { type: "string", minLength: 1, maxLength: 128 },
+          diff: { type: "string", minLength: 1, maxLength: 4096 },
+          selection: {
+            type: "object",
+            additionalProperties: false,
+            required: ["start", "side", "end", "endSide"],
+            properties: {
+              start: { type: "integer", minimum: 1, maximum: 1e6 },
+              side: { enum: ["additions", "deletions"] },
+              end: { type: "integer", minimum: 1, maximum: 1e6 },
+              endSide: { enum: ["additions", "deletions"] }
+            }
+          },
+          startIndex: { type: "integer", minimum: 0, maximum: 1e6 },
+          endIndex: { type: "integer", minimum: 0, maximum: 1e6 },
+          body: { type: "string", minLength: 1, maxLength: 4096 }
+        }
+      }
+    ]
+  };
+  var composerThreadIdInput = {
+    threadId: { type: "string", minLength: 1, maxLength: 128 }
+  };
   var CLIENT_COMPOSER_API = validateApiDefinition({
     id: "t3.client/composer",
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
       {
         name: "insertContext",
@@ -1426,25 +1481,107 @@ var __t3Client = (() => {
         effect: "write",
         requiredGrants: [],
         inputSchema: withTarget({
-          threadId: { type: "string", minLength: 1, maxLength: 128 },
-          annotation: {
-            type: "object",
-            additionalProperties: false,
-            required: ["filePath", "startLine", "endLine", "body"],
-            properties: {
-              filePath: { type: "string", minLength: 1, maxLength: 512 },
-              startLine: { type: "integer", minimum: 1, maximum: 1e6 },
-              endLine: { type: "integer", minimum: 1, maximum: 1e6 },
-              body: { type: "string", minLength: 1, maxLength: 4096 },
-              excerpt: { type: "string", maxLength: 4096 }
-            }
-          }
+          ...composerThreadIdInput,
+          annotation: composerAnnotationSchema
         }, ["threadId", "annotation"]),
         outputSchema: {
           type: "object",
           additionalProperties: false,
           required: ["annotationId"],
           properties: { annotationId: { type: "string", minLength: 1, maxLength: 256 } }
+        }
+      },
+      {
+        name: "insertMention",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          ...composerThreadIdInput,
+          paths: {
+            type: "array",
+            minItems: 1,
+            maxItems: 8,
+            items: { type: "string", minLength: 1, maxLength: 512 }
+          }
+        }, ["threadId", "paths"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["inserted", "target"],
+          properties: {
+            inserted: { type: "integer", minimum: 0, maximum: 8 },
+            target: { type: "string", minLength: 1, maxLength: 256 }
+          }
+        }
+      },
+      {
+        name: "insertTerminalContext",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          ...composerThreadIdInput,
+          terminalId: { type: "string", minLength: 1, maxLength: 128 },
+          terminalLabel: { type: "string", minLength: 1, maxLength: 128 },
+          // 10,000 chars keeps the worst-case escaped frame inside the 64 KiB
+          // broker envelope; matches the public catalogue bound.
+          lineStart: { type: "integer", minimum: 1, maximum: 1e6 },
+          lineEnd: { type: "integer", minimum: 1, maximum: 1e6 },
+          text: { type: "string", minLength: 1, maxLength: 1e4 }
+        }, ["threadId", "terminalId", "terminalLabel", "lineStart", "lineEnd", "text"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["inserted", "target"],
+          properties: {
+            inserted: { type: "boolean" },
+            target: { type: "string", minLength: 1, maxLength: 256 },
+            reason: { type: "string", maxLength: 64 }
+          }
+        }
+      },
+      {
+        name: "listAnnotations",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({ ...composerThreadIdInput }, ["threadId"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["annotations"],
+          properties: {
+            annotations: {
+              type: "array",
+              // 8 entries at field maxima stay inside the 64 KiB frame envelope.
+              maxItems: 8,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["annotationId", "kind", "filePath", "rangeLabel", "sectionTitle"],
+                properties: {
+                  annotationId: { type: "string", minLength: 1, maxLength: 256 },
+                  kind: { enum: ["file", "diff"] },
+                  filePath: { type: "string", minLength: 1, maxLength: 512 },
+                  rangeLabel: { type: "string", maxLength: 128 },
+                  sectionTitle: { type: "string", maxLength: 256 }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        name: "removeAnnotation",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          ...composerThreadIdInput,
+          annotationId: { type: "string", minLength: 1, maxLength: 256 }
+        }, ["threadId", "annotationId"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["removed"],
+          properties: { removed: { type: "boolean" } }
         }
       }
     ]
@@ -5617,7 +5754,7 @@ var __t3Client = (() => {
   var COMPOSER_WRITE = "t3.composer/write";
   var MESSAGES_ENRICHMENT = "t3.messages/enrichment";
   var MESSAGES_WRITE = "t3.messages/write";
-  var composerThreadIdInput = { type: "string", minLength: 1, maxLength: 128 };
+  var composerThreadIdInput2 = { type: "string", minLength: 1, maxLength: 128 };
   var composerLineInput = { type: "integer", minimum: 1, maximum: 1e6 };
   var composerContextRefSchema = {
     type: "object",
@@ -5653,9 +5790,57 @@ var __t3Client = (() => {
     additionalProperties: false,
     properties: {}
   };
+  var composerTerminalIdInput = { type: "string", minLength: 1, maxLength: 128 };
+  var composerTerminalTextInput = { type: "string", minLength: 1, maxLength: 1e4 };
+  var composerInsertResultOutput = {
+    type: "object",
+    additionalProperties: false,
+    required: ["inserted", "target"],
+    properties: {
+      inserted: { type: "integer", minimum: 0, maximum: 8 },
+      target: { type: "string", minLength: 1, maxLength: 256 }
+    }
+  };
+  var annotationSelectionSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["start", "side", "end", "endSide"],
+    properties: {
+      start: composerLineInput,
+      side: { enum: ["additions", "deletions"] },
+      end: composerLineInput,
+      endSide: { enum: ["additions", "deletions"] }
+    }
+  };
+  var diffAnnotationSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "kind",
+      "filePath",
+      "sectionId",
+      "sectionTitle",
+      "rangeLabel",
+      "diff",
+      "selection",
+      "body"
+    ],
+    properties: {
+      kind: { const: "diff" },
+      filePath: { type: "string", minLength: 1, maxLength: 512 },
+      sectionId: { type: "string", minLength: 1, maxLength: 512 },
+      sectionTitle: { type: "string", minLength: 1, maxLength: 256 },
+      rangeLabel: { type: "string", minLength: 1, maxLength: 128 },
+      diff: { type: "string", minLength: 1, maxLength: 4096 },
+      selection: annotationSelectionSchema,
+      startIndex: { type: "integer", minimum: 0, maximum: 1e6 },
+      endIndex: { type: "integer", minimum: 0, maximum: 1e6 },
+      body: { type: "string", minLength: 1, maxLength: 4096 }
+    }
+  };
   var composerContextApi = defineApi({
     id: COMPOSER_CONTEXT,
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
       {
         name: "getCapabilities",
@@ -5664,7 +5849,12 @@ var __t3Client = (() => {
         // apart from "no grant" — authority gates the mutations, not the report.
         requiredGrants: [],
         inputSchema: composerEmptyInputSchema,
-        outputSchema: composerTransportOutput(["insertContext", "getDraftState"])
+        outputSchema: composerTransportOutput([
+          "insertContext",
+          "getDraftState",
+          "insertMention",
+          "insertTerminalContext"
+        ])
       },
       {
         name: "insertContext",
@@ -5675,7 +5865,7 @@ var __t3Client = (() => {
           additionalProperties: false,
           required: ["refs"],
           properties: {
-            threadId: composerThreadIdInput,
+            threadId: composerThreadIdInput2,
             refs: {
               type: "array",
               minItems: 1,
@@ -5703,7 +5893,7 @@ var __t3Client = (() => {
         inputSchema: {
           type: "object",
           additionalProperties: false,
-          properties: { threadId: composerThreadIdInput }
+          properties: { threadId: composerThreadIdInput2 }
         },
         outputSchema: {
           type: "object",
@@ -5745,19 +5935,71 @@ var __t3Client = (() => {
             }
           }
         }
+      },
+      {
+        name: "insertMention",
+        effect: "write",
+        requiredGrants: [COMPOSER_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["paths"],
+          properties: {
+            threadId: composerThreadIdInput2,
+            paths: {
+              type: "array",
+              minItems: 1,
+              maxItems: 8,
+              items: { type: "string", minLength: 1, maxLength: 512 }
+            }
+          }
+        },
+        outputSchema: composerInsertResultOutput
+      },
+      {
+        name: "insertTerminalContext",
+        effect: "write",
+        requiredGrants: [COMPOSER_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["terminalId", "terminalLabel", "lineStart", "lineEnd", "text"],
+          properties: {
+            threadId: composerThreadIdInput2,
+            terminalId: composerTerminalIdInput,
+            terminalLabel: composerTerminalIdInput,
+            lineStart: composerLineInput,
+            lineEnd: composerLineInput,
+            text: composerTerminalTextInput
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["inserted", "target"],
+          properties: {
+            inserted: { type: "boolean" },
+            reason: { enum: ["duplicate"] },
+            target: { type: "string", minLength: 1, maxLength: 256 }
+          }
+        }
       }
     ]
   });
   var messagesEnrichmentApi = defineApi({
     id: MESSAGES_ENRICHMENT,
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
       {
         name: "getCapabilities",
         effect: "read",
         requiredGrants: [],
         inputSchema: composerEmptyInputSchema,
-        outputSchema: composerTransportOutput(["attachAnnotation"])
+        outputSchema: composerTransportOutput([
+          "attachAnnotation",
+          "listAnnotations",
+          "removeAnnotation"
+        ])
       },
       {
         name: "attachAnnotation",
@@ -5768,20 +6010,25 @@ var __t3Client = (() => {
           additionalProperties: false,
           required: ["annotation"],
           properties: {
-            threadId: composerThreadIdInput,
+            threadId: composerThreadIdInput2,
             annotation: {
-              type: "object",
-              additionalProperties: false,
-              required: ["filePath", "startLine", "endLine", "body"],
-              properties: {
-                filePath: { type: "string", minLength: 1, maxLength: 512 },
-                startLine: composerLineInput,
-                endLine: composerLineInput,
-                // body + excerpt at 4,096 chars each keep the worst-case
-                // encoded request (~53 KB) inside the 64 KiB invoke envelope.
-                body: { type: "string", minLength: 1, maxLength: 4096 },
-                excerpt: { type: "string", maxLength: 4096 }
-              }
+              oneOf: [
+                {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["filePath", "startLine", "endLine", "body"],
+                  properties: {
+                    filePath: { type: "string", minLength: 1, maxLength: 512 },
+                    startLine: composerLineInput,
+                    endLine: composerLineInput,
+                    // body + excerpt at 4,096 chars each keep the worst-case
+                    // encoded request (~53 KB) inside the 64 KiB invoke envelope.
+                    body: { type: "string", minLength: 1, maxLength: 4096 },
+                    excerpt: { type: "string", maxLength: 4096 }
+                  }
+                },
+                diffAnnotationSchema
+              ]
             }
           }
         },
@@ -5792,6 +6039,63 @@ var __t3Client = (() => {
           properties: {
             annotationId: { type: "string", minLength: 1, maxLength: 256 }
           }
+        }
+      },
+      {
+        name: "listAnnotations",
+        effect: "read",
+        // Lists the caller's own unsent annotations only, but the draft itself
+        // is the user's unsent words — same write-authority stance as
+        // getDraftState on the composer contract.
+        requiredGrants: [MESSAGES_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: { threadId: composerThreadIdInput2 }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["annotations"],
+          properties: {
+            annotations: {
+              // 8 entries at field maxima stay inside the 64 KiB frame envelope.
+              type: "array",
+              maxItems: 8,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["annotationId", "kind", "filePath", "rangeLabel", "sectionTitle"],
+                properties: {
+                  annotationId: { type: "string", minLength: 1, maxLength: 256 },
+                  kind: { enum: ["file", "diff"] },
+                  filePath: { type: "string", minLength: 1, maxLength: 512 },
+                  rangeLabel: { type: "string", minLength: 1, maxLength: 128 },
+                  sectionTitle: { type: "string", minLength: 1, maxLength: 256 }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        name: "removeAnnotation",
+        effect: "write",
+        requiredGrants: [MESSAGES_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["annotationId"],
+          properties: {
+            threadId: composerThreadIdInput2,
+            annotationId: { type: "string", minLength: 1, maxLength: 256 }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["removed"],
+          properties: { removed: { type: "boolean" } }
         }
       }
     ]
