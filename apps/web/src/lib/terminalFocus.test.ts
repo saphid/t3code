@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it } from "vite-plus/test";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 
+import { resolveShortcutCommand } from "../keybindings";
 import {
   getTerminalFocusOwner,
   isExtensionClaimedTerminalCommand,
+  isExtensionDockTerminalFocused,
   isTerminalFocused,
 } from "./terminalFocus";
 
@@ -10,7 +13,7 @@ class MockHTMLElement {
   isConnected = false;
   className = "";
   terminalOwner: string | null = null;
-  readonly dataset: { terminalOwner?: string } = {};
+  readonly dataset: { terminalOwner?: string; terminalPlacement?: string } = {};
 
   readonly classList = {
     contains: (value: string) => this.className.split(/\s+/).includes(value),
@@ -133,4 +136,61 @@ describe("isExtensionClaimedTerminalCommand", () => {
       expect(isExtensionClaimedTerminalCommand(command, "extension")).toBe(false);
     },
   );
+});
+
+function focusTerminalFrame(owner: string, placement?: string) {
+  const element = new MockHTMLElement();
+  element.isConnected = true;
+  element.terminalOwner = owner;
+  element.dataset.terminalOwner = owner;
+  if (placement !== undefined) element.dataset.terminalPlacement = placement;
+  globalThis.HTMLElement = MockHTMLElement as unknown as typeof HTMLElement;
+  globalThis.document = { activeElement: element } as unknown as Document;
+}
+
+describe("mod+n inside a claiming extension terminal", () => {
+  const modN = {
+    key: "n",
+    metaKey: true,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+  };
+  const resolveModN = () =>
+    resolveShortcutCommand(modN, DEFAULT_RESOLVED_KEYBINDINGS, {
+      platform: "MacIntel",
+      context: { terminalFocus: isTerminalFocused() },
+    });
+
+  it("resolves to the terminal command the surface owns, not the new-thread picker", () => {
+    focusTerminalFrame("extension", "side-panel");
+    const command = resolveModN();
+    expect(command).toBe("terminal.new");
+    expect(isExtensionClaimedTerminalCommand(command!, getTerminalFocusOwner())).toBe(true);
+  });
+
+  it("still opens a new thread when focus is outside every terminal", () => {
+    globalThis.HTMLElement = MockHTMLElement as unknown as typeof HTMLElement;
+    globalThis.document = { activeElement: null } as unknown as Document;
+    expect(resolveModN()).toBe("chat.new");
+  });
+});
+
+describe("isExtensionDockTerminalFocused", () => {
+  it("is true for a claiming extension surface in the extension dock", () => {
+    focusTerminalFrame("extension", "bottom-dock");
+    expect(isExtensionDockTerminalFocused()).toBe(true);
+  });
+
+  it("leaves the toggle to the native drawer from a side-panel extension terminal", () => {
+    focusTerminalFrame("extension", "side-panel");
+    expect(isExtensionDockTerminalFocused()).toBe(false);
+  });
+
+  it("leaves the toggle to the native drawer from native terminals", () => {
+    focusTerminalFrame("drawer", "bottom-dock");
+    expect(isExtensionDockTerminalFocused()).toBe(false);
+    focusTerminalFrame("right-panel");
+    expect(isExtensionDockTerminalFocused()).toBe(false);
+  });
 });

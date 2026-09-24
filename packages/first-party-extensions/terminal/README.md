@@ -75,8 +75,10 @@ user remaps (including `terminalFocus`-guarded ones and chords with no
 default) apply from the first press. The four `terminal.*` commands
 dispatch through the same actions the registered `t3.ui/keybindings`
 commands drive, and every other key is left for the shell. A host without
-the resolver gets the shipped default chords only. The
-`<pre>` fallback for asset-less hosts stays single-pane — the group model
+the resolver gets the shipped default chords only. `mod+j` stays the
+host's: focused in the extension dock it hides that dock, as it hides the
+native drawer from inside it; anywhere else it drives the native drawer.
+The `<pre>` fallback for asset-less hosts stays single-pane — the group model
 still applies (sidebar membership and activation), it just does not render
 side-by-side.
 
@@ -92,9 +94,17 @@ packaged as digest-verified extension assets:
 
 The host delivers verified bytes via `host.readAsset`; `ghostty/runtime.ts`
 instantiates one shared runtime and each surface allocates its own terminal
-handle. A host without asset support still works: the panel falls back to a
-bounded `<pre>` text view that honors the same `--t3-terminal-*`
-contract variables and `::selection` styling.
+handle. The runtime allows 4 concurrent asset reads per installation, so
+every mounted placement shares one sequential load (`assetLoader.ts`) and a
+read refused at that cap backs off and retries. A host without asset
+support still works: the panel falls back to a bounded `<pre>` text view
+that drops escape sequences and honors the same `--t3-terminal-*` contract
+variables and `::selection` styling.
+
+The committed `.t3-extension/` bundle inlines SDK and shared code, and
+`t3-extension check` only compares it with its own receipt.
+`bundleFreshness.test.mjs` rebuilds the source and fails when the bundle is
+stale; run `vp run build` here after SDK or source changes.
 
 Vendoring deviations from `apps/web/src/terminal/ghostty/` (all mechanical,
 none change VT semantics): imports repointed to package-local helpers;

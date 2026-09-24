@@ -138,7 +138,11 @@ export function createNativeSurfaceBridge<Bindings>(
         {claimsTerminalFocus ? (
           // display: contents keeps the existing layout wrapper the only box;
           // the tag just marks this subtree as extension-owned terminal focus.
-          <div data-terminal-owner="extension" className="contents">
+          <div
+            data-terminal-owner="extension"
+            data-terminal-placement={props.record.placement}
+            className="contents"
+          >
             {rendered}
           </div>
         ) : (
