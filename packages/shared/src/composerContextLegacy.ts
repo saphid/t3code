@@ -230,15 +230,21 @@ function unescapeAttribute(value: string): string {
 }
 
 /**
- * Reverses the serializer's body encoding, and only that encoding: `&lt;` before a
- * `review_comment` delimiter becomes `<`, then `&amp;` becomes `&`. Ampersands decode last so
- * a literal `&lt;` the writer shielded as `&amp;lt;` is restored rather than reinterpreted.
- * Callers apply this only to bodies carrying the writer's `bodyEncoding` marker, after the
- * record boundary is fixed, so a restored `<` can never split a record and historical
- * unencoded bodies keep byte-identical semantics.
+ * Reverses the serializer's body encoding, and only that encoding: the exact lowercase
+ * `&lt;` the writer emits before a `review_comment` delimiter becomes `<` (the tag name
+ * still matches case-insensitively), then `&amp;` becomes `&`. Ampersands decode last so a
+ * literal `&lt;` the writer shielded as `&amp;lt;` is restored rather than reinterpreted,
+ * and entity prefixes the writer never emits (`&LT;`, `&Lt;`, `&lT;`) stay literal. Callers
+ * apply this only to bodies carrying the writer's `bodyEncoding` marker, after the record
+ * boundary is fixed, so a restored `<` can never split a record and historical unencoded
+ * bodies keep byte-identical semantics.
  */
 export function unescapeReviewCommentTags(text: string): string {
-  return text.replace(/&lt;(?=\/?review_comment\b)/giu, "<").replace(/&amp;/g, "&");
+  return text
+    .replace(/&lt;(\/?\w+)/g, (entity, tail: string) =>
+      /^\/?review_comment\b/i.test(tail) ? `<${tail}` : entity,
+    )
+    .replace(/&amp;/g, "&");
 }
 
 function reviewRecord(
