@@ -11,7 +11,11 @@ import {
   type ApiDiscovery,
   type ApiStreamEvent,
 } from "./capabilities.js";
-import { assertProvidedApiOwner, type BrowserSurfaceHost } from "./catalogue.js";
+import {
+  assertProvidedApiOwner,
+  type BrowserFramesHost,
+  type BrowserSurfaceHost,
+} from "./catalogue.js";
 import type * as React from "react";
 import {
   assertId,
@@ -187,6 +191,12 @@ export interface ClientHost {
    * "host-unavailable" state.
    */
   readonly browserSurface?: BrowserSurfaceHost;
+  /**
+   * `t3.browser/frames` host capability — presents remote frames into a
+   * caller-owned element when native compositing is unavailable. Absent on
+   * hosts without a remote-frame transport (treat as "host-unavailable").
+   */
+  readonly browserFrames?: BrowserFramesHost;
 }
 export type ClientFactory = (host: ClientHost) => Extension<SurfaceRenderer>;
 

@@ -81,6 +81,7 @@ function overlay(
     loading: false,
     zoomFactor: 1,
     pictureInPicture: false,
+    remoteLive: false,
     colorScheme: "system" as const,
     audioMuted: audio?.audioMuted ?? false,
     audible: audio?.audible ?? false,
@@ -123,6 +124,7 @@ function renderTabs(
       onAddDiff={() => undefined}
       onAddFiles={() => undefined}
       onAddAgents={() => undefined}
+      onAddDevice={() => undefined}
       liveAgentCount={0}
       browserAvailable
       terminalAvailable={false}
@@ -131,6 +133,7 @@ function renderTabs(
       pullRequestAvailable={false}
       pullRequestsAvailable={false}
       agentsAvailable={false}
+      deviceAvailable={false}
     >
       <div>content</div>
     </RightPanelTabs>,

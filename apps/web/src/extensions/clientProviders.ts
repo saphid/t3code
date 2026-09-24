@@ -701,6 +701,20 @@ export function createPanelsClientProvider(deps: ClientProviderDeps): ClientLoca
 // ---------------------------------------------------------------------------
 // Composer — real composerDraftStore writes, ScopedThreadRef only.
 
+/**
+ * `buildFileReviewComment` slices the quoted code out of `contents` by 1-based
+ * line number, treating it as the whole file. An excerpt is not a whole file:
+ * passed through raw, any comment below the excerpt's own line count quotes
+ * nothing, and without an excerpt the comment body or path would be quoted as
+ * code. Padding the excerpt to its real line position makes the slice yield
+ * exactly the excerpt; no excerpt means no quoted code.
+ */
+function composerQuotedContents(excerpt: string, startLine: number, endLine: number): string {
+  if (excerpt === "") return "";
+  const firstLine = Math.max(1, Math.min(startLine, endLine));
+  return "\n".repeat(firstLine - 1) + excerpt;
+}
+
 function composerThread(call: ClientProviderInvokeCall, threadId: string): ScopedThreadRef {
   const scoped = call.context.resource.threadId;
   if (threadId !== scoped)
@@ -742,7 +756,7 @@ export function createComposerClientProvider(deps: ClientProviderDeps): ClientLo
                 startLine,
                 endLine,
                 text: excerpt || `Context from ${path}`,
-                contents: excerpt || path,
+                contents: composerQuotedContents(excerpt, startLine, endLine),
               }),
             );
             inserted += 1;
@@ -767,7 +781,8 @@ export function createComposerClientProvider(deps: ClientProviderDeps): ClientLo
                 files: draft.files.length,
                 images: draft.images.length + draft.persistedAttachments.length,
                 terminalContexts: draft.terminalContexts.length,
-                elementContexts: draft.elementContexts.length,
+                // Element picks are drafted as preview annotations; the SDK keeps the key.
+                elementContexts: 0,
                 previewAnnotations: draft.previewAnnotations.length,
                 reviewComments: draft.reviewComments.length,
               },
@@ -793,7 +808,7 @@ export function createComposerClientProvider(deps: ClientProviderDeps): ClientLo
               startLine,
               endLine,
               text: body,
-              contents: excerpt || body,
+              contents: composerQuotedContents(excerpt, startLine, endLine),
             }),
           );
           return { annotationId } as unknown as Json;

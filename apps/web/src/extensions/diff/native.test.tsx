@@ -2,6 +2,7 @@ import { createContext, Suspense, useContext, useState, type ComponentProps } fr
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { createExtensionHost } from "@t3tools/extension-sdk/host";
 import { ExtensionSurface, type SurfaceRenderer } from "@t3tools/extension-sdk/react";
 import type { ViewRecord } from "@t3tools/extension-sdk/contracts";
@@ -27,7 +28,15 @@ const fixture = vi.hoisted(() => ({
   focusListeners: new Set<() => void>(),
 }));
 
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => ({ availableEditors: [] }) }));
+vi.mock("@effect/atom-react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@effect/atom-react")>();
+  // The mocked server config atom is null; every other atom (review file patches) stays real.
+  const useAtomValue = ((atom: Parameters<typeof actual.useAtomValue>[0]) =>
+    atom === null
+      ? { availableEditors: [] }
+      : actual.useAtomValue(atom)) as typeof actual.useAtomValue;
+  return { ...actual, useAtomValue };
+});
 vi.mock("@tanstack/react-router", () => ({
   useParams: ({ select }: { select: (params: object) => unknown }) =>
     select({ environmentId: "environment-a", threadId: "thread-a" }),
@@ -65,6 +74,7 @@ vi.mock("../../state/query", () => ({
       return {
         data: {
           cwd: "/fixture",
+          generatedAt: DateTime.makeUnsafe("2026-09-09T00:00:00.000Z"),
           sources: ["working-tree", "branch-range"].map((kind) => ({
             kind,
             diff: fixture.patch,
@@ -120,18 +130,22 @@ vi.mock("../../components/diffs/AnnotatableCodeView", () => ({
 vi.mock("../../components/diffs/DiffFileTree", () => ({ DiffFileTree: () => <aside /> }));
 vi.mock("../../components/DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null }));
 vi.mock("../../components/ui/menu", async () => {
-  const { control } = await import("./testControls");
-  return Object.fromEntries(
-    [
-      "DropdownMenu",
-      "DropdownMenuContent",
-      "DropdownMenuItem",
-      "DropdownMenuSub",
-      "DropdownMenuSubContent",
-      "DropdownMenuSubTrigger",
-      "DropdownMenuTrigger",
-    ].map((name) => [name, control]),
-  );
+  const { control, radioGroup, radioItem } = await import("./testControls");
+  return {
+    ...Object.fromEntries(
+      [
+        "DropdownMenu",
+        "DropdownMenuContent",
+        "DropdownMenuItem",
+        "DropdownMenuSub",
+        "DropdownMenuSubContent",
+        "DropdownMenuSubTrigger",
+        "DropdownMenuTrigger",
+      ].map((name) => [name, control]),
+    ),
+    DropdownMenuRadioGroup: radioGroup,
+    DropdownMenuRadioItem: radioItem,
+  };
 });
 vi.mock("../../components/ui/tooltip", async () => {
   const { control } = await import("./testControls");
@@ -144,6 +158,7 @@ vi.mock("../../components/ui/combobox", async () => {
       "Combobox",
       "ComboboxEmpty",
       "ComboboxInput",
+      "ComboboxSearchInput",
       "ComboboxItem",
       "ComboboxList",
       "ComboboxPopup",
@@ -167,9 +182,8 @@ const threadRef = {
   threadId: ThreadId.make("thread-a"),
 };
 const initialBindings: DiffBindings = {
-  panelKey: "environment-a:thread-a:resolved",
+  panelKey: "environment-a:thread-a",
   composerDraftTarget: threadRef,
-  initialGitScope: "unstaged",
   workspaceMutationId: null,
 };
 const BindingsContext = createContext(initialBindings);
@@ -235,7 +249,6 @@ async function mount(kind: "baseline" | "extension", bindings = initialBindings)
             key={value.panelKey}
             mode="embedded"
             composerDraftTarget={value.composerDraftTarget}
-            initialGitScope={value.initialGitScope}
             workspaceMutationId={value.workspaceMutationId}
           />
         </Suspense>
@@ -382,25 +395,12 @@ describe.each(["baseline", "extension"] as const)("%s native diff composition", 
     expect(text(tree.root)).toContain("image.png");
   });
 
-  it("preserves initial scope until the host's git-resolution key changes", async () => {
-    const mounted = await mount(kind, {
-      ...initialBindings,
-      initialGitScope: "branch",
-      panelKey: "pending",
-    });
-    await mounted.update({ ...initialBindings, panelKey: "pending" });
-    expect(button(mounted.tree, "Diff scope: Branch changes")).toBeDefined();
-    await mounted.update(initialBindings);
-    expect(button(mounted.tree, "Diff scope: Working tree")).toBeDefined();
-    expect(fixture.focusListeners.size).toBe(1);
-  });
-
   it.each([
     ["empty", "No net changes in this selection."],
     ["failed", "fixture read failed"],
     ["non-git", "Turn diffs are unavailable because this project is not a git repository."],
     ["missing-thread", "Select a thread to inspect turn diffs."],
-    ["truncated", "This diff was truncated because it exceeded the preview limit."],
+    ["truncated", "This preview exceeds the size limit. Changes shown are incomplete."],
   ])("keeps the %s state visible", async (state, expected) => {
     if (state === "empty" || state === "failed") fixture.patch = "";
     if (state === "failed") fixture.error = "fixture read failed";

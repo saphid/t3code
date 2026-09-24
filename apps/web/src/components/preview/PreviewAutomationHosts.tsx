@@ -29,7 +29,11 @@ import {
   reconcilePreviewServerSessions,
   updatePreviewServerSnapshot,
 } from "~/previewStateStore";
-import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
+import {
+  browserMiniPlayerSource,
+  selectThreadPreviewMiniPlayerTabId,
+  usePreviewMiniPlayerStore,
+} from "~/previewMiniPlayerStore";
 import { resolveBrowserNavigationTarget } from "~/browser/browserTargetResolver";
 import {
   readActiveBrowserRecordingTargets,
@@ -286,8 +290,42 @@ export function PreviewAutomationHosts() {
   );
 }
 
+/**
+ * Resolves the loopback frame-hub endpoint before mounting the host so the
+ * broker sees exactly one registration carrying `frameHub` — re-registering
+ * to add it later would churn the automation request stream. The endpoint
+ * carries the hub's shared secret; it travels inside the registration to the
+ * server and is never forwarded to viewers.
+ */
 function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId }) {
   const { environmentId } = props;
+  const [frameHub, setFrameHub] = useState<
+    { readonly origin: string; readonly secret: string } | null | undefined
+  >(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    if (previewBridge?.frames === undefined) {
+      // No desktop bridge — the host registers without frame capability.
+      setFrameHub(null);
+      return;
+    }
+    void previewBridge.frames
+      .hubEndpoint()
+      .then((endpoint) => !cancelled && setFrameHub(endpoint))
+      .catch(() => !cancelled && setFrameHub(null));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  if (frameHub === undefined) return null;
+  return <PreviewAutomationHostInner environmentId={environmentId} frameHub={frameHub} />;
+}
+
+function PreviewAutomationHostInner(props: {
+  readonly environmentId: EnvironmentId;
+  readonly frameHub: { readonly origin: string; readonly secret: string } | null;
+}) {
+  const { environmentId, frameHub } = props;
   const registry = useContext(RegistryContext);
   const [automationClientId] = useState(createPreviewAutomationClientId);
   const initialAutomationHost = useMemo<PreviewAutomationHostState>(
@@ -295,8 +333,9 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
       clientId: automationClientId,
       environmentId,
       supportedOperations: [...PREVIEW_AUTOMATION_OPERATIONS],
+      ...(frameHub === null ? {} : { frameHub }),
     }),
-    [automationClientId, environmentId],
+    [automationClientId, environmentId, frameHub],
   );
   const automationRequestsAtom = previewEnvironment.automationRequests({
     environmentId,
@@ -378,7 +417,9 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                     ?.has(runtimeTabId) ?? false,
               })
             ) {
-              usePreviewMiniPlayerStore.getState().open(threadRef, readyTabId);
+              usePreviewMiniPlayerStore
+                .getState()
+                .open(threadRef, browserMiniPlayerSource(readyTabId));
             }
           }
           browserActivity.release ??= acquireBrowserSurfaceActivity(runtimeTabId);
@@ -493,11 +534,11 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                   new Set([activeRuntimeTabId]),
                 );
               }
-              const miniPlayer = selectThreadPreviewMiniPlayer(
+              const miniPlayerTabId = selectThreadPreviewMiniPlayerTabId(
                 usePreviewMiniPlayerStore.getState().byThreadKey,
                 threadRef,
               );
-              if (miniPlayer?.tabId === activeTabId) {
+              if (miniPlayerTabId === activeTabId) {
                 usePreviewMiniPlayerStore.getState().close(threadRef);
               }
             } else if (shouldPresentPreview) {
@@ -507,7 +548,9 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               }
             }
             if (shouldPresentPreview) {
-              usePreviewMiniPlayerStore.getState().open(threadRef, activeTabId);
+              usePreviewMiniPlayerStore
+                .getState()
+                .open(threadRef, browserMiniPlayerSource(activeTabId));
             }
             if (activeSnapshot && previewAutomationOpenNeedsOverlay(input, activeSnapshot)) {
               await requireReadyTab();

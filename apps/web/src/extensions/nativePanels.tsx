@@ -33,7 +33,8 @@ export interface NativePanelBindings {
   readonly versionControl: VersionControlBindings | null;
 }
 interface PanelProps {
-  readonly surface: RightPanelSurface;
+  /** Devices are host-rendered by the chat view; no extension family owns them. */
+  readonly surface: Exclude<RightPanelSurface, { kind: "device" }>;
   readonly threadRef: ScopedThreadRef;
   readonly context: ViewContext;
   readonly visible: boolean;
@@ -116,7 +117,7 @@ export const nativePanelRegistry = {
   "pull-request": entry(versionControlBridge, (bindings) => bindings.versionControl),
   "pull-requests": entry(versionControlBridge, (bindings) => bindings.versionControl),
 } satisfies Record<
-  Exclude<RightPanelSurface["kind"], "extension">,
+  Exclude<RightPanelSurface["kind"], "extension" | "device">,
   { render(props: PanelProps): ReactNode }
 >;
 

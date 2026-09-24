@@ -20,8 +20,10 @@ This is a read-oriented panel. It consumes `t3.vcs/read` plus the
 - per-file hunks parsed with the vendored `@pierre/diffs`
   `parsePatchFiles` (the same pure parser the native panel feeds — its
   React `CodeView` imports react-dom and cannot be bundled into an
-  extension), rendered as package-owned unified rows in collapsible
-  per-file sections,
+  extension), rendered as package-owned rows in collapsible per-file
+  sections in either a unified or split (side-by-side) layout — within a
+  hunk each deletion run pairs line-by-line with the addition run that
+  follows it, the shorter side padded,
 - full-file context expansion via `getFileContents` /
   `streamFileContents` (same unary-first policy; per-side sha256) for
   two-sided text changes; binary files are detected from the delivered
@@ -33,7 +35,11 @@ This is a read-oriented panel. It consumes `t3.vcs/read` plus the
   open-in-editor via `t3.file/presentation.open` (reports the resolved
   surface — mounting it awaits the unshipped `t3.ui/surfaces` contract),
   base-ref picker over `t3.vcs/refs.list`, ignore-whitespace and
-  word-wrap toggles,
+  word-wrap toggles, unified/split layout toggle — the layout persists
+  per view through `session.save` (records saved before split shipped
+  restore as unified; the plugin cannot read or write the host's global
+  `diffLayout` client setting, so the two preferences are separate), and
+  wrap stays session-local like native's `wordWrap`,
 - freshness via `t3.vcs/status.subscribe`: one refresh per distinct
   local-status fingerprint (never per frame, never polled), bounded
   resubscribe on `closed`, honest "stream ended" fallback to manual
@@ -76,10 +82,10 @@ This is a read-oriented panel. It consumes `t3.vcs/read` plus the
   no in-panel affordance, so an error toast is the honest channel;
   status rows stay inline, matching the native panel.
 
-Deferred slices: split view + Pierre renderer features (react-dom is
-bundler-banned), diff-line comments (`t3.messages/enrichment`),
-repo-root→workspace path remapping for open (no public repo-root
-contract).
+Deferred slices: Pierre renderer features (react-dom is bundler-banned)
+— syntax highlighting, virtualization, sticky headers; diff-line comments
+(`t3.messages/enrichment`); repo-root→workspace path remapping for open
+(no public repo-root contract).
 
 Per-row dispositions and native citations:
 `docs/internals/extensions/vcs-diff-binding-disposition.md`.

@@ -12,8 +12,15 @@ import type { HostApiProvider } from "@t3tools/extension-runtime";
 import { it, expect, describe } from "@effect/vitest";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import {
+  BrowserFrameLeases,
+  layer as BrowserFrameLeasesLayer,
+} from "../browserFrames/BrowserFrameLeases.ts";
 import { createResourcesLeaseApiProvider } from "./resourcesLeaseApi.ts";
 
 const isOperationError = Schema.is(ExtensionOperationError);
@@ -62,10 +69,15 @@ const meta = (
 
 type Deps = Parameters<typeof createResourcesLeaseApiProvider>[0];
 
-const fakeUrl = (kind: string, name = "preview.svg") =>
-  `/api/assets/${Buffer.from(JSON.stringify({ version: 1, kind, expiresAt: 999 })).toString(
-    "base64url",
-  )}.sig/${name}`;
+const fakeUrl = (kind: string, name = "preview.svg", extra: Record<string, unknown> = {}) =>
+  `/api/assets/${Buffer.from(
+    JSON.stringify({ version: 1, kind, expiresAt: 999, ...extra }),
+  ).toString("base64url")}.sig/${name}`;
+
+/** The claim-token segment of a minted `/api/assets/<token>/<name>` URL. */
+const urlToken = (url: string) => url.slice("/api/assets/".length).split("/")[0]!;
+
+const LeasesLive = BrowserFrameLeasesLayer.pipe(Layer.provideMerge(NodeServices.layer));
 
 const makeDeps = (overrides: Partial<Deps> = {}): Deps => ({
   environmentId: "env",
@@ -110,7 +122,17 @@ const makeDeps = (overrides: Partial<Deps> = {}): Deps => ({
   },
   issueUrl: () => Effect.succeed({ relativeUrl: fakeUrl("workspace-file"), expiresAt: 999 }),
   issueBrowserSurface: () =>
-    Effect.succeed({ relativeUrl: fakeUrl("browser-surface", "browser-surface"), expiresAt: 999 }),
+    Effect.succeed({
+      relativeUrl: fakeUrl("browser-surface", "browser-surface"),
+      expiresAt: 999,
+      slotId: "slot-1",
+    }),
+  leases: {
+    recordHeldSurfaceClaim: () => Effect.succeed(true),
+    heldSurfaceClaim: () => Effect.succeed(Option.none()),
+    revokeWhere: () => Effect.void,
+    withRetainedConnection: (_connectionId, effect) => effect,
+  },
   authorizeGrant: async () => true,
   ...overrides,
 });
@@ -526,6 +548,7 @@ describe("t3.resources/lease adapter", () => {
             allowedCommands: readonly string[];
           }
         | undefined;
+      let held: Parameters<Deps["leases"]["recordHeldSurfaceClaim"]>[0] | undefined;
       const provider = createResourcesLeaseApiProvider(
         makeDeps({
           authorizeGrant: async (_callerId, requested) => {
@@ -537,7 +560,17 @@ describe("t3.resources/lease adapter", () => {
             return Effect.succeed({
               relativeUrl: fakeUrl("browser-surface", "browser-surface"),
               expiresAt: 7,
+              slotId: "slot-1",
             });
+          },
+          leases: {
+            recordHeldSurfaceClaim: (claim) => {
+              held = claim;
+              return Effect.succeed(true);
+            },
+            heldSurfaceClaim: () => Effect.succeed(Option.none()),
+            revokeWhere: () => Effect.void,
+            withRetainedConnection: (_connectionId, effect) => effect,
           },
         }),
       );
@@ -558,6 +591,30 @@ describe("t3.resources/lease adapter", () => {
         serverEpoch: "epoch-1",
         allowedCommands: ["attach", "present"],
       });
+      // The mint must register the claim as held: the frames mint only honors
+      // tokens that passed through this path under the same authority.
+      expect(held).toMatchObject({
+        token: expect.any(String),
+        session: {
+          environmentId: "env",
+          threadId: "thread",
+          tabId: "tab-1",
+          serverEpoch: "epoch-1",
+        },
+        allowedCommands: ["attach", "present"],
+        expiresAt: 7,
+      });
+      // The registered authority is what `browserFrameAuthorityKey` binds the
+      // frames mint to — wrong caller identity or slot would never match.
+      expect(held?.authority).toMatchObject({
+        kind: "extension",
+        callerId: "caller",
+        rootCallerId: "root",
+        heldSlot: "slot-1",
+        grants: [BROWSER_SESSIONS],
+      });
+      const heldContext = held?.authority.kind === "extension" ? held.authority.context : undefined;
+      expect(heldContext).toMatchObject({ resource: { projectId: "project" } });
     }),
   );
 
@@ -731,6 +788,7 @@ describe("t3.resources/lease adapter", () => {
             return Effect.succeed({
               relativeUrl: fakeUrl("browser-surface", "browser-surface"),
               expiresAt: 1,
+              slotId: "slot-1",
             });
           },
         }),
@@ -749,5 +807,247 @@ describe("t3.resources/lease adapter", () => {
       expect(error.detail).toContain("revoked");
       expect(issued).toBe(true);
     }),
+  );
+
+  const releaseInput = {
+    resource: {
+      ...browserSurfaceInput.resource,
+      allowedCommands: ["attach", "present", "release"],
+    },
+  };
+
+  it.effect("two simultaneous mints acquire distinct held presentation slots", () =>
+    Effect.gen(function* () {
+      const leases = yield* BrowserFrameLeases;
+      let mintCount = 0;
+      const provider = createResourcesLeaseApiProvider(
+        makeDeps({
+          issueBrowserSurface: () => {
+            mintCount += 1;
+            const slotId = `slot-${mintCount}`;
+            return Effect.succeed({
+              relativeUrl: fakeUrl("browser-surface", "browser-surface", { slotId }),
+              expiresAt: 4_102_444_800_000,
+              slotId,
+            });
+          },
+          leases,
+        }),
+      );
+      // Equivalent claims minted at the same moment — the defect this guards
+      // against is both presentations collapsing onto one held identity.
+      const [a, b] = yield* Effect.all(
+        [
+          invoke(provider, "createPresentationUrl", releaseInput, makeContext()),
+          invoke(provider, "createPresentationUrl", releaseInput, makeContext()),
+        ],
+        { concurrency: 2 },
+      );
+      const urlA = (a as { url: string }).url;
+      const urlB = (b as { url: string }).url;
+      expect(urlA).not.toBe(urlB);
+      const heldA = yield* leases.heldSurfaceClaim(urlToken(urlA));
+      const heldB = yield* leases.heldSurfaceClaim(urlToken(urlB));
+      if (Option.isNone(heldA) || Option.isNone(heldB)) {
+        throw new Error("both claims must be registered as held");
+      }
+      const slotA =
+        heldA.value.authority.kind === "extension" ? heldA.value.authority.heldSlot : undefined;
+      const slotB =
+        heldB.value.authority.kind === "extension" ? heldB.value.authority.heldSlot : undefined;
+      expect(slotA).toBeDefined();
+      expect(slotB).toBeDefined();
+      // Distinct slots → distinct authority keys → the frames mint can never
+      // seat the two presentations on one another's leases.
+      expect(slotA).not.toBe(slotB);
+      const leaseA = yield* leases.issueInputLease({
+        authority: heldA.value.authority,
+        session: heldA.value.session,
+      });
+      const leaseB = yield* leases.issueInputLease({
+        authority: heldB.value.authority,
+        session: heldB.value.session,
+      });
+      if (Option.isNone(leaseA) || Option.isNone(leaseB)) {
+        throw new Error("each held slot must mint its own input lease");
+      }
+      expect(leaseA.value.leaseId).not.toBe(leaseB.value.leaseId);
+      expect(Option.isSome(yield* leases.verify(leaseA.value.inputTicket))).toBe(true);
+      expect(Option.isSome(yield* leases.verify(leaseB.value.inputTicket))).toBe(true);
+    }).pipe(Effect.provide(LeasesLive)),
+  );
+
+  it.effect(
+    "releasePresentation retires the held claim and every frame record under its slot",
+    () =>
+      Effect.gen(function* () {
+        const leases = yield* BrowserFrameLeases;
+        const provider = createResourcesLeaseApiProvider(
+          makeDeps({
+            issueBrowserSurface: () =>
+              Effect.succeed({
+                relativeUrl: fakeUrl("browser-surface", "browser-surface", {
+                  slotId: "slot-1",
+                }),
+                expiresAt: 4_102_444_800_000,
+                slotId: "slot-1",
+              }),
+            leases,
+          }),
+        );
+        const minted = (yield* invoke(
+          provider,
+          "createPresentationUrl",
+          releaseInput,
+          makeContext(),
+        )) as { url: string };
+        const token = urlToken(minted.url);
+        const held = yield* leases.heldSurfaceClaim(token);
+        if (Option.isNone(held)) throw new Error("minted claim must be held");
+        // The records the frames mint creates under this presentation's slot.
+        const streamTicket = yield* leases.issueStreamTicket({
+          authority: held.value.authority,
+          session: held.value.session,
+        });
+        if (Option.isNone(streamTicket)) throw new Error("stream ticket must mint");
+        const inputLease = yield* leases.issueInputLease({
+          authority: held.value.authority,
+          session: held.value.session,
+        });
+        if (Option.isNone(inputLease)) throw new Error("input lease must mint");
+        const released = (yield* invoke(
+          provider,
+          "releasePresentation",
+          { presentationUrl: minted.url },
+          makeContext(),
+        )) as { released: boolean };
+        expect(released).toEqual({ released: true });
+        // Claim, stream ticket, and input lease all die with the release.
+        expect(Option.isNone(yield* leases.heldSurfaceClaim(token))).toBe(true);
+        expect(Option.isNone(yield* leases.verify(streamTicket.value.ticket))).toBe(true);
+        expect(Option.isNone(yield* leases.verify(inputLease.value.inputTicket))).toBe(true);
+        const lease = yield* leases.resolveLease(inputLease.value.leaseId);
+        expect(Option.isNone(lease) || lease.value.revoked).toBe(true);
+        // Releasing twice is a no-op, not an error.
+        const again = (yield* invoke(
+          provider,
+          "releasePresentation",
+          { presentationUrl: minted.url },
+          makeContext(),
+        )) as { released: boolean };
+        expect(again).toEqual({ released: false });
+      }).pipe(Effect.provide(LeasesLive)),
+  );
+
+  it.effect("releasePresentation refuses a caller that does not hold the claim", () =>
+    Effect.gen(function* () {
+      const leases = yield* BrowserFrameLeases;
+      const provider = createResourcesLeaseApiProvider(
+        makeDeps({
+          issueBrowserSurface: () =>
+            Effect.succeed({
+              relativeUrl: fakeUrl("browser-surface", "browser-surface", {
+                slotId: "slot-1",
+              }),
+              expiresAt: 4_102_444_800_000,
+              slotId: "slot-1",
+            }),
+          leases,
+        }),
+      );
+      const minted = (yield* invoke(
+        provider,
+        "createPresentationUrl",
+        releaseInput,
+        makeContext(),
+      )) as { url: string };
+      const token = urlToken(minted.url);
+      // A different caller identity — same everything else — cannot retire it.
+      const denied = (yield* invoke(
+        provider,
+        "releasePresentation",
+        { presentationUrl: minted.url },
+        makeContext(),
+        { ...meta(provider), callerId: "other-caller" },
+      )) as { released: boolean };
+      expect(denied).toEqual({ released: false });
+      expect(Option.isSome(yield* leases.heldSurfaceClaim(token))).toBe(true);
+    }).pipe(Effect.provide(LeasesLive)),
+  );
+
+  it.effect("releasePresentation refuses a claim minted without the release command", () =>
+    Effect.gen(function* () {
+      const leases = yield* BrowserFrameLeases;
+      const provider = createResourcesLeaseApiProvider(
+        makeDeps({
+          issueBrowserSurface: () =>
+            Effect.succeed({
+              relativeUrl: fakeUrl("browser-surface", "browser-surface", {
+                slotId: "slot-1",
+              }),
+              expiresAt: 4_102_444_800_000,
+              slotId: "slot-1",
+            }),
+          leases,
+        }),
+      );
+      // browserSurfaceInput's allowedCommands lack "release".
+      const minted = (yield* invoke(
+        provider,
+        "createPresentationUrl",
+        browserSurfaceInput,
+        makeContext(),
+      )) as { url: string };
+      const denied = (yield* invoke(
+        provider,
+        "releasePresentation",
+        { presentationUrl: minted.url },
+        makeContext(),
+      )) as { released: boolean };
+      expect(denied).toEqual({ released: false });
+      expect(Option.isSome(yield* leases.heldSurfaceClaim(urlToken(minted.url)))).toBe(true);
+    }).pipe(Effect.provide(LeasesLive)),
+  );
+
+  it.effect("an aborted browser-surface acquisition leaves no held claim behind", () =>
+    Effect.gen(function* () {
+      const leases = yield* BrowserFrameLeases;
+      let markSuspended: (() => void) | undefined;
+      const suspended = new Promise<void>((resolve) => {
+        markSuspended = resolve;
+      });
+      const provider = createResourcesLeaseApiProvider(
+        makeDeps({
+          issueBrowserSurface: () =>
+            Effect.succeed({
+              relativeUrl: fakeUrl("browser-surface", "browser-surface", { slotId: "slot-1" }),
+              expiresAt: 4_102_444_800_000,
+              slotId: "slot-1",
+            }),
+          leases,
+        }),
+      );
+      // The post-mint authority re-check is the abortible tail of an
+      // acquisition — suspend it so the caller's abort lands while the claim
+      // could otherwise be held with a URL nobody will ever receive.
+      const controller = new AbortController();
+      const invocation = provider.invoke(
+        "createPresentationUrl",
+        releaseInput,
+        makeContext(),
+        controller.signal,
+        meta(provider, [], async () => {
+          markSuspended?.();
+          await new Promise<never>(() => {});
+        }),
+      );
+      yield* Effect.promise(() => suspended);
+      controller.abort();
+      const exit = yield* Effect.exit(Effect.promise(() => Promise.resolve(invocation)));
+      expect(Exit.isSuccess(exit)).toBe(false);
+      // The claim's token never reached the caller, so nothing may stay held.
+      const token = urlToken(fakeUrl("browser-surface", "browser-surface", { slotId: "slot-1" }));
+      expect(Option.isNone(yield* leases.heldSurfaceClaim(token))).toBe(true);
+    }).pipe(Effect.provide(LeasesLive)),
   );
 });

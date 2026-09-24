@@ -1,3 +1,4 @@
+// @effect-diagnostics globalTimers:off -- The default scheduler defers notifications by one macrotask in extension-host code, outside any Effect fiber.
 import {
   uiKeybindingsApi,
   uiThemeApi,

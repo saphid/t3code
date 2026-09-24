@@ -41,6 +41,7 @@ import * as ProjectionSnapshotQuery from "../../orchestration/Services/Projectio
 import * as SourceControlProviderRegistry from "../../sourceControl/SourceControlProviderRegistry.ts";
 import * as SourceControlRateLimit from "../../sourceControl/SourceControlRateLimit.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as PullRequestFilesViewed from "../../persistence/PullRequestFilesViewed.ts";
 import { createPrsApiProvider } from "./v1.ts";
 
 const isOperationError = Schema.is(ExtensionOperationError);
@@ -1161,32 +1162,41 @@ it.layer(NodeServices.layer)("t3.prs/read adapter", (it) => {
               },
             },
           );
-          const service = yield* PullRequestService.make.pipe(
-            Effect.provide(
-              Layer.mergeAll(
-                Layer.succeed(PullRequestProviderRegistry, fromProviders([api])),
-                Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
-                  resolveHandle: () => Effect.die("Unexpected provider refinement"),
-                }),
-                Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
-                  getShellSnapshot: () =>
-                    Effect.succeed({
-                      snapshotSequence: 1,
-                      projects: [projectShell()],
-                      threads: [],
-                      updatedAt: NOW,
-                    }),
-                }),
-                SourceControlRateLimit.layer,
-                Layer.effect(
-                  PullRequestReadCache.PullRequestReadCache,
-                  PullRequestReadCache.make,
-                ).pipe(
-                  Layer.provide(Persistence.layerKvs),
-                  Layer.provide(KeyValueStore.layerMemory),
-                  Layer.provide(NodeServices.layer),
-                ),
+          // Built into the test scope: the viewed-files store owns a database that
+          // `Effect.provide` would close as soon as the service was returned.
+          const service = yield* Layer.build(
+            Layer.mergeAll(
+              Layer.succeed(PullRequestProviderRegistry, fromProviders([api])),
+              Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+                resolveLink: () => undefined,
+                resolveHandle: () => Effect.die("Unexpected provider refinement"),
+              }),
+              Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+                getProjectShells: (projectIds) =>
+                  Effect.succeed(
+                    [projectShell()].filter((project) => projectIds?.includes(project.id) ?? true),
+                  ),
+                getProjectShellById: (projectId) =>
+                  Effect.succeed(
+                    Option.fromNullishOr(
+                      [projectShell()].find((project) => project.id === projectId),
+                    ),
+                  ),
+              }),
+              SourceControlRateLimit.layer,
+              PullRequestFilesViewed.layer.pipe(Layer.provide(SqlitePersistenceMemory)),
+              Layer.effect(
+                PullRequestReadCache.PullRequestReadCache,
+                PullRequestReadCache.make,
+              ).pipe(
+                Layer.provide(Persistence.layerKvs),
+                Layer.provide(KeyValueStore.layerMemory),
+                Layer.provide(NodeServices.layer),
               ),
+            ),
+          ).pipe(
+            Effect.flatMap((context) =>
+              PullRequestService.make.pipe(Effect.provideContext(context)),
             ),
           );
           const provider = createPrsApiProvider({
@@ -1415,30 +1425,37 @@ it.layer(NodeServices.layer)("t3.prs/read adapter", (it) => {
           getDiffFileContents: () => Effect.succeed({ oldContents: "a\n", newContents: "b\n" }),
         },
       );
-      const service = yield* PullRequestService.make.pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            Layer.succeed(PullRequestProviderRegistry, fromProviders([api])),
-            Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
-              resolveHandle: () => Effect.die("Unexpected provider refinement"),
-            }),
-            Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
-              getShellSnapshot: () =>
-                Effect.succeed({
-                  snapshotSequence: 1,
-                  projects: [projectA, projectB],
-                  threads: [],
-                  updatedAt: NOW,
-                }),
-            }),
-            SourceControlRateLimit.layer,
-            Layer.effect(PullRequestReadCache.PullRequestReadCache, PullRequestReadCache.make).pipe(
-              Layer.provide(Persistence.layerKvs),
-              Layer.provide(KeyValueStore.layerMemory),
-              Layer.provide(NodeServices.layer),
-            ),
+      // Built into the test scope: the viewed-files store owns a database that
+      // `Effect.provide` would close as soon as the service was returned.
+      const service = yield* Layer.build(
+        Layer.mergeAll(
+          Layer.succeed(PullRequestProviderRegistry, fromProviders([api])),
+          Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+            resolveLink: () => undefined,
+            resolveHandle: () => Effect.die("Unexpected provider refinement"),
+          }),
+          Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+            getProjectShells: (projectIds) =>
+              Effect.succeed(
+                [projectA, projectB].filter((project) => projectIds?.includes(project.id) ?? true),
+              ),
+            getProjectShellById: (projectId) =>
+              Effect.succeed(
+                Option.fromNullishOr(
+                  [projectA, projectB].find((project) => project.id === projectId),
+                ),
+              ),
+          }),
+          SourceControlRateLimit.layer,
+          PullRequestFilesViewed.layer.pipe(Layer.provide(SqlitePersistenceMemory)),
+          Layer.effect(PullRequestReadCache.PullRequestReadCache, PullRequestReadCache.make).pipe(
+            Layer.provide(Persistence.layerKvs),
+            Layer.provide(KeyValueStore.layerMemory),
+            Layer.provide(NodeServices.layer),
           ),
         ),
+      ).pipe(
+        Effect.flatMap((context) => PullRequestService.make.pipe(Effect.provideContext(context))),
       );
       const provider = createPrsApiProvider({
         ...makeDeps({}, { shells: [projectA, projectB], registry: fromProviders([api]) }),

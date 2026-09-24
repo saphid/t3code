@@ -3,6 +3,7 @@ import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/unstable/http";
+import * as NetAddress from "effect/unstable/net/NetAddress";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { McpInvocationContext, requireMcpCapability } from "./McpInvocationContext.ts";
@@ -11,7 +12,7 @@ import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 const environmentId = EnvironmentId.make("environment-1");
 const makeFakeHttpServer = (hostname: string, port = 43123) =>
   HttpServer.HttpServer.of({
-    address: { _tag: "TcpAddress", hostname, port },
+    address: NetAddress.inetAddressFromIpStringUnsafe(hostname, port),
     serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
   });
 const fakeHttpServer = makeFakeHttpServer("127.0.0.1");
@@ -40,7 +41,7 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
     const issued = yield* registry.issue({
       threadId,
       providerInstanceId: ProviderInstanceId.make("codex"),
-      preview: true,
+      capabilities: new Set(["preview"]),
     });
     expect(issued.config.endpoint).toBe("http://127.0.0.1:43123/mcp");
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
@@ -56,26 +57,32 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
   }),
 );
 
-it.effect("always grants pull-requests and gates preview on the request", () =>
+it.effect("always grants pull-requests and gates browser and device access independently", () =>
   Effect.gen(function* () {
     const registry = yield* makeRegistry(() => 1_000);
     const withPreview = yield* registry.issue({
       threadId: ThreadId.make("thread-preview"),
       providerInstanceId: ProviderInstanceId.make("codex"),
-      preview: true,
+      capabilities: new Set(["preview"]),
     });
     const withoutPreview = yield* registry.issue({
       threadId: ThreadId.make("thread-no-preview"),
       providerInstanceId: ProviderInstanceId.make("codex"),
-      preview: false,
+      capabilities: new Set(),
+    });
+    const withDevice = yield* registry.issue({
+      threadId: ThreadId.make("thread-device"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(["device"]),
     });
     const capabilitiesOf = (issued: typeof withPreview) =>
       registry
         .resolve(issued.config.authorizationHeader.replace(/^Bearer\s+/, ""))
         .pipe(Effect.map((scope) => [...(scope?.capabilities ?? [])].sort()));
 
-    expect(yield* capabilitiesOf(withPreview)).toEqual(["extensions", "preview", "pull-requests"]);
-    expect(yield* capabilitiesOf(withoutPreview)).toEqual(["extensions", "pull-requests"]);
+    expect(yield* capabilitiesOf(withPreview)).toEqual(["preview", "pull-requests"]);
+    expect(yield* capabilitiesOf(withoutPreview)).toEqual(["pull-requests"]);
+    expect(yield* capabilitiesOf(withDevice)).toEqual(["device", "pull-requests"]);
   }),
 );
 
@@ -84,7 +91,8 @@ it.effect("builds MCP endpoints from the bound server host", () =>
     const cases = [
       ["100.64.0.40", "http://100.64.0.40:43123/mcp"],
       ["0.0.0.0", "http://127.0.0.1:43123/mcp"],
-      ["localhost", "http://localhost:43123/mcp"],
+      ["::", "http://127.0.0.1:43123/mcp"],
+      ["::1", "http://[::1]:43123/mcp"],
       ["127.0.0.1", "http://127.0.0.1:43123/mcp"],
     ] as const;
 
@@ -93,7 +101,7 @@ it.effect("builds MCP endpoints from the bound server host", () =>
       const issued = yield* registry.issue({
         threadId: ThreadId.make(`thread-${hostname}`),
         providerInstanceId: ProviderInstanceId.make("codex"),
-        preview: true,
+        capabilities: new Set(["preview"]),
       });
       expect(issued.config.endpoint).toBe(expectedEndpoint);
     }
@@ -107,7 +115,7 @@ it.effect("expires credentials once their session stops showing signs of life", 
     const issued = yield* registry.issue({
       threadId: ThreadId.make("thread-2"),
       providerInstanceId: ProviderInstanceId.make("claude"),
-      preview: true,
+      capabilities: new Set(["preview"]),
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
     timestamp += 101;
@@ -123,7 +131,7 @@ it.effect("keeps a credential alive across turns that never touch an MCP tool", 
     const issued = yield* registry.issue({
       threadId,
       providerInstanceId: ProviderInstanceId.make("claude"),
-      preview: true,
+      capabilities: new Set(["preview"]),
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
 
@@ -145,7 +153,7 @@ it.effect("does not keep credentials of other threads alive", () =>
     const issued = yield* registry.issue({
       threadId: ThreadId.make("thread-4"),
       providerInstanceId: ProviderInstanceId.make("codex"),
-      preview: true,
+      capabilities: new Set(["preview"]),
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
 
@@ -157,23 +165,6 @@ it.effect("does not keep credentials of other threads alive", () =>
   }),
 );
 
-it.effect("issued extension capability is revoked with its existing provider credential", () =>
-  Effect.gen(function* () {
-    const registry = yield* makeRegistry(() => 1000);
-    const threadId = ThreadId.make("extension-thread");
-    const issued = yield* registry.issue({
-      threadId,
-      providerInstanceId: ProviderInstanceId.make("codex"),
-      preview: false,
-    });
-    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
-    const scope = yield* registry.resolve(token);
-    expect(scope?.capabilities.has("extensions")).toBe(true);
-    yield* registry.revokeThread(threadId);
-    expect(yield* registry.resolve(token)).toBeUndefined();
-  }),
-);
-
 it.effect("extensions-only issued credentials deny preview and are revoked together", () =>
   Effect.gen(function* () {
     const registry = yield* makeRegistry(() => 1000);
@@ -181,14 +172,13 @@ it.effect("extensions-only issued credentials deny preview and are revoked toget
     const issued = yield* registry.issue({
       threadId,
       providerInstanceId: ProviderInstanceId.make("codex"),
-      preview: false,
-      capabilities: ["extensions"],
+      capabilities: new Set(["extensions"]),
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
     const scope = yield* registry.resolve(token);
     expect(scope?.capabilities.has("extensions")).toBe(true);
     expect(scope?.capabilities.has("preview")).toBe(false);
-    expect(issued.config.capabilities).toEqual(["pull-requests", "extensions"]);
+    expect([...issued.config.capabilities].sort()).toEqual(["extensions", "pull-requests"]);
     if (!scope) return yield* Effect.die("Issued credential missing");
     const denial = yield* requireMcpCapability("preview").pipe(
       Effect.provideService(McpInvocationContext, scope),
@@ -197,49 +187,5 @@ it.effect("extensions-only issued credentials deny preview and are revoked toget
     expect(denial._tag).toBe("PreviewAutomationUnavailableError");
     yield* registry.revokeThread(threadId);
     expect(yield* registry.resolve(token)).toBeUndefined();
-  }),
-);
-
-it.effect("keeps explicit capability restrictions and preview flags consistent", () =>
-  Effect.gen(function* () {
-    const registry = yield* makeRegistry(() => 1_000);
-    const cases = [
-      {
-        name: "default-preview",
-        preview: true,
-        expectedPreview: true,
-        expected: ["extensions", "preview", "pull-requests"],
-      },
-      {
-        name: "default-no-preview",
-        preview: false,
-        expectedPreview: false,
-        expected: ["extensions", "pull-requests"],
-      },
-      {
-        name: "explicit-omits-preview",
-        preview: true,
-        expectedPreview: false,
-        capabilities: ["extensions"] as const,
-        expected: ["extensions", "pull-requests"],
-      },
-      {
-        name: "explicit-contradictory-preview",
-        preview: false,
-        expectedPreview: false,
-        capabilities: ["extensions", "preview"] as const,
-        expected: ["extensions", "pull-requests"],
-      },
-    ] as const;
-    for (const [index, testCase] of cases.entries()) {
-      const issued = yield* registry.issue({
-        threadId: ThreadId.make(`authority-${index}`),
-        providerInstanceId: ProviderInstanceId.make("codex"),
-        preview: testCase.preview,
-        ...("capabilities" in testCase ? { capabilities: testCase.capabilities } : {}),
-      });
-      expect([...(issued.config.capabilities ?? [])].sort()).toEqual([...testCase.expected].sort());
-      expect(issued.config.preview).toBe(testCase.expectedPreview);
-    }
   }),
 );

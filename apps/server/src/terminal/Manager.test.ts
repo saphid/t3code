@@ -1,4 +1,3 @@
-import * as NodeFSP from "node:fs/promises";
 import * as NodeURL from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -1251,13 +1250,15 @@ it.layer(
     }),
   );
 
-  const loadVtRuntime = Effect.promise(async () => {
-    const [vt, writePty] = await Promise.all([
-      NodeFSP.readFile(new URL("ghostty-vt.wasm", `file://${TERMINAL_VT_ASSETS_DIR}`)),
-      NodeFSP.readFile(new URL("ghostty-write-pty.wasm", `file://${TERMINAL_VT_ASSETS_DIR}`)),
-    ]);
-    return loadGhosttyRuntime({ vt, writePty });
-  });
+  const loadVtRuntime = Effect.flatMap(Effect.service(FileSystem.FileSystem), (fs) =>
+    Effect.flatMap(
+      Effect.all([
+        fs.readFile(`${TERMINAL_VT_ASSETS_DIR}ghostty-vt.wasm`),
+        fs.readFile(`${TERMINAL_VT_ASSETS_DIR}ghostty-write-pty.wasm`),
+      ]),
+      ([vt, writePty]) => Effect.promise(() => loadGhosttyRuntime({ vt, writePty })),
+    ),
+  );
 
   type WireItem = {
     readonly type: string;
@@ -1310,7 +1311,7 @@ it.layer(
           ptyAdapter.processes[0]!.emitData("\x1b[6n");
           frame = yield* nextFrame(stream1);
           apply(frame.value!);
-          yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
+          yield* Effect.yieldNow;
           expect(firstWrites).toHaveLength(1);
           expect(firstWrites[0]).toMatch(/\[\d+;\d+R/);
           attachment.detach();
@@ -1348,7 +1349,7 @@ it.layer(
           });
           apply(frame.value!);
           if (!mountInGap) attachment.attach(second);
-          yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
+          yield* Effect.yieldNow;
           yield* Effect.addFinalizer(() => Effect.sync(() => second.dispose()));
 
           // The retained lookalike query is replay-suppressed and the
@@ -3007,13 +3008,15 @@ it.layer(
 
   it.effect("injects runtime env overrides into spawned terminals", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager();
+      const { manager, ptyAdapter } = yield* createManager(5, { env: { FORCE_COLOR: "3" } });
       yield* manager.open(
         openInput({
           env: {
             T3CODE_PROJECT_ROOT: "/repo",
             T3CODE_WORKTREE_PATH: "/repo/worktree-a",
             CUSTOM_FLAG: "1",
+            NO_COLOR: "1",
+            FORCE_COLOR: "0",
           },
         }),
       );
@@ -3024,6 +3027,8 @@ it.layer(
       assert.equal(spawnInput.env.T3CODE_PROJECT_ROOT, "/repo");
       assert.equal(spawnInput.env.T3CODE_WORKTREE_PATH, "/repo/worktree-a");
       assert.equal(spawnInput.env.CUSTOM_FLAG, "1");
+      assert.equal(spawnInput.env.NO_COLOR, "1");
+      assert.equal(spawnInput.env.FORCE_COLOR, "0");
     }),
   );
 

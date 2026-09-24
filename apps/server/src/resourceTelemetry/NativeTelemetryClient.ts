@@ -507,7 +507,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
         }).pipe(
           Effect.flatMap(
             Option.match({
-              onNone: () => Effect.succeed(false),
+              onNone: () => Effect.void,
               onSome: (deferred) => Deferred.succeed(deferred, event.processes),
             }),
           ),

@@ -51,6 +51,12 @@ export function HostedBrowserWebview(props: {
   readonly viewport: PreviewViewportSetting;
   readonly pictureInPicture: boolean;
   /**
+   * A remote `t3.browser/frames` viewer is attached to this tab. Counts as
+   * compositor activity so the guest keeps painting for captures while the
+   * local panel is inactive.
+   */
+  readonly remoteLive: boolean;
+  /**
    * Fixed for the tab's lifetime: Electron only honours `partition` before the
    * guest attaches, so a live change here would not move the tab anyway.
    */
@@ -64,6 +70,7 @@ export function HostedBrowserWebview(props: {
     initialUrl,
     viewport,
     pictureInPicture,
+    remoteLive,
     zoomFactor,
     profileId,
   } = props;
@@ -156,9 +163,18 @@ export function HostedBrowserWebview(props: {
         }
       }, recovery.delayMs);
     };
+    // A click inside the guest only reaches this document as a webview focus
+    // event, so open menus and popovers never see the outside press that
+    // would dismiss them. Replay it as a pointerdown on the webview itself.
+    const dismissHostPopups = () => {
+      webview.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse" }),
+      );
+    };
     webview.addEventListener("did-attach", register);
     webview.addEventListener("dom-ready", register);
     webview.addEventListener("render-process-gone", recoverGuest);
+    webview.addEventListener("focus", dismissHostPopups);
     register();
     return () => {
       disposed = true;
@@ -166,6 +182,7 @@ export function HostedBrowserWebview(props: {
       webview.removeEventListener("did-attach", register);
       webview.removeEventListener("dom-ready", register);
       webview.removeEventListener("render-process-gone", recoverGuest);
+      webview.removeEventListener("focus", dismissHostPopups);
     };
   }, [clientSettingsHydrated, config, initialSrc, runtimeTabId, webviewGeneration]);
 
@@ -254,7 +271,8 @@ export function HostedBrowserWebview(props: {
 
   if (!clientSettingsHydrated || !config) return null;
 
-  const renderingActive = active || backgroundActivity || pictureInPicture || recordingActive;
+  const renderingActive =
+    active || backgroundActivity || pictureInPicture || remoteLive || recordingActive;
   const wrapperStyle = resolveHostedBrowserWebviewWrapperStyle({
     active,
     renderingActive,

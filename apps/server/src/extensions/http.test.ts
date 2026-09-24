@@ -9,6 +9,8 @@ import {
   EnvironmentId,
   EnvironmentAuthenticatedPrincipal,
   ExtensionInvokeInput,
+  ThreadId,
+  PreviewTabId,
   type AuthEnvironmentScope,
   type ExtensionApiInvokeInput,
 } from "@t3tools/contracts";
@@ -303,6 +305,7 @@ import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentHttpApi, AuthAdministrativeScopes } from "@t3tools/contracts";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as Etag from "effect/unstable/http/Etag";
@@ -312,6 +315,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as BrowserFrameLeases from "../browserFrames/BrowserFrameLeases.ts";
 import { environmentAuthenticatedAuthLayer } from "../auth/http.ts";
 import { extensionsHttpApiLayer } from "./http.ts";
 
@@ -529,6 +533,197 @@ it.live(
         "install",
       ]);
     }).pipe(Effect.provide(realAuthLayer)),
+);
+it.live("invokeApi binds the client's own live root connection via the echoed instance id", () =>
+  Effect.gen(function* () {
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    const sessions = yield* SessionStore;
+    const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
+    const leases = yield* BrowserFrameLeases.BrowserFrameLeases;
+    const f = fixture([]);
+    const routes = HttpApiBuilder.layer(ExtensionTestApi).pipe(
+      Layer.provide(extensionsHttpApiLayer),
+      Layer.provide(environmentAuthenticatedAuthLayer),
+      Layer.provide(Layer.succeed(EnvironmentAuth.EnvironmentAuth, auth)),
+      Layer.provide(Layer.succeed(SessionStore, sessions)),
+      Layer.provide(
+        Layer.succeed(ServerEnvironment.ServerEnvironment, {
+          getEnvironmentId: environment.getEnvironmentId,
+          getDescriptor: Effect.die("unused descriptor"),
+        }),
+      ),
+      Layer.provide(Layer.succeed(EnvironmentExtensions, f.service)),
+      Layer.provide(NodeHttpPlatform.layer),
+      Layer.provide(Etag.layer),
+      Layer.provide(NodeServices.layer),
+    );
+    const web = yield* Effect.acquireRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(routes, { disableLogger: true })),
+      (web) => Effect.promise(web.dispose),
+    );
+    const request = (
+      endpoint: string,
+      payload: unknown,
+      token?: string,
+      clientInstanceId?: string,
+    ) =>
+      encodePayload(payload).pipe(
+        Effect.flatMap((body) =>
+          Effect.promise(() =>
+            web.handler(
+              new Request(`http://fixture/api/extensions/${endpoint}`, {
+                method: "POST",
+                headers: {
+                  "content-type": "application/json",
+                  ...(token ? { authorization: `Bearer ${token}` } : {}),
+                  ...(clientInstanceId !== undefined
+                    ? { "x-t3-client-instance": clientInstanceId }
+                    : {}),
+                },
+                body,
+              }),
+            ),
+          ),
+        ),
+      );
+    const metadata = {
+      deviceType: "desktop" as const,
+      os: "Linux",
+      browser: "fixture",
+      ipAddress: "127.0.0.1",
+    };
+    const grant = yield* auth.issuePairingCredential({
+      scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+    });
+    const token = yield* auth.exchangeBootstrapCredentialForAccessToken(
+      grant.credential,
+      undefined,
+      metadata,
+    );
+    const apiInvoke = {
+      installationId: "fixture",
+      expectedContentHash: "a".repeat(64),
+      request: {
+        id: "t3.workspace/files",
+        versionRange: "^1.0.0",
+        method: "listEntries",
+        input: { relativePath: "" },
+        context: {
+          resource: { namespace: "fixture", id: "a", environmentId: "env" },
+          client: "web",
+        },
+      },
+    };
+    const session = (yield* sessions.listActive())[0];
+    expect(session).toBeDefined();
+    // Two client instances share the session; each registered its own ws
+    // connection on upgrade. B connects second — newest must not win.
+    yield* sessions.markConnected(session!.sessionId, "conn-a", "inst-a");
+    yield* sessions.markConnected(session!.sessionId, "conn-b", "inst-b");
+    expect((yield* request("api/invoke", apiInvoke, token.access_token, "inst-a")).status).toBe(
+      200,
+    );
+    expect(f.roots[0]?.connectionId).toBe("conn-a");
+    expect((yield* request("api/invoke", apiInvoke, token.access_token, "inst-b")).status).toBe(
+      200,
+    );
+    expect(f.roots[1]?.connectionId).toBe("conn-b");
+    // A supplied instance id that resolves to nothing — never registered or
+    // already disconnected — is a stale identity and fails by name rather
+    // than downgrading to connectionless: its mints would escape root
+    // connection revocation entirely. Only an absent header stays
+    // connectionless (documented pure-HTTP mode).
+    const staleUnknown = yield* request("api/invoke", apiInvoke, token.access_token, "inst-c");
+    expect(staleUnknown.status).toBe(400);
+    const staleBody = yield* Effect.promise(() => staleUnknown.json());
+    expect(staleBody).toMatchObject({
+      _tag: "ExtensionOperationError",
+      detail: expect.stringContaining("ExtensionClientInstanceError"),
+    });
+    expect((yield* request("api/invoke", apiInvoke, token.access_token)).status).toBe(200);
+    expect(f.roots[2]?.connectionId).toBeUndefined();
+    // A record minted under instance A's authority dies with A's connection
+    // while B's binding survives — attribution is per-connection, not
+    // per-session-newest.
+    const environmentId = yield* environment.getEnvironmentId;
+    const mintA = (connId: string) =>
+      leases.issueInputLease({
+        authority: {
+          kind: "extension",
+          principalKind: "environment-session",
+          principalId: f.roots[0]!.principal.id,
+          rootCallerId: "fixture-ext",
+          callerId: "fixture-ext",
+          callerGenerations: [],
+          rootConnectionId: connId,
+          context: null,
+          grants: [],
+        },
+        session: {
+          environmentId,
+          threadId: ThreadId.make("thread-a"),
+          serverEpoch: "epoch-1",
+          tabId: PreviewTabId.make("tab-a"),
+        },
+      });
+    const mintedA = yield* mintA("conn-a");
+    expect(Option.isSome(mintedA)).toBe(true);
+    const ticketA = Option.getOrThrow(mintedA).inputTicket;
+    expect(Option.isSome(yield* leases.verify(ticketA))).toBe(true);
+    yield* sessions.markDisconnected(session!.sessionId, "conn-a");
+    yield* leases.revokeConnection("conn-a");
+    expect(Option.isNone(yield* leases.verify(ticketA))).toBe(true);
+    // A revoked connection can never mint again — the in-flight-mint hole.
+    expect(Option.isNone(yield* mintA("conn-a"))).toBe(true);
+    // And the captured root's revalidation fails now that its connection is
+    // dead, so a brokered invoke cannot proceed under it either.
+    const rootA = f.roots[0];
+    expect(rootA).toBeDefined();
+    const revalidated = yield* Effect.promise(() =>
+      Promise.resolve(rootA!.revalidate()).then(
+        () => "ok" as const,
+        () => "denied" as const,
+      ),
+    );
+    expect(revalidated).toBe("denied");
+    // B's socket still binds correctly after A's teardown.
+    expect((yield* request("api/invoke", apiInvoke, token.access_token, "inst-b")).status).toBe(
+      200,
+    );
+    expect(f.roots[3]?.connectionId).toBe("conn-b");
+    // Disconnecting B turns its instance header stale — the request fails by
+    // name instead of minting a connectionless root nobody can revoke.
+    yield* sessions.markDisconnected(session!.sessionId, "conn-b");
+    yield* leases.revokeConnection("conn-b");
+    expect((yield* request("api/invoke", apiInvoke, token.access_token, "inst-b")).status).toBe(
+      400,
+    );
+    expect(f.roots).toHaveLength(4);
+    // A reconnect restores the binding — the fresh connection owns its mints
+    // and a second disconnect fences them and the stale header again.
+    yield* sessions.markConnected(session!.sessionId, "conn-b2", "inst-b");
+    expect((yield* request("api/invoke", apiInvoke, token.access_token, "inst-b")).status).toBe(
+      200,
+    );
+    expect(f.roots[4]?.connectionId).toBe("conn-b2");
+    const mintedB2 = yield* mintA("conn-b2");
+    expect(Option.isSome(mintedB2)).toBe(true);
+    const ticketB2 = Option.getOrThrow(mintedB2).inputTicket;
+    yield* sessions.markDisconnected(session!.sessionId, "conn-b2");
+    yield* leases.revokeConnection("conn-b2");
+    expect(Option.isNone(yield* leases.verify(ticketB2))).toBe(true);
+    expect((yield* request("api/invoke", apiInvoke, token.access_token, "inst-b")).status).toBe(
+      400,
+    );
+    expect(f.roots).toHaveLength(5);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        realAuthLayer,
+        BrowserFrameLeases.layer.pipe(Layer.provide(NodeServices.layer)),
+      ),
+    ),
+  ),
 );
 
 it.effect("asset bytes require read scope and carry no-store/nosniff headers", () =>

@@ -58,6 +58,15 @@ const detail = {
   reference: { projectId: ProjectId.make("project-a"), repository: "owner/repo", number: 42 },
   context: "thread" as const,
   composerDraftTarget: threadRef,
+  shortcutsEnabled: false,
+  getShortcutContext: () => ({
+    terminalFocus: false,
+    terminalOpen: false,
+    previewFocus: false,
+    previewOpen: false,
+    isWeb: true,
+    isDesktop: false,
+  }),
 };
 const readyBindings: VersionControlBindings = { status: "ready", detail };
 const record: ViewRecord = {

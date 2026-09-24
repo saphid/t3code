@@ -95,7 +95,7 @@ export type ApprovalOption = {
 };
 export type PendingApproval = {
   readonly requestId: string;
-  readonly requestKind: "command" | "file-read" | "file-change" | "mcp-elicitation";
+  readonly requestKind: "command" | "file-read" | "file-change" | "mcp-elicitation" | "permission";
   readonly createdAt: string;
   readonly detail?: string;
   readonly appName?: string;
@@ -329,7 +329,7 @@ for (const key of ["agentIndex", "phaseIndex", "attempt"]) agentProps[key] = nul
 const approval = obj(
   {
     requestId: id,
-    requestKind: { enum: ["command", "file-read", "file-change", "mcp-elicitation"] },
+    requestKind: { enum: ["command", "file-read", "file-change", "mcp-elicitation", "permission"] },
     createdAt: str,
     detail: str,
     appName: str,

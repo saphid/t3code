@@ -2,11 +2,14 @@ import {
   defineExtension,
   requireApi,
   useBrowserSurfaceSlot,
+  useRemoteBrowserFrames,
 } from "@t3tools/extension-sdk/authoring";
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import {
+  browserFramesApi,
   browserSessionsApi,
   filePresentationApi,
+  resourcesLeaseApi,
   uiKeybindingsApi,
   uiNotificationsApi,
   uiPanelsApi,
@@ -298,6 +301,21 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   });
 
   /**
+   * Remote-pixel fallback: hosts that cannot composite a native surface
+   * (every non-Electron client) present the session's remote frame stream
+   * inside the slot instead. `t3.browser/frames` mints lease-bound tickets;
+   * pointer/wheel/keyboard input rides the lease-gated input lane — absent
+   * grants simply produce no mints and the view stays present-only.
+   */
+  const remoteEligible =
+    held !== null &&
+    (host.browserSurface === undefined || host.browserSurface.presentation.supported === false);
+  const remote = useRemoteBrowserFrames(host, session, {
+    session: held,
+    enabled: visible && remoteEligible && surfaceLease?.state.kind !== "ended",
+  });
+
+  /**
    * Persist the restore record: the url the view reopens on, the held
    * session identity, and the per-view history list.
    * fitHistoryToSaveBudget keeps the record under the SDK's bounded save
@@ -454,15 +472,24 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   }, [host, session, visible]);
 
   const leaseState = surfaceLease?.state;
-  const surfaceNotice = surfaceDenial
-    ? `Native presentation is unavailable — ${surfaceDenial.reason}${
-        surfaceDenial.grant ? ` (missing grant: ${surfaceDenial.grant})` : ""
-      }: ${surfaceDenial.detail}`
-    : leaseState?.kind === "ended"
+  const remoteNotice =
+    remote.status.kind === "connecting"
+      ? "Connecting remote browser frames…"
+      : remote.status.kind === "error"
+        ? `Remote browser frames failed — ${remote.status.detail}`
+        : remote.status.kind === "unsupported"
+          ? `This client cannot composite a native browser surface and has no remote frame transport (${remote.status.detail}). The session is still open — view it from the desktop app.`
+          : null;
+  const surfaceNotice =
+    leaseState?.kind === "ended"
       ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.`
-      : leaseState?.kind === "active" && !leaseState.presentation.supported
-        ? `This client cannot composite a native browser surface (${leaseState.presentation.reason}). The session is still open — view it from the desktop app.`
-        : null;
+      : remoteEligible
+        ? remoteNotice
+        : surfaceDenial
+          ? `Native presentation is unavailable — ${surfaceDenial.reason}${
+              surfaceDenial.grant ? ` (missing grant: ${surfaceDenial.grant})` : ""
+            }: ${surfaceDenial.detail}`
+          : null;
 
   return (
     <section
@@ -547,6 +574,13 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             aria-label="Browser surface"
             style={{ position: "absolute", inset: 0 }}
           />
+          {remoteEligible && remote.status.kind !== "unsupported" && (
+            <div
+              ref={remote.ref}
+              aria-label="Remote browser surface"
+              style={{ position: "absolute", inset: 0 }}
+            />
+          )}
           {surfaceNotice && (
             <p
               role="note"
@@ -660,6 +694,8 @@ const authored = defineExtension({
   serverEntry: "server.ts",
   requires: [
     requireApi(browserSessionsApi),
+    requireApi(browserFramesApi),
+    requireApi(resourcesLeaseApi),
     requireApi(uiThemeApi),
     requireApi(uiKeybindingsApi),
     requireApi(uiPanelsApi),

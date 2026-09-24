@@ -1,3 +1,4 @@
+import { isElectron } from "../env";
 import {
   extensionCommandForPlugin,
   extensionCommandName,
@@ -669,6 +670,8 @@ function whenContext(surfaceId: string | null): ShortcutMatchContext {
     terminalOpen: false,
     previewFocus: false,
     previewOpen: false,
+    isWeb: !isElectron,
+    isDesktop: isElectron,
     "thread.active": activeThreadRef !== null,
   };
   if (surfaceId) context[`extension.${surfaceId}.focus`] = true;

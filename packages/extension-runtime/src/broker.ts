@@ -34,6 +34,13 @@ export interface HostApiInvocationMetadata {
     readonly contentHash: string;
     readonly installationGeneration: number;
   }[];
+  /**
+   * Per-connection identity of the transport root (e.g. the server WebSocket
+   * connection that opened the extension session). Providers keying records
+   * to the viewer's root connection use this so two connections sharing a
+   * session never share a record — and so root disconnect can revoke them.
+   */
+  readonly rootConnectionId?: string;
   readonly principal?: HostApiPrincipal;
   readonly assertAuthority?: () => Promise<void>;
   /**
@@ -56,6 +63,8 @@ export interface HostApiRootAuthority {
   readonly principal: HostApiPrincipal;
   readonly allowWrite: boolean;
   readonly revalidate: () => void | Promise<void>;
+  /** Identity of the transport connection this root rides on, when one exists. */
+  readonly connectionId?: string;
 }
 
 export interface HostApiProvider {
@@ -280,7 +289,8 @@ export function createApiBroker(options: {
       !root ||
       typeof root !== "object" ||
       !root.principal ||
-      typeof root.revalidate !== "function"
+      typeof root.revalidate !== "function" ||
+      (root.connectionId !== undefined && typeof root.connectionId !== "string")
     )
       throw new Error("Invalid API root authority");
     const principal = root.principal;
@@ -307,6 +317,7 @@ export function createApiBroker(options: {
       principal: frozenPrincipal,
       allowWrite: root.allowWrite === true,
       revalidate: root.revalidate,
+      ...(root.connectionId === undefined ? {} : { connectionId: root.connectionId }),
     }) as HostApiRootAuthority;
   }
   async function invoke(
@@ -479,6 +490,9 @@ export function createApiBroker(options: {
                     providerId: provider.providerId,
                     providerGeneration: stamp,
                     callerGenerations,
+                    ...(authority.root?.connectionId !== undefined
+                      ? { rootConnectionId: authority.root.connectionId }
+                      : {}),
                     ...(authority.root ? { principal: authority.root.principal } : {}),
                     assertAuthority,
                     ...(request.clientConnectionId
@@ -785,6 +799,9 @@ export function createApiBroker(options: {
                       providerId: provider.providerId,
                       providerGeneration: generation,
                       callerGenerations: Object.freeze(authority.callers.map(captureCaller)),
+                      ...(authority.root?.connectionId !== undefined
+                        ? { rootConnectionId: authority.root.connectionId }
+                        : {}),
                       ...(authority.root ? { principal: authority.root.principal } : {}),
                       assertAuthority,
                       ...(request.clientConnectionId

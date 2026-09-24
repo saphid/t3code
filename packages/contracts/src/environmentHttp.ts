@@ -73,6 +73,10 @@ import {
 const OptionalBearerHeaders = Schema.Struct({
   authorization: Schema.optionalKey(Schema.String),
   dpop: Schema.optionalKey(Schema.String),
+  // Client runtime instance identity — the same id the client presents on
+  // its ws upgrade. Lets the server attribute a connectionless HTTP call to
+  // that client's live socket instead of a session-global "newest" one.
+  "x-t3-client-instance": Schema.optionalKey(Schema.String),
 });
 
 const OptionalDpopProofHeaders = Schema.Struct({
@@ -514,6 +518,7 @@ const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
 // to strings). Both fields optional: omitting them keeps the full-snapshot
 // behavior, so pagination stays opt-in per request.
 const EnvironmentOrchestrationThreadSnapshotQuery = {
+  reasoningMessages: Schema.optional(Schema.Literal("true")),
   turnLimit: Schema.optional(
     Schema.FiniteFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
   ),

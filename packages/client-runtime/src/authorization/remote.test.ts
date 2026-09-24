@@ -6,11 +6,11 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import { EnvironmentAuthInvalidError } from "@t3tools/contracts";
+import { clientInstanceId } from "../clientInstance.ts";
 import {
   appendClientConnectionParams,
   bootstrapRemoteBearerSession,
   exchangeRemoteDpopAccessToken,
-  fetchRemoteDpopSessionState,
   fetchRemoteSessionState,
   issueRemoteDpopWebSocketTicket,
   issueRemoteWebSocketTicket,
@@ -380,45 +380,6 @@ describe("remote environment authorization", () => {
     }),
   );
 
-  it.effect("loads remote session state with a DPoP-bound access token", () =>
-    Effect.gen(function* () {
-      const fetch = recordedFetch(
-        Response.json({
-          authenticated: true,
-          auth: {
-            policy: "remote-reachable",
-            bootstrapMethods: ["one-time-token"],
-            sessionMethods: ["dpop-access-token"],
-            sessionCookieName: "t3_session",
-          },
-          sessionMethod: "dpop-access-token",
-          scopes: [
-            "orchestration:read",
-            "orchestration:operate",
-            "terminal:operate",
-            "review:write",
-          ],
-          expiresAt: "2026-05-01T12:00:00.000Z",
-        }),
-      );
-
-      yield* fetchRemoteDpopSessionState({
-        httpBaseUrl: "https://remote.example.com/",
-        accessToken: "dpop-access-token",
-        dpopProof: "dpop-proof",
-      }).pipe(provideRemoteHttp(fetch.fetchFn));
-
-      expectFetchCall(fetch.calls, 1, {
-        url: "https://remote.example.com/api/auth/session",
-        method: "GET",
-        headers: {
-          authorization: "DPoP dpop-access-token",
-          dpop: "dpop-proof",
-        },
-      });
-    }),
-  );
-
   it.effect("fails hung fetch requests on the configured timeout", () =>
     Effect.gen(function* () {
       const fetch = hangingFetch();
@@ -521,7 +482,7 @@ describe("remote environment authorization", () => {
       }).pipe(provideRemoteHttp(fetch.fetchFn));
 
       expect(url).toBe(
-        "wss://remote.example.com/ws?wsTicket=ws-ticket&clientSurface=mobile&clientAppVersion=1.2.3&clientDeviceType=phone&clientOs=Android&clientOsMajorVersion=15&clientDeviceModel=Pixel+9&connectionMethod=relay",
+        `wss://remote.example.com/ws?wsTicket=ws-ticket&clientInstanceId=${clientInstanceId}&clientSurface=mobile&clientAppVersion=1.2.3&clientDeviceType=phone&clientOs=Android&clientOsMajorVersion=15&clientDeviceModel=Pixel+9&connectionMethod=relay`,
       );
     }),
   );
