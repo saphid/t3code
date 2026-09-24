@@ -15,6 +15,8 @@ import {
   type TerminalSessionMetadata,
   type TerminalSessionResult,
   type TerminalSessionsListEvent,
+  type UiKeybindingChord,
+  type UiKeybindingsHost,
   type UiTerminalAppearance,
 } from "@t3tools/extension-sdk/catalogue";
 import { bindApi, bindStreamApi, type ApiClient } from "@t3tools/extension-sdk/capabilities";
@@ -1197,8 +1199,9 @@ export const TERMINAL_FOCUS_WHEN = `extension.${TERMINAL_SURFACE_ID}.focus`;
  * user and native rules first, so a displaced default is honest metadata
  * `listConflicts` reports rather than a stolen chord. The surface declares
  * `claimsTerminalFocus`, so while it owns focus the host leaves the
- * split/new/close chords untouched and they reach these bindings instead
- * of a native terminal. The Ghostty-level editing intercepts (clear,
+ * focused-terminal commands it resolves untouched, and the view's capture
+ * handler dispatches them (`terminalChordAction`) instead of a native
+ * terminal. The Ghostty-level editing intercepts (clear,
  * word-nav, delete) exist locally on the VT surface via `handleBeforeKey`;
  * what remains absent is adopting them as configurable commands through
  * `t3.ui/keybindings`.
@@ -1279,19 +1282,10 @@ export interface TerminalCommandActions {
 
 export type TerminalChordAction = "split" | "splitVertical" | "new" | "close";
 
-/** One `t3.ui/keybindings.listConflicts` row, as the contract reports it. */
-export interface TerminalKeybindingConflict {
-  readonly command: string;
-  readonly key: string;
-  readonly winner: "user" | "native" | "plugin";
-  readonly loser: string;
-}
-
 /**
- * The chords this surface owns by default (`claimsTerminalFocus` makes the
- * host leave them untouched inside the frame), keyed by the same spelling
- * the command descriptors use for `defaultKey` — `listConflicts` reports
- * displaced defaults under that exact key.
+ * The shipped default chords for the four focused-terminal commands, keyed
+ * by the descriptor `defaultKey` spelling. Only a host without the
+ * `t3.ui/keybindings@1.1.0` resolver falls back to these.
  */
 export const TERMINAL_DEFAULT_CHORDS: ReadonlyMap<string, TerminalChordAction> = new Map([
   ["mod+d", "split"],
@@ -1299,16 +1293,6 @@ export const TERMINAL_DEFAULT_CHORDS: ReadonlyMap<string, TerminalChordAction> =
   ["mod+n", "new"],
   ["mod+w", "close"],
 ]);
-
-/**
- * Every chord the panel's registered commands claim by default — the
- * pane-action chords above plus the `mod+j` toggle.
- */
-const TERMINAL_REGISTERED_CHORDS: ReadonlySet<string> = new Set(
-  TERMINAL_VIEW_COMMANDS.flatMap((command) =>
-    command.defaultKey === undefined ? [] : [command.defaultKey],
-  ),
-);
 
 /**
  * Native focused-terminal commands the panel can honor chord-for-chord:
@@ -1338,108 +1322,30 @@ export function terminalChordFromEvent(
 }
 
 /**
- * The action a captured chord should dispatch, given the host's keymap
- * resolution. `listConflicts` rows name the winning command for each
- * displaced registered defaultKey — the mod+d family AND the mod+j toggle —
- * but the list is computed under this surface's when-context, where
- * `terminalFocus` is false, so the winner is usually the shipped
- * `!terminalFocus` sibling (mod+d → diff.toggle, mod+n → chat.new) — a rule
- * that can never fire while this surface owns focus. A row on ANY chord
- * resolving to a native focused-terminal command means the user remapped
- * that chord to that command — dispatch THAT action, not the hardcoded
- * default: the host leaves exactly those events untouched for this surface
- * (isExtensionClaimedTerminalCommand), so nobody else will. Any other row
- * falls back to the default: the host dispatches at window capture before
- * this surface sees the event and marks what it dispatched
- * `defaultPrevented`, and the capture handler bails on those, so a fallback
- * dispatch only lands on a chord nobody else actually claimed. No row (or
- * an unavailable list) leaves the default binding in charge.
+ * The panel action a keydown on the focused terminal dispatches, or null
+ * when the key is not this surface's to act on.
  *
- * Residuals the plugin cannot see (the SDK keybindings surface exposes only
- * getCapabilities/registerCommands/unregisterCommands/listConflicts — no
- * resolve): a remap on a chord no registered default sits on (mod+e →
- * terminal.split) produces no row at all, and a remap guarded by
- * `terminalFocus` itself is invisible in the list's false-terminalFocus
- * context — the default action still fires plugin-side for those.
+ * With the host's resolver (`t3.ui/keybindings@1.1.0`), the answer is the
+ * host dispatcher's own resolution of the chord under terminal focus. The
+ * dispatcher leaves exactly the four focused-terminal commands untouched
+ * for a `claimsTerminalFocus` surface, so those map to panel actions. Any
+ * other answer, including null, is a key the host already handled or that
+ * belongs to the shell. The resolver is synchronous and reads the live
+ * keymap, so there is no window in which a remap is unknown. Without it (a
+ * host predating 1.1.0, or no `t3.ui/keybindings` grant), only the shipped
+ * default chords apply.
  */
-export function resolveTerminalChord(
-  chord: string | null,
-  conflicts: readonly TerminalKeybindingConflict[] | null,
+export function terminalChordAction(
+  event: UiKeybindingChord,
+  keybindings: UiKeybindingsHost | undefined,
+  isMac: boolean,
 ): TerminalChordAction | null {
-  if (chord === null) return null;
-  if (conflicts !== null) {
-    const entry = conflicts.find((conflict) => conflict.key === chord);
-    if (entry !== undefined) {
-      // Rows exist for every displaced defaultKey, not just the four
-      // pane-action chords — the mod+j toggle default displaces the same
-      // way, and its row must resolve too or the host yields an event the
-      // surface then drops.
-      const action = NATIVE_TERMINAL_CHORD_COMMANDS.get(entry.command);
-      if (action !== undefined) return action;
-    }
+  if (keybindings !== undefined) {
+    const command = keybindings.resolveTerminalFocusKey(event);
+    return command === null ? null : (NATIVE_TERMINAL_CHORD_COMMANDS.get(command) ?? null);
   }
-  return TERMINAL_DEFAULT_CHORDS.get(chord) ?? null;
-}
-
-/**
- * Chords the capture handler must keep intercepted while the current
- * `listConflicts` answer is outstanding — judged independently of the stale
- * resolver, which cannot see a remap until its row arrives. Three clauses:
- *
- * 1. Every chord the panel's registered commands claim by default (the
- *    mod+d family AND the mod+j toggle, whose remap row names a native
- *    terminal command the stale or absent list does not carry yet).
- * 2. Every chord whose last-known rows name a native focused-terminal
- *    command on either side of the conflict. `listConflicts` is
- *    environment-wide, so the row can come from another installation — a
- *    foreign registration the user remapped to `terminal.split` produces
- *    exactly that row, and the panel dispatches it once the answer lands,
- *    so the pending window must hold the chord even though no default of
- *    ours sits on it. A foreign-only row (plugin vs plugin, or a remap to
- *    some other command) names no terminal command and must NOT hold the
- *    chord: after a terminal remap is removed, a leftover foreign row on
- *    the same key would otherwise eat that key's ordinary input through
- *    every later pending window. A row that disappears stops holding its
- *    chord — the latest answer replaces the list; nothing accumulates.
- * 3. Before ANY answer has landed (a freshly mounted surface, both the
- *    mount-time and focused requests outstanding) no row can vouch for or
- *    against a chord, and clause 1 cannot see other installations'
- *    registrations at all — a Browser-registered `mod+shift+j` remapped to
- *    a native split leaked its encoded bytes through exactly this window.
- *    Hold the shifted-mod class: those chords encode as disambiguated
- *    CSI-u sequences rather than a plain control byte, so holding one
- *    costs a re-press while leaking one injects escape garbage into the
- *    PTY. Plain mod chords stay free — they are the single control bytes
- *    readline apps bind (Ctrl+T transposes), and the VT surface's own
- *    clipboard chords (mod+shift+c / mod+shift+v) stay free so copy and
- *    paste still work at mount.
- *
- * Truly unowned chords — ordinary typing, host-only chords, foreign remaps,
- * foreign-only conflict rows — still fall through.
- */
-export function isPendingOwnableTerminalChord(
-  chord: string | null,
-  conflicts: readonly TerminalKeybindingConflict[] | null,
-): boolean {
-  if (chord === null) return false;
-  if (TERMINAL_REGISTERED_CHORDS.has(chord)) return true;
-  if (
-    conflicts !== null &&
-    conflicts.some(
-      (conflict) =>
-        conflict.key === chord &&
-        (NATIVE_TERMINAL_CHORD_COMMANDS.has(conflict.command) ||
-          NATIVE_TERMINAL_CHORD_COMMANDS.has(conflict.loser)),
-    )
-  ) {
-    return true;
-  }
-  return (
-    conflicts === null &&
-    chord.startsWith("mod+shift+") &&
-    chord !== "mod+shift+c" &&
-    chord !== "mod+shift+v"
-  );
+  const chord = terminalChordFromEvent(event, isMac);
+  return chord === null ? null : (TERMINAL_DEFAULT_CHORDS.get(chord) ?? null);
 }
 
 /** Maps a dispatched command id to its panel action; false for unknown ids. */

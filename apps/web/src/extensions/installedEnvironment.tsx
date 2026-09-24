@@ -43,6 +43,7 @@ import {
 import { registerInstalledApiClient, setInstalledApiPolicy } from "./installedApiClients";
 import { createBrowserSurfaceBridge } from "./browserSurfaceBridge";
 import { createBrowserFramesBridge } from "./browserFramesBridge";
+import { createKeybindingsHostBridge } from "./keybindingsHostBridge";
 import {
   CLIENT_PROVIDER_CLIENT_TAG,
   CLIENT_PROVIDER_DESCRIPTORS,
@@ -236,7 +237,7 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
           expectedContentHash: installation.contentHash,
           request: {
             id: "t3.ui/keybindings",
-            versionRange: "1.0.0",
+            versionRange: "^1.0.0",
             method: "registerCommands",
             input: { commands: commands as unknown as Json },
             context,
@@ -435,6 +436,7 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
       load: importInstalledClient,
       browserSurface: createBrowserSurfaceBridge(environmentId),
       browserFrames: createBrowserFramesBridge(environmentId),
+      keybindings: createKeybindingsHostBridge(),
       register: (extension, client) => {
         const unregister = registerWorkspaceExtension(
           extension,

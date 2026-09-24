@@ -6876,6 +6876,11 @@ export const UI_THEME_READ = "t3.ui/theme.read";
 export const UI_THEME_WRITE = "t3.ui/theme.write";
 export const UI_KEYBINDINGS = "t3.ui/keybindings";
 export const UI_KEYBINDINGS_GLOBAL = "t3.ui/keybindings.global";
+/**
+ * 1.1.0 adds the client-local `ClientHost.keybindings` capability
+ * (`UiKeybindingsHost`); the brokered methods are unchanged from 1.0.0.
+ */
+export const UI_KEYBINDINGS_VERSION = "1.1.0";
 export const UI_NOTIFY = "t3.ui/notify";
 export const UI_PANELS = "t3.ui/panels";
 
@@ -7136,7 +7141,7 @@ export const uiKeybindingsApi = defineApi<{
   };
 }>({
   id: UI_KEYBINDINGS,
-  version: "1.0.0",
+  version: UI_KEYBINDINGS_VERSION,
   methods: [
     {
       name: "getCapabilities",
@@ -7225,6 +7230,42 @@ export const uiKeybindingsApi = defineApi<{
     },
   ],
 });
+
+/**
+ * A keydown as the host keymap matches it: the `KeyboardEvent` fields its
+ * resolver reads, so a live event passes as-is.
+ */
+export type UiKeybindingChord = {
+  readonly key: string;
+  readonly code?: string;
+  readonly metaKey: boolean;
+  readonly ctrlKey: boolean;
+  readonly shiftKey: boolean;
+  readonly altKey: boolean;
+  readonly getModifierState?: (key: "AltGraph") => boolean;
+};
+
+/**
+ * The client-local half of `t3.ui/keybindings@1.1.0`, present on `ClientHost`
+ * as `keybindings` for installations holding the `t3.ui/keybindings` grant.
+ * Absence means the host predates 1.1.0 or the grant is missing — treat it
+ * as "host-unavailable". Resolution runs in the renderer against the keymap
+ * the client already holds, so it is synchronous (a keydown handler can act
+ * on the answer before the event moves on) and never crosses the network.
+ */
+export interface UiKeybindingsHost {
+  readonly id: typeof UI_KEYBINDINGS;
+  readonly version: string;
+  /**
+   * The command the host's keydown dispatcher resolves `chord` to while a
+   * terminal surface owns focus (`terminalFocus` true, every other `when`
+   * key as the dispatcher currently sees it), or null when no user or
+   * native rule claims the chord. This is the dispatcher's own resolver and
+   * rule set, not a copy. Plugin `defaultKey`s are not rules — the host
+   * dispatches those itself on a null answer.
+   */
+  resolveTerminalFocusKey(chord: UiKeybindingChord): string | null;
+}
 
 const uiNotificationActionSchema = {
   type: "object",

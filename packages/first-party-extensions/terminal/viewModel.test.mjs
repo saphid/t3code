@@ -768,10 +768,9 @@ import {
   TERMINAL_VIEW_COMMANDS,
   asTerminalAppearance,
   dispatchTerminalCommand,
-  isPendingOwnableTerminalChord,
   registerPanelCommands,
-  resolveTerminalChord,
   terminalAppearanceVars,
+  terminalChordAction,
   terminalChordFromEvent,
   themeVarOverrides,
   watchTerminalAppearanceVars,
@@ -1063,7 +1062,6 @@ NodeTest.describe("t3.ui/keybindings — focused-chord resolution (r2 item 4)", 
     shiftKey: false,
     ...overrides,
   });
-  const conflict = (key, command, winner) => ({ command, key, winner, loser: "t3.terminal" });
 
   NodeTest.it("canonicalizes mod chords in the descriptor defaultKey spelling", () => {
     // mod is meta on mac, ctrl elsewhere; the other super-ish modifier,
@@ -1089,10 +1087,32 @@ NodeTest.describe("t3.ui/keybindings — focused-chord resolution (r2 item 4)", 
     );
   });
 
-  NodeTest.it("dispatches the host-resolved command when the keymap displaced a default", () => {
-    // The reviewer repro: the user remapped mod+d → terminal.close. The
-    // host still yields the chord (a focused terminal claims terminal.*),
-    // so the panel must CLOSE, not split — dispatch the resolved command.
+  NodeTest.it("maps only the host's focused-terminal commands to panel actions", () => {
+    // The host yields exactly these four commands to a claimsTerminalFocus
+    // surface; everything else it resolved it dispatched itself, and a null
+    // answer is the shell's key.
+    const answering = (command) => ({
+      id: "t3.ui/keybindings",
+      version: "1.1.0",
+      resolveTerminalFocusKey: () => command,
+    });
+    const press = keyEvent({ metaKey: true });
+    NodeAssert.equal(terminalChordAction(press, answering("terminal.split"), true), "split");
+    NodeAssert.equal(
+      terminalChordAction(press, answering("terminal.splitVertical"), true),
+      "splitVertical",
+    );
+    NodeAssert.equal(terminalChordAction(press, answering("terminal.new"), true), "new");
+    NodeAssert.equal(terminalChordAction(press, answering("terminal.close"), true), "close");
+    NodeAssert.equal(terminalChordAction(press, answering("terminal.toggle"), true), null);
+    NodeAssert.equal(terminalChordAction(press, answering("diff.toggle"), true), null);
+    NodeAssert.equal(terminalChordAction(press, answering("ext.t3.browser.toggle"), true), null);
+    // A null answer never falls back to the static defaults: mod+d with
+    // the host saying "unbound" is the shell's.
+    NodeAssert.equal(terminalChordAction(press, answering(null), true), null);
+  });
+
+  NodeTest.it("the resolved action drives the registered-command dispatch funnel", () => {
     const calls = [];
     const actions = {
       newTerminal: () => calls.push("new"),
@@ -1100,190 +1120,27 @@ NodeTest.describe("t3.ui/keybindings — focused-chord resolution (r2 item 4)", 
       splitTerminal: (direction) => calls.push(`split:${direction}`),
       toggleSurface: () => calls.push("toggle"),
     };
-    const remapped = [
-      conflict("mod+d", "terminal.close", "user"),
-      // Cross-mapping: a chord rebound to a different terminal command
-      // dispatches that command, whatever its default was.
-      conflict("mod+n", "terminal.splitVertical", "user"),
-    ];
-    NodeAssert.equal(resolveTerminalChord("mod+d", remapped), "close");
-    NodeAssert.equal(resolveTerminalChord("mod+n", remapped), "splitVertical");
-    // And the resolved action drives the same dispatch funnel the
-    // registered commands use.
-    NodeAssert.equal(
-      dispatchTerminalCommand(resolveTerminalChord("mod+d", remapped), actions),
-      true,
-    );
-    NodeAssert.equal(
-      dispatchTerminalCommand(resolveTerminalChord("mod+n", remapped), actions),
-      true,
-    );
-    NodeAssert.deepEqual(calls, ["close", "split:vertical"]);
+    for (const action of ["close", "splitVertical", "split", "new"]) {
+      NodeAssert.equal(dispatchTerminalCommand(action, actions), true);
+    }
+    NodeAssert.deepEqual(calls, ["close", "split:vertical", "split:horizontal", "new"]);
   });
 
-  NodeTest.it("a native-default displacement resolves to that native command", () => {
-    // By default the host's own terminal.* rule shadows the plugin
-    // binding — listConflicts reports it with winner "native". The
-    // resolved command is the honest source of truth either way.
+  NodeTest.it("a host without the resolver keeps only the shipped default chords", () => {
+    NodeAssert.equal(terminalChordAction(keyEvent({ metaKey: true }), undefined, true), "split");
     NodeAssert.equal(
-      resolveTerminalChord("mod+w", [conflict("mod+w", "terminal.close", "native")]),
+      terminalChordAction(keyEvent({ ctrlKey: true, key: "W" }), undefined, false),
       "close",
     );
     NodeAssert.equal(
-      resolveTerminalChord("mod+shift+d", [conflict("mod+shift+d", "terminal.split", "native")]),
-      "split",
-    );
-  });
-
-  NodeTest.it("undisplaced chords keep their default action", () => {
-    // No row (or an empty list) means the plugin default owns the chord.
-    NodeAssert.equal(resolveTerminalChord("mod+d", []), "split");
-    NodeAssert.equal(resolveTerminalChord("mod+shift+d", []), "splitVertical");
-    NodeAssert.equal(resolveTerminalChord("mod+n", []), "new");
-    NodeAssert.equal(resolveTerminalChord("mod+w", []), "close");
-    // A row for a DIFFERENT chord does not displace this one.
-    NodeAssert.equal(
-      resolveTerminalChord("mod+d", [conflict("mod+n", "terminal.close", "user")]),
-      "split",
-    );
-  });
-
-  NodeTest.it("an unavailable list falls back to the static defaults (r1 behavior)", () => {
-    // listConflicts denied or the capability missing: null keeps the
-    // hardcoded chord mapping rather than disabling the chords entirely.
-    NodeAssert.equal(resolveTerminalChord("mod+d", null), "split");
-    NodeAssert.equal(resolveTerminalChord("mod+w", null), "close");
-  });
-
-  NodeTest.it(
-    "the shipped !terminalFocus siblings fall back to the default, not a dead key",
-    () => {
-      // The conflicts list is computed with terminalFocus false, so on the
-      // default keymap the winner for every one of our chords is its
-      // !terminalFocus sibling (diff.toggle on mod+d, chat.new on mod+n,
-      // rightPanel.close on mod+w) — rules that can never fire while this
-      // surface owns focus. Nulling them dead-keyed all four default chords
-      // in the real client; the host preventDefaults what it truly
-      // dispatches at window capture and the handler bails on
-      // defaultPrevented events, so the resolution falls back instead.
-      NodeAssert.equal(
-        resolveTerminalChord("mod+d", [conflict("mod+d", "diff.toggle", "native")]),
-        "split",
-      );
-      NodeAssert.equal(
-        resolveTerminalChord("mod+n", [conflict("mod+n", "chat.new", "user")]),
-        "new",
-      );
-      NodeAssert.equal(
-        resolveTerminalChord("mod+w", [conflict("mod+w", "rightPanel.close", "user")]),
-        "close",
-      );
-      // A same-chord default from another plugin: the host dispatches the
-      // first-registered binding itself (defaultPrevented) — an event that
-      // still reaches this surface was left unclaimed, so the default
-      // stands rather than dead-keying.
-      NodeAssert.equal(
-        resolveTerminalChord("mod+d", [conflict("mod+d", "other.plugin/action", "plugin")]),
-        "split",
-      );
-    },
-  );
-
-  NodeTest.it("a chord with no default and no row is never intercepted", () => {
-    // mod+e and mod+shift+n have no default binding here — the VT surface
-    // sees the bytes regardless of what the keymap says elsewhere.
-    NodeAssert.equal(resolveTerminalChord("mod+e", null), null);
-    NodeAssert.equal(resolveTerminalChord("mod+e", []), null);
-    NodeAssert.equal(resolveTerminalChord("mod+shift+n", []), null);
-    NodeAssert.equal(resolveTerminalChord(null, null), null);
-    // A row on ANY chord — not just the four pane-action defaults — naming
-    // a native focused-terminal command dispatches it: the host left that
-    // event for this surface and nobody else will act on it (r3 finding 4).
-    NodeAssert.equal(
-      resolveTerminalChord("mod+e", [conflict("mod+e", "terminal.close", "user")]),
-      "close",
-    );
-    // A row naming anything else still leaves nothing in charge — the
-    // host's own dispatch of that command already marked defaultPrevented.
-    NodeAssert.equal(
-      resolveTerminalChord("mod+e", [conflict("mod+e", "other.plugin/action", "plugin")]),
+      terminalChordAction(keyEvent({ ctrlKey: true, shiftKey: true, key: "J" }), undefined, false),
       null,
     );
-  });
-
-  NodeTest.it("the pending ownable set ignores the stale resolver's answer", () => {
-    // r5 review finding: mod+j remapped to terminal.split resolves null
-    // against a stale or absent list (its row has not arrived and the
-    // static defaults do not carry the toggle chord), so gating the
-    // pending swallow on the resolver let Ctrl+J fall through to the VT
-    // encoder. The pending set stands on its own — registered default
-    // chords, last-known rows naming a native terminal command, and
-    // (before any answer at all) the shifted-mod class.
-    NodeAssert.equal(resolveTerminalChord("mod+j", null), null);
-    NodeAssert.equal(isPendingOwnableTerminalChord("mod+j", null), true);
-    NodeAssert.equal(isPendingOwnableTerminalChord("mod+d", null), true);
-    NodeAssert.equal(isPendingOwnableTerminalChord("mod+shift+d", []), true);
-    // A chord only the last-known answer carried stays intercepted through
-    // the pending window when its row names a native terminal command — a
-    // superseding refresh can drop the row, but until its answer lands the
-    // panel still owns the chord.
     NodeAssert.equal(
-      isPendingOwnableTerminalChord("mod+e", [conflict("mod+e", "terminal.split", "user")]),
-      true,
+      terminalChordAction(keyEvent({ ctrlKey: true, key: "t" }), undefined, false),
+      null,
     );
-    // r6 review finding 1: the list is environment-wide, so rows from
-    // OTHER installations hold their chord when they name a native
-    // terminal command — on either side of the conflict.
-    NodeAssert.equal(
-      isPendingOwnableTerminalChord("mod+shift+j", [
-        {
-          command: "terminal.split",
-          key: "mod+shift+j",
-          winner: "user",
-          loser: "ext.t3.browser.toggle",
-        },
-      ]),
-      true,
-    );
-    NodeAssert.equal(
-      isPendingOwnableTerminalChord("mod+k", [
-        { command: "diff.toggle", key: "mod+k", winner: "user", loser: "terminal.close" },
-      ]),
-      true,
-    );
-    // Before ANY answer has landed no row can vouch for a chord, so the
-    // shifted-mod class holds — the Browser mod+shift+j leak — minus the
-    // VT surface's own clipboard chords, which must keep working at mount.
-    NodeAssert.equal(isPendingOwnableTerminalChord("mod+shift+j", null), true);
-    NodeAssert.equal(isPendingOwnableTerminalChord("mod+shift+c", null), false);
-    NodeAssert.equal(isPendingOwnableTerminalChord("mod+shift+v", null), false);
-    // r6 review finding 2: a foreign-only row names no terminal command
-    // and must NOT hold its chord — after a terminal remap is removed, a
-    // leftover plugin-vs-plugin row on the same key would otherwise eat
-    // that key's ordinary input through every later pending window.
-    NodeAssert.equal(
-      isPendingOwnableTerminalChord("mod+t", [
-        {
-          command: "ext.foreign.a.tools",
-          key: "mod+t",
-          winner: "plugin",
-          loser: "ext.foreign.b.tools",
-        },
-      ]),
-      false,
-    );
-    NodeAssert.equal(
-      isPendingOwnableTerminalChord("mod+t", [conflict("mod+t", "diff.toggle", "user")]),
-      false,
-    );
-    // Truly unowned chords fall through: no chord, ordinary keys,
-    // host-only chords, foreign remaps with no row — and no shifted-class
-    // hold once any answer exists, even an empty one.
-    NodeAssert.equal(isPendingOwnableTerminalChord(null, null), false);
-    NodeAssert.equal(isPendingOwnableTerminalChord("mod+t", null), false);
-    NodeAssert.equal(isPendingOwnableTerminalChord("mod+e", null), false);
-    NodeAssert.equal(isPendingOwnableTerminalChord("mod+e", []), false);
-    NodeAssert.equal(isPendingOwnableTerminalChord("mod+shift+j", []), false);
+    NodeAssert.equal(terminalChordAction(keyEvent({ key: "x" }), undefined, false), null);
   });
 });
 
