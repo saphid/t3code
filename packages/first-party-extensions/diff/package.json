@@ -8,7 +8,7 @@
     "check": "t3-extension check .t3-extension",
     "test": "node --test --experimental-strip-types viewModel.test.mjs uiContracts.test.mjs bundleFreshness.test.mjs",
     "typecheck": "tsc -p tsconfig.json",
-    "audit": "node ../scripts/audit-imports.mjs . --allow @pierre/diffs"
+    "audit": "node ../scripts/audit-imports.mjs . --allow @pierre/diffs --allow-relative ../scripts/check-bundles.mjs"
   },
   "dependencies": {
     "@pierre/diffs": "catalog:",

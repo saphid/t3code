@@ -13,6 +13,10 @@
  *   - bare specifiers outside the public allowlist
  *
  * Usage: node audit-imports.mjs <package-dir> [--allow <specifier-prefix>]...
+ *   [--allow-relative <path>]...
+ * `--allow-relative` exempts one exact file outside the package root, resolved
+ * from <package-dir>; use it only for test-time tooling the bundle never
+ * reaches, such as ../scripts/check-bundles.mjs.
  * Exit 0 = clean. Findings print as JSON lines to stderr and the process
  * exits 1. Shared by every first-party panel package.
  */
@@ -79,12 +83,15 @@ function lineOf(text, index) {
 async function main() {
   const args = process.argv.slice(2);
   const extraAllowed = [];
+  const allowedRelative = [];
   const positional = [];
   for (let i = 0; i < args.length; i += 1) {
     if (args[i] === "--allow") extraAllowed.push(args[++i]);
+    else if (args[i] === "--allow-relative") allowedRelative.push(args[++i]);
     else positional.push(args[i]);
   }
   const root = NodePath.resolve(positional[0] ?? ".");
+  const allowedOutside = new Set(allowedRelative.map((path) => NodePath.resolve(root, path)));
   const allowed = [...PUBLIC_SPECIFIER_PREFIXES, ...extraAllowed];
   const findings = [];
 
@@ -114,7 +121,11 @@ async function main() {
       if (specifier === undefined) continue;
       if (specifier.startsWith(".")) {
         const resolved = NodePath.resolve(NodePath.dirname(file), specifier);
-        if (!resolved.startsWith(root + NodePath.sep) && resolved !== root)
+        if (
+          !resolved.startsWith(root + NodePath.sep) &&
+          resolved !== root &&
+          !allowedOutside.has(resolved)
+        )
           findings.push({
             file: rel,
             line: lineOf(text, match.index),
