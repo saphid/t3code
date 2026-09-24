@@ -76,6 +76,12 @@ export interface RuntimeOptions {
   ): boolean | Promise<boolean>;
   readonly timeoutMs?: number;
   readonly workerUrl?: URL;
+  /**
+   * Starts workers as `process.execPath ...workerCommand` instead of forking
+   * `workerUrl`. A Node single-executable has no Node to fork a script with, so
+   * it passes the hidden subcommand that runs `runWorkerProcess` inside itself.
+   */
+  readonly workerCommand?: readonly string[];
 }
 export interface ExtensionRuntime {
   install(sourceDir: string, grants?: Partial<InstallationGrants>): Promise<Installation>;
@@ -175,6 +181,7 @@ interface Worker {
 }
 const errorMessage = (error: unknown) =>
   error instanceof Error ? error.message.slice(0, 1000) : "Extension failed";
+const WORKER_HEAP_LIMIT = "--max-old-space-size=96";
 const clone = <T>(value: T): T => copyEnvelope(value, 4 * 1024 * 1024) as T;
 
 /** Trusted bundled code, one environment and one process owner per runtime root. Not a sandbox. */
@@ -197,6 +204,22 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
   const workerUrl = options.workerUrl
     ? new URL(options.workerUrl.href)
     : new URL("./worker.js", import.meta.url);
+  const workerCommand = options.workerCommand ? [...options.workerCommand] : undefined;
+  function spawnWorker(record: Installation): NodeChildProcess.ChildProcess {
+    const spawnOptions = {
+      cwd: NodePath.join(root, "packages", record.contentHash),
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+      env: { PATH: process.env.PATH ?? "", NODE_ENV: "production", ELECTRON_RUN_AS_NODE: "1" },
+    } satisfies NodeChildProcess.SpawnOptions;
+    // An executable passes every argument to its own program, so the heap cap
+    // reaches its embedded Node through NODE_OPTIONS instead of execArgv.
+    return workerCommand
+      ? NodeChildProcess.spawn(process.execPath, workerCommand, {
+          ...spawnOptions,
+          env: { ...spawnOptions.env, NODE_OPTIONS: WORKER_HEAP_LIMIT },
+        })
+      : NodeChildProcess.fork(workerUrl, [], { ...spawnOptions, execArgv: [WORKER_HEAP_LIMIT] });
+  }
   await NodeFSP.mkdir(root, { recursive: true, mode: 0o700 });
   if ((await NodeFSP.realpath(root)) !== root)
     throw new Error("Runtime root cannot contain symlinks");
@@ -764,12 +787,7 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
     const existing = workers.get(record.id);
     if (existing) return existing;
     if (!record.package.serverEntry) throw new Error("Package has no server entry");
-    const child = NodeChildProcess.fork(workerUrl, [], {
-      cwd: NodePath.join(root, "packages", record.contentHash),
-      stdio: ["ignore", "ignore", "ignore", "ipc"],
-      execArgv: ["--max-old-space-size=96"],
-      env: { PATH: process.env.PATH ?? "", NODE_ENV: "production", ELECTRON_RUN_AS_NODE: "1" },
-    });
+    const child = spawnWorker(record);
     let readyResolve!: () => void, readyReject!: (error: Error) => void;
     const ready = new Promise<void>((resolve, reject) => {
       readyResolve = resolve;
@@ -1098,12 +1116,7 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
   async function stage(record: Installation) {
     if (!record.package.serverEntry) return;
     // A separate process verifies the executable contract without receiving grants or service authority.
-    const child = NodeChildProcess.fork(workerUrl, [], {
-      cwd: NodePath.join(root, "packages", record.contentHash),
-      stdio: ["ignore", "ignore", "ignore", "ipc"],
-      execArgv: ["--max-old-space-size=96"],
-      env: { PATH: process.env.PATH ?? "", NODE_ENV: "production", ELECTRON_RUN_AS_NODE: "1" },
-    });
+    const child = spawnWorker(record);
     await new Promise<void>((resolve, reject) => {
       let result: Error | undefined;
       let ready = false;

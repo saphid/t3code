@@ -25,6 +25,7 @@ import {
   type Installation,
 } from "@t3tools/extension-runtime";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
+import { HostProcessIsExecutable } from "@t3tools/shared/hostProcess";
 import type { ToolDescriptor } from "@t3tools/extension-sdk/environment";
 import {
   WORKSPACE_READ_TEXT,
@@ -75,11 +76,25 @@ const operationError = (operation: string, cause: unknown) =>
   });
 const installation = Schema.decodeUnknownSync(ExtensionInstallation);
 
+/**
+ * How the extension runtime starts workers. The npm bundle forks its sibling
+ * `extension-worker.mjs`; the single-executable has neither that file nor a
+ * Node to fork it with, so it runs its own hidden `__extension-worker`
+ * subcommand. Unbundled source keeps the runtime's default worker script.
+ */
+export const extensionWorkerLaunch = (isExecutable: boolean, moduleUrl: string) =>
+  isExecutable
+    ? { workerCommand: ["__extension-worker"] }
+    : moduleUrl.endsWith(".mjs")
+      ? { workerUrl: new URL("./extension-worker.mjs", moduleUrl) }
+      : {};
+
 export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   factory: typeof createExtensionRuntime = createExtensionRuntime,
 ) {
   const config = yield* ServerConfig.ServerConfig;
   const path = yield* Path.Path;
+  const isExecutable = yield* HostProcessIsExecutable;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const environmentId = yield* environment.getEnvironmentId;
   const projects = yield* ProjectionProjectRepository;
@@ -183,9 +198,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
         factory({
           rootDir: path.join(config.stateDir, "extensions"),
           environmentId,
-          ...(import.meta.url.endsWith(".mjs")
-            ? { workerUrl: new URL("./extension-worker.mjs", import.meta.url) }
-            : {}),
+          ...extensionWorkerLaunch(isExecutable, import.meta.url),
           apiProviders: [
             browserLocalServersApi,
             browserSessionsApi,

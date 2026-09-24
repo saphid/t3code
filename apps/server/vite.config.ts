@@ -75,8 +75,8 @@ export default mergeConfig(
       },
     },
     pack: {
-      // The executable embeds one entry; the history worker becomes a hidden
-      // subcommand there instead of a sibling script.
+      // The executable embeds one entry; the Claude history and extension
+      // workers become hidden subcommands there instead of sibling scripts.
       entry: packExecutable
         ? ["src/bin.ts"]
         : ["src/bin.ts", "src/claude-history-worker.ts", "src/extension-worker.ts"],

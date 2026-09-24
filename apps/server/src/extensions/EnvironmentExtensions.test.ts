@@ -36,7 +36,7 @@ import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import { WorkspaceEntries } from "../workspace/WorkspaceEntries.ts";
 import { WorkspaceFileSystem } from "../workspace/WorkspaceFileSystem.ts";
 import { toSdkContext } from "./scope.ts";
-import { make } from "./EnvironmentExtensions.ts";
+import { extensionWorkerLaunch, make } from "./EnvironmentExtensions.ts";
 import { TerminalManager } from "../terminal/Manager.ts";
 import { PreviewManager } from "../preview/Manager.ts";
 import { PreviewAutomationBroker } from "../mcp/PreviewAutomationBroker.ts";
@@ -341,6 +341,22 @@ function fixture() {
     },
   };
 }
+
+it("the executable runs its hidden worker subcommand and the npm bundle forks the sibling script", () => {
+  expect(extensionWorkerLaunch(true, "file:///opt/t3/dist-exe/bin.mjs")).toEqual({
+    workerCommand: ["__extension-worker"],
+  });
+  expect(extensionWorkerLaunch(false, "file:///opt/t3/dist/bin.mjs")).toEqual({
+    workerUrl: new URL("file:///opt/t3/dist/extension-worker.mjs"),
+  });
+  // Unbundled source leaves the runtime on its own worker script.
+  expect(
+    extensionWorkerLaunch(
+      false,
+      "file:///repo/apps/server/src/extensions/EnvironmentExtensions.ts",
+    ),
+  ).toEqual({});
+});
 
 it.effect("forwards the verified root authority to unary and stream runtime calls", () => {
   const f = fixture();
