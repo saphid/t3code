@@ -785,3 +785,13 @@ export const CLIENT_PROVIDER_APIS: ReadonlyMap<string, ApiDefinition> = new Map(
  * a version inside the range for the area it declares.
  */
 export const CLIENT_PROVIDER_SUPPORTED_RANGE = "^1.0.0";
+
+/**
+ * The composer range that carries the 1.1.0 operations: `insertMention`,
+ * `insertTerminalContext`, `listAnnotations`, `removeAnnotation`, and the
+ * `kind: "diff"` annotation variant. A connection still declaring a 1.0.x
+ * composer keeps exactly its 1.0.0 surface — `^1.0.0` registration accepts it,
+ * so adapters must gate these ops on the targeted connection satisfying this
+ * range instead of trusting registration alone.
+ */
+export const CLIENT_COMPOSER_V11_RANGE = "^1.1.0";

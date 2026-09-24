@@ -1,6 +1,7 @@
 import {
   AuthOrchestrationReadScope,
   ClientProvidersError,
+  EnvironmentId,
   ExtensionOperationError,
   ProjectId,
   ThreadId,
@@ -13,9 +14,16 @@ import type {
 } from "@t3tools/extension-sdk/catalogue";
 import type { HostApiProvider } from "@t3tools/extension-runtime";
 import { it, expect } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/stream";
+import type { ClientProviderServerFrame } from "@t3tools/contracts";
+import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
+import { ClientApiProviders, layer as clientApiProvidersLayer } from "./ClientApiProviders.ts";
 import { createComposerApiProviders } from "./composerApi.ts";
 
 const isOperationError = Schema.is(ExtensionOperationError);
@@ -38,47 +46,45 @@ const noClient = new ClientProvidersError({
   code: "client-provider-unavailable",
   detail: "No connected client hosts this provider; the draft store is client-local.",
 });
-const providers = createComposerApiProviders(
-  {
-    environmentId: "env",
-    projects: {
-      getById: () =>
-        Effect.succeedSome({
-          projectId: ProjectId.make("project"),
-          workspaceRoot: WORKSPACE,
-          deletedAt: null,
-        }),
-    },
-    threads: {
-      getById: (input) =>
-        Effect.succeed(
-          input.threadId === ThreadId.make("thread")
-            ? Option.some({
-                projectId: ProjectId.make("project"),
-                worktreePath: null,
-                deletedAt: null,
-              })
-            : Option.none(),
-        ),
-    },
+const resolverDeps: Parameters<typeof createComposerApiProviders>[0] = {
+  environmentId: "env",
+  projects: {
+    getById: () =>
+      Effect.succeedSome({
+        projectId: ProjectId.make("project"),
+        workspaceRoot: WORKSPACE,
+        deletedAt: null,
+      }),
   },
-  {
-    environmentId: "env",
-    clientApiProviders: {
-      connect: () => Effect.die("unused"),
-      respond: () => Effect.die("unused"),
-      emit: () => Effect.die("unused"),
-      invoke: () => Effect.fail(noClient),
-      openSubscription: () => Effect.fail(noClient),
-      registerCorrelation: () => Effect.die("unused"),
-      unregisterCorrelation: () => Effect.die("unused"),
-      listTargets: () => Effect.succeed([]),
-      resolveTarget: () => Effect.fail(noClient),
-      hasProvider: () => Effect.succeed(false),
-      connectionForSession: () => Effect.succeed(false),
-    },
+  threads: {
+    getById: (input) =>
+      Effect.succeed(
+        input.threadId === ThreadId.make("thread")
+          ? Option.some({
+              projectId: ProjectId.make("project"),
+              worktreePath: null,
+              deletedAt: null,
+            })
+          : Option.none(),
+      ),
   },
-);
+};
+const providers = createComposerApiProviders(resolverDeps, {
+  environmentId: "env",
+  clientApiProviders: {
+    connect: () => Effect.die("unused"),
+    respond: () => Effect.die("unused"),
+    emit: () => Effect.die("unused"),
+    invoke: () => Effect.fail(noClient),
+    openSubscription: () => Effect.fail(noClient),
+    registerCorrelation: () => Effect.die("unused"),
+    unregisterCorrelation: () => Effect.die("unused"),
+    listTargets: () => Effect.succeed([]),
+    resolveTarget: () => Effect.fail(noClient),
+    hasProvider: () => Effect.succeed(false),
+    connectionForSession: () => Effect.succeed(false),
+  },
+});
 const composer = providers.find((p) => p.providerId === "host.composer")!;
 const messages = providers.find((p) => p.providerId === "host.messages")!;
 
@@ -106,6 +112,24 @@ const call = (
 ): Promise<Json> =>
   Promise.resolve(provider.invoke(method, input, context, signal, meta(provider)));
 
+/** A plugin-style principal bound to one live client connection, with a real caller generation. */
+const sessionMeta = (provider: HostApiProvider, connectionId: string) => ({
+  ...meta(provider),
+  clientConnectionId: connectionId,
+  callerGenerations: [{ pluginId: "ext.a", contentHash: "hash-a", installationGeneration: 1 }],
+});
+
+/** Same as `call`, but through the mixed-version session metadata. */
+const dispatch = (
+  provider: HostApiProvider,
+  method: string,
+  input: Json,
+  connectionId: string,
+): Promise<Json> =>
+  Promise.resolve(
+    provider.invoke(method, input, makeContext(), signal, sessionMeta(provider, connectionId)),
+  );
+
 const expectNamedError = async (pending: Promise<Json>, operation: string, detail: RegExp) => {
   const error = await pending.then(
     () => {
@@ -119,6 +143,24 @@ const expectNamedError = async (pending: Promise<Json>, operation: string, detai
     expect(error.detail).toMatch(detail);
   }
 };
+
+// The mixed-version test drives the production broker: a real socket whose
+// declared composer version is what dispatch gates on.
+const brokerLayer = clientApiProvidersLayer.pipe(
+  Layer.provide(
+    Layer.succeed(ServerEnvironment, {
+      getEnvironmentId: Effect.succeed(EnvironmentId.make("env")),
+      getDescriptor: Effect.die("unused"),
+    }),
+  ),
+);
+const nextFrame = (iterator: AsyncIterator<ClientProviderServerFrame>) =>
+  Effect.promise<ClientProviderServerFrame | undefined>(async () => {
+    const next = await iterator.next();
+    return next.done ? undefined : next.value;
+  });
+const frameIterator = (stream: Stream.Stream<ClientProviderServerFrame>) =>
+  Stream.toAsyncIterableWith(stream, Context.empty())[Symbol.asyncIterator]();
 
 it.effect("reports the transport gap honestly through getCapabilities", () =>
   Effect.promise(async () => {
@@ -147,6 +189,143 @@ it.effect("reports the transport gap honestly through getCapabilities", () =>
       removeAnnotation: false,
     });
   }),
+);
+
+it.effect("gates 1.1.0 shapes on the targeted connection while 1.0.0 ops keep flowing", () =>
+  Effect.gen(function* () {
+    const broker = yield* ClientApiProviders;
+    // A real 1.0.0 registration the broker accepts through ^1.0.0, plus a
+    // 1.1.0 sibling in the same environment: only the targeted connection's
+    // version may unlock the new ops.
+    const oldStream = yield* broker.connect(
+      { connectionId: "conn-old", sessionId: "session", announcedOrigin: { surface: "web" } },
+      { providers: [{ id: "t3.client/composer", version: "1.0.0" }] },
+    );
+    const oldFrames = frameIterator(oldStream);
+    yield* nextFrame(oldFrames); // registered
+    const newStream = yield* broker.connect(
+      { connectionId: "conn-new", sessionId: "session", announcedOrigin: { surface: "web" } },
+      { providers: [{ id: "t3.client/composer", version: "1.1.0" }] },
+    );
+    const newFrames = frameIterator(newStream);
+    yield* nextFrame(newFrames); // registered
+
+    const mixedProviders = createComposerApiProviders(resolverDeps, {
+      environmentId: "env",
+      clientApiProviders: broker,
+    });
+    const composer = mixedProviders.find((p) => p.providerId === "host.composer")!;
+    const messages = mixedProviders.find((p) => p.providerId === "host.messages")!;
+
+    // Capabilities report the targeted connection's version, not the environment's best.
+    const oldCaps = (yield* Effect.promise(() =>
+      dispatch(composer, "getCapabilities", {}, "conn-old"),
+    )) as ComposerCapabilities;
+    expect(oldCaps.transport).toBe("client");
+    expect(oldCaps.detail).toContain("1.0.0");
+    expect(oldCaps.operations).toEqual({
+      insertContext: true,
+      getDraftState: true,
+      insertMention: false,
+      insertTerminalContext: false,
+    });
+    const newCaps = (yield* Effect.promise(() =>
+      dispatch(composer, "getCapabilities", {}, "conn-new"),
+    )) as ComposerCapabilities;
+    expect(newCaps.transport).toBe("client");
+    expect(newCaps.detail).toBeNull();
+    expect(newCaps.operations).toEqual({
+      insertContext: true,
+      getDraftState: true,
+      insertMention: true,
+      insertTerminalContext: true,
+    });
+
+    // The unchanged 1.0.0 file annotation still succeeds end to end.
+    const fileAnnotation = yield* Effect.promise(() =>
+      dispatch(
+        messages,
+        "attachAnnotation",
+        {
+          annotation: { filePath: "a.ts", startLine: 1, endLine: 2, body: "x" },
+        } as Json,
+        "conn-old",
+      ),
+    ).pipe(Effect.forkChild);
+    const fileFrame = yield* nextFrame(oldFrames);
+    if (fileFrame?.type !== "invoke") throw new Error("expected attachAnnotation dispatch");
+    expect(fileFrame.method).toBe("attachAnnotation");
+    yield* broker.respond("conn-old", {
+      requestId: fileFrame.requestId,
+      ok: true,
+      value: { annotationId: "annotation:ext.a:legacy-1" },
+    });
+    expect(yield* Fiber.join(fileAnnotation)).toEqual({
+      annotationId: "annotation:ext.a:legacy-1",
+    });
+
+    // The diff variant is refused with the named error before any mutation.
+    yield* Effect.promise(() =>
+      expectNamedError(
+        dispatch(
+          messages,
+          "attachAnnotation",
+          {
+            annotation: {
+              kind: "diff",
+              filePath: "a.ts",
+              sectionId: "diff:a.ts",
+              sectionTitle: "Changes",
+              rangeLabel: "+12",
+              diff: "@@ -1,1 +1,1 @@\n-old\n+new",
+              selection: { start: 12, side: "additions", end: 12, endSide: "additions" },
+              body: "this breaks",
+            },
+          } as Json,
+          "conn-old",
+        ),
+        "messages.enrichment.attachAnnotation",
+        /client-provider-unsupported-version/,
+      ),
+    );
+    // So is every other 1.1.0-only method on that connection.
+    yield* Effect.promise(() =>
+      expectNamedError(
+        dispatch(composer, "insertMention", { paths: ["a.ts"] } as Json, "conn-old"),
+        "composer.context.insertMention",
+        /client-provider-unsupported-version/,
+      ),
+    );
+
+    // Nothing was dispatched for the refused ops: the next frame on the old
+    // socket is a later 1.0.0 op — no interleaved invoke frame exists.
+    const followUp = yield* Effect.promise(() =>
+      dispatch(composer, "getDraftState", {}, "conn-old"),
+    ).pipe(Effect.forkChild);
+    const followUpFrame = yield* nextFrame(oldFrames);
+    if (followUpFrame?.type !== "invoke") throw new Error("expected getDraftState dispatch");
+    expect(followUpFrame.method).toBe("getDraftState");
+    yield* broker.respond("conn-old", {
+      requestId: followUpFrame.requestId,
+      ok: true,
+      value: { draft: null },
+    });
+    expect(yield* Fiber.join(followUp)).toEqual({ draft: null });
+
+    // The same 1.1.0 op does flow to a connection that declares 1.1.0.
+    const mention = yield* Effect.promise(() =>
+      dispatch(composer, "insertMention", { paths: ["a.ts"] } as Json, "conn-new"),
+    ).pipe(Effect.forkChild);
+    const mentionFrame = yield* nextFrame(newFrames);
+    if (mentionFrame?.type !== "invoke") throw new Error("expected insertMention dispatch");
+    expect(mentionFrame.method).toBe("insertMention");
+    yield* broker.respond("conn-new", {
+      requestId: mentionFrame.requestId,
+      ok: true,
+      value: { inserted: 1, target: "env:thread" },
+    });
+    expect(yield* Fiber.join(mention)).toEqual({ inserted: 1, target: "env:thread" });
+  }).pipe(Effect.provide(brokerLayer)),
 );
 
 it.effect("fails state ops with a named unsupported error after valid scope and input", () =>
