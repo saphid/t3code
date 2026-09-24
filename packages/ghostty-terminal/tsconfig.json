@@ -7,7 +7,7 @@
     "plugins": [
       {
         "name": "@effect/language-service",
-        // Browser rendering code, not Effect code: same overrides as apps/web.
+        // Browser rendering code, not Effect code: the same overrides as the web app.
         "diagnosticSeverity": {
           "globalDate": "off",
           "globalConsole": "off",
