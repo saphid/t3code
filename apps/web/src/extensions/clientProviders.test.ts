@@ -729,6 +729,82 @@ describe("composer provider", () => {
       .getComposerDraft(scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a")));
     expect(draft?.reviewComments.some((entry) => entry.id === result.annotationId)).toBe(true);
   });
+
+  it("quotes exactly the excerpt at its real line numbers", () => {
+    const provider = createComposerClientProvider(makeDeps(["t3.messages/write"]));
+    const excerpt = "line forty\nline forty one\nline forty two";
+    const result = provider.invoke(
+      invokeCall("attachAnnotation", {
+        threadId: "thread-a",
+        annotation: {
+          filePath: "src/c.ts",
+          startLine: 40,
+          endLine: 42,
+          body: "check this block",
+          excerpt,
+        },
+      }),
+    ) as { annotationId: string };
+    const draft = useComposerDraftStore
+      .getState()
+      .getComposerDraft(scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a")));
+    const entry = draft?.reviewComments.find((comment) => comment.id === result.annotationId);
+    expect(entry?.diff).toBe(excerpt);
+    expect(entry?.rangeLabel).toBe("L40 to L42");
+    expect(entry?.sectionTitle).toBe("File comment");
+    expect(entry?.text).toBe("check this block");
+  });
+
+  it("quotes no code when the annotation carries no excerpt", () => {
+    const provider = createComposerClientProvider(makeDeps(["t3.messages/write"]));
+    const result = provider.invoke(
+      invokeCall("attachAnnotation", {
+        threadId: "thread-a",
+        annotation: {
+          filePath: "src/c.ts",
+          startLine: 1,
+          endLine: 1,
+          body: "what is this file doing?",
+        },
+      }),
+    ) as { annotationId: string };
+    const draft = useComposerDraftStore
+      .getState()
+      .getComposerDraft(scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a")));
+    const entry = draft?.reviewComments.find((comment) => comment.id === result.annotationId);
+    // The body is comment text — it must never double as the quoted code.
+    expect(entry?.diff).toBe("");
+    expect(entry?.text).toBe("what is this file doing?");
+  });
+
+  it("insertContext quotes exactly the excerpt at its real line numbers", () => {
+    const provider = createComposerClientProvider(makeDeps(["t3.composer/write"]));
+    const excerpt = "export const a = 1;\nexport const b = 2;";
+    provider.invoke(
+      invokeCall("insertContext", {
+        threadId: "thread-a",
+        refs: [{ path: "src/d.ts", startLine: 10, endLine: 11, excerpt }],
+      }),
+    );
+    const draft = useComposerDraftStore
+      .getState()
+      .getComposerDraft(scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a")));
+    const entry = draft?.reviewComments.find((comment) => comment.filePath === "src/d.ts");
+    expect(entry?.diff).toBe(excerpt);
+    expect(entry?.rangeLabel).toBe("L10 to L11");
+    // Without an excerpt the path must not be quoted as code.
+    provider.invoke(
+      invokeCall("insertContext", {
+        threadId: "thread-a",
+        refs: [{ path: "src/e.ts", startLine: 2, endLine: 3 }],
+      }),
+    );
+    const next = useComposerDraftStore
+      .getState()
+      .getComposerDraft(scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a")));
+    const bare = next?.reviewComments.find((comment) => comment.filePath === "src/e.ts");
+    expect(bare?.diff).toBe("");
+  });
 });
 
 describe("panels provider", () => {
