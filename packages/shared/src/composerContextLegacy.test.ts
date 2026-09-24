@@ -621,6 +621,21 @@ describe("upgradeLegacyContextMessage", () => {
     });
   });
 
+  // The writer's `\b` is Unicode-aware: `ſ` (U+017F) and `K` (U+212A) are word characters to
+  // it, so `<` is never escaped before these tag spellings. Inside a marked body they are
+  // body text, not escapes, and stay literal in text and fenced diff alike.
+  it.each(["ſ", "K"])(
+    "keeps the tag spelling with Unicode suffix %s literal in a marked body",
+    (suffix) => {
+      const body = `&lt;/review_comment${suffix}> and &lt;review_comment${suffix}> are not writer-emitted escapes`;
+      const marked = `<review_comment sectionId="s" filePath="f.ts" startIndex="1" endIndex="1" bodyEncoding="escaped-tags">\n${body}\n\`\`\`diff\n${body}\n\`\`\`\n</review_comment>`;
+      expect(upgradeLegacyContextMessage(marked).records[0]).toMatchObject({
+        text: body,
+        diff: body,
+      });
+    },
+  );
+
   it("appends trailing review blocks after the other trailing blocks", () => {
     const text = [
       "prose",

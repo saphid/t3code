@@ -277,6 +277,20 @@ describe("review comment serialization", () => {
     ]);
   });
 
+  // The writer's `\b` is Unicode-aware: `ſ` (U+017F) and `K` (U+212A) are word characters to
+  // it, so `<` is never escaped before these tag spellings. Inside a marked body they are
+  // body text, not escapes, and stay literal in text and fenced diff alike.
+  it.each(["ſ", "K"])(
+    "keeps the tag spelling with Unicode suffix %s literal in a marked body",
+    (suffix) => {
+      const body = `&lt;/review_comment${suffix}> and &lt;review_comment${suffix}> are not writer-emitted escapes`;
+      const serialized = `<review_comment sectionId="s" filePath="app.ts" startIndex="0" endIndex="0" bodyEncoding="escaped-tags">\n${body}\n\`\`\`diff\n${body}\n\`\`\`\n</review_comment>`;
+      expect(parseReviewInlineComments(serialized)).toEqual([
+        expect.objectContaining({ text: body, diff: body }),
+      ]);
+    },
+  );
+
   it("preserves literal entities through draft insertion and legacy dispatch", () => {
     // The draft path upgrades the formatted block, re-identifies the record for the draft
     // store, and may serialize again for a server without inline context — the literal entity
