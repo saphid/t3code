@@ -1,5 +1,9 @@
 import * as NodeAssert from "node:assert/strict";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 import * as NodeTest from "node:test";
+import * as NodeURL from "node:url";
 import {
   EMPTY_OUTPUT_BUFFER,
   EMPTY_OVERFLOW_STREAK,
@@ -776,8 +780,6 @@ import {
   watchTerminalAppearanceVars,
   watchThemeVars,
 } from "./viewModel.ts";
-import * as NodeFS from "node:fs";
-
 const viewContext = { resource: { environmentId: "env-1", threadId: "thread-1" } };
 
 /** invokeApi stub: records requests; registerCommands answers with `results`. */
@@ -1448,14 +1450,44 @@ NodeTest.describe("t3.ui/theme — watch lifecycle (no stale overrides)", () => 
   });
 });
 
+// Builds a scratch copy of the package so manifest assertions consume
+// this run's build output, never a possibly stale committed bundle.
+async function buildScratchManifest() {
+  const packageDir = NodeURL.fileURLToPath(new URL("./", import.meta.url));
+  const scratch = await NodeFSP.mkdtemp(NodePath.join(packageDir, ".t3-extension-build-test-"));
+  try {
+    for (const entry of await NodeFSP.readdir(packageDir)) {
+      if (entry.startsWith(".t3-extension") || entry === "node_modules" || entry === "fixtures")
+        continue;
+      await NodeFSP.cp(NodePath.join(packageDir, entry), NodePath.join(scratch, entry), {
+        recursive: true,
+      });
+    }
+    const cli = NodeURL.fileURLToPath(
+      new URL("../../extension-sdk/bin/t3-extension.mjs", import.meta.url),
+    );
+    const build = NodeChildProcess.spawnSync(process.execPath, [cli, "build", scratch], {
+      encoding: "utf8",
+    });
+    NodeAssert.equal(
+      build.status,
+      0,
+      `t3-extension build failed:\n${build.stdout}\n${build.stderr}`,
+    );
+    return JSON.parse(
+      await NodeFSP.readFile(NodePath.join(scratch, ".t3-extension/t3-extension.json"), "utf8"),
+    );
+  } finally {
+    await NodeFSP.rm(scratch, { recursive: true, force: true });
+  }
+}
+
 NodeTest.describe("package requirements — t3.ui/* adoption policy", () => {
   NodeTest.it("declares the consumed t3.ui/* contracts as mandatory requirements", async () => {
     // Invocation authority only exists for declared APIs, so these must stay
     // in `requires`; capability resolution fails closed (missing-api) on a
     // host without the providers rather than mounting a half-contracted panel.
-    const manifest = JSON.parse(
-      NodeFS.readFileSync(new URL("./.t3-extension/t3-extension.json", import.meta.url), "utf8"),
-    );
+    const manifest = await buildScratchManifest();
     NodeAssert.deepEqual(
       manifest.requires.map((item) => item.id),
       [

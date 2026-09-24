@@ -1,7 +1,5 @@
 # Extension architecture: V1 views and trusted environment packages
 
-Status: implementation decision for the trusted V1 extension preview. This describes source behavior, not publication, release readiness or universal parity. Exact candidate commits and verification receipts belong in the retained validation evidence.
-
 ## Decision
 
 Build on orchestration V1 first. Keep one public extension SDK whose identities and presentation contracts do not expose either orchestration engine. Adapt existing domain services and client surfaces through narrow host-owned interfaces. The first environment package exposes workspace reads and uses the existing provider MCP transport. A later V2 integration should reuse the SDK and implement engine-specific bindings, with semantic compatibility tests rather than renamed V1 commands.

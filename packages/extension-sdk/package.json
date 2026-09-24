@@ -25,15 +25,13 @@
     "test",
     "bin",
     "examples/start-here",
-    "examples/orchestration-contracts",
     "examples/files",
     "HOST.md",
     "examples/api-provider",
     "examples/api-consumer",
-    "examples/native-files-tree",
-    "examples/editable-files",
     "examples/persisted-state",
-    "examples/browser-local-servers"
+    "examples/browser-local-servers",
+    "!examples/*/proof.json"
   ],
   "type": "module",
   "exports": {

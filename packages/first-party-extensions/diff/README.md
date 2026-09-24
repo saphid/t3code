@@ -87,9 +87,6 @@ Deferred slices: Pierre renderer features (react-dom is bundler-banned)
 (`t3.messages/enrichment`); repo-root→workspace path remapping for open
 (no public repo-root contract).
 
-Per-row dispositions and native citations:
-`docs/internals/extensions/vcs-diff-binding-disposition.md`.
-
 ```sh
 pnpm --filter @t3tools/extension-diff test
 pnpm --filter @t3tools/extension-diff build

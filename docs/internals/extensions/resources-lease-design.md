@@ -1,8 +1,9 @@
-# t3.resources/lease — promoted binary/media presentation contract (parent design)
+# t3.resources/lease — promoted binary/media presentation contract
 
-Status: DRAFT v1 (monitor-authored, 2026-09-12). Blocks: P05 media slice, P08-B Browser engine
-attachment, P16 Devices. Implements the "promoted binary/media lease channel" tranche item
-(ROADMAP §3b) and the ResourceRef+lease requirement in browser-capability-plan.md:35-41.
+Draft v1. Blocks: P05 media slice, P08-B Browser engine attachment, P16 Devices. Implements
+the promoted binary/media lease channel and its ResourceRef+lease requirement: a promoted
+binary or media resource is reached only through a lease-bound presentation URL, never a raw
+path.
 
 ## Key discovery: native already has 80% of this
 
@@ -54,7 +55,7 @@ createPresentationUrl(resource: ResourceRef) → { url: string, expiresAt: numbe
   lands, workspace-file kinds are unavailable to plugins and the adapter fails closed);
   attachment → the messages/composer read grant when it exists. Mint-time is the only
   grant check; serve-time is token-only (documented, matches native, required by `<img>`).
-- **Lease semantics** (from browser-capability-plan.md:37, now binding): a lease binds
+- **Lease semantics** (binding): a lease binds
   resource + resource epoch + rights to the authenticated principal and caller chain; a
   serialized handle alone grants nothing; renewal = call again; revocation = expiry, and
   installation replacement/revocation/owner failure invalidate affected leases (v1
@@ -75,7 +76,7 @@ createPresentationUrl(resource: ResourceRef) → { url: string, expiresAt: numbe
 ## Explicit non-goals (v1)
 
 - No persistence of browser/device resource metadata across server restart (native keeps
-  it in-memory; a separate migration decision — capability-plan.md:37).
+  it in-memory; a separate migration decision).
 - No cross-provider ResourceRef identity transfer.
 - No arbitrary-path minting: every kind resolves inside a workspace root, the attachment
   store, or a registered resource owner. Path kinds keep the native canonical-realpath

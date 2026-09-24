@@ -1,9 +1,53 @@
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 import * as NodeTest from "node:test";
 import * as NodeAssert from "node:assert/strict";
+import * as NodeURL from "node:url";
 import React from "react";
 import TestRenderer from "react-test-renderer";
 import { createExtensionHost } from "../../dist/host.js";
-import clientFactory from "./.t3-extension/client.mjs";
+
+// Build a scratch copy of the example so the test consumes this run's
+// build output, never a possibly stale committed bundle.
+const here = NodeURL.fileURLToPath(new URL("./", import.meta.url));
+const scratch = await NodeFSP.mkdtemp(NodePath.join(here, ".t3-extension-build-test-"));
+try {
+  for (const entry of await NodeFSP.readdir(here)) {
+    if (
+      entry.startsWith(".t3-extension") ||
+      entry === "node_modules" ||
+      entry.endsWith(".test.mjs")
+    )
+      continue;
+    await NodeFSP.cp(NodePath.join(here, entry), NodePath.join(scratch, entry), {
+      recursive: true,
+    });
+  }
+  // The example's own package.json is the nearest one for module
+  // resolution, and it has no local node_modules: give the scratch copy the
+  // same link layout an install would produce so the build resolves the
+  // workspace SDK and react exactly as a consumer's install would.
+  const sdk = NodePath.resolve(here, "../..");
+  await NodeFSP.mkdir(NodePath.join(scratch, "node_modules", "@t3tools"), { recursive: true });
+  await NodeFSP.symlink(sdk, NodePath.join(scratch, "node_modules", "@t3tools", "extension-sdk"));
+  await NodeFSP.symlink(
+    NodePath.join(sdk, "node_modules", "react"),
+    NodePath.join(scratch, "node_modules", "react"),
+  );
+  const cli = NodeURL.fileURLToPath(new URL("../../bin/t3-extension.mjs", import.meta.url));
+  const build = NodeChildProcess.spawnSync(process.execPath, [cli, "build", scratch], {
+    encoding: "utf8",
+  });
+  NodeAssert.equal(build.status, 0, `t3-extension build failed:\n${build.stdout}\n${build.stderr}`);
+} catch (error) {
+  await NodeFSP.rm(scratch, { recursive: true, force: true });
+  throw error;
+}
+NodeTest.after(() => NodeFSP.rm(scratch, { recursive: true, force: true }));
+const { default: clientFactory } = await import(
+  NodeURL.pathToFileURL(NodePath.join(scratch, ".t3-extension/client.mjs")).href
+);
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 

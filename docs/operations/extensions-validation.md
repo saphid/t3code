@@ -73,9 +73,7 @@ A real application journey must then establish that a newly registered contribut
 
 For native surfaces, preserve resource ownership and presentation identity. In particular, verify same-workspace file navigation does not reset the outer preview merely because a thread or selected path changed; attachments still reset by attachment identity. Retained terminal docks must not acquire the foreground project's context.
 
-Follow the [comparison protocol](extensions-comparison.md) for matched baseline/candidate journeys, baseline-noise measurement, fault injection, 100-cycle soaks, raw latency/CPU/memory/wire samples and acceptance analysis. Supply actual web/Electron drivers and service receipts. Synthetic analyzer fixtures are not substitute journey evidence. Record unsupported macOS, React Native, SwiftUI, provider and connection-mode paths explicitly.
-
-The paired `electron-baseline-observation-4.json` and `electron-candidate-observation-4.json` receipts record passing Linux native-browser behavior checks. Their scope is those observed checks; they do not establish full Browser parity, repeated performance measurements, reconnect coverage, a complete shared-viewer soak or other-platform compatibility.
+Matched baseline/candidate journeys, baseline-noise measurement, fault injection, 100-cycle soaks and raw latency/CPU/memory/wire samples are the acceptance bar for parity claims. Supply actual web/Electron drivers and service receipts; synthetic analyzer fixtures are not substitute journey evidence. Record unsupported macOS, React Native, SwiftUI, provider and connection-mode paths explicitly.
 
 ## Interpret readiness and resource diagnostics
 

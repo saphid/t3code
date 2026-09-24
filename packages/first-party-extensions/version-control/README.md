@@ -130,9 +130,6 @@ branch rename/delete (internal driver methods only), working-tree diff
 rendering (P11's `t3.vcs/diff` surface), AI commit text (no contract),
 discard/revert and checkpoint diffs (P12 orchestration boundary).
 
-Per-row dispositions and native citations:
-`docs/internals/extensions/vcs-diff-binding-disposition.md`.
-
 ```sh
 pnpm --filter @t3tools/extension-version-control test
 pnpm --filter @t3tools/extension-version-control build

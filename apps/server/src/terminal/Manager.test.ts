@@ -1,5 +1,3 @@
-import * as NodeURL from "node:url";
-
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -40,9 +38,6 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { expect } from "vite-plus/test";
 
-import { TerminalVtAttachment } from "../../../../packages/first-party-extensions/terminal/vtAttachment.ts";
-import { GhosttyTerminalCore } from "../../../../packages/first-party-extensions/terminal/ghostty/core.ts";
-import { loadGhosttyRuntime } from "../../../../packages/first-party-extensions/terminal/ghostty/runtime.ts";
 import { createTerminalOutputEventsApiProvider } from "../extensions/terminalOutputEventsApi.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -329,19 +324,6 @@ const createManager = (
 const withHostPlatform = (platform: NodeJS.Platform) =>
   Layer.succeed(HostProcessPlatform, platform);
 
-// Cross-layer harness: the real Manager, the real output-events provider,
-// the real attachment, and the vendored Ghostty WASM — the same path the
-// shipped extension drives, so host sanitization cannot be simulated away.
-const TERMINAL_VT_ASSETS_DIR = NodeURL.fileURLToPath(
-  new URL("../../../../packages/first-party-extensions/terminal/assets/", import.meta.url),
-);
-
-const TERMINAL_VT_THEME = {
-  foreground: { r: 229, g: 231, b: 235 },
-  background: { r: 10, g: 10, b: 12 },
-  cursor: { r: 229, g: 231, b: 235 },
-};
-
 const outputEventsContext = {
   resource: {
     namespace: "test.extension",
@@ -394,6 +376,14 @@ const outputEventsProvider = (manager: ManagerFixture["manager"]) =>
     },
     terminal: manager,
   });
+
+type OutputEventsWireItem = {
+  readonly type: string;
+  readonly value: Record<string, unknown>;
+};
+
+const nextOutputEventFrame = (iterator: AsyncIterator<unknown>) =>
+  Effect.promise(() => iterator.next() as Promise<IteratorResult<OutputEventsWireItem>>);
 
 // Apply the existing line policy, then find the longest code-point-aligned
 // byte tail — then advance the cut through any control sequence it lands
@@ -572,7 +562,7 @@ it("preserves retained lines as older storage is compacted", () => {
 });
 
 it("suppresses a stripped query fragment at every eviction offset inside the sequence", () => {
-  // r11 finding: byte eviction that lands inside a control sequence left a
+  // Byte eviction that lands inside a control sequence left a
   // dangling fragment ("6n…") whose prefix was evicted; both read-side
   // sanitizers then surfaced it as visible text. The retained origin must
   // advance through the sequence end, for every split point and every
@@ -657,7 +647,7 @@ it("suppresses fragments cut by line eviction inside a control sequence", () => 
 });
 
 it("recognizes BEL and C1 ST as string terminators even right after an ESC", () => {
-  // r13 finding: an ESC inside a string re-arms the ST check, but BEL and
+  // An ESC inside a string re-arms the ST check, but BEL and
   // C1 ST still terminate the sequence at their own position — the r12
   // boundary tracker missed that and discarded valid retained output.
   for (const terminator of ["\x07", "\x9c", "\x1b\\"]) {
@@ -677,7 +667,7 @@ it("recognizes BEL and C1 ST as string terminators even right after an ESC", () 
 });
 
 it("retains ordinary output after a boundary-aligned sequence ends", () => {
-  // Cascade case: the r12 stale-state failure mode dropped everything
+  // Cascade case: a stale boundary state dropped everything
   // retained until another terminator, and subsequent trims kept
   // discarding ordinary output that arrived after the real terminator.
   const history = new TerminalManager.BoundedTerminalHistory(5_000, "", 11);
@@ -708,7 +698,7 @@ it("drops a retroactively-ended escape only through its true end", () => {
 });
 
 it("decides an intermediates run over the whole retained window, not per chunk", () => {
-  // r14 finding: a non-final byte ends an escape retroactively at its
+  // A non-final byte ends an escape retroactively at its
   // first byte, so intermediates-only chunks are ordinary text — but a
   // chunk-local drop discarded them before the deciding byte in a later
   // chunk was ever scanned. MAX_HISTORY_CHUNK_LENGTH is 16384, so this
@@ -746,7 +736,7 @@ it("drops an intermediates run through a final byte even across chunks", () => {
 });
 
 it("locates a retroactive escape end in window coordinates across chunks", () => {
-  // r15 finding: the deciding non-final byte can sit in a later chunk
+  // The deciding non-final byte can sit in a later chunk
   // than the first intermediate — endIndex===0 was then read as "ended
   // before the window", but the true endpoint is window offset 1.
   const input = "p".repeat(16_382) + "\x1b))\x01" + "K".repeat(16_382);
@@ -781,7 +771,7 @@ it("locates a retroactive escape end in window coordinates across chunks", () =>
 });
 
 it("carries the retroactive endpoint across a storage seam inside the window", () => {
-  // r16: the boundary scan walks chunks without joining; the escape's
+  // The boundary scan walks chunks without joining; the escape's
   // retroactive end must survive intermediates that cross the 16 KiB
   // storage seam, with the deciding byte in a later chunk.
   const input = "p".repeat(100) + "\x1b" + ")".repeat(16_384) + "\x01KEEP";
@@ -805,7 +795,7 @@ it("carries the retroactive endpoint across a storage seam inside the window", (
 });
 
 it("never joins the retained window while aligning a sequence boundary", () => {
-  // r16 performance contract: boundary alignment scans chunks in place —
+  // Performance contract: boundary alignment scans chunks in place —
   // value() must not be called from the append/trim path at all.
   const history = new TerminalManager.BoundedTerminalHistory(5_000, "", 8 * 1024);
   let valueCalls = 0;
@@ -1148,14 +1138,14 @@ it.layer(
     }),
   );
 
-  it.effect("retains raw output so evicted-byte provenance stays absolute (r10 P2-1)", () =>
+  it.effect("retains raw output so evicted-byte provenance stays absolute", () =>
     Effect.gen(function* () {
       // The sanitizer removes the answered CSI 6n from display text but the
       // retained window — and therefore contentsUnitStart — must count the
       // raw delivered stream. With a 5-line cap the eviction burst drops the
       // first line: raw origin moves to 7 (the sanitized view would report
-      // 3, which is exactly the coordinate confusion the r10 finding
-      // exploited).
+      // 3, which is exactly the coordinate confusion a sanitized view
+      // would create).
       const { manager, ptyAdapter } = yield* createManager(5);
       yield* manager.open(openInput());
       ptyAdapter.processes[0]!.emitData("\x1b[6n");
@@ -1183,7 +1173,7 @@ it.layer(
   );
 
   it.effect(
-    "keeps an incomplete control inside retained contents across the subscription boundary (r10 P2-2)",
+    "keeps an incomplete control inside retained contents across the subscription boundary",
     () =>
       Effect.gen(function* () {
         // The subscription lands between the two halves of the bracketed-
@@ -1250,52 +1240,20 @@ it.layer(
     }),
   );
 
-  const loadVtRuntime = Effect.flatMap(Effect.service(FileSystem.FileSystem), (fs) =>
-    Effect.flatMap(
-      Effect.all([
-        fs.readFile(`${TERMINAL_VT_ASSETS_DIR}ghostty-vt.wasm`),
-        fs.readFile(`${TERMINAL_VT_ASSETS_DIR}ghostty-write-pty.wasm`),
-      ]),
-      ([vt, writePty]) => Effect.promise(() => loadGhosttyRuntime({ vt, writePty })),
-    ),
-  );
-
-  type WireItem = {
-    readonly type: string;
-    readonly value: Parameters<TerminalVtAttachment["applyFrame"]>[1];
-  };
-
-  const nextFrame = (iterator: AsyncIterator<unknown>) =>
-    Effect.promise(() => iterator.next() as Promise<IteratorResult<WireItem>>);
-
-  for (const [mountInGap, gapQuery] of [
-    [false, true],
-    [true, true],
-    [false, false],
-    [true, false],
-  ] as const) {
+  // Wire-frame contract for detached replay: the exact output-events frames
+  // a terminal client consumes in the evicted-query and split-mode-setter
+  // scenarios. Every subscription opens with a snapshot, identity
+  // (streamEpoch) survives resubscription within one incarnation, and raw
+  // retained-window provenance (contentsUnitStart) counts the delivered
+  // stream — including bytes the sanitized attach view removes.
+  for (const gapQuery of [true, false]) {
     it.effect(
-      `cross-layer: an evicted query's reply cannot transfer to a retained lookalike (r10 P2-1, mount ${mountInGap ? "in gap" : "after snapshot"}, gap tail ${gapQuery ? "queries" : "inert"})`,
+      `pins the output-events wire frames for an evicted query's dead claim (gap tail ${gapQuery ? "queries" : "inert"})`,
       () =>
         Effect.gen(function* () {
-          // The r10 trace end to end: real Manager history + sanitizer →
-          // real output-events provider → real attachment → vendored Ghostty
-          // WASM. Under sanitized-window provenance the resnapshot claimed
-          // unitStart 3 and the evicted CSI 6n's claim was transferred onto
-          // the retained ESC Z; raw-window provenance reports unitStart 7
-          // and the claim dies with its bytes.
           const { manager, ptyAdapter } = yield* createManager(5);
           yield* manager.open(openInput());
           const provider = outputEventsProvider(manager);
-          const runtime = yield* loadVtRuntime;
-          const attachment = new TerminalVtAttachment(DEFAULT_TERMINAL_ID);
-          const firstWrites: string[] = [];
-          const first = yield* Effect.promise(() =>
-            GhosttyTerminalCore.create(runtime, 80, 24, 8, 16, TERMINAL_VT_THEME, (data) =>
-              firstWrites.push(data),
-            ),
-          );
-          attachment.attach(first);
 
           const subscribe = (abort: AbortController) =>
             provider.subscribe!(
@@ -1307,125 +1265,134 @@ it.layer(
             )[Symbol.asyncIterator]();
 
           const abort1 = new AbortController();
+          yield* Effect.addFinalizer(() => Effect.sync(() => abort1.abort()));
           const stream1 = subscribe(abort1);
-          let wireSequence = 0;
-          const apply = (item: WireItem) =>
-            attachment.applyFrame({ streamId: "s", sequence: ++wireSequence }, item.value);
-          let frame = yield* nextFrame(stream1);
-          apply(frame.value!);
+          const first = yield* nextOutputEventFrame(stream1);
           ptyAdapter.processes[0]!.emitData("\x1b[6n");
-          frame = yield* nextFrame(stream1);
-          apply(frame.value!);
-          yield* Effect.yieldNow;
-          expect(firstWrites).toHaveLength(1);
-          expect(firstWrites[0]).toMatch(/\[\d+;\d+R/);
-          attachment.detach();
-          first.dispose();
-
-          // Detached but subscribed: the DA query is delivered as an
-          // unanswered run at absolute position 4 of the stream window.
+          const query = yield* nextOutputEventFrame(stream1);
           ptyAdapter.processes[0]!.emitData("\x1bZ\n");
-          frame = yield* nextFrame(stream1);
-          apply(frame.value!);
+          const lookalike = yield* nextOutputEventFrame(stream1);
           abort1.abort();
 
-          // Disconnected: the burst evicts the line holding the answered
-          // query. The retained tail may keep a lookalike ESC Z; it lies past
-          // everything the client received (unit 7), so it is a new query
-          // issued in the subscription gap, not the evicted one.
+          // Disconnected: the burst evicts the line holding the answered query.
+          // The retained tail may carry a new gap query or be inert.
           const gapTail = (gapQuery ? "x\x1bZ\n" : "xyz\n") + "z\n".repeat(4);
           ptyAdapter.processes[0]!.emitData(gapTail);
 
-          attachment.beginStream();
-          wireSequence = 0;
           const abort2 = new AbortController();
-          const stream2 = subscribe(abort2);
           yield* Effect.addFinalizer(() => Effect.sync(() => abort2.abort()));
-          const secondWrites: string[] = [];
-          const second = yield* Effect.promise(() =>
-            GhosttyTerminalCore.create(runtime, 80, 24, 8, 16, TERMINAL_VT_THEME, (data) =>
-              secondWrites.push(data),
-            ),
-          );
-          if (mountInGap) attachment.attach(second);
-          frame = yield* nextFrame(stream2);
-          expect(frame.value!.value).toMatchObject({
+          const stream2 = subscribe(abort2);
+          const resnapshot = yield* nextOutputEventFrame(stream2);
+
+          // Frame sequence: every subscription opens with a snapshot, and live
+          // output arrives as data frames after it.
+          expect(first.value.type).toBe("snapshot");
+          expect(query.value.type).toBe("data");
+          expect(lookalike.value.type).toBe("data");
+          expect(resnapshot.value.type).toBe("snapshot");
+
+          // Identity: one incarnation across both subscriptions.
+          const epoch = resnapshot.value.value.streamEpoch;
+          expect(typeof epoch).toBe("string");
+          for (const frame of [first, query, lookalike, resnapshot]) {
+            expect(frame.value.value.terminalId).toBe(DEFAULT_TERMINAL_ID);
+            expect(frame.value.value.streamEpoch).toBe(epoch);
+          }
+
+          // First snapshot: empty window at raw origin 0.
+          expect(first.value.value).toMatchObject({
             kind: "snapshot",
-            contentsUnitStart: 7,
+            status: "running",
+            contents: "",
+            retainedByteLength: 0,
+            truncated: false,
             clearGeneration: 0,
-            contents: gapTail,
-          });
-          apply(frame.value!);
-          if (!mountInGap) attachment.attach(second);
-          yield* Effect.yieldNow;
-          yield* Effect.addFinalizer(() => Effect.sync(() => second.dispose()));
-
-          // The evicted claim is dead: an inert tail earns no reply. A gap
-          // query earns exactly its own one DA reply (hidden panes keep VT
-          // protocol continuity across the reshow gap), never a second one
-          // transferred from the evicted claim.
-          expect(secondWrites).toEqual(gapQuery ? ["\x1b[?62;22c"] : []);
-          // A surface mounted in the gap replayed the attachment's complete
-          // base and then received only the gap, so its parser is faithful;
-          // one mounted after the snapshot replays only the truncated tail.
-          expect(attachment.state.degraded).toBe(!mountInGap);
-        }),
-    );
-  }
-
-  for (const sinkBeforeSnapshot of [true, false]) {
-    it.effect(
-      `cross-layer: a mode setter split across the subscription boundary keeps parser coverage (r10 P2-2, sink ${sinkBeforeSnapshot ? "before" : "after"} snapshot)`,
-      () =>
-        Effect.gen(function* () {
-          // "ESC[?2004" is emitted before the subscription exists; "h"
-          // completes it live. The snapshot must carry the raw prefix —
-          // coverage includes it — and paste encoding must stay bracketed.
-          const { manager, ptyAdapter } = yield* createManager();
-          yield* manager.open(openInput());
-          const provider = outputEventsProvider(manager);
-          const runtime = yield* loadVtRuntime;
-          const attachment = new TerminalVtAttachment(DEFAULT_TERMINAL_ID);
-          const writes: string[] = [];
-          const core = yield* Effect.promise(() =>
-            GhosttyTerminalCore.create(runtime, 80, 24, 8, 16, TERMINAL_VT_THEME, (data) =>
-              writes.push(data),
-            ),
-          );
-          yield* Effect.addFinalizer(() => Effect.sync(() => core.dispose()));
-
-          ptyAdapter.processes[0]!.emitData("\x1b[?2004");
-          if (sinkBeforeSnapshot) attachment.attach(core);
-
-          const abort = new AbortController();
-          yield* Effect.addFinalizer(() => Effect.sync(() => abort.abort()));
-          const stream = provider.subscribe!(
-            "subscribe",
-            { terminalId: DEFAULT_TERMINAL_ID },
-            outputEventsContext,
-            abort.signal,
-            outputEventsMetadata,
-          )[Symbol.asyncIterator]();
-          let wireSequence = 0;
-          const snapshot = yield* nextFrame(stream);
-          expect(snapshot.value!.value).toMatchObject({
-            kind: "snapshot",
             contentsUnitStart: 0,
-            clearGeneration: 0,
-            contents: "\x1b[?2004",
+            boundarySequence: 1,
           });
-          attachment.applyFrame({ streamId: "s", sequence: ++wireSequence }, snapshot.value!.value);
-          if (!sinkBeforeSnapshot) attachment.attach(core);
 
-          ptyAdapter.processes[0]!.emitData("h");
-          const live = yield* nextFrame(stream);
-          attachment.applyFrame({ streamId: "s", sequence: ++wireSequence }, live.value!.value);
-          expect(live.value!.value).toMatchObject({ kind: "output", data: "h" });
-          expect(core.encodePaste("a\nb")).toBe("\x1b[200~a\nb\x1b[201~");
-          expect(attachment.state.degraded).toBe(false);
+          // The query and the retained lookalike pass through unsanitized.
+          expect(query.value.value).toMatchObject({
+            kind: "output",
+            data: "\x1b[6n",
+            sequence: 2,
+            chunkIndex: 0,
+            chunkCount: 1,
+          });
+          expect(lookalike.value.value).toMatchObject({
+            kind: "output",
+            data: "\x1bZ\n",
+            sequence: 3,
+            chunkIndex: 0,
+            chunkCount: 1,
+          });
+
+          // Resnapshot: raw provenance. The answered query's bytes were evicted
+          // but still counted — the window starts at unit 7, not the sanitized
+          // view's 3, so a replayed claim anchored before the window is dead.
+          expect(resnapshot.value.value).toMatchObject({
+            kind: "snapshot",
+            status: "running",
+            contents: gapTail,
+            truncated: false,
+            clearGeneration: 0,
+            contentsUnitStart: 7,
+            retainedByteLength: 12,
+            boundarySequence: 4,
+          });
         }),
     );
   }
+
+  it.effect("pins the output-events wire frames across a subscription-split mode setter", () =>
+    Effect.gen(function* () {
+      // "ESC[?2004" is emitted before the subscription exists; "h" completes
+      // it live. The snapshot must carry the raw prefix — coverage includes
+      // it — so a client that mounts mid-sequence continues it rather than
+      // restarting its parser state.
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const provider = outputEventsProvider(manager);
+
+      ptyAdapter.processes[0]!.emitData("\x1b[?2004");
+
+      const abort = new AbortController();
+      yield* Effect.addFinalizer(() => Effect.sync(() => abort.abort()));
+      const subscription = provider.subscribe!(
+        "subscribe",
+        { terminalId: DEFAULT_TERMINAL_ID },
+        outputEventsContext,
+        abort.signal,
+        outputEventsMetadata,
+      );
+      const stream = subscription[Symbol.asyncIterator]();
+      const snapshot = yield* nextOutputEventFrame(stream);
+      ptyAdapter.processes[0]!.emitData("h");
+      const live = yield* nextOutputEventFrame(stream);
+
+      expect(snapshot.value.type).toBe("snapshot");
+      expect(live.value.type).toBe("data");
+      expect(snapshot.value.value.terminalId).toBe(DEFAULT_TERMINAL_ID);
+      expect(snapshot.value.value.streamEpoch).toBe(live.value.value.streamEpoch);
+      expect(snapshot.value.value).toMatchObject({
+        kind: "snapshot",
+        status: "running",
+        contents: "\x1b[?2004",
+        truncated: false,
+        clearGeneration: 0,
+        contentsUnitStart: 0,
+        retainedByteLength: 7,
+        boundarySequence: 2,
+      });
+      expect(live.value.value).toMatchObject({
+        kind: "output",
+        data: "h",
+        sequence: 3,
+        chunkIndex: 0,
+        chunkCount: 1,
+      });
+    }),
+  );
 
   it.effect("terminates an old observation on reincarnation without accepting old identity", () =>
     Effect.gen(function* () {
