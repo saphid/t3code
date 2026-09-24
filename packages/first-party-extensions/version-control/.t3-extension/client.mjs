@@ -5802,6 +5802,7 @@ var __t3Client = (() => {
   var UI_THEME_READ = "t3.ui/theme.read";
   var UI_THEME_WRITE = "t3.ui/theme.write";
   var UI_KEYBINDINGS = "t3.ui/keybindings";
+  var UI_KEYBINDINGS_VERSION = "1.1.0";
   var UI_NOTIFY = "t3.ui/notify";
   var UI_PANELS = "t3.ui/panels";
   var uiClientTargetSchema = {
@@ -5948,7 +5949,7 @@ var __t3Client = (() => {
   });
   var uiKeybindingsApi = defineApi({
     id: UI_KEYBINDINGS,
-    version: "1.0.0",
+    version: UI_KEYBINDINGS_VERSION,
     methods: [
       {
         name: "getCapabilities",
