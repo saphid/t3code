@@ -10067,6 +10067,7 @@ var __t3Client = (() => {
       this.gestureActive = false;
       const surface = this.deps.getSurface();
       if (surface === null) return;
+      surface.focus();
       this.flow.openContextMenu({
         selectionText: surface.hasSelection() ? surface.getSelection() : null,
         position: { x: event.clientX, y: event.clientY }

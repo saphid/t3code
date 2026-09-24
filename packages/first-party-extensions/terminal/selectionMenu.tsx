@@ -68,6 +68,11 @@ class TerminalSelectionMenuController {
     this.gestureActive = false;
     const surface = this.deps.getSurface();
     if (surface === null) return;
+    // The surface only prevents the left button's mousedown default, so a
+    // right press has already blurred the terminal to <body>. Take focus
+    // back: the menu never holds it, and typing (or Escape) after the menu
+    // must still reach the terminal.
+    surface.focus();
     this.flow.openContextMenu({
       selectionText: surface.hasSelection() ? surface.getSelection() : null,
       position: { x: event.clientX, y: event.clientY },
