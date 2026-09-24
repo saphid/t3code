@@ -34,6 +34,7 @@ import {
   terminalNavigationShortcutData,
 } from "./ghostty/surfaceKeys.ts";
 import { useTerminalSelectionMenu } from "./selectionMenu.tsx";
+import { readAssetWithRetry, sharedLoad, type ReadAsset } from "./assetLoader.ts";
 import { TerminalStreamHub, type TerminalPaneLease } from "./streamHub.ts";
 import { terminalFontFromVars, terminalThemeFromApp } from "./terminalTheme.ts";
 import { TerminalVtAttachment, pumpTerminalOutput } from "./vtAttachment.ts";
@@ -48,6 +49,7 @@ import {
   dispatchTerminalCommand,
   isResumableOutputClose,
   noteOutputFrameForStreak,
+  plainTerminalText,
   registerPanelCommands,
   terminalChordAction,
   watchTerminalAppearanceVars,
@@ -162,54 +164,56 @@ type GhosttyAssets =
   | { readonly kind: "unavailable"; readonly message: string };
 
 /**
- * Load the vendored libghostty-vt closure through `host.readAsset`. The host
- * has already verified each asset's sha256 against the package manifest; the
- * media-type check here is the last sanity gate before the bytes instantiate.
+ * Load the vendored libghostty-vt closure through `host.readAsset`, once per
+ * installation client (see assetLoader.ts). The host has already verified
+ * each asset's sha256 against the package manifest; the media-type check
+ * here is the last sanity gate before the bytes instantiate.
  */
+const loadGhosttyAssets = sharedLoad(async (host: ClientHost) => {
+  if (!host.readAsset) throw new Error("This host cannot load package assets.");
+  const read: ReadAsset = host.readAsset.bind(host);
+  // Every mount shares this load, so no one view's signal may cancel it; the
+  // host still ends it with the installation lifetime.
+  const signal = new AbortController().signal;
+  const vt = await readAssetWithRetry(read, GHOSTTY_VT_ASSET, signal);
+  const writePty = await readAssetWithRetry(read, GHOSTTY_WRITE_PTY_ASSET, signal);
+  const font = await readAssetWithRetry(read, SYMBOLS_FONT_ASSET, signal);
+  if (vt.mediaType !== "application/wasm" || writePty.mediaType !== "application/wasm") {
+    throw new Error("Terminal WASM assets failed package verification.");
+  }
+  if (font.mediaType !== "font/woff2") {
+    throw new Error("Terminal symbols font failed package verification.");
+  }
+  const runtime = await loadGhosttyRuntime({
+    vt: vt.bytes.slice(),
+    writePty: writePty.bytes.slice(),
+  });
+  return { runtime, symbolsFont: font.bytes };
+});
+
 function useGhosttyAssets(host: ClientHost, session: ViewSession): GhosttyAssets {
   const [state, setState] = useState<GhosttyAssets>({ kind: "loading" });
   useEffect(() => {
-    const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, session.signal]);
+    let cancelled = false;
     let symbolsFontUrl: string | null = null;
-    void (async () => {
-      try {
-        if (!host.readAsset) throw new Error("This host cannot load package assets.");
-        const readAsset = host.readAsset.bind(host);
-        // The runtime caps concurrent asset reads per installation at 4 —
-        // parallel reads plus a StrictMode replay of this effect can cross
-        // that cap and the whole mount degrades to the text fallback.
-        // Sequential reads keep each mount to one outstanding read.
-        const vt = await readAsset(GHOSTTY_VT_ASSET, signal);
-        const writePty = await readAsset(GHOSTTY_WRITE_PTY_ASSET, signal);
-        const font = await readAsset(SYMBOLS_FONT_ASSET, signal);
-        if (signal.aborted) return;
-        if (vt.mediaType !== "application/wasm" || writePty.mediaType !== "application/wasm") {
-          throw new Error("Terminal WASM assets failed package verification.");
-        }
-        if (font.mediaType !== "font/woff2") {
-          throw new Error("Terminal symbols font failed package verification.");
-        }
-        const runtime = await loadGhosttyRuntime({
-          vt: vt.bytes.slice(),
-          writePty: writePty.bytes.slice(),
-        });
-        if (signal.aborted) return;
+    loadGhosttyAssets(host).then(
+      ({ runtime, symbolsFont }) => {
+        if (cancelled || session.signal.aborted) return;
         symbolsFontUrl = URL.createObjectURL(
-          new Blob([font.bytes as BlobPart], { type: "font/woff2" }),
+          new Blob([symbolsFont as BlobPart], { type: "font/woff2" }),
         );
         setState({ kind: "ready", runtime, symbolsFontUrl });
-      } catch (error) {
-        if (!signal.aborted) {
-          setState({
-            kind: "unavailable",
-            message: error instanceof Error ? error.message : "Terminal renderer unavailable",
-          });
-        }
-      }
-    })();
+      },
+      (error: unknown) => {
+        if (cancelled || session.signal.aborted) return;
+        setState({
+          kind: "unavailable",
+          message: error instanceof Error ? error.message : "Terminal renderer unavailable",
+        });
+      },
+    );
     return () => {
-      controller.abort();
+      cancelled = true;
       if (symbolsFontUrl !== null) URL.revokeObjectURL(symbolsFontUrl);
     };
   }, [host, session]);
@@ -1045,6 +1049,8 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
     visible && textFallback,
   );
   useFitResize(panel, textFallback ? activeId : null, outputRef);
+  const outputContents = output?.contents ?? "";
+  const plainOutput = useMemo(() => plainTerminalText(outputContents), [outputContents]);
 
   const send = () => {
     if (activeId === null || input.length === 0) return;
@@ -1473,7 +1479,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
               colorScheme: "var(--t3-terminal-color-scheme, normal)",
             }}
           >
-            {output?.contents ?? ""}
+            {plainOutput}
           </pre>
           <div
             style={{

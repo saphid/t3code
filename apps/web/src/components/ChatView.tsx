@@ -287,7 +287,11 @@ import {
 } from "./chat/composerProviderState";
 import { confirmTerminalClose, isTerminalCloseConfirmPending } from "../lib/terminalCloseConfirm";
 import { isPreviewFocused } from "../lib/previewFocus";
-import { getTerminalFocusOwner, isExtensionClaimedTerminalCommand } from "../lib/terminalFocus";
+import {
+  getTerminalFocusOwner,
+  isExtensionClaimedTerminalCommand,
+  isExtensionDockTerminalFocused,
+} from "../lib/terminalFocus";
 import { publishShortcutContext } from "../lib/shortcutContext";
 import { suppressNativeTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
@@ -6230,6 +6234,11 @@ export default function ChatView(props: ChatViewProps) {
       if (command === "terminal.toggle") {
         event.preventDefault();
         event.stopPropagation();
+        if (activeThreadRef && isExtensionDockTerminalFocused()) {
+          useRightPanelStore.getState().hideExtensionDock(activeThreadRef);
+          window.requestAnimationFrame(() => focusComposer());
+          return;
+        }
         toggleTerminalVisibility();
         return;
       }
@@ -6419,6 +6428,7 @@ export default function ChatView(props: ChatViewProps) {
     toggleRightPanel,
     toggleRightPanelMaximized,
     toggleTerminalVisibility,
+    focusComposer,
     composerRef,
   ]);
 

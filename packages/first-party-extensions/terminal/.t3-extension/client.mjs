@@ -10336,6 +10336,37 @@ var __t3Client = (() => {
     );
   }
 
+  // assetLoader.ts
+  var ASSET_READ_RETRY_DELAYS_MS = [250, 500, 1e3, 2e3];
+  function isAssetReadLimitError(error) {
+    return error instanceof Error && /asset read limit reached/i.test(error.message);
+  }
+  var sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  async function readAssetWithRetry(read, path3, signal, delays = ASSET_READ_RETRY_DELAYS_MS, wait = sleep) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await read(path3, signal);
+      } catch (error) {
+        const delay = delays[attempt];
+        if (delay === void 0 || signal.aborted || !isAssetReadLimitError(error)) throw error;
+        await wait(delay);
+      }
+    }
+  }
+  function sharedLoad(load) {
+    const loads = /* @__PURE__ */ new WeakMap();
+    return (key) => {
+      const existing = loads.get(key);
+      if (existing) return existing;
+      const promise = load(key).catch((error) => {
+        if (loads.get(key) === promise) loads.delete(key);
+        throw error;
+      });
+      loads.set(key, promise);
+      return promise;
+    };
+  }
+
   // streamHub.ts
   var BROKER_STREAM_CAP = 8;
   var FEED_REPLAY_MAX_FRAMES = 64;
@@ -10978,6 +11009,26 @@ var __t3Client = (() => {
     nativeWatermark: -1,
     ended: false
   };
+  var TERMINAL_ESCAPE = (
+    // eslint-disable-next-line no-control-regex
+    /\x1b(?:\[[0-?]*[ -/]*[@-~]|[\]PX^_][^\x07\x1b]*(?:\x07|\x1b\\)|[ -/]*[0-~])|\x9b[0-?]*[ -/]*[@-~]/g
+  );
+  var TRAILING_PARTIAL_ESCAPE = /\x1b(?:\[[0-?]*[ -/]*|[\]PX^_][^\x07\x1b]*\x1b?|[ -/]*)$/;
+  var TERMINAL_CONTROL2 = /[\x00-\x07\x0b\x0c\x0e-\x1f\x7f]/g;
+  function overstrikeLine(line) {
+    if (!line.includes("\r") && !line.includes("\b")) return line;
+    const cells = [];
+    let cursor = 0;
+    for (const char of line) {
+      if (char === "\r") cursor = 0;
+      else if (char === "\b") cursor = Math.max(0, cursor - 1);
+      else cells[cursor++] = char;
+    }
+    return cells.join("");
+  }
+  function plainTerminalText(contents2) {
+    return contents2.replace(TRAILING_PARTIAL_ESCAPE, "").replace(TERMINAL_ESCAPE, "").replace(TERMINAL_CONTROL2, "").replace(/\r+\n/g, "\n").split("\n").map(overstrikeLine).join("\n");
+  }
   function applyOutputEvent(current, frame, value, pending) {
     const fail = (message) => ({
       buffer: { ...EMPTY_OUTPUT_BUFFER, status: "error", statusText: message, ended: true },
@@ -12404,7 +12455,7 @@ var __t3Client = (() => {
   };
   async function pumpTerminalOutput(options) {
     const { attachment, signal } = options;
-    const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    const sleep2 = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     const now = options.now ?? Date.now;
     let streak = EMPTY_OVERFLOW_STREAK;
     while (!signal.aborted) {
@@ -12434,7 +12485,7 @@ var __t3Client = (() => {
         return;
       }
       if (signal.aborted || !resurrect) return;
-      if (overflowClose && streak.attempts > 1) await sleep(300 * streak.attempts);
+      if (overflowClose && streak.attempts > 1) await sleep2(300 * streak.attempts);
     }
   }
 
@@ -12471,46 +12522,48 @@ var __t3Client = (() => {
       close: (input) => api.invoke("close", input, session.signal)
     };
   }
+  var loadGhosttyAssets = sharedLoad(async (host) => {
+    if (!host.readAsset) throw new Error("This host cannot load package assets.");
+    const read = host.readAsset.bind(host);
+    const signal = new AbortController().signal;
+    const vt = await readAssetWithRetry(read, GHOSTTY_VT_ASSET, signal);
+    const writePty = await readAssetWithRetry(read, GHOSTTY_WRITE_PTY_ASSET, signal);
+    const font = await readAssetWithRetry(read, SYMBOLS_FONT_ASSET, signal);
+    if (vt.mediaType !== "application/wasm" || writePty.mediaType !== "application/wasm") {
+      throw new Error("Terminal WASM assets failed package verification.");
+    }
+    if (font.mediaType !== "font/woff2") {
+      throw new Error("Terminal symbols font failed package verification.");
+    }
+    const runtime = await loadGhosttyRuntime({
+      vt: vt.bytes.slice(),
+      writePty: writePty.bytes.slice()
+    });
+    return { runtime, symbolsFont: font.bytes };
+  });
   function useGhosttyAssets(host, session) {
     const [state2, setState] = (0, import_react2.useState)({ kind: "loading" });
     (0, import_react2.useEffect)(() => {
-      const controller = new AbortController();
-      const signal = AbortSignal.any([controller.signal, session.signal]);
+      let cancelled = false;
       let symbolsFontUrl = null;
-      void (async () => {
-        try {
-          if (!host.readAsset) throw new Error("This host cannot load package assets.");
-          const readAsset = host.readAsset.bind(host);
-          const vt = await readAsset(GHOSTTY_VT_ASSET, signal);
-          const writePty = await readAsset(GHOSTTY_WRITE_PTY_ASSET, signal);
-          const font = await readAsset(SYMBOLS_FONT_ASSET, signal);
-          if (signal.aborted) return;
-          if (vt.mediaType !== "application/wasm" || writePty.mediaType !== "application/wasm") {
-            throw new Error("Terminal WASM assets failed package verification.");
-          }
-          if (font.mediaType !== "font/woff2") {
-            throw new Error("Terminal symbols font failed package verification.");
-          }
-          const runtime = await loadGhosttyRuntime({
-            vt: vt.bytes.slice(),
-            writePty: writePty.bytes.slice()
-          });
-          if (signal.aborted) return;
+      loadGhosttyAssets(host).then(
+        ({ runtime, symbolsFont }) => {
+          if (cancelled || session.signal.aborted) return;
           symbolsFontUrl = URL.createObjectURL(
-            new Blob([font.bytes], { type: "font/woff2" })
+            new Blob([symbolsFont], { type: "font/woff2" })
           );
           setState({ kind: "ready", runtime, symbolsFontUrl });
-        } catch (error) {
-          if (!signal.aborted) {
-            setState({
-              kind: "unavailable",
-              message: error instanceof Error ? error.message : "Terminal renderer unavailable"
-            });
-          }
+        },
+        (error) => {
+          if (cancelled || session.signal.aborted) return;
+          setState({
+            kind: "unavailable",
+            message: error instanceof Error ? error.message : "Terminal renderer unavailable"
+          });
         }
-      })();
+      );
       return () => {
-        controller.abort();
+        cancelled = true;
         if (symbolsFontUrl !== null) URL.revokeObjectURL(symbolsFontUrl);
       };
     }, [host, session]);
@@ -13140,6 +13193,8 @@ var __t3Client = (() => {
       visible && textFallback
     );
     useFitResize(panel, textFallback ? activeId : null, outputRef);
+    const outputContents = output?.contents ?? "";
+    const plainOutput = (0, import_react2.useMemo)(() => plainTerminalText(outputContents), [outputContents]);
     const send = () => {
       if (activeId === null || input.length === 0) return;
       panel.sendInput(activeId, input + "\r");
@@ -13552,7 +13607,7 @@ var __t3Client = (() => {
                       fontVariantLigatures: "var(--t3-terminal-ligatures, normal)",
                       colorScheme: "var(--t3-terminal-color-scheme, normal)"
                     },
-                    children: output?.contents ?? ""
+                    children: plainOutput
                   }
                 ),
                 /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(

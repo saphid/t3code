@@ -288,6 +288,51 @@ export const EMPTY_OUTPUT_BUFFER: OutputBuffer = {
   ended: false,
 };
 
+// ESC-introduced sequences: CSI (parameters, intermediates, final byte),
+// OSC/DCS/SOS/PM/APC strings ended by BEL or ST, and short escapes such as
+// charset designation and keypad modes; plus the 8-bit CSI introducer.
+const TERMINAL_ESCAPE =
+  // eslint-disable-next-line no-control-regex
+  /\x1b(?:\[[0-?]*[ -/]*[@-~]|[\]PX^_][^\x07\x1b]*(?:\x07|\x1b\\)|[ -/]*[0-~])|\x9b[0-?]*[ -/]*[@-~]/g;
+// A sequence split across output chunks: the rest is still in flight.
+// eslint-disable-next-line no-control-regex
+const TRAILING_PARTIAL_ESCAPE = /\x1b(?:\[[0-?]*[ -/]*|[\]PX^_][^\x07\x1b]*\x1b?|[ -/]*)$/;
+// C0 controls a plain-text view cannot express, including a stray ESC left
+// by a malformed sequence. Tab, newline, carriage return and backspace stay
+// for the line pass below.
+// eslint-disable-next-line no-control-regex
+const TERMINAL_CONTROL = /[\x00-\x07\x0b\x0c\x0e-\x1f\x7f]/g;
+
+/** Applies carriage return and backspace as cursor moves within one line. */
+function overstrikeLine(line: string): string {
+  if (!line.includes("\r") && !line.includes("\b")) return line;
+  const cells: string[] = [];
+  let cursor = 0;
+  for (const char of line) {
+    if (char === "\r") cursor = 0;
+    else if (char === "\b") cursor = Math.max(0, cursor - 1);
+    else cells[cursor++] = char;
+  }
+  return cells.join("");
+}
+
+/**
+ * Raw PTY output as readable plain text for the fallback view, which cannot
+ * run the VT parser: escape sequences are dropped and carriage return /
+ * backspace overwrite in place, so colour codes and prompt redraws do not
+ * print as `[1;36m` noise. Styling and cursor addressing are lost.
+ */
+export function plainTerminalText(contents: string): string {
+  return contents
+    .replace(TRAILING_PARTIAL_ESCAPE, "")
+    .replace(TERMINAL_ESCAPE, "")
+    .replace(TERMINAL_CONTROL, "")
+    .replace(/\r+\n/g, "\n")
+    .split("\n")
+    .map(overstrikeLine)
+    .join("\n");
+}
+
 /**
  * Apply one public `t3.terminal/output-events` frame. Output chunks share a
  * native sequence number and arrive in chunkIndex order; a partial group is
