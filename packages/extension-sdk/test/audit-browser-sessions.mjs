@@ -9,6 +9,10 @@ const rootArg = process.argv.find((arg) => arg.startsWith("--root="));
 const root = rootArg
   ? NodePath.resolve(rootArg.slice("--root=".length))
   : NodeURL.fileURLToPath(new URL("../examples/browser-sessions/", import.meta.url));
+// The recorded root is repo-relative so a fixture regenerated from any checkout
+// is identical; the absolute path is only used to read the files.
+const repoRoot = NodeURL.fileURLToPath(new URL("../../../", import.meta.url));
+const recordedRoot = NodePath.relative(repoRoot, NodePath.resolve(root)) + "/";
 const files =
   rootArg !== undefined
     ? process.argv.filter((arg) => !arg.startsWith("--")).slice(2)
@@ -31,7 +35,7 @@ for (const file of files) {
       findings.push({ file, reason: "non-SDK import", specifier: match[1] });
   }
 }
-const report = { package: "example.browser-sessions", root, files: hashes, findings };
+const report = { package: "example.browser-sessions", root: recordedRoot, files: hashes, findings };
 if (process.argv.includes("--write")) {
   await NodeFSP.writeFile(
     NodeURL.fileURLToPath(new URL("fixtures/browser-sessions-import-audit.json", import.meta.url)),
