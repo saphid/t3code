@@ -328,6 +328,28 @@ describe("GhosttyTerminalSurface visibility", () => {
     ).rejects.toThrow("libghostty-vt unavailable");
   });
 
+  it("registers the symbols font once, from the first surface that supplies its URL", async () => {
+    const harness = createHarness();
+    const sources: string[] = [];
+    vi.stubGlobal(
+      "FontFace",
+      class {
+        constructor(_family: string, source: string) {
+          sources.push(source);
+        }
+        load() {
+          return Promise.resolve(this);
+        }
+      },
+    );
+    // A host without the font must not stop a later host from registering it.
+    await harness.create();
+    expect(sources).toEqual([]);
+    await harness.create({ symbolsFontUrl: "/assets/symbols.woff2" });
+    await harness.create({ symbolsFontUrl: "/assets/other.woff2" });
+    expect(sources).toEqual(["url(/assets/symbols.woff2)"]);
+  });
+
   it("holds PTY replies for a whole replay bracket", async () => {
     const harness = createHarness();
     const surface = await harness.create();
