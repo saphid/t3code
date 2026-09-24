@@ -1,6 +1,6 @@
 # Capability system and installable panel replacement
 
-Status: implementation direction for this work, not a claim of implemented capabilities. Baseline: 967210389d2d5fb857baa05d3ba4c7d5c93d1d0c. Existing format-1 packages and native wrappers remain compatible while replacements are proven.
+This is an implementation direction, not a claim of implemented capabilities. Existing format-1 packages and native wrappers remain compatible while replacements are proven.
 
 ## Product acceptance
 
@@ -64,10 +64,10 @@ V1 and V2 implement adapters for the same capability model. Unsupported V2 comma
 2. Runtime broker and transactional dependency lifecycle: provider selection, schema checks, caller chain, generations, health, cancellation, snapshots and rollback. Real worker provider + separate consumer packages, missing/conflict/cycle/revocation/crash/update/rollback tests.
 3. Authenticated API discovery/invoke/selection/availability endpoints. Host workspace list/read adapters use existing project/thread authority and actual filesystem services, never caller cwd. Preserve format-1 read behavior.
 4. Independently packaged Files renderer consumes public workspace APIs and provides file presentation; a second package consumes its namespaced API. Generic selected-presentation routing replaces the ordinary Files entry point. Refactor the retained Files consumer's reads/listing onto the same public contracts. No private React bindings in the installed package.
-5. Real lxso2 installed-path proof: install both packages, select provider, open ordinary Files entry, navigate/read known files, show API trace, preserve state across reload/restart, then disable/revoke/update/rollback with explicit unavailable/fallback behavior. Preserve baseline967210 and existing comparisons. Do not call a read-only slice full Files replacement.
+5. Real installed-path proof: install both packages, select provider, open ordinary Files entry, navigate/read known files, show API trace, preserve state across reload/restart, then disable/revoke/update/rollback with explicit unavailable/fallback behavior. Do not call a read-only slice full Files replacement.
 6. Complete Files parity, then terminal/browser/diff/source-control/agents with one independently owned migration task each, shared streaming/resource primitives and V1 orchestration adapters. Expand exact parity and failure evidence before retiring each built-in.
 
-Tests must cover independent tarballs without private imports, range compatibility and shuffled graph determinism, selected-provider cycles/conflicts, no half-published activation, caller/provider revocation during async work, stale responses, output validation, unaffected plugins after failure, rollback and durable selection. Real UI tests require content and transport evidence. All implementation, builds and test clients run on lxso2 under the existing heavy-check lock; no Mac builds or browser control.
+Tests must cover independent tarballs without private imports, range compatibility and shuffled graph determinism, selected-provider cycles/conflicts, no half-published activation, caller/provider revocation during async work, stale responses, output validation, unaffected plugins after failure, rollback and durable selection. Real UI tests require content and transport evidence.
 
 ## Catalogue change delivery across clients
 

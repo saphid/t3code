@@ -230,7 +230,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   NodeTest.it(
     "clearScreen erases viewport + scrollback but preserves negotiated modes (P1)",
     async () => {
-      // Astra r1 repro: seed application-cursor + bracketed-paste, clear,
+      // Seed application-cursor + bracketed-paste, clear,
       // then paste — the bracketed wrapper must survive. An RIS reset would
       // drop mode 2004 and encode "a\nb" as "a\rb" (interactive commands).
       const { core } = await makeCore();
@@ -360,7 +360,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   NodeTest.it(
     "a resubscribe snapshot extending past an unanswered query still answers it (P2)",
     async () => {
-      // Astra r4 repro: a live DSR arrives while detached, then a
+      // A live DSR arrives while detached, then a
       // same-epoch resubscribe snapshot returns retained contents that
       // append NEWER output after the query — the unanswered bytes are
       // no longer a suffix of the replay stream, but their reply is
@@ -476,7 +476,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   NodeTest.it(
     "a repeated query in a resubscribe snapshot answers at its OWN position (P2)",
     async () => {
-      // Astra r5: the resnapshot holds TWO identical DSRs — the live one
+      // The resnapshot holds TWO identical DSRs — the live one
       // we received (position 0) and a newer history-only copy emitted
       // while disconnected. Content matching picks the rightmost copy and
       // answers at the wrong cursor position; position tracking answers
@@ -586,7 +586,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   NodeTest.it(
     "an evicted unanswered query cannot migrate to a newer identical query (P2)",
     async () => {
-      // Astra r6: the original query falls entirely outside the retained
+      // The original query falls entirely outside the retained
       // tail while a NEWER identical query lands inside the resnapshot.
       // The pending reply must drop with its bytes — never re-anchor to
       // the coincidental copy (which is snapshot history and stays
@@ -701,7 +701,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   NodeTest.it(
     "a pending reply is dropped when mounting before the replacement snapshot (P2)",
     async () => {
-      // Astra r6: identity-changed invalidates the pending reply AT the
+      // Identity-changed invalidates the pending reply AT the
       // close — a renderer that finishes mounting before the replacement
       // subscription delivers its snapshot must not emit an old-epoch
       // reply to the new process over the shared terminalId channel.
@@ -815,7 +815,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   NodeTest.it(
     "a pending reply dies when a missed clear bumped the snapshot generation (P2)",
     async () => {
-      // Astra r7: a history clear does not end the epoch, so an overflow
+      // A history clear does not end the epoch, so an overflow
       // resubscription can miss the reset entirely. The next untruncated
       // snapshot's contents then start at the CLEAR POINT, not our
       // stream's origin — truncated:false only means "all current
@@ -923,7 +923,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   );
 
   NodeTest.it("a pending reply does not cross a terminal incarnation change (P2)", async () => {
-    // Astra r5: a query queued against epoch e must not deliver into
+    // A query queued against epoch e must not deliver into
     // epoch e+1 — the new process's retained history never earned it,
     // even when identical bytes appear there.
     const attachment = new TerminalVtAttachment("term-1");
@@ -1001,7 +1001,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   NodeTest.it(
     "default line retention cannot migrate an evicted query's claim — mount after snapshot (P2)",
     async () => {
-      // Astra r8 P2-1: the host's 5000-line retention evicts the original
+      // The host's 5000-line retention evicts the original
       // query line while the retained tail still fits under the 8 KiB
       // snapshot cap — truncated:false, clearGeneration:0, yet the window
       // moved forward 5 units (contentsUnitStart). The pending reply must
@@ -1109,7 +1109,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   NodeTest.it(
     "a first attach after a host history clear is degraded — sink before snapshot (P2)",
     async () => {
-      // Astra r8 P2-2: a fresh attachment's FIRST snapshot already shows
+      // A fresh attachment's FIRST snapshot already shows
       // clearGeneration 1 — the process negotiated modes before history
       // was cleared, and no retained byte covers them. truncated:false
       // is not coverage evidence: fidelity must stay unclaimed.

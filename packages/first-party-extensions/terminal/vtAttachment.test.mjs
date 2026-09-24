@@ -486,7 +486,7 @@ NodeTest.describe("TerminalVtAttachment — failure paths", () => {
   NodeTest.it(
     "a resubscribe snapshot extending past unanswered bytes keeps their claim mid-stream (P2)",
     () => {
-      // Astra r4: an unanswered run is not necessarily a suffix of the
+      // An unanswered run is not necessarily a suffix of the
       // replay stream — the resubscribe snapshot's retained contents can
       // append newer output after it. Replay must suppress only the
       // already-answered/history bytes around the run.
