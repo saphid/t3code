@@ -101,7 +101,7 @@ NodeTest.before(async () => {
       {
         name: "surface-stub",
         setup(builder) {
-          builder.onResolve({ filter: /^\.\/ghostty\/surface\.ts$/ }, () => ({
+          builder.onResolve({ filter: /^@t3tools\/ghostty-terminal\/surface$/ }, () => ({
             path: "surface-stub",
             namespace: "surface-stub",
           }));

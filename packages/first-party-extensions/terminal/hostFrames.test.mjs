@@ -11,11 +11,14 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeTest from "node:test";
 import * as NodeURL from "node:url";
 
-import { GhosttyTerminalCore } from "./ghostty/core.ts";
-import { loadGhosttyRuntime } from "./ghostty/runtime.ts";
+import { GhosttyTerminalCore } from "@t3tools/ghostty-terminal/core";
+import { loadGhosttyRuntime } from "@t3tools/ghostty-terminal/runtime";
 import { TerminalVtAttachment } from "./vtAttachment.ts";
 
 const packageDir = NodeURL.fileURLToPath(new URL("./", import.meta.url));
+const ghosttyAssetsDir = NodeURL.fileURLToPath(
+  new URL("./", import.meta.resolve("@t3tools/ghostty-terminal/assets/ghostty-vt.wasm")),
+);
 
 const THEME = {
   foreground: { r: 229, g: 231, b: 235 },
@@ -30,8 +33,8 @@ let recorded;
 
 NodeTest.before(async () => {
   const [vt, writePty, fixture] = await Promise.all([
-    NodeFSP.readFile(new URL("assets/ghostty-vt.wasm", `file://${packageDir}`)),
-    NodeFSP.readFile(new URL("assets/ghostty-write-pty.wasm", `file://${packageDir}`)),
+    NodeFSP.readFile(new URL("ghostty-vt.wasm", `file://${ghosttyAssetsDir}`)),
+    NodeFSP.readFile(new URL("ghostty-write-pty.wasm", `file://${ghosttyAssetsDir}`)),
     NodeFSP.readFile(new URL("fixtures/host-output-frames.json", `file://${packageDir}`), "utf8"),
   ]);
   runtime = await loadGhosttyRuntime({ vt, writePty });

@@ -15,9 +15,8 @@ export function cssFontFamilies(input: string): string | null {
   const families = input
     .split(",")
     .map(quoteFontFamilyName)
-    .filter((name) => name.length > 0)
-    .join(", ");
-  return families.length === 0 ? null : families;
+    .filter((name) => name.length > 0);
+  return families.length > 0 ? families.join(", ") : null;
 }
 
 let fontProbeContext: CanvasRenderingContext2D | null | undefined;

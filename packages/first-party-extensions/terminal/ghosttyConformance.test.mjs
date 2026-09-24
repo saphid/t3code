@@ -1,18 +1,20 @@
 /**
  * VT conformance over the REAL vendored libghostty-vt WASM — the same
  * closure the extension packages as format-4 assets. Loads the bytes from
- * ./assets exactly as the host's readAsset would deliver them.
+ * @t3tools/ghostty-terminal, the files the build stages for readAsset.
  */
 import * as NodeAssert from "node:assert/strict";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeTest from "node:test";
 import * as NodeURL from "node:url";
 
-import { GhosttyTerminalCore } from "./ghostty/core.ts";
-import { loadGhosttyRuntime } from "./ghostty/runtime.ts";
+import { GhosttyTerminalCore } from "@t3tools/ghostty-terminal/core";
+import { loadGhosttyRuntime } from "@t3tools/ghostty-terminal/runtime";
 import { TerminalVtAttachment } from "./vtAttachment.ts";
 
-const assetsDir = NodeURL.fileURLToPath(new URL("./assets/", import.meta.url));
+const assetsDir = NodeURL.fileURLToPath(
+  new URL("./", import.meta.resolve("@t3tools/ghostty-terminal/assets/ghostty-vt.wasm")),
+);
 
 const THEME = {
   foreground: { r: 229, g: 231, b: 235 },

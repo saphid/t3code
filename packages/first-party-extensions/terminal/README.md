@@ -84,16 +84,19 @@ side-by-side.
 
 ## Rendering: real Ghostty VT (format 4)
 
-The panel renders through the vendored libghostty-vt WASM closure in
-`ghostty/` — the same handwritten adapter the native terminal drawer uses —
-packaged as digest-verified extension assets:
+The panel renders through `@t3tools/ghostty-terminal`, the same libghostty-vt
+adapter the native terminal drawer uses, with its WASM closure packaged as
+digest-verified extension assets:
 
 - `assets/ghostty-vt.wasm` — terminal core, parser, render state
 - `assets/ghostty-write-pty.wasm` — PTY-write callback trampoline
 - `assets/SymbolsNerdFontMono-Regular.woff2` — symbol fallback font
 
-The host delivers verified bytes via `host.readAsset`; `ghostty/runtime.ts`
-instantiates one shared runtime and each surface allocates its own terminal
+The bytes live once, in the package's `assets/`. `stageGhosttyAssets.mjs`
+copies them into this package's gitignored `assets/` on install and before
+every `build`, because `t3-extension build` packs only files inside the
+source directory. The host delivers verified bytes via `host.readAsset`;
+`loadGhosttyRuntime` instantiates one shared runtime and each surface allocates its own terminal
 handle. The runtime allows 4 concurrent asset reads per installation, so
 every mounted placement shares one sequential load (`assetLoader.ts`) and a
 read refused at that cap backs off and retries. A host without asset
@@ -104,16 +107,6 @@ variables and `::selection` styling.
 The `.t3-extension/` bundle inlines SDK and shared code, and
 `t3-extension check` only compares it with its own receipt, so check cannot
 see a stale bundle; run `vp run build` here after SDK or source changes.
-
-Vendoring deviations from `apps/web/src/terminal/ghostty/` (all mechanical,
-none change VT semantics): imports repointed to package-local helpers;
-`runtime.ts` loads WASM/font bytes from an injected asset loader instead of
-`~/` URL-module imports (the upstream `~/` static-asset concatenation is
-rewritten); the runtime and symbols-font URL reach the surface through
-options rather than module scope; `cssFontFamilies` is a joined string
-constant rather than a module glob; and `platform.ts` guards `navigator`
-access for non-DOM hosts. The WASM bytes, parser, and encoder are
-byte-identical to upstream.
 
 ## Attach semantics (honest degradation)
 

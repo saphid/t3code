@@ -60,10 +60,10 @@ let symbolsFontLoad: Promise<void> | null = null;
  * devicons render even on machines without a locally installed Nerd Font.
  */
 function ensureTerminalSymbolsFont(symbolsFontUrl: string | undefined): Promise<void> {
+  if (symbolsFontUrl === undefined) return Promise.resolve();
   if (symbolsFontLoad !== null) return symbolsFontLoad;
   symbolsFontLoad = (async () => {
     try {
-      if (symbolsFontUrl === undefined) return;
       const face = new FontFace("Symbols Nerd Font Mono", `url(${symbolsFontUrl})`);
       document.fonts.add(await face.load());
     } catch {
@@ -396,6 +396,15 @@ export function isTerminalPasteShortcut(
   return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
 }
 
+/**
+ * Middle-click paste is an X11/Wayland convention. macOS and Windows have no
+ * primary selection and use the button for autoscroll, so only desktops that
+ * expect the gesture get it.
+ */
+function isMiddleClickPastePlatform(): boolean {
+  return /linux|bsd/i.test(navigator.platform);
+}
+
 export function isTerminalCompositionCommitInput(event: Pick<InputEvent, "inputType">): boolean {
   return (
     event.inputType === "" ||
@@ -530,9 +539,13 @@ export interface GhosttySelectionPosition {
 }
 
 export interface GhosttyTerminalSurfaceOptions {
-  /** Shared libghostty-vt instance; the surface allocates its terminal inside it. */
-  readonly runtime: GhosttyRuntime;
-  /** Object URL for the bundled symbols-only Nerd Font; skipped when absent. */
+  /**
+   * The shared libghostty-vt instance; the surface allocates its terminal
+   * inside it. A pending load is awaited after the mount paints its
+   * background, so the canvas never waits on the WASM fetch.
+   */
+  readonly runtime: GhosttyRuntime | Promise<GhosttyRuntime>;
+  /** URL of the bundled symbols-only Nerd Font (`assets/`); skipped when absent. */
   readonly symbolsFontUrl?: string;
   readonly theme: GhosttyTheme;
   readonly font?: GhosttyTerminalFont;
@@ -673,6 +686,10 @@ export class GhosttyTerminalSurface {
     mount: HTMLElement,
     options: GhosttyTerminalSurfaceOptions,
   ): Promise<GhosttyTerminalSurface> {
+    // Observe a pending runtime load now: a failure while the fonts load must
+    // not surface as an unhandled rejection. It rethrows at the await below.
+    const runtime = Promise.resolve(options.runtime);
+    runtime.catch(() => {});
     const canvas = document.createElement("canvas");
     canvas.className = "block size-full cursor-text";
     canvas.setAttribute("aria-hidden", "true");
@@ -719,7 +736,7 @@ export class GhosttyTerminalSurface {
     const metrics = measureGhosttyCell(context, fontSize, fontFamily);
     const grid = terminalGridSize(mount.clientWidth, mount.clientHeight, metrics, CONTENT_PADDING);
     const core = await GhosttyTerminalCore.create(
-      options.runtime,
+      await runtime,
       grid.cols,
       grid.rows,
       metrics.width,
@@ -978,6 +995,20 @@ export class GhosttyTerminalSurface {
     if (text.length === 0) return;
     const encoded = this.core.encodePaste(text);
     if (encoded.length > 0) this.options.onData(encoded);
+  }
+
+  /**
+   * Middle-click pastes the terminal's own selection, which is the only
+   * primary-selection-like buffer a browser can read. It goes through
+   * pasteFromClipboard so it joins the same paste race as every other path.
+   * With nothing selected here there is no buffer to paste, and CLIPBOARD is
+   * deliberately not substituted: middle-click must never emit text the user
+   * only ever copied.
+   */
+  private pasteTerminalSelection(): void {
+    const selection = this.getSelection();
+    if (selection.length === 0) return;
+    void this.pasteFromClipboard(() => Promise.resolve(selection));
   }
 
   hasSelection(): boolean {
@@ -1314,6 +1345,12 @@ export class GhosttyTerminalSurface {
       this.canvas.setPointerCapture(event.pointerId);
       return;
     }
+    if (event.button === 1 && isMiddleClickPastePlatform()) {
+      // Left uncancelled on purpose: cancelling pointerdown drops the
+      // compatibility mousedown, which is what activates a split pane.
+      this.pasteTerminalSelection();
+      return;
+    }
     if (event.button !== 0) return;
     const clickCount = this.recordSelectionClick(event);
     const link = this.linkAt(event.clientX, event.clientY);
@@ -1557,6 +1594,10 @@ export class GhosttyTerminalSurface {
     if (this.canvas.hasPointerCapture(event.pointerId)) {
       this.canvas.releasePointerCapture(event.pointerId);
     }
+    if (event.button === 1 && isMiddleClickPastePlatform()) {
+      event.preventDefault();
+      return;
+    }
     if (event.button !== 0) return;
     if (!this.selectionMoved && this.selectionMode === "cell") {
       this.clearSelection();
@@ -1593,8 +1634,21 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onMouseDown = (event: MouseEvent) => {
-    if (event.button === 0) event.preventDefault();
+    // Cancelling the middle button here stops autoscroll while still letting
+    // the event bubble to the drawer handler that activates a split pane.
+    if (event.button === 0 || (event.button === 1 && isMiddleClickPastePlatform())) {
+      event.preventDefault();
+    }
     this.focus();
+  };
+
+  /**
+   * Chromium pastes PRIMARY into the focused editable on a middle mouseup, and
+   * the hidden textarea is focused, so leaving the default alive would deliver
+   * a second paste through onPaste on top of the one onPointerDown sent.
+   */
+  private readonly onMouseUp = (event: MouseEvent) => {
+    if (event.button === 1 && isMiddleClickPastePlatform()) event.preventDefault();
   };
 
   private readonly onContextMenu = (event: MouseEvent) => {
@@ -1686,6 +1740,7 @@ export class GhosttyTerminalSurface {
     this.canvas.addEventListener("pointercancel", this.onPointerUp);
     this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
     this.canvas.addEventListener("mousedown", this.onMouseDown);
+    this.canvas.addEventListener("mouseup", this.onMouseUp);
     this.canvas.addEventListener("contextmenu", this.onContextMenu);
     this.scrollbar.addEventListener("pointerdown", this.onScrollbarPointerDown);
     this.scrollbar.addEventListener("pointermove", this.onScrollbarPointerMove);
@@ -1711,6 +1766,7 @@ export class GhosttyTerminalSurface {
     this.canvas.removeEventListener("pointercancel", this.onPointerUp);
     this.canvas.removeEventListener("wheel", this.onWheel);
     this.canvas.removeEventListener("mousedown", this.onMouseDown);
+    this.canvas.removeEventListener("mouseup", this.onMouseUp);
     this.canvas.removeEventListener("contextmenu", this.onContextMenu);
     this.scrollbar.removeEventListener("pointerdown", this.onScrollbarPointerDown);
     this.scrollbar.removeEventListener("pointermove", this.onScrollbarPointerMove);

@@ -12,7 +12,9 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeTest from "node:test";
 import * as NodeURL from "node:url";
 
-const assetsDir = NodeURL.fileURLToPath(new URL("./assets/", import.meta.url));
+const assetsDir = NodeURL.fileURLToPath(
+  new URL("./", import.meta.resolve("@t3tools/ghostty-terminal/assets/ghostty-vt.wasm")),
+);
 
 // ---------------------------------------------------------------- fake DOM
 function installDom() {
@@ -134,8 +136,8 @@ function installDom() {
 
 const El = installDom();
 
-const { GhosttyTerminalSurface } = await import("./ghostty/surface.ts");
-const { loadGhosttyRuntime } = await import("./ghostty/runtime.ts");
+const { GhosttyTerminalSurface } = await import("@t3tools/ghostty-terminal/surface");
+const { loadGhosttyRuntime } = await import("@t3tools/ghostty-terminal/runtime");
 const { TerminalInputQueue } = await import("./inputQueue.ts");
 
 const THEME = {

@@ -5,7 +5,7 @@ import {
   ghosttyUnshiftedCodepoint,
   loadGhosttyKeyboardLayoutMap,
 } from "./keyCodes.ts";
-import { GhosttyRuntime } from "./runtime.ts";
+import { type GhosttyRuntime } from "./runtime.ts";
 
 const GHOSTTY_SUCCESS = 0;
 const GHOSTTY_OUT_OF_SPACE = -3;

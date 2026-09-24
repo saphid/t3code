@@ -6929,12 +6929,12 @@ var __t3Client = (() => {
   // extension.tsx
   var import_react2 = __toESM(require_react(), 1);
 
-  // ghostty/platform.ts
+  // node_modules/@t3tools/ghostty-terminal/src/platform.ts
   function isMacPlatform(platform) {
     return /mac|iphone|ipad|ipod/i.test(platform);
   }
 
-  // ghostty/runtime.ts
+  // node_modules/@t3tools/ghostty-terminal/src/runtime.ts
   var textDecoder = new TextDecoder();
   var GhosttyRuntime = class _GhosttyRuntime {
     memory;
@@ -7120,10 +7120,10 @@ var __t3Client = (() => {
     return promise;
   }
 
-  // ghostty/selection.ts
+  // node_modules/@t3tools/ghostty-terminal/src/selection.ts
   var SELECTION_MULTI_CLICK_INTERVAL_MS = 500;
 
-  // ghostty/terminal-links.ts
+  // node_modules/@t3tools/ghostty-terminal/src/terminal-links.ts
   var URL_PATTERN = /https?:\/\/[^\s"'`<>]+/giu;
   var FILE_PATH_PATTERN = /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
   var TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
@@ -7212,7 +7212,7 @@ var __t3Client = (() => {
     };
   }
 
-  // ghostty/keyCodes.ts
+  // node_modules/@t3tools/ghostty-terminal/src/keyCodes.ts
   var ghosttyKeyboardCodes = [
     "Unidentified",
     "Backquote",
@@ -7452,7 +7452,7 @@ var __t3Client = (() => {
     return event.key.codePointAt(0) ?? 0;
   }
 
-  // ghostty/core.ts
+  // node_modules/@t3tools/ghostty-terminal/src/core.ts
   var GHOSTTY_SUCCESS = 0;
   var GHOSTTY_OUT_OF_SPACE = -3;
   var MAX_SCROLLBACK_ROWS = 1e4;
@@ -8449,7 +8449,7 @@ var __t3Client = (() => {
     return sameColor(left, right);
   }
 
-  // ghostty/renderer.ts
+  // node_modules/@t3tools/ghostty-terminal/src/renderer.ts
   var DEFAULT_SELECTION_BACKGROUND = "rgba(72, 122, 191, 0.35)";
   function cssColor(color) {
     return `rgb(${color.r}, ${color.g}, ${color.b})`;
@@ -8634,7 +8634,7 @@ var __t3Client = (() => {
     }
   }
 
-  // ghostty/monospaceFonts.ts
+  // node_modules/@t3tools/ghostty-terminal/src/monospaceFonts.ts
   function quoteFontFamilyName(name) {
     const bare = name.trim();
     if (bare.length === 0) return "";
@@ -8643,8 +8643,8 @@ var __t3Client = (() => {
     return `"${bare.replaceAll('"', "")}"`;
   }
   function cssFontFamilies(input) {
-    const families = input.split(",").map(quoteFontFamilyName).filter((name) => name.length > 0).join(", ");
-    return families.length === 0 ? null : families;
+    const families = input.split(",").map(quoteFontFamilyName).filter((name) => name.length > 0);
+    return families.length > 0 ? families.join(", ") : null;
   }
   var fontProbeContext;
   var MONOSPACE_PROBE_VARIANTS = ["normal 400", "normal 700", "italic 400", "italic 700"];
@@ -8677,7 +8677,7 @@ var __t3Client = (() => {
     }
   }
 
-  // ghostty/surface.ts
+  // node_modules/@t3tools/ghostty-terminal/src/surface.ts
   var DEFAULT_TERMINAL_FONT_SIZE = 12;
   var MIN_TERMINAL_FONT_SIZE = 6;
   var MAX_TERMINAL_FONT_SIZE = 32;
@@ -8695,10 +8695,10 @@ var __t3Client = (() => {
   ];
   var symbolsFontLoad = null;
   function ensureTerminalSymbolsFont(symbolsFontUrl) {
+    if (symbolsFontUrl === void 0) return Promise.resolve();
     if (symbolsFontLoad !== null) return symbolsFontLoad;
     symbolsFontLoad = (async () => {
       try {
-        if (symbolsFontUrl === void 0) return;
         const face = new FontFace("Symbols Nerd Font Mono", `url(${symbolsFontUrl})`);
         document.fonts.add(await face.load());
       } catch {
@@ -8890,6 +8890,9 @@ var __t3Client = (() => {
     if (key !== "v") return false;
     return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
   }
+  function isMiddleClickPastePlatform() {
+    return /linux|bsd/i.test(navigator.platform);
+  }
   function isTerminalCompositionCommitInput(event) {
     return event.inputType === "" || event.inputType === "insertCompositionText" || event.inputType === "insertFromComposition";
   }
@@ -9050,6 +9053,9 @@ var __t3Client = (() => {
       this.resizeObserver.observe(mount);
     }
     static async create(mount, options) {
+      const runtime = Promise.resolve(options.runtime);
+      runtime.catch(() => {
+      });
       const canvas = document.createElement("canvas");
       canvas.className = "block size-full cursor-text";
       canvas.setAttribute("aria-hidden", "true");
@@ -9084,7 +9090,7 @@ var __t3Client = (() => {
       const metrics = measureGhosttyCell(context, fontSize, fontFamily);
       const grid = terminalGridSize(mount.clientWidth, mount.clientHeight, metrics, CONTENT_PADDING);
       const core = await GhosttyTerminalCore.create(
-        options.runtime,
+        await runtime,
         grid.cols,
         grid.rows,
         metrics.width,
@@ -9291,6 +9297,19 @@ var __t3Client = (() => {
       if (text.length === 0) return;
       const encoded = this.core.encodePaste(text);
       if (encoded.length > 0) this.options.onData(encoded);
+    }
+    /**
+     * Middle-click pastes the terminal's own selection, which is the only
+     * primary-selection-like buffer a browser can read. It goes through
+     * pasteFromClipboard so it joins the same paste race as every other path.
+     * With nothing selected here there is no buffer to paste, and CLIPBOARD is
+     * deliberately not substituted: middle-click must never emit text the user
+     * only ever copied.
+     */
+    pasteTerminalSelection() {
+      const selection = this.getSelection();
+      if (selection.length === 0) return;
+      void this.pasteFromClipboard(() => Promise.resolve(selection));
     }
     hasSelection() {
       return this.core.selectionText().length > 0;
@@ -9538,6 +9557,10 @@ var __t3Client = (() => {
         this.canvas.setPointerCapture(event.pointerId);
         return;
       }
+      if (event.button === 1 && isMiddleClickPastePlatform()) {
+        this.pasteTerminalSelection();
+        return;
+      }
       if (event.button !== 0) return;
       const clickCount = this.recordSelectionClick(event);
       const link = this.linkAt(event.clientX, event.clientY);
@@ -9737,6 +9760,10 @@ var __t3Client = (() => {
       if (this.canvas.hasPointerCapture(event.pointerId)) {
         this.canvas.releasePointerCapture(event.pointerId);
       }
+      if (event.button === 1 && isMiddleClickPastePlatform()) {
+        event.preventDefault();
+        return;
+      }
       if (event.button !== 0) return;
       if (!this.selectionMoved && this.selectionMode === "cell") {
         this.clearSelection();
@@ -9769,8 +9796,18 @@ var __t3Client = (() => {
       this.scrollViewport(delta.rows);
     };
     onMouseDown = (event) => {
-      if (event.button === 0) event.preventDefault();
+      if (event.button === 0 || event.button === 1 && isMiddleClickPastePlatform()) {
+        event.preventDefault();
+      }
       this.focus();
+    };
+    /**
+     * Chromium pastes PRIMARY into the focused editable on a middle mouseup, and
+     * the hidden textarea is focused, so leaving the default alive would deliver
+     * a second paste through onPaste on top of the one onPointerDown sent.
+     */
+    onMouseUp = (event) => {
+      if (event.button === 1 && isMiddleClickPastePlatform()) event.preventDefault();
     };
     onContextMenu = (event) => {
       if (shouldReportTerminalMouse(this.core.isMouseTracking(), event)) {
@@ -9853,6 +9890,7 @@ var __t3Client = (() => {
       this.canvas.addEventListener("pointercancel", this.onPointerUp);
       this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
       this.canvas.addEventListener("mousedown", this.onMouseDown);
+      this.canvas.addEventListener("mouseup", this.onMouseUp);
       this.canvas.addEventListener("contextmenu", this.onContextMenu);
       this.scrollbar.addEventListener("pointerdown", this.onScrollbarPointerDown);
       this.scrollbar.addEventListener("pointermove", this.onScrollbarPointerMove);
@@ -9877,6 +9915,7 @@ var __t3Client = (() => {
       this.canvas.removeEventListener("pointercancel", this.onPointerUp);
       this.canvas.removeEventListener("wheel", this.onWheel);
       this.canvas.removeEventListener("mousedown", this.onMouseDown);
+      this.canvas.removeEventListener("mouseup", this.onMouseUp);
       this.canvas.removeEventListener("contextmenu", this.onContextMenu);
       this.scrollbar.removeEventListener("pointerdown", this.onScrollbarPointerDown);
       this.scrollbar.removeEventListener("pointermove", this.onScrollbarPointerMove);
@@ -10133,7 +10172,7 @@ var __t3Client = (() => {
     }
   };
 
-  // ghostty/surfaceKeys.ts
+  // surfaceKeys.ts
   var TERMINAL_WORD_BACKWARD = "\x1Bb";
   var TERMINAL_WORD_FORWARD = "\x1Bf";
   var TERMINAL_LINE_START = "";
