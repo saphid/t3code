@@ -10693,6 +10693,7 @@ var __t3Client = (() => {
         const delay = delays[attempt];
         if (delay === void 0 || signal.aborted || !isAssetReadLimitError(error)) throw error;
         await wait(delay);
+        if (signal.aborted) throw error;
       }
     }
   }
@@ -11354,10 +11355,10 @@ var __t3Client = (() => {
   };
   var TERMINAL_ESCAPE = (
     // eslint-disable-next-line no-control-regex
-    /\x1b(?:\[[0-?]*[ -/]*[@-~]|[\]PX^_][^\x07\x1b]*(?:\x07|\x1b\\)|[ -/]*[0-~])|\x9b[0-?]*[ -/]*[@-~]/g
+    /\x1b(?:\[[0-?]*[ -/]*[@-~]|[\]PX^_][^\x07\x18\x1a\x1b\x80-\x9f]*(?:\x07|\x1b\\|\x9c|(?=[\x18\x1a\x1b\x80-\x9f])|$)|[ -/]*[0-~])|\x9b[0-?]*[ -/]*[@-~]|[\x90\x98\x9d-\x9f][^\x07\x18\x1a\x1b\x80-\x9f]*(?:\x07|\x1b\\|\x9c|(?=[\x18\x1a\x1b\x80-\x9f])|$)/g
   );
-  var TRAILING_PARTIAL_ESCAPE = /\x1b(?:\[[0-?]*[ -/]*|[\]PX^_][^\x07\x1b]*\x1b?|[ -/]*)$/;
-  var TERMINAL_CONTROL2 = /[\x00-\x07\x0b\x0c\x0e-\x1f\x7f]/g;
+  var TRAILING_PARTIAL_ESCAPE = /(?:\x1b(?:\[[0-?]*[ -/]*|[ -/]*)|\x9b[0-?]*[ -/]*)$/;
+  var TERMINAL_CONTROL2 = /[\x00-\x07\x0b\x0c\x0e-\x1f\x7f-\x9f]/g;
   function overstrikeLine(line) {
     if (!line.includes("\r") && !line.includes("\b")) return line;
     const cells = [];

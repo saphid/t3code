@@ -288,20 +288,24 @@ export const EMPTY_OUTPUT_BUFFER: OutputBuffer = {
   ended: false,
 };
 
-// ESC-introduced sequences: CSI (parameters, intermediates, final byte),
-// OSC/DCS/SOS/PM/APC strings ended by BEL or ST, and short escapes such as
-// charset designation and keypad modes; plus the 8-bit CSI introducer.
+// CSI (parameters, intermediates, final byte) by ESC [ or 8-bit 0x9b;
+// OSC/DCS/SOS/PM/APC strings by their ESC or 8-bit introducer, ended by
+// BEL, ST (ESC \ or 0x9c), or — as the VT parser aborts them — by CAN, SUB,
+// ESC, any other C1 control or the end of the buffer, so an unterminated
+// string never prints its payload; and short escapes such as charset
+// designation and keypad modes.
 const TERMINAL_ESCAPE =
   // eslint-disable-next-line no-control-regex
-  /\x1b(?:\[[0-?]*[ -/]*[@-~]|[\]PX^_][^\x07\x1b]*(?:\x07|\x1b\\)|[ -/]*[0-~])|\x9b[0-?]*[ -/]*[@-~]/g;
-// A sequence split across output chunks: the rest is still in flight.
+  /\x1b(?:\[[0-?]*[ -/]*[@-~]|[\]PX^_][^\x07\x18\x1a\x1b\x80-\x9f]*(?:\x07|\x1b\\|\x9c|(?=[\x18\x1a\x1b\x80-\x9f])|$)|[ -/]*[0-~])|\x9b[0-?]*[ -/]*[@-~]|[\x90\x98\x9d-\x9f][^\x07\x18\x1a\x1b\x80-\x9f]*(?:\x07|\x1b\\|\x9c|(?=[\x18\x1a\x1b\x80-\x9f])|$)/g;
+// A sequence split across output chunks: the rest is still in flight. A
+// split string needs no entry — TERMINAL_ESCAPE withholds it to the end.
 // eslint-disable-next-line no-control-regex
-const TRAILING_PARTIAL_ESCAPE = /\x1b(?:\[[0-?]*[ -/]*|[\]PX^_][^\x07\x1b]*\x1b?|[ -/]*)$/;
-// C0 controls a plain-text view cannot express, including a stray ESC left
-// by a malformed sequence. Tab, newline, carriage return and backspace stay
-// for the line pass below.
+const TRAILING_PARTIAL_ESCAPE = /(?:\x1b(?:\[[0-?]*[ -/]*|[ -/]*)|\x9b[0-?]*[ -/]*)$/;
+// C0 and C1 controls a plain-text view cannot express, including a stray
+// ESC or ST left by a malformed sequence. Tab, newline, carriage return and
+// backspace stay for the line pass below.
 // eslint-disable-next-line no-control-regex
-const TERMINAL_CONTROL = /[\x00-\x07\x0b\x0c\x0e-\x1f\x7f]/g;
+const TERMINAL_CONTROL = /[\x00-\x07\x0b\x0c\x0e-\x1f\x7f-\x9f]/g;
 
 /** Applies carriage return and backspace as cursor moves within one line. */
 function overstrikeLine(line: string): string {
@@ -318,9 +322,11 @@ function overstrikeLine(line: string): string {
 
 /**
  * Raw PTY output as readable plain text for the fallback view, which cannot
- * run the VT parser: escape sequences are dropped and carriage return /
- * backspace overwrite in place, so colour codes and prompt redraws do not
- * print as `[1;36m` noise. Styling and cursor addressing are lost.
+ * run the VT parser: the escape sequences above and stray controls are
+ * dropped, and carriage return / backspace overwrite in place, so colour
+ * codes and prompt redraws do not print as `[1;36m` noise. Styling and
+ * cursor addressing are lost; anything else the VT parser would interpret
+ * (line wrapping, cursor moves) is not replayed.
  */
 export function plainTerminalText(contents: string): string {
   return contents
