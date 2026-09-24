@@ -1,6 +1,25 @@
+import type { ReactNode } from "react";
+import { act } from "react";
+import { create, type ReactTestRenderer } from "react-test-renderer";
 import { jsx } from "react/jsx-runtime";
-import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+import type { PreviewPanelMode } from "./PreviewPanelShell";
+
+// The resize hook binds window listeners; the retention behavior under test
+// does not involve dragging, so pin the width and neutralize the handlers.
+vi.mock("~/hooks/useResizableWidth", () => ({
+  useResizableWidth: () => ({
+    width: 540,
+    handlers: {
+      onPointerDown: () => {},
+      onPointerMove: () => {},
+      onPointerUp: () => {},
+      onPointerCancel: () => {},
+      onLostPointerCapture: () => {},
+    },
+  }),
+}));
 
 import { getPreviewPanelMaxWidth, PreviewPanelShell } from "./PreviewPanelShell";
 
@@ -40,23 +59,48 @@ describe("getPreviewPanelMaxWidth", () => {
   });
 });
 
-it("keeps retained closed inline controls inert without hiding open or sheet content", () => {
-  const closed = renderToStaticMarkup(
-    jsx(PreviewPanelShell, {
-      mode: "inline",
-      open: false,
-      children: jsx("button", { children: "Retained tab" }),
-    }),
-  );
-  expect(closed).toContain('inert=""');
-  expect(closed).toContain('aria-hidden="true"');
-  expect(closed).toContain("Retained tab");
-  for (const props of [
-    { mode: "inline" as const, open: true },
-    { mode: "sheet" as const, open: false },
-  ]) {
-    const markup = renderToStaticMarkup(jsx(PreviewPanelShell, { ...props, children: "Panel" }));
-    expect(markup.slice(0, markup.indexOf(">") + 1)).not.toContain("inert=");
-    expect(markup.slice(0, markup.indexOf(">") + 1)).not.toContain('aria-hidden="true"');
+describe("PreviewPanelShell", () => {
+  let renderer: ReactTestRenderer | undefined;
+
+  function mountPanel(mode: PreviewPanelMode, open: boolean, children: ReactNode) {
+    act(() => {
+      renderer = create(jsx(PreviewPanelShell, { mode, open, children }));
+    });
+    return renderer!;
   }
+
+  it("keeps closed inline content mounted but inert, and restores it on reopen", () => {
+    const retained = jsx("button", { children: "Retained tab" });
+    const panel = mountPanel("inline", false, retained);
+    // Retention: closing must unmount nothing.
+    expect(() => panel.root.findByProps({ children: "Retained tab" })).not.toThrow();
+    // Suppression: the closed host is inert and hidden from assistive tech.
+    const host = panel.root.findByProps({ "data-preview-panel-mode": "inline" });
+    expect(host.props.inert).toBe(true);
+    expect(host.props["aria-hidden"]).toBe(true);
+
+    act(() => {
+      renderer!.update(jsx(PreviewPanelShell, { mode: "inline", open: true, children: retained }));
+    });
+    expect(() => panel.root.findByProps({ inert: true })).toThrow();
+    expect(() => panel.root.findByProps({ children: "Retained tab" })).not.toThrow();
+
+    act(() => {
+      renderer!.unmount();
+    });
+    renderer = undefined;
+  });
+
+  it("does not suppress sheet content when the sheet is closed", () => {
+    const panel = mountPanel("sheet", false, jsx("button", { children: "Sheet content" }));
+    const host = panel.root.findByProps({ "data-preview-panel-mode": "sheet" });
+    expect(host.props.inert).toBe(false);
+    expect(host.props["aria-hidden"]).toBeUndefined();
+    expect(() => panel.root.findByProps({ children: "Sheet content" })).not.toThrow();
+
+    act(() => {
+      renderer!.unmount();
+    });
+    renderer = undefined;
+  });
 });
