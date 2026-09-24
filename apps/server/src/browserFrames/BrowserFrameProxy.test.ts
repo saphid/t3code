@@ -2,10 +2,9 @@
 import { it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { createServer, type RequestListener, type Server } from "node:http";
-import { createHash } from "node:crypto";
-import type { AddressInfo } from "node:net";
-import type { Socket as NetSocket } from "node:net";
+import * as NodeHttp from "node:http";
+import * as NodeCrypto from "node:crypto";
+import type * as NodeNet from "node:net";
 import { FetchHttpClient, HttpRouter } from "effect/unstable/http";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -95,7 +94,7 @@ const routes = (
 /** Loopback GET against a real Node server — kept out of Effect code. */
 const httpGet = (url: string): Promise<Response> => fetch(url);
 
-const listen = async (server: Server): Promise<string> => {
+const listen = async (server: NodeHttp.Server): Promise<string> => {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (typeof address !== "object" || address === null) throw new Error("no address");
@@ -114,14 +113,14 @@ interface Fixture {
 }
 
 const withProxy = <A, E>(
-  upstream: RequestListener,
+  upstream: NodeHttp.RequestListener,
   extensions: Pick<EnvironmentExtensions["Service"], "list">,
   auth: Partial<EnvAuth.EnvironmentAuth["Service"]> | undefined,
   run: (fixture: Fixture) => Effect.Effect<A, E>,
 ) =>
   Effect.gen(function* () {
     const leases = yield* BrowserFrameLeases;
-    const server = createServer(upstream);
+    const server = NodeHttp.createServer(upstream);
     const origin = yield* Effect.promise(() => listen(server));
     const hub = {
       origin,
@@ -205,7 +204,7 @@ describe("BrowserFrameProxy", () => {
 
   it.live("an upstream redirect is never followed and leaks no hub secret", () => {
     const redirectHits: Array<Record<string, unknown>> = [];
-    const redirectTarget = createServer((req, res) => {
+    const redirectTarget = NodeHttp.createServer((req, res) => {
       redirectHits.push(req.headers as Record<string, unknown>);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end("{}");
@@ -338,8 +337,8 @@ describe("BrowserFrameProxy", () => {
       // Upstream engine hub: a held-open MJPEG response and an input WS
       // that accepts and idles — both must die when the viewer's root
       // connection goes away.
-      const upstreamSockets = new Set<NetSocket>();
-      const upstream = createServer((req, res) => {
+      const upstreamSockets = new Set<NodeNet.Socket>();
+      const upstream = NodeHttp.createServer((req, res) => {
         if (req.url?.startsWith("/sessions/tab-1/stream.mjpeg")) {
           res.writeHead(200, {
             "content-type": "multipart/x-mixed-replace; boundary=t3frame",
@@ -352,10 +351,10 @@ describe("BrowserFrameProxy", () => {
       });
       // Minimal 101 handshake upstream — accepts the input upgrade and idles
       // so the test observes the proxy closing the hop, not WS semantics.
-      upstream.on("upgrade", (req, socket: NetSocket) => {
+      upstream.on("upgrade", (req, socket: NodeNet.Socket) => {
         if (req.url?.startsWith("/sessions/tab-1/input")) {
           const key = req.headers["sec-websocket-key"];
-          const accept = createHash("sha1")
+          const accept = NodeCrypto.createHash("sha1")
             .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
             .digest("base64");
           socket.write(
@@ -385,7 +384,7 @@ describe("BrowserFrameProxy", () => {
         environmentId: "env-a",
       } as Broker.BrowserFrameHubEndpoint;
       // A real Node server so the input path exercises an actual upgrade.
-      const nodeServer = createServer();
+      const nodeServer = NodeHttp.createServer();
       yield* Layer.build(
         HttpRouter.serve(routes(leases, hub, okExtensions, undefined), {
           disableLogger: true,
@@ -402,7 +401,7 @@ describe("BrowserFrameProxy", () => {
           ),
         ),
       );
-      const origin = `http://127.0.0.1:${(nodeServer.address() as AddressInfo).port}`;
+      const origin = `http://127.0.0.1:${(nodeServer.address() as NodeNet.AddressInfo).port}`;
       let inputSocket: WebSocket | undefined;
       try {
         const connOne: BrowserFrameAuthority = {

@@ -25,9 +25,9 @@
  * Actions never cross this surface: input packets map onto CDP `Input.*`
  * through the Manager's human lane only.
  */
-import * as crypto from "node:crypto";
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import type { Duplex } from "node:stream";
+import * as NodeCrypto from "node:crypto";
+import * as NodeHttp from "node:http";
+import type * as NodeStream from "node:stream";
 
 import {
   BROWSER_FRAME_INPUT_MAX_EVENTS_PER_SECOND,
@@ -249,7 +249,7 @@ export const sweepExpiredLeaseLanes = (
   }
 };
 
-const writeJson = (res: ServerResponse, status: number, body: unknown): void => {
+const writeJson = (res: NodeHttp.ServerResponse, status: number, body: unknown): void => {
   if (res.headersSent || res.destroyed) {
     res.destroy();
     return;
@@ -276,10 +276,10 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const secret = crypto.randomBytes(32).toString("hex");
-  const secretDigest = crypto.createHash("sha256").update(secret).digest();
+  const secret = NodeCrypto.randomBytes(32).toString("hex");
+  const secretDigest = NodeCrypto.createHash("sha256").update(secret).digest();
   /** Constant-time check via a digest so header length never leaks the secret. */
-  const authorized = (req: IncomingMessage): boolean => {
+  const authorized = (req: NodeHttp.IncomingMessage): boolean => {
     const presented = req.headers["x-t3-hub-auth"];
     let value = Array.isArray(presented) ? presented[0] : presented;
     // Node's WebSocket cannot set upgrade headers, so the proxy's input
@@ -291,7 +291,10 @@ const make = Effect.gen(function* () {
           : undefined;
     }
     if (typeof value !== "string" || value.length === 0) return false;
-    return crypto.timingSafeEqual(crypto.createHash("sha256").update(value).digest(), secretDigest);
+    return NodeCrypto.timingSafeEqual(
+      NodeCrypto.createHash("sha256").update(value).digest(),
+      secretDigest,
+    );
   };
 
   const activities = new Map<string, SessionActivity>();
@@ -698,7 +701,7 @@ const make = Effect.gen(function* () {
   );
 
   const writeFramePart = (
-    res: ServerResponse,
+    res: NodeHttp.ServerResponse,
     frame: PreviewManager.RemoteLiveFrame,
     geometrySeq: number,
   ): boolean =>
@@ -722,8 +725,8 @@ const make = Effect.gen(function* () {
     );
 
   const handleStream = (
-    req: IncomingMessage,
-    res: ServerResponse,
+    req: NodeHttp.IncomingMessage,
+    res: NodeHttp.ServerResponse,
     asserted: AssertedSession,
     engineGeneration: string | null,
     expiresAt: number | null,
@@ -1096,8 +1099,8 @@ const make = Effect.gen(function* () {
   };
 
   const handleInputUpgrade = (
-    req: IncomingMessage,
-    socket: Duplex,
+    req: NodeHttp.IncomingMessage,
+    socket: NodeStream.Duplex,
     head: Buffer,
     wss: WebSocketServer,
   ): void => {
@@ -1227,7 +1230,7 @@ const make = Effect.gen(function* () {
     });
   };
 
-  const handleRequest = (req: IncomingMessage, res: ServerResponse): void => {
+  const handleRequest = (req: NodeHttp.IncomingMessage, res: NodeHttp.ServerResponse): void => {
     if (!authorized(req)) {
       writeJson(res, 403, { error: "unauthorized" });
       return;
@@ -1377,7 +1380,7 @@ const make = Effect.gen(function* () {
     // assembled-byteLength check below is only the backstop.
     maxPayload: BROWSER_FRAME_INPUT_PACKET_MAX_BYTES,
   });
-  const server: Server = createServer((req, res) => {
+  const server: NodeHttp.Server = NodeHttp.createServer((req, res) => {
     try {
       handleRequest(req, res);
     } catch {
