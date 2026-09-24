@@ -18,6 +18,7 @@ import {
   persistClientSettingsPatch,
 } from "../hooks/useSettings";
 import { toastManager } from "../components/ui/toast";
+import { formatInlineContextReference } from "../lib/composerContextReferences";
 import { useComposerDraftStore, type ComposerContextInsertionHandler } from "../composerDraftStore";
 import {
   createClientProviders,
@@ -910,6 +911,62 @@ describe("composer provider", () => {
       expect(draft.terminalContexts).toHaveLength(1);
       // Handler reported success, so the store did not append its own copy.
       expect(draft.prompt).not.toContain("t3-context://v1/terminal/");
+    } finally {
+      unregister?.();
+    }
+  });
+
+  it("batched mention+terminal-context inserts survive the mounted stale-ref window", () => {
+    const provider = createComposerClientProvider(makeDeps(["t3.composer/write"]));
+    const ref = scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a"));
+    const store = useComposerDraftStore.getState();
+    // The mounted composer's promptRef and the draft store agree at rest.
+    store.setPrompt(ref, "original");
+    const promptRef: { current: string } = { current: "original" };
+
+    // Mirrors ChatComposer's insertion seam: the store dispatches context to
+    // the registered handler, whose insertComposerText body syncs promptRef
+    // from the store draft before building the next prompt — a passive effect
+    // alone cannot cover a store-only write that has not flushed yet.
+    const handler: ComposerContextInsertionHandler = (references) => {
+      const draftPrompt = useComposerDraftStore.getState().getComposerDraft(ref)?.prompt;
+      if (draftPrompt !== undefined && draftPrompt !== promptRef.current) {
+        promptRef.current = draftPrompt;
+      }
+      const prompt = promptRef.current;
+      const boundary = prompt.length > 0 && !/\s/.test(prompt[prompt.length - 1] ?? "") ? " " : "";
+      const next = `${prompt}${boundary}${references.map(formatInlineContextReference).join(" ")} `;
+      promptRef.current = next;
+      store.setPrompt(ref, next);
+      return true;
+    };
+    const unregister = store.setContextInsertionHandler(ref, handler);
+    try {
+      // Both ops arrive in one batch, before any effect flushes the ref.
+      const mention = provider.invoke(
+        invokeCall("insertMention", { threadId: "thread-a", paths: ["keep.ts"] }),
+      ) as { inserted: number };
+      const terminal = provider.invoke(
+        invokeCall("insertTerminalContext", {
+          threadId: "thread-a",
+          terminalId: "term-1",
+          terminalLabel: "zsh",
+          lineStart: 1,
+          lineEnd: 2,
+          text: "npm test",
+        }),
+      ) as { inserted: boolean };
+      expect(mention.inserted).toBe(1);
+      expect(terminal.inserted).toBe(true);
+      const draft = useComposerDraftStore.getState().getComposerDraft(ref)!;
+      expect(draft.terminalContexts).toHaveLength(1);
+      // Both writes survive in order: the mention the first op wrote through
+      // the store, and the terminal chip the handler appended to it.
+      expect(draft.prompt.indexOf("[keep.ts](keep.ts)")).toBeGreaterThanOrEqual(0);
+      const terminalAt = draft.prompt.indexOf("t3-context://v1/terminal/");
+      expect(terminalAt).toBeGreaterThanOrEqual(0);
+      expect(terminalAt).toBeGreaterThan(draft.prompt.indexOf("[keep.ts](keep.ts)"));
+      expect(draft.prompt).toContain("zsh lines 1-2");
     } finally {
       unregister?.();
     }
