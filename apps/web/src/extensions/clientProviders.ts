@@ -30,7 +30,11 @@ import { readProject, readThreadShell } from "../state/entities";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { buildFileReviewComment } from "../reviewCommentContext";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { normalizeTerminalContextText, type TerminalContextDraft } from "../lib/terminalContext";
+import {
+  normalizeTerminalContextSelection,
+  type TerminalContextDraft,
+  type TerminalContextSelection,
+} from "../lib/terminalContext";
 import {
   authorizeCaller,
   ClientProviderOpError,
@@ -736,28 +740,12 @@ function appendMention(prompt: string, path: string): string {
   return `${prompt}${boundary}${serializeComposerFileLink(path)} `;
 }
 
-/** `normalizeTerminalContextSelection` from lib/terminalContext, expressed on the exported text normalizer (that function is module-private). */
-function normalizeTerminalSelection(input: {
-  terminalId: string;
-  terminalLabel: string;
-  lineStart: number;
-  lineEnd: number;
-  text: string;
-}): {
-  terminalId: string;
-  terminalLabel: string;
-  lineStart: number;
-  lineEnd: number;
-  text: string;
-} {
-  const text = normalizeTerminalContextText(input.text);
-  const terminalId = input.terminalId.trim();
-  const terminalLabel = input.terminalLabel.trim();
-  if (text.length === 0 || terminalId.length === 0 || terminalLabel.length === 0)
+/** The canonical selection normalizer; a selection that empties on trim is the provider's named rejection. */
+function requireTerminalSelection(selection: TerminalContextSelection): TerminalContextSelection {
+  const normalized = normalizeTerminalContextSelection(selection);
+  if (normalized === null)
     throw new ClientProviderOpError("provider-rejected", "Invalid terminal context");
-  const lineStart = Math.max(1, Math.floor(input.lineStart));
-  const lineEnd = Math.max(lineStart, Math.floor(input.lineEnd));
-  return { terminalId, terminalLabel, lineStart, lineEnd, text };
+  return normalized;
 }
 
 function readAnnotationSelection(value: unknown) {
@@ -845,7 +833,7 @@ export function createComposerClientProvider(deps: ClientProviderDeps): ClientLo
           const lineEnd = input.lineEnd;
           if (typeof lineStart !== "number" || typeof lineEnd !== "number")
             throw new ClientProviderOpError("provider-rejected", "Invalid line range");
-          const selection = normalizeTerminalSelection({
+          const selection = requireTerminalSelection({
             terminalId: readInputString(input, "terminalId")!,
             terminalLabel: readInputString(input, "terminalLabel")!,
             lineStart,
