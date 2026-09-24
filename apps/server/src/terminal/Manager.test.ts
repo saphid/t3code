@@ -1268,9 +1268,14 @@ it.layer(
   const nextFrame = (iterator: AsyncIterator<unknown>) =>
     Effect.promise(() => iterator.next() as Promise<IteratorResult<WireItem>>);
 
-  for (const mountInGap of [false, true]) {
+  for (const [mountInGap, gapQuery] of [
+    [false, true],
+    [true, true],
+    [false, false],
+    [true, false],
+  ] as const) {
     it.effect(
-      `cross-layer: an evicted query's reply cannot transfer to a retained lookalike (r10 P2-1, mount ${mountInGap ? "in gap" : "after snapshot"})`,
+      `cross-layer: an evicted query's reply cannot transfer to a retained lookalike (r10 P2-1, mount ${mountInGap ? "in gap" : "after snapshot"}, gap tail ${gapQuery ? "queries" : "inert"})`,
       () =>
         Effect.gen(function* () {
           // The r10 trace end to end: real Manager history + sanitizer →
@@ -1325,8 +1330,11 @@ it.layer(
           abort1.abort();
 
           // Disconnected: the burst evicts the line holding the answered
-          // query. The retained tail keeps a lookalike ESC Z.
-          ptyAdapter.processes[0]!.emitData("x\x1bZ\n" + "z\n".repeat(4));
+          // query. The retained tail may keep a lookalike ESC Z; it lies past
+          // everything the client received (unit 7), so it is a new query
+          // issued in the subscription gap, not the evicted one.
+          const gapTail = (gapQuery ? "x\x1bZ\n" : "xyz\n") + "z\n".repeat(4);
+          ptyAdapter.processes[0]!.emitData(gapTail);
 
           attachment.beginStream();
           wireSequence = 0;
@@ -1345,17 +1353,22 @@ it.layer(
             kind: "snapshot",
             contentsUnitStart: 7,
             clearGeneration: 0,
-            contents: "x\x1bZ\n" + "z\n".repeat(4),
+            contents: gapTail,
           });
           apply(frame.value!);
           if (!mountInGap) attachment.attach(second);
           yield* Effect.yieldNow;
           yield* Effect.addFinalizer(() => Effect.sync(() => second.dispose()));
 
-          // The retained lookalike query is replay-suppressed and the
-          // evicted claim is dead: no DA reply may leave either parser.
-          expect(secondWrites).toEqual([]);
-          expect(attachment.state.degraded).toBe(true);
+          // The evicted claim is dead: an inert tail earns no reply. A gap
+          // query earns exactly its own one DA reply (hidden panes keep VT
+          // protocol continuity across the reshow gap), never a second one
+          // transferred from the evicted claim.
+          expect(secondWrites).toEqual(gapQuery ? ["\x1b[?62;22c"] : []);
+          // A surface mounted in the gap replayed the attachment's complete
+          // base and then received only the gap, so its parser is faithful;
+          // one mounted after the snapshot replays only the truncated tail.
+          expect(attachment.state.degraded).toBe(!mountInGap);
         }),
     );
   }
