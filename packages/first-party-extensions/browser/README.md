@@ -15,7 +15,18 @@ The panel renders through public contracts only:
   unsupported clients (`desktop-required`) render as named states, never
   silence.
 - `t3.file/presentation.open` routes browser-previewable files
-  (`.html`/`.htm`/`.pdf`) to `t3.browser/view`.
+  (`.html`/`.htm`/`.pdf`) to `t3.browser/view`. The view mints a
+  `t3.resources/lease` `workspace-file` URL (`t3.workspace/resources` grant),
+  resolves it on the document's own origin and opens it in a session; sibling
+  assets load under the same token. The token lives 1 h, so the view keeps the
+  workspace path — never the minted URL — in history and restore state, and
+  Reload re-mints. A client not served from the environment's HTTP origin
+  (the desktop `t3code://` renderer, a foreign web origin) gets a named
+  state: the SDK does not tell plugins the environment origin.
+- `t3.browser/local-servers` (`t3.browser/read-local-servers` grant) fills
+  the empty state's "Local servers" section while it is visible. Loopback
+  URLs open as-is — unlike the native panel they are not re-mapped to a
+  remote environment's host, and the section says so.
 - `t3.ui/theme` — under the `t3.ui/theme.read` grant: `getTokens` resolves
   the host's effective theme (stored preference, session overlay, or
   external preview — the provider folds them) and `subscribeState` re-reads

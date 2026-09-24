@@ -738,7 +738,10 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           <LocalServersSection
             servers={landing.serverList}
             notice={landing.localNotice}
-            onOpen={submit}
+            onOpen={(url) => {
+              setAddress(url);
+              submit(url);
+            }}
           />
           {recentTargets(state).length > 0 && (
             <ul
