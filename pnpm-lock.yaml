@@ -1115,6 +1115,9 @@ importers:
       '@t3tools/extension-sdk':
         specifier: workspace:*
         version: link:../../extension-sdk
+      '@t3tools/ghostty-terminal':
+        specifier: workspace:*
+        version: link:../../ghostty-terminal
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../../shared

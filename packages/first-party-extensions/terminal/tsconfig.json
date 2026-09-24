@@ -9,5 +9,5 @@
     "types": ["react"],
     "allowImportingTsExtensions": true
   },
-  "include": ["*.ts", "*.tsx", "ghostty/**/*.ts"]
+  "include": ["*.ts", "*.tsx"]
 }

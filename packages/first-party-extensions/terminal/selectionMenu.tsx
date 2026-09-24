@@ -7,8 +7,8 @@ import {
   type RefObject,
 } from "react";
 
-import type { GhosttyTerminalSurface } from "./ghostty/surface.ts";
-import { SELECTION_MULTI_CLICK_INTERVAL_MS } from "./ghostty/selection.ts";
+import type { GhosttyTerminalSurface } from "@t3tools/ghostty-terminal/surface";
+import { SELECTION_MULTI_CLICK_INTERVAL_MS } from "@t3tools/ghostty-terminal/selection";
 import {
   TerminalSelectionMenuFlow,
   clampMenuToViewport,

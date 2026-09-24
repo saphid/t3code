@@ -1,4 +1,4 @@
-import { isMacPlatform } from "./platform.ts";
+import { isMacPlatform } from "@t3tools/ghostty-terminal/platform";
 
 export interface ShortcutEventLike {
   type?: string;

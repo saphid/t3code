@@ -47,7 +47,7 @@ await build({
     {
       name: "record-surface",
       setup(b) {
-        b.onResolve({ filter: /^\.\/ghostty\/surface\.ts$/ }, () => ({
+        b.onResolve({ filter: /^@t3tools\/ghostty-terminal\/surface$/ }, () => ({
           path: "surface",
           namespace: "probe",
         }));

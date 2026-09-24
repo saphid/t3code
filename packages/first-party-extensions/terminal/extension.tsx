@@ -25,14 +25,17 @@ import {
   type RefObject,
 } from "react";
 
-import { isMacPlatform } from "./ghostty/platform.ts";
-import { loadGhosttyRuntime, type GhosttyRuntime } from "./ghostty/runtime.ts";
-import { GhosttyTerminalSurface, type GhosttyTerminalSurfaceOptions } from "./ghostty/surface.ts";
+import { isMacPlatform } from "@t3tools/ghostty-terminal/platform";
+import { loadGhosttyRuntime, type GhosttyRuntime } from "@t3tools/ghostty-terminal/runtime";
+import {
+  GhosttyTerminalSurface,
+  type GhosttyTerminalSurfaceOptions,
+} from "@t3tools/ghostty-terminal/surface";
 import {
   isTerminalClearShortcut,
   terminalDeleteShortcutData,
   terminalNavigationShortcutData,
-} from "./ghostty/surfaceKeys.ts";
+} from "./surfaceKeys.ts";
 import { useTerminalSelectionMenu } from "./selectionMenu.tsx";
 import { readAssetWithRetry, sharedLoad, type ReadAsset } from "./assetLoader.ts";
 import { TerminalStreamHub, type TerminalPaneLease } from "./streamHub.ts";

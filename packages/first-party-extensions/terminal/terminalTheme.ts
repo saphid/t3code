@@ -1,5 +1,5 @@
-import type { GhosttyColor, GhosttyTheme } from "./ghostty/core.ts";
-import type { GhosttyTerminalFont } from "./ghostty/surface.ts";
+import type { GhosttyColor, GhosttyTheme } from "@t3tools/ghostty-terminal/core";
+import type { GhosttyTerminalFont } from "@t3tools/ghostty-terminal/surface";
 
 function parseTerminalColor(value: string, fallback: GhosttyColor): GhosttyColor {
   if (typeof document === "undefined") return fallback;
