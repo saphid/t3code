@@ -24,7 +24,7 @@ import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useEffect, useRef, useState } from "react";
 
-import { isLeaseUrl, mintWorkspaceFileUrl } from "./fileOpen.js";
+import { mintWorkspaceFileUrl } from "./fileOpen.js";
 import {
   type BrowserHistoryEntry,
   fitHistoryToSaveBudget,
@@ -52,6 +52,7 @@ import {
   goBack,
   goForward,
   initialNavigationState,
+  isLeaseUrl,
   recentTargets,
   reload,
   submitAddress,
@@ -739,12 +740,12 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
               aria-label="Requested targets"
               style={{ listStyle: "none", margin: 0, padding: 0, fontSize: 12 }}
             >
-              {recentTargets(state).map((target, position) => (
-                <li key={target}>
+              {recentTargets(state).map((target) => (
+                <li key={target.url}>
                   <button
                     type="button"
-                    aria-current={state.history.length - 1 - position === state.index}
-                    onClick={() => submit(target)}
+                    aria-current={target.index === state.index}
+                    onClick={() => submit(target.url)}
                     style={{
                       ...buttonStyle,
                       border: "none",
@@ -752,12 +753,12 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                       textAlign: "left",
                       textDecoration: "underline",
                       color:
-                        state.history.length - 1 - position === state.index
+                        target.index === state.index
                           ? "var(--t3-browser-text, var(--foreground, #20252d))"
                           : muted,
                     }}
                   >
-                    {target}
+                    {target.url}
                   </button>
                 </li>
               ))}

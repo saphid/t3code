@@ -14,7 +14,7 @@
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { isLocalLoopbackHost, normalizeHostname } from "@t3tools/shared/hostClassification";
 
-import { isLeaseUrl } from "./fileOpen.ts";
+import { isLeaseUrl } from "./viewModel.ts";
 
 export type BrowserHistoryEntry = { url: string; lastVisitedAt: number; title?: string };
 

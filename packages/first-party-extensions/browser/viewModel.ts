@@ -109,9 +109,21 @@ export function currentUrl(state: NavigationState): string | null {
   return state.index >= 0 ? (state.history[state.index] ?? null) : null;
 }
 
-/** Requested targets, most recent first — the skeleton's honest history list. */
-export function recentTargets(state: NavigationState): readonly string[] {
-  return state.history.toReversed();
+/**
+ * The requested-targets rows the empty state lists, newest first, each
+ * paired with its index in `state.history` so the render can mark the
+ * current entry. Minted lease URLs stay in the navigation stack —
+ * back/forward and `currentUrl` must track the session's traversal — but
+ * never list: they expire with their token and a click can only open a
+ * guaranteed-404 session.
+ */
+export function recentTargets(
+  state: NavigationState,
+): ReadonlyArray<{ readonly url: string; readonly index: number }> {
+  return state.history
+    .map((url, index) => ({ url, index }))
+    .toReversed()
+    .filter((entry) => !isLeaseUrl(entry.url));
 }
 
 /**
@@ -140,4 +152,13 @@ export function describeStatus(state: NavigationState): string {
  */
 export function isBrowserPreviewFile(path: string): boolean {
   return /\.(?:html?|pdf)$/i.test(path.split(/[?#]/, 1)[0] ?? "");
+}
+
+/** A minted workspace-file URL — never recorded in history or restore state. */
+export function isLeaseUrl(url: string): boolean {
+  try {
+    return new URL(url).pathname.startsWith("/api/assets/");
+  } catch {
+    return false;
+  }
 }
