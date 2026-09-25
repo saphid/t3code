@@ -5,6 +5,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeProcess from "node:process";
 import { createExtensionRuntime } from "../dist/index.js";
 import { FILE_PRESENTATION_API } from "@t3tools/extension-sdk/catalogue";
 
@@ -529,7 +530,7 @@ NodeTest.test(
     // The hung worker signals over a socket: fs.watch can miss a file written
     // before its watcher is live, leaving the worker to hit its startup deadline.
     const enteredPath =
-      process.platform === "win32"
+      NodeProcess.platform === "win32"
         ? "\\\\.\\pipe\\" + NodePath.basename(f.directory)
         : NodePath.join(f.directory, "entered.sock");
     const server = NodeNet.createServer();

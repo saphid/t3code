@@ -1,8 +1,11 @@
 import * as NodeAssert from "node:assert/strict";
-import * as NodeTest from "node:test";
+import * as NodeEvents from "node:events";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeProcess from "node:process";
+import * as NodeTest from "node:test";
 import { createExtensionRuntime } from "../dist/index.js";
 import { FILE_PRESENTATION_API } from "@t3tools/extension-sdk/catalogue";
 
@@ -71,17 +74,21 @@ function implementation(pkg, expression = '"value"') {
   );
 }
 // Two-phase gate: the staged handshake (no marker) completes normally; the real
-// worker start (marker present) writes `entered` then performs `trap`.
+// worker start (marker present) connects to the entry socket then performs `trap`.
+const enteredPath = (directory, name) =>
+  NodeProcess.platform === "win32"
+    ? "\\\\.\\pipe\\" + NodePath.basename(directory) + "-" + name
+    : NodePath.join(directory, "entered-" + name + ".sock");
 function gated(pkg, directory, name, trap, expression = '"value"') {
   const marker = JSON.stringify(NodePath.join(directory, "staged-" + name));
-  const entered = JSON.stringify(NodePath.join(directory, "entered-" + name));
+  const entered = JSON.stringify(enteredPath(directory, name));
   return (
-    'import fs from "node:fs/promises";\n' +
+    'import fs from "node:fs/promises";\nimport net from "node:net";\n' +
     "try { await fs.stat(" +
     marker +
-    "); await fs.writeFile(" +
+    "); net.connect(" +
     entered +
-    ',"ready"); ' +
+    ').on("error",()=>{}); ' +
     trap +
     " } " +
     'catch (error) { if(error.code!=="ENOENT") throw error; await fs.writeFile(' +
@@ -90,17 +97,20 @@ function gated(pkg, directory, name, trap, expression = '"value"') {
     implementation(pkg, expression)
   );
 }
-async function waitForFile(directory, name) {
-  try {
-    await NodeFSP.stat(NodePath.join(directory, name));
-    return;
-  } catch {}
-  const watcher = NodeFSP.watch(directory);
-  try {
-    for await (const event of watcher) if (event.filename === name) return;
-  } finally {
-    watcher.return?.();
-  }
+// Socket rendezvous, as in capabilities.test.mjs: fs.watch can miss a marker
+// file written before its watcher is live, hanging the test until the worker
+// hits its startup deadline. A connection to a socket that is already
+// listening cannot be missed. Returns { entered } so awaiting this function
+// means "listening", not "connected".
+async function entrySocket(t, directory, name) {
+  const server = NodeNet.createServer();
+  t.after(() => server.close());
+  const entered = NodeEvents.once(server, "connection");
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(enteredPath(directory, name), resolve);
+  });
+  return { entered };
 }
 async function fixture(t, overrides = {}) {
   const directory = await NodeFSP.mkdtemp(
@@ -157,42 +167,9 @@ async function fixture(t, overrides = {}) {
   };
 }
 
-NodeTest.test("discovery resolves while an unrelated provider is still starting", async (t) => {
-  const f = await fixture(t);
-  const blockedPkg = metadata("test.blocked");
-  const blocked = await f.install(
-    blockedPkg,
-    gated(blockedPkg, f.directory, "blocked", "await new Promise(()=>{});"),
-  );
-  const fastPkg = metadata("test.fast");
-  const fast = await f.install(fastPkg);
-  const consumerPkg = metadata("test.consumer", {
-    provides: [],
-    requires: [{ id: fastPkg.provides[0].id, versionRange: "^1" }],
-  });
-  const consumer = await f.install(consumerPkg);
-
-  const discovery = f.discover(consumer);
-  await waitForFile(f.directory, "entered-blocked");
-  const winner = await Promise.race([
-    discovery.then(() => "resolved"),
-    f.nextCatalogue().then(() => "invalidated"),
-  ]);
-  NodeAssert.equal(winner, "resolved");
-  const entries = await discovery;
-  const blockedEntry = entries.find((entry) => entry.pluginId === blocked.id);
-  NodeAssert.equal(blockedEntry.health, "starting");
-  const fastEntry = entries.find((entry) => entry.pluginId === fast.id);
-  NodeAssert.equal(fastEntry.health, "ready");
-  NodeAssert.equal(
-    entries.find((entry) => entry.id === fastPkg.provides[0].id).providerId,
-    fast.id,
-  );
-  NodeAssert.equal(await f.invokeApi(consumer, fastPkg.provides[0].id), "value");
-});
-
 NodeTest.test(
-  "removing an unrelated provider while its start is in flight does not disturb discovery",
+  "discovery resolves while an unrelated provider is still starting",
+  { timeout: 10000 },
   async (t) => {
     const f = await fixture(t);
     const blockedPkg = metadata("test.blocked");
@@ -208,8 +185,48 @@ NodeTest.test(
     });
     const consumer = await f.install(consumerPkg);
 
+    const { entered } = await entrySocket(t, f.directory, "blocked");
     const discovery = f.discover(consumer);
-    await waitForFile(f.directory, "entered-blocked");
+    await entered;
+    const winner = await Promise.race([
+      discovery.then(() => "resolved"),
+      f.nextCatalogue().then(() => "invalidated"),
+    ]);
+    NodeAssert.equal(winner, "resolved");
+    const entries = await discovery;
+    const blockedEntry = entries.find((entry) => entry.pluginId === blocked.id);
+    NodeAssert.equal(blockedEntry.health, "starting");
+    const fastEntry = entries.find((entry) => entry.pluginId === fast.id);
+    NodeAssert.equal(fastEntry.health, "ready");
+    NodeAssert.equal(
+      entries.find((entry) => entry.id === fastPkg.provides[0].id).providerId,
+      fast.id,
+    );
+    NodeAssert.equal(await f.invokeApi(consumer, fastPkg.provides[0].id), "value");
+  },
+);
+
+NodeTest.test(
+  "removing an unrelated provider while its start is in flight does not disturb discovery",
+  { timeout: 10000 },
+  async (t) => {
+    const f = await fixture(t);
+    const blockedPkg = metadata("test.blocked");
+    const blocked = await f.install(
+      blockedPkg,
+      gated(blockedPkg, f.directory, "blocked", "await new Promise(()=>{});"),
+    );
+    const fastPkg = metadata("test.fast");
+    const fast = await f.install(fastPkg);
+    const consumerPkg = metadata("test.consumer", {
+      provides: [],
+      requires: [{ id: fastPkg.provides[0].id, versionRange: "^1" }],
+    });
+    const consumer = await f.install(consumerPkg);
+
+    const { entered } = await entrySocket(t, f.directory, "blocked");
+    const discovery = f.discover(consumer);
+    await entered;
     const entries = await discovery;
     NodeAssert.equal(entries.find((entry) => entry.pluginId === blocked.id).health, "starting");
     await f.runtime.remove(blocked.id);
@@ -228,6 +245,7 @@ NodeTest.test(
 
 NodeTest.test(
   "a selected provider that fails to start is marked failed and discovery falls back",
+  { timeout: 10000 },
   async (t) => {
     const f = await fixture(t);
     const make = async (id, code) => {
@@ -260,8 +278,9 @@ NodeTest.test(
       fallbackProviderIds: [steady.record.id],
     });
 
+    const { entered } = await entrySocket(t, f.directory, "flaky");
     const discovery = f.discover(consumer);
-    await waitForFile(f.directory, "entered-flaky");
+    await entered;
     const entries = await discovery;
     NodeAssert.equal(
       f.runtime.catalogue().pluginResolution.find((item) => item.id === flaky.record.id).status,
@@ -275,6 +294,7 @@ NodeTest.test(
 
 NodeTest.test(
   "selection changes apply while an unrelated provider is still starting",
+  { timeout: 10000 },
   async (t) => {
     const f = await fixture(t);
     const blockedPkg = metadata("test.blocked");
@@ -299,8 +319,9 @@ NodeTest.test(
       fallbackProviderIds: [second.id],
     });
 
+    const { entered } = await entrySocket(t, f.directory, "blocked");
     const discovery = f.discover(consumer);
-    await waitForFile(f.directory, "entered-blocked");
+    await entered;
     const entries = await discovery;
     NodeAssert.equal(
       entries.find((entry) => entry.id === sharedApi.id && entry.selected).providerId,
