@@ -27,6 +27,22 @@ The panel renders through public contracts only:
   the empty state's "Local servers" section while it is visible. Loopback
   URLs open as-is — unlike the native panel they are not re-mapped to a
   remote environment's host, and the section says so.
+- `t3.browser/sessions` `resize` (row 11) — the header's device-toolbar
+  toggle and the toolbar it reveals (Responsive/preset picker, freeform
+  width × height inputs, rotate, close) drive every viewport change through
+  `resize` on a serialized per-session queue with the native 15 s commit
+  timeout; a failed or timed-out commit reports its named error through
+  `t3.ui/notifications` when granted and the inline fault line otherwise,
+  and rolls back by never applying — the toolbar renders the session
+  snapshot's viewport, never a plugin-side copy, so a restored session comes
+  back at its saved viewport. The preset catalog is
+  `@t3tools/shared/previewViewport`'s (the Chrome DevTools table the native
+  picker uses), and freeform sizes clamp to the same 240–3840 /
+  3840×2160-area envelope. In device mode the slot keeps presenting the
+  whole content area — the host's engine view lays the W × H frame out
+  inside it exactly as for the native panel — while the plugin paints its
+  toolbar over the strip the engine reserves and a visible frame plus fit
+  percentage from the mirrored layout math.
 - `t3.ui/theme` — under the `t3.ui/theme.read` grant: `getTokens` resolves
   the host's effective theme (stored preference, session overlay, or
   external preview — the provider folds them) and `subscribeState` re-reads

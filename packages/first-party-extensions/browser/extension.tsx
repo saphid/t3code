@@ -18,6 +18,7 @@ import {
   type BrowserSession,
   type BrowserSessionReceipt,
   type BrowserSessionStreamValue,
+  type BrowserSessionViewport,
 } from "@t3tools/extension-sdk/catalogue";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
@@ -36,6 +37,15 @@ import {
 } from "./historyStore.js";
 import { LocalServersSection, NoPreview, RecentlyUsedHeading, useLocalServers } from "./landing.js";
 import { landingModel } from "./localServers.js";
+import { BrowserViewportToolbar, ViewportDeviceFrame, useElementSize } from "./viewportToolbar.js";
+import {
+  FALLBACK_RESPONSIVE_VIEWPORT_SIZE,
+  createViewportCommitter,
+  notifyViewportResizeFailure,
+  responsiveViewportForToggle,
+  viewportFailureMessage,
+  type ViewportCommitter,
+} from "./viewport.js";
 import {
   BROWSER_GLOBAL_COMMANDS,
   BROWSER_VIEW_COMMANDS,
@@ -210,6 +220,10 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const historyRef = useRef(history);
   const lastRevision = useRef(-1);
   const addressRef = useRef<HTMLInputElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const contentSize = useElementSize(contentRef);
+  const [viewportPending, setViewportPending] = useState(false);
+  const viewportCommitter = useRef<ViewportCommitter | null>(null);
   const themeVars = useThemeVars(host, session, visible);
   const localServers = useLocalServers(host, session, visible && held === null);
   useEffect(() => {
@@ -323,6 +337,81 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     session: held,
     enabled: visible && remoteEligible && surfaceLease?.state.kind !== "ended",
   });
+
+  /**
+   * Row 11 — viewport sizing. Every resize rides `sessions.resize` through a
+   * per-session commit queue (serialized, 15 s timeout, failures reported by
+   * name); the queue outlives session upserts by reading the guard fields
+   * from `heldRef` at dispatch time. Nothing applies optimistically: the
+   * toolbar renders the session snapshot's viewport, so a rejected or timed-
+   * out commit rolls the UI back by never leaving it.
+   */
+  useEffect(() => {
+    const api = bindApi(browserSessionsApi, host, session.context);
+    viewportCommitter.current = createViewportCommitter((viewport, signal) => {
+      const current = heldRef.current;
+      if (!current) return Promise.reject(new Error("No browser session to resize"));
+      return api.invoke(
+        "resize",
+        {
+          tabId: current.tabId,
+          serverEpoch: current.serverEpoch,
+          expectedEngineGeneration: current.engineGeneration,
+          viewport,
+        },
+        signal,
+      );
+    });
+    return () => {
+      viewportCommitter.current = null;
+    };
+  }, [host, session]);
+
+  const commitViewport = (next: BrowserSessionViewport) => {
+    const committer = viewportCommitter.current;
+    if (!committer) return;
+    setViewportPending(true);
+    void committer.commit(next, session.signal).then(
+      (receipt) => {
+        setViewportPending(false);
+        // Stale receipts (older revision than already applied) never win.
+        if (session.signal.aborted || receipt.revision < lastRevision.current) return;
+        lastRevision.current = receipt.revision;
+        if (receipt.outcome !== "accepted") {
+          setFault(`Browser command ${receipt.outcome}`);
+          return;
+        }
+        const heldNext = {
+          tabId: receipt.session.tabId,
+          serverEpoch: receipt.serverEpoch,
+          engineGeneration: receipt.session.engine.generation,
+        };
+        heldRef.current = heldNext;
+        setHeld(heldNext);
+        setLive(receipt.session);
+        setFault(null);
+      },
+      (error) => {
+        setViewportPending(false);
+        if (session.signal.aborted) return;
+        // Native parity: the toast when `t3.ui/notify` is granted, the
+        // inline fault line otherwise. The committed setting is untouched —
+        // the rollback.
+        const message = viewportFailureMessage(error);
+        setFault(message);
+        void notifyViewportResizeFailure(
+          bindApi(uiNotificationsApi, host, session.context),
+          session.context.resource.threadId ?? "",
+          error,
+          AbortSignal.timeout(5_000),
+        ).catch(() => {});
+      },
+    );
+  };
+
+  /** Session-snapshot viewport — the only source the toolbar trusts. */
+  const viewportSetting: BrowserSessionViewport | null = live?.viewport ?? null;
+  const deviceMode = viewportSetting !== null && viewportSetting._tag !== "fill";
 
   /**
    * Persist the restore record: the url the view reopens on, the held
@@ -619,6 +708,30 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         >
           ⟳
         </button>
+        <button
+          type="button"
+          aria-label={deviceMode ? "Turn off device toolbar" : "Turn on device toolbar"}
+          aria-pressed={deviceMode}
+          disabled={!held || viewportPending}
+          onClick={() => {
+            if (!viewportSetting) return;
+            // Native toggle semantics: non-fill → fill; fill → a responsive
+            // freeform sized from the panel this slot fills.
+            commitViewport(
+              viewportSetting._tag !== "fill"
+                ? { _tag: "fill" }
+                : responsiveViewportForToggle(contentSize),
+            );
+          }}
+          style={{
+            ...buttonStyle,
+            ...(deviceMode
+              ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" }
+              : {}),
+          }}
+        >
+          ⛶
+        </button>
         <input
           type="text"
           aria-label="Address"
@@ -644,7 +757,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             : describeStatus(state))}
       </div>
       {held ? (
-        <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
+        <div ref={contentRef} style={{ position: "relative", flex: 1, minHeight: 0 }}>
           <div
             ref={surfaceSlotRef}
             aria-label="Browser surface"
@@ -656,6 +769,30 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
               aria-label="Remote browser surface"
               style={{ position: "absolute", inset: 0 }}
             />
+          )}
+          {deviceMode && viewportSetting && (
+            <>
+              {/*
+               * Slot sizing: the slot keeps presenting the whole content
+               * area — the host's engine view lays the W × H frame out
+               * inside it (toolbar strip, rails, centered, scaled down to
+               * fit) exactly as it does for the native panel's own slot.
+               * The overlays paint from the mirrored math so the visible
+               * frame, the fit percentage, and the composited page coincide.
+               * The toolbar covers the strip the engine view reserves, so
+               * plugin chrome and engine chrome never stack.
+               */}
+              <BrowserViewportToolbar
+                setting={viewportSetting}
+                pending={viewportPending}
+                onCommit={commitViewport}
+              />
+              <ViewportDeviceFrame
+                slot={contentSize}
+                setting={viewportSetting}
+                fallbackSlot={FALLBACK_RESPONSIVE_VIEWPORT_SIZE}
+              />
+            </>
           )}
           {surfaceNotice && (
             <p
