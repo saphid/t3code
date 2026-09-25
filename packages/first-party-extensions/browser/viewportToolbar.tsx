@@ -3,6 +3,8 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import {
   DEVICE_TOOLBAR_HEIGHT,
+  PREVIEW_VIEWPORT_MAX_DIMENSION,
+  PREVIEW_VIEWPORT_MIN_DIMENSION,
   PREVIEW_VIEWPORT_PRESETS,
   deviceViewportLayout,
   freeformFromSetting,
@@ -181,8 +183,8 @@ export function BrowserViewportToolbar(props: {
         <input
           type="number"
           inputMode="numeric"
-          min={240}
-          max={3840}
+          min={PREVIEW_VIEWPORT_MIN_DIMENSION}
+          max={PREVIEW_VIEWPORT_MAX_DIMENSION}
           value={presentedSize.width}
           disabled={pending}
           onFocus={() =>
@@ -214,8 +216,8 @@ export function BrowserViewportToolbar(props: {
         <input
           type="number"
           inputMode="numeric"
-          min={240}
-          max={3840}
+          min={PREVIEW_VIEWPORT_MIN_DIMENSION}
+          max={PREVIEW_VIEWPORT_MAX_DIMENSION}
           value={presentedSize.height}
           disabled={pending}
           onFocus={() =>
