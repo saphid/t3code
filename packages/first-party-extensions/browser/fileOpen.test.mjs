@@ -5,11 +5,11 @@ import {
   FOREIGN_ORIGIN_UNREACHABLE,
   fileLeaseRef,
   fileOpenErrorState,
-  isLeaseUrl,
   mintGate,
   mintWorkspaceFileUrl,
   resolveLeaseUrl,
 } from "./fileOpen.ts";
+import { isLeaseUrl } from "./viewModel.ts";
 
 const TOKEN_URL = "/api/assets/eyJ2.sig/index.html";
 

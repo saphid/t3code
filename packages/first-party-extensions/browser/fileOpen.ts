@@ -240,12 +240,3 @@ export async function mintWorkspaceFileUrl(input: {
   }
   return { ok: true, url: resolved.url, expiresAt: minted.expiresAt };
 }
-
-/** A minted workspace-file URL — never recorded in history or restore state. */
-export function isLeaseUrl(url: string): boolean {
-  try {
-    return new URL(url).pathname.startsWith("/api/assets/");
-  } catch {
-    return false;
-  }
-}

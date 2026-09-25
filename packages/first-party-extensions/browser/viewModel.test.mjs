@@ -122,12 +122,26 @@ NodeTest.describe("history traversal", () => {
     NodeAssert.equal(goBack(initialNavigationState), initialNavigationState);
   });
 
-  NodeTest.it("recentTargets lists newest first", () => {
+  NodeTest.it("recentTargets lists newest first, paired with the stack index", () => {
     NodeAssert.deepEqual(recentTargets(loaded()), [
-      "https://b.example.com/",
-      "https://a.example.com/",
+      { url: "https://b.example.com/", index: 1 },
+      { url: "https://a.example.com/", index: 0 },
     ]);
     NodeAssert.deepEqual(recentTargets(initialNavigationState), []);
+  });
+
+  NodeTest.it("lease urls stay in the nav stack but never list as targets", () => {
+    // review-gap-browser-landing-1 F2: a minted workspace-file url expires
+    // with its token — clicking it later opens a guaranteed 404. It must be
+    // filtered from the rendered list while remaining in history so
+    // back/forward and currentUrl keep matching the session's traversal.
+    const lease = "http://localhost:3773/api/assets/tok/site/index.html";
+    let state = submitAddress(initialNavigationState, "example.com");
+    state = submitAddress(state, lease);
+    NodeAssert.equal(currentUrl(state), lease, "the file view stays the current target");
+    NodeAssert.equal(canGoBack(state), true, "stack keeps the lease entry");
+    NodeAssert.deepEqual(recentTargets(state), [{ url: "https://example.com/", index: 0 }]);
+    NodeAssert.equal(recentTargets(goBack(state))[0]?.index, 0);
   });
 });
 

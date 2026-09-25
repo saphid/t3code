@@ -26,7 +26,14 @@ export function useLocalServers(
   session: ViewSession,
   active: boolean,
 ): LocalServersState {
-  const [state, setState] = useState<LocalServersState>({ kind: "loading" });
+  const [state, setState] = useState<LocalServersState>(LOADING);
+  const [run, setRun] = useState({ host, session, active });
+  if (run.host !== host || run.session !== session || run.active !== active) {
+    // A new subscription starts in `loading`; the previous run's snapshot
+    // must never paint ahead of it.
+    setRun({ host, session, active });
+    setState(LOADING);
+  }
   useEffect(() => {
     if (!active) return;
     const controller = new AbortController();
@@ -42,6 +49,7 @@ export function useLocalServers(
 }
 
 const IDLE: LocalServersState = { kind: "idle" };
+const LOADING: LocalServersState = { kind: "loading" };
 
 export function RecentlyUsedHeading() {
   return <h2 style={headingStyle}>Recently used</h2>;

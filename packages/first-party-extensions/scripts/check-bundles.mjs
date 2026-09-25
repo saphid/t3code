@@ -166,13 +166,13 @@ function main() {
       .split("\0")
       .filter(Boolean),
   );
+  for (const pack of missingReceipt)
+    console.log("NO RECEIPT " + pack + "\n  committed .t3-extension has no receipt.json");
   if (packs.length === 0) {
     console.error("No committed first-party bundles found; refusing to pass an empty gate.");
     process.exit(1);
   }
   let failed = missingReceipt.length;
-  for (const pack of missingReceipt)
-    console.log("NO RECEIPT " + pack + "\n  committed .t3-extension has no receipt.json");
   for (const pack of packs) {
     let stale;
     try {

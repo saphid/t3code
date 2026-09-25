@@ -9,6 +9,7 @@ import {
   recentHistoryEntries,
   recordHistoryVisit,
   removeHistoryUrl,
+  restoreTarget,
   sanitizeHistoryEntries,
   setHistoryEntryTitle,
   upsertHistoryEntry,
@@ -224,6 +225,34 @@ NodeTest.describe("recentHistoryEntries", () => {
     const recents = recentHistoryEntries(entries);
     NodeAssert.equal(recents.length, 8);
     NodeAssert.equal(recents[0]?.url, "http://r-0.test/");
+  });
+});
+
+NodeTest.describe("restoreTarget", () => {
+  const LEASE_URL = "http://localhost:3773/api/assets/token123/site/index.html";
+
+  NodeTest.it("a presented file always wins the record's location", () => {
+    NodeAssert.deepEqual(restoreTarget("site/index.html", "https://a.test/"), {
+      relativePath: "site/index.html",
+    });
+    NodeAssert.deepEqual(restoreTarget("site/index.html", LEASE_URL), {
+      relativePath: "site/index.html",
+    });
+    NodeAssert.deepEqual(restoreTarget("site/index.html", null), {
+      relativePath: "site/index.html",
+    });
+  });
+
+  NodeTest.it("persists an ordinary requested url", () => {
+    NodeAssert.deepEqual(restoreTarget(null, "https://a.test/"), { url: "https://a.test/" });
+  });
+
+  NodeTest.it("a lease url — or no target — writes no location, never a stale path", () => {
+    // review-gap-browser-landing-1 F1: with fileSource cleared (pasted lease
+    // url), falling back to the mount-time restored.relativePath would write
+    // back a path this session did not navigate to.
+    NodeAssert.deepEqual(restoreTarget(null, LEASE_URL), {});
+    NodeAssert.deepEqual(restoreTarget(null, null), {});
   });
 });
 
