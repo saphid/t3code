@@ -14,6 +14,8 @@
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { isLocalLoopbackHost, normalizeHostname } from "@t3tools/shared/hostClassification";
 
+import { isLeaseUrl } from "./fileOpen.ts";
+
 export type BrowserHistoryEntry = { url: string; lastVisitedAt: number; title?: string };
 
 export const BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT = 50;
@@ -188,6 +190,24 @@ export function recentHistoryEntries(
  * `history` attached) encodes under the budget; ~8 KiB of the envelope is
  * reserved for the record fields alongside `history`.
  */
+/**
+ * The location half of the `session.save` restore record — what the next
+ * mount reopens. A presented workspace file is identified by its path (its
+ * lease URL expires with the token); an ordinary navigation persists its
+ * url. Anything else — a lease URL on the stack, or no target — writes no
+ * location at all. The mount-time restore record is never consulted here:
+ * once a session navigates away from a file (`fileSource` cleared), the
+ * record must not regain a `relativePath` this session did not earn.
+ */
+export function restoreTarget(
+  fileSource: string | null,
+  url: string | null,
+): { relativePath?: string; url?: string } {
+  if (fileSource) return { relativePath: fileSource };
+  if (url && !isLeaseUrl(url)) return { url };
+  return {};
+}
+
 export const HISTORY_SAVE_BUDGET_BYTES = 56_000;
 
 const historyByteEncoder = new TextEncoder();

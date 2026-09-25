@@ -31,6 +31,7 @@ import {
   recentHistoryEntries,
   recordHistoryVisit,
   removeHistoryUrl,
+  restoreTarget,
   sanitizeHistoryEntries,
 } from "./historyStore.js";
 import { LocalServersSection, NoPreview, RecentlyUsedHeading, useLocalServers } from "./landing.js";
@@ -339,13 +340,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       tabId?: string;
       serverEpoch?: string;
     } = {
-      ...(fileSourceRef.current
-        ? { relativePath: fileSourceRef.current }
-        : url && !isLeaseUrl(url)
-          ? { url }
-          : restored?.relativePath
-            ? { relativePath: restored.relativePath }
-            : {}),
+      ...restoreTarget(fileSourceRef.current, url),
       ...(heldSession ? { tabId: heldSession.tabId, serverEpoch: heldSession.serverEpoch } : {}),
     };
     session.save({ ...base, history: fitHistoryToSaveBudget(base, entries) });
@@ -391,11 +386,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         setFault(null);
         const requested = receipt.session.requestedUrl;
         const base: { url?: string; relativePath?: string; tabId: string; serverEpoch: string } = {
-          ...(fileSourceRef.current
-            ? { relativePath: fileSourceRef.current }
-            : requested && !isLeaseUrl(requested)
-              ? { url: requested }
-              : {}),
+          ...restoreTarget(fileSourceRef.current, requested),
           tabId: next.tabId,
           serverEpoch: next.serverEpoch,
         };
