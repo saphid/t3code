@@ -318,7 +318,7 @@ export function deviceViewportLayout(
   const height = setting.height * scale;
   return {
     x: DEVICE_VIEWPORT_RAIL + Math.round((areaWidth - width) / 2),
-    y: DEVICE_TOOLBAR_HEIGHT + DEVICE_VIEWPORT_RAIL + Math.round((areaHeight - height) / 2),
+    y: DEVICE_TOOLBAR_HEIGHT + Math.round((areaHeight - height) / 2),
     width,
     height,
     scale,

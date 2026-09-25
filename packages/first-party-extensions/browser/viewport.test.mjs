@@ -344,10 +344,12 @@ NodeTest.test("an exact-fit viewport paints at its size below the chrome", () =>
     },
   );
   NodeAssert.equal(layout.scale, 1);
-  // Device area 980x758, frame 800x600 centered: x=10+90, y=42+79.
+  // Device area 980x758, frame 800x600 centered: x=10+90, y=32+79.
+  // Native parity: the rail is already baked into the device area, so y
+  // gets only the toolbar height.
   NodeAssert.deepEqual(
     { x: layout.x, y: layout.y, width: layout.width, height: layout.height },
-    { x: 100, y: 121, width: 800, height: 600 },
+    { x: 100, y: 111, width: 800, height: 600 },
   );
 });
 
@@ -361,11 +363,12 @@ NodeTest.test("an oversized viewport scales down to fit and stays centered", () 
     },
   );
   // Scale 980/2000 = 0.49 governs; the frame fits the 980x758 device area.
-  NodeAssert.ok(layout.scale > 0.48 && layout.scale <= 0.49);
-  NodeAssert.equal(layout.width, 2000 * layout.scale);
-  NodeAssert.equal(layout.height, 1500 * layout.scale);
+  // Native formula: y = toolbar + round((758 - 735) / 2) = 44.
+  NodeAssert.equal(layout.scale, 0.49);
+  NodeAssert.equal(layout.width, 980);
+  NodeAssert.equal(layout.height, 735);
   NodeAssert.equal(layout.x, 10);
-  NodeAssert.ok(layout.y >= 42 && layout.y + layout.height <= 800);
+  NodeAssert.equal(layout.y, 44);
 });
 
 NodeTest.test("a tiny panel still produces a sane frame", () => {
@@ -379,6 +382,10 @@ NodeTest.test("a tiny panel still produces a sane frame", () => {
   );
   NodeAssert.ok(layout.width >= 1 && layout.height >= 1);
   NodeAssert.ok(layout.scale < 1);
+  // Height governs: the frame fills the 158px device area vertically, so
+  // native y is exactly the toolbar height (no extra rail).
+  NodeAssert.equal(layout.y, 32);
+  NodeAssert.equal(layout.x, 106);
 });
 
 // ---------------------------------------------------------------------------
