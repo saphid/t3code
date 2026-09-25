@@ -177,8 +177,9 @@ export function createApiBroker(options: {
     });
   };
   const pending = new Map<AbortController, Set<string>>();
-  const streamCounts = new Map<string, number>();
-  let streamCount = 0;
+  // Admitted streams and the plugins each one charges. Quotas are counted from this map, and
+  // every stream exit path runs finish(), which deletes its entry, so no counter can drift.
+  const openStreams = new Map<AbortController, ReadonlySet<string>>();
   const resolution = () =>
     resolveCapabilities({
       installations: options.installations(),
@@ -611,14 +612,9 @@ export function createApiBroker(options: {
             signal.removeEventListener("abort", abort);
             controller.signal.removeEventListener("abort", onCancel);
             clearTimeout(deadline);
+            pending.delete(controller);
+            openStreams.delete(controller);
             if (admitted) {
-              pending.delete(controller);
-              streamCount--;
-              for (const id of affected) {
-                const count = (streamCounts.get(id) ?? 1) - 1;
-                if (count) streamCounts.set(id, count);
-                else streamCounts.delete(id);
-              }
               admitted = false;
               audit("stream-close");
             }
@@ -659,9 +655,10 @@ export function createApiBroker(options: {
           };
           const own = (id: string) => {
             if (affected.has(id)) return;
-            if ((streamCounts.get(id) ?? 0) >= 8) throw new Error("Plugin stream limit reached");
+            let count = 0;
+            for (const owners of openStreams.values()) if (owners.has(id)) count++;
+            if (count >= 8) throw new Error("Plugin stream limit reached");
             affected.add(id);
-            streamCounts.set(id, (streamCounts.get(id) ?? 0) + 1);
           };
           const initialize = async () => {
             active();
@@ -692,9 +689,11 @@ export function createApiBroker(options: {
             const key = JSON.stringify([record.id, request.id, "stream", request.name]);
             if (authority.calls.includes(key) || authority.calls.length >= 8)
               throw new Error("API call cycle or depth limit");
-            if (streamCount >= 64) throw new Error("Environment stream limit reached");
+            // Revalidation awaited above; a client that disconnected meanwhile is never admitted.
+            active();
+            if (openStreams.size >= 64) throw new Error("Environment stream limit reached");
             admitted = true;
-            streamCount++;
+            openStreams.set(controller, affected);
             pending.set(controller, affected);
             for (const caller of authority.callers) own(caller.id);
             deadline = setTimeout(
