@@ -1,6 +1,8 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
+import * as NodeEvents from "node:events";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { createExtensionRuntime } from "../dist/index.js";
@@ -523,27 +525,33 @@ NodeTest.test(
   { timeout: 10000 },
   async (t) => {
     const f = await fixture(t);
-    const marker = NodePath.join(f.directory, "staged"),
-      enteredPath = NodePath.join(f.directory, "entered");
+    const marker = NodePath.join(f.directory, "staged");
+    // The hung worker signals over a socket: fs.watch can miss a file written
+    // before its watcher is live, leaving the worker to hit its startup deadline.
+    const enteredPath =
+      process.platform === "win32"
+        ? "\\\\.\\pipe\\" + NodePath.basename(f.directory)
+        : NodePath.join(f.directory, "entered.sock");
+    const server = NodeNet.createServer();
+    t.after(() => server.close());
+    const entered = NodeEvents.once(server, "connection");
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(enteredPath, resolve);
+    });
     const pkg = metadata("test.provider");
     const delayed =
-      'import fs from "node:fs/promises";\n' +
+      'import fs from "node:fs/promises";\nimport net from "node:net";\n' +
       "try { await fs.stat(" +
       JSON.stringify(marker) +
-      "); await fs.writeFile(" +
+      "); net.connect(" +
       JSON.stringify(enteredPath) +
-      ',"ready"); await new Promise(()=>{}); } ' +
+      ').on("error",()=>{}); await new Promise(()=>{}); } ' +
       'catch (error) { if(error.code!=="ENOENT") throw error; await fs.writeFile(' +
       JSON.stringify(marker) +
       ',"staged"); }\n' +
       implementation(pkg);
     const installed = await f.install(pkg, delayed);
-    const events = NodeFSP.watch(f.directory);
-    const entered = (async () => {
-      for await (const event of events) {
-        if (event.filename === "entered") return;
-      }
-    })();
     const discovery = f.runtime.discoverApis(
       installed.id,
       installed.contentHash,
