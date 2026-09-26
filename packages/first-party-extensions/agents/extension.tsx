@@ -43,9 +43,11 @@ import {
   collectDiffStream,
   countAnsweredQuestions,
   deriveAgentsPanelModel,
+  describeLaunchReceipt,
   describeReceipt,
   describeScriptRun,
   elapsedBetween,
+  isWorkflowName,
   operationSupport,
   parseT3ProjectFile,
   resolveQuestionAnswer,
@@ -55,6 +57,7 @@ import {
   trackThemeVars,
   toggleQuestionOption,
   userInputOptionValue,
+  workflowLaunchEffect,
   workspaceFromRevision,
   type AgentsFeedState,
   type AgentsWorkflowGroup,
@@ -300,6 +303,7 @@ type OpOutcome =
   | {
       readonly kind: "done";
       readonly receipt: {
+        readonly commandId: string;
         readonly status: string;
         readonly sequence: number;
         readonly error: string | null;
@@ -353,13 +357,13 @@ function useControls(host: ClientHost, session: ViewSession, feed: AgentsFeedSta
     [api, session],
   );
 
-  const outcomeText = (key: string): string | null => {
+  const outcomeText = (key: string, format = describeReceipt): string | null => {
     const outcome = outcomes[key];
     if (!outcome) return null;
     if (outcome.kind === "pending") return "dispatching…";
     if (outcome.kind === "error") return outcome.message;
-    return describeReceipt({
-      commandId: "",
+    return format({
+      commandId: outcome.receipt.commandId,
       status: outcome.receipt.status === "accepted" ? "accepted" : "rejected",
       sequence: outcome.receipt.sequence,
       error: outcome.receipt.error,
@@ -493,6 +497,76 @@ function SessionControls(props: {
           </output>
         ))}
       <p style={{ margin: "6px 0 0", color: muted, fontSize: 11 }}>{SETTLED_STATE_NOTE}</p>
+    </section>
+  );
+}
+
+/**
+ * Workflow launch (`t3.orchestration/control` 1.1.0 `workflow.launch`, under
+ * the extra `t3.orchestration/launch-workflow` grant). Launch starts a turn on
+ * the user's behalf, so it takes the same inline confirm as checkpoint revert.
+ * The receipt line is the whole lifecycle here; the run itself appears in the
+ * roster once the provider starts it.
+ */
+function WorkflowLaunchSection(props: {
+  readonly capabilities: OrchestrationCapabilities | null;
+  readonly run: ReturnType<typeof useControls>["run"];
+  readonly outcomeText: ReturnType<typeof useControls>["outcomeText"];
+}) {
+  const { capabilities, run, outcomeText } = props;
+  const [name, setName] = useState("");
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const workflowName = name.trim();
+  const outcome = outcomeText("workflow.launch", describeLaunchReceipt);
+  return (
+    <section aria-label="Launch workflow" style={{ padding: "6px 10px", borderBottom: border }}>
+      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+        <input
+          aria-label="Workflow name"
+          placeholder="Workflow name…"
+          value={name}
+          disabled={confirming !== null}
+          onChange={(event) => setName(event.target.value)}
+          style={{ ...textInput, flex: 1 }}
+        />
+        {confirming !== null ? (
+          <>
+            <button
+              type="button"
+              style={{ ...control, borderColor: toneColor.danger, color: toneColor.danger }}
+              onClick={() => {
+                setConfirming(null);
+                run("workflow.launch", "workflow.launch", { workflowName: confirming });
+              }}
+            >
+              Confirm launch
+            </button>
+            <button type="button" style={control} onClick={() => setConfirming(null)}>
+              Keep
+            </button>
+          </>
+        ) : (
+          <OpButton
+            label="Launch"
+            support={operationSupport(capabilities, "workflow.launch")}
+            disabled={!isWorkflowName(workflowName)}
+            onClick={() => setConfirming(workflowName)}
+          />
+        )}
+      </div>
+      {confirming !== null && (
+        <span style={{ display: "block", fontSize: 11, color: toneColor.danger, marginTop: 4 }}>
+          {workflowLaunchEffect(confirming)}
+        </span>
+      )}
+      {outcome && (
+        <output
+          aria-label="Outcome of workflow.launch"
+          style={{ display: "block", fontSize: 11, color: muted, marginTop: 4 }}
+        >
+          {outcome}
+        </output>
+      )}
     </section>
   );
 }
@@ -1280,6 +1354,11 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
               run={run}
               outcomeText={outcomeText}
               onRefreshCapabilities={refreshCapabilities}
+            />
+            <WorkflowLaunchSection
+              capabilities={capabilities}
+              run={run}
+              outcomeText={outcomeText}
             />
             <PendingSection
               feed={feed}

@@ -14,6 +14,7 @@ import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests"
 import {
   ORCHESTRATION_STATUS_API,
   ORCHESTRATION_CONTROL_API,
+  WORKFLOW_NAME_PATTERN,
   type AgentsState,
   type OrchestrationReceipt,
 } from "@t3tools/extension-sdk/catalogue";
@@ -72,8 +73,17 @@ const nativeTypes = {
   "thread.unsettle": "thread.unsettle",
   "checkpoint.revert": "thread.checkpoint.revert",
 } as const;
-type ControlOp = keyof typeof nativeTypes;
-const isControlOp = (name: string): name is ControlOp => Object.hasOwn(nativeTypes, name);
+type ControlOp = keyof typeof nativeTypes | "workflow.launch";
+const isControlOp = (name: string): name is ControlOp =>
+  name === "workflow.launch" || Object.hasOwn(nativeTypes, name);
+const workflowNamePattern = new RegExp(WORKFLOW_NAME_PATTERN);
+/**
+ * The only text `workflow.launch` can send. T3 cannot call the harness's
+ * Workflow tool itself; it starts a turn carrying the user's explicit request,
+ * composed from the validated slug alone so the pack supplies no free text.
+ */
+export const workflowLaunchText = (workflowName: string) =>
+  `Run the saved workflow \`${workflowName}\` with the Workflow tool. The user explicitly requested this launch.`;
 
 type Serialized<T> = T extends string | number | boolean | null
   ? T
@@ -212,6 +222,8 @@ export function createOrchestrationApiProviders(deps: Dependencies): readonly Ho
         "userInput.dismiss": known,
         "thread.settle": true,
         "thread.unsettle": true,
+        // Workflows are a Claude harness tool; no other adapter can run one.
+        "workflow.launch": available && probe.value.info.driverKind === "claudeAgent",
         "checkpoint.revert":
           known &&
           !["grok", "antigravity"].includes(probe.value.info.driverKind) &&
@@ -260,7 +272,12 @@ export function createOrchestrationApiProviders(deps: Dependencies): readonly Ho
         if (safe.expectedRevision !== undefined && safe.expectedRevision !== state.snapshotSequence)
           return reject("OrchestrationStaleRevision");
         const support = yield* capabilities(state);
-        if (!support.operations[method]) return reject(`OrchestrationUnsupported: ${method}`);
+        if (!support.operations[method])
+          return reject(
+            method === "workflow.launch"
+              ? "OrchestrationWorkflowEngineUnavailable"
+              : `OrchestrationUnsupported: ${method}`,
+          );
         for (const name of [
           "attachments",
           "bootstrap",
@@ -278,6 +295,31 @@ export function createOrchestrationApiProviders(deps: Dependencies): readonly Ho
         const createdAt = DateTime.formatIso(yield* DateTime.now);
         const command = yield* Effect.try({
           try: () => {
+            if (method === "workflow.launch") {
+              const { workflowName, ...extra } = args;
+              if (
+                Object.keys(extra).length > 0 ||
+                typeof workflowName !== "string" ||
+                !workflowNamePattern.test(workflowName)
+              )
+                throw new Error("invalid workflow launch");
+              // Rides the thread's own runtime/interaction mode and model; launch
+              // never changes thread settings.
+              return decode({
+                type: "thread.turn.start",
+                commandId,
+                threadId,
+                runtimeMode: state.thread.runtimeMode,
+                interactionMode: state.thread.interactionMode,
+                message: {
+                  messageId: commandId,
+                  role: "user",
+                  text: workflowLaunchText(workflowName),
+                  attachments: [],
+                },
+                createdAt,
+              });
+            }
             const base = { ...args, type: nativeTypes[method], commandId, threadId };
             if (method === "turn.start") {
               const { text, ...rest } = args;

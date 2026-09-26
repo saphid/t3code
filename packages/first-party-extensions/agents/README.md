@@ -22,13 +22,19 @@ terminal.
   whole-payload sha256) before a byte renders — the same verification the
   diff panel performs. A server `closed` frame (queue overflow) resubscribes
   with a bounded retry; hiding the panel abandons the stream.
-- `t3.orchestration/control@^1.0.0` — under the `t3.orchestration/operate`
+- `t3.orchestration/control@^1.1.0` — under the `t3.orchestration/operate`
   grant: `turn.start`, `turn.interrupt`, `session.stop`, `approval.respond`,
   `userInput.respond`/`dismiss`, `thread.settle`/`unsettle`, and
   `checkpoint.revert` (behind an inline confirm). Every command carries a
   fresh `commandId` and the stream's `expectedEpoch`; accepted/rejected
   receipts render next to the control. Operations the provider does not
   advertise render as named "unsupported" rows — never fake buttons.
+  `workflow.launch` (1.1.0) additionally needs the
+  `t3.orchestration/launch-workflow` grant: Launch takes a workflow name,
+  shows an inline confirm stating the effect, and renders the launch id with
+  its accepted/rejected receipt. The host turns it into a turn asking the
+  agent to run that saved workflow — Claude threads only; other providers
+  show the named unsupported row.
 - `t3.workspace/files@^1.0.0` `readText` — reads the checked-in `t3.json`
   under the `t3.workspace/read-text` grant and lists its `scripts[]` entries.
   Settings-owned project scripts (machine defaults, per-project overrides)
@@ -65,8 +71,7 @@ collapse to Working / Idle · resumable / Completed / Failed / Stopped; the
 activity line keeps the native precedence (live rows lead with progress,
 settled rows with the outcome).
 
-Still deferred — named in the panel, not faked: workflow launch (no native
-binding exists), agent logs and session deep links (net-new design, plus
+Still deferred — named in the panel, not faked: agent logs and session deep links (net-new design, plus
 navigation contracts), agent session scan/import (needs a narrow public scan
 contract), and the mobile Agents surface.
 Thread settled state is not projected by the status contract, so Settle and

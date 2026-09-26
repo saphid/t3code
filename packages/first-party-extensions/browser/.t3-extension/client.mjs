@@ -280,6 +280,8 @@ var __t3Client = (() => {
   var ORCHESTRATION_CONTROL = "t3.orchestration/control";
   var ORCHESTRATION_READ = "t3.orchestration/read";
   var ORCHESTRATION_OPERATE = "t3.orchestration/operate";
+  var ORCHESTRATION_LAUNCH_WORKFLOW = "t3.orchestration/launch-workflow";
+  var WORKFLOW_NAME_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$";
   var ORCHESTRATION_CONTROL_OPS = [
     "turn.start",
     "turn.interrupt",
@@ -440,18 +442,28 @@ var __t3Client = (() => {
     "userInput.dismiss": obj({ ...guard, requestId: id }, ["requestId"]),
     "thread.settle": obj(guard, []),
     "thread.unsettle": obj(guard, []),
-    "checkpoint.revert": obj({ ...guard, turnCount: num }, ["turnCount"])
+    "checkpoint.revert": obj({ ...guard, turnCount: num }, ["turnCount"]),
+    "workflow.launch": obj({ ...guard, workflowName: { type: "string", pattern: WORKFLOW_NAME_PATTERN } }, ["workflowName"])
   };
   var orchestrationControlApi = defineApi({
     id: ORCHESTRATION_CONTROL,
-    version: "1.0.0",
-    methods: ORCHESTRATION_CONTROL_OPS.map((name) => ({
-      name,
-      effect: "write",
-      requiredGrants: [ORCHESTRATION_OPERATE],
-      inputSchema: operationInputs[name],
-      outputSchema: receipt
-    }))
+    version: "1.1.0",
+    methods: [
+      ...ORCHESTRATION_CONTROL_OPS.map((name) => ({
+        name,
+        effect: "write",
+        requiredGrants: [ORCHESTRATION_OPERATE],
+        inputSchema: operationInputs[name],
+        outputSchema: receipt
+      })),
+      {
+        name: "workflow.launch",
+        effect: "write",
+        requiredGrants: [ORCHESTRATION_OPERATE, ORCHESTRATION_LAUNCH_WORKFLOW],
+        inputSchema: operationInputs["workflow.launch"],
+        outputSchema: receipt
+      }
+    ]
   });
   function defineOrchestrationStatusApi(diffEventSchema) {
     return defineStreamApi({
