@@ -124,8 +124,11 @@ export type GlobalCommandDescriptor = {
   readonly id: string;
   readonly title: string;
   readonly description?: string;
-  /** A key value (`mod+shift+p` form) used when no user rule claims the key. */
-  readonly defaultKey?: string;
+  /**
+   * Key value(s) (`mod+shift+p` form) used when no user rule claims the key.
+   * A list binds every spelling — e.g. `["mod+=", "mod++"]` for zoom in.
+   */
+  readonly defaultKey?: string | readonly string[];
   /** Host-computable `when` expression over the shortcut context only. */
   readonly when?: string;
   readonly scope: "surface" | "thread" | "global";

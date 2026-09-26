@@ -5569,6 +5569,12 @@ export const PRS_WRITE_API = prsWriteApi.definition;
  * state once the authenticated report path writes. Engine state is
  * projected from authenticated host state only; this slice has none, so it
  * is always `unavailable`/`desktop-required`, never fabricated.
+ *
+ * Favicons (1.1.0): a session carries at most a `faviconRef` — never bytes.
+ * The ref names a bounded server-side asset the owner host captured for the
+ * page's origin; `getFavicon` resolves it under the read grant, scoped to
+ * the caller's project. Refs are best-effort: an evicted or unknown ref
+ * fails `BrowserFaviconNotFound`, and callers render their fallback tier.
  * --------------------------------------------------------------------- */
 export const BROWSER_OPERATE = "t3.browser/operate";
 
@@ -5587,6 +5593,9 @@ export type BrowserSessionCommand = (typeof BROWSER_SESSION_COMMANDS)[number];
 export const BROWSER_SESSION_URL_MAX_LENGTH = 2048;
 export const BROWSER_SESSION_TITLE_MAX_LENGTH = 512;
 export const BROWSER_SESSION_LIMIT = 64;
+export const BROWSER_SESSION_FAVICON_REF_MAX_LENGTH = 64;
+/** Matches the engine host's own favicon bound. */
+export const BROWSER_SESSION_FAVICON_MAX_LENGTH = 8192;
 
 export type BrowserSessionViewport =
   | { readonly _tag: "fill" }
@@ -5638,6 +5647,15 @@ export type BrowserSession = {
   readonly appearance: "system" | "light" | "dark" | null;
   readonly audioMuted: boolean | null;
   readonly audible: boolean | null;
+  /** Captured favicon for the current page's origin; resolve with `getFavicon`. */
+  readonly faviconRef?: string;
+};
+
+export type BrowserSessionFaviconInput = { readonly ref: string };
+export type BrowserSessionFavicon = {
+  readonly ref: string;
+  /** A bounded `data:image/*;base64` URL. */
+  readonly dataUrl: string;
 };
 
 export type BrowserSessionsSnapshot = {
@@ -5762,6 +5780,11 @@ const browserSessionUrl = {
   minLength: 1,
   maxLength: BROWSER_SESSION_URL_MAX_LENGTH,
 } as const;
+const browserSessionFaviconRef = {
+  type: "string",
+  minLength: 1,
+  maxLength: BROWSER_SESSION_FAVICON_REF_MAX_LENGTH,
+} as const;
 const browserSessionViewport = {
   oneOf: [
     {
@@ -5864,6 +5887,7 @@ const browserSessionObject = {
     appearance: { enum: ["system", "light", "dark", null] },
     audioMuted: { type: ["boolean", "null"] },
     audible: { type: ["boolean", "null"] },
+    faviconRef: browserSessionFaviconRef,
   },
 } as const;
 const browserSessionReceipt = {
@@ -5915,6 +5939,7 @@ export const browserSessionsApi: TypedApi<{
     output: BrowserSessionCapabilities;
   };
   list: { input: Record<string, never>; output: BrowserSessionsSnapshot };
+  getFavicon: { input: BrowserSessionFaviconInput; output: BrowserSessionFavicon };
   open: { input: BrowserSessionOpenInput; output: BrowserSessionReceipt };
   navigate: { input: BrowserSessionNavigateInput; output: BrowserSessionReceipt };
   close: { input: BrowserSessionCloseInput; output: BrowserSessionCloseResult };
@@ -5933,7 +5958,7 @@ export const browserSessionsApi: TypedApi<{
   events: { input: Record<string, never>; event: BrowserSessionStreamValue };
 }>({
   id: BROWSER_SESSIONS,
-  version: "1.0.0",
+  version: "1.1.0",
   methods: [
     {
       name: "getCapabilities",
@@ -5986,6 +6011,26 @@ export const browserSessionsApi: TypedApi<{
             maxItems: BROWSER_SESSION_LIMIT,
             items: browserSessionObject,
           },
+        },
+      },
+    },
+    {
+      name: "getFavicon",
+      effect: "read",
+      requiredGrants: [BROWSER_SESSIONS],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["ref"],
+        properties: { ref: browserSessionFaviconRef },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["ref", "dataUrl"],
+        properties: {
+          ref: browserSessionFaviconRef,
+          dataUrl: { type: "string", minLength: 1, maxLength: BROWSER_SESSION_FAVICON_MAX_LENGTH },
         },
       },
     },

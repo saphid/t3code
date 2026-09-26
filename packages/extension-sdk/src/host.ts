@@ -24,6 +24,63 @@ export type ViewCommandHandler = (call: {
   readonly context: ViewContext;
 }) => void;
 
+/**
+ * Host-rendered chrome for a view's panel tab, drawn beside the manifest
+ * title the way native tabs show a page icon and audio state. The host
+ * derives the public-provider icon from `pageUrl`; a captured
+ * `faviconDataUrl` beats it; with neither the host keeps its default icon.
+ */
+export interface ViewTabIndicators {
+  /** The http(s) page the tab represents. */
+  readonly pageUrl?: string;
+  /** A captured favicon: `data:image/*;base64`, at most 8192 chars. */
+  readonly faviconDataUrl?: string;
+  /** "audible" is playing sound; "muted" has sound the user silenced. */
+  readonly audio?: "audible" | "muted";
+}
+
+const TAB_FAVICON_DATA_URL =
+  /^data:image\/(?:png|x-icon|vnd\.microsoft\.icon|gif|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+
+/** Returns a plain copy of valid indicators; throws on anything else. */
+export function validateTabIndicators(value: unknown): ViewTabIndicators {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Tab indicators must be an object");
+  const input = value as Record<string, unknown>;
+  const keys = Object.keys(input);
+  if (keys.some((key) => !["pageUrl", "faviconDataUrl", "audio"].includes(key)))
+    throw new Error("Tab indicators accept only pageUrl, faviconDataUrl and audio");
+  const { pageUrl, faviconDataUrl, audio } = input;
+  if (pageUrl !== undefined) {
+    let protocol: string | null = null;
+    try {
+      protocol = typeof pageUrl === "string" ? new URL(pageUrl).protocol : null;
+    } catch {
+      protocol = null;
+    }
+    if (
+      typeof pageUrl !== "string" ||
+      pageUrl.length > 2048 ||
+      (protocol !== "http:" && protocol !== "https:")
+    )
+      throw new Error("Tab pageUrl must be an http(s) URL of at most 2048 chars");
+  }
+  if (
+    faviconDataUrl !== undefined &&
+    (typeof faviconDataUrl !== "string" ||
+      faviconDataUrl.length > 8192 ||
+      !TAB_FAVICON_DATA_URL.test(faviconDataUrl))
+  )
+    throw new Error("Tab faviconDataUrl must be a base64 image data URL of at most 8192 chars");
+  if (audio !== undefined && audio !== "audible" && audio !== "muted")
+    throw new Error('Tab audio must be "audible" or "muted"');
+  return {
+    ...(pageUrl === undefined ? {} : { pageUrl: pageUrl as string }),
+    ...(faviconDataUrl === undefined ? {} : { faviconDataUrl: faviconDataUrl as string }),
+    ...(audio === undefined ? {} : { audio }),
+  };
+}
+
 export interface ViewSession {
   readonly context: ViewContext;
   readonly signal: AbortSignal;
@@ -43,6 +100,13 @@ export interface ViewSession {
    * Idempotent per (view-session, token). The binding dies with the view.
    */
   bindCommands(commandSetToken: string, handler: ViewCommandHandler): string;
+  /**
+   * Replaces the host-rendered tab indicators (null clears them). Allowed
+   * while hidden — a background tab still shows its icon and audio. Invalid
+   * indicators throw; a disposed session returns false. Cleared when the
+   * view restarts or closes.
+   */
+  setTabIndicators(indicators: ViewTabIndicators | null): boolean;
   onDispose(cleanup: () => void): void;
 }
 export interface ViewController<Renderer> {
@@ -100,6 +164,8 @@ export interface ViewSnapshot {
   readonly reason: string | null;
   readonly state: Json;
   readonly generation: number;
+  /** Set only while the view publishes indicators. */
+  readonly tab?: ViewTabIndicators;
 }
 interface Registration<R> {
   manifest: ExtensionManifest;
@@ -282,7 +348,8 @@ export function createExtensionHost<Renderer>(options: HostOptions) {
     entry.activity = new AbortController();
     entry.sequence = -1;
     const generation = entry.snapshot.generation + 1;
-    entry.snapshot = { ...entry.snapshot, generation, state: null };
+    const { tab: _tab, ...untabbed } = entry.snapshot;
+    entry.snapshot = { ...untabbed, generation, state: null };
     const resolved = resolve(entry.snapshot.record);
     entry.registration = resolved.registration;
     entry.descriptor = resolved.descriptor;
@@ -402,6 +469,14 @@ export function createExtensionHost<Renderer>(options: HostOptions) {
         });
         entry.cleanup.add(bound.unbind);
         return bound.bindingId;
+      },
+      setTabIndicators(indicators) {
+        const next = indicators === null ? null : validateTabIndicators(indicators);
+        if (!live()) return false;
+        const { tab: _tab, ...untabbed } = entry.snapshot;
+        entry.snapshot = next === null ? untabbed : { ...untabbed, tab: next };
+        notifyCurrent();
+        return true;
       },
       onDispose(cleanup) {
         if (live()) entry.cleanup.add(cleanup);
@@ -702,8 +777,9 @@ export function createExtensionHost<Renderer>(options: HostOptions) {
       };
       if (entry.snapshot.status === "hidden") {
         stop(entry);
+        const { tab: _tab, ...untabbed } = entry.snapshot;
         entry.snapshot = {
-          ...entry.snapshot,
+          ...untabbed,
           generation: entry.snapshot.generation + 1,
           state: null,
         };

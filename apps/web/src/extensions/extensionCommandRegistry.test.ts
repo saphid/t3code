@@ -147,6 +147,11 @@ describe("registerCommands", () => {
       command({ id: "badscope", scope: "nope" as never }),
       command({ id: "badwhen", when: "&&" }),
       command({ id: "badkey", defaultKey: "ctrl+alt" }),
+      command({ id: "keys", defaultKey: ["ctrl+alt+r", "ctrl+alt+t"] }),
+      command({ id: "badlistkey", defaultKey: ["ctrl+alt+r", "ctrl+alt"] }),
+      command({ id: "emptykeys", defaultKey: [] }),
+      command({ id: "dupkeys", defaultKey: ["ctrl+alt+r", "ctrl+alt+r"] }),
+      command({ id: "manykeys", defaultKey: ["ctrl+1", "ctrl+2", "ctrl+3", "ctrl+4", "ctrl+5"] }),
     ]);
     expect(results.map((r) => [r.commandId, r.status])).toEqual([
       ["9bad", "rejected"],
@@ -154,6 +159,11 @@ describe("registerCommands", () => {
       ["badscope", "rejected"],
       ["badwhen", "rejected"],
       ["badkey", "rejected"],
+      ["keys", "registered"],
+      ["badlistkey", "rejected"],
+      ["emptykeys", "rejected"],
+      ["dupkeys", "rejected"],
+      ["manykeys", "rejected"],
     ]);
   });
 
@@ -416,6 +426,20 @@ describe("keydown matching + palette enumeration", () => {
     ).toBeNull();
   });
 
+  it("binds every key in a default-key list", () => {
+    configureExtensionCommandEnvironment(ENV, envDeps());
+    register([command({ scope: "global", defaultKey: ["ctrl+=", "ctrl++"] })], {
+      capabilities: ["t3.ui/keybindings", "t3.ui/keybindings.global"],
+    });
+    expect(extensionCommandForKeydown(keydownEvent("=", { ctrl: true }), "Linux")).toBe(
+      `ext.${INSTALL}.run`,
+    );
+    expect(extensionCommandForKeydown(keydownEvent("+", { ctrl: true }), "Linux")).toBe(
+      `ext.${INSTALL}.run`,
+    );
+    expect(extensionCommandForKeydown(keydownEvent("-", { ctrl: true }), "Linux")).toBeNull();
+  });
+
   it("lists palette items with per-scope enabled state", () => {
     configureExtensionCommandEnvironment(ENV, envDeps());
     restoreDom = installFakeDom("host-1:view-1", SURFACE);
@@ -448,6 +472,25 @@ describe("keydown matching + palette enumeration", () => {
     expect(conflicts).toHaveLength(1);
     expect(conflicts[0]?.winner).toBe("plugin");
     expect(conflicts[0]?.key).toBe("ctrl+alt+r");
+  });
+
+  it("arbitrates each key of a default-key list on its own chord", () => {
+    configureExtensionCommandEnvironment(ENV, envDeps());
+    register(
+      [
+        command({ id: "one", defaultKey: "ctrl+alt+r" }),
+        command({ id: "two", defaultKey: ["ctrl+alt+t", "ctrl+alt+r"] }),
+      ],
+      { capabilities: ["t3.ui/keybindings"] },
+    );
+    expect(listExtensionCommandConflicts(ENV)).toEqual([
+      {
+        command: `ext.${INSTALL}.one`,
+        key: "ctrl+alt+r",
+        winner: "plugin",
+        loser: `ext.${INSTALL}.two`,
+      },
+    ]);
   });
 });
 
