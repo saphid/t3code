@@ -11,6 +11,7 @@ import {
 import {
   AGENT_SESSION_TITLE_MAX_LENGTH,
   AGENT_SESSIONS_SCAN_CAP,
+  AGENT_SESSIONS_SCAN_DEADLINE_MS,
   agentSessionsApi,
   type AgentSessionImportReceipt,
   type AgentSessionSummary,
@@ -20,6 +21,7 @@ import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { HostApiInvocationMetadata, HostApiProvider } from "@t3tools/extension-runtime";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
@@ -83,6 +85,8 @@ type Dependencies = Omit<ScopeDependencies, "threads"> & {
     { readonly sequence: number | null },
     Effect.Error<ReturnType<typeof importAgentSessionThread>>
   >;
+  /** Completes when a scan must stop; defaults to `AGENT_SESSIONS_SCAN_DEADLINE_MS`. */
+  readonly scanDeadline?: Effect.Effect<void>;
 };
 
 const sameKey = (source: AgentSessionImportSource, key: typeof SessionKey.Type) =>
@@ -104,6 +108,8 @@ export function createAgentSessionsApiProvider(deps: Dependencies): HostApiProvi
   const resolve = makeExtensionScopeResolver(deps);
   // One import at a time: a double-click must see the first thread, not race a second create.
   const importLock = Semaphore.makeUnsafe(1);
+  const deadline =
+    deps.scanDeadline ?? Effect.sleep(Duration.millis(AGENT_SESSIONS_SCAN_DEADLINE_MS));
 
   const guard = async (
     context: ViewContext,
@@ -174,6 +180,7 @@ export function createAgentSessionsApiProvider(deps: Dependencies): HostApiProvi
   const scan = Effect.fn("AgentSessionsApi.scan")(function* (context: ViewContext) {
     const { projectId, workspaceRoot } = yield* project(context);
     let skipped = 0;
+    let timedOut = false;
     const listed = yield* deps.recentThreads(workspaceRoot, projectId).pipe(
       Stream.mapError(() => fail("AgentSessionScanUnavailable")),
       Stream.mapEffect((outcome) => summarize(projectId, outcome)),
@@ -182,12 +189,22 @@ export function createAgentSessionsApiProvider(deps: Dependencies): HostApiProvi
         return typeof entry === "object" && entry !== null;
       }),
       Stream.take(AGENT_SESSIONS_SCAN_CAP + 1),
+      // A slow disk ends the scan with what it found rather than holding the caller.
+      Stream.interruptWhen(
+        deadline.pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              timedOut = true;
+            }),
+          ),
+        ),
+      ),
       Stream.runCollect,
     );
     return {
       scope: "project",
       sessions: listed.slice(0, AGENT_SESSIONS_SCAN_CAP),
-      truncated: listed.length > AGENT_SESSIONS_SCAN_CAP,
+      truncated: timedOut || listed.length > AGENT_SESSIONS_SCAN_CAP,
       skipped,
       scannedAt: DateTime.formatIso(yield* DateTime.now),
     } satisfies AgentSessionsScanResult;
@@ -219,6 +236,10 @@ export function createAgentSessionsApiProvider(deps: Dependencies): HostApiProvi
           sameKey(outcome.source, key),
       ),
       Stream.runHead,
+      // Past the deadline the session is unknown, not out of scope.
+      Effect.raceFirst(
+        deadline.pipe(Effect.andThen(Effect.fail(fail("AgentSessionScanTimedOut")))),
+      ),
     );
     if (Option.isNone(found)) return rejected("AgentSessionOutOfScope");
     const outcome = found.value;

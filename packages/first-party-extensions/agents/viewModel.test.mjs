@@ -1124,5 +1124,6 @@ NodeTest.describe("session import", () => {
       describeSessionsError(new Error("AgentSessionsAuthorityDenied: orchestration:operate")),
       /unavailable — AgentSessionsAuthorityDenied/,
     );
+    NodeAssert.match(describeSessionsError(new Error("AgentSessionScanTimedOut")), /time limit/);
   });
 });

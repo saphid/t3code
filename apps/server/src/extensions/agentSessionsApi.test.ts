@@ -93,7 +93,10 @@ type ThreadRow = {
  * each project root, `threads` is the projection, and `importThread` persists
  * like the native importer and returns a monotonically increasing sequence.
  */
-const makeHost = (byRoot: Record<string, AgentSessionRecentThread[]>) => {
+const makeHost = (
+  byRoot: Record<string, AgentSessionRecentThread[]>,
+  slow?: { readonly deadline: Effect.Effect<void>; readonly onStall: Effect.Effect<void> },
+) => {
   const threads = new Map<string, ThreadRow>();
   const imports: string[] = [];
   let sequence = 40;
@@ -111,7 +114,15 @@ const makeHost = (byRoot: Record<string, AgentSessionRecentThread[]>) => {
     threads: {
       getById: ({ threadId }) => Effect.succeed(Option.fromNullishOr(threads.get(threadId))),
     },
-    recentThreads: (workspaceRoot) => Stream.fromIterable(byRoot[workspaceRoot] ?? []),
+    recentThreads: (workspaceRoot) =>
+      slow
+        ? // Emits what it has, signals, then stalls like a hung disk read.
+          Stream.fromIterable(byRoot[workspaceRoot] ?? []).pipe(
+            Stream.concat(Stream.fromEffectDrain(slow.onStall)),
+            Stream.concat(Stream.never),
+          )
+        : Stream.fromIterable(byRoot[workspaceRoot] ?? []),
+    ...(slow ? { scanDeadline: slow.deadline } : {}),
     importThread: (input) =>
       Effect.gen(function* () {
         if (failImport) return yield* Effect.die("decider rejected");
@@ -197,6 +208,20 @@ it("lists only this project's sessions, bounded, without paths or transcript tex
 
   const exact = makeHost({ "/work/a": many.slice(0, 50) });
   expect((await exact.scan()).truncated).toBe(false);
+});
+
+it("ends a stalled scan at its deadline with what it found, and refuses import by name", async () => {
+  const stalled = Promise.withResolvers<void>();
+  const host = makeHost(
+    { "/work/a": [importable(session("s1")), importable(session("s2"))] },
+    { deadline: Effect.promise(() => stalled.promise), onStall: Effect.sync(stalled.resolve) },
+  );
+  const result = await host.scan();
+  expect(result.sessions.map((entry) => entry.providerSessionId)).toEqual(["s1", "s2"]);
+  expect(result.truncated).toBe(true);
+  // A session the stalled walk never reached is unknown, not out of scope.
+  await expect(host.importKey(key("later"))).rejects.toThrow("AgentSessionScanTimedOut");
+  expect(host.imports).toEqual([]);
 });
 
 it("marks sessions already imported into this project and hides another project's", async () => {

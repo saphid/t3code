@@ -12,6 +12,8 @@ export const AGENT_SESSIONS_SCAN = "t3.agents/scan-sessions";
 /** Mutation grant: create a thread from one listed session. Import also requires the scan grant. */
 export const AGENT_SESSIONS_IMPORT = "t3.agents/import-sessions";
 export const AGENT_SESSIONS_SCAN_CAP = 50;
+/** Wall-clock bound on one host scan; a scan cut here returns what it found with `truncated`. */
+export const AGENT_SESSIONS_SCAN_DEADLINE_MS = 10_000;
 export const AGENT_SESSION_TITLE_MAX_LENGTH = 200;
 
 export type AgentSessionKey = {
@@ -30,7 +32,7 @@ export type AgentSessionsScanResult = {
   readonly scope: "project";
   /** Newest first, at most `AGENT_SESSIONS_SCAN_CAP`. */
   readonly sessions: readonly AgentSessionSummary[];
-  /** More listable sessions existed than were returned. */
+  /** The list may be incomplete: cut at `AGENT_SESSIONS_SCAN_CAP` or at the scan deadline. */
   readonly truncated: boolean;
   /** Transcripts the host could not list (unreadable, over its read budget, or unsupported ids). */
   readonly skipped: number;

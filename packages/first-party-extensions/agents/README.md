@@ -70,7 +70,9 @@ project (`t3.agents/sessions`, `t3.agents/scan-sessions` grant) and imports
 one at a time as a new thread after a Confirm step
 (`t3.agents/import-sessions` grant). The host re-discovers the session inside
 the project on every import; a duplicate, another project's session, or a
-missing grant is named in the row's receipt line.
+missing grant is named in the row's receipt line. A scan returns at most the
+50 newest sessions and stops after 10 seconds; either cut is marked in the
+panel.
 
 Still deferred — named in the panel, not faked: workflow launch (no native
 binding exists), agent logs and session deep links (net-new design, plus

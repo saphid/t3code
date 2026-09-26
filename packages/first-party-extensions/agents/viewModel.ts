@@ -933,6 +933,8 @@ export function describeSessionsError(error: unknown): string {
     if (text.includes(`capability denied: ${grant}`))
       return `This installation is missing the ${grant} grant.`;
   }
+  if (text.includes("AgentSessionScanTimedOut"))
+    return "The session scan hit its time limit before finding this session. Scan again to retry.";
   return `Session import is unavailable${text ? ` — ${text.slice(0, 300)}` : ""}.`;
 }
 
