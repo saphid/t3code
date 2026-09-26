@@ -174,6 +174,7 @@ it.effect("reports the transport gap honestly through getCapabilities", () =>
         getDraftState: false,
         insertMention: false,
         insertTerminalContext: false,
+        insertImage: false,
       },
     });
     const messageCaps = (await call(
@@ -228,17 +229,19 @@ it.effect("gates 1.1.0 shapes on the targeted connection while 1.0.0 ops keep fl
       getDraftState: true,
       insertMention: false,
       insertTerminalContext: false,
+      insertImage: false,
     });
     const newCaps = (yield* Effect.promise(() =>
       dispatch(composer, "getCapabilities", {}, "conn-new"),
     )) as ComposerCapabilities;
     expect(newCaps.transport).toBe("client");
-    expect(newCaps.detail).toBeNull();
+    expect(newCaps.detail).toContain("1.1.0");
     expect(newCaps.operations).toEqual({
       insertContext: true,
       getDraftState: true,
       insertMention: true,
       insertTerminalContext: true,
+      insertImage: false,
     });
 
     // The unchanged 1.0.0 file annotation still succeeds end to end.
@@ -326,6 +329,94 @@ it.effect("gates 1.1.0 shapes on the targeted connection while 1.0.0 ops keep fl
     });
     expect(yield* Fiber.join(mention)).toEqual({ inserted: 1, target: "env:thread" });
   }).pipe(Effect.provide(brokerLayer)),
+);
+
+const ARTIFACT_REF = "pending-0f1e2d3c-4b5a-4968-8776-655443322110";
+
+it.effect("forwards insertImage as an artifactRef only to a 1.2.0 composer", () =>
+  Effect.gen(function* () {
+    const broker = yield* ClientApiProviders;
+    const olderStream = yield* broker.connect(
+      { connectionId: "conn-11", sessionId: "session", announcedOrigin: { surface: "web" } },
+      { providers: [{ id: "t3.client/composer", version: "1.1.0" }] },
+    );
+    const olderFrames = frameIterator(olderStream);
+    yield* nextFrame(olderFrames); // registered
+    const currentStream = yield* broker.connect(
+      { connectionId: "conn-12", sessionId: "session", announcedOrigin: { surface: "desktop" } },
+      { providers: [{ id: "t3.client/composer", version: "1.2.0" }] },
+    );
+    const currentFrames = frameIterator(currentStream);
+    yield* nextFrame(currentFrames); // registered
+    const composer = createComposerApiProviders(resolverDeps, {
+      environmentId: "env",
+      clientApiProviders: broker,
+    }).find((p) => p.providerId === "host.composer")!;
+
+    const caps = (yield* Effect.promise(() =>
+      dispatch(composer, "getCapabilities", {}, "conn-12"),
+    )) as ComposerCapabilities;
+    expect(caps.detail).toBeNull();
+    expect(caps.operations.insertImage).toBe(true);
+
+    // A 1.1.0 client would drop the op; it is refused before any dispatch.
+    yield* Effect.promise(() =>
+      expectNamedError(
+        dispatch(composer, "insertImage", { artifactRef: ARTIFACT_REF } as Json, "conn-11"),
+        "composer.context.insertImage",
+        /client-provider-unsupported-version.*\^1\.2\.0/,
+      ),
+    );
+
+    const inserted = yield* Effect.promise(() =>
+      dispatch(
+        composer,
+        "insertImage",
+        { artifactRef: ARTIFACT_REF, name: "capture.png" } as Json,
+        "conn-12",
+      ),
+    ).pipe(Effect.forkChild);
+    const frame = yield* nextFrame(currentFrames);
+    if (frame?.type !== "invoke") throw new Error("expected insertImage dispatch");
+    expect(frame.method).toBe("insertImage");
+    // The frame names the draft thread and the ref; no image bytes travel.
+    expect(frame.input).toEqual({
+      target: expect.anything(),
+      threadId: "thread",
+      artifactRef: ARTIFACT_REF,
+      name: "capture.png",
+    });
+    yield* broker.respond("conn-12", {
+      requestId: frame.requestId,
+      ok: true,
+      value: { inserted: true, target: "env:thread" },
+    });
+    expect(yield* Fiber.join(inserted)).toEqual({ inserted: true, target: "env:thread" });
+  }).pipe(Effect.provide(brokerLayer)),
+);
+
+it.effect("rejects insertImage payloads that are not a capture artifactRef", () =>
+  Effect.promise(async () => {
+    for (const input of [
+      {},
+      { artifactRef: "data:image/png;base64,iVBORw0KGgo=" },
+      { artifactRef: "thread-0f1e2d3c-4b5a-4968-8776-655443322110" },
+      { artifactRef: `../${ARTIFACT_REF}` },
+      { artifactRef: ARTIFACT_REF, bytes: "iVBORw0KGgo=" },
+      { artifactRef: ARTIFACT_REF, name: "" },
+    ]) {
+      await expectNamedError(
+        call(composer, "insertImage", input as Json),
+        "composer.context.insertImage",
+        /Invalid composer operation request/,
+      );
+    }
+    await expectNamedError(
+      call(composer, "insertImage", { threadId: "other", artifactRef: ARTIFACT_REF }),
+      "composer.context.insertImage",
+      /outside the granted thread scope/,
+    );
+  }),
 );
 
 it.effect("fails state ops with a named unsupported error after valid scope and input", () =>

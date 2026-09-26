@@ -41,6 +41,7 @@ import {
 } from "./installedController";
 
 import { registerInstalledApiClient, setInstalledApiPolicy } from "./installedApiClients";
+import { createBrowserCaptureBridge } from "./browserCaptureBridge";
 import { createBrowserSurfaceBridge } from "./browserSurfaceBridge";
 import { createBrowserFramesBridge } from "./browserFramesBridge";
 import { createKeybindingsHostBridge } from "./keybindingsHostBridge";
@@ -436,6 +437,7 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
       load: importInstalledClient,
       browserSurface: createBrowserSurfaceBridge(environmentId),
       browserFrames: createBrowserFramesBridge(environmentId),
+      browserCapture: createBrowserCaptureBridge(environmentId),
       keybindings: createKeybindingsHostBridge(),
       register: (extension, client) => {
         const unregister = registerWorkspaceExtension(

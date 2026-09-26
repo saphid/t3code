@@ -14,15 +14,15 @@ import {
   messagesEnrichmentApi,
 } from "../dist/catalogue.js";
 import { validateApiDefinition } from "../dist/capabilities.js";
-import { CLIENT_COMPOSER_API } from "../dist/clientProviders.js";
+import { CLIENT_COMPOSER_API, CLIENT_COMPOSER_V12_RANGE } from "../dist/clientProviders.js";
 
 const methodsOf = (definition) =>
   Object.fromEntries((definition.methods ?? []).map((m) => [m.name, m]));
 
-NodeTest.test("both contracts are registered at 1.1.0 with stable ids", () => {
+NodeTest.test("both contracts are registered with stable ids", () => {
   NodeAssert.equal(COMPOSER_CONTEXT_API.id, "t3.composer/context");
   NodeAssert.equal(COMPOSER_CONTEXT_API.id, COMPOSER_CONTEXT);
-  NodeAssert.equal(COMPOSER_CONTEXT_API.version, "1.1.0");
+  NodeAssert.equal(COMPOSER_CONTEXT_API.version, "1.2.0");
   NodeAssert.equal(composerContextApi.definition, COMPOSER_CONTEXT_API);
   NodeAssert.equal(MESSAGES_ENRICHMENT_API.id, "t3.messages/enrichment");
   NodeAssert.equal(MESSAGES_ENRICHMENT_API.id, MESSAGES_ENRICHMENT);
@@ -44,9 +44,12 @@ NodeTest.test("grants split write authority across the two contracts", () => {
     "getCapabilities",
     "getDraftState",
     "insertContext",
+    "insertImage",
     "insertMention",
     "insertTerminalContext",
   ]);
+  NodeAssert.deepEqual(composer.insertImage.requiredGrants, [COMPOSER_WRITE]);
+  NodeAssert.equal(composer.insertImage.effect, "write");
   NodeAssert.deepEqual(composer.getCapabilities.requiredGrants, []);
   NodeAssert.equal(composer.getCapabilities.effect, "read");
   NodeAssert.deepEqual(composer.insertContext.requiredGrants, [COMPOSER_WRITE]);
@@ -164,12 +167,29 @@ NodeTest.test("insertMention and insertTerminalContext inputs are closed and bou
   NodeAssert.equal(listing.properties.annotationId, undefined);
 });
 
-NodeTest.test("the private client-provider seam carries every 1.1.0 op", () => {
+NodeTest.test("insertImage takes only an artifactRef, never image bytes", () => {
+  const input = methodsOf(COMPOSER_CONTEXT_API).insertImage.inputSchema;
+  NodeAssert.equal(input.additionalProperties, false);
+  NodeAssert.deepEqual(input.required, ["artifactRef"]);
+  NodeAssert.deepEqual(Object.keys(input.properties).sort(), ["artifactRef", "name", "threadId"]);
+  const pattern = new RegExp(input.properties.artifactRef.pattern);
+  NodeAssert.ok(pattern.test("pending-0f1e2d3c-4b5a-4968-8776-655443322110"));
+  // Settled thread attachments, paths, and data URLs are not capture refs.
+  NodeAssert.ok(!pattern.test("thread_1-0f1e2d3c-4b5a-4968-8776-655443322110"));
+  NodeAssert.ok(!pattern.test("../pending-0f1e2d3c-4b5a-4968-8776-655443322110"));
+  NodeAssert.ok(!pattern.test("data:image/png;base64,AAAA"));
+  const seam = methodsOf(CLIENT_COMPOSER_API).insertImage.inputSchema;
+  NodeAssert.deepEqual(seam.required, ["target", "threadId", "artifactRef"]);
+  NodeAssert.equal(seam.properties.artifactRef.pattern, input.properties.artifactRef.pattern);
+  NodeAssert.equal(CLIENT_COMPOSER_V12_RANGE, "^1.2.0");
+});
+
+NodeTest.test("the private client-provider seam carries every public op", () => {
   // The broker's METHOD_SCHEMAS table is built from this definition — an op
   // missing here can never cross to the client, whatever the public contract
   // or web provider support.
   NodeAssert.equal(CLIENT_COMPOSER_API.id, "t3.client/composer");
-  NodeAssert.equal(CLIENT_COMPOSER_API.version, "1.1.0");
+  NodeAssert.equal(CLIENT_COMPOSER_API.version, "1.2.0");
   NodeAssert.deepEqual(methodsOf(CLIENT_COMPOSER_API).insertMention.inputSchema.required, [
     "target",
     "threadId",
@@ -182,6 +202,7 @@ NodeTest.test("the private client-provider seam carries every 1.1.0 op", () => {
     "attachAnnotation",
     "insertMention",
     "insertTerminalContext",
+    "insertImage",
     "listAnnotations",
     "removeAnnotation",
   ]) {
@@ -211,7 +232,7 @@ NodeTest.test("capability honesty output names per-op support and transport", ()
   for (const [definition, ops] of [
     [
       COMPOSER_CONTEXT_API,
-      ["insertContext", "getDraftState", "insertMention", "insertTerminalContext"],
+      ["insertContext", "getDraftState", "insertMention", "insertTerminalContext", "insertImage"],
     ],
     [MESSAGES_ENRICHMENT_API, ["attachAnnotation", "listAnnotations", "removeAnnotation"]],
   ]) {

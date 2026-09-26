@@ -45,7 +45,7 @@
     },
     {
       "id": "t3.composer/context",
-      "versionRange": "^1.1.0"
+      "versionRange": "^1.2.0"
     },
     {
       "id": "t3.file/presentation",

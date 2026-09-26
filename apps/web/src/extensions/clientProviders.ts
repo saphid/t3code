@@ -1,6 +1,7 @@
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ClientProviderEmitEvent } from "@t3tools/contracts";
+import { BROWSER_CAPTURE_ARTIFACT_REF_PATTERN } from "@t3tools/extension-sdk/catalogue";
 import type { Json } from "@t3tools/extension-sdk/contracts";
 import {
   applyThemeColorPreview,
@@ -32,7 +33,8 @@ import {
 } from "../rightPanelStore";
 import { installedSurfaceRecord, installedWorkspaceContext } from "./installedContext";
 import { readProject, readThreadShell } from "../state/entities";
-import { useComposerDraftStore } from "../composerDraftStore";
+import { useComposerDraftStore, type ComposerImageAttachment } from "../composerDraftStore";
+import { fetchBrowserCaptureArtifact } from "../browser/browserCaptureArtifacts";
 import { buildFileReviewComment } from "../reviewCommentContext";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import {
@@ -772,7 +774,19 @@ function readAnnotationSelection(value: unknown) {
   return { start: line("start"), side: side("side"), end: line("end"), endSide: side("endSide") };
 }
 
-export function createComposerClientProvider(deps: ClientProviderDeps): ClientLocalProvider {
+const CAPTURE_ARTIFACT_REF = new RegExp(BROWSER_CAPTURE_ARTIFACT_REF_PATTERN);
+
+/** Reads a capture artifact as a PNG File; the test seam for insertImage. */
+export type FetchCaptureArtifact = (
+  environmentId: EnvironmentId,
+  artifactRef: string,
+  name: string,
+) => Promise<File>;
+
+export function createComposerClientProvider(
+  deps: ClientProviderDeps,
+  fetchCaptureArtifact: FetchCaptureArtifact = fetchBrowserCaptureArtifact,
+): ClientLocalProvider {
   return {
     invoke(call) {
       const input = readInputObject(call.input);
@@ -864,6 +878,45 @@ export function createComposerClientProvider(deps: ClientProviderDeps): ClientLo
           };
           store.addTerminalContext(ref, context);
           return { inserted: true, target } as unknown as Json;
+        }
+        case "insertImage": {
+          authorizeCaller(deps, call.caller, call.context, ["t3.composer/write"]);
+          const threadId = readInputString(input, "threadId")!;
+          const ref = composerThread(call, threadId);
+          const artifactRef = readInputString(input, "artifactRef")!;
+          if (!CAPTURE_ARTIFACT_REF.test(artifactRef))
+            throw new ClientProviderOpError("provider-rejected", "Invalid artifactRef");
+          const name =
+            typeof input.name === "string" && input.name.length > 0 && input.name.length <= 128
+              ? input.name
+              : `browser-capture-${artifactRef.slice("pending-".length, "pending-".length + 8)}.png`;
+          return fetchCaptureArtifact(ref.environmentId, artifactRef, name).then(
+            (file) => {
+              // The draft owns its own upload of these bytes, like a pasted
+              // image; the capture's pending upload ages out of the store.
+              const image: ComposerImageAttachment = {
+                type: "image",
+                id: randomUUID(),
+                name,
+                mimeType: "image/png",
+                sizeBytes: file.size,
+                previewUrl: URL.createObjectURL(file),
+                file,
+              };
+              const inserted = useComposerDraftStore.getState().addImage(ref, image);
+              if (!inserted) URL.revokeObjectURL(image.previewUrl);
+              return {
+                inserted,
+                target: `${ref.environmentId}:${ref.threadId}`,
+              } as unknown as Json;
+            },
+            (error: unknown) => {
+              throw new ClientProviderOpError(
+                "provider-rejected",
+                error instanceof Error ? error.message : "The capture could not be read",
+              );
+            },
+          );
         }
         case "getDraftState": {
           authorizeCaller(deps, call.caller, call.context, ["t3.composer/write"]);
@@ -1182,7 +1235,7 @@ export const CLIENT_PROVIDER_DESCRIPTORS = [
   { id: "t3.client/notifications", version: "1.0.0" },
   { id: "t3.client/keybindings", version: "1.0.0" },
   { id: "t3.client/panels", version: "1.0.0" },
-  { id: "t3.client/composer", version: "1.1.0" },
+  { id: "t3.client/composer", version: "1.2.0" },
   { id: "t3.client/terminal-appearance", version: "1.0.0" },
   { id: "t3.client/preferences", version: "1.0.0" },
 ] as const;

@@ -2235,6 +2235,67 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("captures the viewport as capped PNG bytes without writing a file", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const png = Buffer.from("resized-png");
+        const resize = vi.fn(() => ({
+          getSize: () => ({ width: 1280, height: 800 }),
+          toPNG: () => png,
+        }));
+        const capturePage = vi.fn(async () => ({
+          getSize: () => ({ width: 2560, height: 1600 }),
+          resize,
+          toPNG: () => Buffer.from("full-size-png"),
+        }));
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com/page",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: vi.fn(),
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setIgnoreMenuShortcuts: vi.fn(),
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand: vi.fn(async () => undefined),
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+          capturePage,
+        } as never);
+
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+        writeFile.mockClear();
+
+        const image = yield* manager.capturePageImage("tab_1");
+
+        expect(resize).toHaveBeenCalledWith({ width: 1280 });
+        expect(image).toEqual({
+          mimeType: "image/png",
+          data: png,
+          width: 1280,
+          height: 800,
+          pageUrl: "https://example.com/page",
+          pageTitle: "Example",
+        });
+        expect(writeFile).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
   effectIt.effect("keeps every recorded guest unthrottled until its frame capture stops", () =>
     withManager((manager) =>
       Effect.gen(function* () {

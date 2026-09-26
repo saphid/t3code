@@ -23,6 +23,16 @@ The panel renders through public contracts only:
   Reload re-mints. A client not served from the environment's HTTP origin
   (the desktop `t3code://` renderer, a foreign web origin) gets a named
   state: the SDK does not tell plugins the environment origin.
+- `t3.browser/capture` (host capability on `ClientHost.browserCapture`;
+  `t3.browser/sessions` + `t3.browser/capture` grants) backs the header's
+  two capture buttons: screenshot the page, or pick an element with the
+  desktop's in-page picker and keep its crop. The host uploads the PNG to the
+  environment's attachment store and returns only an `artifactRef`, which
+  `t3.composer/context` `insertImage` (`t3.composer/write`) attaches to this
+  thread's draft; pixels never ride an API payload. Capturing needs the
+  session shown on a desktop client; elsewhere the buttons stay disabled.
+  Unlike the native pick, the picked elements' text context is not added to
+  the draft yet — the composer contract has no preview-annotation insert.
 - `t3.browser/local-servers` (`t3.browser/read-local-servers` grant) fills
   the empty state's "Local servers" section while it is visible. Loopback
   URLs open as-is — unlike the native panel they are not re-mapped to a

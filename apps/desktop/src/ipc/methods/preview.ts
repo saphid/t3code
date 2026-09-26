@@ -13,6 +13,7 @@ import {
   DesktopPreviewRecordingArtifactSchema,
   DesktopPreviewRecordingSaveInputSchema,
   DesktopPreviewRegisterWebviewInputSchema,
+  DesktopPreviewPageImageSchema,
   DesktopPreviewScreenshotArtifactSchema,
   DesktopPreviewSetAudioMutedInputSchema,
   DesktopPreviewSetColorSchemeInputSchema,
@@ -373,6 +374,16 @@ export const captureScreenshot = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const capturePageImage = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_CAPTURE_PAGE_IMAGE_CHANNEL,
+  payload: DesktopPreviewTabInputSchema,
+  result: DesktopPreviewPageImageSchema,
+  handler: Effect.fn("desktop.ipc.preview.capturePageImage")(function* ({ tabId }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    return yield* manager.capturePageImage(tabId);
+  }),
+});
+
 export const revealArtifact = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_REVEAL_ARTIFACT_CHANNEL,
   payload: DesktopPreviewArtifactInputSchema,
@@ -522,6 +533,7 @@ export const methods = [
   pickElement,
   cancelPickElement,
   captureScreenshot,
+  capturePageImage,
   revealArtifact,
   copyArtifactToClipboard,
   openPictureInPicture,

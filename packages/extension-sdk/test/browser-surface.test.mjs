@@ -10,6 +10,9 @@ import {
   BROWSER_SURFACE_VERSION,
   GENERIC_API_CATALOGUE,
   HOST_CAPABILITY_GRANTS,
+  BROWSER_CAPTURE,
+  BROWSER_CAPTURE_REQUIRED_GRANTS,
+  BROWSER_CAPTURE_VERSION,
 } from "../dist/catalogue.js";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -210,6 +213,21 @@ NodeTest.test("t3.browser/surface contract surface is named, versioned and grant
     false,
   );
   NodeAssert.equal(BROWSER_OPERATE, "t3.browser/operate");
+});
+
+NodeTest.test("t3.browser/capture is a host-local grant, never a brokered API", () => {
+  NodeAssert.equal(BROWSER_CAPTURE, "t3.browser/capture");
+  NodeAssert.equal(BROWSER_CAPTURE_VERSION, "1.0.0");
+  NodeAssert.deepEqual(BROWSER_CAPTURE_REQUIRED_GRANTS, [
+    "t3.browser/sessions",
+    "t3.browser/capture",
+  ]);
+  NodeAssert.ok(HOST_CAPABILITY_GRANTS.includes(BROWSER_CAPTURE));
+  // Capture results carry an artifactRef; no brokered method can return bytes.
+  NodeAssert.equal(
+    GENERIC_API_CATALOGUE.some((api) => api.id === BROWSER_CAPTURE),
+    false,
+  );
 });
 
 NodeTest.test("useBrowserSurfaceSlot reports host-unavailable without the capability", async () => {
