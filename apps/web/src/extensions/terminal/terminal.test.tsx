@@ -16,18 +16,29 @@ import {
 import ThreadTerminalDrawer from "../../components/ThreadTerminalDrawer";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../../terminalUiStateStore";
 
+interface FixtureSession {
+  readonly target: { readonly terminalId: string };
+  readonly state: {
+    readonly summary: {
+      readonly cwd: string;
+      readonly worktreePath: string | null;
+      readonly origin?: "extension";
+    };
+  };
+}
+const defaultSessions: FixtureSession[] = [
+  {
+    target: { terminalId: "term-1" },
+    state: { summary: { cwd: "/fixture/one", worktreePath: null } },
+  },
+  {
+    target: { terminalId: "term-2" },
+    state: { summary: { cwd: "/fixture/two", worktreePath: "/fixture/worktree" } },
+  },
+];
 const fixture = vi.hoisted(() => ({
   project: { workspaceRoot: "/fixture/project" } as { workspaceRoot: string } | null,
-  sessions: [
-    {
-      target: { terminalId: "term-1" },
-      state: { summary: { cwd: "/fixture/one", worktreePath: null } },
-    },
-    {
-      target: { terminalId: "term-2" },
-      state: { summary: { cwd: "/fixture/two", worktreePath: "/fixture/worktree" } },
-    },
-  ],
+  sessions: [] as FixtureSession[],
   panels: [{ kind: "terminal", terminalIds: ["term-2"] }],
   mounts: 0,
   unmounts: 0,
@@ -171,6 +182,7 @@ beforeEach(() => {
   fixture.mounts = 0;
   fixture.unmounts = 0;
   fixture.project = { workspaceRoot: "/fixture/project" };
+  fixture.sessions = defaultSessions;
   fixture.close.mockResolvedValue({ _tag: "Success" });
   useTerminalUiStateStore.setState({
     terminalUiStateByThreadKey: {},
@@ -279,6 +291,41 @@ describe.each([false, true])("terminal native composition (registered=%s)", (reg
     await mount(drawerBindings(), registered);
     expect(renderer!.root.findAllByType(ThreadTerminalDrawer)).toHaveLength(0);
     expect(fixture.open).not.toHaveBeenCalled();
+  });
+});
+
+describe("native drawer and extension-created sessions", () => {
+  const extensionSession = (terminalId: string): FixtureSession => ({
+    target: { terminalId },
+    state: { summary: { cwd: "/fixture/project", worktreePath: null, origin: "extension" } },
+  });
+  const nativeSession = (terminalId: string): FixtureSession => ({
+    target: { terminalId },
+    state: { summary: { cwd: "/fixture/project", worktreePath: null } },
+  });
+
+  it("reconciles native sessions into tabs but leaves extension sessions out", async () => {
+    fixture.sessions = [
+      ...defaultSessions,
+      nativeSession("term-3"),
+      extensionSession("term-4"),
+      extensionSession("term-5"),
+    ];
+    await mount(drawerBindings(), false);
+    expect(state().terminalIds).toEqual(["term-1", "term-3"]);
+    expect(viewport().terminalIds).toEqual(["term-1", "term-3"]);
+    // Extension ids still reserve allocation, so a new drawer tab never
+    // attaches to the extension's PTY.
+    await click("new");
+    expect(state().terminalIds).toEqual(["term-1", "term-3", "term-6"]);
+  });
+
+  it("drops a previously reconciled extension tab from persisted drawer state", async () => {
+    useTerminalUiStateStore.getState().newTerminal(ref, "term-4");
+    expect(state().terminalIds).toEqual(["term-1", "term-4"]);
+    fixture.sessions = [...defaultSessions, extensionSession("term-4")];
+    await mount(drawerBindings(), false);
+    expect(state().terminalIds).toEqual(["term-1"]);
   });
 });
 

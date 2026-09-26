@@ -4,7 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import type { ViewRecord } from "@t3tools/extension-sdk/contracts";
-import { GenericExtensionDock } from "./GenericExtensionDock";
+import {
+  extensionSurfaceMinHeight,
+  GenericExtensionDock,
+  MIN_EXTENSION_SURFACE_BODY_HEIGHT,
+} from "./GenericExtensionDock";
 import { NativeRightPanel, NativeTerminalDock, type NativePanelBindings } from "./nativePanels";
 import { registerWorkspaceExtension } from "./workspaceRegistry";
 import {
@@ -491,6 +495,128 @@ it("does not activate a cold successor when the visible viewer is closed while h
     expect(counter.restored).toEqual([0, 8]);
     expect(button(root!, "Increment dock counter").children).toEqual(["8"]);
   } finally {
+    await act(async () => {
+      root?.unmount();
+      counter.unregister();
+    });
+  }
+});
+
+// A minimal layout double: react-test-renderer has no DOM, so these elements
+// carry the computed styles and heights the dock's measurement reads.
+interface FakeElement {
+  readonly style: Record<string, string>;
+  height: number;
+  readonly children: FakeElement[];
+  readonly firstElementChild: FakeElement | null;
+  getBoundingClientRect(): { height: number };
+}
+function fakeElement(
+  style: Record<string, string>,
+  height: number,
+  children: FakeElement[] = [],
+): FakeElement {
+  return {
+    style: {
+      display: "block",
+      flexDirection: "row",
+      flexGrow: "0",
+      position: "static",
+      rowGap: "normal",
+      paddingTop: "0px",
+      paddingBottom: "0px",
+      borderTopWidth: "0px",
+      borderBottomWidth: "0px",
+      ...style,
+    },
+    height,
+    children,
+    firstElementChild: children[0] ?? null,
+    getBoundingClientRect() {
+      return { height: this.height };
+    },
+  };
+}
+const fakeStyle = (element: Element) =>
+  (element as unknown as FakeElement).style as unknown as CSSStyleDeclaration;
+/** The terminal view's shape: a style tag, header, per-session list, and a growing pane area. */
+function terminalShapedPanel(sessionListHeight: number) {
+  const list = fakeElement({ flexShrink: "0" }, sessionListHeight);
+  const surfaceRoot = fakeElement({ display: "flex", flexDirection: "column" }, 0, [
+    fakeElement({ display: "none" }, 0),
+    fakeElement({}, 33),
+    list,
+    fakeElement({ display: "flex", flexGrow: "1" }, 0),
+  ]);
+  const wrapper = fakeElement({ display: "contents" }, 0, [surfaceRoot]);
+  const panel = fakeElement({ display: "flex", flexDirection: "column" }, 222, [
+    fakeElement({}, 222, [wrapper]),
+  ]);
+  return { panel, list };
+}
+
+it("measures the content floor from a surface's fixed chrome plus a usable body", () => {
+  // Four sessions: header 33 + session list 190 already exceed the 222px body
+  // of the default 256px frame, which is what collapsed the pane area to zero.
+  const { panel } = terminalShapedPanel(190);
+  expect(extensionSurfaceMinHeight(panel as unknown as Element, fakeStyle)).toBe(
+    33 + 190 + MIN_EXTENSION_SURFACE_BODY_HEIGHT,
+  );
+  const block = fakeElement({}, 0, [fakeElement({}, 400), fakeElement({}, 40)]);
+  expect(extensionSurfaceMinHeight(block as unknown as Element, fakeStyle)).toBe(0);
+});
+
+it("auto-grows the default frame to keep a four-session surface body visible", async () => {
+  const counter = registerCounter();
+  useRightPanelStore.getState().openExtension(a, record);
+  const { panel, list } = terminalShapedPanel(190);
+  const frame = fakeElement({}, 256);
+  const resizeCallbacks: Array<() => void> = [];
+  vi.stubGlobal("window", { innerHeight: 1200 });
+  vi.stubGlobal("getComputedStyle", fakeStyle);
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(callback: () => void) {
+        resizeCallbacks.push(callback);
+      }
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.stubGlobal(
+    "MutationObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  let root: ReactTestRenderer | undefined;
+  try {
+    await act(async () => {
+      root = create(<GenericExtensionDock threadRef={a} />, {
+        createNodeMock: (element) =>
+          element.type === "aside"
+            ? frame
+            : (element.props as { role?: string }).role === "tabpanel"
+              ? panel
+              : null,
+      });
+    });
+    const height = () =>
+      root!.root.findByProps({ "aria-label": "Extension dock" }).props.style.height;
+    // Dock tab strip (256 - 222) + chrome 223 + body floor 120.
+    expect(height()).toBe(`${34 + 223 + MIN_EXTENSION_SURFACE_BODY_HEIGHT}px`);
+    expect(dock().height).toBeUndefined();
+
+    // Closing sessions shrinks the chrome; the frame returns to the user's height.
+    list.height = 40;
+    await act(async () => {
+      for (const callback of resizeCallbacks) callback();
+    });
+    expect(height()).toBe("256px");
+  } finally {
+    vi.unstubAllGlobals();
     await act(async () => {
       root?.unmount();
       counter.unregister();

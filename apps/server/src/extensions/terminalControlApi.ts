@@ -30,6 +30,9 @@ const decoders = {
   restart: Schema.decodeUnknownSync(TerminalRestartInput, decodeOptions),
   close: Schema.decodeUnknownSync(TerminalCloseInput, decodeOptions),
 } as const;
+// Sessions this API creates are marked so native terminal surfaces can leave
+// them to the extension view that owns them.
+const EXTENSION_LAUNCH = { origin: "extension" } as const;
 const failure = (detail: string) =>
   new ExtensionOperationError({ operation: "terminal.control", detail });
 
@@ -151,7 +154,7 @@ export function createTerminalControlApiProvider(
         const denied = checkLaunch(safe, scope);
         if (denied) return yield* denied;
         yield* checkExisting(scope, threadId, safe.terminalId);
-        yield* run(dependencies.terminal.open(safe));
+        yield* run(dependencies.terminal.open(safe, EXTENSION_LAUNCH));
         result = yield* readResult(scope, threadId, safe.terminalId);
         break;
       }
@@ -160,7 +163,7 @@ export function createTerminalControlApiProvider(
         const denied = checkLaunch(safe, scope);
         if (denied) return yield* denied;
         yield* checkExisting(scope, threadId, safe.terminalId);
-        yield* run(dependencies.terminal.openOrAttach(safe));
+        yield* run(dependencies.terminal.openOrAttach(safe, EXTENSION_LAUNCH));
         result = yield* readResult(scope, threadId, safe.terminalId);
         break;
       }
@@ -187,7 +190,7 @@ export function createTerminalControlApiProvider(
         const denied = checkLaunch(safe, scope);
         if (denied) return yield* denied;
         yield* checkExisting(scope, threadId, safe.terminalId);
-        yield* run(dependencies.terminal.restart(safe));
+        yield* run(dependencies.terminal.restart(safe, EXTENSION_LAUNCH));
         result = yield* readResult(scope, threadId, safe.terminalId);
         break;
       }

@@ -450,6 +450,14 @@ it.live("drives the full lifecycle against a real PTY", () =>
       rows: 24,
     });
     expect(opened).toMatchObject({ terminalId: "term-1" });
+    // Sessions the extension API creates carry the origin marker; native
+    // opens do not, and attaching from the extension never relabels them.
+    const inspect = (terminalId: string) => manager.inspect({ threadId: "thread", terminalId });
+    expect((yield* inspect("term-1"))?.origin).toBe("extension");
+    yield* manager.open({ threadId: "thread", terminalId: "term-2", cwd: baseDir });
+    yield* call("attach", { terminalId: "term-2" });
+    expect(yield* inspect("term-2")).not.toHaveProperty("origin");
+    yield* call("close", { terminalId: "term-2", deleteHistory: true });
 
     yield* call("write", { terminalId: "term-1", data: "echo p07b-marker\n" });
     const seen = yield* manager.readOutput({ threadId: "thread", terminalId: "term-1" }).pipe(
@@ -474,6 +482,7 @@ it.live("drives the full lifecycle against a real PTY", () =>
     });
     expect(restarted).toMatchObject({ terminalId: "term-1" });
     expect(["starting", "running"]).toContain((restarted as { status: string }).status);
+    expect((yield* inspect("term-1"))?.origin).toBe("extension");
 
     yield* call("close", { terminalId: "term-1", deleteHistory: true });
     const gone = yield* manager

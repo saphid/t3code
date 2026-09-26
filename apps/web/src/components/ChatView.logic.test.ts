@@ -71,6 +71,7 @@ import {
   peekRememberedThreadTimeline,
   rememberReadyThreadTimeline,
   resetHeldThreadTimeline,
+  resolveScriptTerminalTarget,
   resolveThreadSwitchTimeline,
   threadKeysShareEnvironment,
   timelineHasEphemeralPreviewUrls,
@@ -1724,6 +1725,83 @@ describe("session branch mismatch dismissal", () => {
     expect(isBranchMismatchDismissedForSession("t1:a:b")).toBe(true);
     expect(isBranchMismatchDismissedForSession("t1:a:c")).toBe(false);
     expect(isBranchMismatchDismissedForSession(null)).toBe(false);
+  });
+});
+
+describe("resolveScriptTerminalTarget", () => {
+  const base = {
+    activeTerminalId: "",
+    knownTerminalIds: [] as string[],
+    extensionTerminalIds: [] as string[],
+    runningTerminalIds: [] as string[],
+    allocatableTerminalIds: [] as string[],
+    preferNewTerminal: false,
+  };
+
+  it("reuses the idle native base terminal", () => {
+    expect(
+      resolveScriptTerminalTarget({
+        ...base,
+        activeTerminalId: "term-2",
+        knownTerminalIds: ["term-2"],
+        allocatableTerminalIds: ["term-2"],
+      }),
+    ).toEqual({ terminalId: "term-2", isNew: false });
+  });
+
+  it("allocates a fresh terminal when only an idle extension term-1 exists", () => {
+    expect(
+      resolveScriptTerminalTarget({
+        ...base,
+        extensionTerminalIds: ["term-1"],
+        allocatableTerminalIds: ["term-1"],
+      }),
+    ).toEqual({ terminalId: "term-2", isNew: true });
+  });
+
+  it("skips a stale active extension terminal and persisted extension ids", () => {
+    expect(
+      resolveScriptTerminalTarget({
+        ...base,
+        activeTerminalId: "term-1",
+        knownTerminalIds: ["term-1", "term-3"],
+        extensionTerminalIds: ["term-1", "term-3"],
+        allocatableTerminalIds: ["term-1", "term-3"],
+      }),
+    ).toEqual({ terminalId: "term-2", isNew: true });
+  });
+
+  it("falls back past a stale active extension terminal to a native one", () => {
+    expect(
+      resolveScriptTerminalTarget({
+        ...base,
+        activeTerminalId: "term-1",
+        knownTerminalIds: ["term-2"],
+        extensionTerminalIds: ["term-1"],
+        allocatableTerminalIds: ["term-1", "term-2"],
+      }),
+    ).toEqual({ terminalId: "term-2", isNew: false });
+  });
+
+  it("allocates when the base terminal is busy or a new one is preferred", () => {
+    const input = {
+      ...base,
+      activeTerminalId: "term-1",
+      knownTerminalIds: ["term-1"],
+      allocatableTerminalIds: ["term-1", "term-2"],
+    };
+    expect(resolveScriptTerminalTarget({ ...input, runningTerminalIds: ["term-1"] })).toEqual({
+      terminalId: "term-3",
+      isNew: true,
+    });
+    expect(resolveScriptTerminalTarget({ ...input, preferNewTerminal: true })).toEqual({
+      terminalId: "term-3",
+      isNew: true,
+    });
+  });
+
+  it("keeps targeting term-1 before any terminal exists", () => {
+    expect(resolveScriptTerminalTarget(base)).toEqual({ terminalId: "term-1", isNew: false });
   });
 });
 
