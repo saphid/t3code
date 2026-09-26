@@ -16,6 +16,7 @@ import {
   describePresentation,
   describeRevertReceipt,
   describeSource,
+  commentSectionFor,
   diffCapabilityState,
   diffTreeRows,
   displayPath,
@@ -28,6 +29,7 @@ import {
   filterBaseRefChoices,
   foldAgentsEvent,
   foldDiffStatusEvent,
+  expansionMatchesPatch,
   isEnvelopeRejection,
   localStatusFingerprint,
   orchestrationCapabilityState,
@@ -162,9 +164,17 @@ const caps = (overrides = {}) => ({
   ...overrides,
 });
 
-// Rows carry `ordinal` (their position) and `hunkStart` (a boundary flag for
-// split pairing); assertions compare the payload.
-const bare = ({ ordinal: _ordinal, hunkStart: _hunkStart, ...rest }) => rest;
+// Rows carry `ordinal` (their position), `hunkStart` (a boundary flag for
+// split pairing), and the split sides' anchor ordinals; assertions compare
+// the payload.
+const bare = ({
+  ordinal: _ordinal,
+  hunkStart: _hunkStart,
+  unifiedOrdinal: _unifiedOrdinal,
+  oldOrdinal: _oldOrdinal,
+  newOrdinal: _newOrdinal,
+  ...rest
+}) => rest;
 
 const filesFrom = (diff = PATCH) => {
   const renderable = renderableFromPatch(diff);
@@ -492,6 +502,97 @@ NodeTest.test("splitRows: gap separators render full-width, expanded context pai
     old: { kind: "deletion", text: "old", line: 2 },
     new: { kind: "addition", text: "new", line: 2 },
   });
+});
+
+NodeTest.test("commentSectionFor: native section ids the viewer filters on", () => {
+  // AnnotatableCodeView matches sectionId by strict equality; the native
+  // DiffPanel's vocabulary is `turn:<id>` / `unstaged` / `branch`.
+  NodeAssert.deepEqual(
+    commentSectionFor("turns", { kind: "turn", turnId: "t1", turnCount: 3 }, null),
+    {
+      id: "turn:t1",
+      title: "Turn 3",
+    },
+  );
+  NodeAssert.deepEqual(commentSectionFor("turns", { kind: "thread" }, null), {
+    id: "thread",
+    title: "All turns",
+  });
+  NodeAssert.deepEqual(commentSectionFor("turns", null, { kind: "working-tree" }), {
+    id: "thread",
+    title: "All turns",
+  });
+  NodeAssert.deepEqual(commentSectionFor("workspace", null, { kind: "working-tree" }), {
+    id: "unstaged",
+    title: "Working tree",
+  });
+  NodeAssert.deepEqual(commentSectionFor("workspace", null, { kind: "branch-range" }), {
+    id: "branch",
+    title: "Branch changes",
+  });
+  NodeAssert.deepEqual(commentSectionFor("workspace", null, null), {
+    id: "branch",
+    title: "Branch changes",
+  });
+});
+
+NodeTest.test("expansionMatchesPatch: hunk lines must match, gap lines may differ", () => {
+  const app = filesFrom().find((row) => row.path === "src/app.ts");
+  NodeAssert.equal(expansionMatchesPatch(app, CONTENTS), true);
+  // A gap line is display-only — it never anchors or quotes, so contents
+  // that moved only there stay usable.
+  const gapMoved = {
+    oldContents: CONTENTS.oldContents,
+    newContents: CONTENTS.newContents.replace("n20\n", "MOVED\n"),
+  };
+  NodeAssert.equal(expansionMatchesPatch(app, gapMoved), true);
+  // A hunk line that disagrees with the patch snapshot is refused: the view
+  // would display these contents while comment quotes come from the patch.
+  const hunkMoved = {
+    oldContents: CONTENTS.oldContents.replace("old\n", "DRIFTED\n"),
+    newContents: CONTENTS.newContents.replace("new\n", "NEWER\n"),
+  };
+  NodeAssert.equal(expansionMatchesPatch(app, hunkMoved), false);
+  // CRLF contents are the same lines: the split on "\n" leaves a trailing
+  // "\r" per line, which must compare (and render) as equal, not drifted.
+  const crlf = {
+    oldContents: `${OLD_LINES.join("\r\n")}\r\n`,
+    newContents: `${NEW_LINES.join("\r\n")}\r\n`,
+  };
+  NodeAssert.equal(expansionMatchesPatch(app, crlf), true);
+});
+
+NodeTest.test("splitRows: each side names the unified row it anchors", () => {
+  const app = filesFrom().find((row) => row.path === "src/app.ts");
+  const unified = fileRows(app);
+  const split = splitRows(unified);
+  // The unified ordinals are the comment selection's index space: a context
+  // row maps to itself on both sides; a paired row keeps one ordinal per
+  // side so the addition is selectable, not just the deletion it replaced;
+  // a padded row keeps only its real side; a gap keeps its separator row.
+  NodeAssert.deepEqual(
+    split
+      .slice(0, 4)
+      .map((row) =>
+        row.kind === "gap" ? null : { old: row.oldOrdinal ?? null, new: row.newOrdinal ?? null },
+      ),
+    [
+      { old: 0, new: 0 },
+      { old: 1, new: 2 },
+      { old: null, new: 3 },
+      { old: 4, new: 4 },
+    ],
+  );
+  for (const row of split) {
+    if (row.kind === "gap") {
+      NodeAssert.equal(unified[row.unifiedOrdinal]?.kind, "gap");
+      continue;
+    }
+    for (const ordinal of [row.oldOrdinal, row.newOrdinal]) {
+      if (ordinal === undefined) continue;
+      NodeAssert.ok(unified[ordinal] !== undefined && unified[ordinal].kind !== "gap");
+    }
+  }
 });
 
 NodeTest.test("splitRows: hand-built rows pair per run, not per buffer", () => {

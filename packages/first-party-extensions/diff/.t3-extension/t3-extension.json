@@ -2,7 +2,7 @@
   "format": 2,
   "manifest": {
     "id": "t3.diff",
-    "version": "0.4.0",
+    "version": "0.5.0",
     "apiVersion": 1,
     "surfaces": [
       {
@@ -52,6 +52,10 @@
     {
       "id": "t3.orchestration/control",
       "versionRange": "^1.0.0"
+    },
+    {
+      "id": "t3.messages/enrichment",
+      "versionRange": "^1.1.0"
     },
     {
       "id": "t3.ui/theme",

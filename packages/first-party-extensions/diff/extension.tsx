@@ -1,5 +1,6 @@
 import {
   filePresentationApi,
+  messagesEnrichmentApi,
   orchestrationControlApi,
   orchestrationStatusApi,
   uiKeybindingsApi,
@@ -34,6 +35,17 @@ import {
   watchThemeTokens,
   type ThemeTokens,
 } from "./uiContracts.js";
+import { COMMENT_QUOTE_MAX_CHARS } from "./diffComments.js";
+import {
+  useCommentBlockReason,
+  useCommentTarget,
+  useDiffCommentDraft,
+  useLineSelection,
+  usePostedComments,
+  type CommentBuffer,
+  type DiffCommentDraft,
+  type PostedComment,
+} from "./commentSession.js";
 
 import {
   areAllDiffFilesCollapsed,
@@ -58,6 +70,8 @@ import {
   filterBaseRefChoices,
   foldAgentsEvent,
   foldDiffStatusEvent,
+  commentSectionFor,
+  expansionMatchesPatch,
   orchestrationCapabilityState,
   presentationPath,
   previewDeliveryKey,
@@ -488,14 +502,54 @@ function useThemeTokens(host: ClientHost, session: ViewSession, enabled: boolean
   return tokens;
 }
 
+/** The per-row slice of comment state: the row's selection membership + the shared handler. */
+interface RowCommentUi {
+  readonly selected: boolean;
+  /** True while the transport probe blocks the action (its reason rides the toolbar). */
+  readonly disabled: boolean;
+  readonly reason: string | null;
+  readonly onSelect: (extend: boolean) => void;
+}
+
+/** The quiet per-row comment affordance; static styles so nothing repaints on hover. */
+function commentAffordance(ui: PanelTheme, comment: RowCommentUi, label: string) {
+  return (
+    <button
+      type="button"
+      // The blocking reason rides the accessible name — the host Tooltip is
+      // not bundleable into an extension, and the toolbar names it visually.
+      aria-label={comment.reason !== null ? `${label} — unavailable: ${comment.reason}` : label}
+      disabled={comment.disabled}
+      onClick={(event) => comment.onSelect(event.shiftKey)}
+      style={{
+        flexShrink: 0,
+        marginLeft: "auto",
+        padding: "0 4px",
+        border: "none",
+        background: "transparent",
+        color: ui.muted,
+        cursor: comment.disabled ? "default" : "pointer",
+        font: "inherit",
+        fontSize: 11,
+        lineHeight: "18px",
+        opacity: 0.7,
+      }}
+    >
+      +
+    </button>
+  );
+}
+
 function DiffRow({
   row,
   wrap,
   ui,
+  comment,
 }: {
   row: ReturnType<typeof fileRows>[number];
   wrap: boolean;
   ui: PanelTheme;
+  comment: RowCommentUi | undefined;
 }) {
   if (row.kind === "gap") {
     return (
@@ -514,6 +568,7 @@ function DiffRow({
   }
   const addition = row.kind === "addition";
   const deletion = row.kind === "deletion";
+  const line = addition || row.kind === "context" ? row.newLine : row.oldLine;
   return (
     <div
       style={{
@@ -526,6 +581,9 @@ function DiffRow({
           : deletion
             ? `color-mix(in srgb, ${ui.destructive} 12%, transparent)`
             : "transparent",
+        ...(comment?.selected
+          ? { outline: `1px solid ${ui.accentOutline}`, outlineOffset: -1 }
+          : {}),
       }}
     >
       <span style={ui.gutter}>{deletion || row.kind === "context" ? (row.oldLine ?? "") : ""}</span>
@@ -534,6 +592,8 @@ function DiffRow({
         {addition ? "+" : deletion ? "−" : " "}
       </span>
       <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{row.text}</span>
+      {comment !== undefined &&
+        commentAffordance(ui, comment, `Select line ${line ?? ""} for a comment`)}
     </div>
   );
 }
@@ -543,11 +603,13 @@ function SplitCell({
   wrap,
   separator,
   ui,
+  comment,
 }: {
   cell: SplitSide;
   wrap: boolean;
   separator: boolean;
   ui: PanelTheme;
+  comment: RowCommentUi | undefined;
 }) {
   const addition = cell.kind === "addition";
   const deletion = cell.kind === "deletion";
@@ -574,6 +636,9 @@ function SplitCell({
       <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
         {cell.kind === "empty" ? "" : cell.text}
       </span>
+      {cell.kind !== "empty" &&
+        comment !== undefined &&
+        commentAffordance(ui, comment, `Select line ${cell.line} for a comment`)}
     </div>
   );
 }
@@ -582,8 +647,22 @@ function SplitCell({
  * A split row is one grid row, so paired old/new cells can never drift out of
  * vertical alignment, and the file keeps its single scroll container — the
  * panes cannot horizontally desync because neither pane scrolls on its own.
+ * Each pane carries its own comment affordance: a paired row's addition is
+ * selectable, not just the deletion it replaced.
  */
-function SplitRow({ row, wrap, ui }: { row: DiffSplitRow; wrap: boolean; ui: PanelTheme }) {
+function SplitRow({
+  row,
+  wrap,
+  ui,
+  comment,
+}: {
+  row: DiffSplitRow;
+  wrap: boolean;
+  ui: PanelTheme;
+  comment:
+    | { readonly old: RowCommentUi | undefined; readonly new: RowCommentUi | undefined }
+    | undefined;
+}) {
   if (row.kind === "gap") {
     return (
       <div
@@ -605,12 +684,43 @@ function SplitRow({ row, wrap, ui }: { row: DiffSplitRow; wrap: boolean; ui: Pan
         ...ui.rowBase,
         display: "grid",
         gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+        ...(comment !== undefined &&
+        (comment.old?.selected === true || comment.new?.selected === true)
+          ? { outline: `1px solid ${ui.accentOutline}`, outlineOffset: -1 }
+          : {}),
       }}
     >
-      <SplitCell cell={row.old} wrap={wrap} separator ui={ui} />
-      <SplitCell cell={row.new} wrap={wrap} separator={false} ui={ui} />
+      <SplitCell cell={row.old} wrap={wrap} separator ui={ui} comment={comment?.old} />
+      <SplitCell cell={row.new} wrap={wrap} separator={false} ui={ui} comment={comment?.new} />
     </div>
   );
+}
+
+/**
+ * The per-file slice of comment state a file section renders. The parent
+ * owns the state (pins, submit, posted list); the section derives the
+ * selection's built target from its own rows.
+ */
+interface FileCommentUi {
+  /** Why the action cannot run (probe, transport, thread scope); null = available. */
+  readonly reason: string | null;
+  /** The live selection's ordinals into this file's rows; null when it is another file's. */
+  readonly anchor: number | null;
+  readonly extent: number | null;
+  readonly onRowSelect: (ordinal: number, extend: boolean) => void;
+  readonly onClearSelection: () => void;
+  readonly draft: DiffCommentDraft | null;
+  readonly draftStale: boolean;
+  readonly onOpenDraft: (draft: DiffCommentDraft) => void;
+  readonly onCloseDraft: () => void;
+  readonly body: string;
+  readonly onBodyChange: (value: string) => void;
+  readonly submit: { readonly busy: boolean; readonly error: string | null };
+  readonly onSubmit: () => void;
+  readonly posted: readonly PostedComment[];
+  readonly removing: string | null;
+  readonly removeError: string | null;
+  readonly onRemove: (annotationId: string) => void;
 }
 
 function FileSection({
@@ -622,6 +732,7 @@ function FileSection({
   expansion,
   expandable,
   action,
+  comment,
   onToggleCollapsed,
   onExpand,
   onOpen,
@@ -637,6 +748,7 @@ function FileSection({
   expansion: Expansion | undefined;
   expandable: boolean;
   action: { key: string; status: string; detail: string } | null;
+  comment: FileCommentUi | null;
   onToggleCollapsed: (key: string) => void;
   onExpand: (row: DiffFileRow) => void;
   onOpen: (row: DiffFileRow) => void;
@@ -652,6 +764,15 @@ function FileSection({
   );
   // Pairing is pure and row-count-bounded; memoized so unrelated renders don't re-pair.
   const paired = useMemo(() => (layout === "split" ? splitRows(rows) : null), [layout, rows]);
+  // Row 14/D9: the selection's comment target — memoized so theme ticks and
+  // wrap flips never re-enumerate the file's review rows.
+  const target = useCommentTarget(row.file, rows, comment?.anchor ?? null, comment?.extent ?? null);
+  const inSelection = (ordinal: number): boolean =>
+    comment !== null &&
+    comment.anchor !== null &&
+    comment.extent !== null &&
+    ordinal >= Math.min(comment.anchor, comment.extent) &&
+    ordinal <= Math.max(comment.anchor, comment.extent);
   return (
     <section
       ref={registerSection}
@@ -725,6 +846,111 @@ function FileSection({
           {action.detail}
         </p>
       )}
+      {comment !== null && comment.draft !== null && (
+        <div
+          role="group"
+          aria-label={`Comment on ${comment.draft.target.rangeLabel}`}
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+            padding: "6px 10px",
+            borderBottom: `1px solid ${ui.border}`,
+            flexShrink: 0,
+          }}
+        >
+          <span style={{ fontSize: 11, color: muted }}>
+            Comment on {comment.draft.target.rangeLabel}
+            {comment.draft.target.truncated
+              ? ` — quote truncated to ${COMMENT_QUOTE_MAX_CHARS} characters`
+              : ""}
+          </span>
+          {comment.draftStale && (
+            <span role="status" style={{ fontSize: 11, color: muted }}>
+              The diff changed since this draft opened — select the lines again to comment on them.
+            </span>
+          )}
+          <textarea
+            aria-label="Comment text"
+            value={comment.body}
+            // The in-flight submit captured this body; edits during the
+            // await would be silently wiped by its success path, so the
+            // field locks while busy (Cancel and Submit already do).
+            readOnly={comment.submit.busy}
+            onChange={(event) => comment.onBodyChange(event.target.value)}
+            onKeyDown={(event) => {
+              // Escape never cancels a pending submit — the in-flight
+              // response belongs to this form, not whatever would open next.
+              if (event.key === "Escape" && !comment.submit.busy) comment.onCloseDraft();
+            }}
+            rows={3}
+            style={{
+              resize: "vertical",
+              border: `1px solid ${ui.border}`,
+              padding: 6,
+              color: "inherit",
+              background: "transparent",
+              fontFamily: "inherit",
+              fontSize: 12,
+            }}
+          />
+          {comment.submit.error !== null && (
+            <span role="alert" style={{ fontSize: 11, color: ui.destructive }}>
+              {comment.submit.error}
+            </span>
+          )}
+          <div style={{ display: "flex", gap: 6 }}>
+            <button
+              type="button"
+              style={ui.iconButton}
+              disabled={comment.draftStale || comment.body.trim() === "" || comment.submit.busy}
+              onClick={comment.onSubmit}
+            >
+              {comment.submit.busy ? "Submitting…" : "Submit comment"}
+            </button>
+            <button
+              type="button"
+              style={ui.iconButton}
+              disabled={comment.submit.busy}
+              onClick={comment.onCloseDraft}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+      {!collapsed && comment !== null && comment.draft === null && comment.anchor !== null && (
+        <div
+          role="toolbar"
+          aria-label="Diff comment"
+          style={{
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            padding: "4px 10px",
+            borderBottom: `1px solid ${ui.border}`,
+            flexShrink: 0,
+            fontSize: 11,
+          }}
+        >
+          {comment.reason === null && target !== null ? (
+            <button
+              type="button"
+              style={ui.iconButton}
+              onClick={() => comment.onOpenDraft({ fileKey: row.key, filePath: row.path, target })}
+            >
+              Comment on {target.rangeLabel}
+            </button>
+          ) : (
+            <span style={{ color: muted }}>
+              Commenting unavailable — {comment.reason ?? "this selection has no anchorable line."}
+            </span>
+          )}
+          <button type="button" style={ui.iconButton} onClick={comment.onClearSelection}>
+            Clear selection
+          </button>
+        </div>
+      )}
       {!collapsed && row.binary && (
         <p role="note" style={{ padding: "4px 10px", color: muted, fontSize: 12, margin: 0 }}>
           {row.path} is a binary file — no text diff is available.
@@ -737,8 +963,50 @@ function FileSection({
       )}
       {!collapsed &&
         (layout === "split"
-          ? paired?.map((line) => <SplitRow key={line.ordinal} row={line} wrap={wrap} ui={ui} />)
-          : rows.map((line) => <DiffRow key={line.ordinal} row={line} wrap={wrap} ui={ui} />))}
+          ? paired?.map((line) => {
+              // Each pane anchors its own side's unified row: the addition is
+              // selectable, not just the deletion it replaced.
+              const cellUi = (ordinal: number | undefined): RowCommentUi | undefined =>
+                ordinal === undefined || comment === null
+                  ? undefined
+                  : {
+                      selected: inSelection(ordinal),
+                      disabled: comment.reason !== null,
+                      reason: comment.reason,
+                      onSelect: (extend) => comment.onRowSelect(ordinal, extend),
+                    };
+              return (
+                <SplitRow
+                  key={line.ordinal}
+                  row={line}
+                  wrap={wrap}
+                  ui={ui}
+                  comment={
+                    line.kind === "gap"
+                      ? undefined
+                      : { old: cellUi(line.oldOrdinal), new: cellUi(line.newOrdinal) }
+                  }
+                />
+              );
+            })
+          : rows.map((line) => (
+              <DiffRow
+                key={line.ordinal}
+                row={line}
+                wrap={wrap}
+                ui={ui}
+                comment={
+                  comment === null || line.kind === "gap"
+                    ? undefined
+                    : {
+                        selected: inSelection(line.ordinal),
+                        disabled: comment.reason !== null,
+                        reason: comment.reason,
+                        onSelect: (extend) => comment.onRowSelect(line.ordinal, extend),
+                      }
+                }
+              />
+            )))}
       {!collapsed && expansion?.status === "loading" && (
         <p style={{ padding: "4px 10px", color: muted, fontSize: 11, margin: 0 }}>
           Loading file contents…
@@ -753,6 +1021,48 @@ function FileSection({
         <p style={{ padding: "4px 10px", color: muted, fontSize: 11, margin: 0 }}>
           Full file context loaded via t3.vcs/diff.
         </p>
+      )}
+      {comment !== null && comment.posted.length > 0 && (
+        <section
+          aria-label="Review comments added here"
+          style={{
+            padding: "6px 10px",
+            borderTop: `1px solid ${ui.border}`,
+            flexShrink: 0,
+            fontSize: 11,
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+          }}
+        >
+          {comment.posted.map((entry) => (
+            <span
+              key={entry.annotationId}
+              style={{ display: "flex", gap: 6, alignItems: "baseline" }}
+            >
+              <span style={{ flex: 1 }}>
+                {entry.rangeLabel}
+                {entry.text !== null ? ` — ${entry.text}` : ""}
+              </span>
+              <button
+                type="button"
+                style={ui.iconButton}
+                disabled={comment.removing === entry.annotationId}
+                onClick={() => comment.onRemove(entry.annotationId)}
+              >
+                {comment.removing === entry.annotationId ? "Removing…" : "Remove"}
+              </button>
+            </span>
+          ))}
+          {comment.removeError !== null && (
+            <span role="alert" style={{ color: ui.destructive }}>
+              {comment.removeError}
+            </span>
+          )}
+          <span style={{ color: muted }}>
+            Comments sit in the composer draft until sent — removal also works from its chip.
+          </span>
+        </section>
       )}
     </section>
   );
@@ -896,6 +1206,183 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
   const allCollapsed = areAllDiffFilesCollapsed(fileKeys, collapsedFiles);
   const baseRefChoices = useMemo(() => buildBaseRefChoices(refs?.refs ?? []), [refs]);
 
+  // --- Row 14/D9: line comments on diff rows. A comment's buffer is the
+  // delivered source plus the file's loaded expansion — selection ordinals
+  // and draft payloads are pinned to that buffer at capture, so a refresh
+  // or an expansion load that reshapes the rows retires the pin instead of
+  // re-arming it over different lines. Submit rides the grant-gated
+  // `t3.messages/enrichment.attachAnnotation` seam, the same transport the
+  // files panel uses for its line comments.
+  const commentThreadId = session.context.resource.threadId;
+  const { reason: commentReason, capabilities: commentCapabilities } = useCommentBlockReason(
+    host,
+    session,
+    commentThreadId,
+  );
+  const [commentFileKey, setCommentFileKey] = useState<string | null>(null);
+  const commentRow =
+    commentFileKey === null ? null : (files.find((entry) => entry.key === commentFileKey) ?? null);
+  const commentBuffer = useMemo<CommentBuffer | null>(() => {
+    if (source === null || commentRow === null || commentRow.binary || commentRow.textless)
+      return null;
+    const expansion = expansions.get(`${source.diffHash}:${commentRow.key}`);
+    return {
+      diffHash: source.diffHash,
+      fileKey: commentRow.key,
+      contents:
+        expansion?.status === "loaded"
+          ? {
+              oldContents: expansion.contents.oldContents,
+              newContents: expansion.contents.newContents,
+            }
+          : null,
+    };
+  }, [source, commentRow, expansions]);
+  const lineSelection = useLineSelection(commentBuffer);
+  const {
+    draft: commentDraft,
+    draftStale: commentDraftStale,
+    openDraft,
+    closeDraft,
+  } = useDiffCommentDraft(commentBuffer);
+  const commentListable =
+    commentCapabilities !== null &&
+    commentCapabilities.transport === "client" &&
+    commentCapabilities.operations.listAnnotations === true &&
+    commentThreadId !== undefined;
+  const posted = usePostedComments(host, session, commentThreadId, commentListable);
+  const [commentBody, setCommentBody] = useState("");
+  const [commentSubmit, setCommentSubmit] = useState<{ busy: boolean; error: string | null }>({
+    busy: false,
+    error: null,
+  });
+  // The open draft the submit machinery last saw. A submit response must act
+  // only on the form it was issued for — a newer draft (or a closed form) must
+  // survive a late response.
+  const submittedDraftRef = useRef<DiffCommentDraft | null>(null);
+
+  // Row 30/D9: the annotation's section identity must match the native
+  // viewer's filter exactly — commentSectionFor owns that mapping.
+  const commentSection = useMemo(
+    () => commentSectionFor(mode, turnSelection, source),
+    [mode, turnSelection, source],
+  );
+
+  const selectCommentLines = (row: DiffFileRow, ordinal: number, extend: boolean) => {
+    if (source === null || row.binary || row.textless) return;
+    const expansion = expansions.get(`${source.diffHash}:${row.key}`);
+    // Same construction as `commentBuffer`, built for the file the click
+    // landed in — the pin must describe these rows, not the panel's last one.
+    const buffer: CommentBuffer = {
+      diffHash: source.diffHash,
+      fileKey: row.key,
+      contents:
+        expansion?.status === "loaded"
+          ? {
+              oldContents: expansion.contents.oldContents,
+              newContents: expansion.contents.newContents,
+            }
+          : null,
+    };
+    if (commentFileKey !== row.key) setCommentFileKey(row.key);
+    // Shift-extend only within the file the held run lives in; across files
+    // (or after a drift retired the run) the click starts a new run.
+    lineSelection.select(buffer, ordinal, extend && commentFileKey === row.key);
+  };
+  const clearCommentSelection = () => lineSelection.clear();
+  const openCommentDraft = (draft: DiffCommentDraft) => {
+    if (commentBuffer === null) return;
+    openDraft(commentBuffer, draft);
+    submittedDraftRef.current = draft;
+    setCommentBody("");
+    setCommentSubmit({ busy: false, error: null });
+  };
+  const closeCommentDraft = () => {
+    closeDraft();
+    submittedDraftRef.current = null;
+    setCommentBody("");
+    setCommentSubmit({ busy: false, error: null });
+  };
+  const postedFor = (row: DiffFileRow): readonly PostedComment[] =>
+    posted.entries.filter((entry) =>
+      entry.fileKey !== null ? entry.fileKey === row.key : entry.filePath === row.path,
+    );
+  const submitCommentDraft = () => {
+    const draft = commentDraft;
+    const body = commentBody.trim();
+    // Stale draft = the pinned buffer drifted under the form; the anchor and
+    // quote it captured are dead and must never reach attachAnnotation.
+    if (draft === null || commentDraftStale || body === "" || commentSubmit.busy) return;
+    setCommentSubmit({ busy: true, error: null });
+    void bindApi(messagesEnrichmentApi, host, session.context)
+      .invoke(
+        "attachAnnotation",
+        {
+          ...(commentThreadId !== undefined ? { threadId: commentThreadId } : {}),
+          annotation: {
+            kind: "diff",
+            filePath: draft.filePath,
+            sectionId: commentSection.id,
+            sectionTitle: commentSection.title,
+            rangeLabel: draft.target.rangeLabel,
+            diff: draft.target.quote,
+            selection: draft.target.selection,
+            startIndex: draft.target.startIndex,
+            endIndex: draft.target.endIndex,
+            body,
+          },
+        },
+        session.signal,
+      )
+      .then(
+        (result) => {
+          // The annotation landed regardless of what the form did meanwhile;
+          // only the form itself is draft-scoped.
+          posted.post({
+            annotationId: result.annotationId,
+            filePath: draft.filePath,
+            fileKey: draft.fileKey,
+            rangeLabel: draft.target.rangeLabel,
+            text: body,
+            sectionTitle: commentSection.title,
+          });
+          if (submittedDraftRef.current === draft) closeCommentDraft();
+        },
+        (error) => {
+          // A newer form must not inherit this submit's outcome.
+          if (submittedDraftRef.current !== draft) return;
+          setCommentSubmit({
+            busy: false,
+            error: error instanceof Error ? error.message : "Comment could not be attached",
+          });
+        },
+      );
+  };
+  // commentUi is the per-file slice: null for files with no commentable rows,
+  // and a live selection/draft only in the file the pins belong to.
+  const commentUiFor = (row: DiffFileRow): FileCommentUi | null =>
+    row.binary || row.textless
+      ? null
+      : {
+          reason: commentReason,
+          anchor: commentFileKey === row.key ? (lineSelection.selection?.anchor ?? null) : null,
+          extent: commentFileKey === row.key ? (lineSelection.selection?.extent ?? null) : null,
+          onRowSelect: (ordinal, extend) => selectCommentLines(row, ordinal, extend),
+          onClearSelection: clearCommentSelection,
+          draft: commentDraft?.fileKey === row.key ? commentDraft : null,
+          draftStale: commentDraft?.fileKey === row.key ? commentDraftStale : false,
+          onOpenDraft: openCommentDraft,
+          onCloseDraft: closeCommentDraft,
+          body: commentBody,
+          onBodyChange: setCommentBody,
+          submit: commentSubmit,
+          onSubmit: submitCommentDraft,
+          posted: postedFor(row),
+          removing: posted.removing,
+          removeError: posted.removeError,
+          onRemove: posted.remove,
+        };
+
   // A new source payload invalidates in-flight expansion loads; stored
   // expansions are keyed `sourceHash:fileKey` so stale entries never paint.
   const sourceKey = source?.diffHash ?? null;
@@ -966,6 +1453,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
     setMode(nextMode);
     setFileKey(null);
     setRevert(null);
+    setCommentFileKey(null);
     persistSelection({
       mode: nextMode,
       sourceId: source?.id ?? null,
@@ -979,6 +1467,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
     setTurnWanted(selection);
     setFileKey(null);
     setRevert(null);
+    setCommentFileKey(null);
     persist({
       mode: "turns",
       sourceId: null,
@@ -992,6 +1481,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
   const chooseSource = (id: string) => {
     setSourceId(id);
     setFileKey(null);
+    setCommentFileKey(null);
     persistSelection({ mode, sourceId: id, fileKey: null, baseRef, ignoreWhitespace, layout });
   };
   const revealFile = (row: DiffFileRow) => {
@@ -1106,7 +1596,12 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
     // serves workspace/branch sources, so turn mode never expands.
     if (source === null || mode === "turns") return;
     const key = `${source.diffHash}:${row.key}`;
-    if (expansions.has(key)) return;
+    // A failed expansion retries: contents that moved under the diff leave
+    // an error entry the user must be able to clear by trying again — and
+    // a reverted mutation restores the same diffHash, so the entry cannot
+    // be keyed away by refreshing. Loading/loaded entries stay sticky.
+    const existing = expansions.get(key);
+    if (existing !== undefined && existing.status !== "error") return;
     const controller = new AbortController();
     expandControllers.current.set(key, controller);
     const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -1132,7 +1627,13 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
         new Map(prev).set(
           key,
           outcome.kind === "ready"
-            ? { status: "loaded", contents: outcome.result }
+            ? expansionMatchesPatch(row, outcome.result)
+              ? { status: "loaded", contents: outcome.result }
+              : {
+                  status: "error",
+                  detail:
+                    "Loaded contents do not match this diff — the file changed while loading. Refresh the diff to try again.",
+                }
             : { status: "error", detail: outcome.detail },
         ),
       );
@@ -1539,6 +2040,14 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
           )}
           {renderable?.kind === "files" && (
             <>
+              {posted.listError !== null && (
+                <p
+                  role="alert"
+                  style={{ padding: "2px 10px", color: muted, fontSize: 11, margin: 0 }}
+                >
+                  Earlier comments could not be listed — {posted.listError}
+                </p>
+              )}
               <ul
                 aria-label="Changed files"
                 style={{
@@ -1631,6 +2140,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
                       expansion={expansions.get(`${source.diffHash}:${row.key}`)}
                       expandable={mode === "workspace"}
                       action={action}
+                      comment={commentUiFor(row)}
                       ui={ui}
                       onToggleCollapsed={(key) =>
                         setCollapsedFiles(toggleCollapsedKey(collapsedFiles, key))
@@ -1662,8 +2172,8 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
       >
         Read-only diff on t3.vcs/diff 1.1 + t3.orchestration: unary small previews, sha256-verified
         streams for large payloads and turn diffs, status-driven refresh. Checkpoint diffs are
-        view-only — revert runs through t3.orchestration/control. Diff-line comments are a deferred
-        slice.
+        view-only — revert runs through t3.orchestration/control. Line comments ride
+        t3.messages/enrichment into the composer draft.
       </output>
     </section>
   );
@@ -1671,7 +2181,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
 
 const authored = defineExtension({
   id: manifestId,
-  version: "0.4.0",
+  version: "0.5.0",
   requires: [
     requireApi(vcsDiffApi),
     requireApi(vcsRepositoryApi),
@@ -1680,6 +2190,7 @@ const authored = defineExtension({
     requireApi(filePresentationApi),
     requireApi(orchestrationStatusApi),
     requireApi(orchestrationControlApi),
+    requireApi(messagesEnrichmentApi),
     requireApi(uiThemeApi),
     requireApi(uiKeybindingsApi),
     requireApi(uiPanelsApi),
