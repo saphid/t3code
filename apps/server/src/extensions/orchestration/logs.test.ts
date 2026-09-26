@@ -590,7 +590,10 @@ it("binds the session before resolving ancestors, so an aliased ancestor cannot 
   ]);
   const read = (runId: string) => f.call("readTail", { runId, source: "output" });
   for (const runId of ["a", "c", "d"]) {
-    const failure = (await read(runId).catch((error: unknown) => error)) as Error;
+    const failure = await read(runId).then(
+      (tail) => new Error(`delivered ${JSON.stringify(tail)}`),
+      (error: unknown) => error as Error,
+    );
     expect(failure.message, runId).toContain("AgentLogsOutOfScope");
     expect(JSON.stringify(failure), runId).not.toContain("SESSION-B");
   }
