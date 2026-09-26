@@ -7426,7 +7426,7 @@ var __t3Client = (() => {
     };
   }
   function useRemoteBrowserFrames(host, session, options) {
-    const { useCallback: useCallback2, useEffect: useEffect5, useRef: useRef3, useState: useState6 } = host.React;
+    const { useCallback: useCallback2, useEffect: useEffect6, useRef: useRef3, useState: useState6 } = host.React;
     const [element, setElement] = useState6(null);
     const [status, setStatus] = useState6({ kind: "idle" });
     const [view, setView] = useState6({
@@ -7439,7 +7439,7 @@ var __t3Client = (() => {
     sessionRef.current = options.session;
     const targetKey = options.session ? `${options.session.serverEpoch} ${options.session.tabId}` : "";
     const ref = useCallback2((node) => setElement(node), []);
-    useEffect5(() => {
+    useEffect6(() => {
       setStatus({ kind: "idle" });
       setView({ status: "connecting", inputConnected: false, droppedFrames: 0, rejectedInput: 0 });
       if (!element || !options.enabled || !options.session)
@@ -13615,9 +13615,10 @@ ${ind(d)}}`;
       byOrigin: Object.fromEntries(keys.filter((k) => !evict.has(k)).map((k) => [k, byOrigin[k]]))
     };
   }
-  function expireProviderFaviconFailure(cache2, rawUrl, at) {
-    const key = faviconOriginKey(rawUrl);
-    if (!key || cache2.byOrigin[key]?.providerFailedAt !== at) return cache2;
+  function expireStaleFaviconFailure(cache2, rawUrl, now) {
+    const key = rawUrl ? faviconOriginKey(rawUrl) : null;
+    const entry = key ? cache2.byOrigin[key] : void 0;
+    if (!key || !entry || now - entry.providerFailedAt < FAVICON_FAILURE_TTL_MS) return cache2;
     const { [key]: _expired, ...byOrigin } = cache2.byOrigin;
     return { byOrigin };
   }
@@ -13652,14 +13653,7 @@ ${ind(d)}}`;
     for (const listener of listeners) listener();
   }
   function faviconImageFailed(rawUrl) {
-    const at = Date.now();
-    const next = recordProviderFaviconFailure(cache, rawUrl, at);
-    if (next === cache) return;
-    publish(next);
-    setTimeout(
-      () => publish(expireProviderFaviconFailure(cache, rawUrl, at)),
-      FAVICON_FAILURE_TTL_MS
-    );
+    publish(recordProviderFaviconFailure(cache, rawUrl, Date.now()));
   }
   function subscribe(listener) {
     listeners.add(listener);
@@ -13669,6 +13663,9 @@ ${ind(d)}}`;
   }
   function useFaviconResolution(url) {
     (0, import_react2.useSyncExternalStore)(subscribe, () => version);
+    (0, import_react2.useEffect)(() => {
+      publish(expireStaleFaviconFailure(cache, url, Date.now()));
+    }, [url]);
     return resolveFavicon(cache, url);
   }
   function BrowserFavicon(props) {

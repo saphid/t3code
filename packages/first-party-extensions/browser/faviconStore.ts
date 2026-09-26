@@ -11,7 +11,9 @@
  * This module owns that tier's per-origin outcome: an origin whose provider
  * image failed to load renders the fallback glyph on every surface and
  * stops being requested until the failure ages out, so a transient network
- * blip does not suppress the image for the whole session.
+ * blip does not suppress the image for the whole session. Nothing schedules
+ * the age-out: a surface expires its origin's stale failure when it mounts
+ * or navigates.
  */
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import { isLocalLoopbackHost, normalizeHostname } from "@t3tools/shared/hostClassification";
@@ -86,17 +88,18 @@ export function recordProviderFaviconFailure(
 }
 
 /**
- * Age out the failure recorded at `at` for this origin, so its provider
- * image is tried again. A later failure owns its own window and stays; a
- * no-op returns the same cache reference.
+ * Drop this origin's failure once it is older than `FAVICON_FAILURE_TTL_MS`
+ * at `now`, so its provider image is tried again. A no-op returns the same
+ * cache reference.
  */
-export function expireProviderFaviconFailure(
+export function expireStaleFaviconFailure(
   cache: FaviconCache,
-  rawUrl: string,
-  at: number,
+  rawUrl: string | null,
+  now: number,
 ): FaviconCache {
-  const key = faviconOriginKey(rawUrl);
-  if (!key || cache.byOrigin[key]?.providerFailedAt !== at) return cache;
+  const key = rawUrl ? faviconOriginKey(rawUrl) : null;
+  const entry = key ? cache.byOrigin[key] : undefined;
+  if (!key || !entry || now - entry.providerFailedAt < FAVICON_FAILURE_TTL_MS) return cache;
   const { [key]: _expired, ...byOrigin } = cache.byOrigin;
   return { byOrigin };
 }

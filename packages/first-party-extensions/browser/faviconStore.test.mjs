@@ -3,8 +3,9 @@ import * as NodeTest from "node:test";
 
 import {
   FAVICON_CACHE_MAX_ENTRIES,
+  FAVICON_FAILURE_TTL_MS,
   emptyFaviconCache,
-  expireProviderFaviconFailure,
+  expireStaleFaviconFailure,
   faviconFallbackGlyph,
   faviconOriginKey,
   recordProviderFaviconFailure,
@@ -76,22 +77,27 @@ NodeTest.describe("recordProviderFaviconFailure", () => {
   });
 });
 
-NodeTest.describe("expireProviderFaviconFailure", () => {
-  NodeTest.it("ages out exactly the failure it was scheduled for", () => {
-    const failed = recordProviderFaviconFailure(emptyFaviconCache(), "https://example.com/", 1_000);
-    const expired = expireProviderFaviconFailure(failed, "https://example.com/other", 1_000);
+NodeTest.describe("expireStaleFaviconFailure", () => {
+  NodeTest.it("retries an origin only once its failure is older than the TTL", () => {
+    let cache = recordProviderFaviconFailure(emptyFaviconCache(), "https://example.com/", 1_000);
+    cache = recordProviderFaviconFailure(cache, "https://example.org/", 1_000);
+    const stale = 1_000 + FAVICON_FAILURE_TTL_MS;
+    NodeAssert.equal(expireStaleFaviconFailure(cache, "https://example.com/a", stale - 1), cache);
+    const expired = expireStaleFaviconFailure(cache, "https://example.com/a", stale);
     NodeAssert.deepEqual(resolveFavicon(expired, "https://example.com/"), {
       kind: "image",
       src: "https://www.google.com/s2/favicons?domain=example.com&sz=32",
     });
+    // Another origin's failure waits for its own surface to mount or navigate.
+    NodeAssert.deepEqual(resolveFavicon(expired, "https://example.org/"), { kind: "glyph" });
   });
 
-  NodeTest.it("keeps a later failure's own window and ignores unknown origins", () => {
-    const failed = recordProviderFaviconFailure(emptyFaviconCache(), "https://example.com/", 1_000);
-    const again = recordProviderFaviconFailure(failed, "https://example.com/", 2_000);
-    NodeAssert.equal(expireProviderFaviconFailure(again, "https://example.com/", 1_000), again);
-    NodeAssert.equal(expireProviderFaviconFailure(again, "https://other.test/", 2_000), again);
-    NodeAssert.equal(expireProviderFaviconFailure(again, "not a url", 2_000), again);
+  NodeTest.it("returns the same cache for unknown origins and non-urls", () => {
+    const cache = recordProviderFaviconFailure(emptyFaviconCache(), "https://example.com/", 1_000);
+    const late = 10 * FAVICON_FAILURE_TTL_MS;
+    NodeAssert.equal(expireStaleFaviconFailure(cache, "https://example.org/", late), cache);
+    NodeAssert.equal(expireStaleFaviconFailure(cache, "not a url", late), cache);
+    NodeAssert.equal(expireStaleFaviconFailure(cache, null, late), cache);
   });
 });
 
