@@ -5,13 +5,8 @@ import {
   setActiveExtensionThreadRef,
 } from "../extensions/extensionCommandRegistry";
 import { InstalledExtensionMenu } from "../extensions/InstalledExtensionMenu";
-import { useInstalledExtensions } from "../extensions/installedEnvironment";
-import {
-  AGENTS_PACK_SURFACE_ID,
-  findInstalledThreadSurface,
-  isAgentsRosterSurface,
-  openInstalledSurface,
-} from "../extensions/installedSurfaceOpen";
+import { isAgentsRosterSurface } from "../extensions/installedSurfaceOpen";
+import { AgentsHeaderBadge, useOpenAgentsSurface } from "./chat/AgentsEntryPoint";
 import {
   assertContextBudget,
   readContextSnapshots,
@@ -4006,43 +4001,11 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
   }, [activeProject, activeThreadRef]);
-  // With the Agents pack installed, every native Agents entry point (spawn CTA
-  // rows, the empty-state card behind the header badge) opens the pack's
-  // roster, so there is one Agents surface per thread, not two.
-  const installedExtensions = useInstalledExtensions(activeThreadRef?.environmentId ?? null);
-  const agentsPackSurface = useMemo(
-    () =>
-      activeProject
-        ? findInstalledThreadSurface(
-            installedExtensions.installations,
-            AGENTS_PACK_SURFACE_ID,
-            activeProject.id,
-            isElectron ? "desktop" : "web",
-          )
-        : null,
-    [activeProject, installedExtensions.installations],
-  );
-  const addAgentsSurface = useCallback(() => {
-    if (!activeThreadRef) return;
-    if (
-      agentsPackSurface &&
-      activeProject &&
-      openInstalledSurface(
-        { environmentId: activeThreadRef.environmentId, client: isElectron ? "desktop" : "web" },
-        activeThreadRef,
-        agentsPackSurface.installationId,
-        agentsPackSurface.surface,
-        "side-panel",
-        {
-          projectId: activeProject.id,
-          workspaceRoot: activeProject.workspaceRoot,
-          worktreePath: activeThreadWorktreePath,
-        },
-      )
-    )
-      return;
-    useRightPanelStore.getState().open(activeThreadRef, "agents");
-  }, [activeProject, activeThreadRef, activeThreadWorktreePath, agentsPackSurface]);
+  const addAgentsSurface = useOpenAgentsSurface({
+    threadRef: activeThreadRef,
+    project: activeProject,
+    worktreePath: activeThreadWorktreePath,
+  });
   const supportsThreadPullRequests =
     serverConfig?.environment.capabilities.threadPullRequests === true;
   const visiblePullRequests = visibleThreadPullRequests(
@@ -9099,6 +9062,12 @@ export default function ChatView(props: ChatViewProps) {
           client: isElectron ? "desktop" : "web",
         })
       : undefined;
+  // Suppressed while the Agents surface is visible: the roster itself is on
+  // screen, so the header badge would be pointing at nothing.
+  const headerLiveAgentCount =
+    rightPanelOpen && isAgentsRosterSurface(activeRightPanelSurface)
+      ? 0
+      : agentPanelModel.liveCount;
   const panelToggleControls = (
     <PanelLayoutControls
       extensionMenu={
@@ -9122,12 +9091,14 @@ export default function ChatView(props: ChatViewProps) {
       rightPanelAvailable={activeProject !== null}
       rightPanelOpen={rightPanelOpen}
       rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
-      // Suppressed while the Agents surface is visible: the roster itself is
-      // on screen, so the toggle badge would be pointing at nothing.
-      liveAgentCount={
-        rightPanelOpen && isAgentsRosterSurface(activeRightPanelSurface)
-          ? 0
-          : agentPanelModel.liveCount
+      liveAgentCount={headerLiveAgentCount}
+      agentsBadge={
+        <AgentsHeaderBadge
+          count={headerLiveAgentCount}
+          threadRef={activeThreadRef}
+          project={activeProject}
+          worktreePath={activeThreadWorktreePath}
+        />
       }
       onToggleTerminal={toggleTerminalVisibility}
       onToggleRightPanel={toggleRightPanel}
