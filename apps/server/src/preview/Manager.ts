@@ -12,6 +12,7 @@
 import {
   BrowserEngineHostError,
   type BrowserEngineHostClaimInput,
+  type BrowserEngineHostLifecycle,
   type BrowserEngineHostReleaseInput,
   type BrowserEngineHostReportInput,
   type BrowserEnginePageStatus,
@@ -118,6 +119,8 @@ export interface PreviewSessionEngine {
   readonly generation: string;
   /** Last owner-host page status; null until the claimed guest reports. */
   readonly status: BrowserEnginePageStatus | null;
+  /** Guest lifecycle the owner reported; null while the guest is live. */
+  readonly lifecycle: BrowserEngineHostLifecycle | null;
 }
 
 export interface PreviewSessionDetail {
@@ -678,6 +681,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
             hostConnectionId: input.hostConnectionId,
             generation: input.engineGeneration,
             status: null,
+            lifecycle: null,
           },
           navigation: { ...session.navigation, engineRevision: null },
         },
@@ -707,7 +711,13 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     yield* engineWrite(input.target, (session) =>
       requireOwner(session, input).pipe(
         Effect.map((engine) => ({
-          next: { ...session, engine: { ...engine, status: input.status } },
+          next: {
+            ...session,
+            engine:
+              "status" in input
+                ? { ...engine, status: input.status, lifecycle: null }
+                : { ...engine, lifecycle: input.lifecycle },
+          },
           navigationWrite: { kind: "engine" } as const,
         })),
       ),

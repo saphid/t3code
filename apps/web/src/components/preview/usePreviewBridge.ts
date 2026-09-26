@@ -1,6 +1,7 @@
 "use client";
 
 import type {
+  BrowserEngineHostLifecycle,
   DesktopPreviewTabState,
   PreviewReportStatusInput,
   ScopedThreadRef,
@@ -52,13 +53,17 @@ interface EngineClaim {
  * also claimed under its webContents id and its page status is reported on
  * that fence (P08-NAV-ACK). The unfenced `reportStatus` keeps native UI
  * current but is not engine provenance.
+ *
+ * Returns the reporter for guest crash lifecycle. Once a lifecycle is
+ * reported the claim stops sending page status: only the replacement guest's
+ * fresh claim returns the session to live.
  */
 export function usePreviewBridge(input: {
   threadRef: ScopedThreadRef;
   tabId: string;
   runtimeTabId: string;
   serverEpoch: string | null;
-}): void {
+}): (lifecycle: BrowserEngineHostLifecycle) => void {
   const { threadRef, tabId, runtimeTabId, serverEpoch } = input;
   const clearBrowserPointer = useBrowserPointerStore((state) => state.clear);
   const reportStatus = useAtomCommand(previewEnvironment.reportStatus, "preview status report");
@@ -92,15 +97,45 @@ export function usePreviewBridge(input: {
     claimed: EngineClaim | null;
     lastStatusKey: string | null;
     lastState: DesktopPreviewTabState | null;
-  }>({ chain: Promise.resolve(), claimed: null, lastStatusKey: null, lastState: null });
+    /** Set once the claimed guest is reported dead; cleared by a fresh claim. */
+    lifecycle: BrowserEngineHostLifecycle | null;
+  }>({
+    chain: Promise.resolve(),
+    claimed: null,
+    lastStatusKey: null,
+    lastState: null,
+    lifecycle: null,
+  });
+  const enqueueEngine = (op: () => Promise<unknown>) => {
+    const current = engine.current;
+    current.chain = current.chain.then(op, op);
+  };
+  const reportEngineLifecycle = useEffectEvent((lifecycle: BrowserEngineHostLifecycle): void => {
+    const current = engine.current;
+    const owned = current.claimed;
+    if (serverEpoch === null || owned === null || current.lifecycle === lifecycle) return;
+    current.lifecycle = lifecycle;
+    const target = { threadId: stableThreadRef.threadId, tabId, serverEpoch };
+    enqueueEngine(() =>
+      current.claimed === owned
+        ? reportEngine({
+            environmentId: stableThreadRef.environmentId,
+            input: {
+              hostConnectionId: owned.hostConnectionId,
+              target,
+              engineGeneration: owned.generation,
+              lifecycle,
+            },
+          })
+        : Promise.resolve(),
+    );
+  });
   const syncEngine = useEffectEvent((): void => {
     if (serverEpoch === null) return;
     const current = engine.current;
     const environmentId = stableThreadRef.environmentId;
     const target = { threadId: stableThreadRef.threadId, tabId, serverEpoch };
-    const enqueue = (op: () => Promise<unknown>) => {
-      current.chain = current.chain.then(op, op);
-    };
+    const enqueue = enqueueEngine;
     const generation = current.lastState ? engineGenerationOf(current.lastState) : null;
     const desired =
       engineHostConnectionId !== null && generation !== null
@@ -115,6 +150,7 @@ export function usePreviewBridge(input: {
     ) {
       current.claimed = null;
       current.lastStatusKey = null;
+      current.lifecycle = null;
       // A replaced registration already lost its claims on the server.
       if (claimed.hostConnectionId === engineHostConnectionId) {
         enqueue(() =>
@@ -147,7 +183,7 @@ export function usePreviewBridge(input: {
       });
     }
     const owned = current.claimed;
-    if (owned === null || current.lastState === null) return;
+    if (owned === null || current.lastState === null || current.lifecycle !== null) return;
     const status = toEnginePageStatus(current.lastState);
     const statusKey = JSON.stringify(status);
     if (statusKey === current.lastStatusKey) return;
@@ -224,6 +260,7 @@ export function usePreviewBridge(input: {
     if (!projectRef) return;
     flushPendingFaviconsForThread(stableThreadRef, projectRef, environmentHostname);
   }, [environmentHostname, projectRef, stableThreadRef]);
+  return reportEngineLifecycle;
 }
 
 function shouldClearBrowserPointer(

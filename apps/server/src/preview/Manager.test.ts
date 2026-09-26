@@ -607,6 +607,7 @@ it.layer(PreviewManager.layer)("PreviewManager", (it) => {
         hostConnectionId: "host-b",
         generation: "9",
         status: null,
+        lifecycle: null,
       });
       expect(handedOff.navigation.engineRevision).toBeNull();
       expect(

@@ -546,6 +546,66 @@ describe("browser sessions adapter", () => {
     }),
   );
 
+  it.effect("owner lifecycle reports project crashed and recovering honestly", () =>
+    Effect.gen(function* () {
+      const { provider, engineHosts } = yield* harness;
+      const opened = (yield* invoke(provider, "open", { url: "localhost:5173" })) as {
+        readonly serverEpoch: string;
+        readonly session: { readonly tabId: string };
+      };
+      const { fence } = yield* attachDesktopHost(engineHosts, {
+        tabId: opened.session.tabId,
+        serverEpoch: opened.serverEpoch,
+      });
+      const loaded = pageStatus({ _tag: "Success", url: "http://localhost:5173/", title: "App" });
+      yield* engineHosts.report(DESKTOP_SOCKET, { ...fence, status: loaded });
+      const session = Effect.map(
+        invoke(provider, "list", {}),
+        (listed) =>
+          (
+            listed as {
+              readonly sessions: readonly {
+                readonly engine: unknown;
+                readonly navigation: { readonly kind: string; readonly failureCode?: string };
+              }[];
+            }
+          ).sessions[0]!,
+      );
+
+      yield* engineHosts.report(DESKTOP_SOCKET, { ...fence, lifecycle: "crashed" });
+      const crashed = yield* session;
+      expect(crashed.engine).toEqual({ state: "crashed", generation: "41" });
+      expect(crashed.navigation).toMatchObject({ kind: "failed", failureCode: "crash" });
+
+      yield* engineHosts.report(DESKTOP_SOCKET, { ...fence, lifecycle: "recovering" });
+      expect((yield* session).engine).toEqual({ state: "recovering", generation: "41" });
+
+      // The replacement guest is a new webContents: release, then a fresh claim.
+      yield* engineHosts.release(DESKTOP_SOCKET, fence);
+      const replacement = { ...fence, engineGeneration: "42" };
+      yield* engineHosts.claim(DESKTOP_SOCKET, replacement);
+      expect((yield* session).engine).toEqual({ state: "starting", generation: "42" });
+      yield* engineHosts.report(DESKTOP_SOCKET, { ...replacement, status: loaded });
+      const recovered = yield* session;
+      expect(recovered.engine).toEqual({ state: "ready", generation: "42" });
+      expect(recovered.navigation.kind).toBe("loaded");
+
+      yield* engineHosts.report(DESKTOP_SOCKET, { ...replacement, lifecycle: "exhausted" });
+      expect((yield* session).engine).toEqual({
+        state: "crashed",
+        generation: "42",
+        reason: "recovery-exhausted",
+      });
+      // Lifecycle rides the same fence: the released generation cannot report.
+      expect(
+        yield* engineHosts.report(DESKTOP_SOCKET, { ...fence, lifecycle: "recovering" }).pipe(
+          Effect.flip,
+          Effect.map((error) => error.reason),
+        ),
+      ).toBe("stale-generation");
+    }),
+  );
+
   it.effect("stale server epoch is a named error, never already-closed", () =>
     Effect.gen(function* () {
       const { provider } = yield* harness;

@@ -126,13 +126,28 @@ const failureCode = (code: number): BrowserSessionFailureCode => {
 const ENGINE_COMMANDS = BROWSER_SESSION_COMMANDS.filter((command) => command !== "resize");
 
 /**
- * Engine state comes only from an authenticated owner claim. Without one the
- * honest state is unavailable, and generation is null rather than fabricated.
+ * Engine state comes only from an authenticated owner claim and its fenced
+ * reports. Without a claim the honest state is unavailable, and generation is
+ * null rather than fabricated. A host whose recovery gave up reads as crashed
+ * with a named reason; the public state set has no separate "exhausted".
  */
-const projectEngine = (engine: PreviewManager.PreviewSessionEngine | null): BrowserSessionEngine =>
-  engine === null
-    ? { state: "unavailable", generation: null, reason: "desktop-required" }
-    : { state: engine.status === null ? "starting" : "ready", generation: engine.generation };
+const projectEngine = (
+  engine: PreviewManager.PreviewSessionEngine | null,
+): BrowserSessionEngine => {
+  if (engine === null)
+    return { state: "unavailable", generation: null, reason: "desktop-required" };
+  const { generation } = engine;
+  switch (engine.lifecycle) {
+    case "crashed":
+      return { state: "crashed", generation };
+    case "exhausted":
+      return { state: "crashed", generation, reason: "recovery-exhausted" };
+    case "recovering":
+      return { state: "recovering", generation };
+    case null:
+      return { state: engine.status === null ? "starting" : "ready", generation };
+  }
+};
 
 const CommandGuardFields = {
   tabId: PreviewTabId,
@@ -183,6 +198,17 @@ const projectNavigation = (
 ): BrowserSessionNavigation => {
   const { snapshot, navigation } = detail;
   const reported = detail.engine?.status ?? null;
+  const lifecycle = detail.engine?.lifecycle ?? null;
+  if (lifecycle === "crashed" || lifecycle === "exhausted") {
+    // The owner reported the guest dead; its last page is not still loaded.
+    const last = reported?.navStatus ?? snapshot.navStatus;
+    return {
+      kind: "failed",
+      url: last._tag === "Idle" ? navigation.requestedUrl : last.url,
+      title: last._tag === "Idle" ? "" : last.title,
+      failureCode: "crash",
+    };
+  }
   const engineAuthored =
     reported !== null &&
     navigation.engineRevision !== null &&

@@ -113,10 +113,20 @@ export type BrowserEngineHostClaimInput = typeof BrowserEngineHostClaimInput.Typ
 export const BrowserEngineHostReleaseInput = Schema.Struct(HostFence);
 export type BrowserEngineHostReleaseInput = typeof BrowserEngineHostReleaseInput.Type;
 
-export const BrowserEngineHostReportInput = Schema.Struct({
-  ...HostFence,
-  status: BrowserEnginePageStatus,
-});
+/**
+ * Guest lifecycle outside normal page status. `crashed`: the guest's render
+ * process is gone. `recovering`: the host is replacing it (the replacement
+ * is released and freshly claimed under its new generation). `exhausted`:
+ * recovery gave up; the guest stays dead until the session is reopened.
+ * A page status report on the same claim returns the guest to live.
+ */
+export const BrowserEngineHostLifecycle = Schema.Literals(["crashed", "recovering", "exhausted"]);
+export type BrowserEngineHostLifecycle = typeof BrowserEngineHostLifecycle.Type;
+
+export const BrowserEngineHostReportInput = Schema.Union([
+  Schema.Struct({ ...HostFence, status: BrowserEnginePageStatus }),
+  Schema.Struct({ ...HostFence, lifecycle: BrowserEngineHostLifecycle }),
+]);
 export type BrowserEngineHostReportInput = typeof BrowserEngineHostReportInput.Type;
 
 export const BrowserEngineCommandRejection = Schema.Literals([

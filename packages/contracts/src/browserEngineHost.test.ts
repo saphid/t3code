@@ -75,6 +75,14 @@ describe("BrowserEngineHostReportInput", () => {
       }),
     ).toThrow();
   });
+
+  it("carries a closed guest lifecycle instead of a page status", () => {
+    const fence = { hostConnectionId: "host-1", target, engineGeneration: "42" };
+    for (const lifecycle of ["crashed", "recovering", "exhausted"]) {
+      expect(decodeReport({ ...fence, lifecycle })).toEqual({ ...fence, lifecycle });
+    }
+    expect(() => decodeReport({ ...fence, lifecycle: "restarting" })).toThrow();
+  });
 });
 
 describe("BrowserEngineHostCommandResultInput", () => {
