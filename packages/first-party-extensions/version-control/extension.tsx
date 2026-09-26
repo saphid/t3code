@@ -30,11 +30,13 @@ import {
   IDLE_STACKED_PROGRESS,
   COMMIT_FOLLOW_UP,
   MUTATION_TOAST_DISMISS_MS,
+  PUBLISH_PROVIDERS,
   applyStackedEvent,
   applyStatusEvent,
   canWorktreeRef,
   describeEntry,
   describeMutation,
+  describePublishResult,
   describeRef,
   describeStackedProgress,
   describeStackedResult,
@@ -53,8 +55,11 @@ import {
   nextThemeVars,
   numstatFor,
   planCommit,
+  planPublish,
   planRefCreate,
   planWorktreeCreate,
+  publishOffer,
+  publishProviderOption,
   pullState,
   pushState,
   refRows,
@@ -80,6 +85,7 @@ import {
   type MutationFollowUp,
   type MutationOp,
   type MutationPhase,
+  type PublishProviderKind,
   type StackedActionProgress,
   type StatusModel,
 } from "./viewModel.js";
@@ -686,6 +692,17 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   } | null>(null);
   const [newRefName, setNewRefName] = useState("");
   const [newWorktreeName, setNewWorktreeName] = useState("");
+  // The publish form — opened from the Sync section's offer; native's
+  // PublishRepositoryDialog reduced to the controls its contract input
+  // carries (provider, owner/name path, visibility, remote name,
+  // protocol).
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [publishProvider, setPublishProvider] = useState<PublishProviderKind>("github");
+  const [publishRepositoryPath, setPublishRepositoryPath] = useState("");
+  const [publishVisibility, setPublishVisibility] = useState<"private" | "public">("private");
+  const [publishRemoteName, setPublishRemoteName] = useState("origin");
+  const [publishProtocol, setPublishProtocol] = useState<"ssh" | "https">("ssh");
+  const [publishAdvancedOpen, setPublishAdvancedOpen] = useState(false);
   // Paths whose plain `worktree remove` already failed — the force retry
   // only appears for those rows (confirm-by-consequence, not a dead
   // always-on hazard).
@@ -798,6 +815,16 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   // The composite surface exists only when the host declares actions.run —
   // no run button against a driver the adapter named unsupported.
   const canRunActions = actionCaps.capabilities?.operations["actions.run"] === true;
+  // Publish rides the same capability probe — declared only for drivers the
+  // adapter serves publishRepository on.
+  const canPublish = actionCaps.capabilities?.operations["actions.publishRepository"] === true;
+  // The offer tracks repository state: a repo without an "origin" remote
+  // (native's menu condition), disabled by name on a detached HEAD.
+  const publish = canPublish ? publishOffer(status.local) : { offered: false, disabled: null };
+  const publishPlan = planPublish({
+    repository: publishRepositoryPath,
+    remoteName: publishRemoteName,
+  });
   const stackedOffers = useMemo(
     () => stackedActionOffers(status.local, status.remote, lanes, featureBranch),
     [status.local, status.remote, lanes, featureBranch],
@@ -1046,6 +1073,39 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
         }),
     );
 
+  /**
+   * `actions.publishRepository` — the submit behind the publish offer.
+   * One unary invoke does the whole native flow (create the host
+   * repository, wire the remote, push the current branch); the settled
+   * mutationSerial re-read makes the new remote/upstream show up on real
+   * state, and the offer disappears once `hasPrimaryRemote` flips.
+   */
+  const runPublish = () => {
+    if (publishPlan.disabled !== null || publishPlan.repository === null) return;
+    const repository = publishPlan.repository;
+    const remoteName = publishPlan.remoteName;
+    runMutation("publish", "Publishing repository", (signal) =>
+      bindApi(vcsActionsApi, host, session.context)
+        .invoke(
+          "publishRepository",
+          {
+            provider: publishProvider,
+            repository,
+            visibility: publishVisibility,
+            remoteName,
+            protocol: publishProtocol,
+          },
+          signal,
+        )
+        .then((result) => {
+          // The publish consumed the form — close it; the mutation
+          // receipt and the re-read remotes/refs carry the outcome.
+          setPublishOpen(false);
+          return describePublishResult(result);
+        }),
+    );
+  };
+
   const runCreateWorktree = (plan: {
     refName: string;
     newRefName?: string;
@@ -1281,7 +1341,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
 
           {repo.kind === "ready" && isRepo && (
             <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 6 }}>
-              {(canPull || canPush) && (
+              {(canPull || canPush || publish.offered) && (
                 <section
                   aria-label="Sync"
                   style={{ display: "flex", alignItems: "center", gap: 6, padding: "2px 6px 6px" }}
@@ -1306,11 +1366,174 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                       {push.label}
                     </button>
                   )}
+                  {publish.offered && (
+                    <button
+                      type="button"
+                      disabled={busy || publish.disabled !== null || publishOpen}
+                      onClick={() => setPublishOpen(true)}
+                      style={control}
+                    >
+                      Publish repository…
+                    </button>
+                  )}
                   <span style={{ color: muted, fontSize: 11 }}>
-                    {[canPull ? pull.disabled : null, canPush ? push.disabled : null]
+                    {[
+                      canPull ? pull.disabled : null,
+                      canPush ? push.disabled : null,
+                      publish.offered ? publish.disabled : null,
+                    ]
                       .filter((reason) => reason !== null)
                       .join(" · ")}
                   </span>
+                </section>
+              )}
+              {publish.offered && publishOpen && (
+                <section
+                  aria-label="Publish repository"
+                  style={{
+                    margin: "0 6px 8px",
+                    padding: "4px 6px",
+                    border: "1px solid var(--border, #dfe3e8)",
+                    borderRadius: 5,
+                    fontSize: 11,
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    <select
+                      aria-label="Publish provider"
+                      value={publishProvider}
+                      disabled={busy}
+                      onChange={(event) =>
+                        setPublishProvider(event.target.value as PublishProviderKind)
+                      }
+                      style={{ ...control, padding: "2px 4px" }}
+                    >
+                      {PUBLISH_PROVIDERS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      aria-label="Repository path"
+                      value={publishRepositoryPath}
+                      disabled={busy}
+                      onChange={(event) => setPublishRepositoryPath(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") runPublish();
+                      }}
+                      placeholder={publishProviderOption(publishProvider).pathPlaceholder}
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        font: "inherit",
+                        fontSize: 12,
+                        padding: "3px 6px",
+                        border,
+                        borderRadius: 5,
+                        background: "transparent",
+                        color: "inherit",
+                      }}
+                    />
+                    <select
+                      aria-label="Repository visibility"
+                      value={publishVisibility}
+                      disabled={busy}
+                      onChange={(event) =>
+                        setPublishVisibility(event.target.value as "private" | "public")
+                      }
+                      style={{ ...control, padding: "2px 4px" }}
+                    >
+                      <option value="private">Private</option>
+                      <option value="public">Public</option>
+                    </select>
+                  </div>
+                  <div style={{ marginTop: 2 }}>
+                    <button
+                      type="button"
+                      aria-expanded={publishAdvancedOpen}
+                      onClick={() => setPublishAdvancedOpen((open) => !open)}
+                      style={{
+                        ...control,
+                        padding: "1px 0",
+                        fontSize: 11,
+                        border: "none",
+                        color: muted,
+                      }}
+                    >
+                      Advanced
+                    </button>
+                    {publishAdvancedOpen && (
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          marginTop: 2,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <input
+                          aria-label="Remote name"
+                          value={publishRemoteName}
+                          disabled={busy}
+                          onChange={(event) => setPublishRemoteName(event.target.value)}
+                          placeholder="origin"
+                          style={{
+                            width: 140,
+                            font: "inherit",
+                            fontSize: 12,
+                            padding: "3px 6px",
+                            border,
+                            borderRadius: 5,
+                            background: "transparent",
+                            color: "inherit",
+                          }}
+                        />
+                        <select
+                          aria-label="Remote protocol"
+                          value={publishProtocol}
+                          disabled={busy}
+                          onChange={(event) =>
+                            setPublishProtocol(event.target.value as "ssh" | "https")
+                          }
+                          style={{ ...control, padding: "2px 4px" }}
+                        >
+                          <option value="ssh">SSH</option>
+                          <option value="https">HTTPS</option>
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      marginTop: 4,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      disabled={busy || publishPlan.disabled !== null}
+                      onClick={runPublish}
+                      style={control}
+                    >
+                      Publish
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setPublishOpen(false)}
+                      style={control}
+                    >
+                      Cancel
+                    </button>
+                    {publishPlan.disabled !== null && publishRepositoryPath.trim() !== "" && (
+                      <span style={{ color: muted, fontSize: 11 }}>{publishPlan.disabled}</span>
+                    )}
+                  </div>
                 </section>
               )}
               {changes.error !== null && (
@@ -2091,8 +2314,8 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
         Version Control on t3.vcs + t3.prs: pull-request browse/detail/diff plus host writes
         (actions, comments, reviews, thread reply/resolve — t3.prs/write), status, staging lanes,
         stage/unstage/commit, branch create/switch, pull/push/fetch, init, worktrees, and remotes
-        (t3.vcs/mutate). Composite commit+push+PR actions, publish/clone, stash, and per-hunk diff
-        expansion are deferred slices.
+        (t3.vcs/mutate); composite commit+push+PR actions and publish repository (t3.vcs/actions).
+        Clone/discovery, stash, and per-hunk diff expansion are deferred slices.
       </output>
     </section>
   );

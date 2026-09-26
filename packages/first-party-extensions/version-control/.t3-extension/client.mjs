@@ -7214,6 +7214,39 @@ var __t3Client = (() => {
       parts.push(`existing PR ${result.pr.url}`);
     return parts.join(" \u2014 ");
   }
+  var PUBLISH_PROVIDERS = [
+    { value: "github", label: "GitHub", pathPlaceholder: "owner/repo" },
+    { value: "gitlab", label: "GitLab", pathPlaceholder: "group/project" },
+    { value: "azure-devops", label: "Azure DevOps", pathPlaceholder: "project/repository" },
+    { value: "bitbucket", label: "Bitbucket", pathPlaceholder: "workspace/repository" },
+    { value: "forgejo", label: "Forgejo / Gitea", pathPlaceholder: "owner/repo" }
+  ];
+  function publishProviderOption(kind) {
+    return PUBLISH_PROVIDERS.find((option) => option.value === kind) ?? PUBLISH_PROVIDERS[0];
+  }
+  function publishOffer(local) {
+    if (local === null || !local.isRepo || local.hasPrimaryRemote) {
+      return { offered: false, disabled: null };
+    }
+    if (local.refName === null) {
+      return { offered: true, disabled: "Detached HEAD \u2014 checkout a ref before publishing" };
+    }
+    return { offered: true, disabled: null };
+  }
+  function planPublish(input) {
+    const remoteName = input.remoteName.trim() || "origin";
+    const parts = input.repository.trim().split("/");
+    const owner = parts[0]?.trim() ?? "";
+    const name = parts.slice(1).join("/").trim();
+    if (owner.length === 0 || name.length === 0) {
+      return { disabled: "Enter a repository as owner/name", repository: null, remoteName };
+    }
+    return { disabled: null, repository: input.repository.trim(), remoteName };
+  }
+  function describePublishResult(result) {
+    const target = `${result.repository.nameWithOwner} (${result.repository.url})`;
+    return result.status === "pushed" ? `Published ${target} \u2014 pushed ${result.branch} to ${result.remoteName}` : `Created ${target} \u2014 remote "${result.remoteName}" added; commit and push to share code`;
+  }
   function remoteRows(result) {
     return (result?.remotes ?? []).map((remote) => ({
       name: remote.name,
@@ -10728,6 +10761,13 @@ ${thread.id}`) === activity,
     const [stacked, setStacked] = (0, import_react2.useState)(null);
     const [newRefName, setNewRefName] = (0, import_react2.useState)("");
     const [newWorktreeName, setNewWorktreeName] = (0, import_react2.useState)("");
+    const [publishOpen, setPublishOpen] = (0, import_react2.useState)(false);
+    const [publishProvider, setPublishProvider] = (0, import_react2.useState)("github");
+    const [publishRepositoryPath, setPublishRepositoryPath] = (0, import_react2.useState)("");
+    const [publishVisibility, setPublishVisibility] = (0, import_react2.useState)("private");
+    const [publishRemoteName, setPublishRemoteName] = (0, import_react2.useState)("origin");
+    const [publishProtocol, setPublishProtocol] = (0, import_react2.useState)("ssh");
+    const [publishAdvancedOpen, setPublishAdvancedOpen] = (0, import_react2.useState)(false);
     const [worktreeRemoveFailures, setWorktreeRemoveFailures] = (0, import_react2.useState)(
       /* @__PURE__ */ new Set()
     );
@@ -10812,6 +10852,12 @@ ${thread.id}`) === activity,
     const busy = mutation.kind === "running";
     const commit = planCommit(lanes, commitMessage);
     const canRunActions = actionCaps.capabilities?.operations["actions.run"] === true;
+    const canPublish = actionCaps.capabilities?.operations["actions.publishRepository"] === true;
+    const publish = canPublish ? publishOffer(status.local) : { offered: false, disabled: null };
+    const publishPlan = planPublish({
+      repository: publishRepositoryPath,
+      remoteName: publishRemoteName
+    });
     const stackedOffers = (0, import_react2.useMemo)(
       () => stackedActionOffers(status.local, status.remote, lanes, featureBranch),
       [status.local, status.remote, lanes, featureBranch]
@@ -10983,6 +11029,29 @@ ${thread.id}`) === activity,
         return "Initialized a Git repository";
       })
     );
+    const runPublish = () => {
+      if (publishPlan.disabled !== null || publishPlan.repository === null) return;
+      const repository2 = publishPlan.repository;
+      const remoteName = publishPlan.remoteName;
+      runMutation(
+        "publish",
+        "Publishing repository",
+        (signal) => bindApi(vcsActionsApi, host, session.context).invoke(
+          "publishRepository",
+          {
+            provider: publishProvider,
+            repository: repository2,
+            visibility: publishVisibility,
+            remoteName,
+            protocol: publishProtocol
+          },
+          signal
+        ).then((result) => {
+          setPublishOpen(false);
+          return describePublishResult(result);
+        })
+      );
+    };
     const runCreateWorktree = (plan) => runMutation(
       "worktree-create",
       `Creating worktree`,
@@ -11167,7 +11236,7 @@ ${thread.id}`) === activity,
               repo.detail
             ] }),
             repo.kind === "ready" && isRepo && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { flex: 1, minHeight: 0, overflow: "auto", padding: 6 }, children: [
-              (canPull || canPush) && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+              (canPull || canPush || publish.offered) && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                 "section",
                 {
                   "aria-label": "Sync",
@@ -11193,7 +11262,188 @@ ${thread.id}`) === activity,
                         children: push.label
                       }
                     ),
-                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 11 }, children: [canPull ? pull.disabled : null, canPush ? push.disabled : null].filter((reason) => reason !== null).join(" \xB7 ") })
+                    publish.offered && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                      "button",
+                      {
+                        type: "button",
+                        disabled: busy || publish.disabled !== null || publishOpen,
+                        onClick: () => setPublishOpen(true),
+                        style: control2,
+                        children: "Publish repository\u2026"
+                      }
+                    ),
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 11 }, children: [
+                      canPull ? pull.disabled : null,
+                      canPush ? push.disabled : null,
+                      publish.offered ? publish.disabled : null
+                    ].filter((reason) => reason !== null).join(" \xB7 ") })
+                  ]
+                }
+              ),
+              publish.offered && publishOpen && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                "section",
+                {
+                  "aria-label": "Publish repository",
+                  style: {
+                    margin: "0 6px 8px",
+                    padding: "4px 6px",
+                    border: "1px solid var(--border, #dfe3e8)",
+                    borderRadius: 5,
+                    fontSize: 11
+                  },
+                  children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }, children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                        "select",
+                        {
+                          "aria-label": "Publish provider",
+                          value: publishProvider,
+                          disabled: busy,
+                          onChange: (event) => setPublishProvider(event.target.value),
+                          style: { ...control2, padding: "2px 4px" },
+                          children: PUBLISH_PROVIDERS.map((option) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: option.value, children: option.label }, option.value))
+                        }
+                      ),
+                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                        "input",
+                        {
+                          "aria-label": "Repository path",
+                          value: publishRepositoryPath,
+                          disabled: busy,
+                          onChange: (event) => setPublishRepositoryPath(event.target.value),
+                          onKeyDown: (event) => {
+                            if (event.key === "Enter") runPublish();
+                          },
+                          placeholder: publishProviderOption(publishProvider).pathPlaceholder,
+                          style: {
+                            flex: 1,
+                            minWidth: 0,
+                            font: "inherit",
+                            fontSize: 12,
+                            padding: "3px 6px",
+                            border: border2,
+                            borderRadius: 5,
+                            background: "transparent",
+                            color: "inherit"
+                          }
+                        }
+                      ),
+                      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                        "select",
+                        {
+                          "aria-label": "Repository visibility",
+                          value: publishVisibility,
+                          disabled: busy,
+                          onChange: (event) => setPublishVisibility(event.target.value),
+                          style: { ...control2, padding: "2px 4px" },
+                          children: [
+                            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "private", children: "Private" }),
+                            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "public", children: "Public" })
+                          ]
+                        }
+                      )
+                    ] }),
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { marginTop: 2 }, children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                        "button",
+                        {
+                          type: "button",
+                          "aria-expanded": publishAdvancedOpen,
+                          onClick: () => setPublishAdvancedOpen((open) => !open),
+                          style: {
+                            ...control2,
+                            padding: "1px 0",
+                            fontSize: 11,
+                            border: "none",
+                            color: muted2
+                          },
+                          children: "Advanced"
+                        }
+                      ),
+                      publishAdvancedOpen && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                        "div",
+                        {
+                          style: {
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            marginTop: 2,
+                            flexWrap: "wrap"
+                          },
+                          children: [
+                            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                              "input",
+                              {
+                                "aria-label": "Remote name",
+                                value: publishRemoteName,
+                                disabled: busy,
+                                onChange: (event) => setPublishRemoteName(event.target.value),
+                                placeholder: "origin",
+                                style: {
+                                  width: 140,
+                                  font: "inherit",
+                                  fontSize: 12,
+                                  padding: "3px 6px",
+                                  border: border2,
+                                  borderRadius: 5,
+                                  background: "transparent",
+                                  color: "inherit"
+                                }
+                              }
+                            ),
+                            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                              "select",
+                              {
+                                "aria-label": "Remote protocol",
+                                value: publishProtocol,
+                                disabled: busy,
+                                onChange: (event) => setPublishProtocol(event.target.value),
+                                style: { ...control2, padding: "2px 4px" },
+                                children: [
+                                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "ssh", children: "SSH" }),
+                                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "https", children: "HTTPS" })
+                                ]
+                              }
+                            )
+                          ]
+                        }
+                      )
+                    ] }),
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                      "div",
+                      {
+                        style: {
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          marginTop: 4,
+                          flexWrap: "wrap"
+                        },
+                        children: [
+                          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                            "button",
+                            {
+                              type: "button",
+                              disabled: busy || publishPlan.disabled !== null,
+                              onClick: runPublish,
+                              style: control2,
+                              children: "Publish"
+                            }
+                          ),
+                          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                            "button",
+                            {
+                              type: "button",
+                              disabled: busy,
+                              onClick: () => setPublishOpen(false),
+                              style: control2,
+                              children: "Cancel"
+                            }
+                          ),
+                          publishPlan.disabled !== null && publishRepositoryPath.trim() !== "" && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 11 }, children: publishPlan.disabled })
+                        ]
+                      }
+                    )
                   ]
                 }
               ),
@@ -11989,7 +12239,7 @@ ${thread.id}`) === activity,
                 borderTop: border2,
                 flexShrink: 0
               },
-              children: "Version Control on t3.vcs + t3.prs: pull-request browse/detail/diff plus host writes (actions, comments, reviews, thread reply/resolve \u2014 t3.prs/write), status, staging lanes, stage/unstage/commit, branch create/switch, pull/push/fetch, init, worktrees, and remotes (t3.vcs/mutate). Composite commit+push+PR actions, publish/clone, stash, and per-hunk diff expansion are deferred slices."
+              children: "Version Control on t3.vcs + t3.prs: pull-request browse/detail/diff plus host writes (actions, comments, reviews, thread reply/resolve \u2014 t3.prs/write), status, staging lanes, stage/unstage/commit, branch create/switch, pull/push/fetch, init, worktrees, and remotes (t3.vcs/mutate); composite commit+push+PR actions and publish repository (t3.vcs/actions). Clone/discovery, stash, and per-hunk diff expansion are deferred slices."
             }
           )
         ]

@@ -11,9 +11,11 @@
  * stay host-side.
  */
 import type {
+  PrsProviderKind,
   VcsActionKind,
   VcsActionPhase,
   VcsActionProgressEvent,
+  VcsActionPublishResult,
   VcsActionResult,
   VcsActionRunInput,
   VcsCapabilitiesResult,
@@ -111,6 +113,8 @@ export function describeEntry(entry: VcsChangeEntry): string {
  * map to `t3.vcs/changes` methods, `ref-create`/`ref-switch` to
  * `t3.vcs/refs` methods, and `pull`/`push`/`fetch`/`init`/worktree ops to
  * `t3.vcs/repository` — all `effect:"write"` under `t3.vcs/mutate`.
+ * `stacked` and `publish` ride `t3.vcs/actions` under the same grant
+ * (publish additionally chain-checks `t3.prs/write` server-side).
  */
 export type MutationOp =
   | "stage"
@@ -123,6 +127,7 @@ export type MutationOp =
   | "push"
   | "fetch"
   | "init"
+  | "publish"
   | "worktree-create"
   | "worktree-remove";
 
@@ -381,9 +386,10 @@ export function pullState(
  * Push gating mirrors the native menu item's disabled reasons in the same
  * order (GitActionsControl.logic.ts): detached HEAD, dirty tree, behind or
  * diverged upstream, then the no-upstream cases — no pushable remote at all
- * (native's "Publish repository" dialog, a deferred slice) versus the
- * ahead-of-base case, where the driver's `push -u` publish path is exactly
- * what native's push action runs. `aheadCount` without an upstream counts
+ * (the `publishOffer` surface below covers native's "Publish repository"
+ * path) versus the ahead-of-base case, where the driver's `push -u`
+ * publish path is exactly what native's push action runs. `aheadCount`
+ * without an upstream counts
  * against the base branch, so the same number labels the button.
  */
 export function pushState(
@@ -707,6 +713,102 @@ export function describeStackedResult(result: VcsActionResult): string {
   if (result.pr.status === "opened_existing" && result.pr.url !== undefined)
     parts.push(`existing PR ${result.pr.url}`);
   return parts.join(" — ");
+}
+
+/* ---------------- publish repository (t3.vcs/actions) ---------------- */
+
+/** The providers `actions.publishRepository` accepts — `unknown` is never offered. */
+export type PublishProviderKind = Exclude<PrsProviderKind, "unknown">;
+
+export interface PublishProviderOption {
+  readonly value: PublishProviderKind;
+  readonly label: string;
+  /** The repository-path placeholder native shows per provider. */
+  readonly pathPlaceholder: string;
+}
+
+/**
+ * The publish offer's provider set — `open_publish`'s picker mirrored.
+ * Native orders these by a readiness probe (`sourceControl.*` discovery)
+ * that no contract exposes, so every concrete provider stays offered and
+ * an unconfigured one fails by name at invoke time rather than hiding.
+ */
+export const PUBLISH_PROVIDERS: readonly PublishProviderOption[] = [
+  { value: "github", label: "GitHub", pathPlaceholder: "owner/repo" },
+  { value: "gitlab", label: "GitLab", pathPlaceholder: "group/project" },
+  { value: "azure-devops", label: "Azure DevOps", pathPlaceholder: "project/repository" },
+  { value: "bitbucket", label: "Bitbucket", pathPlaceholder: "workspace/repository" },
+  { value: "forgejo", label: "Forgejo / Gitea", pathPlaceholder: "owner/repo" },
+];
+
+export function publishProviderOption(kind: PrsProviderKind): PublishProviderOption {
+  return PUBLISH_PROVIDERS.find((option) => option.value === kind) ?? PUBLISH_PROVIDERS[0];
+}
+
+export interface PublishOffer {
+  /** Whether the affordance renders — native's `!hasPrimaryRemote` menu condition. */
+  readonly offered: boolean;
+  /** Why the offer is blocked; null when it may run. */
+  readonly disabled: string | null;
+}
+
+/**
+ * The publish offer state. The affordance exists whenever the workspace
+ * is a repository without an "origin" remote — native's menu-item
+ * condition — but a detached HEAD disables rather than hides: publish
+ * creates the host repository and wires the remote *before* pushing, so
+ * a run that cannot push still leaves those effects behind, and the
+ * offer names its blocker instead of letting the click do the damage.
+ */
+export function publishOffer(local: VcsStatusLocal | null): PublishOffer {
+  if (local === null || !local.isRepo || local.hasPrimaryRemote) {
+    return { offered: false, disabled: null };
+  }
+  if (local.refName === null) {
+    return { offered: true, disabled: "Detached HEAD — checkout a ref before publishing" };
+  }
+  return { offered: true, disabled: null };
+}
+
+export interface PublishPlan {
+  /** Why submit is disabled; null when the input may be sent. */
+  readonly disabled: string | null;
+  /** Trimmed repository path — null while the input is invalid. */
+  readonly repository: string | null;
+  /** Trimmed remote name; "origin" when left blank (native's default). */
+  readonly remoteName: string;
+}
+
+/**
+ * Publish-submit validation, mirroring the native dialog's gate: the
+ * repository must parse as `<owner>/<name>` — everything after the first
+ * `/` is the name, so nested groups resolve the way the host provider
+ * expects.
+ */
+export function planPublish(input: {
+  readonly repository: string;
+  readonly remoteName: string;
+}): PublishPlan {
+  const remoteName = input.remoteName.trim() || "origin";
+  const parts = input.repository.trim().split("/");
+  const owner = parts[0]?.trim() ?? "";
+  const name = parts.slice(1).join("/").trim();
+  if (owner.length === 0 || name.length === 0) {
+    return { disabled: "Enter a repository as owner/name", repository: null, remoteName };
+  }
+  return { disabled: null, repository: input.repository.trim(), remoteName };
+}
+
+/**
+ * The settled publish line. `remote_added` is the empty-repo partial —
+ * the host repository and remote exist but nothing was pushed, so the
+ * line says what remains rather than claiming a publish.
+ */
+export function describePublishResult(result: VcsActionPublishResult): string {
+  const target = `${result.repository.nameWithOwner} (${result.repository.url})`;
+  return result.status === "pushed"
+    ? `Published ${target} — pushed ${result.branch} to ${result.remoteName}`
+    : `Created ${target} — remote "${result.remoteName}" added; commit and push to share code`;
 }
 
 /* ---------------- remotes + worktrees ---------------- */

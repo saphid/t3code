@@ -3,7 +3,8 @@
 The first-party Version Control panel (`t3.version-control`) as an
 installable SDK extension — reads, mutations and repository ops on the
 `t3.vcs/*` contracts (repository at 1.1.0),
-plus a read-only pull-request browser on `t3.prs/read@^1.0.0`.
+plus a pull-request browser on `t3.prs/read@^1.0.0` with comment and
+review-thread writes on `t3.prs/write@^1.0.0`.
 
 The PR browser consumes the `t3.prs/read` grant:
 
@@ -23,16 +24,18 @@ The PR browser consumes the `t3.prs/read` grant:
 - freshness via `prs.subscribeRefreshes` and an explicit Refresh that
   calls `prs.invalidate` then re-reads the list;
 - `prs.stack`/`prs.reviewerCandidates`/`prs.labelCandidates`/`prs.listStats`
-  remain unwired — no row needs them yet.
+  remain unwired — no row needs them yet;
+- PR writes via `t3.prs/write`: comments, review-thread replies, and
+  thread resolve/unresolve, each gated on the write capability probe's
+  per-operation flags.
 
 The capability gate (`prs.getCapabilities`) renders every named
 unavailable state — no configured host, `cli-missing`,
 `cli-unauthenticated`, `provider-unsupported` — and each section falls
 back to a named note when its `operations` flag is false, so an
 unsupported provider never masquerades as an empty list. PR mutations
-(comment, review, merge, state changes) are deferred: they belong to a
-later `t3.prs/*` control contract, and the panel says so rather than
-rendering dead controls.
+beyond comment/reply/resolve (reviews, merge, state changes) are
+deferred, and the panel says so rather than rendering dead controls.
 
 Repository reads consume the `t3.vcs/read` grant:
 
@@ -66,7 +69,15 @@ Mutations need the `t3.vcs/mutate` grant at install time:
   per-ref Worktree action, a new-branch worktree form with the host
   assigning the path, and per-worktree Remove with a force retry that only
   appears after a real refusal; the worktree list is derived from
-  `refs.list` `worktreePath`, matching native's branch-selector data.
+  `refs.list` `worktreePath`, matching native's branch-selector data,
+- publish repository (`t3.vcs/actions` `publishRepository`; also
+  chain-checked against `t3.prs/write` server-side): the offer renders
+  while the workspace has no `origin` remote — native's menu condition —
+  and disables by name on a detached HEAD, since the op creates the host
+  repository and wires the remote _before_ pushing. The form mirrors the
+  native dialog's inputs (provider, `owner/name` path, visibility,
+  remote name, protocol); `remote_added` reports as the partial it is
+  rather than claiming a publish.
 
 Remotes render from `t3.vcs/repository` `listRemotes` (a read-granted
 call) — name, URL, and primary marker, with per-remote Fetch.
@@ -123,12 +134,13 @@ native surface opens or closes panels programmatically.
 required host services, and `t3.ui/*` contracts are opportunistic
 client-provider APIs, not mount requirements.
 
-Still deferred: PR mutations (a later `t3.prs/*` control contract),
-publish/clone flows (no remote-creation contract — `sourceControl.*`
-provisioning is host-side), stash (no native binding exists to mirror),
-branch rename/delete (internal driver methods only), working-tree diff
-rendering (the Diff panel's `t3.vcs/diff` surface), AI commit text (no
-contract), discard/revert and checkpoint diffs (orchestration contracts).
+Still deferred: PR mutations beyond comment/reply/resolve,
+clone/discovery flows (no remote-creation/discovery contract —
+`sourceControl.*` provisioning is host-side), stash (no native binding
+exists to mirror), branch rename/delete (internal driver methods only),
+working-tree diff rendering (the Diff panel's `t3.vcs/diff` surface), AI
+commit text (no contract), discard/revert and checkpoint diffs
+(orchestration contracts).
 
 ```sh
 pnpm --filter @t3tools/extension-version-control test
