@@ -2,7 +2,8 @@
  * Component-level regressions over the REAL extension.tsx tree, bundled by
  * esbuild with the Ghostty surface replaced by a recording stub. These pin
  * these regression shapes as tests: cold-restore stream budget, group-switch
- * waiter wake, and focused-chord capture against the real host keymap resolver.
+ * waiter wake, focused-chord capture against the real host keymap resolver,
+ * and path-link activation through t3.file/presentation.
  *
  * The bundle is written to the system tmpdir, never into the package, so
  * the shipped tree stays free of test-only builds.
@@ -63,6 +64,7 @@ export class GhosttyTerminalSurface {
     const surface = new this();
     surface.options = options;
     surface.mount = mount;
+    surface.writes = [];
     GhosttyTerminalSurface.surfaces.push(surface);
     if (GhosttyTerminalSurface.delay) {
       await new Promise((resolve) => GhosttyTerminalSurface.pending.push(resolve));
@@ -72,13 +74,18 @@ export class GhosttyTerminalSurface {
   setTheme() {}
   async setFont() {}
   setVisible() {}
-  write() {}
-  resetAndWrite() {}
+  write(data) {
+    this.writes.push(data);
+  }
+  resetAndWrite(data) {
+    this.writes.push(data);
+  }
   dispose() {}
   focus() {
     GhosttyTerminalSurface.focusOwner = this;
   }
 }
+globalThis.__T3_TERMINAL_SURFACE_STUB__ = GhosttyTerminalSurface;
 `;
 
 let bundle;
@@ -107,6 +114,16 @@ NodeTest.before(async () => {
           }));
           builder.onLoad({ filter: /.*/, namespace: "surface-stub" }, () => ({
             contents: surfaceStub,
+            loader: "js",
+          }));
+          // The link-activation path mounts a real surface, so the asset
+          // load must finish — but the WASM runtime behind it stays stubbed.
+          builder.onResolve({ filter: /^@t3tools\/ghostty-terminal\/runtime$/ }, () => ({
+            path: "runtime-stub",
+            namespace: "runtime-stub",
+          }));
+          builder.onLoad({ filter: /.*/, namespace: "runtime-stub" }, () => ({
+            contents: "export async function loadGhosttyRuntime() { return { stub: true }; }",
             loader: "js",
           }));
           builder.onResolve({ filter: /^react(?:\/.*)?$/ }, (args) => ({
@@ -773,3 +790,232 @@ NodeTest.describe(
     });
   },
 );
+
+NodeTest.describe("path link activation (Terminal 22 path half)", () => {
+  const drain = () => new Promise((resolve) => setImmediate(resolve));
+  // The stub class exists only inside the esbuild bundle; it publishes itself.
+  const stubSurfaces = () => globalThis.__T3_TERMINAL_SURFACE_STUB__.surfaces;
+  // The count this feature owns — other invokes may share the window.
+  const presentationInvokes = (invokes) =>
+    invokes.filter((entry) => entry.id === "t3.file/presentation");
+
+  /** A host whose assets resolve, so the pane really mounts its surface. */
+  function linkHost(presentationResult) {
+    const invokes = [];
+    const host = {
+      readAsset: async (path) => ({
+        bytes: new Uint8Array([1, 2, 3]),
+        mediaType: path.endsWith(".woff2")
+          ? "font/woff2"
+          : path.endsWith(".txt")
+            ? "text/plain"
+            : "application/wasm",
+        sha256: "0".repeat(64),
+      }),
+      invokeApi: async (request) => {
+        invokes.push({ id: request.id, method: request.method, input: request.input });
+        if (request.id === "t3.file/presentation" && request.method === "open")
+          return presentationResult;
+        if (request.id === "t3.ui/theme" && request.method === "getTokens")
+          return { tokens: {}, cssVars: {} };
+        return { commandSetToken: "token", results: [] };
+      },
+      subscribeApi: (request, signal) => ({
+        async *[Symbol.asyncIterator]() {
+          if (request.id === "t3.terminal/sessions" && request.name === "list") {
+            yield { value: { kind: "snapshot", terminals: [sessionMetadata("link1")] } };
+          }
+          await new Promise((resolve) =>
+            signal.aborted ? resolve() : signal.addEventListener("abort", resolve, { once: true }),
+          );
+        },
+      }),
+    };
+    return { host, invokes };
+  }
+
+  function workspaceSession() {
+    return {
+      signal: new AbortController().signal,
+      context: {
+        resource: { threadId: "t", environmentId: "e" },
+        workspaceRevision: JSON.stringify(["/ws/root", null]),
+      },
+      visible: true,
+      save() {},
+      onVisibility: () => () => {},
+      bindCommands: () => () => {},
+      restoreState: { terminalIds: ["link1"], activeTerminalId: "link1" },
+    };
+  }
+
+  NodeTest.test(
+    "path links open through t3.file/presentation; URLs and outside paths refuse by name",
+    async () => {
+      const { host, invokes } = linkHost({
+        surfaceId: "t3.files/view",
+        placement: "side-panel",
+        restoreState: {},
+      });
+      stubSurfaces().length = 0;
+      let renderer;
+      await act(async () => {
+        renderer = create(
+          React.createElement(bundle.TerminalView, { host, session: workspaceSession() }),
+          {
+            createNodeMock: nodeMock,
+          },
+        );
+      });
+      try {
+        // The pane's surface mounts only after the shared asset load lands.
+        for (let attempt = 0; stubSurfaces().length === 0 && attempt < 20; attempt++) {
+          await act(async () => {
+            await drain();
+          });
+        }
+        const surface = stubSurfaces()[0];
+        NodeAssert.ok(surface, "terminal surface never mounted");
+        const activate = surface.options.onLinkActivate;
+
+        // Path link: the position suffix is stripped, the presentation op is
+        // invoked with the workspace-relative path, and the resolved
+        // descriptor is reported on the surface.
+        await act(async () => {
+          activate("src/view.tsx:12", { metaKey: true });
+          await drain();
+        });
+        NodeAssert.deepEqual(
+          invokes.filter((entry) => entry.id === "t3.file/presentation"),
+          [{ id: "t3.file/presentation", method: "open", input: { relativePath: "src/view.tsx" } }],
+        );
+        NodeAssert.ok(
+          surface.writes.some((data) =>
+            data.includes("[terminal] src/view.tsx opens in t3.files/view · side-panel"),
+          ),
+        );
+
+        // URL link: no external-open contract exists, so the refusal is
+        // written honestly and nothing reaches the presentation op.
+        const invokesBefore = presentationInvokes(invokes).length;
+        surface.writes.length = 0;
+        await act(async () => {
+          activate("https://t3.codes/docs", { metaKey: true });
+          await drain();
+        });
+        NodeAssert.equal(presentationInvokes(invokes).length, invokesBefore);
+        NodeAssert.ok(
+          surface.writes.some((data) =>
+            data.includes("[terminal] Opening URLs is unavailable in this extension host."),
+          ),
+        );
+
+        // Outside-workspace path: refuses by name, still no invoke.
+        surface.writes.length = 0;
+        await act(async () => {
+          activate("/etc/passwd", { metaKey: true });
+          await drain();
+        });
+        NodeAssert.equal(presentationInvokes(invokes).length, invokesBefore);
+        NodeAssert.ok(
+          surface.writes.some((data) =>
+            data.includes(
+              "[terminal] /etc/passwd cannot be opened — not a workspace-relative path.",
+            ),
+          ),
+        );
+      } finally {
+        await act(async () => {
+          renderer.unmount();
+        });
+      }
+    },
+  );
+
+  NodeTest.test("a denied presentation invoke reports the failure on the surface", async () => {
+    const { host, invokes } = (() => {
+      const inner = linkHost(null);
+      const denied = Object.create(inner.host);
+      denied.invokeApi = async (request) => {
+        inner.invokes.push({ id: request.id, method: request.method, input: request.input });
+        if (request.id === "t3.file/presentation" && request.method === "open")
+          throw new Error("API capability denied: t3.file/open");
+        if (request.id === "t3.ui/theme" && request.method === "getTokens")
+          return { tokens: {}, cssVars: {} };
+        return { commandSetToken: "token", results: [] };
+      };
+      return { host: denied, invokes: inner.invokes };
+    })();
+    stubSurfaces().length = 0;
+    let renderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(bundle.TerminalView, { host, session: workspaceSession() }),
+        {
+          createNodeMock: nodeMock,
+        },
+      );
+    });
+    try {
+      for (let attempt = 0; stubSurfaces().length === 0 && attempt < 20; attempt++) {
+        await act(async () => {
+          await drain();
+        });
+      }
+      const surface = stubSurfaces()[0];
+      NodeAssert.ok(surface, "terminal surface never mounted");
+      await act(async () => {
+        surface.options.onLinkActivate("src/view.tsx", { metaKey: true });
+        await drain();
+      });
+      NodeAssert.equal(invokes.filter((entry) => entry.id === "t3.file/presentation").length, 1);
+      NodeAssert.ok(
+        surface.writes.some((data) =>
+          data.includes(
+            "[terminal] src/view.tsx could not be opened — API capability denied: t3.file/open",
+          ),
+        ),
+      );
+    } finally {
+      await act(async () => {
+        renderer.unmount();
+      });
+    }
+  });
+
+  NodeTest.test("a session without a workspace reports it on the surface", async () => {
+    const { host, invokes } = linkHost(null);
+    stubSurfaces().length = 0;
+    const session = workspaceSession();
+    session.context.workspaceRevision = undefined;
+    let renderer;
+    await act(async () => {
+      renderer = create(React.createElement(bundle.TerminalView, { host, session }), {
+        createNodeMock: nodeMock,
+      });
+    });
+    try {
+      for (let attempt = 0; stubSurfaces().length === 0 && attempt < 20; attempt++) {
+        await act(async () => {
+          await drain();
+        });
+      }
+      const surface = stubSurfaces()[0];
+      NodeAssert.ok(surface, "terminal surface never mounted");
+      await act(async () => {
+        surface.options.onLinkActivate("src/a.ts", { metaKey: true });
+        await drain();
+      });
+      NodeAssert.equal(presentationInvokes(invokes).length, 0);
+      NodeAssert.ok(
+        surface.writes.some((data) =>
+          data.includes("[terminal] src/a.ts cannot be opened — the workspace is not available."),
+        ),
+      );
+    } finally {
+      await act(async () => {
+        renderer.unmount();
+      });
+    }
+  });
+});

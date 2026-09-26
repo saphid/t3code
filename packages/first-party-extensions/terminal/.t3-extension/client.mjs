@@ -6958,6 +6958,101 @@ var __t3Client = (() => {
     return /mac|iphone|ipad|ipod/i.test(platform);
   }
 
+  // node_modules/@t3tools/ghostty-terminal/src/terminal-links.ts
+  var URL_PATTERN = /https?:\/\/[^\s"'`<>]+/giu;
+  var FILE_PATH_PATTERN = /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
+  var TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
+  function trimClosingDelimiters(value) {
+    let output = value.replace(TRAILING_PUNCTUATION_PATTERN, "");
+    if (output.length === 0) return output;
+    const trimUnbalanced = (open, close) => {
+      while (output.endsWith(close)) {
+        const opens = output.split(open).length - 1;
+        const closes = output.split(close).length - 1;
+        if (opens >= closes) return;
+        output = output.slice(0, -1);
+      }
+    };
+    trimUnbalanced("(", ")");
+    trimUnbalanced("[", "]");
+    trimUnbalanced("{", "}");
+    return output;
+  }
+  function overlaps(a, b) {
+    return a.start < b.end && b.start < a.end;
+  }
+  function collectMatches(line, kind, pattern, existing) {
+    const matches = [];
+    pattern.lastIndex = 0;
+    for (const rawMatch of line.matchAll(pattern)) {
+      const raw = rawMatch[0];
+      const start = rawMatch.index ?? -1;
+      if (start < 0 || raw.length === 0) continue;
+      const trimmed = trimClosingDelimiters(raw);
+      if (trimmed.length === 0) continue;
+      if (kind === "path" && isTerminalUrl(trimmed)) continue;
+      const candidate = {
+        kind,
+        text: trimmed,
+        start,
+        end: start + trimmed.length
+      };
+      const collides = [...existing, ...matches].some((other) => overlaps(candidate, other));
+      if (collides) continue;
+      matches.push(candidate);
+    }
+    return matches;
+  }
+  function isWindowsAbsolutePath(value) {
+    return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
+  }
+  function isAbsolutePath(value) {
+    return value.startsWith("/") || isWindowsAbsolutePath(value);
+  }
+  function extractTerminalLinks(line) {
+    const urlMatches = collectMatches(line, "url", URL_PATTERN, []);
+    const pathMatches = collectMatches(line, "path", FILE_PATH_PATTERN, urlMatches);
+    return [...urlMatches, ...pathMatches].toSorted((a, b) => a.start - b.start);
+  }
+  function isTerminalUrl(value) {
+    return /^https?:\/\//iu.test(value);
+  }
+  function collectWrappedTerminalLinkLine(bufferLineNumber, getLine) {
+    const anchorLine = getLine(bufferLineNumber - 1);
+    if (!anchorLine) return null;
+    let startBufferLineNumber = bufferLineNumber;
+    let startLine = anchorLine;
+    while (startBufferLineNumber > 1 && startLine.isWrapped) {
+      const previousLine = getLine(startBufferLineNumber - 2);
+      if (!previousLine) return null;
+      startBufferLineNumber -= 1;
+      startLine = previousLine;
+    }
+    const segments = [];
+    let nextStartIndex = 0;
+    let currentBufferLineNumber = startBufferLineNumber;
+    while (true) {
+      const currentLine = getLine(currentBufferLineNumber - 1);
+      if (!currentLine) break;
+      const nextLine = getLine(currentBufferLineNumber);
+      const hasWrappedContinuation = nextLine?.isWrapped === true;
+      const text = currentLine.translateToString(!hasWrappedContinuation);
+      segments.push({
+        bufferLineNumber: currentBufferLineNumber,
+        text,
+        startIndex: nextStartIndex,
+        endIndex: nextStartIndex + text.length
+      });
+      nextStartIndex += text.length;
+      if (!hasWrappedContinuation) break;
+      currentBufferLineNumber += 1;
+    }
+    return {
+      text: segments.map((segment) => segment.text).join(""),
+      segments
+    };
+  }
+
   // node_modules/@t3tools/ghostty-terminal/src/runtime.ts
   var textDecoder = new TextDecoder();
   var GhosttyRuntime = class _GhosttyRuntime {
@@ -7146,95 +7241,6 @@ var __t3Client = (() => {
 
   // node_modules/@t3tools/ghostty-terminal/src/selection.ts
   var SELECTION_MULTI_CLICK_INTERVAL_MS = 500;
-
-  // node_modules/@t3tools/ghostty-terminal/src/terminal-links.ts
-  var URL_PATTERN = /https?:\/\/[^\s"'`<>]+/giu;
-  var FILE_PATH_PATTERN = /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
-  var TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
-  function trimClosingDelimiters(value) {
-    let output = value.replace(TRAILING_PUNCTUATION_PATTERN, "");
-    if (output.length === 0) return output;
-    const trimUnbalanced = (open, close) => {
-      while (output.endsWith(close)) {
-        const opens = output.split(open).length - 1;
-        const closes = output.split(close).length - 1;
-        if (opens >= closes) return;
-        output = output.slice(0, -1);
-      }
-    };
-    trimUnbalanced("(", ")");
-    trimUnbalanced("[", "]");
-    trimUnbalanced("{", "}");
-    return output;
-  }
-  function overlaps(a, b) {
-    return a.start < b.end && b.start < a.end;
-  }
-  function collectMatches(line, kind, pattern, existing) {
-    const matches = [];
-    pattern.lastIndex = 0;
-    for (const rawMatch of line.matchAll(pattern)) {
-      const raw = rawMatch[0];
-      const start = rawMatch.index ?? -1;
-      if (start < 0 || raw.length === 0) continue;
-      const trimmed = trimClosingDelimiters(raw);
-      if (trimmed.length === 0) continue;
-      if (kind === "path" && isTerminalUrl(trimmed)) continue;
-      const candidate = {
-        kind,
-        text: trimmed,
-        start,
-        end: start + trimmed.length
-      };
-      const collides = [...existing, ...matches].some((other) => overlaps(candidate, other));
-      if (collides) continue;
-      matches.push(candidate);
-    }
-    return matches;
-  }
-  function extractTerminalLinks(line) {
-    const urlMatches = collectMatches(line, "url", URL_PATTERN, []);
-    const pathMatches = collectMatches(line, "path", FILE_PATH_PATTERN, urlMatches);
-    return [...urlMatches, ...pathMatches].toSorted((a, b) => a.start - b.start);
-  }
-  function isTerminalUrl(value) {
-    return /^https?:\/\//iu.test(value);
-  }
-  function collectWrappedTerminalLinkLine(bufferLineNumber, getLine) {
-    const anchorLine = getLine(bufferLineNumber - 1);
-    if (!anchorLine) return null;
-    let startBufferLineNumber = bufferLineNumber;
-    let startLine = anchorLine;
-    while (startBufferLineNumber > 1 && startLine.isWrapped) {
-      const previousLine = getLine(startBufferLineNumber - 2);
-      if (!previousLine) return null;
-      startBufferLineNumber -= 1;
-      startLine = previousLine;
-    }
-    const segments = [];
-    let nextStartIndex = 0;
-    let currentBufferLineNumber = startBufferLineNumber;
-    while (true) {
-      const currentLine = getLine(currentBufferLineNumber - 1);
-      if (!currentLine) break;
-      const nextLine = getLine(currentBufferLineNumber);
-      const hasWrappedContinuation = nextLine?.isWrapped === true;
-      const text = currentLine.translateToString(!hasWrappedContinuation);
-      segments.push({
-        bufferLineNumber: currentBufferLineNumber,
-        text,
-        startIndex: nextStartIndex,
-        endIndex: nextStartIndex + text.length
-      });
-      nextStartIndex += text.length;
-      if (!hasWrappedContinuation) break;
-      currentBufferLineNumber += 1;
-    }
-    return {
-      text: segments.map((segment) => segment.text).join(""),
-      segments
-    };
-  }
 
   // node_modules/@t3tools/ghostty-terminal/src/keyCodes.ts
   var ghosttyKeyboardCodes = [
@@ -11666,6 +11672,62 @@ var __t3Client = (() => {
       return null;
     }
   }
+  var TERMINAL_LINK_POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
+  function isHomeRelativeLink(path3) {
+    return path3[0] === "~" && path3[1] === "/";
+  }
+  function joinPathStyle(base, next, separator) {
+    const cleanBase = base.replace(/[\\/]+$/, "");
+    if (separator === "\\") return `${cleanBase}\\${next.replaceAll("/", "\\")}`;
+    return `${cleanBase}/${next.replace(/^\/+/, "")}`;
+  }
+  function inferHomeFromCwd(cwd) {
+    return cwd.match(/^\/Users\/([^/]+)/)?.[0] ?? cwd.match(/^\/home\/([^/]+)/)?.[0] ?? cwd.match(/^([A-Za-z]:\\Users\\[^\\]+)/)?.[1] ?? void 0;
+  }
+  function terminalLinkSegments(relative, windows) {
+    const segments = [];
+    for (const segment of relative.split(windows ? /[\\/]/ : /\//)) {
+      if (segment === "" || segment === ".") continue;
+      if (segment === "..") {
+        if (segments.length === 0) return null;
+        segments.pop();
+        continue;
+      }
+      segments.push(segment);
+    }
+    return segments.length > 0 ? segments : null;
+  }
+  function terminalPathLinkTarget(text, cwd, workspaceRoot) {
+    const reject = () => ({
+      status: "unopenable",
+      reason: `${text} cannot be opened \u2014 not a workspace-relative path.`
+    });
+    const windows = isWindowsAbsolutePath(workspaceRoot);
+    const root = workspaceRoot.replace(/[\\/]+$/, "");
+    const stripRoot = (absolute2) => {
+      const prefix = `${root}${windows ? "\\" : "/"}`;
+      const head = absolute2.slice(0, prefix.length);
+      const expected = windows ? prefix.toLowerCase() : prefix;
+      return (windows ? head.toLowerCase() : head) === expected ? absolute2.slice(prefix.length) : null;
+    };
+    const path3 = text.replace(TERMINAL_LINK_POSITION_SUFFIX_PATTERN, "");
+    if (path3.length === 0) return reject();
+    let absolute;
+    if (isAbsolutePath(path3)) {
+      absolute = path3;
+    } else if (isHomeRelativeLink(path3)) {
+      const home = inferHomeFromCwd(cwd);
+      if (home === void 0) return reject();
+      absolute = joinPathStyle(home, path3.slice(2), home.includes("\\") ? "\\" : "/");
+    } else {
+      absolute = joinPathStyle(cwd, path3, isWindowsAbsolutePath(cwd) ? "\\" : "/");
+    }
+    const relative = stripRoot(windows ? absolute.replaceAll("/", "\\") : absolute);
+    if (relative === null) return reject();
+    const segments = terminalLinkSegments(relative, windows);
+    if (segments === null) return reject();
+    return { status: "open", relativePath: segments.join("/") };
+  }
   var clampDimension = (value, max) => Number.isSafeInteger(value) && value >= 1 && value <= max ? value : null;
   var TerminalPanel = class {
     #control;
@@ -13355,10 +13417,41 @@ var __t3Client = (() => {
           onSelectionChange: selectionMenu.onSelectionChange,
           onContextMenu: selectionMenu.onContextMenu,
           beforeKey: (event) => handleBeforeKey(event, panel, terminalId),
-          onLinkActivate: () => {
-            if (surface) {
-              writeSystemMessage(surface, "Opening links is unavailable in this extension host.");
+          onLinkActivate: (text) => {
+            if (surface === null) return;
+            const paneSurface = surface;
+            if (isTerminalUrl(text)) {
+              writeSystemMessage(paneSurface, "Opening URLs is unavailable in this extension host.");
+              return;
             }
+            const workspace = workspaceLaunchFromRevision(session.context.workspaceRevision);
+            const target = workspace === null ? null : terminalPathLinkTarget(text, workspace.cwd, workspace.workspaceRoot);
+            if (target === null || target.status === "unopenable") {
+              writeSystemMessage(
+                paneSurface,
+                target === null ? `${text} cannot be opened \u2014 the workspace is not available.` : target.reason
+              );
+              return;
+            }
+            const signal = session.signal;
+            void bindApi(filePresentationApi, host, session.context).invoke("open", { relativePath: target.relativePath }, signal).then(
+              (result) => {
+                if (!signal.aborted && surfaceRef.current === paneSurface) {
+                  writeSystemMessage(
+                    paneSurface,
+                    `${target.relativePath} opens in ${result.surfaceId} \xB7 ${result.placement}`
+                  );
+                }
+              },
+              (error) => {
+                if (!signal.aborted && surfaceRef.current === paneSurface) {
+                  writeSystemMessage(
+                    paneSurface,
+                    `${text} could not be opened \u2014 ${error instanceof Error ? error.message : "presentation unavailable"}`
+                  );
+                }
+              }
+            );
           }
         };
         try {
@@ -13406,6 +13499,8 @@ var __t3Client = (() => {
         surfaceRef.current = null;
       };
     }, [
+      host,
+      session,
       assets,
       attachment,
       panel,
@@ -14163,6 +14258,10 @@ var __t3Client = (() => {
       // "Add to chat" (insertTerminalContext is 1.1.0). The host provider is
       // always registered; getCapabilities reports whether a composer is there.
       requireApi(composerContextApi),
+      // Path links open through the files pack's presentation provider. A
+      // denied or failing invoke degrades to an honest surface message, so
+      // only a provider-less host (no files installation) blocks the package.
+      requireApi(filePresentationApi),
       // Mandatory requirements — the broker only authorizes invocations for
       // declared APIs, so the t3.ui/* contracts must be declared even though
       // the panel degrades per-call. A host without these providers resolves

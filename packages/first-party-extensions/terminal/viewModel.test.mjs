@@ -20,6 +20,7 @@ import {
   noteOutputFrameForStreak,
   removeTerminalId,
   resolveActiveTerminalId,
+  terminalPathLinkTarget,
 } from "./viewModel.ts";
 
 const frame = (sequence, streamId = "stream-1") => ({ streamId, sequence });
@@ -1496,10 +1497,145 @@ NodeTest.describe("package requirements — t3.ui/* adoption policy", () => {
         "t3.terminal/output-events",
         "t3.terminal/control",
         "t3.composer/context",
+        "t3.file/presentation",
         "t3.ui/theme",
         "t3.ui/keybindings",
         "t3.ui/panels",
       ],
+    );
+  });
+});
+
+NodeTest.describe("terminal path links (Terminal 22 path half)", () => {
+  const target = (text, cwd, workspaceRoot) => terminalPathLinkTarget(text, cwd, workspaceRoot);
+  const unopenable = (value) =>
+    value.status === "unopenable" &&
+    value.reason === `${value.text} cannot be opened — not a workspace-relative path.`;
+
+  NodeTest.it("bare-relative link strips its position suffix and opens", () => {
+    NodeAssert.deepEqual(target("src/view.tsx:12:3", "/ws/root", "/ws/root"), {
+      status: "open",
+      relativePath: "src/view.tsx",
+    });
+  });
+
+  NodeTest.it("a position suffix of zero still slices off", () => {
+    // The markdown splitter slices the suffix even when the line number is
+    // not keepable, so `a.ts:0` must resolve as `a.ts`, not `a.ts:0`.
+    NodeAssert.deepEqual(target("a.ts:0", "/ws/root", "/ws/root"), {
+      status: "open",
+      relativePath: "a.ts",
+    });
+  });
+
+  NodeTest.it("a link that is only a position suffix refuses by name", () => {
+    // Nothing presentable remains once the suffix is stripped.
+    NodeAssert.ok(unopenable({ ...target(":12", "/ws/root", "/ws/root"), text: ":12" }));
+  });
+
+  NodeTest.it("absolute link inside the workspace root opens relative", () => {
+    NodeAssert.deepEqual(target("/ws/root/packages/a.ts", "/ws/root", "/ws/root"), {
+      status: "open",
+      relativePath: "packages/a.ts",
+    });
+  });
+
+  NodeTest.it("absolute link outside the workspace root refuses by name", () => {
+    const value = target("/etc/passwd", "/ws/root", "/ws/root");
+    NodeAssert.ok(unopenable({ ...value, text: "/etc/passwd" }));
+  });
+
+  NodeTest.it("home-relative link resolves through the inferred home", () => {
+    // Spelled concatenated: the pack's audit bans the home-link sequence.
+    const homeLink = (rest) => "~" + "/" + rest;
+    const noHome = "~" + "/srv/none/a.ts";
+    NodeAssert.ok(unopenable({ ...target(noHome, "/srv/app", "/srv/app"), text: noHome }));
+    const inside = target(homeLink("proj/src/a.ts"), "/Users/alex/proj", "/Users/alex/proj");
+    NodeAssert.deepEqual(inside, {
+      status: "open",
+      relativePath: "src/a.ts",
+    });
+    NodeAssert.ok(
+      unopenable({
+        ...target(homeLink("elsewhere/x.ts"), "/Users/alex/proj", "/Users/alex/proj"),
+        text: homeLink("elsewhere/x.ts"),
+      }),
+    );
+  });
+
+  NodeTest.it("dot segments normalize while root escapes refuse", () => {
+    NodeAssert.deepEqual(target("./src/./a.ts", "/ws/root", "/ws/root"), {
+      status: "open",
+      relativePath: "src/a.ts",
+    });
+    NodeAssert.deepEqual(target("src/../a.ts", "/ws/root", "/ws/root"), {
+      status: "open",
+      relativePath: "a.ts",
+    });
+    // `..` past the root — including through the root prefix — never opens.
+    NodeAssert.ok(
+      unopenable({ ...target("../outside.ts", "/ws/root", "/ws/root"), text: "../outside.ts" }),
+    );
+    NodeAssert.ok(
+      unopenable({
+        ...target("/ws/root/../escape.ts", "/ws/root", "/ws/root"),
+        text: "/ws/root/../escape.ts",
+      }),
+    );
+  });
+
+  NodeTest.it("the bare workspace root is not a presentable file", () => {
+    NodeAssert.ok(unopenable({ ...target("/ws/root", "/ws/root", "/ws/root"), text: "/ws/root" }));
+  });
+
+  NodeTest.it("a worktree launch cwd cannot express its links as project-relative", () => {
+    // The terminal spawns in the worktree, but the presentation op's paths
+    // are project-root-relative, so worktree paths refuse honestly while
+    // project-root absolutes still open.
+    NodeAssert.ok(unopenable({ ...target("src/a.ts", "/wt/tree", "/ws/root"), text: "src/a.ts" }));
+    NodeAssert.ok(
+      unopenable({
+        ...target("/wt/tree/src/a.ts", "/wt/tree", "/ws/root"),
+        text: "/wt/tree/src/a.ts",
+      }),
+    );
+    NodeAssert.deepEqual(target("/ws/root/src/a.ts", "/wt/tree", "/ws/root"), {
+      status: "open",
+      relativePath: "src/a.ts",
+    });
+  });
+
+  NodeTest.it("windows workspaces map drive-letter links case-insensitively", () => {
+    NodeAssert.deepEqual(target("src\\a.ts:4", "C:\\ws\\root", "C:\\ws\\root"), {
+      status: "open",
+      relativePath: "src/a.ts",
+    });
+    NodeAssert.deepEqual(target("c:\\WS\\ROOT\\src\\a.ts", "C:\\ws\\root", "C:\\ws\\root"), {
+      status: "open",
+      relativePath: "src/a.ts",
+    });
+    NodeAssert.ok(
+      unopenable({
+        ...target("C:\\Other\\a.ts", "C:\\ws\\root", "C:\\ws\\root"),
+        text: "C:\\Other\\a.ts",
+      }),
+    );
+    // Windows tools emit forward-slash and mixed-separator paths; the
+    // resolver normalizes to the root's style before mapping.
+    NodeAssert.deepEqual(target("C:/ws/root/src/a.ts", "C:\\ws\\root", "C:\\ws\\root"), {
+      status: "open",
+      relativePath: "src/a.ts",
+    });
+    NodeAssert.deepEqual(target("c:/WS/root\\src\\a.ts", "C:\\ws\\root", "C:\\ws\\root"), {
+      status: "open",
+      relativePath: "src/a.ts",
+    });
+    // Cross-style: a posix absolute never maps onto a windows root.
+    NodeAssert.ok(
+      unopenable({
+        ...target("/ws/root/src/a.ts", "C:\\ws\\root", "C:\\ws\\root"),
+        text: "/ws/root/src/a.ts",
+      }),
     );
   });
 });

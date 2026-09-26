@@ -1,5 +1,6 @@
 import {
   composerContextApi,
+  filePresentationApi,
   terminalControlApi,
   terminalOutputApi,
   terminalOutputEventsApi,
@@ -28,6 +29,7 @@ import {
 } from "react";
 
 import { isMacPlatform } from "@t3tools/ghostty-terminal/platform";
+import { isTerminalUrl } from "@t3tools/ghostty-terminal/terminal-links";
 import { loadGhosttyRuntime, type GhosttyRuntime } from "@t3tools/ghostty-terminal/runtime";
 import {
   GhosttyTerminalSurface,
@@ -57,6 +59,7 @@ import {
   plainTerminalText,
   registerPanelCommands,
   terminalChordAction,
+  terminalPathLinkTarget,
   watchTerminalAppearanceVars,
   watchThemeVars,
   workspaceLaunchFromRevision,
@@ -684,13 +687,54 @@ function TerminalPane(props: {
         onSelectionChange: selectionMenu.onSelectionChange,
         onContextMenu: selectionMenu.onContextMenu,
         beforeKey: (event) => handleBeforeKey(event, panel, terminalId),
-        onLinkActivate: () => {
-          // Detection and hover still work; opening needs host contracts
-          // (t3.browser/control for URLs, t3.file/open for paths) that
-          // no host provider ships yet — say so instead of silently dropping.
-          if (surface) {
-            writeSystemMessage(surface, "Opening links is unavailable in this extension host.");
+        onLinkActivate: (text) => {
+          // Terminal 22, path half: a detected path link opens through
+          // t3.file/presentation (the files pack's provider), reported on the
+          // surface. The URL half still has no external-open contract, so it
+          // stays an honest refusal instead of a silent drop.
+          if (surface === null) return;
+          const paneSurface = surface;
+          if (isTerminalUrl(text)) {
+            writeSystemMessage(paneSurface, "Opening URLs is unavailable in this extension host.");
+            return;
           }
+          const workspace = workspaceLaunchFromRevision(session.context.workspaceRevision);
+          const target =
+            workspace === null
+              ? null
+              : terminalPathLinkTarget(text, workspace.cwd, workspace.workspaceRoot);
+          if (target === null || target.status === "unopenable") {
+            writeSystemMessage(
+              paneSurface,
+              target === null
+                ? `${text} cannot be opened — the workspace is not available.`
+                : target.reason,
+            );
+            return;
+          }
+          const signal = session.signal;
+          void bindApi(filePresentationApi, host, session.context)
+            .invoke("open", { relativePath: target.relativePath }, signal)
+            .then(
+              (result) => {
+                if (!signal.aborted && surfaceRef.current === paneSurface) {
+                  writeSystemMessage(
+                    paneSurface,
+                    `${target.relativePath} opens in ${result.surfaceId} · ${result.placement}`,
+                  );
+                }
+              },
+              (error: unknown) => {
+                if (!signal.aborted && surfaceRef.current === paneSurface) {
+                  writeSystemMessage(
+                    paneSurface,
+                    `${text} could not be opened — ${
+                      error instanceof Error ? error.message : "presentation unavailable"
+                    }`,
+                  );
+                }
+              },
+            );
         },
       };
       try {
@@ -760,6 +804,8 @@ function TerminalPane(props: {
       surfaceRef.current = null;
     };
   }, [
+    host,
+    session,
     assets,
     attachment,
     panel,
@@ -1568,6 +1614,10 @@ const authored = defineExtension({
     // "Add to chat" (insertTerminalContext is 1.1.0). The host provider is
     // always registered; getCapabilities reports whether a composer is there.
     requireApi(composerContextApi),
+    // Path links open through the files pack's presentation provider. A
+    // denied or failing invoke degrades to an honest surface message, so
+    // only a provider-less host (no files installation) blocks the package.
+    requireApi(filePresentationApi),
     // Mandatory requirements — the broker only authorizes invocations for
     // declared APIs, so the t3.ui/* contracts must be declared even though
     // the panel degrades per-call. A host without these providers resolves
