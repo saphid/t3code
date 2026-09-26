@@ -8,6 +8,8 @@ import {
   type AgentSessionImportSource,
 } from "@t3tools/contracts";
 import { createExtensionRuntime, type HostApiRootAuthority } from "@t3tools/extension-runtime";
+import { agentSessionsApi } from "@t3tools/extension-sdk/catalogue";
+import { Ajv } from "ajv";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { HostApiProvider } from "@t3tools/extension-runtime";
 import * as Effect from "effect/Effect";
@@ -84,23 +86,40 @@ type ThreadRow = {
   projectId: ProjectId;
   worktreePath: null;
   deletedAt: string | null;
-  title: string;
   updatedAt: string;
 };
 
 /**
- * In-memory host: `byRoot` is what the native scanner would discover under
- * each project root, `threads` is the projection, and `importThread` persists
- * like the native importer and returns a monotonically increasing sequence.
+ * In-memory host modelling the native scanner and importer. `byRoot` is what a
+ * discovery walk finds under each project root; like the native scanner, the
+ * last walk is reused until a scan asks for a refresh. `completed` holds imports
+ * whose transcript was recorded (the scanner then reports them AlreadyImported);
+ * `threads` is the projection, which an interrupted import can leave behind.
  */
 const makeHost = (
   byRoot: Record<string, AgentSessionRecentThread[]>,
   slow?: { readonly deadline: Effect.Effect<void>; readonly onStall: Effect.Effect<void> },
 ) => {
   const threads = new Map<string, ThreadRow>();
+  const completed = new Set<string>();
   const imports: string[] = [];
+  let discovered: Record<string, AgentSessionRecentThread[]> | null = null;
   let sequence = 40;
   let failImport = false;
+  let interruptHistory = false;
+  const idOf = (source: { providerInstanceId: string; providerSessionId: string }) =>
+    `import:${source.providerInstanceId}:${source.providerSessionId}`;
+  const discover = (workspaceRoot: string, refresh: boolean) => {
+    if (refresh || discovered === null)
+      discovered = Object.fromEntries(
+        Object.entries(byRoot).map(([root, outcomes]) => [root, [...outcomes]]),
+      );
+    return (discovered[workspaceRoot] ?? []).map((outcome): AgentSessionRecentThread =>
+      outcome._tag === "Importable" && completed.has(idOf(outcome.source))
+        ? { _tag: "AlreadyImported", source: outcome.source }
+        : outcome,
+    );
+  };
   const provider = createAgentSessionsApiProvider({
     environmentId: ENV,
     projects: {
@@ -114,29 +133,37 @@ const makeHost = (
     threads: {
       getById: ({ threadId }) => Effect.succeed(Option.fromNullishOr(threads.get(threadId))),
     },
-    recentThreads: (workspaceRoot) =>
-      slow
-        ? // Emits what it has, signals, then stalls like a hung disk read.
-          Stream.fromIterable(byRoot[workspaceRoot] ?? []).pipe(
-            Stream.concat(Stream.fromEffectDrain(slow.onStall)),
-            Stream.concat(Stream.never),
-          )
-        : Stream.fromIterable(byRoot[workspaceRoot] ?? []),
+    recentThreads: (workspaceRoot, _projectId, { refresh }) =>
+      Stream.suspend(() =>
+        slow
+          ? // Emits what it has, signals, then stalls like a hung disk read.
+            Stream.fromIterable(discover(workspaceRoot, refresh)).pipe(
+              Stream.concat(Stream.fromEffectDrain(slow.onStall)),
+              Stream.concat(Stream.never),
+            )
+          : Stream.fromIterable(discover(workspaceRoot, refresh)),
+      ),
     ...(slow ? { scanDeadline: slow.deadline } : {}),
     importThread: (input) =>
       Effect.gen(function* () {
         if (failImport) return yield* Effect.die("decider rejected");
         // Yield first so a concurrent import would interleave here if it were not serialized.
         yield* Effect.yieldNow;
-        const id = `import:${input.thread.providerInstanceId}:${input.thread.providerSessionId}`;
+        const id = idOf(input.thread);
+        // The native importer reports a finished import without dispatching anything.
+        if (completed.has(id)) return { sequence: null };
         imports.push(id);
         threads.set(id, {
           projectId: input.projectId,
           worktreePath: null,
           deletedAt: null,
-          title: input.thread.title,
           updatedAt: input.thread.updatedAt,
         });
+        if (interruptHistory) {
+          interruptHistory = false;
+          return yield* Effect.die("history import interrupted");
+        }
+        completed.add(id);
         sequence += 2;
         return { sequence };
       }),
@@ -144,7 +171,11 @@ const makeHost = (
   return {
     provider,
     threads,
+    completed,
     imports,
+    interruptNextHistory: () => {
+      interruptHistory = true;
+    },
     failNextImports: () => {
       failImport = true;
     },
@@ -196,7 +227,6 @@ it("lists only this project's sessions, bounded, without paths or transcript tex
     providerInstanceId: "codex",
     providerSessionId: "long",
     source: "codex",
-    title: "x".repeat(200),
     lastActiveAt: "2026-09-20T10:05:00.000Z",
     status: "importable",
     threadId: null,
@@ -204,6 +234,9 @@ it("lists only this project's sessions, bounded, without paths or transcript tex
   const wire = JSON.stringify(result);
   expect(wire).not.toContain("/home/me");
   expect(wire).not.toContain("secret prompt");
+  // Native titles are the first prompt line, so they are transcript text too.
+  expect(wire).not.toContain("xxxxxxxxxx");
+  expect(wire).not.toContain("Session s");
   expect(wire).not.toContain("other-project");
 
   const exact = makeHost({ "/work/a": many.slice(0, 50) });
@@ -224,7 +257,7 @@ it("ends a stalled scan at its deadline with what it found, and refuses import b
   expect(host.imports).toEqual([]);
 });
 
-it("marks sessions already imported into this project and hides another project's", async () => {
+it("marks finished imports in this project and hides another project's", async () => {
   const mine = session("mine");
   const theirs = session("theirs");
   const host = makeHost({
@@ -234,18 +267,17 @@ it("marks sessions already imported into this project and hides another project'
       { _tag: "AlreadyImported", source: sourceOf(session("gone")) },
     ],
   });
+  host.completed.add("import:codex:mine");
   host.threads.set("import:codex:mine", {
     projectId: PROJECT,
     worktreePath: null,
     deletedAt: null,
-    title: "Mine",
     updatedAt: "2026-09-21T00:00:00.000Z",
   });
   host.threads.set("import:codex:theirs", {
     projectId: OTHER,
     worktreePath: null,
     deletedAt: null,
-    title: "Theirs",
     updatedAt: "2026-09-21T00:00:00.000Z",
   });
   const result = await host.scan();
@@ -294,7 +326,6 @@ it("names duplicates, cross-project sessions, and other projects' threads", asyn
     projectId: OTHER,
     worktreePath: null,
     deletedAt: null,
-    title: "Conflict",
     updatedAt: "2026-09-21T00:00:00.000Z",
   });
   // Another project's thread id is not disclosed.
@@ -304,6 +335,39 @@ it("names duplicates, cross-project sessions, and other projects' threads", asyn
     error: "AgentSessionProjectConflict",
   });
   expect(host.imports).toEqual(["import:codex:s1"]);
+});
+
+it("finishes an interrupted import on retry instead of calling it a duplicate", async () => {
+  const host = makeHost({ "/work/a": [importable(session("s1"))] });
+  host.interruptNextHistory();
+  expect(await host.importKey(key("s1"))).toMatchObject({
+    status: "rejected",
+    error: "AgentSessionImportRejected",
+  });
+  // The thread exists but its history never landed: still importable.
+  expect(host.threads.has("import:codex:s1")).toBe(true);
+  expect((await host.scan()).sessions[0]).toMatchObject({ status: "importable", threadId: null });
+  expect(await host.importKey(key("s1"))).toEqual({
+    status: "imported",
+    threadId: "import:codex:s1",
+    sequence: 42,
+    messageCount: 2,
+    error: null,
+  });
+});
+
+it("rescans discover sessions started after the previous scan", async () => {
+  const outcomes = [importable(session("s1"))];
+  const host = makeHost({ "/work/a": outcomes });
+  expect((await host.scan()).sessions.map((entry) => entry.providerSessionId)).toEqual(["s1"]);
+  outcomes.push(importable(session("s2")));
+  // Import only accepts what a scan listed; the pack rescans to see new sessions.
+  expect(await host.importKey(key("s2"))).toMatchObject({ error: "AgentSessionOutOfScope" });
+  expect((await host.scan()).sessions.map((entry) => entry.providerSessionId)).toEqual([
+    "s1",
+    "s2",
+  ]);
+  expect(await host.importKey(key("s2"))).toMatchObject({ status: "imported" });
 });
 
 it("serializes concurrent imports so a double click creates one thread", async () => {
@@ -340,6 +404,25 @@ it("refuses a stale workspace context before reading sessions", async () => {
     host.provider.invoke("import", key("s1"), stale, signal, meta(host.provider)),
   ).rejects.toThrow("Extension workspace context is stale.");
   expect(host.imports).toEqual([]);
+});
+
+it("accepts only whole import receipts, never a success/rejection hybrid", () => {
+  const receipt = agentSessionsApi.definition.methods?.find((method) => method.name === "import");
+  // Same options as the broker's validator.
+  const validate = new Ajv({ strict: true, addUsedSchema: false }).compile(receipt!.outputSchema);
+  const imported = { status: "imported", threadId: "t", sequence: 3, messageCount: 2, error: null };
+  const rejected = {
+    status: "rejected",
+    threadId: null,
+    sequence: null,
+    messageCount: 0,
+    error: "AgentSessionOutOfScope",
+  };
+  expect(validate(imported)).toBe(true);
+  expect(validate(rejected)).toBe(true);
+  expect(validate({ ...rejected, status: "imported" })).toBe(false);
+  expect(validate({ ...imported, error: "AgentSessionImportRejected" })).toBe(false);
+  expect(validate({ ...rejected, sequence: 3 })).toBe(false);
 });
 
 const CONSUMER_MANIFEST =

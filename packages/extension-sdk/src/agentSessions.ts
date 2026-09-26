@@ -4,7 +4,8 @@ import { defineApi } from "./capabilities.js";
  * Agent CLI sessions (Claude, Codex) that ran in the caller's project and can
  * be imported as T3 threads. Scope is the view context's project only: the
  * host re-discovers the session inside that project's root on every import,
- * and transcript paths, message text and resume cursors never leave the host.
+ * and transcript paths, message text (including the first-prompt title the
+ * native reader derives) and resume cursors never leave the host.
  */
 export const AGENT_SESSIONS_API = "t3.agents/sessions";
 /** Read grant: list importable sessions of the granted project. */
@@ -14,7 +15,6 @@ export const AGENT_SESSIONS_IMPORT = "t3.agents/import-sessions";
 export const AGENT_SESSIONS_SCAN_CAP = 50;
 /** Wall-clock bound on one host scan; a scan cut here returns what it found with `truncated`. */
 export const AGENT_SESSIONS_SCAN_DEADLINE_MS = 10_000;
-export const AGENT_SESSION_TITLE_MAX_LENGTH = 200;
 
 export type AgentSessionKey = {
   readonly providerInstanceId: string;
@@ -22,9 +22,11 @@ export type AgentSessionKey = {
 };
 export type AgentSessionSummary = AgentSessionKey & {
   readonly source: "claudeAgent" | "codex";
-  readonly title: string;
   readonly lastActiveAt: string;
-  /** `imported` sessions already have a thread; `threadId` names it. */
+  /**
+   * `imported` sessions have a completed import and `threadId` names it. An
+   * interrupted import stays `importable` so importing again can finish it.
+   */
   readonly status: "importable" | "imported";
   readonly threadId: string | null;
 };
@@ -110,7 +112,6 @@ export const agentSessionsApi = defineApi<{
                 "providerInstanceId",
                 "providerSessionId",
                 "source",
-                "title",
                 "lastActiveAt",
                 "status",
                 "threadId",
@@ -119,7 +120,6 @@ export const agentSessionsApi = defineApi<{
                 providerInstanceId: providerInstanceIdSchema,
                 providerSessionId: providerSessionIdSchema,
                 source: { enum: ["claudeAgent", "codex"] },
-                title: { type: "string", minLength: 1, maxLength: AGENT_SESSION_TITLE_MAX_LENGTH },
                 lastActiveAt: { type: "string", minLength: 1, maxLength: 40 },
                 status: { enum: ["importable", "imported"] },
                 threadId: threadIdSchema,
@@ -143,24 +143,39 @@ export const agentSessionsApi = defineApi<{
         },
       },
       outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["status", "threadId", "sequence", "messageCount", "error"],
-        properties: {
-          status: { enum: ["imported", "rejected"] },
-          threadId: threadIdSchema,
-          sequence: { type: ["integer", "null"], minimum: 0 },
-          messageCount: { type: "integer", minimum: 0 },
-          error: {
-            enum: [
-              null,
-              "AgentSessionOutOfScope",
-              "AgentSessionAlreadyImported",
-              "AgentSessionProjectConflict",
-              "AgentSessionImportRejected",
-            ],
+        oneOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["status", "threadId", "sequence", "messageCount", "error"],
+            properties: {
+              status: { const: "imported" },
+              threadId: { type: "string", minLength: 1, maxLength: 256 },
+              sequence: { type: "integer", minimum: 0 },
+              messageCount: { type: "integer", minimum: 0 },
+              error: { const: null },
+            },
           },
-        },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["status", "threadId", "sequence", "messageCount", "error"],
+            properties: {
+              status: { const: "rejected" },
+              threadId: threadIdSchema,
+              sequence: { const: null },
+              messageCount: { const: 0 },
+              error: {
+                enum: [
+                  "AgentSessionOutOfScope",
+                  "AgentSessionAlreadyImported",
+                  "AgentSessionProjectConflict",
+                  "AgentSessionImportRejected",
+                ],
+              },
+            },
+          },
+        ],
       },
     },
   ],

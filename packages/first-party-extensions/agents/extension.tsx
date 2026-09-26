@@ -1194,7 +1194,7 @@ function SessionImportSection(props: { readonly host: ClientHost; readonly sessi
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {entry.title}
+                    {entry.providerSessionId}
                   </span>
                   <span style={{ fontSize: 11, color: muted }}>
                     {entry.source === "claudeAgent" ? "Claude" : "Codex"} · {entry.lastActiveAt}

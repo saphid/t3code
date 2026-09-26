@@ -9,7 +9,6 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import {
-  AGENT_SESSION_TITLE_MAX_LENGTH,
   AGENT_SESSIONS_SCAN_CAP,
   AGENT_SESSIONS_SCAN_DEADLINE_MS,
   agentSessionsApi,
@@ -70,14 +69,16 @@ type Dependencies = Omit<ScopeDependencies, "threads"> & {
       threadId: ThreadId;
     }): Effect.Effect<
       Option.Option<
-        Pick<ProjectionThread, "projectId" | "worktreePath" | "deletedAt" | "title" | "updatedAt">
+        Pick<ProjectionThread, "projectId" | "worktreePath" | "deletedAt" | "updatedAt">
       >,
       ProjectionRepositoryError
     >;
   };
+  /** `refresh` re-walks the agent homes first; otherwise the last discovery is reused. */
   readonly recentThreads: (
     workspaceRoot: string,
     projectId: ProjectId,
+    options: { readonly refresh: boolean },
   ) => Stream.Stream<AgentSessionRecentThread, AgentSessionScanError | ProjectionRepositoryError>;
   readonly importThread: (
     input: Parameters<typeof importAgentSessionThread>[0],
@@ -155,10 +156,10 @@ export function createAgentSessionsApiProvider(deps: Dependencies): HostApiProvi
       .pipe(Effect.mapError(() => fail("Cannot resolve imported threads.")));
     // Same rules import applies: another project's session is not this caller's to list.
     if (Option.isSome(existing) && existing.value.projectId !== projectId) return null;
-    const imported = Option.isSome(existing);
-    if (outcome._tag === "AlreadyImported" && !imported) return null;
-    const title =
-      outcome._tag === "Importable" ? outcome.thread.title : Option.getOrThrow(existing).title;
+    if (outcome._tag === "AlreadyImported" && Option.isNone(existing)) return null;
+    // Only a recorded transcript means the import finished; a thread without one stays
+    // importable so a second import can complete it.
+    const imported = outcome._tag === "AlreadyImported";
     const lastActiveAt =
       outcome._tag === "Importable"
         ? outcome.thread.updatedAt
@@ -169,7 +170,6 @@ export function createAgentSessionsApiProvider(deps: Dependencies): HostApiProvi
       providerInstanceId: outcome.source.providerInstanceId,
       providerSessionId: outcome.source.providerSessionId,
       source: outcome.source.provider,
-      title: title.trim().slice(0, AGENT_SESSION_TITLE_MAX_LENGTH) || "Untitled session",
       lastActiveAt,
       status: imported ? "imported" : "importable",
       threadId: imported ? threadId : null,
@@ -181,7 +181,7 @@ export function createAgentSessionsApiProvider(deps: Dependencies): HostApiProvi
     const { projectId, workspaceRoot } = yield* project(context);
     let skipped = 0;
     let timedOut = false;
-    const listed = yield* deps.recentThreads(workspaceRoot, projectId).pipe(
+    const listed = yield* deps.recentThreads(workspaceRoot, projectId, { refresh: true }).pipe(
       Stream.mapError(() => fail("AgentSessionScanUnavailable")),
       Stream.mapEffect((outcome) => summarize(projectId, outcome)),
       Stream.filter((entry): entry is AgentSessionSummary => {
@@ -220,14 +220,12 @@ export function createAgentSessionsApiProvider(deps: Dependencies): HostApiProvi
     const existing = yield* deps.threads
       .getById({ threadId })
       .pipe(Effect.mapError(() => fail("Cannot resolve imported threads.")));
-    if (Option.isSome(existing)) {
-      // Another project's thread id is not disclosed to this caller.
-      return existing.value.projectId === projectId
-        ? rejected("AgentSessionAlreadyImported", threadId)
-        : rejected("AgentSessionProjectConflict");
-    }
+    // Another project's thread id is not disclosed to this caller. A thread in this project
+    // may be an interrupted import; the native importer finishes it or reports it complete.
+    if (Option.isSome(existing) && existing.value.projectId !== projectId)
+      return rejected("AgentSessionProjectConflict");
     // The pack's key is only a name: the host re-discovers it inside this project's root.
-    const found = yield* deps.recentThreads(workspaceRoot, projectId).pipe(
+    const found = yield* deps.recentThreads(workspaceRoot, projectId, { refresh: false }).pipe(
       Stream.mapError(() => fail("AgentSessionScanUnavailable")),
       Stream.filter(
         (outcome) =>
@@ -306,9 +304,12 @@ export const makeAgentSessionsApiProvider = Effect.fn("AgentSessionsApi.make")(f
     environmentId: yield* environment.getEnvironmentId,
     projects: yield* ProjectionProjectRepository,
     threads: yield* ProjectionThreadRepository,
-    recentThreads: (workspaceRoot, projectId) =>
+    recentThreads: (workspaceRoot, projectId, { refresh }) =>
       Stream.unwrap(
-        snapshots.getImportedAgentSessionSources(projectId).pipe(
+        // The scanner reuses its last discovery until `scan` runs; this instance is the
+        // provider's own, so only a pack scan refreshes it.
+        (refresh ? scanner.scan.pipe(Effect.asVoid) : Effect.void).pipe(
+          Effect.andThen(snapshots.getImportedAgentSessionSources(projectId)),
           Effect.map((completed) =>
             scanner.recentThreads(
               workspaceRoot,
