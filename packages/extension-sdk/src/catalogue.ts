@@ -19,6 +19,9 @@ import {
   commandDescriptorSchema,
   commandResultSchema,
   themeHalvesSchema,
+  clientPreferencesSchema,
+  clientPreferencesPatchSchema,
+  clientPreferencesReceiptSchema,
 } from "./clientProviders.js";
 
 export * from "./workspaceResources.js";
@@ -7138,6 +7141,9 @@ export const UI_KEYBINDINGS_GLOBAL = "t3.ui/keybindings.global";
 export const UI_KEYBINDINGS_VERSION = "1.1.0";
 export const UI_NOTIFY = "t3.ui/notify";
 export const UI_PANELS = "t3.ui/panels";
+export const UI_PREFERENCES = "t3.ui/preferences";
+export const UI_PREFERENCES_READ = "t3.ui/preferences.read";
+export const UI_PREFERENCES_WRITE = "t3.ui/preferences.write";
 
 const uiClientTargetSchema = {
   type: "object",
@@ -7857,10 +7863,68 @@ export const uiPanelsApi = defineApi<{
   ],
 });
 
+/** The client preferences a pack can read — see `clientPreferencesSchema`. */
+export type UiPreferences = {
+  readonly wordWrap: boolean;
+};
+
+/**
+ * `t3.ui/preferences` — typed read, change stream and write receipt for a
+ * named subset of the target client's persisted settings. The stream emits a
+ * snapshot, then one frame per actual change; it never polls.
+ */
+export const uiPreferencesApi = defineApi<{
+  getCapabilities: { input: Record<string, never>; output: UiCapabilities };
+  getPreferences: { input: Record<string, never>; output: UiPreferences };
+  setPreferences: {
+    input: Partial<UiPreferences>;
+    output: { applied: boolean; reason?: string; preferences: UiPreferences };
+  };
+}>({
+  id: UI_PREFERENCES,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: composerEmptyInputSchema,
+      outputSchema: uiCapabilitiesOutput([
+        "getPreferences",
+        "setPreferences",
+        "subscribePreferences",
+      ]),
+    },
+    {
+      name: "getPreferences",
+      effect: "read",
+      requiredGrants: [UI_PREFERENCES_READ],
+      inputSchema: composerEmptyInputSchema,
+      outputSchema: clientPreferencesSchema,
+    },
+    {
+      name: "setPreferences",
+      effect: "write",
+      requiredGrants: [UI_PREFERENCES_WRITE],
+      inputSchema: clientPreferencesPatchSchema,
+      outputSchema: clientPreferencesReceiptSchema,
+    },
+  ],
+  streams: [
+    {
+      name: "subscribePreferences",
+      inputSchema: composerEmptyInputSchema,
+      eventSchema: clientPreferencesSchema,
+      requiredGrants: [UI_PREFERENCES_READ],
+    },
+  ],
+});
+
 export const UI_THEME_API = uiThemeApi.definition;
 export const UI_KEYBINDINGS_API = uiKeybindingsApi.definition;
 export const UI_NOTIFICATIONS_API = uiNotificationsApi.definition;
 export const UI_PANELS_API = uiPanelsApi.definition;
+export const UI_PREFERENCES_API = uiPreferencesApi.definition;
 
 /**
  * Contracts only: their presence does not advertise a functioning or
@@ -7907,6 +7971,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   uiKeybindingsApi.definition,
   uiNotificationsApi.definition,
   uiPanelsApi.definition,
+  uiPreferencesApi.definition,
 ];
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";

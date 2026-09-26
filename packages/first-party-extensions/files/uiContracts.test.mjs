@@ -7,8 +7,100 @@ import {
   FILES_THEME_VARS,
   FILES_VIEW_COMMANDS,
   themeVarOverrides,
+  watchPreferences,
   watchThemeVars,
+  writeWordWrap,
 } from "./viewModel.ts";
+
+NodeTest.describe("watchPreferences", () => {
+  const viewContext = { resource: { environmentId: "env-1", threadId: "thread-1" } };
+
+  const streamOf = (frames, error) => ({
+    subscribeApi: (request) => {
+      NodeAssert.equal(request.id, "t3.ui/preferences");
+      NodeAssert.equal(request.name, "subscribePreferences");
+      return (async function* () {
+        yield* frames;
+        if (error) throw error;
+      })();
+    },
+  });
+
+  NodeTest.it("applies each streamed value, then clears when the stream closes", async () => {
+    const applied = [];
+    await watchPreferences({
+      client: streamOf([
+        { type: "snapshot", value: { wordWrap: false } },
+        { type: "data", value: { wordWrap: true } },
+        { type: "closed", value: {} },
+        { type: "data", value: { wordWrap: false } },
+      ]),
+      context: viewContext,
+      signal: new AbortController().signal,
+      apply: (value) => applied.push(value),
+    });
+    NodeAssert.deepEqual(applied, [null, { wordWrap: false }, { wordWrap: true }, null]);
+  });
+
+  NodeTest.it("clears on a denied or lost stream so no stale value survives", async () => {
+    const applied = [];
+    await watchPreferences({
+      client: streamOf(
+        [{ type: "snapshot", value: { wordWrap: true } }],
+        new Error("API capability denied: t3.ui/preferences.read"),
+      ),
+      context: viewContext,
+      signal: new AbortController().signal,
+      apply: (value) => applied.push(value),
+    });
+    NodeAssert.deepEqual(applied, [null, { wordWrap: true }, null]);
+  });
+});
+
+NodeTest.describe("writeWordWrap", () => {
+  const viewContext = { resource: { environmentId: "env-1", threadId: "thread-1" } };
+  const invoking = (result) => ({
+    invokeApi: (request) => {
+      NodeAssert.equal(request.id, "t3.ui/preferences");
+      NodeAssert.equal(request.method, "setPreferences");
+      NodeAssert.deepEqual(request.input, { wordWrap: false });
+      return result;
+    },
+  });
+  const write = (client) =>
+    writeWordWrap({
+      client,
+      context: viewContext,
+      signal: new AbortController().signal,
+      wordWrap: false,
+    });
+
+  NodeTest.it("reports nothing for an applied receipt", async () => {
+    NodeAssert.equal(
+      await write(invoking(Promise.resolve({ applied: true, preferences: { wordWrap: false } }))),
+      null,
+    );
+  });
+
+  NodeTest.it("names the receipt's reason or the denial", async () => {
+    NodeAssert.equal(
+      await write(
+        invoking(
+          Promise.resolve({
+            applied: false,
+            reason: "persist-failed",
+            preferences: { wordWrap: true },
+          }),
+        ),
+      ),
+      "Word wrap not saved — persist-failed",
+    );
+    NodeAssert.equal(
+      await write(invoking(Promise.reject(new Error("Missing grant t3.ui/preferences.write")))),
+      "Word wrap not saved — Missing grant t3.ui/preferences.write",
+    );
+  });
+});
 
 NodeTest.describe("themeVarOverrides", () => {
   const cssVars = {
