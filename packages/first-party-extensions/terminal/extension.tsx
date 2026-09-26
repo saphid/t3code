@@ -811,7 +811,7 @@ function TerminalPane(props: {
           style={{ padding: "4px 10px", color: muted, fontSize: 11, flexShrink: 0 }}
         >
           Attached with truncated history — modes and screen state before the retained tail are
-          unknown, so interactive parity is not claimed until the next full snapshot (B4).
+          unknown, so interactive parity is not claimed until the next full snapshot.
         </output>
       )}
       {streamBlocked && (
@@ -849,7 +849,7 @@ function TerminalPane(props: {
 }
 
 /* ------------------------------------------------------------------ */
-/* Text fallback for hosts without package-asset reads (design Q3)     */
+/* Text fallback for hosts without package-asset reads                 */
 /* ------------------------------------------------------------------ */
 
 /** Live output via the public output-events stream; chunk groups reassemble in the view model. */

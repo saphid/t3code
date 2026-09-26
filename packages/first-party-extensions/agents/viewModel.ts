@@ -2,11 +2,11 @@
  * Pure view-model for the Agents panel. Two halves:
  *
  * - checked-in `t3.json` script derivation plus the script-run terminal plan
- *   over `t3.terminal/control` (rows 17/18 — the native settings script list
- *   has no public read contract; the checked-in file is readable through
+ *   over `t3.terminal/control` (the native settings script list has no
+ *   public read contract; the checked-in file is readable through
  *   `t3.workspace/files` `readText`), and
  * - the live fleet view over `t3.orchestration/status` + `t3.orchestration/
- *   control` (rows 2-12, 14, 16, 19): the subscribe stream already delivers
+ *   control`: the subscribe stream already delivers
  *   the server-folded `RuntimeSubagent[]`, pending requests, checkpoints,
  *   session and turn — this module derives the panel model (workflow groups,
  *   status visuals, activity lines, counts), the per-operation capability
@@ -389,11 +389,10 @@ export function describeScriptRun(run: ScriptRun): string {
 export interface DeferredSection {
   readonly title: string;
   readonly blocker: string;
-  readonly rows: string;
 }
 
 /**
- * Every parity row the panel names but cannot serve. Rendered as static text —
+ * Every capability the panel names but cannot serve. Rendered as static text —
  * a deferred section is a statement about a missing contract, not a promise of
  * data in flight.
  */
@@ -401,31 +400,27 @@ export const DEFERRED_SECTIONS: readonly DeferredSection[] = [
   {
     title: "Workflow launch",
     blocker: "no native binding exists to extract — net-new design, not fakeable",
-    rows: "15",
   },
   {
     title: "Agent logs and session deep links",
     blocker: "no native web/desktop binding exists — net-new design",
-    rows: "20–21",
   },
   {
     title: "Agent session scan/import (welcome wizard)",
     blocker:
-      "native provisioning scan exists (agentSessions scan/import RPC) but is not in the shipped contract surface — needs a narrow public scan contract (NEW-NARROW)",
-    rows: "22",
+      "native provisioning scan exists (agentSessions scan/import RPC) but is not in the shipped contract surface — needs a narrow public scan contract",
   },
   {
     title: "Mobile Agents surface",
     blocker: "web/desktop only — the same client restriction the native manifest declares",
-    rows: "23",
   },
 ];
 
-/** Why the scripts list covers only the checked-in file (row 17's deferred half). */
+/** Why the scripts list covers only the checked-in file — the settings-backed half is deferred. */
 export const SCRIPTS_SCOPE_NOTE =
   "Checked-in t3.json scripts only. Project scripts stored in settings (machine defaults and per-project overrides) are not readable through public contracts yet.";
 
-/** Row 13's host half, stated where a user would look for it. */
+/** The host-rendered half of Agents navigation, stated where a user would look for it. */
 export const HOST_CHROME_NOTE =
   "The chat badge and spawn CTA rows are host chat UI a plugin cannot install; this surface is the plugin-owned half of Agents navigation.";
 

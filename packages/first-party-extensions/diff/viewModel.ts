@@ -521,7 +521,7 @@ export type DiffCapabilityState =
   | { readonly kind: "ready" };
 
 /**
- * The honesty gate (row 30): capabilities decide whether the panel renders
+ * The honesty gate: capabilities decide whether the panel renders
  * real state, a real no-repo state, or a named unsupported driver — never
  * a fabricated empty diff.
  */

@@ -1,5 +1,5 @@
 /**
- * Editor session for one workspace path (F1 #2/#3/#4). A package-owned
+ * Editor session for one workspace path. A package-owned
  * FileEditCoordinator drives debounced autosave through the revisioned
  * `t3.workspace/text-edits@1.1.0` contract: the textarea renders the buffered
  * contents optimistically, saves compare-and-swap on the confirmed base
@@ -7,7 +7,7 @@
  * session flushes pending edits when the file changes or the view unmounts —
  * the native panel's unmount-dispose semantics.
  *
- * Past the checkpoint's 24,000-byte bound (F1 C06, #19) the same semantics
+ * Past the checkpoint's 24,000-byte bound the same semantics
  * ride `t3.workspace/resources`: opens fall through to the chunked,
  * sha256-verified `read` stream and saves become a `save.begin`/`save.chunk`/
  * `save.commit` upload carrying the same expected-revision compare-and-swap.

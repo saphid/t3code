@@ -9970,7 +9970,7 @@ ${prefix}`;
         placements: ["side-panel"],
         clients: ["web", "desktop"],
         // SurfaceDescriptor.capabilities declares consumed host services; the
-        // installed path exposes none, so this stays empty (design F4).
+        // installed path exposes none, so this stays empty.
         capabilities: [],
         stateVersion: 1,
         validateRestore: restoreDiffState,

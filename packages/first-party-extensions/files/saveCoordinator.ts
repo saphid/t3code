@@ -1,5 +1,5 @@
 /**
- * Package-owned save coordinator (F1 #3). Mirrors the observable semantics of
+ * Package-owned save coordinator. Mirrors the observable semantics of
  * the native panel's FileSaveCoordinator — 500 ms debounce, single-flight
  * serial persist, pending cleared only when the persisted edit is the latest
  * one and it succeeded, dispose() flushing pending edits immediately — adapted
@@ -113,7 +113,7 @@ export class FileEditCoordinator {
   }
 
   /**
-   * Refresh reconciliation (F1 #4): the view re-read the snapshot and reports
+   * Refresh reconciliation: the view re-read the snapshot and reports
    * the remote revision. Clean sessions adopt the remote file via the view;
    * dirty sessions latch conflict rather than clobber pending edits.
    */

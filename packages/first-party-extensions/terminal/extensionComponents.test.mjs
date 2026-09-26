@@ -166,10 +166,9 @@ NodeTest.describe("cold restore stream budget", () => {
   NodeTest.test(
     "eight-session restore admits sessions/theme/appearance inside the cap",
     async () => {
-      // Cold restore: pane effects run before the view's fixed-feed effects,
-      // hidden panes take optional slots, and pre-fix the three fixed
-      // subscriptions were rejected over the cap — the panel never went live
-      // and New stayed disabled.
+      // Cold restore: pane effects run before the view's fixed-feed effects
+      // and hidden panes take optional slots — the three fixed subscriptions
+      // must land inside the cap for the panel to go live and New to enable.
       const active = new Set();
       const attempts = [];
       const rejects = [];
@@ -271,9 +270,9 @@ NodeTest.describe("group switch waiter wake", () => {
     async () => {
       // Group switch, on real TerminalPane components: three fixed feeds plus
       // a1..a4/c fill the pool, b is hidden and unallocated. Reorder b first
-      // and show only b and c — pre-fix, b's failed acquire never retried
-      // because the later demotions of a1..a4 did not wake waiters, leaving the
-      // visible pane disconnected despite evictable streams.
+      // and show only b and c — b's failed acquire must retry when the later
+      // demotions of a1..a4 wake waiters, so the visible pane connects over
+      // evicted streams.
       const { host, active } = paneStreamHost();
       const session = {
         signal: new AbortController().signal,
@@ -351,10 +350,9 @@ NodeTest.describe("group switch waiter wake", () => {
 NodeTest.describe("hidden waiters retry at current visibility", () => {
   NodeTest.test("refused hidden waiters cannot seize demoted slots as mandatory", async () => {
     // Five visible panes fill the pool, four hidden panes and b are refused and
-    // wait. Switching to [b, c] demotes a1..a4 — pre-fix, every hidden waiter's
-    // retry acquired MANDATORY, so the demotions handed h1..h4 permanent
-    // mandatory slots and the newly visible b starved behind "Stream budget"
-    // with nothing left to evict.
+    // wait. Switching to [b, c] demotes a1..a4 — hidden waiters retry at their
+    // current (still-hidden) priority, so the demoted slots go to the newly
+    // visible b rather than to h1..h4.
     const { host, active } = paneStreamHost();
     const session = {
       signal: new AbortController().signal,
@@ -435,9 +433,9 @@ NodeTest.describe("two full views sidebar switch", () => {
   NodeTest.test("the selected pane wins the stream budget in both placements", async () => {
     // Two complete TerminalView placements for one thread, eleven restored
     // sessions. Selecting b through its real sidebar callback demotes a1..a4 in
-    // the left placement — pre-fix, the left placement's earlier refused hidden
-    // waiters re-acquired MANDATORY slots on those demotions, the streams
-    // stayed on c/h2..h5, and the visible b showed "Stream budget".
+    // the left placement — the left placement's earlier refused hidden waiters
+    // retry at hidden priority on those demotions, so the streams leave
+    // c/h2..h5 and the visible b connects.
     const active = new Map();
     let counter = 0;
     const host = {

@@ -401,7 +401,7 @@ function OpButton(props: {
   );
 }
 
-/** Session line + thread-level controls (rows 6, 7, 12). */
+/** Session line + thread-level controls. */
 function SessionControls(props: {
   readonly feed: AgentsFeedState;
   readonly capabilities: OrchestrationCapabilities | null;
@@ -667,7 +667,7 @@ function UserInputRow(props: {
   );
 }
 
-/** Pending approvals and user inputs (row 8). */
+/** Pending approvals and user inputs. */
 function PendingSection(props: {
   readonly feed: AgentsFeedState;
   readonly capabilities: OrchestrationCapabilities | null;
@@ -936,7 +936,7 @@ type DiffView =
   | { readonly key: string; readonly kind: "ready"; readonly patch: VerifiedDiffPatch }
   | { readonly key: string; readonly kind: "error"; readonly detail: string };
 
-/** Checkpoints list + verified turn/thread diff rendering (rows 9–11). */
+/** Checkpoints list + verified turn/thread diff rendering. */
 function CheckpointsSection(props: {
   readonly feed: AgentsFeedState;
   readonly capabilities: OrchestrationCapabilities | null;
@@ -1445,9 +1445,7 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
             {DEFERRED_SECTIONS.map((section) => (
               <li key={section.title} style={{ fontSize: 12 }}>
                 <div>{section.title}</div>
-                <div style={{ color: muted, fontSize: 11 }}>
-                  {section.blocker} (parity rows {section.rows})
-                </div>
+                <div style={{ color: muted, fontSize: 11 }}>{section.blocker}</div>
               </li>
             ))}
           </ul>

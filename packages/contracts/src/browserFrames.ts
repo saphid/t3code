@@ -137,14 +137,14 @@ export const BrowserFrameInputNotice = Schema.Union([
     /**
      * Set when the superseded socket's held-input cleanup could not fully
      * settle before this bind — the guest may still carry released-state the
-     * ledger could not confirm. Design §3.7 cleanup vocabulary.
+     * ledger could not confirm, so the caller can surface cleanup-incomplete.
      */
     cleanupIncomplete: Schema.optional(Schema.Boolean),
   }),
   /**
    * A same-lease socket bound under a ticket older than the newest accepted:
    * it may dispatch under the lease but owns nothing — no `bound` ownership
-   * notice, no slot, no lease cleanup. Design §3.7 shadow vocabulary.
+   * notice, no slot, no lease cleanup.
    */
   Schema.Struct({
     type: Schema.Literal("shadow"),

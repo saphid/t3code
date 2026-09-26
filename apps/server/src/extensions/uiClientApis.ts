@@ -26,7 +26,7 @@ const OUTCOME_RETENTION_CAP = 256;
 
 /**
  * The public `t3.ui/*` contracts backed by `t3.client/*` client providers.
- * Each adapter resolves an explicit connection target (§1.4), stamps the
+ * Each adapter resolves an explicit connection target, stamps the
  * broker-verified caller identity into the frame, and forwards the op over
  * the connect stream. There is no failover: an unresolved or vanished target
  * fails `client-provider-unavailable`/`client-target-*` instead of landing

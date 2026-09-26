@@ -8,7 +8,7 @@
  * is unknown (transport failure, timeout, or a server-side error after the
  * request body was sent) the queue halts: the failed batch and everything
  * queued behind it are discarded and never resent — there is no op-id fence
- * to prove which bytes landed (B6). Input stays stopped until the user
+ * to prove which bytes landed. Input stays stopped until the user
  * resumes explicitly; a restart/close resets the queue entirely.
  */
 export const TERMINAL_INPUT_SERIALIZED_BUDGET = 48 * 1024;
@@ -241,7 +241,7 @@ export class TerminalInputQueue {
           await this.#send(batch);
         } catch (error) {
           // The batch and everything behind it are dropped: without an op-id
-          // fence there is no way to tell which bytes landed (B6), and a paste
+          // fence there is no way to tell which bytes landed, and a paste
           // that lost its opening marker must never release the rest.
           this.#pending = [];
           this.#pendingSerialized = 0;

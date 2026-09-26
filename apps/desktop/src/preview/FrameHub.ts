@@ -12,7 +12,7 @@
  * server-side; the secret is what makes loopback non-authoritative-by-
  * omission rather than non-authoritative-by-accident.
  *
- * Input sockets run the certified §3.7 machine: one active socket plus one
+ * Input sockets run the held-input machine: one active socket plus one
  * pending candidate per session. An upgrade while an incumbent is
  * bound/live/closing parks as the pending candidate (latest arrival wins —
  * a parked candidate is closed `superseded` when a newer upgrade lands) and
@@ -125,7 +125,7 @@ interface SessionActivity {
   /** The single parked upgrade awaiting the incumbent's `ended`. */
   pending: PendingCandidate | null;
   geometry: HubGeometry | null;
-  /** Latest capture-loop frame — seeds newly attached viewers (F9). */
+  /** Latest capture-loop frame — seeds newly attached viewers. */
   latestFrame: PreviewManager.RemoteLiveFrame | null;
   lastFrame: { readonly width: number; readonly height: number; readonly seq: number } | null;
   /**

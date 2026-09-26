@@ -6,8 +6,8 @@
  * cannot reach `t3.ui/panels` is never offered, or withdraws itself once
  * access is confirmed gone.
  *
- * Reference: design/t3-ui-contract.md §2.1 (theme), §2.2 (keybindings),
- * §2.3 (notifications), §2.4 (panels). The native `diff.toggle` binding is
+ * The `t3.ui` contract halves consumed: theme, keybindings, notifications,
+ * panels. The native `diff.toggle` binding is
  * `mod+d` with `!terminalFocus` (packages/shared/src/keybindings.ts). The
  * native panel surfaces no toasts, so `t3.ui/notifications` is used only to
  * report command-dispatch failures — a failure path the native toggle cannot

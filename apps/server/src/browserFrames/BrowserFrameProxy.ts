@@ -324,7 +324,7 @@ const upstreamParams = (
   if (leaseBinding?.leaseId !== undefined) upstream.set("x-t3-lease", leaseBinding.leaseId);
   // The credential's expiry rides along as the stream/socket floor: the hub
   // ends the response or closes the socket when it passes, so open-time auth
-  // never leaves pixels or input flowing past a dead ticket (design §3.7.7).
+  // never leaves pixels or input flowing past a dead ticket.
   if (leaseBinding?.expiresAt !== undefined) {
     upstream.set("x-t3-lease-expires", String(leaseBinding.expiresAt));
   }

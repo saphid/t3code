@@ -2795,8 +2795,8 @@ describe("PreviewManager", () => {
     ),
   );
 
-  // Runs on the real clock: an earlier queueing design only settled under TestClock and stalled the
-  // losing start forever in the desktop app.
+  // Runs on the real clock: this proves the losing start settles rather than
+  // stalling — a TestClock run would mask the live timing.
   effectIt.live("settles both starts when two tabs race for the capture stream", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -4581,7 +4581,7 @@ describe("PreviewManager", () => {
         );
         expect(keyEvents("down")).toHaveLength(1);
 
-        // D1 physical-up semantics (certified §3.7): a key-up is honored
+        // Physical-up semantics: a key-up is honored
         // regardless of which lease owns the held entry — the key is
         // physically released, so the entry clears and the up dispatches.
         yield* manager.dispatchRemoteInput(

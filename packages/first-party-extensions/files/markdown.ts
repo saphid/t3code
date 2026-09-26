@@ -1,5 +1,5 @@
 /**
- * Minimal safe markdown parser for the Files preview (F1 #22). The native
+ * Minimal safe markdown parser for the Files preview. The native
  * FileMarkdownPreview renders through ChatMarkdown (react-markdown + GFM +
  * raw-HTML sanitize) — that dependency tree cannot bundle into an extension
  * (the build bans react-dom; the import audit bans every app-private

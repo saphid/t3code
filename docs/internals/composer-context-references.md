@@ -86,9 +86,9 @@ Messages sent before this feature carry trailing `<terminal_context>`, `<element
   only, and only inside a marked body, after the record boundary is fixed. New writes
   round-trip byte-identical while historical unmarked bodies keep their bytes, literal `&lt;`
   spellings included, and entity casings the writer never emits (`&LT;`, `&Lt;`, `&lT;`) stay
-  literal even inside marked bodies. The parser's leniency toward pre-fix payloads is boundary
-  leniency, not proof that historical entity content was ever preserved; the marker is what
-  guarantees it. Writers must keep this contract.
+  literal even inside marked bodies. The parser's leniency toward unmarked historical bodies is
+  boundary leniency, not proof that historical entity content was ever preserved; the marker is
+  what guarantees it. Writers must keep this contract.
 - Trailing blocks peel off the end in reverse send order (preview, element, terminal).
 - Placeholders bind to terminal entries in order; entries without a placeholder are appended.
 - Ids are deterministic (`legacy_<kind>_<n>`) so re-running the upgrade is idempotent.

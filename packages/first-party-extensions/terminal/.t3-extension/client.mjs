@@ -12024,7 +12024,7 @@ var __t3Client = (() => {
     /**
      * Type into a terminal. Batches by serialized invocation bytes and stops on
      * an unknown write outcome — the queue owns ordering, bounds, and the
-     * input-stopped halt (B6); the panel only gates draining on `starting`.
+     * input-stopped halt; the panel only gates draining on `starting`.
      */
     sendInput(terminalId, data) {
       const tab = this.#tabs.get(terminalId);
@@ -12625,7 +12625,7 @@ var __t3Client = (() => {
         this.#emit({
           ...this.#state,
           status: "live",
-          statusText: unfaithful ? "Replayed without full history \u2014 modes and screen state before the retained tail are unknown, so interactive parity is not claimed (B4)." : "Watching live output.",
+          statusText: unfaithful ? "Replayed without full history \u2014 modes and screen state before the retained tail are unknown, so interactive parity is not claimed." : "Watching live output.",
           degraded: unfaithful || this.#state.degraded
         });
       }
@@ -13454,7 +13454,7 @@ var __t3Client = (() => {
             {
               "aria-label": "Attach degraded",
               style: { padding: "4px 10px", color: muted, fontSize: 11, flexShrink: 0 },
-              children: "Attached with truncated history \u2014 modes and screen state before the retained tail are unknown, so interactive parity is not claimed until the next full snapshot (B4)."
+              children: "Attached with truncated history \u2014 modes and screen state before the retained tail are unknown, so interactive parity is not claimed until the next full snapshot."
             }
           ),
           streamBlocked && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(

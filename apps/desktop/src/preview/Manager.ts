@@ -516,7 +516,7 @@ export interface RemoteFrameConfigInfo {
 }
 
 /**
- * Geometry stamp shared by frame captures and config reads (design §3.6):
+ * Geometry stamp shared by frame captures and config reads:
  * `generation:cssWxcssH@zoom`. The hub maps distinct keys onto its own
  * monotonic `geometrySeq`; identical keys always mean identical geometry.
  */
@@ -535,7 +535,7 @@ export const remoteFrameGeometryKey = (
 type InputStateOwner = { readonly kind: "action" | "lease"; readonly id: string };
 
 /**
- * Shared per-guest held-input ledger (design §3.7): every key/button pressed
+ * Shared per-guest held-input ledger: every key/button pressed
  * against this webContents generation, by any lane, records its owner BEFORE
  * the CDP send — an applied-but-rejected send still owes cleanup. Mutated
  * only inside `lane`, which serializes lease dispatches and deferred cleanup
@@ -568,13 +568,13 @@ interface RemoteInputLeaseState {
   /**
    * Set when cleanup begins — a queued or arriving dispatch fails rather than
    * sending into a guest whose held state is being released. The registry
-   * entry stays until release settles (sends/failures accounted, D3).
+   * entry stays until release settles (sends/failures accounted).
    */
   ending: boolean;
   /**
    * Focus restore target, overwritten on each fresh claim — a lease that
    * loses guest focus to an action (or another lease) re-claims and
-   * re-captures it (claim generations, D2).
+   * re-captures it (claim generations).
    */
   previouslyFocusedId: number | null;
 }
@@ -4494,13 +4494,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     // state: an exiting action skips the emulation disable when a remote
     // input lease has since claimed the guest (and vice versa).
     const ownerToken = yield* cryptoService.randomUUIDv4.pipe(Effect.orDie);
-    // Focus claim and release both ride the guest ledger lane (D2): an action
+    // Focus claim and release both ride the guest ledger lane: an action
     // press and a remote lease's focus claim/cleanup serialize against each
     // other, so neither can interleave an emulation toggle into the other's
     // still-running claim.
     const actionLedger = yield* remoteGuestLedgerFor(tabId, String(wc.id));
     // A press that re-presses a key another lane holds takes over its ledger
-    // entry before the keyDown sends (latest presser owns, §3.7); the action's
+    // entry before the keyDown sends (latest presser owns); the action's
     // keyUp then clears only its own claim and recomputes the modifier mask,
     // so a stale lease entry never mirrors onto later remote pointer/wheel
     // packets or owes a duplicate release at lease cleanup.
@@ -5353,7 +5353,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
     // Focus-affecting classes hold the guest-global input state, mirroring
     // the action path's focus grab. Ownership is re-checked inside the lane
-    // on EVERY such event (D2 claim generations): a lease that lost focus to
+    // on EVERY such event (claim generations): a lease that lost focus to
     // an action or another lease re-claims and re-captures the previously
     // focused target — a one-way flag could never re-acquire.
     const focusAffecting =
@@ -5415,7 +5415,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           });
           return;
         }
-        // Physical up is honored regardless of the ledger owner (D1): the
+        // Physical up is honored regardless of the ledger owner: the
         // pointer is physically released, so the entry clears for whichever
         // lane owns it and the release dispatches unconditionally.
         ledger.buttons.delete(button);
@@ -5458,7 +5458,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           yield* send("Input.dispatchKeyEvent", keyDown);
           return;
         }
-        // Physical key-up is honored regardless of the ledger owner (D1):
+        // Physical key-up is honored regardless of the ledger owner:
         // the key is physically up, so the entry clears for whichever lane
         // owns it and the release dispatches unconditionally.
         const entry = ledger.keys.get(heldKey);
@@ -5517,7 +5517,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         const control = live
           ? (yield* SynchronizedRef.get(controlSessionsRef)).get(wc.id)
           : undefined;
-        // Truthful accounting (D3): every send attempt is counted before it
+        // Truthful accounting: every send attempt is counted before it
         // runs; a failed send keeps `failed` nonzero so callers can surface
         // cleanup-incomplete instead of reporting a clean release.
         let attempted = 0;
@@ -5602,7 +5602,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
    * work and fresh dispatches fail from here), releases everything the lease
    * holds on the guest ledger's lane so a `keyUp` can never dispatch ahead of
    * a still-queued `keyDown`, and only then removes the entry — sends and
-   * failures are accounted before the record disappears (D3). Runs on every
+   * failures are accounted before the record disappears. Runs on every
    * lease end path — socket close, supersession, fence mismatch, revocation,
    * expiry.
    */
@@ -5634,7 +5634,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   /**
    * Ordered held-state release WITHOUT ending the lease: used when the
-   * session geometry changes (design §3.7) so stale up events cannot strand
+   * session geometry changes, so stale up events cannot strand
    * keys/buttons across the geometry bump. Focus is left claimed. Failures
    * aggregate so the hub can flag the bound socket cleanup-incomplete.
    */
@@ -6210,7 +6210,7 @@ export class PreviewManager extends Context.Service<
     /**
      * Ordered held-state release across every remote-input lease on the tab,
      * keeping the leases alive. Called on a geometry bump before the new
-     * geometry is advertised (design §3.7). `failed > 0` means cleanup did
+     * geometry is advertised. `failed > 0` means cleanup did
      * not fully settle — callers should flag the surface cleanup-incomplete
      * rather than report a clean release.
      */

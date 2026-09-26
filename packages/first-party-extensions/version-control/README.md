@@ -23,7 +23,7 @@ The PR browser consumes the `t3.prs/read` grant:
 - freshness via `prs.subscribeRefreshes` and an explicit Refresh that
   calls `prs.invalidate` then re-reads the list;
 - `prs.stack`/`prs.reviewerCandidates`/`prs.labelCandidates`/`prs.listStats`
-  remain unwired — no row needs them yet.
+  remain unwired — nothing in the panel needs them yet.
 
 The capability gate (`prs.getCapabilities`) renders every named
 unavailable state — no configured host, `cli-missing`,
