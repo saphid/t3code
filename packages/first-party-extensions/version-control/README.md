@@ -2,7 +2,7 @@
 
 The first-party Version Control panel (`t3.version-control`) as an
 installable SDK extension — reads, mutations and repository ops on the
-`t3.vcs/*` contracts (repository at 1.1.0),
+`t3.vcs/*` contracts (repository at 1.2.0, changes at 1.1.0),
 plus a pull-request browser on `t3.prs/read@^1.0.0` with comment and
 review-thread writes on `t3.prs/write@^1.0.0`.
 
@@ -51,6 +51,13 @@ Repository reads consume the `t3.vcs/read` grant:
 Mutations need the `t3.vcs/mutate` grant at install time:
 
 - per-row and per-lane Stage/Unstage (`t3.vcs/changes` `stage`/`unstage`),
+- Discard on the Changes lane and Delete on the Untracked lane
+  (`t3.vcs/changes` `discard`): the button only arms an inline
+  confirmation naming the paths; the destructive call fires from its
+  confirm button, never on a timer. Changes revert to the index (staged
+  work survives), untracked paths are deleted. The host refuses the whole
+  request — touching nothing — if any path is conflicted or has no
+  working-tree change, and the refusal surfaces as a failed receipt,
 - commit with a required message (`t3.vcs/changes` `commit`; staged set
   when a staged lane exists, all changes otherwise — conflicted lanes
   block the button outright),
@@ -89,10 +96,10 @@ panel status line. Stage/unstage are index-only changes the status stream
 does not fingerprint — the panel re-reads `changes.list`/`refs.list`
 after each settled mutation instead of editing lanes locally.
 
-The manifest requires `t3.vcs/repository` at `^1.0.0` — the frozen floor —
-so the panel still loads against a 1.0.0 host; the 1.1.0 additions
-(push/fetch/listRemotes) gate on `operations` keys a 1.0.0 host never
-reports and simply hide.
+The manifest requires `t3.vcs/repository` and `t3.vcs/changes` at
+`^1.0.0` — the frozen floor — so the panel still loads against a 1.0.0
+host; later additions (push/fetch/listRemotes, discard) gate on
+`operations` keys an older host never reports and simply hide.
 
 The panel adopts the `t3.ui/*` client contracts the native surface uses:
 
@@ -135,12 +142,14 @@ required host services, and `t3.ui/*` contracts are opportunistic
 client-provider APIs, not mount requirements.
 
 Still deferred: PR mutations beyond comment/reply/resolve,
-clone/discovery flows (no remote-creation/discovery contract —
-`sourceControl.*` provisioning is host-side), stash (no native binding
-exists to mirror), branch rename/delete (internal driver methods only),
-working-tree diff rendering (the Diff panel's `t3.vcs/diff` surface), AI
-commit text (no contract), discard/revert and checkpoint diffs
-(orchestration contracts).
+clone/discovery flows (native clone is the environment-level
+`projectClone.*` RPC that creates a project; no extension contract exposes
+it), stash (no native binding exists to mirror), branch rename/delete
+(internal driver methods only), working-tree diff rendering (the Diff
+panel's `t3.vcs/diff` surface), AI commit text (no contract), and
+checkpoints — restore is `t3.orchestration/control` `checkpoint.revert`,
+adopted by the Diff and Agents panels; capture/delete are turn-lifecycle
+internals with no user command natively either.
 
 ```sh
 pnpm --filter @t3tools/extension-version-control test

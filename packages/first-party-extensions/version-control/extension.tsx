@@ -41,6 +41,8 @@ import {
   describeStackedProgress,
   describeStackedResult,
   describeStatus,
+  discardAction,
+  discardReceipt,
   dismissReceiptAfterSeen,
   entryMutation,
   isNotificationDismissal,
@@ -55,6 +57,7 @@ import {
   nextThemeVars,
   numstatFor,
   planCommit,
+  planDiscard,
   planPublish,
   planRefCreate,
   planWorktreeCreate,
@@ -82,6 +85,7 @@ import {
   VCS_PATHS_MAX,
   type ChangeLane,
   type ChangeSelection,
+  type DiscardRequest,
   type MutationFollowUp,
   type MutationOp,
   type MutationPhase,
@@ -100,6 +104,8 @@ const manifestId = "t3.version-control";
  * instead of erroring.
  */
 const REPOSITORY_API_RANGE = "^1.0.0";
+/** Changes binds at the same floor; `discard` (1.1.0) gates on `changes.discard`. */
+const CHANGES_API_RANGE = "^1.0.0";
 
 interface RestoredState {
   readonly selectedPath?: string;
@@ -294,7 +300,7 @@ function useChangesList(
     if (!visible || !isRepo || revision === "") return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
-    void bindApi(vcsChangesApi, host, session.context)
+    void bindApi(vcsChangesApi, host, session.context, CHANGES_API_RANGE)
       .invoke("list", {}, signal)
       .then(
         (changes) => {
@@ -690,6 +696,9 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   // feature-ref decision is on screen; the run fires only from its
   // buttons.
   const [pendingConfirm, setPendingConfirm] = useState<VcsActionKind | null>(null);
+  // An armed discard: the destructive call fires only from its confirm
+  // button, and the prompt disarms itself once the paths leave their lane.
+  const [pendingDiscard, setPendingDiscard] = useState<DiscardRequest | null>(null);
   // A receipt follow-up clicked while another mutation was in flight.
   const [deferredFollowUp, setDeferredFollowUp] = useState<VcsActionKind | null>(null);
   const [stacked, setStacked] = useState<{
@@ -807,6 +816,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   const canStage = ops?.["changes.stage"] === true;
   const canUnstage = ops?.["changes.unstage"] === true;
   const canCommit = ops?.["changes.commit"] === true;
+  const canDiscard = ops?.["changes.discard"] === true;
   const canCreateRef = ops?.["refs.create"] === true;
   const canSwitchRef = ops?.["refs.switch"] === true;
   const canPull = ops?.["repository.pull"] === true;
@@ -909,7 +919,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
 
   const runPaths = (op: "stage" | "unstage", paths: readonly string[], label: string) =>
     runMutation(op, label, async (signal) => {
-      const changesApi = bindApi(vcsChangesApi, host, session.context);
+      const changesApi = bindApi(vcsChangesApi, host, session.context, CHANGES_API_RANGE);
       for (let index = 0; index < paths.length; index += VCS_PATHS_MAX) {
         await changesApi.invoke(op, { paths: paths.slice(index, index + VCS_PATHS_MAX) }, signal);
       }
@@ -917,12 +927,33 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
       return op === "stage" ? `Staged ${noun}` : `Unstaged ${noun}`;
     });
 
+  /** The confirmed destructive call — one request, all-or-nothing host-side. */
+  const runDiscard = (request: DiscardRequest) => {
+    setPendingDiscard(null);
+    const plan = planDiscard(lanes, request);
+    if (plan === null || plan.disabled !== null) return;
+    const label =
+      request.paths.length === 1
+        ? `Discarding ${request.paths[0]}`
+        : `Discarding ${request.paths.length} paths`;
+    runMutation("discard", label, async (signal) => {
+      const result = await bindApi(vcsChangesApi, host, session.context, CHANGES_API_RANGE).invoke(
+        "discard",
+        { paths: [...request.paths] },
+        signal,
+      );
+      const receipt = discardReceipt(result);
+      if (!receipt.ok) throw new Error(receipt.detail);
+      return receipt.detail;
+    });
+  };
+
   const runCommit = () => {
     const plan = planCommit(lanes, commitMessage);
     if (plan.disabled !== null) return;
     const message = commitMessage.trim();
     runMutation("commit", "Committing", (signal) =>
-      bindApi(vcsChangesApi, host, session.context)
+      bindApi(vcsChangesApi, host, session.context, CHANGES_API_RANGE)
         .invoke(
           "commit",
           plan.paths === undefined ? { message } : { message, paths: [...plan.paths] },
@@ -1566,6 +1597,9 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                 const bulkAllowed = bulk !== null && (bulk.op === "stage" ? canStage : canUnstage);
                 const rowAllowed =
                   rowAction !== null && (rowAction.op === "stage" ? canStage : canUnstage);
+                const discard = canDiscard ? discardAction(lane) : null;
+                const discardConfirm =
+                  pendingDiscard?.lane === lane ? planDiscard(lanes, pendingDiscard) : null;
                 return lanes[lane].length === 0 ? null : (
                   <section key={lane} aria-label={laneTitle(lane)} style={{ marginBottom: 8 }}>
                     <h3
@@ -1586,23 +1620,86 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                       <span>
                         {laneTitle(lane)} ({lanes[lane].length})
                       </span>
-                      {bulkAllowed && (
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() =>
-                            runPaths(
-                              bulk.op,
-                              lanes[lane].map((entry) => entry.path),
-                              `${bulk.op === "stage" ? "Staging" : "Unstaging"} ${lanes[lane].length} paths`,
-                            )
-                          }
-                          style={{ ...control, padding: "1px 6px", fontSize: 12 }}
-                        >
-                          {bulk.label}
-                        </button>
-                      )}
+                      <span style={{ display: "flex", gap: 4 }}>
+                        {discard !== null && (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() =>
+                              setPendingDiscard({
+                                lane,
+                                paths: lanes[lane].map((entry) => entry.path),
+                              })
+                            }
+                            style={{ ...control, padding: "1px 6px", fontSize: 12 }}
+                          >
+                            {discard.bulk}
+                          </button>
+                        )}
+                        {bulkAllowed && (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() =>
+                              runPaths(
+                                bulk.op,
+                                lanes[lane].map((entry) => entry.path),
+                                `${bulk.op === "stage" ? "Staging" : "Unstaging"} ${lanes[lane].length} paths`,
+                              )
+                            }
+                            style={{ ...control, padding: "1px 6px", fontSize: 12 }}
+                          >
+                            {bulk.label}
+                          </button>
+                        )}
+                      </span>
                     </h3>
+                    {pendingDiscard !== null && discardConfirm !== null && (
+                      <div
+                        role="alertdialog"
+                        aria-label={`Confirm ${discard?.verb.toLowerCase() ?? "discard"}`}
+                        style={{
+                          margin: "4px 0",
+                          padding: "4px 6px",
+                          border: "1px solid var(--border, #dfe3e8)",
+                          borderRadius: 5,
+                          fontSize: 12,
+                        }}
+                      >
+                        <div style={{ marginBottom: 4 }}>{discardConfirm.prompt}</div>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <button
+                            type="button"
+                            disabled={busy || discardConfirm.disabled !== null}
+                            onClick={() => runDiscard(pendingDiscard)}
+                            style={{
+                              ...control,
+                              color: "var(--t3-version-control-warning, var(--warning, #b54708))",
+                            }}
+                          >
+                            {discardConfirm.confirmLabel}
+                          </button>
+                          <button
+                            type="button"
+                            autoFocus
+                            onClick={() => setPendingDiscard(null)}
+                            style={control}
+                          >
+                            Cancel
+                          </button>
+                          {discardConfirm.disabled !== null && (
+                            <span style={{ color: muted }}>{discardConfirm.disabled}</span>
+                          )}
+                        </div>
+                      </div>
+                    )}
                     <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
                       {lanes[lane].map((entry) => (
                         <li
@@ -1659,6 +1756,21 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                               }}
                             >
                               {rowAction.label}
+                            </button>
+                          )}
+                          {discard !== null && (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => setPendingDiscard({ lane, paths: [entry.path] })}
+                              style={{
+                                ...control,
+                                padding: "1px 6px",
+                                fontSize: 12,
+                                flexShrink: 0,
+                              }}
+                            >
+                              {discard.row}
                             </button>
                           )}
                         </li>
@@ -2334,13 +2446,13 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
 
 export default defineExtension({
   id: manifestId,
-  version: "0.4.0",
+  version: "0.5.0",
   requires: [
     requireApi(prsReadApi),
     requireApi(prsWriteApi),
     requireApi(vcsActionsApi),
     requireApi(vcsStatusApi),
-    requireApi(vcsChangesApi),
+    requireApi(vcsChangesApi, CHANGES_API_RANGE),
     requireApi(vcsRefsApi),
     requireApi(vcsRepositoryApi, REPOSITORY_API_RANGE),
     requireApi(uiThemeApi),

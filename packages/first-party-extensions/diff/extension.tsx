@@ -100,6 +100,8 @@ import {
 } from "./viewModel.js";
 
 const manifestId = "t3.diff";
+/** The panel only reads `getCapabilities`; later repository versions add nothing it uses. */
+const REPOSITORY_API_RANGE = "^1.1.0";
 
 /**
  * Parses are pure functions of the delivered diff text, keyed on the
@@ -128,7 +130,7 @@ function useCapabilities(host: ClientHost, session: ViewSession, visible: boolea
     if (!visible) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
-    void bindApi(vcsRepositoryApi, host, session.context)
+    void bindApi(vcsRepositoryApi, host, session.context, REPOSITORY_API_RANGE)
       .invoke("getCapabilities", {}, signal)
       .then(
         (capabilities) => {
@@ -2191,7 +2193,7 @@ const authored = defineExtension({
   version: "0.5.0",
   requires: [
     requireApi(vcsDiffApi),
-    requireApi(vcsRepositoryApi),
+    requireApi(vcsRepositoryApi, REPOSITORY_API_RANGE),
     requireApi(vcsStatusApi),
     requireApi(vcsRefsApi),
     requireApi(filePresentationApi),

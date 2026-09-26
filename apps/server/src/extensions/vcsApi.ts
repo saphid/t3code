@@ -19,6 +19,7 @@ import {
   type VcsCapabilitiesResult,
   type VcsChangeEntry,
   type VcsChangesListResult,
+  type VcsDiscardResult,
   type VcsEmptyResult,
   type VcsFetchResult,
   type VcsListRefsResult,
@@ -387,6 +388,7 @@ const operationsSupport = (
     "repository.fetch": git,
     // listRemotes is a required VcsDriver method — any detected driver serves it.
     "repository.listRemotes": handle !== null,
+    "changes.discard": git,
   };
 };
 const NO_OPERATIONS = operationsSupport(null);
@@ -480,6 +482,38 @@ export function createVcsApiProviders(dependencies: VcsApiDependencies): HostApi
       );
     }
     return handle;
+  });
+
+  /**
+   * Porcelain state of exactly `paths`, keyed by path, for discard's pre/post
+   * checks. Porcelain never reports absolute or `..`-segment paths, and git
+   * aborts on a pathspec outside the repository, so those never reach it.
+   */
+  const discardableState = Effect.fn("VcsApi.discardableState")(function* (
+    cwd: string,
+    requested: ReadonlyArray<string>,
+  ) {
+    const paths = requested.filter(
+      (path) => !NodePath.isAbsolute(path) && !path.split(/[/\\]/).includes(".."),
+    );
+    if (paths.length === 0) return new Map<string, VcsChangeEntry>();
+    const result = yield* dependencies.git.execute({
+      operation: "vcs.changes.discard",
+      cwd,
+      args: [
+        "--literal-pathspecs",
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=normal",
+        "--",
+        ...paths,
+      ],
+    });
+    if (result.stdoutTruncated) {
+      return yield* failure("vcs.changes.discard", "Working-tree status exceeded the read bound.");
+    }
+    return new Map(parsePorcelainStatus(result.stdout).map((entry) => [entry.path, entry]));
   });
 
   /** Mirrors ws.ts `refreshGitStatus`: detached so callers never wait on it. */
@@ -871,6 +905,73 @@ export function createVcsApiProviders(dependencies: VcsApiDependencies): HostApi
           });
           const refName = ref.stdout.trim();
           return { commitSha, refName: refName === "HEAD" ? null : refName };
+        }),
+      }),
+      discard: runMethod({
+        operation: "vcs.changes.discard",
+        requiredScope: AuthOrchestrationOperateScope,
+        decode: pathsInput,
+        refreshAfter: true,
+        run: Effect.fn("vcs.changes.discard")(function* (safe, scope) {
+          yield* requireGit("vcs.changes.discard", scope.cwd);
+          const paths = [...new Set(safe.paths)];
+          // Only exact porcelain paths are acted on, so a path the host does
+          // not report (clean, outside the repo, `..`-shaped) is refused
+          // before any write rather than handed to restore/clean.
+          const before = yield* discardableState(scope.cwd, paths);
+          const conflicted = paths.filter((path) => before.get(path)?.conflicted === true);
+          if (conflicted.length > 0) {
+            return {
+              status: "refused",
+              reason: "conflicted",
+              paths: conflicted,
+            } satisfies VcsDiscardResult;
+          }
+          const unchanged = paths.filter((path) => {
+            const entry = before.get(path);
+            return entry === undefined || (!entry.unstaged && !entry.untracked);
+          });
+          if (unchanged.length > 0) {
+            return {
+              status: "refused",
+              reason: "no-working-tree-change",
+              paths: unchanged,
+            } satisfies VcsDiscardResult;
+          }
+          const restored = paths.filter((path) => before.get(path)?.unstaged === true);
+          const removed = paths.filter((path) => before.get(path)?.untracked === true);
+          if (restored.length > 0) {
+            // Worktree only: edits revert to the index, staged work survives.
+            yield* dependencies.git.execute({
+              operation: "vcs.changes.discard",
+              cwd: scope.cwd,
+              args: ["--literal-pathspecs", "restore", "--worktree", "--", ...restored],
+            });
+          }
+          if (removed.length > 0) {
+            yield* dependencies.git.execute({
+              operation: "vcs.changes.discard",
+              cwd: scope.cwd,
+              args: ["--literal-pathspecs", "clean", "-f", "-d", "--", ...removed],
+            });
+          }
+          // `git clean` exits 0 while skipping nested repositories; a path
+          // still reported changed must not be receipted as discarded.
+          const after = yield* discardableState(scope.cwd, paths);
+          const remaining = paths.filter((path) => {
+            const entry = after.get(path);
+            return entry !== undefined && (entry.unstaged || entry.untracked);
+          });
+          if (remaining.length > 0) {
+            return yield* failure(
+              "vcs.changes.discard",
+              `Discard left ${remaining.length} path${remaining.length === 1 ? "" : "s"} changed: ${remaining.join(", ")}`.slice(
+                0,
+                512,
+              ),
+            );
+          }
+          return { status: "discarded", restored, removed } satisfies VcsDiscardResult;
         }),
       }),
     }),

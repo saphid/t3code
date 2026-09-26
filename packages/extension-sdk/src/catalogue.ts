@@ -1338,6 +1338,25 @@ export type VcsCommitResult = {
   readonly commitSha: string;
   readonly refName: string | null;
 };
+/**
+ * `changes.discard` receipt. All-or-nothing: `refused` means no path was
+ * touched. `conflicted` names paths mid-merge; `no-working-tree-change`
+ * names paths the host does not currently report as unstaged or untracked
+ * (clean, staged-only, or unknown).
+ */
+export type VcsDiscardResult =
+  | {
+      readonly status: "discarded";
+      /** Tracked paths whose working-tree edits were reverted to the index. */
+      readonly restored: readonly string[];
+      /** Untracked paths deleted from disk. */
+      readonly removed: readonly string[];
+    }
+  | {
+      readonly status: "refused";
+      readonly reason: "conflicted" | "no-working-tree-change";
+      readonly paths: readonly string[];
+    };
 export type VcsDiffPreviewInput = {
   readonly baseRef?: string;
   readonly ignoreWhitespace?: boolean;
@@ -1445,10 +1464,13 @@ export type VcsOperationsSupport = {
   readonly "repository.push": boolean;
   readonly "repository.fetch": boolean;
   readonly "repository.listRemotes": boolean;
+  readonly "changes.discard": boolean;
 };
+/** The operations map a frozen 1.1.0 host reports — no discard key. */
+export type VcsOperationsSupportV1_1 = Omit<VcsOperationsSupport, "changes.discard">;
 /** The operations map a frozen 1.0.0 host reports — the 16 shipped keys only. */
 export type VcsOperationsSupportV1 = Omit<
-  VcsOperationsSupport,
+  VcsOperationsSupportV1_1,
   "repository.push" | "repository.fetch" | "repository.listRemotes"
 >;
 export type VcsDriverCapabilitiesInfo = {
@@ -1466,6 +1488,10 @@ export type VcsCapabilitiesResult = {
   readonly detail: string | null;
   readonly driver: VcsDriverCapabilitiesInfo | null;
   readonly operations: VcsOperationsSupport;
+};
+/** Frozen 1.1.0 getCapabilities output — no discard key. */
+export type VcsCapabilitiesResultV1_1 = Omit<VcsCapabilitiesResult, "operations"> & {
+  readonly operations: VcsOperationsSupportV1_1;
 };
 /** Frozen 1.0.0 getCapabilities output — narrower operations map only. */
 export type VcsCapabilitiesResultV1 = Omit<VcsCapabilitiesResult, "operations"> & {
@@ -1846,6 +1872,100 @@ const vcsChangeEntrySchema = {
     conflicted: { type: "boolean" },
   },
 } as const;
+const vcsChangesListMethod = {
+  name: "list",
+  effect: "read",
+  requiredGrants: [VCS_READ],
+  inputSchema: vcsEmptyInputSchema,
+  outputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["isRepo", "entries", "truncated"],
+    properties: {
+      isRepo: { type: "boolean" },
+      entries: { type: "array", maxItems: 5000, items: vcsChangeEntrySchema },
+      truncated: { type: "boolean" },
+    },
+  },
+} as const;
+const vcsChangesPathsMethod = (name: "stage" | "unstage") =>
+  ({
+    name,
+    effect: "write",
+    requiredGrants: [VCS_MUTATE],
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["paths"],
+      properties: { paths: vcsPathsInput },
+    },
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["paths"],
+      properties: { paths: vcsPathsInput },
+    },
+  }) as const;
+const vcsChangesStageMethod = vcsChangesPathsMethod("stage");
+const vcsChangesUnstageMethod = vcsChangesPathsMethod("unstage");
+const vcsChangesCommitMethod = {
+  name: "commit",
+  effect: "write",
+  requiredGrants: [VCS_MUTATE],
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["message"],
+    properties: {
+      message: { type: "string", minLength: 1, maxLength: 10000 },
+      paths: vcsPathsInput,
+    },
+  },
+  outputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["commitSha", "refName"],
+    properties: {
+      commitSha: { type: "string", minLength: 1, maxLength: 64 },
+      refName: vcsRefNameOrNull,
+    },
+  },
+} as const;
+const vcsChangesDiscardMethod = {
+  name: "discard",
+  effect: "write",
+  requiredGrants: [VCS_MUTATE],
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["paths"],
+    properties: { paths: vcsPathsInput },
+  },
+  outputSchema: {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "restored", "removed"],
+        properties: {
+          status: { const: "discarded" },
+          restored: { type: "array", maxItems: 100, items: vcsPath },
+          removed: { type: "array", maxItems: 100, items: vcsPath },
+        },
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "reason", "paths"],
+        properties: {
+          status: { const: "refused" },
+          reason: { enum: ["conflicted", "no-working-tree-change"] },
+          paths: vcsPathsInput,
+        },
+      },
+    ],
+  },
+} as const;
 /**
  * Index staging. `list` exposes per-path staged/unstaged/untracked/
  * conflicted state the private status payload drops (porcelain XY state —
@@ -1854,8 +1974,33 @@ const vcsChangeEntrySchema = {
  * (`add -A -- <paths>` / `reset` / `commit`), under `t3.vcs/mutate`.
  * `commit.paths` mirrors native semantics: given → reset + add -A those
  * paths only; omitted → add -A all changes.
+ *
+ * 1.1.0 adds `discard`, the destructive working-tree revert: each path must
+ * be reported by `list` as unstaged (its edits revert to the index, so
+ * staged work survives) or untracked (deleted). Validation runs before any
+ * write — a conflicted or unchanged path refuses the whole request with a
+ * typed receipt and touches nothing. Callers confirm with the user first;
+ * support is gated on `changes.discard` in `repository.getCapabilities`.
  */
 export const vcsChangesApi = defineApi<{
+  list: { input: Record<string, never>; output: VcsChangesListResult };
+  stage: { input: VcsPathsInput; output: VcsPathsResult };
+  unstage: { input: VcsPathsInput; output: VcsPathsResult };
+  commit: { input: VcsCommitInput; output: VcsCommitResult };
+  discard: { input: VcsPathsInput; output: VcsDiscardResult };
+}>({
+  id: VCS_CHANGES,
+  version: "1.1.0",
+  methods: [
+    vcsChangesListMethod,
+    vcsChangesStageMethod,
+    vcsChangesUnstageMethod,
+    vcsChangesCommitMethod,
+    vcsChangesDiscardMethod,
+  ],
+});
+/** Frozen published 1.0.0 definition; shared definitions are immutable per version. */
+export const vcsChangesApiV1 = defineApi<{
   list: { input: Record<string, never>; output: VcsChangesListResult };
   stage: { input: VcsPathsInput; output: VcsPathsResult };
   unstage: { input: VcsPathsInput; output: VcsPathsResult };
@@ -1864,79 +2009,10 @@ export const vcsChangesApi = defineApi<{
   id: VCS_CHANGES,
   version: "1.0.0",
   methods: [
-    {
-      name: "list",
-      effect: "read",
-      requiredGrants: [VCS_READ],
-      inputSchema: vcsEmptyInputSchema,
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["isRepo", "entries", "truncated"],
-        properties: {
-          isRepo: { type: "boolean" },
-          entries: { type: "array", maxItems: 5000, items: vcsChangeEntrySchema },
-          truncated: { type: "boolean" },
-        },
-      },
-    },
-    {
-      name: "stage",
-      effect: "write",
-      requiredGrants: [VCS_MUTATE],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["paths"],
-        properties: { paths: vcsPathsInput },
-      },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["paths"],
-        properties: { paths: vcsPathsInput },
-      },
-    },
-    {
-      name: "unstage",
-      effect: "write",
-      requiredGrants: [VCS_MUTATE],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["paths"],
-        properties: { paths: vcsPathsInput },
-      },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["paths"],
-        properties: { paths: vcsPathsInput },
-      },
-    },
-    {
-      name: "commit",
-      effect: "write",
-      requiredGrants: [VCS_MUTATE],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["message"],
-        properties: {
-          message: { type: "string", minLength: 1, maxLength: 10000 },
-          paths: vcsPathsInput,
-        },
-      },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["commitSha", "refName"],
-        properties: {
-          commitSha: { type: "string", minLength: 1, maxLength: 64 },
-          refName: vcsRefNameOrNull,
-        },
-      },
-    },
+    vcsChangesListMethod,
+    vcsChangesStageMethod,
+    vcsChangesUnstageMethod,
+    vcsChangesCommitMethod,
   ],
 });
 
@@ -2226,7 +2302,7 @@ const vcsOperationsSupportSchemaV1 = {
   },
 } as const;
 /** 1.1.0 operations map — 1.0.0 keys plus the push/fetch/listRemotes rows. */
-const vcsOperationsSupportSchema = {
+const vcsOperationsSupportSchemaV1_1 = {
   type: "object",
   additionalProperties: false,
   required: [
@@ -2240,6 +2316,16 @@ const vcsOperationsSupportSchema = {
     "repository.push": { type: "boolean" },
     "repository.fetch": { type: "boolean" },
     "repository.listRemotes": { type: "boolean" },
+  },
+} as const;
+/** 1.2.0 operations map — 1.1.0 keys plus `changes.discard` (t3.vcs/changes@1.1.0). */
+const vcsOperationsSupportSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [...vcsOperationsSupportSchemaV1_1.required, "changes.discard"],
+  properties: {
+    ...vcsOperationsSupportSchemaV1_1.properties,
+    "changes.discard": { type: "boolean" },
   },
 } as const;
 const vcsDriverCapabilitiesSchema = {
@@ -2274,7 +2360,7 @@ const vcsCapabilitiesResultSchemaV1 = {
     operations: vcsOperationsSupportSchemaV1,
   },
 } as const;
-const vcsCapabilitiesResultSchema = {
+const vcsCapabilitiesResultSchemaV1_1 = {
   type: "object",
   additionalProperties: false,
   required: ["detected", "kind", "detail", "driver", "operations"],
@@ -2283,6 +2369,13 @@ const vcsCapabilitiesResultSchema = {
     kind: { type: ["string", "null"], enum: ["git", "jj", "unknown", null] },
     detail: { type: ["string", "null"], maxLength: 512 },
     driver: vcsDriverCapabilitiesSchema,
+    operations: vcsOperationsSupportSchemaV1_1,
+  },
+} as const;
+const vcsCapabilitiesResultSchema = {
+  ...vcsCapabilitiesResultSchemaV1_1,
+  properties: {
+    ...vcsCapabilitiesResultSchemaV1_1.properties,
     operations: vcsOperationsSupportSchema,
   },
 } as const;
@@ -2292,6 +2385,13 @@ const vcsRepositoryGetCapabilitiesMethodV1 = {
   requiredGrants: [VCS_READ],
   inputSchema: vcsEmptyInputSchema,
   outputSchema: vcsCapabilitiesResultSchemaV1,
+} as const;
+const vcsRepositoryGetCapabilitiesMethodV1_1 = {
+  name: "getCapabilities",
+  effect: "read",
+  requiredGrants: [VCS_READ],
+  inputSchema: vcsEmptyInputSchema,
+  outputSchema: vcsCapabilitiesResultSchemaV1_1,
 } as const;
 const vcsRepositoryGetCapabilitiesMethod = {
   name: "getCapabilities",
@@ -2461,6 +2561,7 @@ const vcsRepositoryListRemotesMethod = {
  * vcs.pull / vcs.init / worktree RPCs under `t3.vcs/mutate`; 1.1.0 adds the
  * sync primitives `push`/`fetch` (write, mutate grant — fetch writes
  * remote-tracking refs) and `listRemotes` (read) off the driver interface.
+ * 1.2.0 only widens the operations map with `changes.discard`.
  */
 export const vcsRepositoryApi = defineApi<{
   getCapabilities: { input: Record<string, never>; output: VcsCapabilitiesResult };
@@ -2473,9 +2574,33 @@ export const vcsRepositoryApi = defineApi<{
   listRemotes: { input: Record<string, never>; output: VcsListRemotesResult };
 }>({
   id: VCS_REPOSITORY,
-  version: "1.1.0",
+  version: "1.2.0",
   methods: [
     vcsRepositoryGetCapabilitiesMethod,
+    vcsRepositoryPullMethod,
+    vcsRepositoryInitMethod,
+    vcsRepositoryCreateWorktreeMethod,
+    vcsRepositoryRemoveWorktreeMethod,
+    vcsRepositoryPushMethod,
+    vcsRepositoryFetchMethod,
+    vcsRepositoryListRemotesMethod,
+  ],
+});
+/** Frozen published 1.1.0 definition; shared definitions are immutable per version. */
+export const vcsRepositoryApiV1_1 = defineApi<{
+  getCapabilities: { input: Record<string, never>; output: VcsCapabilitiesResultV1_1 };
+  pull: { input: Record<string, never>; output: VcsPullResult };
+  init: { input: VcsInitInput; output: VcsEmptyResult };
+  createWorktree: { input: VcsCreateWorktreeInput; output: VcsCreateWorktreeResult };
+  removeWorktree: { input: VcsRemoveWorktreeInput; output: VcsEmptyResult };
+  push: { input: Record<string, never>; output: VcsPushResult };
+  fetch: { input: VcsFetchInput; output: VcsFetchResult };
+  listRemotes: { input: Record<string, never>; output: VcsListRemotesResult };
+}>({
+  id: VCS_REPOSITORY,
+  version: "1.1.0",
+  methods: [
+    vcsRepositoryGetCapabilitiesMethodV1_1,
     vcsRepositoryPullMethod,
     vcsRepositoryInitMethod,
     vcsRepositoryCreateWorktreeMethod,
@@ -2507,9 +2632,11 @@ export const vcsRepositoryApiV1 = defineApi<{
 export const VCS_STATUS_API = vcsStatusApi.definition;
 export const VCS_REFS_API = vcsRefsApi.definition;
 export const VCS_CHANGES_API = vcsChangesApi.definition;
+export const VCS_CHANGES_API_V1 = vcsChangesApiV1.definition;
 export const VCS_DIFF_API = vcsDiffApi.definition;
 export const VCS_DIFF_API_V1 = vcsDiffApiV1.definition;
 export const VCS_REPOSITORY_API = vcsRepositoryApi.definition;
+export const VCS_REPOSITORY_API_V1_1 = vcsRepositoryApiV1_1.definition;
 export const VCS_REPOSITORY_API_V1 = vcsRepositoryApiV1.definition;
 
 /* ------------------------------------------------------------------------
@@ -7891,8 +8018,10 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   vcsStatusApi.definition,
   vcsRefsApi.definition,
   vcsChangesApi.definition,
+  vcsChangesApiV1.definition,
   vcsDiffApi.definition,
   vcsRepositoryApi.definition,
+  vcsRepositoryApiV1_1.definition,
   vcsRepositoryApiV1.definition,
   vcsDiffApiV1.definition,
   vcsActionsApi.definition,

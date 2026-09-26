@@ -5,6 +5,7 @@ import {
   GENERIC_API_CATALOGUE,
   VCS_CHANGES,
   VCS_CHANGES_API,
+  VCS_CHANGES_API_V1,
   VCS_DIFF,
   VCS_DIFF_API,
   VCS_DIFF_API_V1,
@@ -15,14 +16,17 @@ import {
   VCS_REPOSITORY,
   VCS_REPOSITORY_API,
   VCS_REPOSITORY_API_V1,
+  VCS_REPOSITORY_API_V1_1,
   VCS_STATUS,
   VCS_STATUS_API,
   vcsChangesApi,
+  vcsChangesApiV1,
   vcsDiffApi,
   vcsDiffApiV1,
   vcsRefsApi,
   vcsRepositoryApi,
   vcsRepositoryApiV1,
+  vcsRepositoryApiV1_1,
   vcsStatusApi,
 } from "../dist/catalogue.js";
 
@@ -50,10 +54,10 @@ NodeTest.test(
       NodeAssert.equal(definition.id, id);
       NodeAssert.equal(apis[id].definition, definition);
     }
-    // t3.vcs/diff and t3.vcs/repository carry additive 1.1.0 entries with the
-    // shipped 1.0.0 frozen alongside; every other t3.vcs id is a single
-    // frozen 1.0.0 entry.
-    for (const id of [VCS_STATUS, VCS_REFS, VCS_CHANGES]) {
+    // t3.vcs/diff, t3.vcs/changes and t3.vcs/repository carry additive
+    // entries with every shipped version frozen alongside; every other
+    // t3.vcs id is a single frozen 1.0.0 entry.
+    for (const id of [VCS_STATUS, VCS_REFS]) {
       NodeAssert.equal(defs[id].version, "1.0.0");
       NodeAssert.deepEqual(
         GENERIC_API_CATALOGUE.filter((d) => d.id === id),
@@ -77,12 +81,43 @@ NodeTest.test(
     );
     NodeAssert.equal(VCS_DIFF_API_V1.streams, undefined);
 
-    NodeAssert.equal(defs[VCS_REPOSITORY].version, "1.1.0");
+    NodeAssert.equal(defs[VCS_CHANGES].version, "1.1.0");
+    NodeAssert.equal(VCS_CHANGES_API_V1.version, "1.0.0");
+    NodeAssert.equal(vcsChangesApiV1.definition, VCS_CHANGES_API_V1);
+    NodeAssert.deepEqual(
+      GENERIC_API_CATALOGUE.filter((d) => d.id === VCS_CHANGES),
+      [VCS_CHANGES_API, VCS_CHANGES_API_V1],
+    );
+    // The frozen 1.0.0 changes surface is the four shipped methods, pinned by
+    // content hash; 1.1.0 only appends `discard`.
+    NodeAssert.deepEqual(
+      VCS_CHANGES_API_V1.methods.map((method) => method.name),
+      ["list", "stage", "unstage", "commit"],
+    );
+    NodeAssert.deepEqual(VCS_CHANGES_API.methods.slice(0, 4), VCS_CHANGES_API_V1.methods);
+    NodeAssert.equal(
+      NodeCrypto.createHash("sha256")
+        .update(JSON.stringify(VCS_CHANGES_API_V1.methods))
+        .digest("hex"),
+      "5e5b1f7c1fcebd1bb3416f1e88df7ef98425b66ef9cfa5f44831fa7d8ac913e0",
+    );
+
+    NodeAssert.equal(defs[VCS_REPOSITORY].version, "1.2.0");
+    NodeAssert.equal(VCS_REPOSITORY_API_V1_1.version, "1.1.0");
+    NodeAssert.equal(vcsRepositoryApiV1_1.definition, VCS_REPOSITORY_API_V1_1);
     NodeAssert.equal(VCS_REPOSITORY_API_V1.version, "1.0.0");
     NodeAssert.equal(vcsRepositoryApiV1.definition, VCS_REPOSITORY_API_V1);
     NodeAssert.deepEqual(
       GENERIC_API_CATALOGUE.filter((d) => d.id === VCS_REPOSITORY),
-      [VCS_REPOSITORY_API, VCS_REPOSITORY_API_V1],
+      [VCS_REPOSITORY_API, VCS_REPOSITORY_API_V1_1, VCS_REPOSITORY_API_V1],
+    );
+    // The frozen 1.1.0 repository surface — the 19-key operations map without
+    // `changes.discard` — pinned by content hash.
+    NodeAssert.equal(
+      NodeCrypto.createHash("sha256")
+        .update(JSON.stringify(VCS_REPOSITORY_API_V1_1.methods))
+        .digest("hex"),
+      "0048ffb0e969c30828a800dc1f603ece079370420fae549f800230f4caa2539a",
     );
     // The frozen 1.0.0 repository surface is the five shipped methods —
     // getCapabilities with the 16-key operations map, pull, init, and the
@@ -107,7 +142,13 @@ NodeTest.test("reads ride t3.vcs/read and mutations ride the distinct t3.vcs/mut
   const expectations = {
     [VCS_STATUS]: { get: "read", refresh: "read" },
     [VCS_REFS]: { list: "read", create: "write", switch: "write" },
-    [VCS_CHANGES]: { list: "read", stage: "write", unstage: "write", commit: "write" },
+    [VCS_CHANGES]: {
+      list: "read",
+      stage: "write",
+      unstage: "write",
+      commit: "write",
+      discard: "write",
+    },
     [VCS_DIFF]: { getPreview: "read", getFileContents: "read" },
     [VCS_REPOSITORY]: {
       getCapabilities: "read",
@@ -297,4 +338,24 @@ NodeTest.test("getCapabilities reports driver kind, flags, and per-operation sup
   for (const key of ["repository.push", "repository.fetch", "repository.listRemotes"]) {
     NodeAssert.equal(operationsV1.properties[key], undefined, `frozen 1.0.0 must lack ${key}`);
   }
+  // `changes.discard` is required at 1.2.0 and absent from the frozen 1.1.0 map.
+  NodeAssert.equal(operations.properties["changes.discard"].type, "boolean");
+  NodeAssert.ok(operations.required.includes("changes.discard"));
+  const operationsV1_1 =
+    methodsOf(VCS_REPOSITORY_API_V1_1).getCapabilities.outputSchema.properties.operations;
+  NodeAssert.equal(operationsV1_1.properties["changes.discard"], undefined);
+});
+
+NodeTest.test("changes.discard is a bounded write with a closed receipt union", () => {
+  const discard = methodsOf(defs[VCS_CHANGES]).discard;
+  NodeAssert.equal(discard.inputSchema.additionalProperties, false);
+  NodeAssert.deepEqual(discard.inputSchema.required, ["paths"]);
+  NodeAssert.equal(discard.inputSchema.properties.paths.maxItems, 100);
+  NodeAssert.equal(discard.inputSchema.properties.paths.minItems, 1);
+  const [discarded, refused] = discard.outputSchema.oneOf;
+  NodeAssert.equal(discarded.properties.status.const, "discarded");
+  NodeAssert.deepEqual([...discarded.required].sort(), ["removed", "restored", "status"]);
+  NodeAssert.equal(refused.properties.status.const, "refused");
+  NodeAssert.deepEqual(refused.properties.reason.enum, ["conflicted", "no-working-tree-change"]);
+  NodeAssert.equal(discard.outputSchema.oneOf.length, 2);
 });
