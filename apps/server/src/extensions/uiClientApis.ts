@@ -58,7 +58,7 @@ const providerError = (code: string, detail: string) =>
 const decodeContext = Schema.decodeUnknownSync(ExtensionViewContext);
 
 /** The broker-verified immediate caller, minted into the client frame. */
-export const callerOf = (metadata: HostApiInvocationMetadata): ClientProviderCaller => {
+const callerOf = (metadata: HostApiInvocationMetadata): ClientProviderCaller => {
   const generation = metadata.callerGenerations.at(-1);
   if (!generation) throw providerError("client-target-denied", "The caller is unidentified.");
   return {

@@ -85,7 +85,7 @@ function setSessionOverlay(next: ThemeSessionOverlay | null) {
   for (const listener of overlayListeners) listener();
 }
 
-export function subscribeThemeOverlay(listener: () => void): () => void {
+function subscribeThemeOverlay(listener: () => void): () => void {
   overlayListeners.add(listener);
   return () => {
     overlayListeners.delete(listener);

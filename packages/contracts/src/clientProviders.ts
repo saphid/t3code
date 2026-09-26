@@ -9,7 +9,7 @@ const Identity = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1
  * discovery, and are never grantable — they are reachable only through the
  * connect-stream frames below.
  */
-export const CLIENT_PROVIDER_API_ID_PATTERN = /^t3\.client\/[a-z][a-z0-9-]*$/;
+const CLIENT_PROVIDER_API_ID_PATTERN = /^t3\.client\/[a-z][a-z0-9-]*$/;
 export const ClientProviderApiId = Schema.String.check(
   Schema.isPattern(CLIENT_PROVIDER_API_ID_PATTERN),
 );
@@ -133,7 +133,7 @@ export const ClientProvidersEmitInput = Schema.Struct({
 export type ClientProvidersEmitInput = typeof ClientProvidersEmitInput.Type;
 
 /** Named seam error codes shared by server adapters and client providers. */
-export const CLIENT_PROVIDER_ERROR_CODES = [
+const CLIENT_PROVIDER_ERROR_CODES = [
   "client-provider-unavailable",
   "client-target-required",
   "client-target-denied",

@@ -638,7 +638,7 @@ function commandSites(commandName: string): DispatchCommandSite[] {
 }
 
 /** The `hostKey:viewId` pair of the mounted extension view containing focus. */
-export function focusedExtensionViewKey(): string | null {
+function focusedExtensionViewKey(): string | null {
   if (typeof document === "undefined") return null;
   const active = document.activeElement;
   if (!(active instanceof HTMLElement)) return null;
@@ -647,7 +647,7 @@ export function focusedExtensionViewKey(): string | null {
 }
 
 /** The `surfaceId` of the mounted extension surface containing focus. */
-export function focusedExtensionSurfaceId(): string | null {
+function focusedExtensionSurfaceId(): string | null {
   if (typeof document === "undefined") return null;
   const active = document.activeElement;
   if (!(active instanceof HTMLElement)) return null;

@@ -30,7 +30,7 @@ export const context = {
 const at = "2026-09-13T00:00:00.000Z";
 const decodeSnapshot = Schema.decodeUnknownSync(OrchestrationThreadDetailSnapshot);
 const decodeEvent = Schema.decodeUnknownSync(OrchestrationEvent);
-export const makeSnapshot = () =>
+const makeSnapshot = () =>
   decodeSnapshot({
     snapshotSequence: 1,
     thread: {

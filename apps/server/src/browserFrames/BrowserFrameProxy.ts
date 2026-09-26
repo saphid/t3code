@@ -77,8 +77,6 @@ import {
   type BrowserFrameTicketRecord,
 } from "./BrowserFrameLeases.ts";
 
-export { BROWSER_FRAMES_ROUTE_PREFIX };
-
 const SESSION_PATH = /^\/sessions$/;
 const SESSION_GET_PATH = /^\/sessions\/[^/]+\/(stream\.mjpeg|snapshot|config)$/;
 const SESSION_INPUT_PATH = /^\/sessions\/([^/]+)\/input$/;

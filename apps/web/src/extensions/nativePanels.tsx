@@ -107,7 +107,7 @@ const filesEntry = entry(
         },
 );
 /** Legacy resource records remain domain-owned; the shell resolves registered presentations. */
-export const nativePanelRegistry = {
+const nativePanelRegistry = {
   preview: entry(browser, (bindings) => bindings.browser),
   terminal: entry(terminal, (bindings) => bindings.terminal),
   files: filesEntry,

@@ -19,7 +19,7 @@ import { readPreparedConnection } from "~/state/session";
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 /** True when the bytes open with the PNG signature. */
-export function isPngBytes(bytes: Uint8Array): boolean {
+function isPngBytes(bytes: Uint8Array): boolean {
   return (
     bytes.length >= PNG_SIGNATURE.length &&
     PNG_SIGNATURE.every((value, index) => bytes[index] === value)

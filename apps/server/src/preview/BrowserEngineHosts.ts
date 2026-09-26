@@ -107,7 +107,7 @@ export class BrowserEngineHosts extends Context.Service<
   }
 >()("t3/preview/BrowserEngineHosts") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const preview = yield* PreviewManager.PreviewManager;
   const crypto = yield* Crypto.Crypto;
   const hosts = yield* Ref.make(new Map<string, HostConnection>());

@@ -146,7 +146,7 @@ async function* authenticatedApiFrames(
   }
 }
 /** Entries are trusted code. The authenticated server binds this body to the catalog's package hash. */
-export async function importInstalledClient(code: string, signal: AbortSignal): Promise<unknown> {
+async function importInstalledClient(code: string, signal: AbortSignal): Promise<unknown> {
   if (signal.aborted) throw new Error("Installed client load cancelled");
   const url = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
   const revoke = () => URL.revokeObjectURL(url);

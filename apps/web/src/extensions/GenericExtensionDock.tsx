@@ -26,7 +26,7 @@ function maxExtensionDockHeight(): number {
   );
 }
 
-export function clampExtensionDockHeight(height: number | undefined): number {
+function clampExtensionDockHeight(height: number | undefined): number {
   const safeHeight =
     height !== undefined && Number.isFinite(height) ? height : DEFAULT_EXTENSION_DOCK_HEIGHT;
   return Math.min(
