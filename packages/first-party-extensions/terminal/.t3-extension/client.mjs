@@ -13441,7 +13441,7 @@ var __t3Client = (() => {
             "output",
             {
               "aria-label": "Output status",
-              style: { padding: "6px 10px", color: muted, fontSize: 11, flexShrink: 0 },
+              style: { padding: "6px 10px", color: muted, fontSize: 12, flexShrink: 0 },
               children: [
                 terminalId,
                 ": ",
@@ -13453,7 +13453,7 @@ var __t3Client = (() => {
             "output",
             {
               "aria-label": "Attach degraded",
-              style: { padding: "4px 10px", color: muted, fontSize: 11, flexShrink: 0 },
+              style: { padding: "4px 10px", color: muted, fontSize: 12, flexShrink: 0 },
               children: "Attached with truncated history \u2014 modes and screen state before the retained tail are unknown, so interactive parity is not claimed until the next full snapshot (B4)."
             }
           ),
@@ -13461,7 +13461,7 @@ var __t3Client = (() => {
             "output",
             {
               "aria-label": "Stream budget",
-              style: { padding: "4px 10px", color: muted, fontSize: 11, flexShrink: 0 },
+              style: { padding: "4px 10px", color: muted, fontSize: 12, flexShrink: 0 },
               children: "Waiting for a free output stream \u2014 close a pane here or in another terminal panel, and this pane attaches as soon as one frees."
             }
           ),
@@ -13589,12 +13589,12 @@ var __t3Client = (() => {
   }
   var control = {
     padding: "4px 8px",
-    border: "1px solid var(--t3-terminal-border, var(--border, #dfe3e8))",
+    border: "1px solid transparent",
     borderRadius: 5,
     background: "transparent",
     color: "inherit",
     font: "inherit",
-    fontSize: 12,
+    fontSize: 14,
     cursor: "pointer"
   };
   function TerminalView(props) {
@@ -13719,15 +13719,16 @@ var __t3Client = (() => {
           color: "var(--t3-terminal-text, var(--foreground, #20252d))",
           background: "var(--t3-terminal-canvas, var(--background, #fff))",
           fontFamily: "var(--font-sans, system-ui, sans-serif)",
-          fontSize: 13,
           // Contract-derived custom properties inherit to every descendant —
           // the chrome's var() chains, the fallback <pre>, and the mount div
           // terminalThemeFromApp resolves into the Ghostty theme.
           ...themeVars,
           ...appearanceVars
         },
+        "data-t3-terminal-panel": true,
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("style", { children: "[data-t3-terminal-output]::selection{background:var(--t3-terminal-selection,Highlight)}" }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("style", { children: `[data-t3-terminal-output]::selection{background:var(--t3-terminal-selection,Highlight)}
+[data-t3-terminal-panel] :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-terminal-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}` }),
           /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
             "header",
             {
@@ -13737,7 +13738,8 @@ var __t3Client = (() => {
                 padding: 8,
                 borderBottom: border,
                 flexShrink: 0,
-                alignItems: "center"
+                alignItems: "center",
+                flexWrap: "wrap"
               },
               children: [
                 /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
@@ -13776,7 +13778,7 @@ var __t3Client = (() => {
                     ]
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted, fontSize: 11 }, children: snapshot.stream === "closed" ? "Session list disconnected" : snapshot.stream === "connecting" ? "Connecting\u2026" : "" })
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted, fontSize: 12 }, children: snapshot.stream === "closed" ? "Session list disconnected" : snapshot.stream === "connecting" ? "Connecting\u2026" : "" })
               ]
             }
           ),
@@ -13812,7 +13814,7 @@ var __t3Client = (() => {
                       borderRadius: 5,
                       cursor: "pointer",
                       font: "inherit",
-                      fontSize: 11,
+                      fontSize: 12,
                       color: snapshot.activeGroupId === group.id ? "inherit" : muted,
                       background: snapshot.activeGroupId === group.id ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))" : "transparent"
                     },
@@ -13913,7 +13915,7 @@ var __t3Client = (() => {
                                 }
                               )
                             ] }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
-                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted, fontSize: 11 }, children: tab.confirmAction === "close" ? "Close this terminal?" : tab.confirmAction === "restart" ? "Restart this terminal?" : "Clear history?" }),
+                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted, fontSize: 12 }, children: tab.confirmAction === "close" ? "Close this terminal?" : tab.confirmAction === "restart" ? "Restart this terminal?" : "Clear history?" }),
                               /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                                 "button",
                                 {
@@ -13950,7 +13952,7 @@ var __t3Client = (() => {
             "output",
             {
               "aria-label": "Panel status",
-              style: { padding: "4px 10px", color: muted, fontSize: 11 },
+              style: { padding: "4px 10px", color: muted, fontSize: 12 },
               children: snapshot.panelError
             }
           ),
@@ -13963,7 +13965,7 @@ var __t3Client = (() => {
                 gap: 8,
                 alignItems: "center",
                 padding: "6px 10px",
-                fontSize: 11,
+                fontSize: 12,
                 color: muted,
                 borderTop: border,
                 flexShrink: 0
@@ -13986,7 +13988,7 @@ var __t3Client = (() => {
             "output",
             {
               "aria-label": "Renderer status",
-              style: { padding: "6px 10px", color: muted, fontSize: 11 },
+              style: { padding: "6px 10px", color: muted, fontSize: 12 },
               children: "Loading terminal renderer\u2026"
             }
           ),
@@ -13994,7 +13996,7 @@ var __t3Client = (() => {
             "output",
             {
               "aria-label": "Renderer status",
-              style: { padding: "6px 10px", color: muted, fontSize: 11 },
+              style: { padding: "6px 10px", color: muted, fontSize: 12 },
               children: [
                 "VT renderer unavailable (",
                 assets.message,
@@ -14069,7 +14071,7 @@ var __t3Client = (() => {
                   "output",
                   {
                     "aria-label": "Output status",
-                    style: { padding: "6px 10px", color: muted, fontSize: 11, flexShrink: 0 },
+                    style: { padding: "6px 10px", color: muted, fontSize: 12, flexShrink: 0 },
                     children: [
                       activeId,
                       ": ",
@@ -14144,7 +14146,7 @@ var __t3Client = (() => {
             "output",
             {
               "aria-label": "Slice notice",
-              style: { padding: "6px 10px", color: muted, fontSize: 11, flexShrink: 0 },
+              style: { padding: "6px 10px", color: muted, fontSize: 12, flexShrink: 0 },
               children: "Ghostty VT rendering over the public control contract; theme, terminal appearance, and panel keybindings follow the host's t3.ui/* providers. Link activation is reported inline \u2014 there is no transient-toast path, so t3.ui/notifications is not adopted."
             }
           )

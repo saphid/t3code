@@ -8740,20 +8740,20 @@ ${writeKey}`;
   var hairline = "1px solid var(--t3-version-control-border, var(--border, #f0f2f5))";
   var control = {
     padding: "4px 8px",
-    border,
+    border: "1px solid transparent",
     borderRadius: 5,
     background: "transparent",
     color: "inherit",
     font: "inherit",
-    fontSize: 12,
+    fontSize: 14,
     cursor: "pointer"
   };
-  var iconButton = { ...control, padding: "2px 6px", fontSize: 11 };
+  var iconButton = { ...control, padding: "2px 6px", fontSize: 12 };
   var inputStyle = {
     flex: 1,
     minWidth: 0,
     font: "inherit",
-    fontSize: 12,
+    fontSize: 14,
     padding: "3px 6px",
     border,
     borderRadius: 5,
@@ -8769,7 +8769,7 @@ ${writeKey}`;
   var headingStyle = {
     margin: 0,
     padding: "2px 10px",
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: 600,
     color: muted,
     textTransform: "uppercase",
@@ -9230,7 +9230,7 @@ ${writeKey}`;
                 gap: 6,
                 minWidth: 0,
                 marginTop: 2,
-                fontSize: 11,
+                fontSize: 12,
                 color: muted,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
@@ -9324,7 +9324,7 @@ ${writeKey}`;
             {
               style: {
                 color: muted,
-                fontSize: 11,
+                fontSize: 12,
                 flexShrink: 1,
                 minWidth: 0,
                 overflow: "hidden",
@@ -9341,7 +9341,7 @@ ${writeKey}`;
   function CommentRow({ comment }) {
     const verdict = prsReviewVerdictLabel(comment.reviewState);
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: { padding: "4px 10px", fontSize: 12, borderTop: hairline }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { color: muted, fontSize: 11 }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { color: muted, fontSize: 12 }, children: [
         prsActorLabel(comment.author),
         verdict !== null ? ` ${verdict}` : comment.kind === "review" ? " reviewed" : " commented",
         comment.path !== null ? ` on ${comment.path}` : "",
@@ -9351,7 +9351,7 @@ ${writeKey}`;
         comment.url !== null ? ` \u2014 ${comment.url}` : ""
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere", marginTop: 2 }, children: comment.body }),
-      comment.reactions !== void 0 && comment.reactions.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { color: muted, fontSize: 11, marginTop: 2 }, children: comment.reactions.map((r) => `${r.content} \xD7${r.count}`).join(" \xB7 ") })
+      comment.reactions !== void 0 && comment.reactions.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { color: muted, fontSize: 12, marginTop: 2 }, children: comment.reactions.map((r) => `${r.content} \xD7${r.count}`).join(" \xB7 ") })
     ] });
   }
   function ReviewThreadSection(props) {
@@ -9370,14 +9370,14 @@ ${writeKey}`;
             ] })
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: thread.comments.map((comment) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: { padding: "3px 10px", fontSize: 12 }, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { color: muted, fontSize: 11 }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { color: muted, fontSize: 12 }, children: [
               prsActorLabel(comment.author),
               " \xB7 ",
               formatRelativeTime(comment.createdAt),
               comment.url !== null ? ` \u2014 ${comment.url}` : ""
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere", marginTop: 1 }, children: comment.body }),
-            comment.reactions !== void 0 && comment.reactions.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { color: muted, fontSize: 11, marginTop: 1 }, children: comment.reactions.map((r) => `${r.content} \xD7${r.count}`).join(" \xB7 ") })
+            comment.reactions !== void 0 && comment.reactions.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { color: muted, fontSize: 12, marginTop: 1 }, children: comment.reactions.map((r) => `${r.content} \xD7${r.count}`).join(" \xB7 ") })
           ] }, comment.id)) }),
           canPage && prsThreadMoreLabel(thread) !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
             "button",
@@ -9389,12 +9389,12 @@ ${writeKey}`;
               children: paging ? "Loading\u2026" : prsThreadMoreLabel(thread)
             }
           ),
-          canPage === false && thread.nextCommentsCursor !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 11 }, children: "More comments exist; paging is not supported by this host." }),
-          pageError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "alert", style: { ...noteStyle, fontSize: 11 }, children: [
+          canPage === false && thread.nextCommentsCursor !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: "More comments exist; paging is not supported by this host." }),
+          pageError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "alert", style: { ...noteStyle, fontSize: 12 }, children: [
             pageError,
             " \u2014 retry with the button above."
           ] }),
-          unrecoverable && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11 }, children: "Some comments could not be shown \u2014 the host cut this thread's tail without a cursor." }),
+          unrecoverable && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Some comments could not be shown \u2014 the host cut this thread's tail without a cursor." }),
           write !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { padding: "2px 10px" }, children: [
             write.canResolve && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
               "button",
@@ -9427,7 +9427,7 @@ ${writeKey}`;
   var diffRowBase = {
     display: "flex",
     fontFamily: "var(--font-mono, ui-monospace, monospace)",
-    fontSize: 11,
+    fontSize: 12,
     lineHeight: "18px",
     whiteSpace: "pre"
   };
@@ -9556,7 +9556,7 @@ ${writeKey}`;
     const { delivery } = diff;
     const renderable = renderableFromPatch(delivery.patch);
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { style: { ...noteStyle, fontSize: 11 }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { style: { ...noteStyle, fontSize: 12 }, children: [
         delivery.diffHashes[0] !== void 0 ? `sha256 ${delivery.diffHashes[0].slice(0, 12)} \xB7 ${delivery.byteLength} bytes` : "empty diff",
         delivery.diffHashes.length > 1 ? ` \xB7 ${delivery.diffHashes.length} verified segments` : "",
         delivery.truncated ? " \xB7 truncated by the host" : ""
@@ -9570,7 +9570,7 @@ ${writeKey}`;
             style: {
               margin: 0,
               padding: "4px 10px",
-              fontSize: 11,
+              fontSize: 12,
               whiteSpace: "pre-wrap",
               overflowWrap: "anywhere"
             },
@@ -9579,7 +9579,7 @@ ${writeKey}`;
         )
       ] }),
       renderable !== null && renderable.kind === "files" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { children: renderable.files.map((row) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PrsFileSection, { row }, row.key)) }),
-      delivery.omittedFileStats.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11 }, children: prsOmittedFilesLabel(delivery.omittedFileStats) }),
+      delivery.omittedFileStats.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: prsOmittedFilesLabel(delivery.omittedFileStats) }),
       delivery.nextCursor !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
         "button",
         {
@@ -9594,7 +9594,7 @@ ${writeKey}`;
   }
   function PrsWriteErrorLine({ error }) {
     if (error === null) return null;
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 11 }, children: error });
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 12 }, children: error });
   }
   function PrsActionButton(props) {
     const { offer, pending, method, onMethodChange, onRun } = props;
@@ -9979,20 +9979,20 @@ ${thread.id}`;
                 prsUnavailableLabel(gate.reason),
                 gate.detail !== null ? ` \u2014 ${gate.detail}` : ""
               ] }),
-              gate.providers.map((provider) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 11 }, children: prsProviderLabel(provider) }, provider.host))
+              gate.providers.map((provider) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: prsProviderLabel(provider) }, provider.host))
             ] }),
             ready && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-              refreshError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 11 }, children: refreshError }),
-              refreshes.detail !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11 }, children: refreshes.detail }),
+              refreshError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 12 }, children: refreshError }),
+              refreshes.detail !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: refreshes.detail }),
               selected === null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
                 ops !== null && ops["prs.list"] !== true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: noteStyle, children: "Listing pull requests is not supported by this host (prs.list)." }),
-                gate.providers.map((provider) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 11 }, children: prsProviderLabel(provider) }, provider.host)),
+                gate.providers.map((provider) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: prsProviderLabel(provider) }, provider.host)),
                 list.error !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: noteStyle, children: list.error }),
                 list.result !== null && list.result.errors.map((entryError) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
                   "p",
                   {
                     role: "alert",
-                    style: { ...noteStyle, fontSize: 11 },
+                    style: { ...noteStyle, fontSize: 12 },
                     children: [
                       entryError.projectTitle,
                       ": ",
@@ -10001,7 +10001,7 @@ ${thread.id}`;
                   },
                   entryError.projectId
                 )),
-                list.result !== null && list.result.truncated && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11 }, children: "Results truncated by the host \u2014 narrow the search to see more." }),
+                list.result !== null && list.result.truncated && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Results truncated by the host \u2014 narrow the search to see more." }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: "2px 4px" }, children: list.entries.map((prEntry) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                   PrListRow,
                   {
@@ -10055,8 +10055,8 @@ ${thread.id}`;
                         },
                         children: [
                           stateBadge(detail),
-                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { style: { fontSize: 13, overflowWrap: "anywhere" }, children: detail.title }),
-                          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted, fontSize: 11 }, children: [
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { style: { fontSize: 14, overflowWrap: "anywhere" }, children: detail.title }),
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted, fontSize: 12 }, children: [
                             detail.repository,
                             "#",
                             detail.number
@@ -10064,7 +10064,7 @@ ${thread.id}`;
                         ]
                       }
                     ),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { color: muted, fontSize: 11, marginTop: 2 }, children: detail.url })
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { color: muted, fontSize: 12, marginTop: 2 }, children: detail.url })
                   ] }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { padding: "4px 10px" }, children: [
                     metaRow("Author", prsActorLabel(detail.author)),
@@ -10099,7 +10099,7 @@ ${thread.id}`;
                       style: {
                         margin: "2px 10px",
                         padding: "6px 8px",
-                        fontSize: 11,
+                        fontSize: 12,
                         whiteSpace: "pre-wrap",
                         overflowWrap: "anywhere",
                         background: "var(--t3-version-control-muted, var(--muted, #f4f5f7))",
@@ -10110,7 +10110,7 @@ ${thread.id}`;
                       children: detail.body
                     }
                   ),
-                  detail.bodyTruncated === true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11 }, children: "Description truncated by the contract bound \u2014 read the rest on the host." })
+                  detail.bodyTruncated === true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Description truncated by the contract bound \u2014 read the rest on the host." })
                 ] }),
                 detail !== null && write.kind === "ready" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
                   "section",
@@ -10125,7 +10125,7 @@ ${thread.id}`;
                       borderTop: "1px solid var(--border, #f0f2f5)"
                     },
                     children: [
-                      writeOps !== null && writeOps["prs.runAction"] !== true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11, padding: 0 }, children: "This host takes no pull-request actions." }),
+                      writeOps !== null && writeOps["prs.runAction"] !== true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12, padding: 0 }, children: "This host takes no pull-request actions." }),
                       writeOps?.["prs.runAction"] === true && prsWriteActionOffers(detail, write).map((offer) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                         PrsActionButton,
                         {
@@ -10146,8 +10146,8 @@ ${thread.id}`;
                     ]
                   }
                 ),
-                sections.stackError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 11 }, children: sections.stackError }),
-                ops !== null && ops["prs.stack"] !== true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11 }, children: "Stack information is not supported by this host (prs.stack)." }),
+                sections.stackError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 12 }, children: sections.stackError }),
+                ops !== null && ops["prs.stack"] !== true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Stack information is not supported by this host (prs.stack)." }),
                 sections.stack !== null && sections.stack.layers.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Stack", style: { paddingBottom: 4 }, children: [
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("h3", { style: headingStyle, children: [
                     "Stack \u2014 base ",
@@ -10179,7 +10179,7 @@ ${thread.id}`;
                     "Checks",
                     detail !== null && prsChecksSummary(detail.checks) !== null ? ` \u2014 ${prsChecksSummary(detail.checks)}` : ""
                   ] }),
-                  detail !== null && detail.checks.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 11 }, children: "No checks reported." }),
+                  detail !== null && detail.checks.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: "No checks reported." }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: detail?.checks.map((check) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                     CheckRow,
                     {
@@ -10190,29 +10190,29 @@ ${thread.id}`;
                 ] }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Linked threads", style: { paddingBottom: 4 }, children: [
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", { style: headingStyle, children: "Linked threads" }),
-                  ops !== null && ops["prs.linkedThreads"] !== true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11 }, children: "Linked threads are not supported by this host." }),
-                  sections.linkedError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 11 }, children: sections.linkedError }),
-                  sections.linked !== null && sections.linked.threads.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 11 }, children: "No linked threads." }),
+                  ops !== null && ops["prs.linkedThreads"] !== true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Linked threads are not supported by this host." }),
+                  sections.linkedError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 12 }, children: sections.linkedError }),
+                  sections.linked !== null && sections.linked.threads.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: "No linked threads." }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: sections.linked?.threads.map((thread) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: { padding: "2px 10px", fontSize: 12 }, children: [
                     thread.title,
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted, fontSize: 11 }, children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted, fontSize: 12 }, children: [
                       " ",
                       "\u2014 ",
                       thread.id,
                       thread.archivedAt !== null ? " \xB7 archived" : ""
                     ] })
                   ] }, thread.id)) }),
-                  sections.linked?.truncated === true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11 }, children: "Linked-thread list truncated." })
+                  sections.linked?.truncated === true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Linked-thread list truncated." })
                 ] }),
-                ops !== null && ops["prs.activity"] !== true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11 }, children: "Review threads and comments are not supported by this host (prs.activity)." }),
-                sections.activityError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 11 }, children: sections.activityError }),
+                ops !== null && ops["prs.activity"] !== true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Review threads and comments are not supported by this host (prs.activity)." }),
+                sections.activityError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 12 }, children: sections.activityError }),
                 activity !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Review threads", style: { paddingBottom: 4 }, children: [
                     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("h3", { style: headingStyle, children: [
                       "Review threads",
                       activity.reviewThreads.length > 0 ? ` (${activity.reviewThreads.length})` : ""
                     ] }),
-                    activity.reviewThreads.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 11 }, children: "No review threads." }),
+                    activity.reviewThreads.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: "No review threads." }),
                     activity.reviewThreads.map((thread) => {
                       const paged = pagedThreads !== null && pagedThreads.scope === pagedScope && pagedThreads.activity === activity ? pagedThreads.map.get(thread.id) : void 0;
                       const merged = paged === void 0 ? thread : {
@@ -10241,9 +10241,9 @@ ${thread.id}`) === activity,
                       "Comments",
                       activity.commentCount > 0 ? ` (${activity.commentCount})` : ""
                     ] }),
-                    activity.comments.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 11 }, children: "No comments." }),
+                    activity.comments.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: "No comments." }),
                     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: activity.comments.map((comment) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CommentRow, { comment }, comment.id)) }),
-                    activity.commentsTruncated && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11 }, children: "Comment list truncated by the host." }),
+                    activity.commentsTruncated && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Comment list truncated by the host." }),
                     writeOps?.["prs.comment"] === true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                       PrsComposer,
                       {
@@ -10304,21 +10304,21 @@ ${thread.id}`) === activity,
                           style: {
                             fontFamily: "var(--font-mono, ui-monospace, monospace)",
                             color: muted,
-                            fontSize: 11
+                            fontSize: 12
                           },
                           children: commit.oid.slice(0, 8)
                         }
                       ),
                       " ",
                       commit.messageHeadline,
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted, fontSize: 11 }, children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted, fontSize: 12 }, children: [
                         " ",
                         "\xB7 ",
                         formatRelativeTime(commit.committedDate)
                       ] })
                     ] }, commit.oid)) })
                   ] }),
-                  activity.truncated && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11 }, children: "Activity truncated \u2014 some comments, threads, or commits were not delivered." })
+                  activity.truncated && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Activity truncated \u2014 some comments, threads, or commits were not delivered." })
                 ] }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Diff", style: { paddingBottom: 4 }, children: [
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", { style: headingStyle, children: "Diff" }),
@@ -10331,7 +10331,7 @@ ${thread.id}`) === activity,
                     }
                   )
                 ] }),
-                prsWriteUnavailableNote(write) !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 11, paddingBottom: 8 }, children: prsWriteUnavailableNote(write) })
+                prsWriteUnavailableNote(write) !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12, paddingBottom: 8 }, children: prsWriteUnavailableNote(write) })
               ] })
             ] })
           ] })
@@ -10705,12 +10705,12 @@ ${thread.id}`) === activity,
   var muted2 = "var(--t3-version-control-muted-foreground, var(--muted-foreground, #667085))";
   var control2 = {
     padding: "4px 8px",
-    border: border2,
+    border: "1px solid transparent",
     borderRadius: 5,
     background: "transparent",
     color: "inherit",
     font: "inherit",
-    fontSize: 12,
+    fontSize: 14,
     cursor: "pointer"
   };
   function VersionControlView(props) {
@@ -11057,6 +11057,7 @@ ${thread.id}`) === activity,
       "section",
       {
         "aria-label": "Version Control",
+        "data-t3-version-control-panel": true,
         style: {
           height: "100%",
           display: "flex",
@@ -11065,10 +11066,10 @@ ${thread.id}`) === activity,
           color: "var(--t3-version-control-text, var(--foreground, #20252d))",
           background: "var(--t3-version-control-canvas, var(--background, #fff))",
           fontFamily: "var(--font-sans, system-ui, sans-serif)",
-          fontSize: 13,
           ...themeVars
         },
         children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("style", { children: `[data-t3-version-control-panel] :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-version-control-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}` }),
           /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
             "header",
             {
@@ -11099,7 +11100,7 @@ ${thread.id}`) === activity,
                         style: {
                           ...control2,
                           padding: "2px 7px",
-                          fontSize: 11,
+                          fontSize: 12,
                           fontWeight: view === value ? 600 : 400,
                           background: view === value ? "var(--t3-version-control-accent-surface, var(--accent, #e8eef7))" : "transparent"
                         },
@@ -11110,7 +11111,7 @@ ${thread.id}`) === activity,
                   }
                 ),
                 view === "repository" && repo.kind === "ready" && repo.capabilities.operations["status.refresh"] === true && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", onClick: refresh, style: control2, children: "Refresh" }),
-                view === "repository" && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 11 }, children: refreshError ?? describeStatus(status) })
+                view === "repository" && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 12 }, children: refreshError ?? describeStatus(status) })
               ]
             }
           ),
@@ -11139,7 +11140,7 @@ ${thread.id}`) === activity,
                   display: "block",
                   padding: "4px 10px",
                   color: mutation.kind === "failed" ? "var(--t3-version-control-error, var(--destructive, #b42318))" : muted2,
-                  fontSize: 11
+                  fontSize: 12
                 },
                 children: describeMutation(mutation)
               }
@@ -11193,7 +11194,7 @@ ${thread.id}`) === activity,
                         children: push.label
                       }
                     ),
-                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 11 }, children: [canPull ? pull.disabled : null, canPush ? push.disabled : null].filter((reason) => reason !== null).join(" \xB7 ") })
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 12 }, children: [canPull ? pull.disabled : null, canPush ? push.disabled : null].filter((reason) => reason !== null).join(" \xB7 ") })
                   ]
                 }
               ),
@@ -11201,7 +11202,7 @@ ${thread.id}`) === activity,
                 "output",
                 {
                   "aria-label": "Changes status",
-                  style: { display: "block", padding: "4px 6px", color: muted2, fontSize: 11 },
+                  style: { display: "block", padding: "4px 6px", color: muted2, fontSize: 12 },
                   children: changes.error
                 }
               ),
@@ -11218,7 +11219,7 @@ ${thread.id}`) === activity,
                       style: {
                         margin: 0,
                         padding: "2px 6px",
-                        fontSize: 11,
+                        fontSize: 12,
                         fontWeight: 600,
                         color: muted2,
                         textTransform: "uppercase",
@@ -11245,7 +11246,7 @@ ${thread.id}`) === activity,
                               lanes[lane].map((entry) => entry.path),
                               `${bulk.op === "stage" ? "Staging" : "Unstaging"} ${lanes[lane].length} paths`
                             ),
-                            style: { ...control2, padding: "1px 6px", fontSize: 11 },
+                            style: { ...control2, padding: "1px 6px", fontSize: 12 },
                             children: bulk.label
                           }
                         )
@@ -11301,7 +11302,7 @@ ${thread.id}`) === activity,
                             style: {
                               ...control2,
                               padding: "1px 6px",
-                              fontSize: 11,
+                              fontSize: 12,
                               flexShrink: 0
                             },
                             children: rowAction.label
@@ -11320,7 +11321,7 @@ ${thread.id}`) === activity,
                     style: {
                       margin: 0,
                       padding: "2px 6px",
-                      fontSize: 11,
+                      fontSize: 12,
                       fontWeight: 600,
                       color: muted2,
                       textTransform: "uppercase",
@@ -11335,7 +11336,7 @@ ${thread.id}`) === activity,
                     style: {
                       margin: 0,
                       padding: "2px 6px",
-                      fontSize: 11,
+                      fontSize: 12,
                       color: "var(--t3-version-control-warning, var(--warning, #b54708))"
                     },
                     children: "Warning: committing on the default branch"
@@ -11357,7 +11358,7 @@ ${thread.id}`) === activity,
                       margin: "4px 0",
                       padding: "4px 6px",
                       font: "inherit",
-                      fontSize: 12,
+                      fontSize: 14,
                       border: border2,
                       borderRadius: 5,
                       background: "transparent",
@@ -11377,7 +11378,7 @@ ${thread.id}`) === activity,
                       children: commit.label
                     }
                   ),
-                  commit.disabled !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 11 }, children: commit.disabled })
+                  commit.disabled !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 12 }, children: commit.disabled })
                 ] }),
                 canRunActions && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                   "div",
@@ -11429,7 +11430,7 @@ ${thread.id}`) === activity,
                             display: "flex",
                             alignItems: "center",
                             gap: 4,
-                            fontSize: 11,
+                            fontSize: 12,
                             color: muted2
                           },
                           children: [
@@ -11449,7 +11450,7 @@ ${thread.id}`) === activity,
                           ]
                         }
                       ),
-                      chooserReason !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 11 }, children: chooserReason })
+                      chooserReason !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 12 }, children: chooserReason })
                     ]
                   }
                 ),
@@ -11470,7 +11471,7 @@ ${thread.id}`) === activity,
                         padding: "4px 6px",
                         border: "1px solid var(--border, #dfe3e8)",
                         borderRadius: 5,
-                        fontSize: 11
+                        fontSize: 12
                       },
                       children: [
                         /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { marginBottom: 4 }, children: [
@@ -11543,7 +11544,7 @@ ${thread.id}`) === activity,
                       padding: "4px 6px",
                       border: "1px solid var(--border, #dfe3e8)",
                       borderRadius: 5,
-                      fontSize: 11
+                      fontSize: 12
                     },
                     children: [
                       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { children: describeStackedProgress(stacked.model) }),
@@ -11579,7 +11580,7 @@ ${thread.id}`) === activity,
                     style: {
                       margin: 0,
                       padding: "2px 6px",
-                      fontSize: 11,
+                      fontSize: 12,
                       fontWeight: 600,
                       color: muted2,
                       textTransform: "uppercase",
@@ -11631,7 +11632,7 @@ ${thread.id}`) === activity,
                           type: "button",
                           disabled: busy || create.refName === null,
                           onClick: runCreateRef,
-                          style: { ...control2, padding: "2px 6px", fontSize: 11, flexShrink: 0 },
+                          style: { ...control2, padding: "2px 6px", fontSize: 12, flexShrink: 0 },
                           children: "Create & switch"
                         }
                       )
@@ -11642,7 +11643,7 @@ ${thread.id}`) === activity,
                   "output",
                   {
                     "aria-label": "Branch create status",
-                    style: { display: "block", padding: "0 6px 4px", color: muted2, fontSize: 11 },
+                    style: { display: "block", padding: "0 6px 4px", color: muted2, fontSize: 12 },
                     children: create.disabled
                   }
                 ),
@@ -11650,7 +11651,7 @@ ${thread.id}`) === activity,
                   "output",
                   {
                     "aria-label": "Refs status",
-                    style: { display: "block", padding: "4px 6px", color: muted2, fontSize: 11 },
+                    style: { display: "block", padding: "4px 6px", color: muted2, fontSize: 12 },
                     children: refs.error
                   }
                 ),
@@ -11686,14 +11687,14 @@ ${thread.id}`) === activity,
                             ]
                           }
                         ),
-                        canSwitchRef && !row.current && !switchState.ok && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 11, flexShrink: 0 }, children: switchState.reason }),
+                        canSwitchRef && !row.current && !switchState.ok && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 12, flexShrink: 0 }, children: switchState.reason }),
                         canSwitchRef && switchState.ok && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                           "button",
                           {
                             type: "button",
                             disabled: busy,
                             onClick: () => runSwitchRef(refSwitchTarget(row)),
-                            style: { ...control2, padding: "1px 6px", fontSize: 11, flexShrink: 0 },
+                            style: { ...control2, padding: "1px 6px", fontSize: 12, flexShrink: 0 },
                             children: "Switch"
                           }
                         ),
@@ -11703,7 +11704,7 @@ ${thread.id}`) === activity,
                             type: "button",
                             disabled: busy,
                             onClick: () => runCreateWorktree({ refName: row.name }),
-                            style: { ...control2, padding: "1px 6px", fontSize: 11, flexShrink: 0 },
+                            style: { ...control2, padding: "1px 6px", fontSize: 12, flexShrink: 0 },
                             children: "Worktree"
                           }
                         )
@@ -11720,7 +11721,7 @@ ${thread.id}`) === activity,
                     style: {
                       margin: 0,
                       padding: "2px 6px",
-                      fontSize: 11,
+                      fontSize: 12,
                       fontWeight: 600,
                       color: muted2,
                       textTransform: "uppercase",
@@ -11784,7 +11785,7 @@ ${thread.id}`) === activity,
                               baseRefName: worktreePlan.baseRefName ?? void 0
                             });
                           },
-                          style: { ...control2, padding: "2px 6px", fontSize: 11, flexShrink: 0 },
+                          style: { ...control2, padding: "2px 6px", fontSize: 12, flexShrink: 0 },
                           children: "Create worktree"
                         }
                       )
@@ -11799,12 +11800,12 @@ ${thread.id}`) === activity,
                       display: "block",
                       padding: "0 6px 4px",
                       color: muted2,
-                      fontSize: 11
+                      fontSize: 12
                     },
                     children: worktreePlan.disabled
                   }
                 ),
-                worktrees.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: 0, padding: "2px 6px 4px", color: muted2, fontSize: 11 }, children: "No additional worktrees." }),
+                worktrees.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: 0, padding: "2px 6px 4px", color: muted2, fontSize: 12 }, children: "No additional worktrees." }),
                 /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: worktrees.map((worktree) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                   "li",
                   {
@@ -11841,7 +11842,7 @@ ${thread.id}`) === activity,
                           type: "button",
                           disabled: busy,
                           onClick: () => runRemoveWorktree(worktree.path, false),
-                          style: { ...control2, padding: "1px 6px", fontSize: 11, flexShrink: 0 },
+                          style: { ...control2, padding: "1px 6px", fontSize: 12, flexShrink: 0 },
                           children: "Remove"
                         }
                       ),
@@ -11854,7 +11855,7 @@ ${thread.id}`) === activity,
                           style: {
                             ...control2,
                             padding: "1px 6px",
-                            fontSize: 11,
+                            fontSize: 12,
                             flexShrink: 0,
                             color: "var(--t3-version-control-error, var(--destructive, #b42318))"
                           },
@@ -11873,7 +11874,7 @@ ${thread.id}`) === activity,
                     style: {
                       margin: 0,
                       padding: "2px 6px",
-                      fontSize: 11,
+                      fontSize: 12,
                       fontWeight: 600,
                       color: muted2,
                       textTransform: "uppercase",
@@ -11894,7 +11895,7 @@ ${thread.id}`) === activity,
                           type: "button",
                           disabled: busy,
                           onClick: () => runFetch(),
-                          style: { ...control2, padding: "1px 6px", fontSize: 11 },
+                          style: { ...control2, padding: "1px 6px", fontSize: 12 },
                           children: "Fetch all"
                         }
                       )
@@ -11905,11 +11906,11 @@ ${thread.id}`) === activity,
                   "output",
                   {
                     "aria-label": "Remotes status",
-                    style: { display: "block", padding: "4px 6px", color: muted2, fontSize: 11 },
+                    style: { display: "block", padding: "4px 6px", color: muted2, fontSize: 12 },
                     children: remotes.error
                   }
                 ),
-                remotes.remotes !== null && remoteList.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: 0, padding: "2px 6px 4px", color: muted2, fontSize: 11 }, children: "No remotes configured." }),
+                remotes.remotes !== null && remoteList.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: 0, padding: "2px 6px 4px", color: muted2, fontSize: 12 }, children: "No remotes configured." }),
                 /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: remoteList.map((remote) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                   "li",
                   {
@@ -11948,7 +11949,7 @@ ${thread.id}`) === activity,
                           type: "button",
                           disabled: busy,
                           onClick: () => runFetch(remote.name),
-                          style: { ...control2, padding: "1px 6px", fontSize: 11, flexShrink: 0 },
+                          style: { ...control2, padding: "1px 6px", fontSize: 12, flexShrink: 0 },
                           children: "Fetch"
                         }
                       )
@@ -11965,7 +11966,7 @@ ${thread.id}`) === activity,
                 style: {
                   padding: "6px 10px",
                   color: muted2,
-                  fontSize: 11,
+                  fontSize: 12,
                   borderTop: border2,
                   flexShrink: 0
                 },
@@ -11985,7 +11986,7 @@ ${thread.id}`) === activity,
               style: {
                 padding: "6px 10px",
                 color: muted2,
-                fontSize: 11,
+                fontSize: 12,
                 borderTop: border2,
                 flexShrink: 0
               },
