@@ -246,6 +246,12 @@ const DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES = Duration.minutes(5);
 // window can still recover by re-bootstrapping rather than locking
 // the user out of the backend.
 const DESKTOP_BOOTSTRAP_TTL_HOURS = Duration.hours(24);
+/**
+ * Subject of sessions minted from the desktop-bootstrap grant. Only the local
+ * desktop app can present that seed, so the subject is server-derived proof
+ * of the desktop's own connection (see preview/BrowserEngineHosts.ts).
+ */
+export const DESKTOP_BOOTSTRAP_SUBJECT = "desktop-bootstrap";
 // A dev server's startup token is read off a log by whoever (or whatever) is
 // driving the session, often minutes later — after a `node --watch` restart, a
 // detour into another task, or a hand-off to the person actually doing the
@@ -314,7 +320,7 @@ export const make = Effect.gen(function* () {
     yield* seedGrant(config.desktopBootstrapToken, {
       method: "desktop-bootstrap",
       scopes: AuthAdministrativeScopes,
-      subject: "desktop-bootstrap",
+      subject: DESKTOP_BOOTSTRAP_SUBJECT,
       expiresAt: DateTime.add(now, {
         milliseconds: Duration.toMillis(DESKTOP_BOOTSTRAP_TTL_HOURS),
       }),

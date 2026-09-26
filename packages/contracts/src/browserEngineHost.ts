@@ -16,7 +16,7 @@
  */
 import * as Schema from "effect/Schema";
 
-import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BrowserFrameEngineGeneration } from "./browserFrames.ts";
 import {
   PREVIEW_URL_MAX_LENGTH,
@@ -78,9 +78,8 @@ export const BrowserEnginePageStatus = Schema.Struct({
 });
 export type BrowserEnginePageStatus = typeof BrowserEnginePageStatus.Type;
 
-export const BrowserEngineHostRegisterInput = Schema.Struct({
-  environmentId: EnvironmentId,
-});
+/** Identity comes from the authenticated socket, never from the payload. */
+export const BrowserEngineHostRegisterInput = Schema.Struct({});
 export type BrowserEngineHostRegisterInput = typeof BrowserEngineHostRegisterInput.Type;
 
 export const BrowserEngineHostStreamEvent = Schema.Union([

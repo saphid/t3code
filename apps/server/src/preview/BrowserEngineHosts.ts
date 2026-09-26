@@ -1,0 +1,218 @@
+/**
+ * Authenticated browser engine host registry (P08-ENGINE-ATTACH).
+ *
+ * The desktop renderer owns Chromium guests; it registers here over its own
+ * WebSocket and receives ordinary page commands on the registration stream.
+ * Registration is accepted only from the desktop bootstrap session, whose
+ * seed reaches the server over the desktop's trusted launch channel — web,
+ * mobile, relay and tunnel sockets never become hosts, so on those
+ * connections engine commands stay named-unsupported.
+ *
+ * This registry owns sockets, command queues and pending acknowledgements.
+ * Which host owns which guest, and under which generation, lives in
+ * PreviewManager session state so ownership, close and epoch share one lock.
+ */
+import {
+  BrowserEngineHostError,
+  type BrowserEngineCommand,
+  type BrowserEngineCommandRejection,
+  type BrowserEngineHostClaimInput,
+  type BrowserEngineHostCommandResultInput,
+  type BrowserEngineHostReleaseInput,
+  type BrowserEngineHostReportInput,
+  type BrowserEngineHostStreamEvent,
+  type BrowserEngineSessionTarget,
+} from "@t3tools/contracts";
+import type * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
+
+import { DESKTOP_BOOTSTRAP_SUBJECT } from "../auth/PairingGrantStore.ts";
+import * as PreviewManager from "./Manager.ts";
+
+/** Bounded wait for a host acknowledgement; silence becomes `unknown`, never success. */
+const COMMAND_ACK_TIMEOUT_MS = 10_000;
+
+/** The authenticated socket a host call arrived on. Derived by the WS layer, never the payload. */
+export interface BrowserEngineHostSocket {
+  readonly socketId: string;
+  readonly sessionSubject: string;
+}
+
+export type BrowserEngineDispatchOutcome =
+  | { readonly outcome: "applied" }
+  | { readonly outcome: "rejected"; readonly reason: BrowserEngineCommandRejection }
+  | { readonly outcome: "unknown" };
+
+export interface BrowserEngineDispatchInput {
+  readonly hostConnectionId: string;
+  readonly target: BrowserEngineSessionTarget;
+  readonly engineGeneration: string;
+  readonly command: BrowserEngineCommand;
+}
+
+interface HostConnection {
+  readonly hostConnectionId: string;
+  readonly socketId: string;
+  readonly queue: Queue.Queue<BrowserEngineHostStreamEvent, Cause.Done>;
+  readonly pending: Map<string, Deferred.Deferred<BrowserEngineDispatchOutcome>>;
+}
+
+export class BrowserEngineHosts extends Context.Service<
+  BrowserEngineHosts,
+  {
+    readonly register: (
+      socket: BrowserEngineHostSocket,
+    ) => Effect.Effect<Stream.Stream<BrowserEngineHostStreamEvent>, BrowserEngineHostError>;
+    readonly claim: (
+      socket: BrowserEngineHostSocket,
+      input: BrowserEngineHostClaimInput,
+    ) => Effect.Effect<void, BrowserEngineHostError>;
+    readonly release: (
+      socket: BrowserEngineHostSocket,
+      input: BrowserEngineHostReleaseInput,
+    ) => Effect.Effect<void, BrowserEngineHostError>;
+    readonly report: (
+      socket: BrowserEngineHostSocket,
+      input: BrowserEngineHostReportInput,
+    ) => Effect.Effect<void, BrowserEngineHostError>;
+    readonly commandResult: (
+      socket: BrowserEngineHostSocket,
+      input: BrowserEngineHostCommandResultInput,
+    ) => Effect.Effect<void, BrowserEngineHostError>;
+    /** Sends a command to the owning host and waits for its bounded acknowledgement. */
+    readonly dispatch: (
+      input: BrowserEngineDispatchInput,
+    ) => Effect.Effect<BrowserEngineDispatchOutcome>;
+    /** Whether any engine host is registered in this environment right now. */
+    readonly hasHost: Effect.Effect<boolean>;
+  }
+>()("t3/preview/BrowserEngineHosts") {}
+
+export const make = Effect.gen(function* () {
+  const preview = yield* PreviewManager.PreviewManager;
+  const crypto = yield* Crypto.Crypto;
+  const hosts = yield* Ref.make(new Map<string, HostConnection>());
+  const randomId = crypto.randomUUIDv4.pipe(Effect.orDie);
+
+  const desktopRequired = new BrowserEngineHostError({
+    reason: "desktop-required",
+    message: "Only the desktop app's own session can host browser engines.",
+  });
+
+  /** A host id is only honored on the socket that registered it. */
+  const authorizeHost = (socket: BrowserEngineHostSocket, hostConnectionId: string) =>
+    Effect.flatMap(Ref.get(hosts), (current) => {
+      const host = current.get(hostConnectionId);
+      if (socket.sessionSubject !== DESKTOP_BOOTSTRAP_SUBJECT) return Effect.fail(desktopRequired);
+      return host !== undefined && host.socketId === socket.socketId
+        ? Effect.succeed(host)
+        : Effect.fail(
+            new BrowserEngineHostError({
+              reason: "host-not-registered",
+              message: "The engine host is not registered on this connection.",
+            }),
+          );
+    });
+
+  const disconnect = (host: HostConnection) =>
+    Effect.gen(function* () {
+      yield* Ref.update(hosts, (current) => {
+        const next = new Map(current);
+        if (next.get(host.hostConnectionId) === host) next.delete(host.hostConnectionId);
+        return next;
+      });
+      // In-flight commands cannot be proven either way once the host is gone.
+      for (const deferred of host.pending.values()) {
+        yield* Deferred.succeed(deferred, { outcome: "unknown" });
+      }
+      host.pending.clear();
+      yield* preview.releaseEngineHost(host.hostConnectionId);
+      yield* Queue.shutdown(host.queue);
+    });
+
+  const register: BrowserEngineHosts["Service"]["register"] = (socket) =>
+    socket.sessionSubject !== DESKTOP_BOOTSTRAP_SUBJECT
+      ? Effect.fail(desktopRequired)
+      : Effect.succeed(
+          Stream.unwrap(
+            Effect.acquireRelease(
+              Effect.gen(function* () {
+                const hostConnectionId = yield* randomId;
+                const queue = yield* Queue.unbounded<BrowserEngineHostStreamEvent, Cause.Done>();
+                const host: HostConnection = {
+                  hostConnectionId,
+                  socketId: socket.socketId,
+                  queue,
+                  pending: new Map(),
+                };
+                yield* Queue.offer(queue, { type: "registered", hostConnectionId });
+                yield* Ref.update(hosts, (current) => new Map(current).set(hostConnectionId, host));
+                return host;
+              }),
+              disconnect,
+            ).pipe(Effect.map((host) => Stream.fromQueue(host.queue))),
+          ),
+        );
+
+  const claim: BrowserEngineHosts["Service"]["claim"] = (socket, input) =>
+    Effect.andThen(authorizeHost(socket, input.hostConnectionId), preview.claimEngine(input));
+
+  const release: BrowserEngineHosts["Service"]["release"] = (socket, input) =>
+    Effect.andThen(authorizeHost(socket, input.hostConnectionId), preview.releaseEngine(input));
+
+  const report: BrowserEngineHosts["Service"]["report"] = (socket, input) =>
+    Effect.andThen(
+      authorizeHost(socket, input.hostConnectionId),
+      preview.reportEngineStatus(input),
+    );
+
+  const commandResult: BrowserEngineHosts["Service"]["commandResult"] = (socket, input) =>
+    Effect.flatMap(authorizeHost(socket, input.hostConnectionId), (host) => {
+      const deferred = host.pending.get(input.commandId);
+      // A late answer after the bounded wait has nothing left to settle.
+      if (deferred === undefined) return Effect.void;
+      host.pending.delete(input.commandId);
+      return Deferred.succeed(deferred, input.result).pipe(Effect.asVoid);
+    });
+
+  const dispatch: BrowserEngineHosts["Service"]["dispatch"] = (input) =>
+    Effect.gen(function* () {
+      const host = (yield* Ref.get(hosts)).get(input.hostConnectionId);
+      if (host === undefined) return { outcome: "unknown" } as const;
+      const commandId = yield* randomId;
+      const deferred = yield* Deferred.make<BrowserEngineDispatchOutcome>();
+      host.pending.set(commandId, deferred);
+      yield* Queue.offer(host.queue, {
+        type: "command",
+        commandId,
+        target: input.target,
+        engineGeneration: input.engineGeneration,
+        command: input.command,
+      });
+      const outcome = yield* Deferred.await(deferred).pipe(
+        Effect.timeoutOption(COMMAND_ACK_TIMEOUT_MS),
+        Effect.ensuring(Effect.sync(() => host.pending.delete(commandId))),
+      );
+      return Option.getOrElse(outcome, () => ({ outcome: "unknown" }) as const);
+    });
+
+  return BrowserEngineHosts.of({
+    register,
+    claim,
+    release,
+    report,
+    commandResult,
+    dispatch,
+    hasHost: Effect.map(Ref.get(hosts), (current) => current.size > 0),
+  });
+}).pipe(Effect.withSpan("BrowserEngineHosts.make"));
+
+export const layer = Layer.effect(BrowserEngineHosts, make);

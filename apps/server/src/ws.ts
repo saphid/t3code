@@ -130,6 +130,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import * as BrowserEngineHosts from "./preview/BrowserEngineHosts.ts";
 import type { ClientApiProviders } from "./extensions/ClientApiProviders.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
@@ -588,6 +589,13 @@ const makeWsRpcLayer = (
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const terminalManager = yield* TerminalManager.TerminalManager;
       const previewManager = yield* PreviewManager.PreviewManager;
+      const browserEngineHosts = yield* BrowserEngineHosts.BrowserEngineHosts;
+      // Host identity is this socket plus its server-derived session subject;
+      // nothing in a host payload can claim to be the desktop.
+      const engineHostSocket: BrowserEngineHosts.BrowserEngineHostSocket = {
+        socketId: wsConnectionId,
+        sessionSubject: currentSession.subject,
+      };
       const deviceService = yield* DeviceService.DeviceService;
       const deviceHostContext =
         yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
@@ -3623,6 +3631,36 @@ const makeWsRpcLayer = (
               }),
             ),
             { "rpc.aggregate": "browser-frames" },
+          ),
+        [WS_METHODS.browserEngineHostRegister]: (_input) =>
+          observeRpcStreamEffect(
+            WS_METHODS.browserEngineHostRegister,
+            browserEngineHosts.register(engineHostSocket),
+            { "rpc.aggregate": "browser-engine-host" },
+          ),
+        [WS_METHODS.browserEngineHostClaim]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.browserEngineHostClaim,
+            browserEngineHosts.claim(engineHostSocket, input),
+            { "rpc.aggregate": "browser-engine-host" },
+          ),
+        [WS_METHODS.browserEngineHostRelease]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.browserEngineHostRelease,
+            browserEngineHosts.release(engineHostSocket, input),
+            { "rpc.aggregate": "browser-engine-host" },
+          ),
+        [WS_METHODS.browserEngineHostReport]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.browserEngineHostReport,
+            browserEngineHosts.report(engineHostSocket, input),
+            { "rpc.aggregate": "browser-engine-host" },
+          ),
+        [WS_METHODS.browserEngineHostCommandResult]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.browserEngineHostCommandResult,
+            browserEngineHosts.commandResult(engineHostSocket, input),
+            { "rpc.aggregate": "browser-engine-host" },
           ),
         [WS_METHODS.browserFramesCloseInput]: (input) =>
           observeRpcEffect(
