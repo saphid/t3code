@@ -1196,7 +1196,18 @@ var __t3Client = (() => {
       id: { type: "string", minLength: 1, maxLength: 80 },
       title: { type: "string", minLength: 1, maxLength: 200 },
       description: { type: "string", maxLength: 1e3 },
-      defaultKey: { type: "string", minLength: 1, maxLength: 64 },
+      defaultKey: {
+        oneOf: [
+          { type: "string", minLength: 1, maxLength: 64 },
+          {
+            type: "array",
+            minItems: 1,
+            maxItems: 4,
+            uniqueItems: true,
+            items: { type: "string", minLength: 1, maxLength: 64 }
+          }
+        ]
+      },
       when: { type: "string", minLength: 1, maxLength: 256 },
       scope: { enum: ["surface", "thread", "global"] },
       activation: {
@@ -5424,6 +5435,8 @@ var __t3Client = (() => {
   var BROWSER_SESSION_URL_MAX_LENGTH = 2048;
   var BROWSER_SESSION_TITLE_MAX_LENGTH = 512;
   var BROWSER_SESSION_LIMIT = 64;
+  var BROWSER_SESSION_FAVICON_REF_MAX_LENGTH = 64;
+  var BROWSER_SESSION_FAVICON_MAX_LENGTH = 8192;
   var browserSessionTabId = {
     type: "string",
     minLength: 1,
@@ -5439,6 +5452,11 @@ var __t3Client = (() => {
     type: "string",
     minLength: 1,
     maxLength: BROWSER_SESSION_URL_MAX_LENGTH
+  };
+  var browserSessionFaviconRef = {
+    type: "string",
+    minLength: 1,
+    maxLength: BROWSER_SESSION_FAVICON_REF_MAX_LENGTH
   };
   var browserSessionViewport = {
     oneOf: [
@@ -5541,7 +5559,8 @@ var __t3Client = (() => {
       zoomFactor: { type: ["number", "null"] },
       appearance: { enum: ["system", "light", "dark", null] },
       audioMuted: { type: ["boolean", "null"] },
-      audible: { type: ["boolean", "null"] }
+      audible: { type: ["boolean", "null"] },
+      faviconRef: browserSessionFaviconRef
     }
   };
   var browserSessionReceipt = {
@@ -5600,7 +5619,7 @@ var __t3Client = (() => {
   };
   var browserSessionsApi = defineStreamApi({
     id: BROWSER_SESSIONS,
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
       {
         name: "getCapabilities",
@@ -5653,6 +5672,26 @@ var __t3Client = (() => {
               maxItems: BROWSER_SESSION_LIMIT,
               items: browserSessionObject
             }
+          }
+        }
+      },
+      {
+        name: "getFavicon",
+        effect: "read",
+        requiredGrants: [BROWSER_SESSIONS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["ref"],
+          properties: { ref: browserSessionFaviconRef }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["ref", "dataUrl"],
+          properties: {
+            ref: browserSessionFaviconRef,
+            dataUrl: { type: "string", minLength: 1, maxLength: BROWSER_SESSION_FAVICON_MAX_LENGTH }
           }
         }
       },
@@ -13578,7 +13617,15 @@ ${ind(d)}}`;
   var FAVICON_CACHE_MAX_ENTRIES = 40;
   var FAVICON_PROVIDER_SIZE = 32;
   function emptyFaviconCache() {
-    return { byOrigin: {} };
+    return { byOrigin: {}, captured: {} };
+  }
+  function capEntries(entries, stamp) {
+    const keys = Object.keys(entries);
+    if (keys.length <= FAVICON_CACHE_MAX_ENTRIES) return entries;
+    const keep = new Set(
+      keys.toSorted((left, right) => stamp(entries[right]) - stamp(entries[left])).slice(0, FAVICON_CACHE_MAX_ENTRIES)
+    );
+    return Object.fromEntries(keys.filter((key) => keep.has(key)).map((key) => [key, entries[key]]));
   }
   function formatFaviconHost(host) {
     return host.includes(":") ? `[${host}]` : host;
@@ -13602,17 +13649,32 @@ ${ind(d)}}`;
     if (!key) return cache2;
     const existing = cache2.byOrigin[key];
     if (existing && existing.providerFailedAt >= at) return cache2;
-    const byOrigin = { ...cache2.byOrigin, [key]: { providerFailedAt: at } };
-    const keys = Object.keys(byOrigin);
-    if (keys.length <= FAVICON_CACHE_MAX_ENTRIES) return { byOrigin };
-    const evict = new Set(
-      keys.toSorted(
-        (left, right) => byOrigin[right].providerFailedAt - byOrigin[left].providerFailedAt
-      ).slice(FAVICON_CACHE_MAX_ENTRIES)
-    );
     return {
-      byOrigin: Object.fromEntries(keys.filter((k) => !evict.has(k)).map((k) => [k, byOrigin[k]]))
+      ...cache2,
+      byOrigin: capEntries(
+        { ...cache2.byOrigin, [key]: { providerFailedAt: at } },
+        (entry) => entry.providerFailedAt
+      )
     };
+  }
+  var CAPTURED_SRC = /^data:image\/[a-z.+-]+;base64,/i;
+  function recordCapturedFavicon(cache2, rawUrl, favicon, at) {
+    const key = faviconOriginKey(rawUrl);
+    if (!key || !CAPTURED_SRC.test(favicon.src)) return cache2;
+    if (cache2.captured[key]?.ref === favicon.ref) return cache2;
+    return {
+      ...cache2,
+      captured: capEntries(
+        { ...cache2.captured, [key]: { ref: favicon.ref, src: favicon.src, capturedAt: at } },
+        (entry) => entry.capturedAt
+      )
+    };
+  }
+  function dropCapturedFavicon(cache2, rawUrl) {
+    const key = faviconOriginKey(rawUrl);
+    if (!key || !cache2.captured[key]) return cache2;
+    const { [key]: _dropped, ...captured } = cache2.captured;
+    return { ...cache2, captured };
   }
   var GLYPH = { kind: "glyph" };
   function faviconFallbackGlyph(rawUrl) {
@@ -13627,9 +13689,37 @@ ${ind(d)}}`;
   function resolveFavicon(cache2, rawUrl) {
     if (!rawUrl) return GLYPH;
     const key = faviconOriginKey(rawUrl);
-    if (!key || cache2.byOrigin[key]) return GLYPH;
+    if (!key) return GLYPH;
+    const captured = cache2.captured[key];
+    if (captured) return { kind: "image", src: captured.src, tier: "captured" };
+    if (cache2.byOrigin[key]) return GLYPH;
     const src = faviconUrlForOrigin(rawUrl, FAVICON_PROVIDER_SIZE);
-    return src ? { kind: "image", src } : GLYPH;
+    return src ? { kind: "image", src, tier: "provider" } : GLYPH;
+  }
+  function pendingFaviconRefs(cache2, sessions, attempted) {
+    const pending = /* @__PURE__ */ new Map();
+    for (const session of sessions) {
+      const ref = session.faviconRef;
+      const url = session.navigation.url;
+      if (!ref || !url || attempted.has(ref) || pending.has(ref)) continue;
+      const key = faviconOriginKey(url);
+      if (!key || cache2.captured[key]?.ref === ref) continue;
+      pending.set(ref, url);
+    }
+    return [...pending].map(([ref, url]) => ({ ref, url }));
+  }
+  function panelTabIndicators(cache2, presented, sessions) {
+    const rawUrl = presented ? presented.navigation.url ?? presented.requestedUrl : null;
+    const pageUrl = rawUrl && rawUrl.length <= 2048 && faviconOriginKey(rawUrl) ? rawUrl : null;
+    const resolution = resolveFavicon(cache2, pageUrl);
+    const audible = sessions.filter((session) => session.audible === true);
+    const audio = audible.some((session) => session.audioMuted !== true) ? "audible" : audible.length > 0 ? "muted" : null;
+    if (pageUrl === null && audio === null) return null;
+    return {
+      ...pageUrl === null ? {} : { pageUrl },
+      ...resolution.kind === "image" && resolution.tier === "captured" ? { faviconDataUrl: resolution.src } : {},
+      ...audio === null ? {} : { audio }
+    };
   }
 
   // favicon.tsx
@@ -13638,12 +13728,34 @@ ${ind(d)}}`;
   var listeners = /* @__PURE__ */ new Set();
   var cache = emptyFaviconCache();
   var version = 0;
-  function faviconImageFailed(rawUrl) {
-    const next = recordProviderFaviconFailure(cache, rawUrl, Date.now());
+  var attemptedRefs = /* @__PURE__ */ new Set();
+  var MAX_ATTEMPTED_REFS = 256;
+  function commit(next) {
     if (next === cache) return;
     cache = next;
     version += 1;
     for (const listener of listeners) listener();
+  }
+  function faviconImageFailed(rawUrl, tier) {
+    commit(
+      tier === "captured" ? dropCapturedFavicon(cache, rawUrl) : recordProviderFaviconFailure(cache, rawUrl, Date.now())
+    );
+  }
+  function resolveSessionFavicons(api, sessions, signal) {
+    for (const { ref, url } of pendingFaviconRefs(cache, sessions, attemptedRefs)) {
+      if (attemptedRefs.size >= MAX_ATTEMPTED_REFS) attemptedRefs.clear();
+      attemptedRefs.add(ref);
+      api.invoke("getFavicon", { ref }, signal).then(
+        (favicon) => commit(recordCapturedFavicon(cache, url, { ref, src: favicon.dataUrl }, Date.now())),
+        () => {
+          if (signal.aborted) attemptedRefs.delete(ref);
+        }
+      );
+    }
+  }
+  function useFaviconCache() {
+    (0, import_react2.useSyncExternalStore)(subscribe, () => version);
+    return cache;
   }
   function subscribe(listener) {
     listeners.add(listener);
@@ -13691,7 +13803,7 @@ ${ind(d)}}`;
         width: size,
         height: size,
         style: { ...box, objectFit: "contain" },
-        onError: () => faviconImageFailed(props.url ?? "")
+        onError: () => faviconImageFailed(props.url ?? "", resolution.tier)
       }
     );
   }
@@ -14398,7 +14510,7 @@ ${ind(d)}}`;
   };
   function createViewportCommitter(resize, timeoutMs = VIEWPORT_COMMIT_TIMEOUT_MS) {
     let tail = Promise.resolve();
-    const commit = (viewport, signal) => {
+    const commit2 = (viewport, signal) => {
       const run2 = tail.then(() => {
         let timeoutId;
         const timeout2 = new Promise((_resolve, reject) => {
@@ -14414,7 +14526,7 @@ ${ind(d)}}`;
       );
       return run2;
     };
-    return { commit };
+    return { commit: commit2 };
   }
   function deviceViewportLayout(slot, setting) {
     const slotWidth = Math.max(1, Math.round(slot.width));
@@ -14789,7 +14901,8 @@ ${ind(d)}}`;
     {
       id: "zoomIn",
       title: "Zoom In",
-      defaultKey: "mod+=",
+      // Both spellings, like the native `preview.zoomIn` rules.
+      defaultKey: ["mod+=", "mod++"],
       when: `extension.${BROWSER_SURFACE_ID}.focus`,
       scope: "surface"
     },
@@ -15037,6 +15150,24 @@ ${ind(d)}}`;
       })();
       return () => controller.abort();
     }, [host, session]);
+    const faviconCache = useFaviconCache();
+    (0, import_react6.useEffect)(() => {
+      resolveSessionFavicons(
+        bindApi(browserSessionsApi, host, session.context),
+        tabs,
+        session.signal
+      );
+    }, [host, session, tabs]);
+    (0, import_react6.useEffect)(() => {
+      if (typeof session.setTabIndicators !== "function") return;
+      const indicators = panelTabIndicators(faviconCache, live, tabs);
+      try {
+        session.setTabIndicators(indicators);
+      } catch {
+        const { faviconDataUrl: _refused, ...rest } = indicators ?? {};
+        session.setTabIndicators(Object.keys(rest).length > 0 ? rest : null);
+      }
+    }, [session, faviconCache, live, tabs]);
     const {
       ref: surfaceSlotRef,
       lease: surfaceLease,
@@ -15118,7 +15249,7 @@ ${ind(d)}}`;
       };
       session.save({ ...base, history: fitHistoryToSaveBudget(base, entries) });
     };
-    const commit = (next) => {
+    const commit2 = (next) => {
       setState(next);
       if (next.status.kind !== "target" || isLeaseUrl(next.status.url)) return;
       const entries = recordHistoryVisit(history, next.status.url, Date.now());
@@ -15174,7 +15305,7 @@ ${ind(d)}}`;
       fileRun.current?.abort();
       presentFile(null);
       const next = submitAddress(state2, raw);
-      commit(next);
+      commit2(next);
       if (next.status.kind !== "target") return;
       go(next.status.url);
     };
@@ -15303,9 +15434,9 @@ ${ind(d)}}`;
         setFault(pageBlock);
         return;
       }
-      if (method === "back") commit(goBack(state2));
-      else if (method === "forward") commit(goForward(state2));
-      else commit(reload(state2));
+      if (method === "back") commit2(goBack(state2));
+      else if (method === "forward") commit2(goForward(state2));
+      else commit2(reload(state2));
       runPage({ method });
     };
     const runViewCommand = (0, import_react6.useRef)(() => {
@@ -15314,7 +15445,7 @@ ${ind(d)}}`;
       runViewCommand.current = (commandId) => {
         if (commandId === "reload") {
           if (held || fileSourceRef.current) command("reload");
-          else commit(reload(state2));
+          else commit2(reload(state2));
         } else if (commandId === "focusAddress") {
           focusAddressInput(addressRef.current);
         } else if (held && (commandId === "zoomIn" || commandId === "zoomOut")) {
@@ -15391,7 +15522,7 @@ ${ind(d)}}`;
                     type: "button",
                     "aria-label": "Back",
                     disabled: held ? pageBlock !== null || !(live?.canGoBack ?? false) : !canGoBack(state2),
-                    onClick: () => held ? command("back") : commit(goBack(state2)),
+                    onClick: () => held ? command("back") : commit2(goBack(state2)),
                     style: buttonStyle,
                     children: "\u2190"
                   }
@@ -15402,7 +15533,7 @@ ${ind(d)}}`;
                     type: "button",
                     "aria-label": "Forward",
                     disabled: held ? pageBlock !== null || !(live?.canGoForward ?? false) : !canGoForward(state2),
-                    onClick: () => held ? command("forward") : commit(goForward(state2)),
+                    onClick: () => held ? command("forward") : commit2(goForward(state2)),
                     style: buttonStyle,
                     children: "\u2192"
                   }
@@ -15413,7 +15544,7 @@ ${ind(d)}}`;
                     type: "button",
                     "aria-label": "Reload",
                     disabled: fileSource === null && (held ? pageBlock !== null && !isRecoveryExhausted(live) : state2.status.kind !== "target"),
-                    onClick: () => held || fileSource ? command("reload") : commit(reload(state2)),
+                    onClick: () => held || fileSource ? command("reload") : commit2(reload(state2)),
                     style: buttonStyle,
                     children: "\u27F3"
                   }

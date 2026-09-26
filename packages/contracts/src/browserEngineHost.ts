@@ -58,8 +58,8 @@ export type BrowserEngineSessionTarget = typeof BrowserEngineSessionTarget.Type;
 
 /**
  * Observed page state of a claimed guest. Title rides `navStatus`. The
- * favicon is held server-side only; the public sessions projection does not
- * carry favicon bytes (P08-FAVICON-REF).
+ * favicon stays server-side: the public sessions projection stores it as a
+ * bounded asset and carries only its ref (P08-FAVICON-REF).
  */
 export const BrowserEnginePageStatus = Schema.Struct({
   navStatus: PreviewNavStatus,

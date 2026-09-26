@@ -15,6 +15,7 @@ import {
   type HostOptions,
 } from "@t3tools/extension-sdk/host";
 import { ExtensionSurface, type SurfaceRenderer } from "@t3tools/extension-sdk/react";
+import { extensionTabKey, setExtensionTabIndicators } from "./extensionTabIndicators";
 
 interface MountedView {
   readonly host: ExtensionHost<SurfaceRenderer>;
@@ -76,8 +77,11 @@ export function createNativeSurfaceBridge<Bindings>(
       let closed = false;
       host.register(extension);
       let saved = JSON.stringify(currentRecord.current.restoreState);
+      const tabKey = extensionTabKey(currentRecord.current);
       const unsubscribe = host.subscribe((next) => {
         if (!next || closed) return;
+        // The tab strip renders these; the view never touches host chrome.
+        setExtensionTabIndicators(tabKey, next.tab ?? null);
         // Loading is published before the factory starts, so visibility also governs activation.
         activeView.current = { host, viewId: next.id, recordKey };
         if (!visibility.current && next.status !== "hidden") host.hide(next.id);
@@ -109,6 +113,7 @@ export function createNativeSurfaceBridge<Bindings>(
         closed = true;
         unsubscribe();
         host.dispose();
+        setExtensionTabIndicators(tabKey, null);
       };
     }, [recordKey]);
     useEffect(() => {
