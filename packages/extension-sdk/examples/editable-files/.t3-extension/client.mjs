@@ -1719,6 +1719,109 @@ var __t3Client = (() => {
     CLIENT_EXTERNAL_API
   ].map((definition) => [definition.id, definition]));
 
+  // node_modules/@t3tools/extension-sdk/dist/agentSessions.js
+  var AGENT_SESSIONS_API = "t3.agents/sessions";
+  var AGENT_SESSIONS_SCAN = "t3.agents/scan-sessions";
+  var AGENT_SESSIONS_IMPORT = "t3.agents/import-sessions";
+  var AGENT_SESSIONS_SCAN_CAP = 50;
+  var AGENT_SESSION_TITLE_MAX_LENGTH = 200;
+  var providerInstanceIdSchema = {
+    type: "string",
+    minLength: 1,
+    maxLength: 64,
+    pattern: "^[a-zA-Z][a-zA-Z0-9_-]*$"
+  };
+  var providerSessionIdSchema = {
+    type: "string",
+    minLength: 1,
+    maxLength: 128,
+    pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+  };
+  var threadIdSchema = { type: ["string", "null"], maxLength: 256 };
+  var agentSessionsApi = defineApi({
+    id: AGENT_SESSIONS_API,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "scan",
+        effect: "read",
+        requiredGrants: [AGENT_SESSIONS_SCAN],
+        inputSchema: { type: "object", additionalProperties: false, properties: {} },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["scope", "sessions", "truncated", "skipped", "scannedAt"],
+          properties: {
+            scope: { const: "project" },
+            truncated: { type: "boolean" },
+            skipped: { type: "integer", minimum: 0 },
+            scannedAt: { type: "string", minLength: 1, maxLength: 40 },
+            sessions: {
+              type: "array",
+              maxItems: AGENT_SESSIONS_SCAN_CAP,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: [
+                  "providerInstanceId",
+                  "providerSessionId",
+                  "source",
+                  "title",
+                  "lastActiveAt",
+                  "status",
+                  "threadId"
+                ],
+                properties: {
+                  providerInstanceId: providerInstanceIdSchema,
+                  providerSessionId: providerSessionIdSchema,
+                  source: { enum: ["claudeAgent", "codex"] },
+                  title: { type: "string", minLength: 1, maxLength: AGENT_SESSION_TITLE_MAX_LENGTH },
+                  lastActiveAt: { type: "string", minLength: 1, maxLength: 40 },
+                  status: { enum: ["importable", "imported"] },
+                  threadId: threadIdSchema
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        name: "import",
+        effect: "write",
+        requiredGrants: [AGENT_SESSIONS_SCAN, AGENT_SESSIONS_IMPORT],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["providerInstanceId", "providerSessionId"],
+          properties: {
+            providerInstanceId: providerInstanceIdSchema,
+            providerSessionId: providerSessionIdSchema
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["status", "threadId", "sequence", "messageCount", "error"],
+          properties: {
+            status: { enum: ["imported", "rejected"] },
+            threadId: threadIdSchema,
+            sequence: { type: ["integer", "null"], minimum: 0 },
+            messageCount: { type: "integer", minimum: 0 },
+            error: {
+              enum: [
+                null,
+                "AgentSessionOutOfScope",
+                "AgentSessionAlreadyImported",
+                "AgentSessionProjectConflict",
+                "AgentSessionImportRejected"
+              ]
+            }
+          }
+        }
+      }
+    ]
+  });
+
   // node_modules/@t3tools/extension-sdk/dist/catalogue.js
   var BROWSER_LOCAL_SERVERS = "t3.browser/local-servers";
   var BROWSER_READ_LOCAL_SERVERS = "t3.browser/read-local-servers";
