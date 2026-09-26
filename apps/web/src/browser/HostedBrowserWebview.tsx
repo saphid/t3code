@@ -47,6 +47,8 @@ export function HostedBrowserWebview(props: {
   readonly threadRef: ScopedThreadRef;
   readonly tabId: string;
   readonly runtimeTabId: string;
+  /** Server process epoch the tab belongs to; fences engine host claims. */
+  readonly serverEpoch: string | null;
   readonly initialUrl: string | null;
   readonly viewport: PreviewViewportSetting;
   readonly pictureInPicture: boolean;
@@ -67,6 +69,7 @@ export function HostedBrowserWebview(props: {
     threadRef,
     tabId,
     runtimeTabId,
+    serverEpoch,
     initialUrl,
     viewport,
     pictureInPicture,
@@ -100,7 +103,7 @@ export function HostedBrowserWebview(props: {
     (state) => (state.activityByTabId[runtimeTabId] ?? 0) > 0,
   );
   const recordingActive = useActiveBrowserRecordingTabIds().has(runtimeTabId);
-  usePreviewBridge({ threadRef, tabId, runtimeTabId });
+  usePreviewBridge({ threadRef, tabId, runtimeTabId, serverEpoch });
 
   useEffect(() => {
     if (!clientSettingsHydrated) return;

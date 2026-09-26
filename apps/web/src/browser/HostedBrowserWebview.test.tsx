@@ -124,6 +124,7 @@ describe("HostedBrowserWebview settings hydration", () => {
           threadRef={threadRef}
           tabId="server-tab"
           runtimeTabId={runtimeTabId}
+          serverEpoch="epoch-1"
           initialUrl="https://example.com"
           viewport={FILL_PREVIEW_VIEWPORT}
           pictureInPicture={false}
