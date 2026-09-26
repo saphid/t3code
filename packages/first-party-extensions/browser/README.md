@@ -36,6 +36,17 @@ The panel renders through public contracts only:
   exhausted, Reload reopens the page in a fresh session. Rejected,
   unanswered (`unknown`) and refused commands name their outcome inline.
   Every value shown is engine-reported; nothing applies optimistically.
+- Native picture-in-picture — the page menu's "Pop out" toggle sends
+  `t3.browser/sessions` `setPictureInPicture` to the owning desktop engine
+  host, which shows the page in its floating PiP window. It needs its own
+  `t3.browser/picture-in-picture` grant (page pixels leave the panel);
+  `t3.browser/operate` neither confers nor is needed for it. The toggle's
+  state is the session's engine-reported `pictureInPicture`, delivered by the
+  events stream like every other page field. A missing grant
+  (`missing-grant`), no desktop host (`desktop-required`) and a recovering or
+  crashed guest name their refusal inline. The native in-app mini-player
+  (the preview floating over the chat) is not available: it needs a host
+  placement that floats a plugin view outside its panel.
 - `t3.browser/capture` (host capability on `ClientHost.browserCapture`;
   `t3.browser/sessions` + `t3.browser/capture` grants) backs the header's
   two capture buttons: screenshot the page, or pick an element with the

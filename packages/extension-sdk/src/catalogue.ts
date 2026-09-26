@@ -5575,8 +5575,18 @@ export const PRS_WRITE_API = prsWriteApi.definition;
  * page's origin; `getFavicon` resolves it under the read grant, scoped to
  * the caller's project. Refs are best-effort: an evicted or unknown ref
  * fails `BrowserFaviconNotFound`, and callers render their fallback tier.
+ *
+ * Picture-in-picture (1.2.0): `setPictureInPicture` asks the owning desktop
+ * engine host to show (or close) the guest in its native PiP window — page
+ * pixels leave the panel, so it needs its own `t3.browser/picture-in-picture`
+ * grant and does NOT need `t3.browser/operate` (neither grant implies the
+ * other). The observed state rides the ordinary session projection as
+ * `pictureInPicture` (null until the owner host reports). A session whose
+ * guest is recovering or crashed fails it by name
+ * (`BrowserSessionEngineNotLive`), as does one with no host (desktop-required).
  * --------------------------------------------------------------------- */
 export const BROWSER_OPERATE = "t3.browser/operate";
+export const BROWSER_PICTURE_IN_PICTURE = "t3.browser/picture-in-picture";
 
 export const BROWSER_SESSION_COMMANDS = [
   "back",
@@ -5587,6 +5597,7 @@ export const BROWSER_SESSION_COMMANDS = [
   "zoom",
   "setAppearance",
   "setAudioMuted",
+  "setPictureInPicture",
 ] as const;
 export type BrowserSessionCommand = (typeof BROWSER_SESSION_COMMANDS)[number];
 
@@ -5647,6 +5658,8 @@ export type BrowserSession = {
   readonly appearance: "system" | "light" | "dark" | null;
   readonly audioMuted: boolean | null;
   readonly audible: boolean | null;
+  /** Shown in the host's native picture-in-picture window; null until reported. */
+  readonly pictureInPicture: boolean | null;
   /** Captured favicon for the current page's origin; resolve with `getFavicon`. */
   readonly faviconRef?: string;
 };
@@ -5719,6 +5732,9 @@ export type BrowserSessionAppearanceInput = BrowserSessionCommandInput & {
 };
 export type BrowserSessionAudioMutedInput = BrowserSessionCommandInput & {
   readonly muted: boolean;
+};
+export type BrowserSessionPictureInPictureInput = BrowserSessionCommandInput & {
+  readonly open: boolean;
 };
 
 export type BrowserSessionStreamCloseReason =
@@ -5831,6 +5847,7 @@ const browserSessionObject = {
     "appearance",
     "audioMuted",
     "audible",
+    "pictureInPicture",
   ],
   properties: {
     tabId: browserSessionTabId,
@@ -5887,6 +5904,7 @@ const browserSessionObject = {
     appearance: { enum: ["system", "light", "dark", null] },
     audioMuted: { type: ["boolean", "null"] },
     audible: { type: ["boolean", "null"] },
+    pictureInPicture: { type: ["boolean", "null"] },
     faviconRef: browserSessionFaviconRef,
   },
 } as const;
@@ -5912,10 +5930,11 @@ const browserSessionCommandMethod = (
   name: BrowserSessionCommand,
   extraProperties: Record<string, JsonObject> = {},
   extraRequired: readonly string[] = [],
+  requiredGrants: readonly string[] = [BROWSER_SESSIONS, BROWSER_OPERATE],
 ) => ({
   name,
   effect: "write" as const,
-  requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
+  requiredGrants,
   inputSchema: {
     type: "object",
     additionalProperties: false,
@@ -5951,6 +5970,10 @@ export const browserSessionsApi: TypedApi<{
   zoom: { input: BrowserSessionZoomInput; output: BrowserSessionReceipt };
   setAppearance: { input: BrowserSessionAppearanceInput; output: BrowserSessionReceipt };
   setAudioMuted: { input: BrowserSessionAudioMutedInput; output: BrowserSessionReceipt };
+  setPictureInPicture: {
+    input: BrowserSessionPictureInPictureInput;
+    output: BrowserSessionReceipt;
+  };
 }> &
   TypedStreamApi<{
     events: { input: Record<string, never>; event: BrowserSessionStreamValue };
@@ -5958,7 +5981,7 @@ export const browserSessionsApi: TypedApi<{
   events: { input: Record<string, never>; event: BrowserSessionStreamValue };
 }>({
   id: BROWSER_SESSIONS,
-  version: "1.1.0",
+  version: "1.2.0",
   methods: [
     {
       name: "getCapabilities",
@@ -6098,6 +6121,12 @@ export const browserSessionsApi: TypedApi<{
       ["appearance"],
     ),
     browserSessionCommandMethod("setAudioMuted", { muted: { type: "boolean" } }, ["muted"]),
+    browserSessionCommandMethod(
+      "setPictureInPicture",
+      { open: { type: "boolean" } },
+      ["open"],
+      [BROWSER_SESSIONS, BROWSER_PICTURE_IN_PICTURE],
+    ),
   ],
   streams: [
     {

@@ -5340,6 +5340,7 @@ var __t3Client = (() => {
   });
   var PRS_WRITE_API = prsWriteApi.definition;
   var BROWSER_OPERATE = "t3.browser/operate";
+  var BROWSER_PICTURE_IN_PICTURE = "t3.browser/picture-in-picture";
   var BROWSER_SESSION_COMMANDS = [
     "back",
     "forward",
@@ -5348,7 +5349,8 @@ var __t3Client = (() => {
     "resize",
     "zoom",
     "setAppearance",
-    "setAudioMuted"
+    "setAudioMuted",
+    "setPictureInPicture"
   ];
   var BROWSER_SESSION_URL_MAX_LENGTH = 2048;
   var BROWSER_SESSION_TITLE_MAX_LENGTH = 512;
@@ -5421,7 +5423,8 @@ var __t3Client = (() => {
       "zoomFactor",
       "appearance",
       "audioMuted",
-      "audible"
+      "audible",
+      "pictureInPicture"
     ],
     properties: {
       tabId: browserSessionTabId,
@@ -5478,6 +5481,7 @@ var __t3Client = (() => {
       appearance: { enum: ["system", "light", "dark", null] },
       audioMuted: { type: ["boolean", "null"] },
       audible: { type: ["boolean", "null"] },
+      pictureInPicture: { type: ["boolean", "null"] },
       faviconRef: browserSessionFaviconRef
     }
   };
@@ -5499,10 +5503,10 @@ var __t3Client = (() => {
     expectedEngineGeneration: { type: ["string", "null"], minLength: 1, maxLength: 128 }
   };
   var browserSessionGuardRequired = ["tabId", "serverEpoch", "expectedEngineGeneration"];
-  var browserSessionCommandMethod = (name, extraProperties = {}, extraRequired = []) => ({
+  var browserSessionCommandMethod = (name, extraProperties = {}, extraRequired = [], requiredGrants = [BROWSER_SESSIONS, BROWSER_OPERATE]) => ({
     name,
     effect: "write",
-    requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
+    requiredGrants,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -5537,7 +5541,7 @@ var __t3Client = (() => {
   };
   var browserSessionsApi = defineStreamApi({
     id: BROWSER_SESSIONS,
-    version: "1.1.0",
+    version: "1.2.0",
     methods: [
       {
         name: "getCapabilities",
@@ -5668,7 +5672,8 @@ var __t3Client = (() => {
       browserSessionCommandMethod("resize", { viewport: browserSessionViewport }, ["viewport"]),
       browserSessionCommandMethod("zoom", { zoomFactor: { enum: [...BROWSER_SESSION_ZOOM_LEVELS] } }, ["zoomFactor"]),
       browserSessionCommandMethod("setAppearance", { appearance: { enum: ["system", "light", "dark"] } }, ["appearance"]),
-      browserSessionCommandMethod("setAudioMuted", { muted: { type: "boolean" } }, ["muted"])
+      browserSessionCommandMethod("setAudioMuted", { muted: { type: "boolean" } }, ["muted"]),
+      browserSessionCommandMethod("setPictureInPicture", { open: { type: "boolean" } }, ["open"], [BROWSER_SESSIONS, BROWSER_PICTURE_IN_PICTURE])
     ],
     streams: [
       {

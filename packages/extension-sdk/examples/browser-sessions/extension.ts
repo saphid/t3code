@@ -1,6 +1,7 @@
 import { defineExtension, requireApi } from "@t3tools/extension-sdk/authoring";
 import {
   BROWSER_OPERATE,
+  BROWSER_PICTURE_IN_PICTURE,
   BROWSER_SESSIONS,
   browserSessionsApi,
 } from "@t3tools/extension-sdk/catalogue";
@@ -14,10 +15,10 @@ const read = (name: string) => ({
   inputSchema: closedObject,
   outputSchema: anyObject,
 });
-const write = (name: string) => ({
+const write = (name: string, grant = BROWSER_OPERATE) => ({
   name,
   effect: "write" as const,
-  requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
+  requiredGrants: [BROWSER_SESSIONS, grant],
   inputSchema: anyObject,
   outputSchema: anyObject,
 });
@@ -37,6 +38,7 @@ export default defineExtension({
         write("navigate"),
         write("close"),
         write("back"),
+        write("setPictureInPicture", BROWSER_PICTURE_IN_PICTURE),
       ],
       streams: [
         {

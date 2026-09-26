@@ -1,10 +1,11 @@
 /**
  * Page controls over the `t3.browser/sessions` engine verbs — back, forward,
- * reload, hard reload, zoom, appearance and mute. Every verb is dispatched to
- * the desktop engine host that owns the session; this module decides whether
- * a verb may be sent, names why not, and turns receipts and errors into the
- * panel's inline messages. Pure and client-injected so the rules are testable
- * without a mounted view.
+ * reload, hard reload, zoom, appearance, mute and native picture-in-picture
+ * (which needs its own `t3.browser/picture-in-picture` grant). Every verb is
+ * dispatched to the desktop engine host that owns the session; this module
+ * decides whether a verb may be sent, names why not, and turns receipts and
+ * errors into the panel's inline messages. Pure and client-injected so the
+ * rules are testable without a mounted view.
  *
  * Engine truth comes only from the session's `engine` block: without an
  * owning host the state is `unavailable` (`desktop-required`), a dead guest is
@@ -27,7 +28,8 @@ export type PageVerb =
   | { readonly method: "back" | "forward" | "reload" | "hardReload" }
   | { readonly method: "zoom"; readonly zoomFactor: number }
   | { readonly method: "setAppearance"; readonly appearance: PageAppearance }
-  | { readonly method: "setAudioMuted"; readonly muted: boolean };
+  | { readonly method: "setAudioMuted"; readonly muted: boolean }
+  | { readonly method: "setPictureInPicture"; readonly open: boolean };
 
 /** The fence every engine verb carries. */
 export interface PageTarget {
@@ -126,6 +128,7 @@ const VERB_LABELS: Record<PageVerb["method"], string> = {
   zoom: "Zoom",
   setAppearance: "Appearance",
   setAudioMuted: "Mute",
+  setPictureInPicture: "Picture in picture",
 };
 
 /** Inline message for a thrown verb, keyed on the server's stable error names. */
@@ -138,6 +141,12 @@ export function pageCommandErrorMessage(method: PageVerb["method"], error: unkno
     return `${label} was not sent: the page's engine was replaced (stale-generation). Try again.`;
   if (text.includes("BrowserSessionNotFound"))
     return `${label} was not sent: the session is gone (session-not-found).`;
+  const engineNotLive = /BrowserSessionEngineNotLive:.*\(([a-z-]+)\)/.exec(text);
+  if (engineNotLive)
+    return `${label} needs a live page; the page's engine is not live (${engineNotLive[1]}).`;
+  const denied = /API capability denied: (\S+)/.exec(text);
+  if (denied)
+    return `${label} is not allowed: this extension lacks the ${denied[1]} grant (missing-grant).`;
   return `${label} failed — ${text || "unknown error"}`;
 }
 
@@ -205,6 +214,9 @@ export async function runPageCommand(
         break;
       case "setAudioMuted":
         receipt = await api.invoke("setAudioMuted", { ...guard, muted: verb.muted }, signal);
+        break;
+      case "setPictureInPicture":
+        receipt = await api.invoke("setPictureInPicture", { ...guard, open: verb.open }, signal);
         break;
       default:
         receipt = await api.invoke(verb.method, guard, signal);

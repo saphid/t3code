@@ -5422,6 +5422,7 @@ var __t3Client = (() => {
   });
   var PRS_WRITE_API = prsWriteApi.definition;
   var BROWSER_OPERATE = "t3.browser/operate";
+  var BROWSER_PICTURE_IN_PICTURE = "t3.browser/picture-in-picture";
   var BROWSER_SESSION_COMMANDS = [
     "back",
     "forward",
@@ -5430,7 +5431,8 @@ var __t3Client = (() => {
     "resize",
     "zoom",
     "setAppearance",
-    "setAudioMuted"
+    "setAudioMuted",
+    "setPictureInPicture"
   ];
   var BROWSER_SESSION_URL_MAX_LENGTH = 2048;
   var BROWSER_SESSION_TITLE_MAX_LENGTH = 512;
@@ -5503,7 +5505,8 @@ var __t3Client = (() => {
       "zoomFactor",
       "appearance",
       "audioMuted",
-      "audible"
+      "audible",
+      "pictureInPicture"
     ],
     properties: {
       tabId: browserSessionTabId,
@@ -5560,6 +5563,7 @@ var __t3Client = (() => {
       appearance: { enum: ["system", "light", "dark", null] },
       audioMuted: { type: ["boolean", "null"] },
       audible: { type: ["boolean", "null"] },
+      pictureInPicture: { type: ["boolean", "null"] },
       faviconRef: browserSessionFaviconRef
     }
   };
@@ -5581,10 +5585,10 @@ var __t3Client = (() => {
     expectedEngineGeneration: { type: ["string", "null"], minLength: 1, maxLength: 128 }
   };
   var browserSessionGuardRequired = ["tabId", "serverEpoch", "expectedEngineGeneration"];
-  var browserSessionCommandMethod = (name, extraProperties = {}, extraRequired = []) => ({
+  var browserSessionCommandMethod = (name, extraProperties = {}, extraRequired = [], requiredGrants = [BROWSER_SESSIONS, BROWSER_OPERATE]) => ({
     name,
     effect: "write",
-    requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
+    requiredGrants,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -5619,7 +5623,7 @@ var __t3Client = (() => {
   };
   var browserSessionsApi = defineStreamApi({
     id: BROWSER_SESSIONS,
-    version: "1.1.0",
+    version: "1.2.0",
     methods: [
       {
         name: "getCapabilities",
@@ -5750,7 +5754,8 @@ var __t3Client = (() => {
       browserSessionCommandMethod("resize", { viewport: browserSessionViewport }, ["viewport"]),
       browserSessionCommandMethod("zoom", { zoomFactor: { enum: [...BROWSER_SESSION_ZOOM_LEVELS] } }, ["zoomFactor"]),
       browserSessionCommandMethod("setAppearance", { appearance: { enum: ["system", "light", "dark"] } }, ["appearance"]),
-      browserSessionCommandMethod("setAudioMuted", { muted: { type: "boolean" } }, ["muted"])
+      browserSessionCommandMethod("setAudioMuted", { muted: { type: "boolean" } }, ["muted"]),
+      browserSessionCommandMethod("setPictureInPicture", { open: { type: "boolean" } }, ["open"], [BROWSER_SESSIONS, BROWSER_PICTURE_IN_PICTURE])
     ],
     streams: [
       {
@@ -14114,7 +14119,8 @@ ${ind(d)}}`;
     hardReload: "Hard reload",
     zoom: "Zoom",
     setAppearance: "Appearance",
-    setAudioMuted: "Mute"
+    setAudioMuted: "Mute",
+    setPictureInPicture: "Picture in picture"
   };
   function pageCommandErrorMessage(method, error) {
     const label = VERB_LABELS[method];
@@ -14125,6 +14131,12 @@ ${ind(d)}}`;
       return `${label} was not sent: the page's engine was replaced (stale-generation). Try again.`;
     if (text.includes("BrowserSessionNotFound"))
       return `${label} was not sent: the session is gone (session-not-found).`;
+    const engineNotLive = /BrowserSessionEngineNotLive:.*\(([a-z-]+)\)/.exec(text);
+    if (engineNotLive)
+      return `${label} needs a live page; the page's engine is not live (${engineNotLive[1]}).`;
+    const denied = /API capability denied: (\S+)/.exec(text);
+    if (denied)
+      return `${label} is not allowed: this extension lacks the ${denied[1]} grant (missing-grant).`;
     return `${label} failed \u2014 ${text || "unknown error"}`;
   }
   function pageReceiptMessage(method, outcome) {
@@ -14166,6 +14178,9 @@ ${ind(d)}}`;
           break;
         case "setAudioMuted":
           receipt2 = await api.invoke("setAudioMuted", { ...guard2, muted: verb.muted }, signal);
+          break;
+        case "setPictureInPicture":
+          receipt2 = await api.invoke("setPictureInPicture", { ...guard2, open: verb.open }, signal);
           break;
         default:
           receipt2 = await api.invoke(verb.method, guard2, signal);
@@ -14262,6 +14277,7 @@ ${ind(d)}}`;
     const disabled = blockReason !== null;
     const zoom = session?.zoomFactor ?? null;
     const audioMuted = session?.audioMuted ?? null;
+    const pictureInPicture = session?.pictureInPicture ?? null;
     return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { ref: root, style: { position: "relative" }, children: [
       /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
         "button",
@@ -14389,6 +14405,21 @@ ${ind(d)}}`;
                 onClick: () => run2({ method: "setAudioMuted", muted: audioMuted !== true }),
                 style: { ...control, textAlign: "left" },
                 children: audioMuted ? "Unmute page" : "Mute page"
+              }
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+              "button",
+              {
+                type: "button",
+                role: "menuitemcheckbox",
+                "aria-checked": pictureInPicture === true,
+                disabled: disabled || pictureInPicture === null,
+                onClick: () => {
+                  run2({ method: "setPictureInPicture", open: pictureInPicture !== true });
+                  setOpen(false);
+                },
+                style: { ...control, textAlign: "left" },
+                children: pictureInPicture ? "Close picture in picture" : "Pop out (picture in picture)"
               }
             )
           ]

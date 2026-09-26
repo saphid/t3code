@@ -84,8 +84,8 @@ export function ZoomIndicator(props: { zoomFactor: number | null }) {
 
 /**
  * "⋯" menu: Hard reload, Appearance, the zoom row (−, any ladder factor in
- * one call, +, reset) and Mute. `blockReason` disables every item and says
- * why; `run` sends one verb.
+ * one call, +, reset), Mute and native picture-in-picture. `blockReason`
+ * disables every item and says why; `run` sends one verb.
  */
 export function PageMenu(props: {
   session: BrowserSession | null;
@@ -116,6 +116,7 @@ export function PageMenu(props: {
   const disabled = blockReason !== null;
   const zoom = session?.zoomFactor ?? null;
   const audioMuted = session?.audioMuted ?? null;
+  const pictureInPicture = session?.pictureInPicture ?? null;
 
   return (
     <div ref={root} style={{ position: "relative" }}>
@@ -240,6 +241,20 @@ export function PageMenu(props: {
             style={{ ...control, textAlign: "left" }}
           >
             {audioMuted ? "Unmute page" : "Mute page"}
+          </button>
+          <button
+            type="button"
+            role="menuitemcheckbox"
+            aria-checked={pictureInPicture === true}
+            // Unreported state stays disabled rather than guessing a direction.
+            disabled={disabled || pictureInPicture === null}
+            onClick={() => {
+              run({ method: "setPictureInPicture", open: pictureInPicture !== true });
+              setOpen(false);
+            }}
+            style={{ ...control, textAlign: "left" }}
+          >
+            {pictureInPicture ? "Close picture in picture" : "Pop out (picture in picture)"}
           </button>
         </div>
       )}

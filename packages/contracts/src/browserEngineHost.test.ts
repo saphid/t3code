@@ -23,6 +23,7 @@ const status = {
   appearance: "dark",
   audioMuted: false,
   audible: true,
+  pictureInPicture: false,
   favicon: null,
 };
 
@@ -36,6 +37,7 @@ describe("BrowserEngineCommand", () => {
       { _tag: "zoom", zoomFactor: 1.5 },
       { _tag: "setAppearance", appearance: "light" },
       { _tag: "setAudioMuted", muted: true },
+      { _tag: "setPictureInPicture", open: true },
     ]) {
       expect(decodeCommand(command)).toEqual(command);
     }
@@ -45,6 +47,7 @@ describe("BrowserEngineCommand", () => {
     expect(() => decodeCommand({ _tag: "zoom", zoomFactor: 1.3 })).toThrow();
     expect(() => decodeCommand({ _tag: "navigate", url: "https://example.com" })).toThrow();
     expect(() => decodeCommand({ _tag: "openDevTools" })).toThrow();
+    expect(() => decodeCommand({ _tag: "setPictureInPicture" })).toThrow();
   });
 });
 

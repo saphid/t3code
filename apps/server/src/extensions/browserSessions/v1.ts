@@ -12,6 +12,9 @@
  * `PreviewSessionDetail` (P08-NAV-ACK, see `Manager.ts`). Favicons ride as a
  * ref into the bounded per-project asset store (`faviconAssets.ts`), resolved
  * through `getFavicon` — never as bytes on the stream (P08-FAVICON-REF).
+ * `setPictureInPicture` is an engine verb under its own grant (the broker
+ * enforces the method's `requiredGrants`); it additionally refuses a guest
+ * that is recovering or crashed by name, since there is no live page to pop out.
  */
 import {
   type BrowserEngineCommand,
@@ -186,6 +189,7 @@ const decodeAppearanceInput = closedDecoder({
   appearance: Schema.Literals(["system", "light", "dark"]),
 });
 const decodeMutedInput = closedDecoder({ ...CommandGuardFields, muted: Schema.Boolean });
+const decodePictureInPictureInput = closedDecoder({ ...CommandGuardFields, open: Schema.Boolean });
 const decodeResizeInput = closedDecoder({
   ...CommandGuardFields,
   viewport: PreviewViewportSetting,
@@ -292,6 +296,7 @@ const projectSession = (
     appearance: status?.appearance ?? null,
     audioMuted: status?.audioMuted ?? null,
     audible: status?.audible ?? null,
+    pictureInPicture: status?.pictureInPicture ?? null,
     ...(faviconRef === null ? {} : { faviconRef }),
   };
 };
@@ -721,6 +726,27 @@ export function createBrowserSessionsApiProvider(
             "setAudioMuted input fails the declared schema.",
           );
           return yield* command(safe, engineWrite({ _tag: "setAudioMuted", muted: safe.muted }));
+        }
+        case "setPictureInPicture": {
+          const safe = yield* decodeGuard(
+            decodePictureInPictureInput,
+            "setPictureInPicture input fails the declared schema.",
+          );
+          return yield* command(safe, (guarded) =>
+            Effect.gen(function* () {
+              const engine = projectEngine(guarded.detail.engine);
+              if (engine.state === "recovering" || engine.state === "crashed") {
+                const reason =
+                  engine.state === "recovering" ? "recovering" : (engine.reason ?? "crash");
+                return yield* named(
+                  operation,
+                  "BrowserSessionEngineNotLive",
+                  `picture-in-picture needs a live page; the engine is ${engine.state} (${reason}).`,
+                );
+              }
+              return yield* engineWrite({ _tag: "setPictureInPicture", open: safe.open })(guarded);
+            }),
+          );
         }
         case "resize": {
           const safe = yield* decodeGuard(

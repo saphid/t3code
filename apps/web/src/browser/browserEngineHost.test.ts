@@ -49,6 +49,7 @@ const makeBridge = () => ({
   setZoomFactor: vi.fn(async () => {}),
   setColorScheme: vi.fn(async () => {}),
   setAudioMuted: vi.fn(async () => {}),
+  pictureInPicture: { open: vi.fn(async () => {}), close: vi.fn(async () => {}) },
 });
 
 const run = (
@@ -125,6 +126,32 @@ describe("executeEngineCommand", () => {
       reason: "failed",
     });
   });
+  it("opens and closes native picture-in-picture only when the guest is not already there", async () => {
+    const bridge = makeBridge();
+    recordHostedTabState(RUNTIME_TAB, tabState({ pictureInPicture: false }));
+    expect(await run(bridge, { _tag: "setPictureInPicture", open: false })).toEqual({
+      outcome: "applied",
+    });
+    expect(bridge.pictureInPicture.close).not.toHaveBeenCalled();
+    expect(await run(bridge, { _tag: "setPictureInPicture", open: true })).toEqual({
+      outcome: "applied",
+    });
+    expect(bridge.pictureInPicture.open).toHaveBeenCalledWith(RUNTIME_TAB);
+
+    recordHostedTabState(RUNTIME_TAB, tabState({ pictureInPicture: true }));
+    expect(await run(bridge, { _tag: "setPictureInPicture", open: false })).toEqual({
+      outcome: "applied",
+    });
+    expect(bridge.pictureInPicture.close).toHaveBeenCalledWith(RUNTIME_TAB);
+    expect(bridge.pictureInPicture.open).toHaveBeenCalledTimes(1);
+
+    recordHostedTabState(RUNTIME_TAB, tabState({ pictureInPicture: false }));
+    bridge.pictureInPicture.open.mockRejectedValueOnce(new Error("webview changed"));
+    expect(await run(bridge, { _tag: "setPictureInPicture", open: true })).toEqual({
+      outcome: "rejected",
+      reason: "failed",
+    });
+  });
 });
 
 describe("toEnginePageStatus", () => {
@@ -146,6 +173,8 @@ describe("toEnginePageStatus", () => {
     );
     expect(decode(status)).toEqual(status);
     expect(status.zoomFactor).toBe(1.25);
+    expect(status.pictureInPicture).toBe(false);
+    expect(toEnginePageStatus(tabState({ pictureInPicture: true })).pictureInPicture).toBe(true);
     expect(status.favicon).toEqual({
       dataUrl: "data:image/png;base64,AAAA",
       pageUrl: "http://localhost:5173/",

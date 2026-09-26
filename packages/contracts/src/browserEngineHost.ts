@@ -35,7 +35,11 @@ export type BrowserEngineHostConnectionId = typeof BrowserEngineHostConnectionId
 export const BrowserEngineCommandId = TrimmedNonEmptyString.check(Schema.isMaxLength(64));
 export type BrowserEngineCommandId = typeof BrowserEngineCommandId.Type;
 
-/** Ordinary page commands. Navigation, resize and privileged verbs are not here. */
+/**
+ * Page commands. Navigation, resize and privileged verbs are not here.
+ * `setPictureInPicture` pops the guest out into the host's native
+ * picture-in-picture window; the server gates it on its own grant.
+ */
 export const BrowserEngineCommand = Schema.Union([
   Schema.TaggedStruct("back", {}),
   Schema.TaggedStruct("forward", {}),
@@ -45,6 +49,7 @@ export const BrowserEngineCommand = Schema.Union([
   Schema.TaggedStruct("zoom", { zoomFactor: PreviewZoomFactor }),
   Schema.TaggedStruct("setAppearance", { appearance: PreviewAppearancePreference }),
   Schema.TaggedStruct("setAudioMuted", { muted: Schema.Boolean }),
+  Schema.TaggedStruct("setPictureInPicture", { open: Schema.Boolean }),
 ]);
 export type BrowserEngineCommand = typeof BrowserEngineCommand.Type;
 
@@ -69,6 +74,8 @@ export const BrowserEnginePageStatus = Schema.Struct({
   appearance: PreviewAppearancePreference,
   audioMuted: Schema.Boolean,
   audible: Schema.Boolean,
+  /** The guest is shown in the host's native picture-in-picture window. */
+  pictureInPicture: Schema.Boolean,
   favicon: Schema.NullOr(
     Schema.Struct({
       dataUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(BROWSER_ENGINE_FAVICON_MAX_LENGTH)),

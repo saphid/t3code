@@ -110,6 +110,7 @@ export function toEnginePageStatus(state: DesktopPreviewTabState): BrowserEngine
     appearance: state.colorScheme,
     audioMuted: state.audioMuted,
     audible: state.audible,
+    pictureInPicture: state.pictureInPicture,
     favicon,
   };
 }
@@ -125,6 +126,7 @@ type EngineCommandBridge = Pick<
   | "setZoomFactor"
   | "setColorScheme"
   | "setAudioMuted"
+  | "pictureInPicture"
 >;
 
 const rejected = (reason: Extract<CommandResult, { outcome: "rejected" }>["reason"]) =>
@@ -164,6 +166,12 @@ export async function executeEngineCommand(
         break;
       case "setAudioMuted":
         await bridge.setAudioMuted(runtimeTabId, command.muted);
+        break;
+      case "setPictureInPicture":
+        // Already in the requested state: nothing to open or close.
+        if (state.pictureInPicture === command.open) break;
+        if (command.open) await bridge.pictureInPicture.open(runtimeTabId);
+        else await bridge.pictureInPicture.close(runtimeTabId);
         break;
     }
   } catch {

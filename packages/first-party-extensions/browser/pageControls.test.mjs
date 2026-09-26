@@ -27,6 +27,7 @@ function session(engine, overrides = {}) {
     appearance: "system",
     audioMuted: false,
     audible: false,
+    pictureInPicture: false,
     ...overrides,
   };
 }
@@ -34,7 +35,13 @@ function session(engine, overrides = {}) {
 const ready = session({ state: "ready", generation: "wc-7" });
 const unavailable = session(
   { state: "unavailable", generation: null, reason: "desktop-required" },
-  { zoomFactor: null, appearance: null, audioMuted: null, audible: null },
+  {
+    zoomFactor: null,
+    appearance: null,
+    audioMuted: null,
+    audible: null,
+    pictureInPicture: null,
+  },
 );
 const recovering = session({ state: "recovering", generation: "wc-7" });
 const crashed = session(
@@ -189,11 +196,13 @@ NodeTest.describe("runPageCommand", () => {
 
   NodeTest.it("refuses locally for every dead or hostless engine state", async () => {
     for (const subject of [unavailable, recovering, crashed, exhausted]) {
-      const api = fakeApi(receipt("accepted"));
-      const outcome = await runPageCommand(api, target, subject, { method: "reload" }, signal);
-      NodeAssert.equal(outcome.kind, "blocked");
-      NodeAssert.equal(outcome.message, pageControlsBlock(subject));
-      NodeAssert.equal(api.calls.length, 0);
+      for (const verb of [{ method: "reload" }, { method: "setPictureInPicture", open: true }]) {
+        const api = fakeApi(receipt("accepted"));
+        const outcome = await runPageCommand(api, target, subject, verb, signal);
+        NodeAssert.equal(outcome.kind, "blocked");
+        NodeAssert.equal(outcome.message, pageControlsBlock(subject));
+        NodeAssert.equal(api.calls.length, 0);
+      }
     }
   });
 
@@ -210,6 +219,7 @@ NodeTest.describe("runPageCommand", () => {
       signal,
     );
     await runPageCommand(api, target, ready, { method: "setAudioMuted", muted: true }, signal);
+    await runPageCommand(api, target, ready, { method: "setPictureInPicture", open: true }, signal);
     NodeAssert.deepEqual(api.calls, [
       { method: "back", input: guard },
       { method: "forward", input: guard },
@@ -217,6 +227,7 @@ NodeTest.describe("runPageCommand", () => {
       { method: "hardReload", input: guard },
       { method: "setAppearance", input: { ...guard, appearance: "dark" } },
       { method: "setAudioMuted", input: { ...guard, muted: true } },
+      { method: "setPictureInPicture", input: { ...guard, open: true } },
     ]);
   });
 
@@ -273,6 +284,35 @@ NodeTest.describe("runPageCommand", () => {
     NodeAssert.equal(
       pageCommandErrorMessage("forward", new Error("boom")),
       "Forward failed — boom",
+    );
+  });
+
+  NodeTest.it("names picture-in-picture refusals: missing grant, dead engine, no desktop", () => {
+    NodeAssert.equal(
+      pageCommandErrorMessage(
+        "setPictureInPicture",
+        new Error("API capability denied: t3.browser/picture-in-picture"),
+      ),
+      "Picture in picture is not allowed: this extension lacks the t3.browser/picture-in-picture grant (missing-grant).",
+    );
+    // The server refuses a guest that went dead between the local check and dispatch.
+    NodeAssert.equal(
+      pageCommandErrorMessage(
+        "setPictureInPicture",
+        new Error(
+          "browser.sessions.setPictureInPicture: BrowserSessionEngineNotLive: picture-in-picture needs a live page; the engine is crashed (recovery-exhausted).",
+        ),
+      ),
+      "Picture in picture needs a live page; the page's engine is not live (recovery-exhausted).",
+    );
+    NodeAssert.match(
+      pageCommandErrorMessage(
+        "setPictureInPicture",
+        new Error(
+          "BrowserSessionCommandUnsupported: none renders this session (desktop-required).",
+        ),
+      ),
+      /^Picture in picture needs the T3 Code desktop app.*\(desktop-required\)/,
     );
   });
 });
