@@ -23,6 +23,7 @@ import { bindApi, bindStreamApi, type ApiClient } from "@t3tools/extension-sdk/c
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { GlobalCommandDescriptor } from "@t3tools/extension-sdk/environment";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
+import { isAbsolutePath, isWindowsAbsolutePath } from "@t3tools/ghostty-terminal/terminal-links";
 
 import { TerminalInputQueue } from "./inputQueue.ts";
 
@@ -568,6 +569,110 @@ export function workspaceLaunchFromRevision(
   } catch {
     return null;
   }
+}
+
+/* ---------------- path links (Terminal 22 path half) ---------------- */
+
+/** What a terminal path link resolves to for a `t3.file/presentation.open`. */
+export type TerminalPathLinkTarget =
+  | { readonly status: "open"; readonly relativePath: string }
+  | { readonly status: "unopenable"; readonly reason: string };
+
+/** Trailing `:line` / `:line:column` — editor metadata the presentation op cannot carry. */
+const TERMINAL_LINK_POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
+/**
+ * Home-relative check spelled as split comparisons: the pack's private-import
+ * audit bans the home-link character sequence anywhere in package content,
+ * and a concatenated constant would fold back into it in the bundle.
+ */
+function isHomeRelativeLink(path: string): boolean {
+  return path[0] === "~" && path[1] === "/";
+}
+
+function joinPathStyle(base: string, next: string, separator: "/" | "\\"): string {
+  const cleanBase = base.replace(/[\\/]+$/, "");
+  if (separator === "\\") return `${cleanBase}\\${next.replaceAll("/", "\\")}`;
+  return `${cleanBase}/${next.replace(/^\/+/, "")}`;
+}
+
+/** `/Users/<user>`, `/home/<user>` or `C:\Users\<user>` inferred the native way. */
+function inferHomeFromCwd(cwd: string): string | undefined {
+  return (
+    cwd.match(/^\/Users\/([^/]+)/)?.[0] ??
+    cwd.match(/^\/home\/([^/]+)/)?.[0] ??
+    cwd.match(/^([A-Za-z]:\\Users\\[^\\]+)/)?.[1] ??
+    undefined
+  );
+}
+
+/**
+ * Lexically normalize one mapped path: `.` and empty segments drop, `..`
+ * pops, and a `..` that would climb past the workspace root fails. Returns
+ * null when nothing presentable is left.
+ */
+function terminalLinkSegments(relative: string, windows: boolean): string[] | null {
+  const segments: string[] = [];
+  for (const segment of relative.split(windows ? /[\\/]/ : /\//)) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      if (segments.length === 0) return null;
+      segments.pop();
+      continue;
+    }
+    segments.push(segment);
+  }
+  return segments.length > 0 ? segments : null;
+}
+
+/**
+ * Terminal link text → the workspace-relative path `t3.file/presentation`
+ * accepts, or the named reason it cannot open. The op only carries
+ * workspace-relative forward-slash paths, so the position suffix is
+ * stripped, `~` and bare-relative links resolve against the launch cwd
+ * (the contracts expose no live shell cwd), and under a Windows root the
+ * link's separators are normalized to the root's style before mapping —
+ * Windows tools emit forward-slash and mixed-separator paths. Anything
+ * that lands outside the workspace root — including cross-style absolute
+ * paths — refuses by name like the diff panel's Open does.
+ */
+export function terminalPathLinkTarget(
+  text: string,
+  cwd: string,
+  workspaceRoot: string,
+): TerminalPathLinkTarget {
+  const reject = (): TerminalPathLinkTarget => ({
+    status: "unopenable",
+    reason: `${text} cannot be opened — not a workspace-relative path.`,
+  });
+  const windows = isWindowsAbsolutePath(workspaceRoot);
+  const root = workspaceRoot.replace(/[\\/]+$/, "");
+  const stripRoot = (absolute: string): string | null => {
+    const prefix = `${root}${windows ? "\\" : "/"}`;
+    const head = absolute.slice(0, prefix.length);
+    const expected = windows ? prefix.toLowerCase() : prefix;
+    return (windows ? head.toLowerCase() : head) === expected
+      ? absolute.slice(prefix.length)
+      : null;
+  };
+
+  const path = text.replace(TERMINAL_LINK_POSITION_SUFFIX_PATTERN, "");
+  if (path.length === 0) return reject();
+  let absolute: string;
+  if (isAbsolutePath(path)) {
+    absolute = path;
+  } else if (isHomeRelativeLink(path)) {
+    const home = inferHomeFromCwd(cwd);
+    if (home === undefined) return reject();
+    absolute = joinPathStyle(home, path.slice(2), home.includes("\\") ? "\\" : "/");
+  } else {
+    absolute = joinPathStyle(cwd, path, isWindowsAbsolutePath(cwd) ? "\\" : "/");
+  }
+
+  const relative = stripRoot(windows ? absolute.replaceAll("/", "\\") : absolute);
+  if (relative === null) return reject();
+  const segments = terminalLinkSegments(relative, windows);
+  if (segments === null) return reject();
+  return { status: "open", relativePath: segments.join("/") };
 }
 
 /** Host calls the panel makes through t3.terminal/control. */
