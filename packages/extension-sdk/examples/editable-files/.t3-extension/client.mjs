@@ -5392,7 +5392,8 @@ var __t3Client = (() => {
   ];
   var BROWSER_SESSION_COMMANDS = [
     ...BROWSER_SESSION_COMMANDS_V1,
-    "setDevToolsOpen"
+    "openDevTools",
+    "closeDevTools"
   ];
   var BROWSER_SESSION_URL_MAX_LENGTH = 2048;
   var BROWSER_SESSION_TITLE_MAX_LENGTH = 512;
@@ -5791,7 +5792,8 @@ var __t3Client = (() => {
     };
   };
   var browserSessionsApi = defineStreamApi(browserSessionsDefinition("1.1.0", BROWSER_SESSION_COMMANDS, browserSessionObject, (receipt2) => [
-    browserSessionCommandMethod(receipt2, "setDevToolsOpen", { open: { type: "boolean" } }, ["open"], [BROWSER_DEVTOOLS])
+    browserSessionCommandMethod(receipt2, "openDevTools", {}, [], [BROWSER_DEVTOOLS]),
+    browserSessionCommandMethod(receipt2, "closeDevTools", {}, [], [BROWSER_DEVTOOLS])
   ]));
   var browserSessionsApiV1 = defineStreamApi(browserSessionsDefinition("1.0.0", BROWSER_SESSION_COMMANDS_V1, browserSessionObjectV1));
   var BROWSER_SESSIONS_API = browserSessionsApi.definition;

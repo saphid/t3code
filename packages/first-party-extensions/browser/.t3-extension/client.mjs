@@ -5424,7 +5424,8 @@ var __t3Client = (() => {
   ];
   var BROWSER_SESSION_COMMANDS = [
     ...BROWSER_SESSION_COMMANDS_V1,
-    "setDevToolsOpen"
+    "openDevTools",
+    "closeDevTools"
   ];
   var BROWSER_SESSION_URL_MAX_LENGTH = 2048;
   var BROWSER_SESSION_TITLE_MAX_LENGTH = 512;
@@ -5823,7 +5824,8 @@ var __t3Client = (() => {
     };
   };
   var browserSessionsApi = defineStreamApi(browserSessionsDefinition("1.1.0", BROWSER_SESSION_COMMANDS, browserSessionObject, (receipt2) => [
-    browserSessionCommandMethod(receipt2, "setDevToolsOpen", { open: { type: "boolean" } }, ["open"], [BROWSER_DEVTOOLS])
+    browserSessionCommandMethod(receipt2, "openDevTools", {}, [], [BROWSER_DEVTOOLS]),
+    browserSessionCommandMethod(receipt2, "closeDevTools", {}, [], [BROWSER_DEVTOOLS])
   ]));
   var browserSessionsApiV1 = defineStreamApi(browserSessionsDefinition("1.0.0", BROWSER_SESSION_COMMANDS_V1, browserSessionObjectV1));
   var BROWSER_SESSIONS_API = browserSessionsApi.definition;
@@ -14027,7 +14029,8 @@ ${ind(d)}}`;
     zoom: "Zoom",
     setAppearance: "Appearance",
     setAudioMuted: "Mute",
-    setDevToolsOpen: "DevTools"
+    openDevTools: "Open DevTools",
+    closeDevTools: "Close DevTools"
   };
   function pageCommandErrorMessage(method, error) {
     const label = VERB_LABELS[method];
@@ -14035,6 +14038,8 @@ ${ind(d)}}`;
     const denied = /capability denied: (\S+)/.exec(text);
     if (denied)
       return `${label} needs the ${denied[1]} grant, which this installation does not hold (grant-denied).`;
+    if (text.includes("BrowserSessionNotOwned"))
+      return `${label} is only available on pages this panel opened (not-owned).`;
     if (text.includes("(engine-unsupported)"))
       return `${label} is not supported by the browser engine rendering this page (engine-unsupported).`;
     if (text.includes("BrowserSessionEngineDetached"))
@@ -14086,9 +14091,6 @@ ${ind(d)}}`;
           break;
         case "setAudioMuted":
           receipt2 = await api.invoke("setAudioMuted", { ...guard2, muted: verb.muted }, signal);
-          break;
-        case "setDevToolsOpen":
-          receipt2 = await api.invoke("setDevToolsOpen", { ...guard2, open: verb.open }, signal);
           break;
         default:
           receipt2 = await api.invoke(verb.method, guard2, signal);
@@ -14323,7 +14325,7 @@ ${ind(d)}}`;
                 "aria-checked": devToolsOpen === true,
                 disabled: disabled || devToolsOpen === null,
                 onClick: () => {
-                  run2({ method: "setDevToolsOpen", open: devToolsOpen !== true });
+                  run2({ method: devToolsOpen ? "closeDevTools" : "openDevTools" });
                   setOpen(false);
                 },
                 style: { ...control, textAlign: "left" },
