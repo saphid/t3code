@@ -245,7 +245,8 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
     });
     if (
       !Array.isArray(result.capabilities) ||
-      result.capabilities.length > 16 ||
+      // raised 16 -> 32: first-party browser pack reached the cap with legitimately distinct grants; operator decision, no grant consolidation
+      result.capabilities.length > 32 ||
       !Array.isArray(result.projectIds) ||
       result.projectIds.length > 64 ||
       new Set(result.capabilities).size !== result.capabilities.length ||
