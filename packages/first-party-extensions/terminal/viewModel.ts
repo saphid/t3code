@@ -537,14 +537,22 @@ export function serverTerminalIdsStrictSubsetOfClient(
   return true;
 }
 
-/** Snapshot reconcile: keep the client order while the server list lags. */
+/**
+ * Snapshot reconcile: keep the client order while the server list lags.
+ * Otherwise the server owns membership but not order (row 16): surviving
+ * ids keep their persisted tab order and server-only ids append in server
+ * order, so a restored order outlives sessions opened or closed elsewhere.
+ */
 export function reconcileTerminalIds(
   clientIds: readonly string[],
   serverIds: readonly string[],
 ): string[] {
   if (terminalIdListsEqual(clientIds, serverIds)) return [...clientIds];
   if (serverTerminalIdsStrictSubsetOfClient(serverIds, clientIds)) return [...clientIds];
-  return [...serverIds];
+  const serverSet = new Set(serverIds);
+  const kept = clientIds.filter((id) => serverSet.has(id));
+  const keptSet = new Set(kept);
+  return [...kept, ...serverIds.filter((id) => !keptSet.has(id))];
 }
 
 /** Public view-context workspace identity (extensionWorkspaceRevision payload). */

@@ -402,6 +402,54 @@ NodeTest.describe("terminal panel — reconciliation + tabs", () => {
     NodeAssert.deepEqual(reconcileTerminalIds(["a", "b"], ["x"]), ["x"]);
   });
 
+  NodeTest.it("reconcile keeps persisted tab order when server membership changes", () => {
+    // New server session appends; surviving ids keep the client order.
+    NodeAssert.deepEqual(reconcileTerminalIds(["b", "a"], ["a", "b", "c"]), ["b", "a", "c"]);
+    // A session gone server-side drops out without reshuffling the rest.
+    NodeAssert.deepEqual(reconcileTerminalIds(["c", "a", "b"], ["a", "c", "d"]), ["c", "a", "d"]);
+  });
+
+  NodeTest.it("a restored tab order survives reconcile and is what gets saved", () => {
+    const saved = [];
+    let panel;
+    panel = new TerminalPanel({
+      control: fakeControl(),
+      launch,
+      restored: { terminalIds: ["term-3", "term-1", "term-2"], activeTerminalId: "term-3" },
+      onChange: () => saved.push([...panel.snapshot.terminalIds]),
+    });
+    // Same membership in server order: nothing moves.
+    panel.applySessionsEvent({
+      kind: "snapshot",
+      terminals: [meta("term-1"), meta("term-2"), meta("term-3")],
+    });
+    NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-3", "term-1", "term-2"]);
+    // Another client closed term-1 and opened term-4 while this view was away.
+    panel.applySessionsEvent({
+      kind: "snapshot",
+      terminals: [meta("term-2"), meta("term-3"), meta("term-4")],
+    });
+    NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-3", "term-2", "term-4"]);
+    NodeAssert.deepEqual(
+      panel.snapshot.tabs.map((tab) => tab.terminalId),
+      ["term-3", "term-2", "term-4"],
+    );
+    NodeAssert.deepEqual(
+      panel.snapshot.groups.map((group) => group.terminalIds),
+      [["term-3"], ["term-2"], ["term-4"]],
+    );
+    NodeAssert.deepEqual(saved.at(-1), ["term-3", "term-2", "term-4"]);
+    // The saved order restores into a fresh panel verbatim.
+    const reopened = new TerminalPanel({
+      control: fakeControl(),
+      launch,
+      restored: { terminalIds: saved.at(-1), activeTerminalId: "term-3" },
+    });
+    NodeAssert.deepEqual(reopened.snapshot.terminalIds, ["term-3", "term-2", "term-4"]);
+    reopened.dispose();
+    panel.dispose();
+  });
+
   NodeTest.it("builds tabs from snapshot, upsert, remove and falls back selection", () => {
     const panel = new TerminalPanel({ control: fakeControl(), launch });
     panel.applySessionsEvent({

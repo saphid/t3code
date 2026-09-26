@@ -11651,7 +11651,10 @@ var __t3Client = (() => {
   function reconcileTerminalIds(clientIds, serverIds) {
     if (terminalIdListsEqual(clientIds, serverIds)) return [...clientIds];
     if (serverTerminalIdsStrictSubsetOfClient(serverIds, clientIds)) return [...clientIds];
-    return [...serverIds];
+    const serverSet = new Set(serverIds);
+    const kept = clientIds.filter((id2) => serverSet.has(id2));
+    const keptSet = new Set(kept);
+    return [...kept, ...serverIds.filter((id2) => !keptSet.has(id2))];
   }
   function workspaceLaunchFromRevision(workspaceRevision) {
     if (workspaceRevision === void 0) return null;
