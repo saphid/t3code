@@ -133,6 +133,7 @@ import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl"
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { toastManager } from "../components/ui/toast";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
+import { publishTitlebarControlsWidth } from "../workspaceTitlebar";
 import {
   PULL_REQUESTS_PANEL_REF,
   pullRequestSurfaceId,
@@ -1728,6 +1729,7 @@ function PullRequestsRouteView() {
       // every titlebar cluster in the app sits one shared inset from its
       // edge.
       className="absolute top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]"
+      ref={publishTitlebarControlsWidth}
       data-workspace-titlebar-controls
     >
       {panelToggleControls}

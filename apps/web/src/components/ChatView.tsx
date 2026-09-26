@@ -5,6 +5,7 @@ import {
   setActiveExtensionThreadRef,
 } from "../extensions/extensionCommandRegistry";
 import { InstalledExtensionMenu } from "../extensions/InstalledExtensionMenu";
+import { publishTitlebarControlsWidth } from "../workspaceTitlebar";
 import {
   assertContextBudget,
   readContextSnapshots,
@@ -9098,6 +9099,7 @@ export default function ChatView(props: ChatViewProps) {
         // header can shrink behind the right panel without moving the controls.
         "pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
       )}
+      ref={publishTitlebarControlsWidth}
       data-workspace-titlebar-controls
     >
       {!shouldUseRightPanelSheet ? (
