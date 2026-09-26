@@ -26,6 +26,7 @@ import {
 import type {
   AgentSessionImportReceipt,
   AgentSessionsScanResult,
+  AgentLogTail,
   AgentsEvent,
   AgentsState,
   ApprovalOption,
@@ -407,8 +408,9 @@ export interface DeferredSection {
  */
 export const DEFERRED_SECTIONS: readonly DeferredSection[] = [
   {
-    title: "Agent logs and output files",
-    blocker: "no native web/desktop binding exists — net-new design",
+    title: "Agent output file access",
+    blocker:
+      "per-agent output tails are served by t3.orchestration/logs; the output file itself has no public binding — net-new design",
   },
   {
     title: "Mobile Agents surface",
@@ -431,6 +433,23 @@ export const HOST_CHROME_NOTE =
  */
 export const SETTLED_STATE_NOTE =
   "Thread settled state is not projected by t3.orchestration/status, so Settle and Unsettle are both offered when the provider supports them; the receipt reports the outcome.";
+
+// ---------------------------------------------------------------------------
+// t3.orchestration/logs consumption
+// ---------------------------------------------------------------------------
+
+/** The panel's tail window: the contract's full byte budget, capped in lines for scanning. */
+export const AGENT_LOG_TAIL_REQUEST = { source: "output", maxLines: 200 } as const;
+
+/**
+ * Renders the contract's truncation marker with the source size. Contents are
+ * redacted, so their length says nothing exact about how much of the source
+ * came before them; the marker names no omitted-byte count.
+ */
+export function agentLogTailMarker(tail: AgentLogTail): string | null {
+  if (!tail.truncated) return null;
+  return `… earlier output omitted (source is ${tail.byteLength.toLocaleString("en-US")} bytes)`;
+}
 
 // ---------------------------------------------------------------------------
 // t3.ui/theme consumption

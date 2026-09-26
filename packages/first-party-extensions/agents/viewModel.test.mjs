@@ -4,6 +4,7 @@ import * as NodeTest from "node:test";
 import {
   DEFAULT_APPROVAL_OPTIONS,
   DEFERRED_SECTIONS,
+  agentLogTailMarker,
   EMPTY_AGENTS_FEED,
   HOST_CHROME_NOTE,
   isWorkflowName,
@@ -449,11 +450,15 @@ NodeTest.describe("deferred sections", () => {
       DEFERRED_SECTIONS.some((section) => /scan\/import/.test(section.title)),
       false,
     );
-    const netNew = DEFERRED_SECTIONS.find((section) => /logs/.test(section.title));
-    NodeAssert.ok(netNew, "logs keep their own section");
-    NodeAssert.match(netNew.blocker, /net-new design/);
     // Session deep links ship through t3.ui/navigation; they are no longer deferred.
     NodeAssert.ok(!DEFERRED_SECTIONS.some((section) => /deep link/i.test(section.title)));
+  });
+
+  NodeTest.it("narrows the logs deferral to the output file", () => {
+    const files = DEFERRED_SECTIONS.find((section) => /output file/i.test(section.title));
+    NodeAssert.ok(files, "the output file keeps its own section");
+    NodeAssert.match(files.blocker, /t3\.orchestration\/logs/);
+    NodeAssert.match(files.blocker, /net-new design/);
   });
 
   NodeTest.it("no longer defers workflow launch", () => {
@@ -1285,5 +1290,30 @@ NodeTest.describe("session import", () => {
       empty: null,
       note: null,
     });
+  });
+});
+
+NodeTest.describe("agent log tails", () => {
+  const tail = (contents, byteLength, truncated) => ({
+    runId: "agent",
+    source: "output",
+    contents,
+    byteLength,
+    truncated,
+  });
+
+  NodeTest.it("marks a cut tail with the source size, never an omitted-byte count", () => {
+    NodeAssert.equal(agentLogTailMarker(tail("done\n", 5, false)), null);
+    NodeAssert.equal(
+      agentLogTailMarker(tail("é\n", 20_003, true)),
+      "… earlier output omitted (source is 20,003 bytes)",
+    );
+    // Redaction changes the delivered length: `first\n`, a 100-character
+    // password and `last\n` keep two lines, yet only 6 bytes came before.
+    const redacted = tail("PASSWORD=[REDACTED]\nlast\n", 121, true);
+    NodeAssert.equal(
+      agentLogTailMarker(redacted),
+      "… earlier output omitted (source is 121 bytes)",
+    );
   });
 });

@@ -15,6 +15,16 @@ export const ORCHESTRATION_OPERATE = "t3.orchestration/operate";
 export const ORCHESTRATION_LAUNCH_WORKFLOW = "t3.orchestration/launch-workflow";
 /** Saved/built-in workflow names are slugs; the host composes the turn text from this alone. */
 export const WORKFLOW_NAME_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$";
+export const ORCHESTRATION_LOGS = "t3.orchestration/logs";
+/**
+ * Distinct read grant for agent log/output contents. Roster read
+ * (`t3.orchestration/read`) never implies it, and it grants nothing writable.
+ */
+export const ORCHESTRATION_READ_LOGS = "t3.orchestration/read-logs";
+/** Public cap on one `readTail` window, in bytes and in UTF-16 units. */
+export const AGENT_LOG_TAIL_MAX_BYTES = 8192;
+export const AGENT_LOG_TAIL_MAX_LINES = 1000;
+export const AGENT_LOG_TITLE_MAX_LENGTH = 200;
 
 export type RuntimeSubagentStatus =
   | "pending"
@@ -540,3 +550,86 @@ export function defineOrchestrationStatusApi(
   });
 }
 export const ORCHESTRATION_CONTROL_API = orchestrationControlApi.definition;
+
+/** v1 serves the agent's output handle only (for Claude subagents, the transcript). */
+export type AgentLogSource = "output";
+export type AgentLogRun = {
+  /** The roster id published by `t3.orchestration/status` `subscribeAgents`. */
+  readonly runId: string;
+  readonly kind: RuntimeSubagent["kind"];
+  readonly title: string;
+  readonly status: RuntimeSubagentStatus;
+  readonly sources: readonly AgentLogSource[];
+};
+export type AgentLogRuns = { readonly runs: readonly AgentLogRun[]; readonly truncated: boolean };
+export type AgentLogTailInput = {
+  readonly runId: string;
+  readonly source: AgentLogSource;
+  readonly maxBytes?: number;
+  readonly maxLines?: number;
+};
+export type AgentLogTail = {
+  readonly runId: string;
+  readonly source: AgentLogSource;
+  readonly contents: string;
+  /** Source size when read; with `truncated`, the consumer's omitted-bytes marker. */
+  readonly byteLength: number;
+  /** True iff `contents` does not start at the first byte of the source. */
+  readonly truncated: boolean;
+};
+const logSource = { enum: ["output"] };
+/**
+ * Read-only agent log inspection for the view's own thread. Hosts resolve
+ * sources from the thread's roster — callers never name a path — and never
+ * return host paths. No stream: re-read when `subscribeAgents` reports the
+ * run's `updatedAt` changed.
+ */
+export const orchestrationLogsApi = defineApi<{
+  listRuns: { input: Record<string, never>; output: AgentLogRuns };
+  readTail: { input: AgentLogTailInput; output: AgentLogTail };
+}>({
+  id: ORCHESTRATION_LOGS,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "listRuns",
+      effect: "read",
+      requiredGrants: [ORCHESTRATION_READ_LOGS],
+      inputSchema: empty,
+      outputSchema: obj({
+        runs: arr(
+          obj({
+            runId: id,
+            kind: agentProps.kind as JsonObject,
+            title: { type: "string", maxLength: AGENT_LOG_TITLE_MAX_LENGTH },
+            status: agentProps.status as JsonObject,
+            sources: { type: "array", items: logSource, minItems: 1, maxItems: 1 },
+          }),
+        ),
+        truncated: bool,
+      }),
+    },
+    {
+      name: "readTail",
+      effect: "read",
+      requiredGrants: [ORCHESTRATION_READ_LOGS],
+      inputSchema: obj(
+        {
+          runId: id,
+          source: logSource,
+          maxBytes: { type: "integer", minimum: 1, maximum: AGENT_LOG_TAIL_MAX_BYTES },
+          maxLines: { type: "integer", minimum: 1, maximum: AGENT_LOG_TAIL_MAX_LINES },
+        },
+        ["runId", "source"],
+      ),
+      outputSchema: obj({
+        runId: id,
+        source: logSource,
+        contents: { type: "string", maxLength: AGENT_LOG_TAIL_MAX_BYTES },
+        byteLength: num,
+        truncated: bool,
+      }),
+    },
+  ],
+});
+export const ORCHESTRATION_LOGS_API = orchestrationLogsApi.definition;

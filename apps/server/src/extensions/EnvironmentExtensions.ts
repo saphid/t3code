@@ -5,6 +5,7 @@ import { makeBrowserProfilesApiProvider } from "./browserSessions/profiles.ts";
 import { makeBrowserSessionsApiProvider } from "./browserSessions/v1.ts";
 import { makeBrowserFramesApiProvider } from "./browserFrames/v1.ts";
 import { makeOrchestrationApiProviders, projectAgents } from "./orchestration/v1.ts";
+import { makeOrchestrationLogsApiProvider } from "./orchestration/logs.ts";
 import { makeWorkspaceChangesApiProvider } from "./workspaceChangesApi.ts";
 import { makeWorkspaceSearchApiProvider } from "./workspaceSearchApi.ts";
 import { makeWorkspaceTreeApiProvider } from "./workspaceTreeApi.ts";
@@ -133,6 +134,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   );
   const composerApis = yield* makeComposerApiProviders({ environmentId, clientApiProviders });
   const orchestrationApis = yield* makeOrchestrationApiProviders();
+  const orchestrationLogsApi = yield* makeOrchestrationLogsApiProvider();
   const prsApi = yield* makePrsApiProvider();
   const providersStatusApi = yield* makeProvidersStatusApiProvider();
   const agentSessionsApi = yield* makeAgentSessionsApiProvider();
@@ -254,6 +256,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
             vcsActionsApi,
             vcsDiffApi,
             ...orchestrationApis,
+            orchestrationLogsApi,
             prsApi,
             providersStatusApi,
             agentSessionsApi,

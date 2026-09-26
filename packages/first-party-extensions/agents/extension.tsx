@@ -1,6 +1,7 @@
 import {
   agentSessionsApi,
   orchestrationControlApi,
+  orchestrationLogsApi,
   orchestrationStatusApi,
   terminalControlApi,
   uiNavigationApi,
@@ -8,6 +9,7 @@ import {
   workspaceFilesApi,
   type AgentSessionSummary,
   type AgentSessionsScanResult,
+  type AgentLogTail,
   type ApprovalDecision,
   type OrchestrationCapabilities,
   type OrchestrationControlMethods,
@@ -28,12 +30,14 @@ import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
+  AGENT_LOG_TAIL_REQUEST,
   DEFERRED_SECTIONS,
   EMPTY_AGENTS_FEED,
   HOST_CHROME_NOTE,
   SCRIPTS_SCOPE_NOTE,
   SETTLED_STATE_NOTE,
   agentActivityText,
+  agentLogTailMarker,
   agentMetadataLine,
   agentStatusLabel,
   agentStatusVisual,
@@ -998,11 +1002,88 @@ function AgentElapsed(props: { readonly agent: RuntimeSubagent }) {
   );
 }
 
+type ReadAgentLog = (runId: string, signal: AbortSignal) => Promise<AgentLogTail>;
+type AgentLogView =
+  | { readonly kind: "ready"; readonly tail: AgentLogTail }
+  | { readonly kind: "error"; readonly detail: string };
+
+/**
+ * On-demand output tail over `t3.orchestration/logs`. While open it re-reads
+ * only when the roster stream reports the run changed (`updatedAt`) — no
+ * polling. A superseded read is aborted and its result dropped; the last
+ * tail stays painted until its replacement lands.
+ */
+function AgentOutput(props: { readonly agent: RuntimeSubagent; readonly readLog: ReadAgentLog }) {
+  const { agent, readLog } = props;
+  const [open, setOpen] = useState(false);
+  const [view, setView] = useState<AgentLogView | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    readLog(agent.id, controller.signal).then(
+      (tail) => {
+        if (!controller.signal.aborted) setView({ kind: "ready", tail });
+      },
+      (error: unknown) => {
+        if (!controller.signal.aborted)
+          setView({
+            kind: "error",
+            detail: error instanceof Error ? error.message : "output unavailable",
+          });
+      },
+    );
+    return () => controller.abort();
+    // `updatedAt` is the refresh signal: the roster stream bumps it when the run changes.
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies
+  }, [open, agent.id, agent.updatedAt, readLog]);
+  const tail = view?.kind === "ready" ? view.tail : null;
+  const marker = tail ? agentLogTailMarker(tail) : null;
+  return (
+    <span style={{ gridColumn: "2 / 4", minWidth: 0 }}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        style={{ ...control, padding: "1px 6px", fontSize: 11, marginTop: 2 }}
+      >
+        {open ? "Hide output" : "Output"}
+      </button>
+      {open && view === null && (
+        <span style={{ marginLeft: 6, fontSize: 11, color: muted }}>reading…</span>
+      )}
+      {open && view?.kind === "error" && (
+        <output style={{ display: "block", fontSize: 11, color: toneColor.danger }}>
+          {view.detail}
+        </output>
+      )}
+      {open && tail && (
+        <pre
+          aria-label={`${agent.title} output`}
+          style={{
+            margin: "4px 0 0",
+            fontFamily: mono,
+            fontSize: 11,
+            color: muted,
+            whiteSpace: "pre-wrap",
+            overflowWrap: "anywhere",
+            maxHeight: 160,
+            overflow: "auto",
+          }}
+        >
+          {marker ? `${marker}\n` : ""}
+          {tail.contents || "(no output yet)"}
+        </pre>
+      )}
+    </span>
+  );
+}
+
 function AgentRow(props: {
   readonly agent: RuntimeSubagent;
   readonly sessionControl: (agent: RuntimeSubagent) => ReactNode;
+  readonly readLog: ReadAgentLog;
 }) {
-  const { agent, sessionControl } = props;
+  const { agent, sessionControl, readLog } = props;
   const visual = agentStatusVisual(agent.status);
   const role = agentVisibleRole(agent);
   return (
@@ -1083,6 +1164,7 @@ function AgentRow(props: {
       <span style={{ fontFamily: mono, fontSize: 11, color: muted, textAlign: "right" }}>
         <AgentElapsed agent={agent} />
       </span>
+      {agent.outputFile !== null && <AgentOutput agent={agent} readLog={readLog} />}
     </li>
   );
 }
@@ -1092,13 +1174,14 @@ function WorkflowGroupView(props: {
   readonly scriptSupport: ReturnType<typeof operationSupport>;
   readonly onShowScript: (workflowId: string) => void;
   readonly sessionControl: (agent: RuntimeSubagent) => ReactNode;
+  readonly readLog: ReadAgentLog;
   readonly script:
     | { readonly contents: string; readonly truncated: boolean }
     | "loading"
     | string
     | null;
 }) {
-  const { group, scriptSupport, onShowScript, sessionControl, script } = props;
+  const { group, scriptSupport, onShowScript, sessionControl, readLog, script } = props;
   const workflow = group.workflow;
   return (
     <li style={{ padding: "4px 0" }}>
@@ -1142,7 +1225,7 @@ function WorkflowGroupView(props: {
           </div>
           <ul style={{ listStyle: "none", margin: 0, padding: "0 0 0 12px" }}>
             {phase.members.map((member) => (
-              <AgentRow key={member.id} agent={member} sessionControl={sessionControl} />
+              <AgentRow key={member.id} agent={member} sessionControl={sessionControl} readLog={readLog} />
             ))}
           </ul>
         </div>
@@ -1150,7 +1233,7 @@ function WorkflowGroupView(props: {
       {group.unphasedMembers.length > 0 && (
         <ul style={{ listStyle: "none", margin: 0, padding: "0 0 0 12px" }}>
           {group.unphasedMembers.map((member) => (
-            <AgentRow key={member.id} agent={member} sessionControl={sessionControl} />
+            <AgentRow key={member.id} agent={member} sessionControl={sessionControl} readLog={readLog} />
           ))}
         </ul>
       )}
@@ -1590,6 +1673,16 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
       );
   };
 
+  const readLog = useCallback<ReadAgentLog>(
+    (runId, signal) =>
+      bindApi(orchestrationLogsApi, host, session.context).invoke(
+        "readTail",
+        { runId, ...AGENT_LOG_TAIL_REQUEST },
+        AbortSignal.any([session.signal, signal]),
+      ),
+    [host, session],
+  );
+
   const state = feed.state;
   const model = state ? deriveAgentsPanelModel(state.agents) : null;
   const planSource = planSourceThreadId(state, session.context.resource.threadId);
@@ -1703,11 +1796,12 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
                       scriptSupport={operationSupport(capabilities, "getWorkflowScript")}
                       onShowScript={showWorkflowScript}
                       sessionControl={sessionControl}
+                      readLog={readLog}
                       script={scripts[group.workflow.id] ?? null}
                     />
                   ))}
                   {model.directAgents.map((agent) => (
-                    <AgentRow key={agent.id} agent={agent} sessionControl={sessionControl} />
+                    <AgentRow key={agent.id} agent={agent} sessionControl={sessionControl} readLog={readLog} />
                   ))}
                 </ul>
               )}
@@ -1870,13 +1964,14 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
 
 export default defineExtension({
   id: manifestId,
-  version: "0.1.0",
+  version: "0.2.0",
   requires: [
     requireApi(workspaceFilesApi),
     requireApi(terminalControlApi),
     requireApi(orchestrationStatusApi),
     requireApi(orchestrationControlApi),
     requireApi(agentSessionsApi),
+    requireApi(orchestrationLogsApi),
     requireApi(uiThemeApi),
     requireApi(uiNavigationApi),
   ],

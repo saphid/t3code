@@ -200,6 +200,11 @@ var __t3Client = (() => {
   var ORCHESTRATION_OPERATE = "t3.orchestration/operate";
   var ORCHESTRATION_LAUNCH_WORKFLOW = "t3.orchestration/launch-workflow";
   var WORKFLOW_NAME_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$";
+  var ORCHESTRATION_LOGS = "t3.orchestration/logs";
+  var ORCHESTRATION_READ_LOGS = "t3.orchestration/read-logs";
+  var AGENT_LOG_TAIL_MAX_BYTES = 8192;
+  var AGENT_LOG_TAIL_MAX_LINES = 1e3;
+  var AGENT_LOG_TITLE_MAX_LENGTH = 200;
   var ORCHESTRATION_CONTROL_OPS = [
     "turn.start",
     "turn.interrupt",
@@ -430,6 +435,48 @@ var __t3Client = (() => {
     });
   }
   var ORCHESTRATION_CONTROL_API = orchestrationControlApi.definition;
+  var logSource = { enum: ["output"] };
+  var orchestrationLogsApi = defineApi({
+    id: ORCHESTRATION_LOGS,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "listRuns",
+        effect: "read",
+        requiredGrants: [ORCHESTRATION_READ_LOGS],
+        inputSchema: empty,
+        outputSchema: obj({
+          runs: arr(obj({
+            runId: id,
+            kind: agentProps.kind,
+            title: { type: "string", maxLength: AGENT_LOG_TITLE_MAX_LENGTH },
+            status: agentProps.status,
+            sources: { type: "array", items: logSource, minItems: 1, maxItems: 1 }
+          })),
+          truncated: bool
+        })
+      },
+      {
+        name: "readTail",
+        effect: "read",
+        requiredGrants: [ORCHESTRATION_READ_LOGS],
+        inputSchema: obj({
+          runId: id,
+          source: logSource,
+          maxBytes: { type: "integer", minimum: 1, maximum: AGENT_LOG_TAIL_MAX_BYTES },
+          maxLines: { type: "integer", minimum: 1, maximum: AGENT_LOG_TAIL_MAX_LINES }
+        }, ["runId", "source"]),
+        outputSchema: obj({
+          runId: id,
+          source: logSource,
+          contents: { type: "string", maxLength: AGENT_LOG_TAIL_MAX_BYTES },
+          byteLength: num,
+          truncated: bool
+        })
+      }
+    ]
+  });
+  var ORCHESTRATION_LOGS_API = orchestrationLogsApi.definition;
 
   // node_modules/@t3tools/extension-sdk/dist/textEdits.js
   var WORKSPACE_READ_TEXT_EDITS = "t3.workspace/text-edits";
@@ -7470,6 +7517,7 @@ var __t3Client = (() => {
   var GENERIC_API_CATALOGUE = [
     orchestrationStatusApi.definition,
     orchestrationControlApi.definition,
+    orchestrationLogsApi.definition,
     browserLocalServersApi.definition,
     browserHistoryApi.definition,
     browserSessionsApi.definition,

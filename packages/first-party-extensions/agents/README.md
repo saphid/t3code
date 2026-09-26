@@ -40,6 +40,14 @@ terminal.
   agent resolves it. Launch keeps the thread's current mode, so a plan-mode
   thread may answer with a plan instead of running the workflow, and an
   accepted receipt acknowledges the request, not a started workflow.
+- `t3.orchestration/logs@^1.0.0` — under its own `t3.orchestration/read-logs`
+  grant (roster read never implies it): agent rows whose roster entry carries
+  an output handle get an Output toggle that reads the run's bounded tail
+  with `readTail` (≤ 8 KiB, last 200 lines; a cut tail leads with an
+  "earlier output omitted (source is M bytes)" marker). While open it re-reads
+  only when the roster stream reports the run changed — no polling. Missing
+  grants, out-of-scope handles and vanished files render the named failure.
+  Only Claude runs carry output handles today.
 - `t3.workspace/files@^1.0.0` `readText` — reads the checked-in `t3.json`
   under the `t3.workspace/read-text` grant and lists its `scripts[]` entries.
   Settings-owned project scripts (machine defaults, per-project overrides)
@@ -102,8 +110,9 @@ missing grant is named in the row's receipt line. A scan returns at most 50
 discovered sessions and stops after 10 seconds; a scan cut short either way
 is marked incomplete in the panel, and Rescan retries it.
 
-Still deferred — named in the panel, not faked: agent logs and output files
-(net-new design) and the mobile Agents surface. The header live-agent badge
+Still deferred — named in the panel, not faked: agent output file access
+(the bounded tail is served by t3.orchestration/logs; the file itself is
+net-new design) and the mobile Agents surface. The header live-agent badge
 and spawn CTA rows stay host chat UI; with this pack installed (enabled and
 granted the thread's project) they open this view instead of the built-in
 Agents panel. The right panel toggle under the badge still restores whichever
