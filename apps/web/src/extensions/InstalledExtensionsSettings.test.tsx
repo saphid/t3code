@@ -128,7 +128,11 @@ describe("installed package settings", () => {
       const grantInput = (grant: string) =>
         root.root
           .findAllByType("label")
-          .find((label) => label.children.join("") === `Allow ${grant} in selected projects`)
+          .find(
+            (label) =>
+              label.children.filter((child) => typeof child === "string").join("") ===
+              `Allow ${grant} in selected projects`,
+          )
           ?.findByType("input");
       expect(grantInput(AGENT_SESSIONS_SCAN)).toBeDefined();
       expect(grantInput(AGENT_SESSIONS_IMPORT)).toBeDefined();
