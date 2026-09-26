@@ -15,6 +15,12 @@ export interface BrowserSurfacePresentation {
   readonly fittedSourceContent: BrowserSurfaceContentPresentation | null;
   readonly fitSourceContent: boolean;
   readonly cornerRadius: number;
+  /**
+   * The host paints the device toolbar and resize rails only for presenters
+   * that delegate viewport controls to it (native slots). Extension leases
+   * render their own viewport controls, so host chrome would double them.
+   */
+  readonly hostViewportControls: boolean;
   readonly updatedAt: number;
   readonly owner: symbol | null;
 }
@@ -33,7 +39,12 @@ interface BrowserSurfaceStoreState {
   readonly activityByTabId: Record<string, number>;
   readonly byTabId: Record<string, BrowserSurfacePresentation>;
   readonly acquireActivity: (tabId: string) => () => void;
-  readonly claim: (tabId: string, owner: symbol, fitSourceContent: boolean) => void;
+  readonly claim: (
+    tabId: string,
+    owner: symbol,
+    fitSourceContent: boolean,
+    hostViewportControls?: boolean,
+  ) => void;
   readonly present: (
     tabId: string,
     owner: symbol,
@@ -94,7 +105,7 @@ export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) =
       });
     };
   },
-  claim: (tabId, owner, fitSourceContent) =>
+  claim: (tabId, owner, fitSourceContent, hostViewportControls = true) =>
     set((state) => {
       const current = state.byTabId[tabId];
       if (current?.owner === owner) return state;
@@ -109,6 +120,7 @@ export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) =
             fittedSourceContent: fitSourceContent ? (current?.content ?? null) : null,
             fitSourceContent,
             cornerRadius: current?.cornerRadius ?? 0,
+            hostViewportControls,
             updatedAt: Date.now(),
             owner,
           },
@@ -150,6 +162,7 @@ export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) =
               fittedSourceContent: null,
               fitSourceContent: false,
               cornerRadius: 0,
+              hostViewportControls: true,
               updatedAt: Date.now(),
               owner: null,
             },
@@ -207,13 +220,18 @@ export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) =
 export const acquireBrowserSurfaceActivity = (tabId: string): (() => void) =>
   useBrowserSurfaceStore.getState().acquireActivity(tabId);
 
+/**
+ * Claims the tab's surface. Pass `hostViewportControls: false` when the
+ * presenter renders its own viewport controls (extension browser views).
+ */
 export function acquireBrowserSurface(
   tabId: string,
   fitSourceContent = false,
+  hostViewportControls = true,
 ): BrowserSurfaceLease {
   const owner = Symbol(`browser-surface:${tabId}`);
   let released = false;
-  useBrowserSurfaceStore.getState().claim(tabId, owner, fitSourceContent);
+  useBrowserSurfaceStore.getState().claim(tabId, owner, fitSourceContent, hostViewportControls);
 
   return {
     present: (rect, visible, cornerRadius = 0, zIndex = 30) => {

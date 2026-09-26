@@ -19,7 +19,10 @@ import {
 import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
 import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
 import { acquireDesktopTab, type AcquiredDesktopTab } from "./desktopTabLifetime";
-import { resolveHostedBrowserWebviewWrapperStyle } from "./hostedBrowserWebviewStyle";
+import {
+  resolveHostedBrowserViewportChrome,
+  resolveHostedBrowserWebviewWrapperStyle,
+} from "./hostedBrowserWebviewStyle";
 import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
 import { useBrowserViewportResize } from "./useBrowserViewportResize";
 import {
@@ -93,6 +96,7 @@ export function HostedBrowserWebview(props: {
         cornerRadius: current?.cornerRadius ?? 0,
         fitSourceContent: current?.fitSourceContent ?? false,
         fittedSourceContent: current?.fittedSourceContent ?? null,
+        hostViewportControls: current?.hostViewportControls ?? true,
         rect: resolveBrowserSurfacePanelRect(state.byTabId, runtimeTabId),
         visible: current?.visible ?? false,
         zIndex: current?.zIndex ?? 30,
@@ -225,7 +229,12 @@ export function HostedBrowserWebview(props: {
           height: hiddenContentSize?.height ?? lastRect?.height ?? 800,
         };
   const containerSize = active && lastRect ? lastRect : hiddenSize;
-  const deviceToolbarVisible = active && viewport._tag !== "fill" && !presentation.fitSourceContent;
+  const viewportChrome = resolveHostedBrowserViewportChrome({
+    active,
+    viewportTag: viewport._tag,
+    fitSourceContent: presentation.fitSourceContent,
+    hostViewportControls: presentation.hostViewportControls,
+  });
   const {
     activeDrag,
     commitViewportChange,
@@ -238,7 +247,7 @@ export function HostedBrowserWebview(props: {
     viewport,
     zoomFactor,
     containerSize,
-    deviceToolbarVisible,
+    deviceToolbarVisible: viewportChrome.reserveDeviceChrome,
     aspectRatio: lockedAspectRatio,
   });
   const fittedSourceViewport =
@@ -306,7 +315,7 @@ export function HostedBrowserWebview(props: {
       data-preview-viewport={runtimeTabId}
     >
       <div className="relative" style={{ width: layout.canvasWidth, height: layout.canvasHeight }}>
-        {deviceToolbarVisible && effectiveViewport._tag !== "fill" ? (
+        {viewportChrome.deviceToolbar && effectiveViewport._tag !== "fill" ? (
           <BrowserDeviceToolbar
             setting={effectiveViewport}
             width={Math.max(1, Math.round(containerSize.width))}
@@ -360,7 +369,7 @@ export function HostedBrowserWebview(props: {
             transformOrigin: "top left",
           }}
         />
-        {active && effectiveViewport._tag !== "fill" && !fittedSourceViewport ? (
+        {viewportChrome.resizeRails && effectiveViewport._tag !== "fill" ? (
           <>
             <BrowserViewportResizeHandles
               layout={layout}
