@@ -1,10 +1,14 @@
 import {
+  FileRenderer,
   Virtualizer,
   VirtualizedFile,
+  disposeHighlighter,
+  getSharedHighlighter,
   type CodeViewItem,
   type CodeViewScrollTarget,
 } from "@pierre/diffs";
 import type { CodeViewProps } from "@pierre/diffs/react";
+import { WorkerPoolManager } from "@pierre/diffs/worker";
 import type { CodeViewDiffProps, CodeViewFileProps } from "@t3tools/extension-sdk/environment";
 import { useImperativeHandle, type ReactElement, type ReactNode, type Ref } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
@@ -14,7 +18,10 @@ const view = vi.hoisted(() => ({
   theme: "dark" as "light" | "dark",
   wordWrapSetting: false,
   codeViews: [] as CodeViewProps<undefined>[],
-  files: [] as { file: { name: string; contents: string }; options: Record<string, unknown> }[],
+  files: [] as {
+    file: { name: string; contents: string; cacheKey?: string };
+    options: Record<string, unknown>;
+  }[],
   scrolls: [] as CodeViewScrollTarget[],
 }));
 
@@ -255,6 +262,38 @@ describe("host code view: File", () => {
     view.theme = "light";
     await render(<HostCodeFile {...baseFile} />);
     expect(view.files.at(-1)?.options.theme).toBe("pierre-light");
+  });
+
+  it("re-renders an edge-whitespace edit to the same file without stale lines", async () => {
+    // Equal length, different line count: only whitespace distinguishes them.
+    const before = "\nhello";
+    const after = " hello";
+    await render(<HostCodeFile path="a.txt" contents={before} />);
+    const first = view.files.at(-1)!.file;
+    await render(<HostCodeFile path="a.txt" contents={after} />);
+    const second = view.files.at(-1)!.file;
+    expect(second.cacheKey).not.toBe(first.cacheKey);
+
+    // Pierre's renderer trusts cacheKey for its line cache; drive it the way the worker pool does.
+    const theme = "pierre-dark";
+    const renderOptions = { theme, useTokenTransformer: false, tokenizeMaxLineLength: 1000 };
+    const highlighter = await getSharedHighlighter({ themes: [theme], langs: [] });
+    const worker = {
+      isWorkingPool: () => true,
+      getFileRenderOptions: () => renderOptions,
+      getFileResultCache: () => undefined,
+      highlighter,
+      renderOptions,
+      getPlainFileAST: WorkerPoolManager.prototype.getPlainFileAST,
+    } as unknown as WorkerPoolManager;
+    const fileRenderer = new FileRenderer({ theme }, undefined, worker);
+    try {
+      fileRenderer.renderFile(first);
+      expect(() => fileRenderer.renderFile(second)).not.toThrow();
+      expect(fileRenderer.getOrCreateLineCache(second)).toEqual([" hello"]);
+    } finally {
+      await disposeHighlighter();
+    }
   });
 
   it("passes malformed text through untouched", async () => {
