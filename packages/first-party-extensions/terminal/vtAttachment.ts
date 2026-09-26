@@ -849,6 +849,14 @@ export async function pumpTerminalOutput(options: {
   readonly subscribe: (signal: AbortSignal) => AsyncIterable<TerminalOutputFrame>;
   readonly attachment: TerminalVtAttachment;
   readonly signal: AbortSignal;
+  /**
+   * Classifies a subscribe error as broker capacity (isBrokerStreamRefusal
+   * shape). A refusal is reported through `onRefused` and ends this pump
+   * without touching the attachment — the caller waits and retries.
+   */
+  readonly refusal?: (error: unknown) => boolean;
+  /** The broker refused the stream: capacity, not failure. */
+  readonly onRefused?: () => void;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly now?: () => number;
 }): Promise<void> {
@@ -875,6 +883,10 @@ export async function pumpTerminalOutput(options: {
         }
       }
     } catch (error) {
+      if (options.refusal?.(error) === true) {
+        options.onRefused?.();
+        return;
+      }
       if (!signal.aborted) {
         attachment.applyTransportError(
           error instanceof Error ? error.message : "Terminal output unavailable",

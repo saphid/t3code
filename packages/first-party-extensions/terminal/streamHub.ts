@@ -47,6 +47,23 @@ export const BROKER_STREAM_CAP = 8;
  */
 export const FEED_REPLAY_MAX_FRAMES = 64;
 
+/**
+ * The broker's stream-capacity refusals. The hub models the caps
+ * client-side, but the broker's accounting is authoritative: another
+ * client document of the same installation, another plugin in the
+ * environment, or the installation's worker process all spend the same
+ * caps without appearing in this hub. A refused subscription is capacity,
+ * not failure — callers wait and retry instead of surfacing an error.
+ */
+export function isBrokerStreamRefusal(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return (
+    error.message === "Plugin stream limit reached" ||
+    error.message === "Environment stream limit reached" ||
+    error.message === "Worker stream limit reached"
+  );
+}
+
 export type TerminalFeedStatus = "connecting" | "disconnected";
 
 export interface TerminalSharedFeedListener<Frame> {

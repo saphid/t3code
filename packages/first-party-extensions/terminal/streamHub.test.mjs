@@ -8,7 +8,12 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 
-import { BROKER_STREAM_CAP, FEED_REPLAY_MAX_FRAMES, TerminalStreamHub } from "./streamHub.ts";
+import {
+  BROKER_STREAM_CAP,
+  FEED_REPLAY_MAX_FRAMES,
+  TerminalStreamHub,
+  isBrokerStreamRefusal,
+} from "./streamHub.ts";
 import { TerminalPanel } from "./viewModel.ts";
 
 // Deterministic eviction order: each demotion stamps a later clock tick.
@@ -35,6 +40,24 @@ NodeTest.test("broker cap is 8 and the pane budget shrinks with live fixed feeds
   NodeAssert.equal(hub.paneStreamBudget(), 7);
   detachFeed();
   NodeAssert.equal(hub.paneStreamBudget(), 8);
+});
+
+NodeTest.test("isBrokerStreamRefusal matches only the broker's capacity refusals", () => {
+  // R6: the broker's own accounting is authoritative — another client of
+  // the installation or another plugin in the environment spends the same
+  // caps. Exactly these messages mean capacity (wait and retry), never a
+  // transport failure.
+  for (const message of [
+    "Plugin stream limit reached",
+    "Environment stream limit reached",
+    "Worker stream limit reached",
+  ]) {
+    NodeAssert.equal(isBrokerStreamRefusal(new Error(message)), true, message);
+  }
+  NodeAssert.equal(isBrokerStreamRefusal(new Error("WebSocket dropped")), false);
+  NodeAssert.equal(isBrokerStreamRefusal(new Error("Plugin stream limit reached: extra")), false);
+  NodeAssert.equal(isBrokerStreamRefusal("Plugin stream limit reached"), false);
+  NodeAssert.equal(isBrokerStreamRefusal(null), false);
 });
 
 NodeTest.test("fixed feed runs one driver for many listeners and fans out", () => {

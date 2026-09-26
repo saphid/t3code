@@ -2,6 +2,7 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 
 import { TerminalVtAttachment, pumpTerminalOutput } from "./vtAttachment.ts";
+import { isBrokerStreamRefusal } from "./streamHub.ts";
 import { OVERFLOW_RESUBSCRIBE_MAX } from "./viewModel.ts";
 
 const EPOCH = "epoch-1";
@@ -835,6 +836,32 @@ NodeTest.describe("pumpTerminalOutput — recovery", () => {
     });
     NodeAssert.equal(vt.state.status, "error");
     NodeAssert.match(vt.state.statusText, /WebSocket dropped/);
+  });
+
+  NodeTest.it("a broker refusal ends the pump without failing the attachment", async () => {
+    // R6: the broker's cap refusal is capacity another client of the
+    // installation is spending — reported to the caller (which waits and
+    // retries), never surfaced as the pane's error.
+    const vt = new TerminalVtAttachment("term-1");
+    vt.attach(sink());
+    const ac = new AbortController();
+    let refused = 0;
+    await pumpTerminalOutput({
+      subscribe: async function* () {
+        for await (const never of []) yield never;
+        throw new Error("Plugin stream limit reached");
+      },
+      attachment: vt,
+      signal: ac.signal,
+      refusal: isBrokerStreamRefusal,
+      onRefused: () => {
+        refused += 1;
+      },
+    });
+    NodeAssert.equal(refused, 1);
+    NodeAssert.equal(vt.state.status, "connecting"); // beginStream ran, nothing failed
+    NodeAssert.equal(vt.state.ended, false);
+    NodeAssert.doesNotMatch(vt.state.statusText, /limit reached/);
   });
 
   NodeTest.it("abortion stops the pump quietly", async () => {
