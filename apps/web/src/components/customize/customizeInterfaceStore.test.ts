@@ -211,6 +211,23 @@ describe("Customize interface history", () => {
     expect(theme()).toBe("dark");
   });
 
+  it("undoes a scene change and reverts its transparency", async () => {
+    actions.commit({ themeBackground: "ocean" });
+    actions.commit({ themeBackgroundTransparency: 65 }, "themeBackgroundTransparency");
+    await customizeActionsSettled();
+
+    actions.undo();
+    await customizeActionsSettled();
+    expect(getClientSettings().themeBackground).toBe("ocean");
+    expect(getClientSettings().themeBackgroundTransparency).toBe(
+      DEFAULT_CLIENT_SETTINGS.themeBackgroundTransparency,
+    );
+
+    actions.revert();
+    await customizeActionsSettled();
+    expect(getClientSettings().themeBackground).toBe("none");
+  });
+
   it("leaves settings and themes changed elsewhere alone on Undo and Revert", async () => {
     setTheme("light");
     actions.commit({ chatWidth: "wide" });

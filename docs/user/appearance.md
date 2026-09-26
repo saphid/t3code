@@ -24,8 +24,8 @@ of the selected theme.
 ## Customize interface
 
 On web and desktop, open **Customize interface** from the sidebar, command palette, or
-**Settings → Appearance** to change your theme, appearance, text size, chat width, and which
-interface details appear. Preview a layout by hovering or focusing it, then select it to apply.
+**Settings → Appearance** to change your theme, appearance, background scene, text size, chat
+width, and which interface details appear. Preview a layout by hovering or focusing it, then select it to apply.
 Choose **Balanced**, **Minimal**, **Focus**, or **Detailed** for different levels of detail.
 All layouts preserve your ordering, chat width, and context window indicator preference.
 
@@ -36,6 +36,17 @@ back on in the list to bring it back. For the composer, select **Expanded** or *
 Changes save immediately on this device or browser. **Undo** (⌘Z or Ctrl+Z) steps back one
 change; **Revert all changes** undoes the changes made since opening the mode. Use Escape to
 step back. **Done** closes the mode and keeps your changes. Mobile does not have this mode.
+
+## Background scenes
+
+On web and desktop, choose a **Background scene** under **Settings → Appearance** or in **Customize interface** to show a dimmed
+scenic backdrop behind the interface. **Theme scene** follows the active theme, so each built-in
+theme ships with its own matching scene, and a library of standalone scenes (Alpine, Aurora,
+Coastline, Dune, Fjord, Forest Lake, Highlands, Meadow, Nightfall, Terraces) works with any theme.
+A picked scene keeps it across theme changes.
+Scenes are off (**None**) until you pick one. **Background transparency** controls how much of the
+scene shows through the interface, from solid up to fully transparent glass. The backdrop is a
+device-local appearance preference.
 
 ## Motion
 
