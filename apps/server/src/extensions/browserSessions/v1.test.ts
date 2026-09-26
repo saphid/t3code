@@ -830,7 +830,7 @@ describe("browser sessions adapter", () => {
       });
       expect(stale.detail).toContain("BrowserStaleEngineGeneration");
 
-      // Page state comes only from the owner's report; favicon bytes stay server-side.
+      // Page state comes only from the owner's report; the favicon rides as a ref.
       yield* engineHosts.report(DESKTOP_SOCKET, {
         ...fence,
         status: pageStatus({ _tag: "Success", url: "http://localhost:5173/", title: "Dev" }),
@@ -847,6 +847,56 @@ describe("browser sessions adapter", () => {
         canGoBack: true,
       });
       expect(Object.keys(listed.sessions[0] ?? {})).not.toContain("favicon");
+      expect(Object.values(listed.sessions[0] ?? {})).not.toContain("data:image/png;base64,AAAA");
+    }),
+  );
+
+  it.effect("projects a captured favicon as a project-scoped ref resolved by getFavicon", () =>
+    Effect.gen(function* () {
+      const { provider, engineHosts } = yield* harness;
+      const opened = (yield* invoke(provider, "open", { url: "localhost:5173" })) as {
+        readonly serverEpoch: string;
+        readonly session: { readonly tabId: string };
+      };
+      const { fence } = yield* attachDesktopHost(engineHosts, {
+        tabId: opened.session.tabId,
+        serverEpoch: opened.serverEpoch,
+      });
+      const report = (url: string) =>
+        engineHosts.report(DESKTOP_SOCKET, {
+          ...fence,
+          status: pageStatus({ _tag: "Success", url, title: "Dev" }),
+        });
+      const firstRef = Effect.map(
+        invoke(provider, "list", {}),
+        (listed) =>
+          (listed as { readonly sessions: readonly { faviconRef?: string }[] }).sessions[0]
+            ?.faviconRef,
+      );
+
+      yield* report("http://localhost:5173/app");
+      const ref = yield* firstRef;
+      expect(ref).toEqual(expect.any(String));
+      expect(yield* invoke(provider, "getFavicon", { ref })).toEqual({
+        ref,
+        dataUrl: "data:image/png;base64,AAAA",
+      });
+
+      // Another project cannot resolve this project's ref.
+      const foreign = yield* invokeError(
+        provider,
+        "getFavicon",
+        { ref },
+        context("foreign", ENV_ID, "other-project"),
+      );
+      expect(foreign.detail).toContain("BrowserFaviconNotFound");
+      // An unknown ref is a named miss — the caller renders its fallback tier.
+      const missing = yield* invokeError(provider, "getFavicon", { ref: "stale" });
+      expect(missing.detail).toContain("BrowserFaviconNotFound");
+
+      // A favicon from another origin than the current page is not projected.
+      yield* report("https://example.com/");
+      expect(yield* firstRef).toBeUndefined();
     }),
   );
 

@@ -1164,7 +1164,18 @@ var __t3Client = (() => {
       id: { type: "string", minLength: 1, maxLength: 80 },
       title: { type: "string", minLength: 1, maxLength: 200 },
       description: { type: "string", maxLength: 1e3 },
-      defaultKey: { type: "string", minLength: 1, maxLength: 64 },
+      defaultKey: {
+        oneOf: [
+          { type: "string", minLength: 1, maxLength: 64 },
+          {
+            type: "array",
+            minItems: 1,
+            maxItems: 4,
+            uniqueItems: true,
+            items: { type: "string", minLength: 1, maxLength: 64 }
+          }
+        ]
+      },
       when: { type: "string", minLength: 1, maxLength: 256 },
       scope: { enum: ["surface", "thread", "global"] },
       activation: {
@@ -5392,6 +5403,8 @@ var __t3Client = (() => {
   var BROWSER_SESSION_URL_MAX_LENGTH = 2048;
   var BROWSER_SESSION_TITLE_MAX_LENGTH = 512;
   var BROWSER_SESSION_LIMIT = 64;
+  var BROWSER_SESSION_FAVICON_REF_MAX_LENGTH = 64;
+  var BROWSER_SESSION_FAVICON_MAX_LENGTH = 8192;
   var browserSessionTabId = {
     type: "string",
     minLength: 1,
@@ -5407,6 +5420,11 @@ var __t3Client = (() => {
     type: "string",
     minLength: 1,
     maxLength: BROWSER_SESSION_URL_MAX_LENGTH
+  };
+  var browserSessionFaviconRef = {
+    type: "string",
+    minLength: 1,
+    maxLength: BROWSER_SESSION_FAVICON_REF_MAX_LENGTH
   };
   var browserSessionViewport = {
     oneOf: [
@@ -5509,7 +5527,8 @@ var __t3Client = (() => {
       zoomFactor: { type: ["number", "null"] },
       appearance: { enum: ["system", "light", "dark", null] },
       audioMuted: { type: ["boolean", "null"] },
-      audible: { type: ["boolean", "null"] }
+      audible: { type: ["boolean", "null"] },
+      faviconRef: browserSessionFaviconRef
     }
   };
   var browserSessionReceipt = {
@@ -5568,7 +5587,7 @@ var __t3Client = (() => {
   };
   var browserSessionsApi = defineStreamApi({
     id: BROWSER_SESSIONS,
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
       {
         name: "getCapabilities",
@@ -5621,6 +5640,26 @@ var __t3Client = (() => {
               maxItems: BROWSER_SESSION_LIMIT,
               items: browserSessionObject
             }
+          }
+        }
+      },
+      {
+        name: "getFavicon",
+        effect: "read",
+        requiredGrants: [BROWSER_SESSIONS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["ref"],
+          properties: { ref: browserSessionFaviconRef }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["ref", "dataUrl"],
+          properties: {
+            ref: browserSessionFaviconRef,
+            dataUrl: { type: "string", minLength: 1, maxLength: BROWSER_SESSION_FAVICON_MAX_LENGTH }
           }
         }
       },

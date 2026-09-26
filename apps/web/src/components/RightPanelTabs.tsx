@@ -1,4 +1,6 @@
 import { useWorkspaceSurfaceTitles } from "../extensions/workspaceRegistry";
+import { extensionTabKey, useExtensionTabIndicators } from "../extensions/extensionTabIndicators";
+import type { ViewRecord } from "@t3tools/extension-sdk/contracts";
 import { pullRequestHostOf, type SourceControlProviderKind } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { useProjects, useServerConfigs, useThreadShells } from "~/state/entities";
@@ -685,6 +687,45 @@ function PreviewFavicon({ capturedUrl, url }: { capturedUrl: string | null; url:
   );
 }
 
+/** A plugin tab's page icon, from the indicators its view published. */
+function ExtensionSurfaceIcon({ record }: { record: ViewRecord }) {
+  const indicators = useExtensionTabIndicators(extensionTabKey(record));
+  if (!indicators?.pageUrl && !indicators?.faviconDataUrl)
+    return <Puzzle className="size-3 shrink-0" />;
+  return (
+    <PreviewFavicon
+      capturedUrl={indicators.faviconDataUrl ?? null}
+      url={indicators.pageUrl ?? null}
+    />
+  );
+}
+
+/**
+ * A plugin tab's audio indicator. Display only: muting stays inside the
+ * plugin, which owns the page command that does it.
+ */
+function ExtensionTabAudio({ record }: { record: ViewRecord }) {
+  const audio = useExtensionTabIndicators(extensionTabKey(record))?.audio;
+  if (!audio) return null;
+  const label = audio === "muted" ? "Tab audio muted" : "Tab playing audio";
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            role="img"
+            aria-label={label}
+            className="flex size-4 shrink-0 items-center justify-center"
+          >
+            {audio === "muted" ? <VolumeOff className="size-3" /> : <Volume2 className="size-3" />}
+          </span>
+        }
+      />
+      <TooltipPopup>{label}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 function sameOrigin(left: string, right: string): boolean {
   try {
     return new URL(left).origin === new URL(right).origin;
@@ -710,7 +751,7 @@ function SurfaceIcon({
 }) {
   switch (surface.kind) {
     case "extension":
-      return <Puzzle className="size-3 shrink-0" />;
+      return <ExtensionSurfaceIcon record={surface.record} />;
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       const url = !snapshot || snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
@@ -1247,6 +1288,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       />
                     ) : null}
                   </PanelTabCloseButton>
+                  {surface.kind === "extension" ? (
+                    <ExtensionTabAudio record={surface.record} />
+                  ) : null}
                   {audio === "none" || !audioRuntimeTabId ? null : (
                     <Tooltip>
                       <TooltipTrigger

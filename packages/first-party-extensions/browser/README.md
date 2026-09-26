@@ -50,22 +50,26 @@ The panel renders through public contracts only:
   the empty state's "Local servers" section while it is visible. Loopback
   URLs open as-is — unlike the native panel they are not re-mapped to a
   remote environment's host, and the section says so.
-- Favicons — the package half of the native favicon row; capture is deferred
-  (P08-FAVICON-REF). The desktop engine host reports each page's favicon to
-  the server, but the server keeps it: `t3.browser/sessions` session objects
-  and events carry no favicon field and no op returns one, so this package
-  cannot capture and does not pretend to. What ships is the fallback tier
-  the native tab strip already renders (`faviconStore.ts`, pure and tested):
-  public origins resolve their icon through `@t3tools/shared/favicon`'s
-  public provider; private/loopback origins, non-URLs, and failed loads
-  render a per-origin letter glyph; and a failed origin is cached (per
-  origin, capped at 40 like the native store) so the tab strip and the
-  recents list agree and the dead origin stops being requested. The session
-  tab strip the favicon renders in is the thread's sessions from the events
-  snapshot — clicking a tab presents that session in this panel (the hold is
-  plugin state, no engine op), and the snapshot's loopback folding mirrors
-  the native favicon key, minus the environment-hostname fold no contract
-  exposes.
+- Favicons — the native favicon row, captured tier first. The desktop engine
+  host reports each page's favicon; the server keeps the bytes as a bounded
+  per-project asset and a session carries only its `faviconRef`. Each new
+  ref is read once through `t3.browser/sessions` `getFavicon` when a
+  snapshot or upsert delivers it, and cached per origin (`faviconStore.ts`,
+  pure and tested) ahead of the provider tier: public origins resolve their
+  icon through `@t3tools/shared/favicon`'s public provider; private/loopback
+  origins without a capture, non-URLs, and failed loads render a per-origin
+  letter glyph. An evicted or unknown ref (`BrowserFaviconNotFound`) or a
+  capture that fails to render leaves the provider tier; a failed provider
+  origin is cached (per origin, capped at 40 like the native store) so the
+  tab strip and the recents list agree. The session tab strip is the
+  thread's sessions from the events snapshot — clicking a tab presents that
+  session in this panel (the hold is plugin state, no engine op), and the
+  loopback folding mirrors the native favicon key, minus the
+  environment-hostname fold no contract exposes.
+- The panel's own right-panel tab shows the presented page's icon and an
+  audio indicator (audible while any session plays unmuted, muted when only
+  muted sessions play) through `ViewSession.setTabIndicators`; the host
+  renders them, and adds the provider tier itself.
 - `t3.browser/sessions` `resize` — the header's device-toolbar
   toggle and the toolbar it reveals (Responsive/preset picker, freeform
   width × height inputs, rotate, close) drive every viewport change through

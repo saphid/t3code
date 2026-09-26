@@ -29,7 +29,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useBrowserCapture } from "./capture.js";
 import { mintWorkspaceFileUrl } from "./fileOpen.js";
-import { BrowserFavicon } from "./favicon.js";
+import { BrowserFavicon, resolveSessionFavicons, useFaviconCache } from "./favicon.js";
+import { panelTabIndicators } from "./faviconStore.js";
 import {
   type BrowserHistoryEntry,
   fitHistoryToSaveBudget,
@@ -348,6 +349,30 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     })();
     return () => controller.abort();
   }, [host, session]);
+
+  // Captured favicons: each new ref the sessions carry is read once, when a
+  // snapshot or upsert delivers it — no timer. Reads live as long as the view.
+  const faviconCache = useFaviconCache();
+  useEffect(() => {
+    resolveSessionFavicons(
+      bindApi(browserSessionsApi, host, session.context),
+      tabs,
+      session.signal,
+    );
+  }, [host, session, tabs]);
+
+  // The host renders this panel's tab icon and audio indicator from these.
+  useEffect(() => {
+    if (typeof session.setTabIndicators !== "function") return;
+    const indicators = panelTabIndicators(faviconCache, live, tabs);
+    try {
+      session.setTabIndicators(indicators);
+    } catch {
+      // A capture the host refuses still leaves the page and audio chrome.
+      const { faviconDataUrl: _refused, ...rest } = indicators ?? {};
+      session.setTabIndicators(Object.keys(rest).length > 0 ? rest : null);
+    }
+  }, [session, faviconCache, live, tabs]);
 
   const {
     ref: surfaceSlotRef,

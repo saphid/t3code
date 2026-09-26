@@ -82,7 +82,7 @@
   "requires": [
     {
       "id": "t3.browser/sessions",
-      "versionRange": "^1.0.0"
+      "versionRange": "^1.1.0"
     },
     {
       "id": "t3.browser/local-servers",
