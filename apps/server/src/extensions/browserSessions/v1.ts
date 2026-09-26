@@ -66,15 +66,15 @@ const MAX_QUEUED_EVENTS = 128;
 const MAX_QUEUED_BYTES = 512 * 1024;
 const WRITE_METHODS = new Set(["open", "navigate", "close", ...BROWSER_SESSION_COMMANDS]);
 
-const failure = (operation: string, detail: string) =>
+export const failure = (operation: string, detail: string) =>
   new ExtensionOperationError({ operation, detail });
 const isOperationError = Schema.is(ExtensionOperationError);
 /** Named denials keep a stable prefix so callers can branch on the name. */
-const named = (operation: string, name: string, detail: string) =>
+export const named = (operation: string, name: string, detail: string) =>
   failure(operation, `${name}: ${detail}`);
 
 /** Native `_tag`s stay visible; only untagged causes collapse to a message. */
-const operationError = (operation: string) => (cause: unknown) => {
+export const operationError = (operation: string) => (cause: unknown) => {
   if (isOperationError(cause)) return cause;
   const tag =
     cause !== null &&
@@ -243,7 +243,7 @@ const projectNavigation = (
   }
 };
 
-const projectSession = (detail: PreviewManager.PreviewSessionDetail): BrowserSession => {
+export const projectSession = (detail: PreviewManager.PreviewSessionDetail): BrowserSession => {
   // Page state is read only from the owner host's fenced report; without one
   // the overlay fields are null, never fabricated defaults. Favicon bytes are
   // deliberately not projected (P08-FAVICON-REF).
@@ -444,6 +444,15 @@ export function createBrowserSessionsApiProvider(
             named(operation, "BrowserSessionInputError", "open input fails the declared schema."),
           ),
         );
+        if (safe.profileId !== undefined) {
+          // Choosing a profile is the t3.browser/profiles grant's authority;
+          // operate alone must not reach another profile's cookie jar.
+          return yield* named(
+            operation,
+            "BrowserProfileGrantRequired",
+            "opening under a named profile goes through t3.browser/profiles.open (t3.browser/profiles grant).",
+          );
+        }
         const before = yield* listDetails();
         if (before.sessions.length >= BROWSER_SESSION_LIMIT) {
           return yield* named(
@@ -457,7 +466,6 @@ export function createBrowserSessionsApiProvider(
             threadId,
             ...(safe.url === undefined ? {} : { url: safe.url }),
             ...(safe.viewport === undefined ? {} : { viewport: safe.viewport }),
-            ...(safe.profileId === undefined ? {} : { profileId: safe.profileId }),
           })
           .pipe(Effect.mapError(operationError(operation)));
         yield* postChecks(operation, scope.context, metadata, signal);

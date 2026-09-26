@@ -6148,6 +6148,295 @@ export const browserSessionsApi: TypedApi<{
 export const BROWSER_SESSIONS_API = browserSessionsApi.definition;
 
 /* ------------------------------------------------------------------------
+ * t3.browser/profiles — browser profiles and their privileged maintenance.
+ *
+ * A profile is an isolated cookie/storage jar (an Electron partition the
+ * desktop app owns), shared by every session opened under it in the
+ * environment. The desktop engine host executes every method, so without it
+ * each one fails `BrowserProfilesUnsupported: … (desktop-required)`; a host
+ * that lacks the operation fails `… (engine-unsupported)`.
+ *
+ * Each capability is its own grant, and holding one implies none of the
+ * others:
+ * - `t3.browser/profiles` — `list` (opaque id + display name only) and
+ *   `open`, which opens a session under a profile. A session's profile is
+ *   fixed at open, so switching means opening a new session.
+ *   `t3.browser/sessions.open` refuses `profileId` by name for the same
+ *   reason: operate alone must not choose a profile.
+ * - `t3.browser/clear-cookies` — drop cookies and site storage of one
+ *   profile. Every session in that profile is signed out, not just one page.
+ * - `t3.browser/clear-cache` — drop the HTTP cache of one profile.
+ * - `t3.browser/import-cookies` — list the browsers installed beside the
+ *   desktop app and import one browser profile's cookies. The desktop asks
+ *   the user to confirm each import; `declined` is the answer when they
+ *   refuse. Source profiles are opaque handles, and only counts come back —
+ *   never cookies, paths or keychain results.
+ *
+ * Clear and import always name a profile; there is no all-profiles form.
+ * An unknown profile fails `BrowserProfileNotFound`. `unknown` means the host
+ * did not answer within the bound (disconnect, or an unanswered import
+ * prompt) and the effect cannot be proven either way.
+ * --------------------------------------------------------------------- */
+export const BROWSER_PROFILES = "t3.browser/profiles";
+export const BROWSER_CLEAR_COOKIES = "t3.browser/clear-cookies";
+export const BROWSER_CLEAR_CACHE = "t3.browser/clear-cache";
+export const BROWSER_IMPORT_COOKIES = "t3.browser/import-cookies";
+
+export type BrowserProfileSummary = { readonly id: string; readonly name: string };
+export type BrowserProfileList = {
+  readonly profiles: readonly BrowserProfileSummary[];
+  /** The profile the desktop opens new sessions under. */
+  readonly defaultProfileId: string;
+};
+export type BrowserProfileOpenInput = {
+  readonly profileId: string;
+  readonly url?: string;
+  readonly viewport?: BrowserSessionViewport;
+};
+export type BrowserProfileTarget = { readonly profileId: string };
+export type BrowserProfileClearResult = {
+  readonly outcome: "cleared" | "unknown";
+  readonly profileId: string;
+};
+export type BrowserImportUnavailableReason =
+  | "notInstalled"
+  | "needsKeychainApproval"
+  | "keychainItemMissing"
+  | "needsFullDiskAccess"
+  | "browserRunning"
+  | "unsupportedPlatform";
+export type BrowserImportFailureReason =
+  | BrowserImportUnavailableReason
+  | "keychainUnavailable"
+  | "unknownSource"
+  | "unknownSourceProfile"
+  | "sessionUnavailable"
+  | "readFailed";
+export type BrowserImportSourceSummary = {
+  readonly id: string;
+  readonly name: string;
+  readonly unavailable?: BrowserImportUnavailableReason;
+  readonly profiles: readonly {
+    readonly handle: string;
+    readonly name: string;
+    readonly cookieCount?: number;
+  }[];
+};
+export type BrowserImportCookiesInput = {
+  readonly profileId: string;
+  readonly sourceId: string;
+  readonly sourceProfile: string;
+};
+export type BrowserImportCookiesResult =
+  | {
+      readonly outcome: "imported";
+      readonly profileId: string;
+      readonly imported: number;
+      readonly skipped: number;
+    }
+  | { readonly outcome: "declined" | "unknown"; readonly profileId: string }
+  | {
+      readonly outcome: "failed";
+      readonly profileId: string;
+      readonly reason: BrowserImportFailureReason;
+    };
+
+const BROWSER_IMPORT_UNAVAILABLE_REASONS = [
+  "notInstalled",
+  "needsKeychainApproval",
+  "keychainItemMissing",
+  "needsFullDiskAccess",
+  "browserRunning",
+  "unsupportedPlatform",
+] as const;
+const browserProfileId = { type: "string", minLength: 1, maxLength: 64 } as const;
+const browserProfileTargetInput = {
+  type: "object",
+  additionalProperties: false,
+  required: ["profileId"],
+  properties: { profileId: browserProfileId },
+} as const;
+const browserProfileClearResult = {
+  type: "object",
+  additionalProperties: false,
+  required: ["outcome", "profileId"],
+  properties: { outcome: { enum: ["cleared", "unknown"] }, profileId: browserProfileId },
+} as const;
+const browserImportLabel = { type: "string", minLength: 1, maxLength: 128 } as const;
+const browserImportHandle = { type: "string", minLength: 1, maxLength: 16 } as const;
+
+export const browserProfilesApi = defineApi<{
+  list: { input: Record<string, never>; output: BrowserProfileList };
+  open: { input: BrowserProfileOpenInput; output: BrowserSessionReceipt };
+  clearCookies: { input: BrowserProfileTarget; output: BrowserProfileClearResult };
+  clearCache: { input: BrowserProfileTarget; output: BrowserProfileClearResult };
+  listImportSources: {
+    input: Record<string, never>;
+    output: { readonly sources: readonly BrowserImportSourceSummary[] };
+  };
+  importCookies: { input: BrowserImportCookiesInput; output: BrowserImportCookiesResult };
+}>({
+  id: BROWSER_PROFILES,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "list",
+      effect: "read",
+      requiredGrants: [BROWSER_PROFILES],
+      inputSchema: browserSessionEmptyInput,
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["profiles", "defaultProfileId"],
+        properties: {
+          profiles: {
+            type: "array",
+            maxItems: 26,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["id", "name"],
+              properties: {
+                id: browserProfileId,
+                name: { type: "string", minLength: 1, maxLength: 48 },
+              },
+            },
+          },
+          defaultProfileId: browserProfileId,
+        },
+      },
+    },
+    {
+      name: "open",
+      effect: "write",
+      requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE, BROWSER_PROFILES],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["profileId"],
+        properties: {
+          profileId: browserProfileId,
+          url: browserSessionUrl,
+          viewport: browserSessionViewport,
+        },
+      },
+      outputSchema: browserSessionReceipt,
+    },
+    {
+      name: "clearCookies",
+      effect: "write",
+      requiredGrants: [BROWSER_CLEAR_COOKIES],
+      inputSchema: browserProfileTargetInput,
+      outputSchema: browserProfileClearResult,
+    },
+    {
+      name: "clearCache",
+      effect: "write",
+      requiredGrants: [BROWSER_CLEAR_CACHE],
+      inputSchema: browserProfileTargetInput,
+      outputSchema: browserProfileClearResult,
+    },
+    {
+      name: "listImportSources",
+      effect: "read",
+      requiredGrants: [BROWSER_IMPORT_COOKIES],
+      inputSchema: browserSessionEmptyInput,
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["sources"],
+        properties: {
+          sources: {
+            type: "array",
+            maxItems: 16,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["id", "name", "profiles"],
+              properties: {
+                id: browserImportLabel,
+                name: browserImportLabel,
+                unavailable: { enum: [...BROWSER_IMPORT_UNAVAILABLE_REASONS] },
+                profiles: {
+                  type: "array",
+                  maxItems: 32,
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["handle", "name"],
+                    properties: {
+                      handle: browserImportHandle,
+                      name: browserImportLabel,
+                      cookieCount: { type: "integer", minimum: 0 },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    {
+      name: "importCookies",
+      effect: "write",
+      requiredGrants: [BROWSER_IMPORT_COOKIES],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["profileId", "sourceId", "sourceProfile"],
+        properties: {
+          profileId: browserProfileId,
+          sourceId: browserImportLabel,
+          sourceProfile: browserImportHandle,
+        },
+      },
+      outputSchema: {
+        oneOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["outcome", "profileId", "imported", "skipped"],
+            properties: {
+              outcome: { const: "imported" },
+              profileId: browserProfileId,
+              imported: { type: "integer", minimum: 0 },
+              skipped: { type: "integer", minimum: 0 },
+            },
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["outcome", "profileId"],
+            properties: { outcome: { enum: ["declined", "unknown"] }, profileId: browserProfileId },
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["outcome", "profileId", "reason"],
+            properties: {
+              outcome: { const: "failed" },
+              profileId: browserProfileId,
+              reason: {
+                enum: [
+                  ...BROWSER_IMPORT_UNAVAILABLE_REASONS,
+                  "keychainUnavailable",
+                  "unknownSource",
+                  "unknownSourceProfile",
+                  "sessionUnavailable",
+                  "readFailed",
+                ],
+              },
+            },
+          },
+        ],
+      },
+    },
+  ],
+});
+export const BROWSER_PROFILES_API = browserProfilesApi.definition;
+
+/* ------------------------------------------------------------------------
  * t3.browser/frames — remote pixel transport for a browser session
  *
  * Actions never ride this contract; automation stays on t3.browser/sessions
@@ -8312,6 +8601,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   orchestrationControlApi.definition,
   browserLocalServersApi.definition,
   browserSessionsApi.definition,
+  browserProfilesApi.definition,
   browserFramesApi.definition,
   workspaceFilesApi.definition,
   workspaceTreeApi.definition,

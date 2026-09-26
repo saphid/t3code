@@ -1,0 +1,374 @@
+/**
+ * `t3.browser/profiles@1.0.0` — browser profiles and their privileged
+ * maintenance (list/open, clear cookies, clear cache, cookie import).
+ *
+ * Profiles are partitions the desktop app owns, so every method is executed
+ * by the environment's authenticated desktop engine host
+ * (`BrowserEngineHosts.dispatchProfile`); this adapter owns the authority
+ * checks and the closed projection of the host's answers. Each method sits
+ * behind its own grant, enforced per call by the broker from the catalogue.
+ * Without a host every method fails by name (desktop-required), and a clear
+ * or import always names one profile: the desktop's all-partitions clear is
+ * not reachable from here.
+ */
+import {
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  BrowserImportSourceId,
+  BrowserProfileId,
+  PreviewViewportSetting,
+  ThreadId,
+  TrimmedNonEmptyString,
+  type BrowserEngineProfileCommand,
+  type ExtensionOperationError,
+} from "@t3tools/contracts";
+import {
+  BROWSER_SESSION_LIMIT,
+  browserProfilesApi,
+  type BrowserImportCookiesResult,
+  type BrowserImportFailureReason,
+  type BrowserProfileClearResult,
+  type BrowserProfileList,
+  type BrowserSessionReceipt,
+} from "@t3tools/extension-sdk/catalogue";
+import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
+import type {
+  HostApiInvocationMetadata,
+  HostApiPrincipal,
+  HostApiProvider,
+} from "@t3tools/extension-runtime";
+import * as NodeCrypto from "node:crypto";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+
+import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
+import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
+import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
+import * as BrowserEngineHosts from "../../preview/BrowserEngineHosts.ts";
+import * as PreviewManager from "../../preview/Manager.ts";
+import { makeExtensionScopeResolver } from "../scope.ts";
+import { failure, named, operationError, projectSession } from "./v1.ts";
+
+const OPERATION = "browser.profiles";
+const WRITE_METHODS = new Set(["open", "clearCookies", "clearCache", "importCookies"]);
+
+const closedDecoder = <F extends Schema.Struct.Fields>(fields: F) =>
+  Schema.decodeUnknownEffect(Schema.Struct(fields), { onExcessProperty: "error" });
+const decodeEmpty = closedDecoder({});
+const decodeOpenInput = closedDecoder({
+  profileId: BrowserProfileId,
+  url: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(2048))),
+  viewport: Schema.optional(PreviewViewportSetting),
+});
+const decodeTarget = closedDecoder({ profileId: BrowserProfileId });
+const decodeImportInput = closedDecoder({
+  profileId: BrowserProfileId,
+  sourceId: BrowserImportSourceId,
+  sourceProfile: TrimmedNonEmptyString.check(Schema.isMaxLength(16)),
+});
+
+/**
+ * Import only ever targets an existing profile, so the desktop's two
+ * new-profile bookkeeping failures cannot honestly occur; anything else
+ * outside the public set reads as a failed read.
+ */
+const publicImportFailure = (reason: string): BrowserImportFailureReason => {
+  switch (reason) {
+    case "notInstalled":
+    case "needsKeychainApproval":
+    case "keychainItemMissing":
+    case "needsFullDiskAccess":
+    case "browserRunning":
+    case "unsupportedPlatform":
+    case "keychainUnavailable":
+    case "unknownSource":
+    case "unknownSourceProfile":
+    case "sessionUnavailable":
+    case "readFailed":
+      return reason;
+    default:
+      return "readFailed";
+  }
+};
+
+export function createBrowserProfilesApiProvider(
+  dependencies: Parameters<typeof makeExtensionScopeResolver>[0] & {
+    readonly preview: Pick<PreviewManager.PreviewManager["Service"], "open" | "listDetails">;
+    readonly engineHosts: Pick<BrowserEngineHosts.BrowserEngineHosts["Service"], "dispatchProfile">;
+  },
+): HostApiProvider {
+  const resolve = makeExtensionScopeResolver(dependencies);
+
+  const authorized = (principal: HostApiPrincipal | undefined, write: boolean) =>
+    principal !== undefined &&
+    principal.environmentId === dependencies.environmentId &&
+    principal.scopes.includes(AuthOrchestrationReadScope) &&
+    (!write || principal.scopes.includes(AuthOrchestrationOperateScope));
+
+  const invoke = (
+    method: string,
+    input: unknown,
+    context: ViewContext,
+    signal: AbortSignal,
+    metadata: HostApiInvocationMetadata,
+  ): Effect.Effect<Json, ExtensionOperationError> =>
+    Effect.gen(function* () {
+      signal.throwIfAborted();
+      const operation = `${OPERATION}.${method}`;
+      if (!authorized(metadata.principal, WRITE_METHODS.has(method)) || !metadata.assertAuthority) {
+        return yield* failure(operation, "Browser profiles authority is unavailable.");
+      }
+      const assertAuthority = metadata.assertAuthority;
+      const scope = yield* resolve(context);
+
+      /** Authority and scope are rechecked after the host answered, before any data returns. */
+      const postChecks = Effect.gen(function* () {
+        yield* Effect.tryPromise({
+          try: () => assertAuthority(),
+          catch: () => failure(operation, "Browser profiles authority was revoked."),
+        });
+        yield* resolve(scope.context);
+        signal.throwIfAborted();
+      });
+
+      const decode = <A, E>(decoder: (value: unknown) => Effect.Effect<A, E>) =>
+        decoder(input).pipe(
+          Effect.mapError(() =>
+            named(
+              operation,
+              "BrowserProfileInputError",
+              `${method} input fails the declared schema.`,
+            ),
+          ),
+        );
+
+      /**
+       * One host round trip. Refusals every method shares fail by name here;
+       * the caller projects the answers that belong to it.
+       */
+      const host = Effect.fn("BrowserProfiles.host")(function* (
+        command: BrowserEngineProfileCommand,
+      ) {
+        const answer = yield* dependencies.engineHosts.dispatchProfile(command);
+        if (answer.outcome === "no-host") {
+          return yield* named(
+            operation,
+            "BrowserProfilesUnsupported",
+            `'${method}' requires the T3 Code desktop app's browser engine; none is connected to this environment (desktop-required).`,
+          );
+        }
+        if (answer.outcome === "rejected") {
+          switch (answer.reason) {
+            case "unknown-profile":
+              return yield* named(
+                operation,
+                "BrowserProfileNotFound",
+                "the desktop has no browser profile with that id.",
+              );
+            case "not-applicable":
+              return yield* named(
+                operation,
+                "BrowserProfilesUnsupported",
+                `the desktop browser engine does not support '${method}' (engine-unsupported).`,
+              );
+            default:
+              return yield* named(
+                operation,
+                "BrowserProfileOperationFailed",
+                `the desktop browser engine failed '${method}' (${answer.reason}).`,
+              );
+          }
+        }
+        return answer;
+      });
+
+      const unexpected = () =>
+        named(
+          operation,
+          "BrowserProfileOperationFailed",
+          `the desktop answered '${method}' with an unexpected result.`,
+        );
+
+      const listProfiles = Effect.fn("BrowserProfiles.listProfiles")(function* () {
+        const answer = yield* host({ _tag: "listProfiles" });
+        if (answer.outcome === "unknown") {
+          return yield* named(
+            operation,
+            "BrowserProfilesUnavailable",
+            "the desktop did not answer the profile list in time (unknown).",
+          );
+        }
+        if (answer.outcome !== "profiles") return yield* unexpected();
+        return {
+          profiles: answer.profiles.map((profile) => ({ id: profile.id, name: profile.name })),
+          defaultProfileId: answer.defaultProfileId,
+        } satisfies BrowserProfileList;
+      });
+
+      const clear = Effect.fn("BrowserProfiles.clear")(function* (
+        tag: "clearCookies" | "clearCache",
+      ) {
+        const { profileId } = yield* decode(decodeTarget);
+        const answer = yield* host({ _tag: tag, profileId });
+        if (answer.outcome !== "applied" && answer.outcome !== "unknown") {
+          return yield* unexpected();
+        }
+        yield* postChecks;
+        return {
+          outcome: answer.outcome === "applied" ? "cleared" : "unknown",
+          profileId,
+        } satisfies BrowserProfileClearResult;
+      });
+
+      switch (method) {
+        case "list": {
+          yield* decode(decodeEmpty);
+          const list = yield* listProfiles();
+          yield* postChecks;
+          return list;
+        }
+        case "open": {
+          const safe = yield* decode(decodeOpenInput);
+          const threadIdRaw = scope.context.resource.threadId;
+          if (!threadIdRaw) {
+            return yield* failure(
+              operation,
+              "Opening a browser session requires a thread-scoped context.",
+            );
+          }
+          const threadId = ThreadId.make(threadIdRaw);
+          // The host is the only authority on which profiles exist; an
+          // unknown id would otherwise mint an orphan partition at attach.
+          const { profiles } = yield* listProfiles();
+          if (!profiles.some((profile) => profile.id === safe.profileId)) {
+            return yield* named(
+              operation,
+              "BrowserProfileNotFound",
+              "the desktop has no browser profile with that id.",
+            );
+          }
+          const listDetails = () =>
+            dependencies.preview
+              .listDetails({ threadId })
+              .pipe(Effect.mapError(operationError(operation)));
+          const before = yield* listDetails();
+          if (before.sessions.length >= BROWSER_SESSION_LIMIT) {
+            return yield* named(
+              operation,
+              "BrowserSessionLimitExceeded",
+              `thread already holds ${BROWSER_SESSION_LIMIT} sessions.`,
+            );
+          }
+          const snapshot = yield* dependencies.preview
+            .open({
+              threadId,
+              profileId: safe.profileId,
+              ...(safe.url === undefined ? {} : { url: safe.url }),
+              ...(safe.viewport === undefined ? {} : { viewport: safe.viewport }),
+            })
+            .pipe(Effect.mapError(operationError(operation)));
+          yield* postChecks;
+          const after = yield* listDetails();
+          const detail = after.sessions.find((entry) => entry.snapshot.tabId === snapshot.tabId);
+          if (!detail) {
+            return yield* failure(
+              operation,
+              "Opened session is not present in the post-open read.",
+            );
+          }
+          return {
+            commandId: NodeCrypto.randomUUID(),
+            outcome: "accepted",
+            serverEpoch: after.serverEpoch,
+            revision: after.revision,
+            session: projectSession(detail),
+          } satisfies BrowserSessionReceipt;
+        }
+        case "clearCookies":
+        case "clearCache":
+          return yield* clear(method);
+        case "listImportSources": {
+          yield* decode(decodeEmpty);
+          const answer = yield* host({ _tag: "listImportSources" });
+          if (answer.outcome === "unknown") {
+            return yield* named(
+              operation,
+              "BrowserProfilesUnavailable",
+              "the desktop did not answer the import source list in time (unknown).",
+            );
+          }
+          if (answer.outcome !== "import-sources") return yield* unexpected();
+          yield* postChecks;
+          return {
+            sources: answer.sources.map((source) => ({
+              id: source.id,
+              name: source.name,
+              ...(source.unavailable === undefined ? {} : { unavailable: source.unavailable }),
+              profiles: source.profiles.map((profile) => ({
+                handle: profile.handle,
+                name: profile.name,
+                ...(profile.cookieCount === undefined ? {} : { cookieCount: profile.cookieCount }),
+              })),
+            })),
+          };
+        }
+        case "importCookies": {
+          const safe = yield* decode(decodeImportInput);
+          const answer = yield* host({
+            _tag: "importCookies",
+            profileId: safe.profileId,
+            sourceId: safe.sourceId,
+            sourceProfile: safe.sourceProfile,
+            requester: metadata.rootCallerId.slice(0, 128) || "an extension",
+          });
+          let result: BrowserImportCookiesResult;
+          switch (answer.outcome) {
+            case "imported":
+              result = {
+                outcome: "imported",
+                profileId: safe.profileId,
+                imported: answer.imported,
+                skipped: answer.skipped,
+              };
+              break;
+            case "declined":
+            case "unknown":
+              result = { outcome: answer.outcome, profileId: safe.profileId };
+              break;
+            case "import-failed":
+              result = {
+                outcome: "failed",
+                profileId: safe.profileId,
+                reason: publicImportFailure(answer.reason),
+              };
+              break;
+            default:
+              return yield* unexpected();
+          }
+          yield* postChecks;
+          return result;
+        }
+        default:
+          return yield* failure(operation, "Browser profiles method is unavailable.");
+      }
+    });
+
+  return {
+    providerId: "t3.host-browser-profiles",
+    definition: browserProfilesApi.definition,
+    requiresRootAuthority: true,
+    invoke: (method, input, context, signal, metadata) =>
+      Effect.runPromise(invoke(method, input, context, signal, metadata), { signal }),
+  };
+}
+
+export const makeBrowserProfilesApiProvider = Effect.fn("BrowserProfilesApi.make")(function* () {
+  const environment = yield* ServerEnvironment;
+  return createBrowserProfilesApiProvider({
+    environmentId: yield* environment.getEnvironmentId,
+    projects: yield* ProjectionProjectRepository,
+    threads: yield* ProjectionThreadRepository,
+    preview: yield* PreviewManager.PreviewManager,
+    engineHosts: yield* BrowserEngineHosts.BrowserEngineHosts,
+  });
+});

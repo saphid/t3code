@@ -2,6 +2,7 @@ import {
   BrowserEnginePageStatus,
   type BrowserEngineCommand,
   type BrowserEngineHostStreamEvent,
+  type BrowserImportSource,
   type DesktopPreviewTabState,
   EnvironmentId,
   ThreadId,
@@ -14,6 +15,8 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   createEngineHostEventHandler,
   executeEngineCommand,
+  executeProfileCommand,
+  type ProfileCommandDeps,
   forgetHostedTab,
   HANDLED_COMMANDS_LIMIT,
   recordHostedTabState,
@@ -183,7 +186,13 @@ describe("createEngineHostEventHandler", () => {
   const setup = () => {
     const bridge = makeBridge();
     const sendResult = vi.fn();
-    const onResult = createEngineHostEventHandler({ environmentId, bridge, sendResult });
+    const onResult = createEngineHostEventHandler({
+      environmentId,
+      bridge,
+      sendResult,
+      profiles: async () => ({ profiles: [], defaultProfileId: "default" }),
+      confirm: async () => false,
+    });
     const deliver = (event: BrowserEngineHostStreamEvent) => onResult(AsyncResult.success(event));
     return { bridge, sendResult, onResult, deliver };
   };
@@ -237,5 +246,184 @@ describe("createEngineHostEventHandler", () => {
     deliver(command("command-0"));
     await settle();
     expect(bridge.refresh).toHaveBeenCalledTimes(HANDLED_COMMANDS_LIMIT + 2);
+  });
+});
+
+describe("executeProfileCommand", () => {
+  const environmentId = EnvironmentId.make("env-profiles");
+  const PROFILES = [
+    { id: "default", name: "Default", kind: "persistent" as const },
+    { id: "incognito", name: "Incognito", kind: "incognito" as const },
+    { id: "work", name: "Work", kind: "persistent" as const },
+  ];
+  const SOURCES: ReadonlyArray<BrowserImportSource> = [
+    {
+      id: "chrome",
+      name: "Google Chrome",
+      profiles: [
+        { directory: "Default", name: "Person 1", cookieCount: 40 },
+        { directory: "Profile 3", name: "Work account" },
+      ],
+    },
+    { id: "safari", name: "Safari", profiles: [], unavailable: "needsFullDiskAccess" },
+  ];
+  const makeDeps = (overrides: Partial<ProfileCommandDeps> = {}) => {
+    const bridge = {
+      clearCookies: vi.fn(async (_environmentId: EnvironmentId, _profileId?: string) => {}),
+      clearCache: vi.fn(async (_environmentId: EnvironmentId, _profileId?: string) => {}),
+      listBrowserImportSources: vi.fn(async () => SOURCES),
+      importBrowserCookies: vi.fn(async () => ({
+        imported: 38,
+        skipped: 2,
+        skippedDomains: ["expired.example"],
+      })),
+    };
+    const confirm = vi.fn(async (_message: string) => true);
+    const deps: ProfileCommandDeps = {
+      environmentId,
+      bridge,
+      profiles: async () => ({ profiles: PROFILES, defaultProfileId: "work" }),
+      confirm,
+      ...overrides,
+    };
+    return { deps, bridge, confirm };
+  };
+
+  it("lists opaque ids and names with the default new tabs open under", async () => {
+    const { deps } = makeDeps();
+    expect(await executeProfileCommand(deps, { _tag: "listProfiles" })).toEqual({
+      outcome: "profiles",
+      profiles: [
+        { id: "default", name: "Default" },
+        { id: "incognito", name: "Incognito" },
+        { id: "work", name: "Work" },
+      ],
+      defaultProfileId: "work",
+    });
+  });
+
+  it("clears exactly the named profile's partition, never every partition", async () => {
+    const { deps, bridge } = makeDeps();
+    expect(await executeProfileCommand(deps, { _tag: "clearCookies", profileId: "work" })).toEqual({
+      outcome: "applied",
+    });
+    expect(bridge.clearCookies).toHaveBeenCalledExactlyOnceWith(environmentId, "work");
+    expect(bridge.clearCache).not.toHaveBeenCalled();
+    expect(await executeProfileCommand(deps, { _tag: "clearCache", profileId: "default" })).toEqual(
+      { outcome: "applied" },
+    );
+    expect(bridge.clearCache).toHaveBeenCalledExactlyOnceWith(environmentId, "default");
+    expect(bridge.clearCookies).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a profile the settings list does not hold without touching the bridge", async () => {
+    const { deps, bridge, confirm } = makeDeps();
+    for (const command of [
+      { _tag: "clearCookies", profileId: "removed" },
+      { _tag: "clearCache", profileId: "removed" },
+      {
+        _tag: "importCookies",
+        profileId: "removed",
+        sourceId: "chrome",
+        sourceProfile: "p0",
+        requester: "t3.browser",
+      },
+    ] as const) {
+      expect(await executeProfileCommand(deps, command)).toEqual({
+        outcome: "rejected",
+        reason: "unknown-profile",
+      });
+    }
+    expect(bridge.clearCookies).not.toHaveBeenCalled();
+    expect(bridge.clearCache).not.toHaveBeenCalled();
+    expect(bridge.importBrowserCookies).not.toHaveBeenCalled();
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it("names a bridge that lacks the operation and a bridge that fails it", async () => {
+    const { deps } = makeDeps({ bridge: {} });
+    expect(await executeProfileCommand(deps, { _tag: "clearCache", profileId: "work" })).toEqual({
+      outcome: "rejected",
+      reason: "not-applicable",
+    });
+    const failing = makeDeps();
+    failing.bridge.clearCookies.mockRejectedValueOnce(new Error("partition busy"));
+    expect(
+      await executeProfileCommand(failing.deps, { _tag: "clearCookies", profileId: "work" }),
+    ).toEqual({ outcome: "rejected", reason: "failed" });
+  });
+
+  it("lists import sources with handles in place of profile directories", async () => {
+    const { deps } = makeDeps();
+    const answer = await executeProfileCommand(deps, { _tag: "listImportSources" });
+    expect(answer).toEqual({
+      outcome: "import-sources",
+      sources: [
+        {
+          id: "chrome",
+          name: "Google Chrome",
+          profiles: [
+            { handle: "p0", name: "Person 1", cookieCount: 40 },
+            { handle: "p1", name: "Work account" },
+          ],
+        },
+        { id: "safari", name: "Safari", unavailable: "needsFullDiskAccess", profiles: [] },
+      ],
+    });
+    expect(JSON.stringify(answer)).not.toContain("Profile 3");
+  });
+
+  const importCommand = (sourceProfile = "p1", sourceId: "chrome" | "safari" = "chrome") =>
+    ({
+      _tag: "importCookies",
+      profileId: "work",
+      sourceId,
+      sourceProfile,
+      requester: "t3.browser",
+    }) as const;
+
+  it("imports only after the user confirms, resolving the handle to its directory", async () => {
+    const { deps, bridge, confirm } = makeDeps();
+    expect(await executeProfileCommand(deps, importCommand())).toEqual({
+      outcome: "imported",
+      imported: 38,
+      skipped: 2,
+    });
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(confirm.mock.calls[0]![0]).toContain("t3.browser");
+    expect(confirm.mock.calls[0]![0]).toContain("Google Chrome (Work account)");
+    expect(confirm.mock.calls[0]![0]).toContain('"Work"');
+    expect(bridge.importBrowserCookies).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      sourceId: "chrome",
+      sourceProfileDirectory: "Profile 3",
+      targetProfileId: "work",
+    });
+  });
+
+  it("a refused prompt reads nothing", async () => {
+    const { deps, bridge } = makeDeps({ confirm: async () => false });
+    expect(await executeProfileCommand(deps, importCommand())).toEqual({ outcome: "declined" });
+    expect(bridge.importBrowserCookies).not.toHaveBeenCalled();
+  });
+
+  it("names unknown handles, blocked sources and bridge failures before or after the prompt", async () => {
+    const { deps, bridge, confirm } = makeDeps();
+    expect(await executeProfileCommand(deps, importCommand("p7"))).toEqual({
+      outcome: "import-failed",
+      reason: "unknownSourceProfile",
+    });
+    expect(await executeProfileCommand(deps, importCommand("p0", "safari"))).toEqual({
+      outcome: "import-failed",
+      reason: "needsFullDiskAccess",
+    });
+    expect(confirm).not.toHaveBeenCalled();
+    bridge.importBrowserCookies.mockRejectedValueOnce(
+      new Error("Importing cookies from chrome failed: needsKeychainApproval."),
+    );
+    expect(await executeProfileCommand(deps, importCommand())).toEqual({
+      outcome: "import-failed",
+      reason: "needsKeychainApproval",
+    });
   });
 });

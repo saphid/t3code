@@ -24,6 +24,8 @@ import {
   type BrowserEngineHostReleaseInput,
   type BrowserEngineHostReportInput,
   type BrowserEngineHostStreamEvent,
+  type BrowserEngineProfileAnswer,
+  type BrowserEngineProfileCommand,
   type BrowserEngineSessionTarget,
   type ServerAuthBootstrapMethod,
 } from "@t3tools/contracts";
@@ -47,6 +49,12 @@ import * as PreviewManager from "./Manager.ts";
  */
 const COMMAND_ACK_TIMEOUT_MS = 10_000;
 
+/**
+ * Cookie import waits on the user: the host asks for confirmation and the OS
+ * may prompt for keychain access. Bounded all the same; silence is `unknown`.
+ */
+export const IMPORT_ACK_TIMEOUT_MS = 5 * 60_000;
+
 /** The authenticated socket a host call arrived on. Derived by the WS layer, never the payload. */
 export interface BrowserEngineHostSocket {
   readonly socketId: string;
@@ -69,11 +77,21 @@ export interface BrowserEngineDispatchInput {
   readonly command: BrowserEngineCommand;
 }
 
+export type BrowserEngineProfileDispatchOutcome =
+  | BrowserEngineProfileAnswer
+  | { readonly outcome: "applied" }
+  | { readonly outcome: "rejected"; readonly reason: BrowserEngineCommandRejection }
+  | { readonly outcome: "unknown" }
+  /** No desktop engine host is registered in this environment. */
+  | { readonly outcome: "no-host" };
+
+type HostAnswer = BrowserEngineHostCommandResultInput["result"] | { readonly outcome: "unknown" };
+
 interface HostConnection {
   readonly hostConnectionId: string;
   readonly socketId: string;
   readonly queue: Queue.Queue<BrowserEngineHostStreamEvent, Cause.Done>;
-  readonly pending: Map<string, Deferred.Deferred<BrowserEngineDispatchOutcome>>;
+  readonly pending: Map<string, Deferred.Deferred<HostAnswer>>;
 }
 
 export class BrowserEngineHosts extends Context.Service<
@@ -102,6 +120,14 @@ export class BrowserEngineHosts extends Context.Service<
     readonly dispatch: (
       input: BrowserEngineDispatchInput,
     ) => Effect.Effect<BrowserEngineDispatchOutcome>;
+    /**
+     * Sends an environment-level profile command to a registered host. Every
+     * desktop window shares one Electron session store, so any host answers
+     * for the environment; the earliest registered one is asked.
+     */
+    readonly dispatchProfile: (
+      command: BrowserEngineProfileCommand,
+    ) => Effect.Effect<BrowserEngineProfileDispatchOutcome>;
     /** Whether any engine host is registered in this environment right now. */
     readonly hasHost: Effect.Effect<boolean>;
   }
@@ -194,30 +220,64 @@ const make = Effect.gen(function* () {
       return Deferred.succeed(deferred, input.result).pipe(Effect.asVoid);
     });
 
+  /** Offers one frame and waits for its bounded answer; silence or disconnect is `unknown`. */
+  const send = (
+    host: HostConnection,
+    frame: (commandId: string) => BrowserEngineHostStreamEvent,
+    timeoutMs: number,
+  ) =>
+    Effect.gen(function* () {
+      const commandId = yield* randomId;
+      const deferred = yield* Deferred.make<HostAnswer>();
+      host.pending.set(commandId, deferred);
+      const offered = yield* Queue.offer(host.queue, frame(commandId));
+      // The host disconnected between lookup and offer; nothing was sent.
+      if (!offered) {
+        host.pending.delete(commandId);
+        return { outcome: "unknown" } as HostAnswer;
+      }
+      const outcome = yield* Deferred.await(deferred).pipe(
+        Effect.timeoutOption(timeoutMs),
+        Effect.ensuring(Effect.sync(() => host.pending.delete(commandId))),
+      );
+      return Option.getOrElse(outcome, (): HostAnswer => ({ outcome: "unknown" }));
+    });
+
   const dispatch: BrowserEngineHosts["Service"]["dispatch"] = (input) =>
     Effect.gen(function* () {
       const host = (yield* Ref.get(hosts)).get(input.hostConnectionId);
       if (host === undefined) return { outcome: "unknown" } as const;
-      const commandId = yield* randomId;
-      const deferred = yield* Deferred.make<BrowserEngineDispatchOutcome>();
-      host.pending.set(commandId, deferred);
-      const offered = yield* Queue.offer(host.queue, {
-        type: "command",
-        commandId,
-        target: input.target,
-        engineGeneration: input.engineGeneration,
-        command: input.command,
-      });
-      // The host disconnected between lookup and offer; nothing was sent.
-      if (!offered) {
-        host.pending.delete(commandId);
-        return { outcome: "unknown" } as const;
-      }
-      const outcome = yield* Deferred.await(deferred).pipe(
-        Effect.timeoutOption(COMMAND_ACK_TIMEOUT_MS),
-        Effect.ensuring(Effect.sync(() => host.pending.delete(commandId))),
+      const answer = yield* send(
+        host,
+        (commandId) => ({
+          type: "command",
+          commandId,
+          target: input.target,
+          engineGeneration: input.engineGeneration,
+          command: input.command,
+        }),
+        COMMAND_ACK_TIMEOUT_MS,
       );
-      return Option.getOrElse(outcome, () => ({ outcome: "unknown" }) as const);
+      switch (answer.outcome) {
+        case "applied":
+        case "rejected":
+        case "unknown":
+          return answer;
+        default:
+          // A profile answer to a page command is a confused host, not success.
+          return { outcome: "rejected", reason: "failed" } as const;
+      }
+    });
+
+  const dispatchProfile: BrowserEngineHosts["Service"]["dispatchProfile"] = (command) =>
+    Effect.gen(function* () {
+      const host = (yield* Ref.get(hosts)).values().next().value;
+      if (host === undefined) return { outcome: "no-host" } as const;
+      return yield* send(
+        host,
+        (commandId) => ({ type: "profile-command", commandId, command }),
+        command._tag === "importCookies" ? IMPORT_ACK_TIMEOUT_MS : COMMAND_ACK_TIMEOUT_MS,
+      );
     });
 
   return BrowserEngineHosts.of({
@@ -227,6 +287,7 @@ const make = Effect.gen(function* () {
     report,
     commandResult,
     dispatch,
+    dispatchProfile,
     hasHost: Effect.map(Ref.get(hosts), (current) => current.size > 0),
   });
 }).pipe(Effect.withSpan("BrowserEngineHosts.make"));

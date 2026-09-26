@@ -6,11 +6,25 @@ import { Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
 
 import { previewBridge } from "~/components/preview/previewBridge";
+import { readLocalApi } from "~/localApi";
 import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { resolveBrowserDefaults } from "./browserDefaults";
 import { createEngineHostEventHandler, useBrowserEngineHostStore } from "./browserEngineHost";
+
+/** Profiles as the settings list shows them, read once client settings have loaded. */
+const hostProfiles = async () => {
+  const defaults = await resolveBrowserDefaults();
+  return { profiles: defaults.profiles, defaultProfileId: defaults.profileId };
+};
+
+/** The in-app confirmation dialog; no dialog host (or no local API) reads as refused. */
+const hostConfirm = async (message: string) =>
+  (await readLocalApi()
+    ?.dialogs.confirm(message)
+    .catch(() => false)) ?? false;
 
 /**
  * Registers this desktop window as the engine host of the desktop's own
@@ -44,6 +58,8 @@ function BrowserEngineHostConnectionInner(props: { readonly environmentId: Envir
           environmentId,
           bridge: previewBridge,
           sendResult: (input) => commandResult({ environmentId, input }),
+          profiles: hostProfiles,
+          confirm: hostConfirm,
         }),
         { immediate: true },
       );

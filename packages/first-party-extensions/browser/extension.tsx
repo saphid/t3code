@@ -8,6 +8,7 @@ import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import {
   browserFramesApi,
   browserLocalServersApi,
+  browserProfilesApi,
   browserSessionsApi,
   composerContextApi,
   filePresentationApi,
@@ -25,7 +26,7 @@ import {
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useBrowserCapture } from "./capture.js";
 import { mintWorkspaceFileUrl } from "./fileOpen.js";
@@ -52,6 +53,8 @@ import {
   type PageVerb,
 } from "./pageControls.js";
 import { PageMenu, ZoomIndicator } from "./pageMenu.js";
+import { bindProfilesApi, ProfileSection } from "./profileMenu.js";
+import { profileFailureMessage, reopenRequest } from "./profiles.js";
 import { BrowserViewportToolbar, ViewportDeviceFrame, useElementSize } from "./viewportToolbar.js";
 import {
   FALLBACK_RESPONSIVE_VIEWPORT_SIZE,
@@ -238,6 +241,8 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const [tabs, setTabs] = useState<readonly BrowserSession[]>([]);
   const tabsEpoch = useRef<string | null>(null);
   const [fault, setFault] = useState<string | null>(null);
+  // Named result of the last profile action (clear/import) for the status line.
+  const [profileNote, setProfileNote] = useState<string | null>(null);
   const [visible, setVisible] = useState(session.visible);
   const heldRef = useRef(held);
   const historyRef = useRef(history);
@@ -248,6 +253,8 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const [viewportPending, setViewportPending] = useState(false);
   const viewportCommitter = useRef<ViewportCommitter | null>(null);
   const themeVars = useThemeVars(host, session, visible);
+  // Stable per view: the profile group reads the list once per menu open.
+  const profilesApi = useMemo(() => bindProfilesApi(host, session.context), [host, session]);
   const localServers = useLocalServers(host, session, visible && held === null);
   useEffect(() => {
     heldRef.current = held;
@@ -510,6 +517,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         setHeld(next);
         setLive(receipt.session);
         setFault(null);
+        setProfileNote(null);
         const requested = receipt.session.requestedUrl;
         const base: { url?: string; relativePath?: string; tabId: string; serverEpoch: string } = {
           ...restoreTarget(fileSourceRef.current, requested),
@@ -548,6 +556,8 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       current && surfaceLease?.state.kind !== "ended" && !isRecoveryExhausted(live)
         ? current
         : null;
+    // A page reopened after its session died keeps that session's profile.
+    const reopen = usable ? null : reopenRequest(current ? live : null, url);
     dispatch((signal) =>
       usable
         ? api.invoke(
@@ -560,7 +570,24 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             },
             signal,
           )
-        : api.invoke("open", { url }, signal),
+        : reopen?.api === "profiles"
+          ? profilesApi.invoke("open", reopen.input, signal).catch((error: unknown) => {
+              throw new Error(profileFailureMessage("open", error));
+            })
+          : api.invoke("open", { url }, signal),
+    );
+  };
+
+  /** Switching profile opens the current page in a new session under it (a profile is fixed at open). */
+  const openInProfile = (profileId: string) => {
+    const url = live?.navigation.url ?? live?.requestedUrl ?? undefined;
+    setProfileNote(null);
+    dispatch((signal) =>
+      profilesApi
+        .invoke("open", { profileId, ...(url === undefined ? {} : { url }) }, signal)
+        .catch((error: unknown) => {
+          throw new Error(profileFailureMessage("open", error));
+        }),
     );
   };
 
@@ -952,7 +979,20 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           blockReason={pageBlock}
           run={(verb) => runPage(verb)}
           zoomStep={zoomStep}
-        />
+        >
+          {held && live && (
+            <ProfileSection
+              session={live}
+              api={profilesApi}
+              signal={session.signal}
+              onOpenInProfile={openInProfile}
+              report={(message) => {
+                setFault(null);
+                setProfileNote(message);
+              }}
+            />
+          )}
+        </PageMenu>
       </header>
       {tabs.length > 0 && (
         <div
@@ -1026,6 +1066,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       >
         {fault ??
           captureStatus ??
+          profileNote ??
           (held && live
             ? `${live.navigation.title || live.navigation.url || "session"} — ${engineStatusLabel(live)}`
             : describeStatus(state))}
@@ -1190,6 +1231,7 @@ const authored = defineExtension({
   serverEntry: "server.ts",
   requires: [
     requireApi(browserSessionsApi),
+    requireApi(browserProfilesApi),
     requireApi(browserLocalServersApi),
     requireApi(browserFramesApi),
     requireApi(resourcesLeaseApi),

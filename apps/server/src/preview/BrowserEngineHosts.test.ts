@@ -138,6 +138,120 @@ it.layer(
   );
 });
 
+it.layer(
+  BrowserEngineHosts.layer.pipe(
+    Layer.provideMerge(PreviewManager.layer),
+    Layer.provide(NodeServices.layer),
+  ),
+)("BrowserEngineHosts profile commands", (it) => {
+  it.effect("with no registered host a profile command is no-host, never unknown", () =>
+    Effect.gen(function* () {
+      const hosts = yield* BrowserEngineHosts.BrowserEngineHosts;
+      expect(yield* hosts.dispatchProfile({ _tag: "listProfiles" })).toEqual({
+        outcome: "no-host",
+      });
+    }),
+  );
+
+  it.effect("a profile command rides its own frame and returns the host's answer", () =>
+    Effect.gen(function* () {
+      const hosts = yield* BrowserEngineHosts.BrowserEngineHosts;
+      const { hostConnectionId, events } = yield* registerHost(hosts, DESKTOP);
+      const pending = yield* Effect.forkChild(
+        hosts.dispatchProfile({ _tag: "clearCookies", profileId: "work" }),
+      );
+      const frame = yield* Queue.take(events);
+      expect(frame).toMatchObject({
+        type: "profile-command",
+        command: { _tag: "clearCookies", profileId: "work" },
+      });
+      if (frame.type !== "profile-command") throw new Error("expected a profile frame");
+      // Another socket cannot answer for this host.
+      const otherWindow = { socketId: "desktop-ws-2", grantMethod: "desktop-bootstrap" } as const;
+      expect(
+        yield* reasonOf(
+          hosts.commandResult(otherWindow, {
+            hostConnectionId,
+            commandId: frame.commandId,
+            result: { outcome: "applied" },
+          }),
+        ),
+      ).toBe("host-not-registered");
+      yield* hosts.commandResult(DESKTOP, {
+        hostConnectionId,
+        commandId: frame.commandId,
+        result: { outcome: "rejected", reason: "unknown-profile" },
+      });
+      expect(yield* Fiber.join(pending)).toEqual({
+        outcome: "rejected",
+        reason: "unknown-profile",
+      });
+    }),
+  );
+
+  it.effect("cookie import waits past the ordinary bound but not forever", () =>
+    Effect.gen(function* () {
+      const hosts = yield* BrowserEngineHosts.BrowserEngineHosts;
+      const { events } = yield* registerHost(hosts, DESKTOP);
+      const pending = yield* Effect.forkChild(
+        hosts.dispatchProfile({
+          _tag: "importCookies",
+          profileId: "work",
+          sourceId: "chrome",
+          sourceProfile: "p0",
+          requester: "t3.browser",
+        }),
+      );
+      yield* Queue.take(events);
+      // The user is still answering the host prompt at the ordinary bound.
+      yield* TestClock.adjust("10 seconds");
+      expect(pending.pollUnsafe()).toBeUndefined();
+      yield* TestClock.adjust(BrowserEngineHosts.IMPORT_ACK_TIMEOUT_MS);
+      expect(yield* Fiber.join(pending)).toEqual({ outcome: "unknown" });
+    }),
+  );
+
+  it.effect("a host disconnect settles an in-flight profile command as unknown", () =>
+    Effect.gen(function* () {
+      const hosts = yield* BrowserEngineHosts.BrowserEngineHosts;
+      const { events, fiber } = yield* registerHost(hosts, DESKTOP);
+      const pending = yield* Effect.forkChild(
+        hosts.dispatchProfile({ _tag: "clearCache", profileId: "default" }),
+      );
+      yield* Queue.take(events);
+      yield* Fiber.interrupt(fiber);
+      expect(yield* Fiber.join(pending)).toEqual({ outcome: "unknown" });
+      expect(yield* hosts.dispatchProfile({ _tag: "listProfiles" })).toEqual({
+        outcome: "no-host",
+      });
+    }),
+  );
+
+  it.effect("a profile answer to a page command is refused, not treated as applied", () =>
+    Effect.gen(function* () {
+      const hosts = yield* BrowserEngineHosts.BrowserEngineHosts;
+      const target = yield* openClaimable;
+      const { hostConnectionId, events } = yield* registerHost(hosts, DESKTOP);
+      const pending = yield* Effect.forkChild(
+        hosts.dispatch({
+          hostConnectionId,
+          target,
+          engineGeneration: "1",
+          command: { _tag: "reload" },
+        }),
+      );
+      const frame = yield* Queue.take(events);
+      if (frame.type !== "command") throw new Error("expected a command frame");
+      yield* hosts.commandResult(DESKTOP, {
+        hostConnectionId,
+        commandId: frame.commandId,
+        result: { outcome: "declined" },
+      });
+      expect(yield* Fiber.join(pending)).toEqual({ outcome: "rejected", reason: "failed" });
+    }),
+  );
+});
+
 const DESKTOP_BOOTSTRAP_TOKEN = "desktop-bootstrap-token";
 
 const bearerRequest = (token: string) =>

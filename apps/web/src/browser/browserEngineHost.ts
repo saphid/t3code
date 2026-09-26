@@ -10,7 +10,13 @@
  */
 import {
   BROWSER_ENGINE_FAVICON_MAX_LENGTH,
+  BROWSER_ENGINE_IMPORT_SOURCE_MAX,
+  BROWSER_ENGINE_IMPORT_SOURCE_PROFILE_MAX,
+  BROWSER_ENGINE_PROFILE_LIST_MAX,
+  BrowserImportFailureReason,
   type BrowserEngineCommand,
+  type BrowserEngineProfileCommand,
+  type BrowserProfile,
   type BrowserEngineHostCommandResultInput,
   type BrowserEngineHostStreamEvent,
   type BrowserEnginePageStatus,
@@ -172,6 +178,132 @@ export async function executeEngineCommand(
   return { outcome: "applied" };
 }
 
+type ProfileCommandBridge = Pick<
+  DesktopPreviewBridge,
+  "clearCookies" | "clearCache" | "listBrowserImportSources" | "importBrowserCookies"
+>;
+
+export interface ProfileCommandDeps {
+  readonly environmentId: EnvironmentId;
+  readonly bridge: Partial<ProfileCommandBridge>;
+  /** The hydrated profile list and the profile new tabs open under. */
+  readonly profiles: () => Promise<{
+    readonly profiles: ReadonlyArray<BrowserProfile>;
+    readonly defaultProfileId: string;
+  }>;
+  /** Asks the user at this desktop; `false` when refused or no prompt could show. */
+  readonly confirm: (message: string) => Promise<boolean>;
+}
+
+const IMPORT_LABEL_MAX = 128;
+const importHandle = (index: number) => `p${index}`;
+const importIndex = (handle: string) => {
+  const match = /^p(\d{1,2})$/.exec(handle);
+  return match ? Number(match[1]) : -1;
+};
+
+/** The desktop bridge flattens import errors to their message; the reason rides in it. */
+const importFailureReason = (cause: unknown): BrowserImportFailureReason => {
+  const message = String((cause as { message?: unknown } | undefined)?.message ?? "");
+  return (
+    BrowserImportFailureReason.literals.find((reason) => message.includes(`failed: ${reason}.`)) ??
+    "readFailed"
+  );
+};
+
+/**
+ * Runs one server-issued `t3.browser/profiles` command against this desktop's
+ * partitions. A clear or import always names a known profile — the bridge's
+ * "no profile means every partition" form is never reached. Import asks the
+ * user here before any source browser is read.
+ */
+export async function executeProfileCommand(
+  deps: ProfileCommandDeps,
+  command: BrowserEngineProfileCommand,
+): Promise<CommandResult> {
+  const { bridge, environmentId } = deps;
+  try {
+    if (command._tag === "listProfiles") {
+      const { profiles, defaultProfileId } = await deps.profiles();
+      return {
+        outcome: "profiles",
+        profiles: profiles
+          .slice(0, BROWSER_ENGINE_PROFILE_LIST_MAX)
+          .map((profile) => ({ id: profile.id, name: profile.name })),
+        defaultProfileId,
+      };
+    }
+    if (command._tag === "listImportSources") {
+      if (!bridge.listBrowserImportSources) return rejected("not-applicable");
+      const sources = await bridge.listBrowserImportSources();
+      return {
+        outcome: "import-sources",
+        sources: sources.slice(0, BROWSER_ENGINE_IMPORT_SOURCE_MAX).map((source) => ({
+          id: source.id,
+          name: source.name.slice(0, IMPORT_LABEL_MAX),
+          ...(source.unavailable === undefined ? {} : { unavailable: source.unavailable }),
+          profiles: source.profiles
+            .slice(0, BROWSER_ENGINE_IMPORT_SOURCE_PROFILE_MAX)
+            .map((profile, index) => ({
+              handle: importHandle(index),
+              name: profile.name.slice(0, IMPORT_LABEL_MAX),
+              ...(profile.cookieCount === undefined || profile.cookieCount < 0
+                ? {}
+                : { cookieCount: profile.cookieCount }),
+            })),
+        })),
+      };
+    }
+    const { profiles } = await deps.profiles();
+    const target = profiles.find((profile) => profile.id === command.profileId);
+    if (target === undefined) return rejected("unknown-profile");
+    switch (command._tag) {
+      case "clearCookies":
+        if (!bridge.clearCookies) return rejected("not-applicable");
+        await bridge.clearCookies(environmentId, target.id);
+        return { outcome: "applied" };
+      case "clearCache":
+        if (!bridge.clearCache) return rejected("not-applicable");
+        await bridge.clearCache(environmentId, target.id);
+        return { outcome: "applied" };
+      case "importCookies": {
+        if (!bridge.listBrowserImportSources || !bridge.importBrowserCookies) {
+          return rejected("not-applicable");
+        }
+        // Re-listed here so the handle resolves against what is installed now.
+        const source = (await bridge.listBrowserImportSources()).find(
+          (candidate) => candidate.id === command.sourceId,
+        );
+        if (source === undefined) return { outcome: "import-failed", reason: "unknownSource" };
+        if (source.unavailable !== undefined) {
+          return { outcome: "import-failed", reason: source.unavailable };
+        }
+        const sourceProfile = source.profiles[importIndex(command.sourceProfile)];
+        if (sourceProfile === undefined) {
+          return { outcome: "import-failed", reason: "unknownSourceProfile" };
+        }
+        const confirmed = await deps.confirm(
+          `${command.requester} wants to import cookies from ${source.name} (${sourceProfile.name}) into the "${target.name}" browser profile. Sites signed in there will be signed in here too.`,
+        );
+        if (!confirmed) return { outcome: "declined" };
+        try {
+          const result = await bridge.importBrowserCookies({
+            environmentId,
+            sourceId: source.id,
+            sourceProfileDirectory: sourceProfile.directory,
+            targetProfileId: target.id,
+          });
+          return { outcome: "imported", imported: result.imported, skipped: result.skipped };
+        } catch (cause) {
+          return { outcome: "import-failed", reason: importFailureReason(cause) };
+        }
+      }
+    }
+  } catch {
+    return rejected("failed");
+  }
+}
+
 /** Command ids already executed; a resubscribed stream must never replay one. */
 export const HANDLED_COMMANDS_LIMIT = 256;
 
@@ -183,8 +315,10 @@ export const HANDLED_COMMANDS_LIMIT = 256;
  */
 export function createEngineHostEventHandler(input: {
   readonly environmentId: EnvironmentId;
-  readonly bridge: EngineCommandBridge | null;
+  readonly bridge: (EngineCommandBridge & Partial<ProfileCommandBridge>) | null;
   readonly sendResult: (result: BrowserEngineHostCommandResultInput) => unknown;
+  readonly profiles: ProfileCommandDeps["profiles"];
+  readonly confirm: ProfileCommandDeps["confirm"];
 }): (result: AsyncResult.AsyncResult<BrowserEngineHostStreamEvent, unknown>) => void {
   const { environmentId, bridge, sendResult } = input;
   const handled = new Set<string>();
@@ -206,6 +340,15 @@ export function createEngineHostEventHandler(input: {
     handled.add(event.commandId);
     if (handled.size > HANDLED_COMMANDS_LIMIT) {
       handled.delete(handled.values().next().value!);
+    }
+    if (event.type === "profile-command") {
+      void executeProfileCommand(
+        { environmentId, bridge, profiles: input.profiles, confirm: input.confirm },
+        event.command,
+      ).then((outcome) =>
+        sendResult({ hostConnectionId, commandId: event.commandId, result: outcome }),
+      );
+      return;
     }
     const runtimeTabId = previewRuntimeTabId(
       { environmentId, threadId: event.target.threadId },
