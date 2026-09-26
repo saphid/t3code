@@ -101,13 +101,16 @@ export function shapeLogTail(
   let bytes = new TextEncoder().encode(
     redactLogSecrets(new TextDecoder().decode(region.subarray(offset))),
   );
+  // Earlier source bytes were withheld; the redacted bytes are cut only when
+  // they overflow `maxBytes`, and only that cut leaves a partial first line.
   let truncated = start > 0;
-  if (bytes.length > limits.maxBytes) {
+  const overflow = bytes.length > limits.maxBytes;
+  if (overflow) {
     bytes = bytes.subarray(bytes.length - limits.maxBytes);
     truncated = true;
   }
   let cut = 0;
-  if (truncated) {
+  if (overflow) {
     while (cut < bytes.length && (bytes[cut]! & 0xc0) === 0x80) cut++;
     const newline = bytes.indexOf(0x0a, cut);
     if (newline !== -1 && newline < bytes.length - 1) cut = newline + 1;

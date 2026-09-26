@@ -281,12 +281,15 @@ it("withholds a leading line whose secret name fell before the read", async () =
       truncated: true,
     });
   }
-  // A later complete line is still delivered.
-  await NodeFSP.appendFile(file, "\ndone\n");
-  expect(
-    ((await f.call("readTail", { runId: "a", source: "output", maxBytes: 128 })) as AgentLogTail)
-      .contents,
-  ).toBe("done\n");
+  // Later complete lines are all delivered when they fit.
+  await NodeFSP.appendFile(file, "\nFIRST-COMPLETE\nSECOND-COMPLETE\n");
+  expect(await f.call("readTail", { runId: "a", source: "output", maxBytes: 128 })).toEqual({
+    runId: "a",
+    source: "output",
+    contents: "FIRST-COMPLETE\nSECOND-COMPLETE\n",
+    byteLength: 20_041,
+    truncated: true,
+  });
 });
 
 it("gates on the orchestration:read principal and a thread scope, by name", async () => {

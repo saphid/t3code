@@ -18,14 +18,18 @@ const quoted = String.raw`(?:"(?:[^"\\\n]|\\.)*"?|\\"(?:[^"\\\n]|\\\\\\.|\\\\|\\
 
 // A PEM line break: raw, or escaped inside a JSON string.
 const pemBreak = String.raw`(?:\r?\n|\\r\\n|\\n)`;
+// Horizontal whitespace a PEM parser skips: raw, or an escaped tab.
+const pemSpace = String.raw`(?:[ \t]|\\t)`;
+const base64 = "[A-Za-z0-9+/=]+";
 /**
  * A PEM private-key block: the BEGIN marker ending its line, then whole
- * header or base64 lines, through END or the end of the read. Prose that
- * merely mentions the marker keeps its line, and a block without END stops
- * at the first line that is not key material.
+ * header or base64 lines (runs separated by whitespace, which is consumed),
+ * through END or the end of the read. Prose that merely mentions the marker
+ * keeps its line, and a block without END stops at the first line that is
+ * not key material.
  */
 const PEM_BLOCK = new RegExp(
-  String.raw`-----BEGIN[A-Z ]{0,40}PRIVATE KEY-----[ \t]*(?:${pemBreak}[ \t]*(?:[A-Za-z-]+:[ \t][^\r\n\\]*|[A-Za-z0-9+/=]+(?=[ \t]*(?:\r|\n|\\[rn]|-----END|$)))?)+(?:-----END[A-Z ]{0,40}PRIVATE KEY-----)?`,
+  String.raw`-----BEGIN[A-Z ]{0,40}PRIVATE KEY-----${pemSpace}*(?:${pemBreak}${pemSpace}*(?:[A-Za-z-]+:[ \t][^\r\n\\]*|${base64}(?:${pemSpace}+${base64})*${pemSpace}*(?=\r|\n|\\[rn]|-----END|$))?)+(?:-----END[A-Z ]{0,40}PRIVATE KEY-----)?`,
   "g",
 );
 
@@ -58,11 +62,10 @@ const RULES: ReadonlyArray<readonly [RegExp, (match: string, ...groups: string[]
     /\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|xox[abposr]-[A-Za-z0-9-]{10,}|(?:AKIA|ASIA)[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|glpat-[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})/g,
     () => LOG_REDACTED,
   ],
-  // Credentials embedded in URLs: scheme://user:pass@host.
-  [
-    /\b([a-z][a-z0-9+.-]*:\/\/)[^/\s:@"'\\]+:[^/\s@"'\\]+@/gi,
-    (_match, scheme) => `${scheme}${LOG_REDACTED}@`,
-  ],
+  // Credentials embedded in URLs: scheme://user:pass@host. Anchored on the
+  // `://` delimiter rather than the scheme, so a long run of scheme-like
+  // words is not rescanned from every word boundary.
+  [/(?<=[a-z0-9+.-]):\/\/[^/\s:@"'\\]+:[^/\s@"'\\]+@/gi, () => `://${LOG_REDACTED}@`],
 ];
 
 const perLine = (match: string) =>
@@ -79,26 +82,44 @@ const quoteLike = (value: string) => {
 };
 
 const PEM_END = /-----END[A-Z ]{0,40}PRIVATE KEY-----/g;
-const isKeyChar = (char: string) => /^[A-Za-z0-9+/=\r\n]$/.test(char);
+const isBase64 = (char: string | undefined) => char !== undefined && /[A-Za-z0-9+/=]/.test(char);
+const isSpace = (char: string | undefined) => char === " " || char === "\t" || char === "\r";
 
 /**
  * The tail of a key whose BEGIN line fell before the read: each END marker
- * plus the key material directly above it. Finds the markers first and walks
- * back from each once, never past the previous one, so the scan is linear.
+ * plus the key material directly above it (base64, whitespace, and raw or
+ * escaped line breaks). The marker must start its line, after indentation or
+ * directly after base64, so prose that mentions it keeps its line. Walks back
+ * from each marker once, never past the previous one, so the scan is linear.
  */
 function redactPemTails(text: string): string {
   let result = "";
   let floor = 0;
+  // Length of the escape (`\n`, `\r`, `\t`) or raw break ending at `at`, or 0.
+  const escapeBefore = (at: number) =>
+    at - 2 >= floor && text[at - 2] === "\\" && /[nrt]/.test(text[at - 1]!) ? 2 : 0;
   for (const marker of text.matchAll(PEM_END)) {
+    const escapedBreak = (at: number) => escapeBefore(at) > 0 && text[at - 1] !== "t";
     let start = marker.index;
+    while (start > floor && !escapedBreak(start)) {
+      if (isSpace(text[start - 1])) start -= 1;
+      else if (text[start - 1] === "t" && escapeBefore(start)) start -= 2;
+      else break;
+    }
+    if (start === marker.index)
+      while (start > floor && !escapedBreak(start) && isBase64(text[start - 1])) start -= 1;
+    const lineStart =
+      start === 0 || (start > floor && (text[start - 1] === "\n" || escapedBreak(start)));
+    if (!lineStart) continue;
     while (start > floor) {
-      if (start - 2 >= floor && text[start - 2] === "\\" && /[nr]/.test(text[start - 1]!))
-        start -= 2;
-      else if (isKeyChar(text[start - 1]!)) start -= 1;
+      const escape = escapeBefore(start);
+      if (escape) start -= escape;
+      else if (isBase64(text[start - 1]) || isSpace(text[start - 1]) || text[start - 1] === "\n")
+        start -= 1;
       else break;
     }
     // A bare END marker with no key material above it is prose; keep it.
-    if (!/[A-Za-z0-9+/=]/.test(text.slice(start, marker.index).replace(/\\[nr]/g, ""))) continue;
+    if (!/[A-Za-z0-9+/=]/.test(text.slice(start, marker.index).replace(/\\[nrt]/g, ""))) continue;
     const end = marker.index + marker[0].length;
     result += text.slice(floor, start) + perLine(text.slice(start, end));
     floor = end;

@@ -75,6 +75,33 @@ it("keeps prose that mentions a PEM delimiter, and later records", () => {
   );
 });
 
+it("redacts every line of a key whose lines carry spaces or tabs", () => {
+  const blocks = [
+    // Trailing whitespace, then spaces and a tab inside base64 lines.
+    "-----BEGIN PRIVATE KEY-----\nAAAA \nBBBB \n-----END PRIVATE KEY-----\n",
+    "-----BEGIN PRIVATE KEY-----\nAA AA\nBB\tBB \t\n  CC CC\n-----END PRIVATE KEY-----\n",
+  ];
+  for (const block of blocks) {
+    const lines = block.split("\n").length - 1;
+    const whole = `${R}\n`.repeat(lines);
+    expect(redactLogSecrets(block), block).toBe(whole);
+    expect(JSON.parse(redactLogSecrets(JSON.stringify({ content: block })))).toEqual({
+      content: `${R}\n`,
+    });
+    // Truncated tail: the BEGIN line fell before the read.
+    const tail = block.slice(block.indexOf("\n") + 1);
+    expect(redactLogSecrets(tail), tail).toBe(`${R}\n`.repeat(lines - 1));
+    const escaped = redactLogSecrets(JSON.stringify({ content: tail }));
+    expect(JSON.parse(escaped)).toEqual({ content: `${R}\n` });
+    // Truncated end: the read stops inside the key.
+    const cut = block.slice(0, block.indexOf("-----END"));
+    expect(redactLogSecrets(cut), cut).toBe(whole.slice(0, -`${R}\n`.length));
+    expect(JSON.parse(redactLogSecrets(JSON.stringify({ content: cut })))).toEqual({
+      content: R,
+    });
+  }
+});
+
 it("scans a full read region in linear time", () => {
   // A 16 KiB region is the most a refresh redacts (8 KiB budget plus 8 KiB of
   // context). The quadratic PEM-tail scan took ~300 ms on this input; the
@@ -86,6 +113,10 @@ it("scans a full read region in linear time", () => {
     "AAAA\n".repeat(3277),
     "-----BEGIN PRIVATE KEY-----\nAAAA".repeat(500),
     "x-----END PRIVATE KEY-----".repeat(630),
+    // Every word boundary starts a URL-scheme candidate.
+    "a.".repeat(8192),
+    `-----BEGIN PRIVATE KEY-----\n${"A ".repeat(8150)}.`,
+    `${"A \t".repeat(5450)}-----END PRIVATE KEY-----`,
   ];
   for (const input of inputs) {
     const runs = Array.from({ length: 3 }, () => {
