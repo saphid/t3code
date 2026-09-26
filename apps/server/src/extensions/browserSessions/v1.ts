@@ -396,9 +396,11 @@ export function createBrowserSessionsApiProvider(
           // Presentation needs a host-issued slot (P08-PRESENTATION-SLOT) —
           // a named deferral even while an engine host is registered.
           presentation: { supported: false, reason: "desktop-required" },
-          // Page verbs are listed only while an authenticated desktop engine
-          // host is registered; web, mobile and remote-only environments
-          // advertise resize alone.
+          // Discovery is environment-wide: page verbs are listed while any
+          // authenticated desktop engine host is registered (web, mobile and
+          // remote-only environments advertise resize alone). Whether a given
+          // session can run them is `session.engine.state`; an ownerless
+          // session still refuses them by name.
           commands: hasHost ? ["resize", ...ENGINE_COMMANDS] : ["resize"],
         } satisfies BrowserSessionCapabilities;
       }
