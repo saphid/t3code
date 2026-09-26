@@ -13,6 +13,7 @@ import type { ViewContext } from "./contracts.js";
 import type { WorkspaceReadTextInput, WorkspaceReadTextResult } from "./workspace.js";
 import { textEditsApi, textEditsApiV1 } from "./textEdits.js";
 import { workspaceResourcesApi, WORKSPACE_RESOURCES } from "./workspaceResources.js";
+import { agentSessionsApi } from "./agentSessions.js";
 import {
   themeProviderStateSchema,
   terminalAppearanceSchema,
@@ -8349,6 +8350,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   uiPanelsApi.definition,
   uiPreferencesApi.definition,
   uiExternalApi.definition,
+  agentSessionsApi.definition,
 ];
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
