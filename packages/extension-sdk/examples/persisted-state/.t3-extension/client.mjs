@@ -1585,13 +1585,70 @@ var __t3Client = (() => {
       }
     ]
   });
+  var clientPreferencesSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["wordWrap"],
+    properties: {
+      wordWrap: { type: "boolean" }
+    }
+  };
+  var clientPreferencesPatchSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      wordWrap: { type: "boolean" }
+    }
+  };
+  var clientPreferencesReceiptSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["applied", "preferences"],
+    properties: {
+      applied: { type: "boolean" },
+      reason: { type: "string", maxLength: 200 },
+      preferences: clientPreferencesSchema
+    }
+  };
+  var CLIENT_PREFERENCES_API = validateApiDefinition({
+    id: "t3.client/preferences",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getPreferences",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({}),
+        outputSchema: clientPreferencesSchema
+      },
+      {
+        name: "applyPreferences",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          writer: { type: "string", minLength: 1, maxLength: 160 },
+          patch: clientPreferencesPatchSchema
+        }, ["writer", "patch"]),
+        outputSchema: clientPreferencesReceiptSchema
+      }
+    ],
+    streams: [
+      {
+        name: "watchPreferences",
+        inputSchema: withTarget({}),
+        eventSchema: clientPreferencesSchema,
+        requiredGrants: []
+      }
+    ]
+  });
   var CLIENT_PROVIDER_APIS = new Map([
     CLIENT_THEME_API,
     CLIENT_NOTIFICATIONS_API,
     CLIENT_KEYBINDINGS_API,
     CLIENT_PANELS_API,
     CLIENT_COMPOSER_API,
-    CLIENT_TERMINAL_APPEARANCE_API
+    CLIENT_TERMINAL_APPEARANCE_API,
+    CLIENT_PREFERENCES_API
   ].map((definition) => [definition.id, definition]));
 
   // node_modules/@t3tools/extension-sdk/dist/catalogue.js
@@ -6087,6 +6144,9 @@ var __t3Client = (() => {
   var UI_KEYBINDINGS_VERSION = "1.1.0";
   var UI_NOTIFY = "t3.ui/notify";
   var UI_PANELS = "t3.ui/panels";
+  var UI_PREFERENCES = "t3.ui/preferences";
+  var UI_PREFERENCES_READ = "t3.ui/preferences.read";
+  var UI_PREFERENCES_WRITE = "t3.ui/preferences.write";
   var uiClientTargetSchema = {
     type: "object",
     additionalProperties: false,
@@ -6586,10 +6646,50 @@ var __t3Client = (() => {
       }
     ]
   });
+  var uiPreferencesApi = defineApi({
+    id: UI_PREFERENCES,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput([
+          "getPreferences",
+          "setPreferences",
+          "subscribePreferences"
+        ])
+      },
+      {
+        name: "getPreferences",
+        effect: "read",
+        requiredGrants: [UI_PREFERENCES_READ],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: clientPreferencesSchema
+      },
+      {
+        name: "setPreferences",
+        effect: "write",
+        requiredGrants: [UI_PREFERENCES_WRITE],
+        inputSchema: clientPreferencesPatchSchema,
+        outputSchema: clientPreferencesReceiptSchema
+      }
+    ],
+    streams: [
+      {
+        name: "subscribePreferences",
+        inputSchema: composerEmptyInputSchema,
+        eventSchema: clientPreferencesSchema,
+        requiredGrants: [UI_PREFERENCES_READ]
+      }
+    ]
+  });
   var UI_THEME_API = uiThemeApi.definition;
   var UI_KEYBINDINGS_API = uiKeybindingsApi.definition;
   var UI_NOTIFICATIONS_API = uiNotificationsApi.definition;
   var UI_PANELS_API = uiPanelsApi.definition;
+  var UI_PREFERENCES_API = uiPreferencesApi.definition;
   var orchestrationStatusApi = defineOrchestrationStatusApi(vcsDiffPreviewStreamEventSchema);
   var ORCHESTRATION_STATUS_API = orchestrationStatusApi.definition;
   var GENERIC_API_CATALOGUE = [
@@ -6628,7 +6728,8 @@ var __t3Client = (() => {
     uiThemeApi.definition,
     uiKeybindingsApi.definition,
     uiNotificationsApi.definition,
-    uiPanelsApi.definition
+    uiPanelsApi.definition,
+    uiPreferencesApi.definition
   ];
   function canonical(value) {
     if (Array.isArray(value))
