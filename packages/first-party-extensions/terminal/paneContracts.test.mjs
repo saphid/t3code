@@ -26,7 +26,9 @@ globalThis.__vtPaneContracts = recorded;
 
 // The bundle must resolve workspace packages (`@t3tools/*`, react) — it has
 // to live under the repo for node to walk up to the workspace node_modules.
-const bundleDir = NodeFS.mkdtempSync(NodePath.join(packageDir, ".pane-contracts-"));
+// It goes inside the package's node_modules because sibling test files copy
+// the package directory concurrently and skip node_modules.
+const bundleDir = NodeFS.mkdtempSync(NodePath.join(packageDir, "node_modules", ".pane-contracts-"));
 const bundled = NodePath.join(bundleDir, "pane.mjs");
 await build({
   stdin: {
