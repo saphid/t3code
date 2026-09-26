@@ -1,7 +1,7 @@
 import { makeBrowserLocalServersApiProvider } from "./browserLocalServersApi.ts";
 import { makeBrowserSessionsApiProvider } from "./browserSessions/v1.ts";
 import { makeBrowserFramesApiProvider } from "./browserFrames/v1.ts";
-import { makeOrchestrationApiProviders } from "./orchestration/v1.ts";
+import { makeOrchestrationApiProviders, projectAgents } from "./orchestration/v1.ts";
 import { makeWorkspaceChangesApiProvider } from "./workspaceChangesApi.ts";
 import { makeWorkspaceSearchApiProvider } from "./workspaceSearchApi.ts";
 import { makeWorkspaceTreeApiProvider } from "./workspaceTreeApi.ts";
@@ -18,6 +18,7 @@ import {
   type ExtensionInstallInput,
   type ExtensionManageInput,
   type ExtensionInvokeInput,
+  ThreadId,
 } from "@t3tools/contracts";
 import {
   createExtensionRuntime,
@@ -34,6 +35,7 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -41,6 +43,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
 import { ProjectionThreadRepository } from "../persistence/Services/ProjectionThreads.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { WorkspaceFileSystem } from "../workspace/WorkspaceFileSystem.ts";
 import { makeExtensionScopeResolver } from "./scope.ts";
 import { makeTerminalApiProvider } from "./terminalApi.ts";
@@ -99,6 +102,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   const environmentId = yield* environment.getEnvironmentId;
   const projects = yield* ProjectionProjectRepository;
   const threads = yield* ProjectionThreadRepository;
+  const snapshots = yield* ProjectionSnapshotQuery;
   const workspace = yield* WorkspaceFileSystem;
   const browserLocalServersApi = yield* makeBrowserLocalServersApiProvider();
   const browserSessionsApi = yield* makeBrowserSessionsApiProvider();
@@ -157,6 +161,31 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
       const entry = extensionRuntime?.list().find((item) => item.id === installationId);
       return entry !== undefined && (await authorize(entry, grant, context));
     },
+    resolveThreadProject: (threadId) =>
+      Effect.runPromise(
+        threads.getById({ threadId: ThreadId.make(threadId) }).pipe(
+          Effect.map((found) =>
+            Option.isSome(found) && found.value.deletedAt === null ? found.value.projectId : null,
+          ),
+          Effect.orElseSucceed(() => null),
+        ),
+      ),
+    readThreadAgentSessions: (threadId) =>
+      Effect.runPromise(
+        snapshots.getThreadDetailSnapshot(ThreadId.make(threadId)).pipe(
+          Effect.map((found) =>
+            Option.isSome(found) && found.value.thread.deletedAt === null
+              ? projectAgents(found.value).agents.map((agent) => ({
+                  id: agent.id,
+                  ...(agent.runHandles?.sessionUrl
+                    ? { sessionUrl: agent.runHandles.sessionUrl }
+                    : {}),
+                }))
+              : null,
+          ),
+          Effect.orElseSucceed(() => null),
+        ),
+      ),
   });
   // Same late-bound caller-chain grant check as the lease provider —
   // publishRepository and the composite's pr phase ask for `t3.prs/write`

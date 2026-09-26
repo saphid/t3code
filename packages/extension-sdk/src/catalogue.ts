@@ -25,6 +25,8 @@ import {
   clientPreferencesReceiptSchema,
   uiExternalOpenReceiptSchema,
   browserHistoryEntriesSchema,
+  uiNavigationReceiptSchema,
+  uiNavigationSessionReceiptSchema,
 } from "./clientProviders.js";
 
 export * from "./workspaceResources.js";
@@ -8591,10 +8593,110 @@ export const uiExternalApi = defineApi<{
   ],
 });
 
+export const UI_NAVIGATION = "t3.ui/navigation";
+export const UI_NAVIGATION_OPEN = "t3.ui/navigation.open";
+export const UI_NAVIGATION_OPEN_SESSION = "t3.ui/navigation.open-session";
+
+/**
+ * Closed refusal set: `unknown-thread` (no live thread by that id),
+ * `out-of-scope` (the thread is outside the caller's project), and
+ * `surface-not-found` (`surfaceId` is not one of the caller's own
+ * thread-scoped side-panel surfaces for this client).
+ */
+export type UiNavigationRefusalReason = "unknown-thread" | "out-of-scope" | "surface-not-found";
+
+export type UiNavigationReceipt =
+  | { readonly status: "opened"; readonly threadId: string; readonly surfaceId?: string }
+  | { readonly status: "refused"; readonly reason: UiNavigationRefusalReason };
+
+/**
+ * Closed refusal set for `openAgentSession`: `unknown-thread` (the caller's
+ * context thread is gone), `unknown-agent` (no roster row by that id on it),
+ * `no-session` (the row carries no http(s) session URL), `opener-refused`
+ * (the client's OS opener declined).
+ */
+export type UiNavigationSessionRefusalReason =
+  | "unknown-thread"
+  | "unknown-agent"
+  | "no-session"
+  | "opener-refused";
+
+export type UiNavigationSessionReceipt =
+  | {
+      readonly status: "opened";
+      readonly agentId: string;
+      readonly opener: "desktop-shell" | "browser-window";
+    }
+  | { readonly status: "refused"; readonly reason: UiNavigationSessionRefusalReason };
+
+/**
+ * Moves the caller's own client to a thread in the caller's project, and
+ * optionally opens one of the caller's own surfaces there. The pack names a
+ * thread, never a URL or route; the host resolves and performs the
+ * navigation. A refusal is a typed receipt; a missing
+ * `t3.ui/navigation.open` grant fails the invoke.
+ *
+ * `openAgentSession` opens the provider session page of one agent on the
+ * caller's own thread. The pack names the agent; the host resolves its
+ * session URL from its own roster and hands it to the OS opener, so the pack
+ * never supplies a URL. It needs its own `t3.ui/navigation.open-session` grant.
+ */
+export const uiNavigationApi = defineApi<{
+  getCapabilities: { input: Record<string, never>; output: UiCapabilities };
+  openThread: {
+    input: { threadId: string; surfaceId?: string };
+    output: UiNavigationReceipt;
+  };
+  openAgentSession: {
+    input: { agentId: string };
+    output: UiNavigationSessionReceipt;
+  };
+}>({
+  id: UI_NAVIGATION,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: composerEmptyInputSchema,
+      outputSchema: uiCapabilitiesOutput(["openThread", "openAgentSession"]),
+    },
+    {
+      name: "openThread",
+      effect: "write",
+      requiredGrants: [UI_NAVIGATION_OPEN],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["threadId"],
+        properties: {
+          threadId: { type: "string", minLength: 1, maxLength: 128 },
+          surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+        },
+      },
+      outputSchema: uiNavigationReceiptSchema,
+    },
+    {
+      name: "openAgentSession",
+      effect: "write",
+      requiredGrants: [UI_NAVIGATION_OPEN_SESSION],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["agentId"],
+        properties: { agentId: { type: "string", minLength: 1, maxLength: 256 } },
+      },
+      outputSchema: uiNavigationSessionReceiptSchema,
+    },
+  ],
+});
+
 export const UI_NOTIFICATIONS_API = uiNotificationsApi.definition;
 export const UI_PANELS_API = uiPanelsApi.definition;
 export const UI_PREFERENCES_API = uiPreferencesApi.definition;
 export const UI_EXTERNAL_API = uiExternalApi.definition;
+export const UI_NAVIGATION_API = uiNavigationApi.definition;
 
 /**
  * Contracts only: their presence does not advertise a functioning or
@@ -8648,6 +8750,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   uiPanelsApi.definition,
   uiPreferencesApi.definition,
   uiExternalApi.definition,
+  uiNavigationApi.definition,
 ];
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";

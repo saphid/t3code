@@ -6,6 +6,8 @@ import {
 } from "../extensions/extensionCommandRegistry";
 import { InstalledExtensionMenu } from "../extensions/InstalledExtensionMenu";
 import { publishTitlebarControlsWidth } from "../workspaceTitlebar";
+import { isAgentsRosterSurface } from "../extensions/installedSurfaceOpen";
+import { AgentsHeaderBadge, useOpenAgentsSurface } from "./chat/AgentsEntryPoint";
 import {
   assertContextBudget,
   readContextSnapshots,
@@ -4023,10 +4025,11 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
   }, [activeProject, activeThreadRef]);
-  const addAgentsSurface = useCallback(() => {
-    if (!activeThreadRef) return;
-    useRightPanelStore.getState().open(activeThreadRef, "agents");
-  }, [activeThreadRef]);
+  const addAgentsSurface = useOpenAgentsSurface({
+    threadRef: activeThreadRef,
+    project: activeProject,
+    worktreePath: activeThreadWorktreePath,
+  });
   const supportsThreadPullRequests =
     serverConfig?.environment.capabilities.threadPullRequests === true;
   const visiblePullRequests = visibleThreadPullRequests(
@@ -9083,6 +9086,12 @@ export default function ChatView(props: ChatViewProps) {
           client: isElectron ? "desktop" : "web",
         })
       : undefined;
+  // Suppressed while the Agents surface is visible: the roster itself is on
+  // screen, so the header badge would be pointing at nothing.
+  const headerLiveAgentCount =
+    rightPanelOpen && isAgentsRosterSurface(activeRightPanelSurface)
+      ? 0
+      : agentPanelModel.liveCount;
   const panelToggleControls = (
     <PanelLayoutControls
       extensionMenu={
@@ -9106,10 +9115,14 @@ export default function ChatView(props: ChatViewProps) {
       rightPanelAvailable={activeProject !== null}
       rightPanelOpen={rightPanelOpen}
       rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
-      // Suppressed while the Agents surface is visible: the roster itself is
-      // on screen, so the toggle badge would be pointing at nothing.
-      liveAgentCount={
-        rightPanelOpen && activeRightPanelSurface?.kind === "agents" ? 0 : agentPanelModel.liveCount
+      liveAgentCount={headerLiveAgentCount}
+      agentsBadge={
+        <AgentsHeaderBadge
+          count={headerLiveAgentCount}
+          threadRef={activeThreadRef}
+          project={activeProject}
+          worktreePath={activeThreadWorktreePath}
+        />
       }
       onToggleTerminal={toggleTerminalVisibility}
       onToggleRightPanel={toggleRightPanel}

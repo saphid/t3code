@@ -5,7 +5,7 @@ import { validateApiDefinition, type ApiDefinition } from "./capabilities.js";
  *
  * These are host-owned ambient providers (theme, notifications, keybindings,
  * panels, composer, terminal appearance, preferences, external open, browser
- * history) reached only through the
+ * history, navigation) reached only through the
  * client-provider connect stream — never registered with the public API
  * broker, never discoverable, never grantable, and never plugin-provided.
  *
@@ -997,6 +997,94 @@ export const CLIENT_BROWSER_HISTORY_API = validateApiDefinition({
   ],
 });
 
+/** The `t3.ui/navigation` open receipt, shared by the public and private areas. */
+export const uiNavigationReceiptSchema = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "threadId"],
+      properties: {
+        status: { const: "opened" },
+        threadId: { type: "string", minLength: 1, maxLength: 128 },
+        surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "reason"],
+      properties: {
+        status: { const: "refused" },
+        reason: { enum: ["unknown-thread", "out-of-scope", "surface-not-found"] },
+      },
+    },
+  ],
+} as const;
+
+/** The `t3.ui/navigation` agent-session receipt, shared by the public and private areas. */
+export const uiNavigationSessionReceiptSchema = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "agentId", "opener"],
+      properties: {
+        status: { const: "opened" },
+        agentId: { type: "string", minLength: 1, maxLength: 256 },
+        opener: { enum: ["desktop-shell", "browser-window"] },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "reason"],
+      properties: {
+        status: { const: "refused" },
+        reason: { enum: ["unknown-thread", "unknown-agent", "no-session", "opener-refused"] },
+      },
+    },
+  ],
+} as const;
+
+/**
+ * Backs `t3.ui/navigation`. The adapter forwards only threads it resolved in
+ * the caller's own project, and only session URLs it resolved from the
+ * caller's own thread roster; the client re-checks before routing or opening.
+ */
+export const CLIENT_NAVIGATION_API = validateApiDefinition({
+  id: "t3.client/navigation",
+  version: "1.0.0",
+  methods: [
+    {
+      name: "openThread",
+      effect: "write",
+      requiredGrants: [],
+      inputSchema: withTarget(
+        {
+          threadId: { type: "string", minLength: 1, maxLength: 128 },
+          surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+        },
+        ["threadId"],
+      ),
+      outputSchema: uiNavigationReceiptSchema,
+    },
+    {
+      name: "openSession",
+      effect: "write",
+      requiredGrants: [],
+      inputSchema: withTarget(
+        {
+          agentId: { type: "string", minLength: 1, maxLength: 256 },
+          url: { type: "string", minLength: 1, maxLength: 4096 },
+        },
+        ["agentId", "url"],
+      ),
+      outputSchema: uiNavigationSessionReceiptSchema,
+    },
+  ],
+});
+
 /** Host-owned client-provider definitions, keyed by area id. */
 export const CLIENT_PROVIDER_APIS: ReadonlyMap<string, ApiDefinition> = new Map(
   [
@@ -1009,6 +1097,7 @@ export const CLIENT_PROVIDER_APIS: ReadonlyMap<string, ApiDefinition> = new Map(
     CLIENT_PREFERENCES_API,
     CLIENT_EXTERNAL_API,
     CLIENT_BROWSER_HISTORY_API,
+    CLIENT_NAVIGATION_API,
   ].map((definition) => [definition.id, definition]),
 );
 

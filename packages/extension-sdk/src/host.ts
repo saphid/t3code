@@ -37,10 +37,31 @@ export interface ViewTabIndicators {
   readonly faviconDataUrl?: string;
   /** "audible" is playing sound; "muted" has sound the user silenced. */
   readonly audio?: "audible" | "muted";
+  /**
+   * A static badge: "running" is live work, "unread" is something that
+   * finished while the user was not looking. `count` is an integer 1-999
+   * (the host abbreviates past 99); absent draws a dot.
+   */
+  readonly badge?: { readonly kind: "running" | "unread"; readonly count?: number };
 }
 
 const TAB_FAVICON_DATA_URL =
   /^data:image\/(?:png|x-icon|vnd\.microsoft\.icon|gif|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+
+function validateTabBadge(value: unknown): NonNullable<ViewTabIndicators["badge"]> {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Tab badge must be an object");
+  const { kind, count, ...rest } = value as Record<string, unknown>;
+  if (Object.keys(rest).length > 0) throw new Error("Tab badge accepts only kind and count");
+  if (kind !== "running" && kind !== "unread")
+    throw new Error('Tab badge kind must be "running" or "unread"');
+  if (
+    count !== undefined &&
+    (!Number.isInteger(count) || (count as number) < 1 || (count as number) > 999)
+  )
+    throw new Error("Tab badge count must be an integer from 1 to 999");
+  return count === undefined ? { kind } : { kind, count: count as number };
+}
 
 /** Returns a plain copy of valid indicators; throws on anything else. */
 export function validateTabIndicators(value: unknown): ViewTabIndicators {
@@ -48,9 +69,9 @@ export function validateTabIndicators(value: unknown): ViewTabIndicators {
     throw new Error("Tab indicators must be an object");
   const input = value as Record<string, unknown>;
   const keys = Object.keys(input);
-  if (keys.some((key) => !["pageUrl", "faviconDataUrl", "audio"].includes(key)))
-    throw new Error("Tab indicators accept only pageUrl, faviconDataUrl and audio");
-  const { pageUrl, faviconDataUrl, audio } = input;
+  if (keys.some((key) => !["pageUrl", "faviconDataUrl", "audio", "badge"].includes(key)))
+    throw new Error("Tab indicators accept only pageUrl, faviconDataUrl, audio and badge");
+  const { pageUrl, faviconDataUrl, audio, badge } = input;
   if (pageUrl !== undefined) {
     let protocol: string | null = null;
     try {
@@ -78,6 +99,7 @@ export function validateTabIndicators(value: unknown): ViewTabIndicators {
     ...(pageUrl === undefined ? {} : { pageUrl: pageUrl as string }),
     ...(faviconDataUrl === undefined ? {} : { faviconDataUrl: faviconDataUrl as string }),
     ...(audio === undefined ? {} : { audio }),
+    ...(badge === undefined ? {} : { badge: validateTabBadge(badge) }),
   };
 }
 

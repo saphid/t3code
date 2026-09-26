@@ -8,6 +8,11 @@ import {
   checkExternalUrl,
   fitBrowserHistoryList,
   UI_EXTERNAL_OPEN,
+  UI_NAVIGATION_OPEN,
+  UI_NAVIGATION_OPEN_SESSION,
+  type UiNavigationReceipt,
+  type UiNavigationSessionReceipt,
+  type UiNavigationRefusalReason,
 } from "@t3tools/extension-sdk/catalogue";
 import type { Json } from "@t3tools/extension-sdk/contracts";
 import {
@@ -33,12 +38,11 @@ import {
 import { toastManager, type ThreadToastData } from "../components/ui/toast";
 import { terminalThemeFromApp } from "../components/ThreadTerminalDrawer";
 import {
-  extensionPanelSurface,
   selectThreadExtensionDock,
   selectThreadRightPanelState,
   useRightPanelStore,
 } from "../rightPanelStore";
-import { installedSurfaceRecord, installedWorkspaceContext } from "./installedContext";
+import { openInstalledSurface } from "./installedSurfaceOpen";
 import { readProject, readThreadShell } from "../state/entities";
 import { useComposerDraftStore, type ComposerImageAttachment } from "../composerDraftStore";
 import { fetchBrowserCaptureArtifact } from "../browser/browserCaptureArtifacts";
@@ -609,43 +613,14 @@ export function createPanelsClientProvider(deps: ClientProviderDeps): ClientLoca
           const project = readProject(scopeProjectRef(deps.environmentId, shell.projectId));
           if (!project)
             throw new ClientProviderOpError("panel-surface-not-found", "Unknown project");
-          const context = installedWorkspaceContext({
-            environmentId: deps.environmentId,
-            projectId: shell.projectId,
-            threadId,
-            projectWorkspaceRoot: project.workspaceRoot,
-            threadWorktreePath: shell.worktreePath ?? null,
-            client: deps.client,
-          });
-          // Mirrors the InstalledExtensionMenu open path: an identical live
-          // surface is activated; a changed record replaces it.
-          const record = installedSurfaceRecord(
-            call.caller.installationId,
-            surface,
-            placement,
-            context,
-          );
-          const requested = extensionPanelSurface(ref, record);
-          if (!requested)
-            throw new ClientProviderOpError("panel-surface-not-found", "Surface rejected");
-          const layout =
-            placement === "bottom-dock"
-              ? selectThreadExtensionDock(store.extensionDockByThreadKey, ref)
-              : selectThreadRightPanelState(store.byThreadKey, ref);
-          const existing = layout.surfaces.find((entry) => entry.id === requested.id);
           if (
-            existing?.kind === "extension" &&
-            existing.record.version === requested.record.version &&
-            existing.record.stateVersion === requested.record.stateVersion &&
-            existing.record.placement === requested.record.placement &&
-            existing.record.context.client === requested.record.context.client &&
-            existing.record.context.workspaceRevision === requested.record.context.workspaceRevision
-          ) {
-            if (placement === "bottom-dock") store.activateDockExtension(ref, existing.id);
-            else store.activateSurface(ref, existing.id);
-          } else if (!store.openExtension(ref, record)) {
+            !openInstalledSurface(deps, ref, call.caller.installationId, surface, placement, {
+              projectId: shell.projectId,
+              workspaceRoot: project.workspaceRoot,
+              worktreePath: shell.worktreePath ?? null,
+            })
+          )
             throw new ClientProviderOpError("panel-surface-not-found", "Surface could not open");
-          }
           return { surfaceId } as unknown as Json;
         }
         case "activateSurface":
@@ -1240,7 +1215,8 @@ export interface ExternalOpener {
 
 /**
  * Desktop hands the URL to Electron's shell (which re-checks its own
- * allowlist); web opens a `noopener` window. Undefined outside a window.
+ * allowlist); web opens a severed browser window. Both reject when nothing
+ * opened (a declined URL, a blocked popup). Undefined outside a window.
  */
 function localExternalOpener(): ExternalOpener | undefined {
   const api = readLocalApi();
@@ -1332,11 +1308,95 @@ export function createBrowserHistoryClientProvider(
   };
 }
 
+// Navigation — route the caller's own client to a thread in its project.
+
+/** Moves the app to a thread; injected so the provider never owns a router. */
+export type ThreadNavigator = (ref: ScopedThreadRef) => Promise<void>;
+
+const refused = (reason: UiNavigationRefusalReason): UiNavigationReceipt => ({
+  status: "refused",
+  reason,
+});
+
+export function createNavigationClientProvider(
+  deps: ClientProviderDeps,
+  navigate: ThreadNavigator,
+  opener: () => ExternalOpener | undefined = localExternalOpener,
+): ClientLocalProvider {
+  return {
+    async invoke(call): Promise<UiNavigationReceipt | UiNavigationSessionReceipt> {
+      if (call.method === "openSession") {
+        authorizeCaller(deps, call.caller, call.context, [UI_NAVIGATION_OPEN_SESSION]);
+        // The adapter resolved this URL from the caller's own thread roster;
+        // the client still refuses anything its external opener would.
+        const input = readInputObject(call.input);
+        const agentId = readInputString(input, "agentId")!;
+        const checked = checkExternalUrl(readInputString(input, "url")!);
+        if (!checked.ok) return { status: "refused", reason: "no-session" };
+        const target = opener();
+        if (!target) return { status: "refused", reason: "opener-refused" };
+        try {
+          await target.open(checked.url);
+        } catch {
+          return { status: "refused", reason: "opener-refused" };
+        }
+        return { status: "opened", agentId, opener: target.kind };
+      }
+      const installation = authorizeCaller(deps, call.caller, call.context, [UI_NAVIGATION_OPEN]);
+      if (call.method !== "openThread")
+        throw new ClientProviderOpError(
+          "client-provider-unavailable",
+          `Unknown navigation op ${call.method}`,
+        );
+      const input = readInputObject(call.input);
+      const threadId = readInputString(input, "threadId")!;
+      const surfaceId = readInputString(input, "surfaceId", false);
+      // The server adapter already scoped the target; the client owns the final say.
+      const ref = scopeThreadRef(deps.environmentId, ThreadId.make(threadId));
+      const shell = readThreadShell(ref);
+      if (!shell?.projectId) return refused("unknown-thread");
+      if (
+        shell.projectId !== call.context.resource.projectId ||
+        !installation.grants.projectIds.some((id) => id === shell.projectId)
+      )
+        return refused("out-of-scope");
+      if (surfaceId !== undefined) {
+        // Only the caller's own thread-scoped side-panel surfaces, as the
+        // right panel is where a thread's session view lives.
+        const surface = installation.package.manifest.surfaces.find(
+          (candidate) => candidate.id === surfaceId,
+        );
+        const project = readProject(scopeProjectRef(deps.environmentId, shell.projectId));
+        if (
+          !surface ||
+          surface.scope !== "thread" ||
+          !surface.placements.includes("side-panel") ||
+          !surface.clients.includes(deps.client)
+        )
+          return refused("surface-not-found");
+        if (!project) return refused("unknown-thread");
+        // Opened before routing so the thread renders with its panel in place.
+        if (
+          !openInstalledSurface(deps, ref, installation.id, surface, "side-panel", {
+            projectId: shell.projectId,
+            workspaceRoot: project.workspaceRoot,
+            worktreePath: shell.worktreePath ?? null,
+          })
+        )
+          return refused("surface-not-found");
+      }
+      await navigate(ref);
+      return { status: "opened", threadId, ...(surfaceId === undefined ? {} : { surfaceId }) };
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 
 /** All host-owned `t3.client/*` providers for one environment connection. */
 export function createClientProviders(
   deps: ClientProviderDeps,
+  navigate: ThreadNavigator,
 ): ReadonlyMap<string, ClientLocalProvider> {
   return new Map<string, ClientLocalProvider>([
     ["t3.client/theme", createThemeClientProvider(deps)],
@@ -1348,6 +1408,7 @@ export function createClientProviders(
     ["t3.client/preferences", createPreferencesClientProvider(deps)],
     ["t3.client/external", createExternalClientProvider(deps)],
     ["t3.client/browser-history", createBrowserHistoryClientProvider(deps)],
+    ["t3.client/navigation", createNavigationClientProvider(deps, navigate)],
   ]);
 }
 
@@ -1361,6 +1422,7 @@ export const CLIENT_PROVIDER_DESCRIPTORS = [
   { id: "t3.client/preferences", version: "1.0.0" },
   { id: "t3.client/external", version: "1.0.0" },
   { id: "t3.client/browser-history", version: "1.1.0" },
+  { id: "t3.client/navigation", version: "1.0.0" },
 ] as const;
 
 export const CLIENT_PROVIDER_CLIENT_TAG = isElectron ? "desktop" : "web";

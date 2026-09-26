@@ -14,6 +14,7 @@ import {
   UI_THEME_API,
   checkExternalUrl,
   UI_EXTERNAL_API,
+  UI_NAVIGATION_API,
 } from "@t3tools/extension-sdk/catalogue";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
@@ -51,6 +52,20 @@ export interface UiClientBridgeDeps {
     grant: string,
     context: ViewContext,
   ) => Promise<boolean>;
+  /**
+   * The project owning a live thread in this environment, or null for an
+   * unknown or deleted thread. `t3.ui/navigation` scopes its target by it.
+   */
+  readonly resolveThreadProject: (threadId: string) => Promise<string | null>;
+  /**
+   * The agent roster of a live thread (the same `projectAgents` fold
+   * `t3.orchestration/status` publishes), or null for an unknown or deleted
+   * thread. `openAgentSession` resolves session URLs from it so a pack never
+   * supplies one.
+   */
+  readonly readThreadAgentSessions: (
+    threadId: string,
+  ) => Promise<readonly { readonly id: string; readonly sessionUrl?: string }[] | null>;
 }
 
 const providerError = (code: string, detail: string) =>
@@ -295,6 +310,7 @@ const CLIENT_PANELS = "t3.client/panels";
 const CLIENT_PREFERENCES = "t3.client/preferences";
 const CLIENT_EXTERNAL = "t3.client/external";
 const CLIENT_BROWSER_HISTORY = "t3.client/browser-history";
+const CLIENT_NAVIGATION = "t3.client/navigation";
 
 interface NotificationOutcome {
   readonly actionId?: string;
@@ -938,6 +954,62 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
     },
   };
 
+  const navigationProvider: HostApiProvider = {
+    providerId: "host.ui.navigation",
+    definition: UI_NAVIGATION_API,
+    availability: ambient(deps, CLIENT_NAVIGATION),
+    invoke(method, input, context, signal, metadata): Promise<Json> {
+      if (method === "getCapabilities")
+        return capabilities(
+          deps,
+          "host.ui.navigation",
+          { openThread: CLIENT_NAVIGATION, openAgentSession: CLIENT_NAVIGATION },
+          metadata,
+        );
+      if (method === "openAgentSession")
+        return (async () => {
+          const { agentId } = input as { agentId: string };
+          // Only the caller's own (broker-scoped) thread; the input cannot name another.
+          const threadId = context.resource.threadId;
+          const agents = threadId ? await deps.readThreadAgentSessions(threadId) : null;
+          if (agents === null)
+            return { status: "refused", reason: "unknown-thread" } satisfies Json;
+          const agent = agents.find((candidate) => candidate.id === agentId);
+          if (!agent) return { status: "refused", reason: "unknown-agent" } satisfies Json;
+          const checked = agent.sessionUrl ? checkExternalUrl(agent.sessionUrl) : null;
+          if (!checked?.ok) return { status: "refused", reason: "no-session" } satisfies Json;
+          return forward(deps, CLIENT_NAVIGATION, "openSession")(
+            method,
+            { agentId, url: checked.url },
+            context,
+            signal,
+            metadata,
+          );
+        })();
+      if (method !== "openThread")
+        return Promise.reject(
+          providerError("client-provider-unavailable", `Unknown navigation op: ${method}`),
+        );
+      return (async () => {
+        const { threadId, surfaceId } = input as { threadId: string; surfaceId?: string };
+        // The broker already scoped the caller's context to a granted
+        // project; a target outside that project never reaches a client.
+        const targetProject = await deps.resolveThreadProject(threadId);
+        if (targetProject === null)
+          return { status: "refused", reason: "unknown-thread" } satisfies Json;
+        if (targetProject !== context.resource.projectId)
+          return { status: "refused", reason: "out-of-scope" } satisfies Json;
+        return forward(deps, CLIENT_NAVIGATION, "openThread")(
+          method,
+          { threadId, ...(surfaceId === undefined ? {} : { surfaceId }) },
+          context,
+          signal,
+          metadata,
+        );
+      })();
+    },
+  };
+
   return [
     themeProvider,
     keybindingsProvider,
@@ -946,5 +1018,6 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
     preferencesProvider,
     externalProvider,
     browserHistoryProvider,
+    navigationProvider,
   ];
 }

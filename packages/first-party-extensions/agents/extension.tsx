@@ -2,6 +2,7 @@ import {
   orchestrationControlApi,
   orchestrationStatusApi,
   terminalControlApi,
+  uiNavigationApi,
   uiThemeApi,
   workspaceFilesApi,
   type ApprovalDecision,
@@ -21,7 +22,7 @@ import {
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   DEFERRED_SECTIONS,
@@ -35,6 +36,7 @@ import {
   agentStatusVisual,
   agentVisibleRole,
   agentsFooterSummary,
+  agentsTabBadge,
   applyAgentsEvent,
   approvalKindLabel,
   approvalOptions,
@@ -43,13 +45,17 @@ import {
   collectDiffStream,
   countAnsweredQuestions,
   deriveAgentsPanelModel,
+  describeAgentSessionReceipt,
   describeLaunchReceipt,
+  describeNavigationReceipt,
   describeReceipt,
   describeScriptRun,
   elapsedBetween,
+  finishedAgentIds,
   isWorkflowName,
   operationSupport,
   parseT3ProjectFile,
+  planSourceThreadId,
   resolveQuestionAnswer,
   runWorkspaceScript,
   scriptRunNonce,
@@ -174,29 +180,50 @@ interface AgentsFeed {
 }
 
 /**
- * `subscribeAgents` consumer: the host owns cancellation/backpressure via the
- * async iterator. Snapshot-first frames fold through `applyAgentsEvent`; a
- * server `closed` frame (queue overflow) triggers a bounded resubscribe, and
- * hiding the panel abandons the stream entirely.
+ * `subscribeAgents` consumer for the view session's lifetime: the host owns
+ * cancellation/backpressure via the async iterator. Snapshot-first frames fold
+ * through `applyAgentsEvent`; a server `closed` frame (queue overflow)
+ * triggers a bounded resubscribe. The stream outlives hiding so the tab badge
+ * stays honest in the background, but a hidden panel only folds into a ref and
+ * republishes the badge — the hidden tree never re-renders per frame. Showing
+ * the panel commits the folded state once and marks finished work seen.
  */
 function useAgentsFeed(host: ClientHost, session: ViewSession, visible: boolean): AgentsFeed {
   const [feed, setFeed] = useState<AgentsFeedState>(EMPTY_AGENTS_FEED);
   const [problem, setProblem] = useState<string | null>(null);
+  const latest = useRef<{ feed: AgentsFeedState; problem: string | null }>({
+    feed: EMPTY_AGENTS_FEED,
+    problem: null,
+  });
+  const seenFinished = useRef<ReadonlySet<string>>(new Set());
+
+  const publish = useCallback(() => {
+    const agents = latest.current.feed.state?.agents ?? [];
+    if (session.visible) {
+      seenFinished.current = finishedAgentIds(agents);
+      setFeed(latest.current.feed);
+      setProblem(latest.current.problem);
+    }
+    const badge = agentsTabBadge(agents, seenFinished.current);
+    session.setTabIndicators(badge ? { badge } : null);
+  }, [session]);
 
   useEffect(() => {
-    if (!visible) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
+    const update = (next: Partial<typeof latest.current>) => {
+      latest.current = { ...latest.current, ...next };
+      publish();
+    };
     void (async () => {
       const streams = bindStreamApi(orchestrationStatusApi, host, session.context);
       for (let attempt = 1; attempt <= 3 && !signal.aborted; attempt += 1) {
-        setFeed(EMPTY_AGENTS_FEED);
-        setProblem(null);
+        update({ feed: EMPTY_AGENTS_FEED, problem: null });
         let closedByServer = false;
         try {
           for await (const frame of streams.subscribe("subscribeAgents", {}, signal)) {
             if (signal.aborted) return;
-            setFeed((current) => applyAgentsEvent(current, frame.value));
+            update({ feed: applyAgentsEvent(latest.current.feed, frame.value) });
             if (frame.value.kind === "closed") {
               closedByServer = true;
               break;
@@ -204,24 +231,138 @@ function useAgentsFeed(host: ClientHost, session: ViewSession, visible: boolean)
           }
         } catch (error) {
           if (signal.aborted) return;
-          setProblem(error instanceof Error ? error.message : "Agent stream is unavailable");
+          update({
+            problem: error instanceof Error ? error.message : "Agent stream is unavailable",
+          });
           return;
         }
         if (signal.aborted) return;
         if (!closedByServer) {
-          setProblem("Agent stream ended without a close frame");
+          update({ problem: "Agent stream ended without a close frame" });
           return;
         }
         await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
       }
       if (!signal.aborted) {
-        setProblem("Agent stream closed repeatedly (queue overflow) — reopen the panel to retry");
+        update({
+          problem:
+            "Agent stream closed repeatedly (queue overflow) — reopen the Agents tab to retry",
+        });
       }
     })();
     return () => controller.abort();
-  }, [host, session, visible]);
+  }, [host, session, publish]);
+
+  useEffect(() => {
+    if (visible) publish();
+  }, [visible, publish]);
 
   return { feed, problem };
+}
+
+/**
+ * "Open agents there" for a turn implementing another thread's plan. The host
+ * routes through `t3.ui/navigation` and opens this pack's view on that thread;
+ * a refusal or a missing grant is rendered by name, never swallowed.
+ */
+function PlanSourceLink({
+  host,
+  session,
+  threadId,
+}: {
+  readonly host: ClientHost;
+  readonly session: ViewSession;
+  readonly threadId: string;
+}) {
+  const api = useMemo(() => bindApi(uiNavigationApi, host, session.context), [host, session]);
+  const capabilities = useApiRead(host, session, uiNavigationApi, "getCapabilities", {});
+  const [outcome, setOutcome] = useState<string | null>(null);
+  const supported =
+    capabilities.status === "ready" && capabilities.value.operations.openThread === true;
+  const open = () => {
+    setOutcome(null);
+    api.invoke("openThread", { threadId, surfaceId: `${manifestId}/view` }, session.signal).then(
+      (receipt) => {
+        if (receipt.status === "refused") setOutcome(describeNavigationReceipt(receipt));
+      },
+      (error: unknown) => setOutcome(error instanceof Error ? error.message : "Navigation failed"),
+    );
+  };
+  return (
+    <span style={{ color: muted, fontSize: 11, display: "inline-flex", gap: 4 }}>
+      Plan from another thread ·
+      <button type="button" onClick={open} disabled={!supported} style={control}>
+        Open agents there
+      </button>
+      {capabilities.status === "unavailable" ? (
+        <output aria-label="Navigation result">{capabilities.error}</output>
+      ) : capabilities.status === "ready" && !supported ? (
+        <output aria-label="Navigation result">Navigation is not available on this client</output>
+      ) : (
+        outcome && <output aria-label="Navigation result">{outcome}</output>
+      )}
+    </span>
+  );
+}
+
+/**
+ * "Open session" for a roster row that carries a provider session handle. The
+ * pack names the agent; the host resolves and opens its session page, so no
+ * URL passes through here. Unsupported clients, a missing grant, and refusals
+ * render by name.
+ */
+function useAgentSessionControl(
+  host: ClientHost,
+  session: ViewSession,
+): (agent: RuntimeSubagent) => ReactNode {
+  const api = useMemo(() => bindApi(uiNavigationApi, host, session.context), [host, session]);
+  const capabilities = useApiRead(host, session, uiNavigationApi, "getCapabilities", {});
+  const [outcomes, setOutcomes] = useState<Readonly<Record<string, string>>>({});
+  const supported =
+    capabilities.status === "ready" && capabilities.value.operations.openAgentSession === true;
+  const unavailable =
+    capabilities.status === "unavailable"
+      ? capabilities.error
+      : capabilities.status === "ready" && !supported
+        ? "Session pages are not available on this client"
+        : null;
+  return useCallback(
+    (agent: RuntimeSubagent) => {
+      if (!agent.runHandles?.sessionUrl) return null;
+      const note = (text: string | null) =>
+        setOutcomes(({ [agent.id]: _previous, ...rest }) =>
+          text === null ? rest : { ...rest, [agent.id]: text },
+        );
+      const open = () => {
+        note(null);
+        api.invoke("openAgentSession", { agentId: agent.id }, session.signal).then(
+          (receipt) => {
+            if (receipt.status === "refused") note(describeAgentSessionReceipt(receipt));
+          },
+          (error: unknown) => note(error instanceof Error ? error.message : "Could not open"),
+        );
+      };
+      const text = unavailable ?? outcomes[agent.id];
+      return (
+        <span style={{ display: "inline-flex", gap: 4, alignItems: "baseline" }}>
+          <button
+            type="button"
+            onClick={open}
+            disabled={!supported}
+            style={{ ...control, padding: "0 6px", fontSize: 11 }}
+          >
+            Open session
+          </button>
+          {text && (
+            <output aria-label="Session result" style={{ fontSize: 11, color: muted }}>
+              {text}
+            </output>
+          )}
+        </span>
+      );
+    },
+    [api, session, supported, unavailable, outcomes],
+  );
 }
 
 /**
@@ -851,8 +992,11 @@ function AgentElapsed(props: { readonly agent: RuntimeSubagent }) {
   );
 }
 
-function AgentRow(props: { readonly agent: RuntimeSubagent }) {
-  const { agent } = props;
+function AgentRow(props: {
+  readonly agent: RuntimeSubagent;
+  readonly sessionControl: (agent: RuntimeSubagent) => ReactNode;
+}) {
+  const { agent, sessionControl } = props;
   const visual = agentStatusVisual(agent.status);
   const role = agentVisibleRole(agent);
   return (
@@ -928,6 +1072,7 @@ function AgentRow(props: { readonly agent: RuntimeSubagent }) {
             {agentActivityText(agent)}
           </span>
         )}
+        {sessionControl(agent)}
       </span>
       <span style={{ fontFamily: mono, fontSize: 11, color: muted, textAlign: "right" }}>
         <AgentElapsed agent={agent} />
@@ -940,13 +1085,14 @@ function WorkflowGroupView(props: {
   readonly group: AgentsWorkflowGroup;
   readonly scriptSupport: ReturnType<typeof operationSupport>;
   readonly onShowScript: (workflowId: string) => void;
+  readonly sessionControl: (agent: RuntimeSubagent) => ReactNode;
   readonly script:
     | { readonly contents: string; readonly truncated: boolean }
     | "loading"
     | string
     | null;
 }) {
-  const { group, scriptSupport, onShowScript, script } = props;
+  const { group, scriptSupport, onShowScript, sessionControl, script } = props;
   const workflow = group.workflow;
   return (
     <li style={{ padding: "4px 0" }}>
@@ -961,6 +1107,7 @@ function WorkflowGroupView(props: {
             onClick={() => onShowScript(workflow.id)}
           />
         )}
+        {sessionControl(workflow)}
       </div>
       {typeof script === "string" && script !== "loading" && (
         <p style={{ margin: "2px 0 0", fontSize: 11, color: muted }}>{script}</p>
@@ -989,7 +1136,7 @@ function WorkflowGroupView(props: {
           </div>
           <ul style={{ listStyle: "none", margin: 0, padding: "0 0 0 12px" }}>
             {phase.members.map((member) => (
-              <AgentRow key={member.id} agent={member} />
+              <AgentRow key={member.id} agent={member} sessionControl={sessionControl} />
             ))}
           </ul>
         </div>
@@ -997,7 +1144,7 @@ function WorkflowGroupView(props: {
       {group.unphasedMembers.length > 0 && (
         <ul style={{ listStyle: "none", margin: 0, padding: "0 0 0 12px" }}>
           {group.unphasedMembers.map((member) => (
-            <AgentRow key={member.id} agent={member} />
+            <AgentRow key={member.id} agent={member} sessionControl={sessionControl} />
           ))}
         </ul>
       )}
@@ -1245,6 +1392,7 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
   );
   const capabilities = capabilitiesRead.status === "ready" ? capabilitiesRead.value : null;
   const { run, outcomeText } = useControls(host, session, feed);
+  const sessionControl = useAgentSessionControl(host, session);
   const [runs, setRuns] = useState<Record<string, ScriptRun>>({});
   // Fresh per panel mount: recreated panels never re-pick overflow ids their
   // previous incarnation may have left running; concurrent clients allocate
@@ -1276,6 +1424,7 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
 
   const state = feed.state;
   const model = state ? deriveAgentsPanelModel(state.agents) : null;
+  const planSource = planSourceThreadId(state, session.context.resource.threadId);
 
   return (
     <section
@@ -1312,6 +1461,7 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
           </span>
         )}
         {state?.turn && <span style={{ color: muted, fontSize: 11 }}>turn {state.turn.state}</span>}
+        {planSource && <PlanSourceLink host={host} session={session} threadId={planSource} />}
         {feed.streamEpoch && (
           <span style={{ color: muted, fontSize: 10, fontFamily: mono }}>rev {feed.revision}</span>
         )}
@@ -1384,11 +1534,12 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
                       group={group}
                       scriptSupport={operationSupport(capabilities, "getWorkflowScript")}
                       onShowScript={showWorkflowScript}
+                      sessionControl={sessionControl}
                       script={scripts[group.workflow.id] ?? null}
                     />
                   ))}
                   {model.directAgents.map((agent) => (
-                    <AgentRow key={agent.id} agent={agent} />
+                    <AgentRow key={agent.id} agent={agent} sessionControl={sessionControl} />
                   ))}
                 </ul>
               )}
@@ -1556,6 +1707,7 @@ export default defineExtension({
     requireApi(orchestrationStatusApi),
     requireApi(orchestrationControlApi),
     requireApi(uiThemeApi),
+    requireApi(uiNavigationApi),
   ],
   surfaces: [
     {

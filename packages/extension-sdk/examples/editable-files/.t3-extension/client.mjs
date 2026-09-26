@@ -1788,6 +1788,78 @@ var __t3Client = (() => {
       }
     ]
   });
+  var uiNavigationReceiptSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "threadId"],
+        properties: {
+          status: { const: "opened" },
+          threadId: { type: "string", minLength: 1, maxLength: 128 },
+          surfaceId: { type: "string", minLength: 1, maxLength: 160 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "reason"],
+        properties: {
+          status: { const: "refused" },
+          reason: { enum: ["unknown-thread", "out-of-scope", "surface-not-found"] }
+        }
+      }
+    ]
+  };
+  var uiNavigationSessionReceiptSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "agentId", "opener"],
+        properties: {
+          status: { const: "opened" },
+          agentId: { type: "string", minLength: 1, maxLength: 256 },
+          opener: { enum: ["desktop-shell", "browser-window"] }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "reason"],
+        properties: {
+          status: { const: "refused" },
+          reason: { enum: ["unknown-thread", "unknown-agent", "no-session", "opener-refused"] }
+        }
+      }
+    ]
+  };
+  var CLIENT_NAVIGATION_API = validateApiDefinition({
+    id: "t3.client/navigation",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "openThread",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          threadId: { type: "string", minLength: 1, maxLength: 128 },
+          surfaceId: { type: "string", minLength: 1, maxLength: 160 }
+        }, ["threadId"]),
+        outputSchema: uiNavigationReceiptSchema
+      },
+      {
+        name: "openSession",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          agentId: { type: "string", minLength: 1, maxLength: 256 },
+          url: { type: "string", minLength: 1, maxLength: 4096 }
+        }, ["agentId", "url"]),
+        outputSchema: uiNavigationSessionReceiptSchema
+      }
+    ]
+  });
   var CLIENT_PROVIDER_APIS = new Map([
     CLIENT_THEME_API,
     CLIENT_NOTIFICATIONS_API,
@@ -1797,7 +1869,8 @@ var __t3Client = (() => {
     CLIENT_TERMINAL_APPEARANCE_API,
     CLIENT_PREFERENCES_API,
     CLIENT_EXTERNAL_API,
-    CLIENT_BROWSER_HISTORY_API
+    CLIENT_BROWSER_HISTORY_API,
+    CLIENT_NAVIGATION_API
   ].map((definition) => [definition.id, definition]));
 
   // node_modules/@t3tools/extension-sdk/dist/catalogue.js
@@ -7092,10 +7165,54 @@ var __t3Client = (() => {
       }
     ]
   });
+  var UI_NAVIGATION = "t3.ui/navigation";
+  var UI_NAVIGATION_OPEN = "t3.ui/navigation.open";
+  var UI_NAVIGATION_OPEN_SESSION = "t3.ui/navigation.open-session";
+  var uiNavigationApi = defineApi({
+    id: UI_NAVIGATION,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput(["openThread", "openAgentSession"])
+      },
+      {
+        name: "openThread",
+        effect: "write",
+        requiredGrants: [UI_NAVIGATION_OPEN],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["threadId"],
+          properties: {
+            threadId: { type: "string", minLength: 1, maxLength: 128 },
+            surfaceId: { type: "string", minLength: 1, maxLength: 160 }
+          }
+        },
+        outputSchema: uiNavigationReceiptSchema
+      },
+      {
+        name: "openAgentSession",
+        effect: "write",
+        requiredGrants: [UI_NAVIGATION_OPEN_SESSION],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["agentId"],
+          properties: { agentId: { type: "string", minLength: 1, maxLength: 256 } }
+        },
+        outputSchema: uiNavigationSessionReceiptSchema
+      }
+    ]
+  });
   var UI_NOTIFICATIONS_API = uiNotificationsApi.definition;
   var UI_PANELS_API = uiPanelsApi.definition;
   var UI_PREFERENCES_API = uiPreferencesApi.definition;
   var UI_EXTERNAL_API = uiExternalApi.definition;
+  var UI_NAVIGATION_API = uiNavigationApi.definition;
   var orchestrationStatusApi = defineOrchestrationStatusApi(vcsDiffPreviewStreamEventSchema);
   var ORCHESTRATION_STATUS_API = orchestrationStatusApi.definition;
   var GENERIC_API_CATALOGUE = [
@@ -7141,7 +7258,8 @@ var __t3Client = (() => {
     uiNotificationsApi.definition,
     uiPanelsApi.definition,
     uiPreferencesApi.definition,
-    uiExternalApi.definition
+    uiExternalApi.definition,
+    uiNavigationApi.definition
   ];
   function canonical(value) {
     if (Array.isArray(value))

@@ -14,6 +14,7 @@ import {
   agentActivityText,
   agentStatusLabel,
   agentsFooterSummary,
+  agentsTabBadge,
   applyAgentsEvent,
   applyDiffStreamEvent,
   approvalOptions,
@@ -24,13 +25,17 @@ import {
   countAnsweredQuestions,
   createDiffAssembly,
   deriveAgentsPanelModel,
+  describeAgentSessionReceipt,
   describeLaunchReceipt,
+  describeNavigationReceipt,
   describeReceipt,
   describeScriptRun,
   elapsedBetween,
   formatAgentModelLabel,
   formatAgentTokenCount,
   formatElapsedSeconds,
+  finishedAgentIds,
+  planSourceThreadId,
   isActiveAgentStatus,
   isTerminalAgentStatus,
   operationSupport,
@@ -442,9 +447,11 @@ NodeTest.describe("deferred sections", () => {
     NodeAssert.match(scan.blocker, /provisioning scan exists/);
     NodeAssert.match(scan.blocker, /narrow public scan contract/);
     NodeAssert.doesNotMatch(scan.blocker, /no native .* binding exists/);
-    const netNew = DEFERRED_SECTIONS.find((section) => /deep links/.test(section.title));
-    NodeAssert.ok(netNew, "logs/deep links keep their own section");
+    const netNew = DEFERRED_SECTIONS.find((section) => /logs/.test(section.title));
+    NodeAssert.ok(netNew, "logs keep their own section");
     NodeAssert.match(netNew.blocker, /net-new design/);
+    // Session deep links ship through t3.ui/navigation; they are no longer deferred.
+    NodeAssert.ok(!DEFERRED_SECTIONS.some((section) => /deep link/i.test(section.title)));
   });
 
   NodeTest.it("no longer defers workflow launch", () => {
@@ -454,6 +461,8 @@ NodeTest.describe("deferred sections", () => {
   NodeTest.it("name the scripts-list and host-chrome boundaries", () => {
     NodeAssert.match(SCRIPTS_SCOPE_NOTE, /settings/i);
     NodeAssert.match(HOST_CHROME_NOTE, /host chat UI/);
+    NodeAssert.match(HOST_CHROME_NOTE, /running\/unread badge/);
+    NodeAssert.match(HOST_CHROME_NOTE, /open this view/);
   });
 });
 
@@ -669,6 +678,92 @@ NodeTest.describe("deriveAgentsPanelModel", () => {
       makeAgent({ id: "c", status: "completed", usage: null }),
     ]);
     NodeAssert.equal(agentsFooterSummary(model), "1 working · 1 idle · 1 settled · 1.5k tokens");
+  });
+});
+
+NodeTest.describe("agents tab badge", () => {
+  const none = new Set();
+  NodeTest.it("counts live work the way the native toggle badge does", () => {
+    const agents = [
+      makeAgent({ id: "a", status: "running" }),
+      makeAgent({ id: "b", status: "waiting" }),
+      makeAgent({ id: "c", status: "completed" }),
+      makeAgent({ id: "d", status: "idle" }),
+    ];
+    NodeAssert.deepEqual(agentsTabBadge(agents, none), { kind: "running", count: 2 });
+  });
+
+  NodeTest.it("does not count a workflow coordinator that has members", () => {
+    const agents = [
+      makeAgent({ id: "wf", kind: "workflow", status: "running" }),
+      makeAgent({ id: "m1", kind: "workflow_agent", parentAgentId: "wf", status: "running" }),
+    ];
+    NodeAssert.deepEqual(agentsTabBadge(agents, none), { kind: "running", count: 1 });
+    const done = agents.map((agent) => ({ ...agent, status: "completed" }));
+    NodeAssert.deepEqual([...finishedAgentIds(done)], ["m1"]);
+  });
+
+  NodeTest.it("marks work finished off screen as unread until it is seen", () => {
+    const before = [makeAgent({ id: "a", status: "completed" }), makeAgent({ id: "b" })];
+    const seen = finishedAgentIds(before);
+    NodeAssert.deepEqual([...seen], ["a"]);
+    // b finishes while the view is hidden.
+    const after = [before[0], makeAgent({ id: "b", status: "failed" })];
+    NodeAssert.deepEqual(agentsTabBadge(after, seen), { kind: "unread", count: 1 });
+    NodeAssert.equal(agentsTabBadge(after, finishedAgentIds(after)), null);
+    NodeAssert.equal(agentsTabBadge([], none), null);
+  });
+
+  NodeTest.it("clamps counts to the host's 999 bound", () => {
+    const agents = Array.from({ length: 1200 }, (_, index) =>
+      makeAgent({ id: `a${index}`, status: "running" }),
+    );
+    NodeAssert.deepEqual(agentsTabBadge(agents, none), { kind: "running", count: 999 });
+  });
+});
+
+NodeTest.describe("plan source deep link", () => {
+  NodeTest.it("names only another thread", () => {
+    const turn = (threadId) => ({
+      turnId: "t",
+      state: "running",
+      requestedAt: "x",
+      startedAt: null,
+      completedAt: null,
+      assistantMessageId: null,
+      sourceProposedPlan: { threadId, planId: "p" },
+    });
+    NodeAssert.equal(
+      planSourceThreadId(makeSnapshot({ turn: turn("thread-b") }), "thread-a"),
+      "thread-b",
+    );
+    NodeAssert.equal(
+      planSourceThreadId(makeSnapshot({ turn: turn("thread-a") }), "thread-a"),
+      null,
+    );
+    NodeAssert.equal(planSourceThreadId(makeSnapshot(), "thread-a"), null);
+    NodeAssert.equal(planSourceThreadId(null, "thread-a"), null);
+  });
+
+  NodeTest.it("keeps each refusal's closed reason distinct", () => {
+    const lines = ["unknown-thread", "out-of-scope", "surface-not-found"].map((reason) =>
+      describeNavigationReceipt({ status: "refused", reason }),
+    );
+    NodeAssert.equal(new Set(lines).size, 3);
+    NodeAssert.match(lines[1], /another project/);
+    NodeAssert.equal(describeNavigationReceipt({ status: "opened", threadId: "t" }), "Opened");
+  });
+
+  NodeTest.it("names every agent-session refusal distinctly", () => {
+    const lines = ["unknown-thread", "unknown-agent", "no-session", "opener-refused"].map(
+      (reason) => describeAgentSessionReceipt({ status: "refused", reason }),
+    );
+    NodeAssert.equal(new Set(lines).size, 4);
+    NodeAssert.match(lines[2], /no session page/);
+    NodeAssert.equal(
+      describeAgentSessionReceipt({ status: "opened", agentId: "a", opener: "desktop-shell" }),
+      "Opened",
+    );
   });
 });
 
