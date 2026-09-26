@@ -10872,6 +10872,10 @@ var __t3Client = (() => {
   // streamHub.ts
   var BROKER_STREAM_CAP = 8;
   var FEED_REPLAY_MAX_FRAMES = 64;
+  function isBrokerStreamRefusal(error) {
+    if (!(error instanceof Error)) return false;
+    return error.message === "Plugin stream limit reached" || error.message === "Environment stream limit reached" || error.message === "Worker stream limit reached";
+  }
   var advanceReplay = (replay, frame, policy) => {
     if (policy === void 0 || policy.isStateFrame(frame)) return [frame];
     if (replay.length === 0) return [];
@@ -10882,6 +10886,8 @@ var __t3Client = (() => {
     #feeds = /* @__PURE__ */ new Map();
     #panes = /* @__PURE__ */ new Map();
     #paneWaiters = /* @__PURE__ */ new Set();
+    /** Evicted victims whose teardown is draining — resolves their replacements' admission. */
+    #drainResolvers = /* @__PURE__ */ new Map();
     #now;
     constructor(options = {}) {
       this.#now = options.now ?? (() => Date.now());
@@ -10906,13 +10912,13 @@ var __t3Client = (() => {
     acquireFixedFeed(key, listener, driver, replayPolicy) {
       let feed = this.#feeds.get(key);
       if (feed === void 0) {
-        let evictedAny = false;
+        const drains = [];
         while (this.#panes.size + this.#feeds.size >= BROKER_STREAM_CAP) {
           const victim = this.#evictablePane();
           if (victim === null) break;
           this.#panes.delete(victim.key);
+          drains.push(this.#beginDrain(victim.state));
           victim.state.onEvicted();
-          evictedAny = true;
         }
         feed = {
           controller: new AbortController(),
@@ -10926,8 +10932,8 @@ var __t3Client = (() => {
         };
         this.#feeds.set(key, feed);
         const entry2 = feed;
-        if (evictedAny) {
-          queueMicrotask(() => this.#startDriver(key, entry2));
+        if (drains.length > 0) {
+          void Promise.all(drains).then(() => this.#startDriver(key, entry2));
         } else {
           this.#startDriver(key, entry2);
         }
@@ -10963,24 +10969,28 @@ var __t3Client = (() => {
         existing.demotedAt = options.mandatory ? Number.POSITIVE_INFINITY : this.#now();
         existing.onEvicted = options.onEvicted;
         if (wasMandatory && !options.mandatory) this.#wakeWaiters();
-        return this.#lease(key, existing);
+        return this.#lease(key, existing, Promise.resolve());
       }
       let evicted = null;
+      let victimState = null;
       if (this.#panes.size >= this.paneStreamBudget()) {
         if (!options.mandatory) return null;
         const victim = this.#evictablePane();
         if (victim === null) return null;
         this.#panes.delete(victim.key);
+        victimState = victim.state;
         evicted = victim.state.onEvicted;
       }
       const state2 = {
         mandatory: options.mandatory,
         demotedAt: options.mandatory ? Number.POSITIVE_INFINITY : this.#now(),
-        onEvicted: options.onEvicted
+        onEvicted: options.onEvicted,
+        draining: null
       };
       this.#panes.set(key, state2);
+      const admitted = victimState === null ? Promise.resolve() : this.#beginDrain(victimState);
       evicted?.();
-      return this.#lease(key, state2);
+      return this.#lease(key, state2, admitted);
     }
     /**
      * One-shot notification that a pane slot freed (release or eviction) —
@@ -11028,9 +11038,10 @@ var __t3Client = (() => {
       feed.replay = [];
       queueMicrotask(() => this.#startDriver(key, feed));
     }
-    #lease(key, state2) {
+    #lease(key, state2, admitted) {
       const hub = this;
       return {
+        admitted,
         setPriority(mandatory) {
           if (hub.#panes.get(key) !== state2) return;
           const wasMandatory = state2.mandatory;
@@ -11042,8 +11053,30 @@ var __t3Client = (() => {
           if (hub.#panes.get(key) !== state2) return;
           hub.#panes.delete(key);
           hub.#wakeWaiters();
+        },
+        streamSettled() {
+          const settle = hub.#drainResolvers.get(state2);
+          if (settle === void 0) return;
+          hub.#drainResolvers.delete(state2);
+          state2.draining = null;
+          settle();
         }
       };
+    }
+    /**
+     * Marks an evicted victim's teardown as draining and returns the promise
+     * its replacement's admission (or a preempting feed's driver start)
+     * waits on. The victim's caller resolves it with `streamSettled()` once
+     * its pump has fully exited; a state that was never evicted has none.
+     */
+    #beginDrain(state2) {
+      if (state2.draining !== null) return state2.draining;
+      let settle;
+      state2.draining = new Promise((resolve) => {
+        settle = resolve;
+      });
+      this.#drainResolvers.set(state2, settle);
+      return state2.draining;
     }
     #evictablePane() {
       let victim = null;
@@ -12440,8 +12473,10 @@ var __t3Client = (() => {
      * replaying them suppressed would silently drop queries the process is
      * still waiting on. Replayed once with replies enabled, then cleared.
      * Snapshot/history bytes are treated as already-rendered history and
-     * stay suppressed (native parity) — only live output the attachment saw
-     * go undelivered earns a reply.
+     * stay suppressed (native parity), with one exception: the first
+     * snapshot proven to cover the whole window since process start is
+     * claimed as the window's first gap — its queries' owning process is
+     * still waiting on answers (R7).
      */
     #unanswered = [];
     /**
@@ -12780,8 +12815,9 @@ var __t3Client = (() => {
             priorHole
           );
         }
-        const sameWindow = priorWindow !== null && priorWindow.epoch === value.streamEpoch && !missedClear;
-        const priorEnd = priorUnitStart === null ? null : priorUnitStart + priorBaseLength + priorHole + priorBufferedLength;
+        const firstWindow = priorWindow === null && priorUnitStart === null && !value.truncated && value.clearGeneration === 0 && value.contentsUnitStart === 0;
+        const sameWindow = firstWindow || priorWindow !== null && priorWindow.epoch === value.streamEpoch && !missedClear;
+        const priorEnd = firstWindow ? 0 : priorUnitStart === null ? null : priorUnitStart + priorBaseLength + priorHole + priorBufferedLength;
         const boundaryEnd = value.contentsUnitStart + value.contents.length;
         const coversPriorEnd = priorEnd !== null && value.contentsUnitStart <= priorEnd;
         const heldClaims = this.#unanswered.length > 0;
@@ -12955,6 +12991,10 @@ var __t3Client = (() => {
           }
         }
       } catch (error) {
+        if (options.refusal?.(error) === true) {
+          options.onRefused?.();
+          return;
+        }
         if (!signal.aborted) {
           attachment.applyTransportError(
             error instanceof Error ? error.message : "Terminal output unavailable"
@@ -13063,6 +13103,7 @@ var __t3Client = (() => {
         },
         (sink, signal) => {
           void (async () => {
+            let refusals = 0;
             for (let attempt = 1; attempt <= 3 && !signal.aborted; attempt += 1) {
               sink.status("connecting", null);
               let closed = false;
@@ -13081,6 +13122,16 @@ var __t3Client = (() => {
                   }
                 }
               } catch (error) {
+                if (!signal.aborted && isBrokerStreamRefusal(error)) {
+                  refusals += 1;
+                  if (refusals > 8) {
+                    sink.status("disconnected", "Session list stream was refused repeatedly.");
+                    return;
+                  }
+                  await new Promise((resolve) => setTimeout(resolve, 400 * refusals));
+                  attempt = 0;
+                  continue;
+                }
                 if (!signal.aborted)
                   sink.status(
                     "disconnected",
@@ -13264,9 +13315,15 @@ var __t3Client = (() => {
       let stopped = false;
       let run = null;
       let retryRegistration = null;
+      let brokerRefusals = 0;
+      let brokerRefusalTimer = null;
       const stopRun = () => {
         retryRegistration?.();
         retryRegistration = null;
+        if (brokerRefusalTimer !== null) {
+          clearTimeout(brokerRefusalTimer);
+          brokerRefusalTimer = null;
+        }
         const current = run;
         run = null;
         current?.lease.release();
@@ -13288,30 +13345,52 @@ var __t3Client = (() => {
         setStreamBlocked(false);
         const controller = new AbortController();
         run = { controller, lease };
-        void pumpTerminalOutput({
-          subscribe: (subscribeSignal) => {
-            const source = bindStreamApi(terminalOutputEventsApi, host, session.context).subscribe(
-              "subscribe",
-              { terminalId },
-              subscribeSignal
-            );
-            return (async function* () {
-              for await (const frame of source) {
-                const value = frame.value;
-                if (value.kind === "closed" && value.reason !== "overflow") {
-                  panel.resetInput(terminalId);
-                }
-                yield { streamId: frame.streamId, sequence: frame.sequence, value };
-              }
-            })();
-          },
-          attachment,
-          signal: AbortSignal.any([controller.signal, session.signal])
-        }).finally(() => {
-          if (run?.controller === controller) {
-            run = null;
-            lease.release();
+        void lease.admitted.then(() => {
+          if (stopped || run?.controller !== controller) {
+            lease.streamSettled();
+            return;
           }
+          let refused = false;
+          void pumpTerminalOutput({
+            subscribe: (subscribeSignal) => {
+              const source = bindStreamApi(terminalOutputEventsApi, host, session.context).subscribe(
+                "subscribe",
+                { terminalId },
+                subscribeSignal
+              );
+              return (async function* () {
+                for await (const frame of source) {
+                  const value = frame.value;
+                  if (value.kind === "closed" && value.reason !== "overflow") {
+                    panel.resetInput(terminalId);
+                  }
+                  yield { streamId: frame.streamId, sequence: frame.sequence, value };
+                }
+              })();
+            },
+            attachment,
+            signal: AbortSignal.any([controller.signal, session.signal]),
+            refusal: isBrokerStreamRefusal,
+            onRefused: () => {
+              refused = true;
+              brokerRefusals += 1;
+              setStreamBlocked(true);
+              brokerRefusalTimer = setTimeout(
+                () => {
+                  brokerRefusalTimer = null;
+                  if (!stopped) acquire(shownRef.current);
+                },
+                Math.min(400 * brokerRefusals, 3200)
+              );
+            }
+          }).finally(() => {
+            if (run?.controller === controller) {
+              run = null;
+              lease.release();
+            }
+            lease.streamSettled();
+            if (!refused) brokerRefusals = 0;
+          });
         });
       };
       acquireStreamRef.current = (mandatory) => {
