@@ -1,15 +1,18 @@
 /**
  * `t3.browser/sessions@1.0.0` — public browser-session metadata capability.
  *
- * This adapter is metadata-only: it projects the server's native
- * `PreviewManager` state through the public contract and never exposes
- * webview handles, partitions, preload URLs, evaluation endpoints, or
- * presentation slots. Command receipts record metadata acceptance, never
- * engine execution — navigation honesty is enforced by comparing the
- * dispatch-side request revision against the engine-side `reportStatus`
- * revision carried by `PreviewSessionDetail` (see `Manager.ts`).
+ * This adapter projects the server's native `PreviewManager` state through
+ * the public contract and never exposes webview handles, partitions, preload
+ * URLs, evaluation endpoints, or presentation slots. Metadata writes (open,
+ * navigate, resize, close) record acceptance, never engine execution. Page
+ * commands (back … setAudioMuted) route to the authenticated desktop engine
+ * host that owns the session (see `preview/BrowserEngineHosts.ts`); with no
+ * owner they fail by name. Navigation honesty compares the dispatch-side
+ * request revision against the last owner-host report carried by
+ * `PreviewSessionDetail` (P08-NAV-ACK, see `Manager.ts`).
  */
 import {
+  type BrowserEngineCommand,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   BrowserProfileId,
@@ -52,6 +55,7 @@ import * as Scope from "effect/Scope";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
+import * as BrowserEngineHosts from "../../preview/BrowserEngineHosts.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import { makeExtensionScopeResolver } from "../scope.ts";
 
@@ -118,16 +122,32 @@ const failureCode = (code: number): BrowserSessionFailureCode => {
   }
 };
 
+/** Page verbs that need an attached guest; the rest are metadata writes. */
+const ENGINE_COMMANDS = BROWSER_SESSION_COMMANDS.filter((command) => command !== "resize");
+
 /**
- * No authenticated engine-host registration exists yet, so the only honest
- * engine state is unavailable.
- * Generation is null rather than fabricated.
+ * Engine state comes only from an authenticated owner claim and its fenced
+ * reports. Without a claim the honest state is unavailable, and generation is
+ * null rather than fabricated. A host whose recovery gave up reads as crashed
+ * with a named reason; the public state set has no separate "exhausted".
  */
-const engineUnavailable = (): BrowserSessionEngine => ({
-  state: "unavailable",
-  generation: null,
-  reason: "desktop-required",
-});
+const projectEngine = (
+  engine: PreviewManager.PreviewSessionEngine | null,
+): BrowserSessionEngine => {
+  if (engine === null)
+    return { state: "unavailable", generation: null, reason: "desktop-required" };
+  const { generation } = engine;
+  switch (engine.lifecycle) {
+    case "crashed":
+      return { state: "crashed", generation };
+    case "exhausted":
+      return { state: "crashed", generation, reason: "recovery-exhausted" };
+    case "recovering":
+      return { state: "recovering", generation };
+    case null:
+      return { state: engine.status === null ? "starting" : "ready", generation };
+  }
+};
 
 const CommandGuardFields = {
   tabId: PreviewTabId,
@@ -177,22 +197,38 @@ const projectNavigation = (
   detail: PreviewManager.PreviewSessionDetail,
 ): BrowserSessionNavigation => {
   const { snapshot, navigation } = detail;
-  const nav = snapshot.navStatus;
-  if (nav._tag === "Idle") return { kind: "idle", url: null, title: "" };
+  const reported = detail.engine?.status ?? null;
+  const lifecycle = detail.engine?.lifecycle ?? null;
+  if (lifecycle === "crashed" || lifecycle === "exhausted") {
+    // The owner reported the guest dead; its last page is not still loaded.
+    const last = reported?.navStatus ?? snapshot.navStatus;
+    return {
+      kind: "failed",
+      url: last._tag === "Idle" ? navigation.requestedUrl : last.url,
+      title: last._tag === "Idle" ? "" : last.title,
+      failureCode: "crash",
+    };
+  }
   const engineAuthored =
+    reported !== null &&
     navigation.engineRevision !== null &&
     (navigation.requestRevision === null ||
       navigation.engineRevision >= navigation.requestRevision);
   if (!engineAuthored) {
-    // Dispatch wrote navStatus before any engine report — the only honest
-    // kind is "pending"; navStatus Success here is NOT proof of load.
+    const native = snapshot.navStatus;
+    if (native._tag === "Idle") return { kind: "idle", url: null, title: "" };
+    // Dispatch or an unfenced legacy report wrote navStatus — the only
+    // honest kind is "pending"; navStatus Success here is NOT proof of load.
     return {
       kind: "pending",
-      url: navigation.requestedUrl ?? nav.url,
-      title: nav.title,
+      url: navigation.requestedUrl ?? native.url,
+      title: native.title,
     };
   }
+  const nav = reported.navStatus;
   switch (nav._tag) {
+    case "Idle":
+      return { kind: "idle", url: null, title: "" };
     case "Loading":
       return { kind: "loading", url: nav.url, title: nav.title };
     case "Success":
@@ -207,22 +243,26 @@ const projectNavigation = (
   }
 };
 
-const projectSession = (detail: PreviewManager.PreviewSessionDetail): BrowserSession => ({
-  tabId: detail.snapshot.tabId,
-  requestedUrl: detail.navigation.requestedUrl,
-  navigation: projectNavigation(detail),
-  canGoBack: detail.snapshot.canGoBack,
-  canGoForward: detail.snapshot.canGoForward,
-  viewport: (detail.snapshot.viewport ?? { _tag: "fill" }) as BrowserSessionViewport,
-  ...(detail.snapshot.profileId === undefined ? {} : { profileId: detail.snapshot.profileId }),
-  engine: engineUnavailable(),
-  // Desktop overlay fields live in the renderer and are null here — never
-  // fabricated defaults.
-  zoomFactor: null,
-  appearance: null,
-  audioMuted: null,
-  audible: null,
-});
+const projectSession = (detail: PreviewManager.PreviewSessionDetail): BrowserSession => {
+  // Page state is read only from the owner host's fenced report; without one
+  // the overlay fields are null, never fabricated defaults. Favicon bytes are
+  // deliberately not projected (P08-FAVICON-REF).
+  const status = detail.engine?.status ?? null;
+  return {
+    tabId: detail.snapshot.tabId,
+    requestedUrl: detail.navigation.requestedUrl,
+    navigation: projectNavigation(detail),
+    canGoBack: status?.canGoBack ?? false,
+    canGoForward: status?.canGoForward ?? false,
+    viewport: (detail.snapshot.viewport ?? { _tag: "fill" }) as BrowserSessionViewport,
+    ...(detail.snapshot.profileId === undefined ? {} : { profileId: detail.snapshot.profileId }),
+    engine: projectEngine(detail.engine),
+    zoomFactor: status?.zoomFactor ?? null,
+    appearance: status?.appearance ?? null,
+    audioMuted: status?.audioMuted ?? null,
+    audible: status?.audible ?? null,
+  };
+};
 
 const sessionBytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value), "utf8");
 
@@ -243,7 +283,11 @@ export function createBrowserSessionsApiProvider(
   dependencies: Parameters<typeof makeExtensionScopeResolver>[0] & {
     readonly preview: Pick<
       PreviewManager.PreviewManager["Service"],
-      "open" | "navigate" | "resize" | "refresh" | "close" | "listDetails" | "subscribeDetails"
+      "open" | "navigate" | "resize" | "close" | "listDetails" | "subscribeDetails"
+    >;
+    readonly engineHosts: Pick<
+      BrowserEngineHosts.BrowserEngineHosts["Service"],
+      "dispatch" | "hasHost"
     >;
   },
 ): HostApiProvider {
@@ -273,10 +317,10 @@ export function createBrowserSessionsApiProvider(
   const sessionDetail = (listed: PreviewManager.PreviewListDetailsResult, tabId: string) =>
     listed.sessions.find((entry) => entry.snapshot.tabId === tabId);
 
-  const guard = Effect.fn("BrowserSessions.guard")(function* (
+  const guardEpoch = Effect.fn("BrowserSessions.guardEpoch")(function* (
     operation: string,
     listed: PreviewManager.PreviewListDetailsResult,
-    input: { readonly serverEpoch: string; readonly expectedEngineGeneration?: string | null },
+    input: { readonly serverEpoch: string },
   ) {
     if (input.serverEpoch !== listed.serverEpoch) {
       return yield* named(
@@ -285,11 +329,27 @@ export function createBrowserSessionsApiProvider(
         "the request epoch does not match the live session epoch.",
       );
     }
-    if (input.expectedEngineGeneration !== undefined && input.expectedEngineGeneration !== null) {
+  });
+
+  /**
+   * A null expected generation is unfenced; a non-null one must name the
+   * guest that currently renders the session.
+   */
+  const guardGeneration = Effect.fn("BrowserSessions.guardGeneration")(function* (
+    operation: string,
+    detail: PreviewManager.PreviewSessionDetail,
+    expectedEngineGeneration: string | null,
+  ) {
+    if (
+      expectedEngineGeneration !== null &&
+      expectedEngineGeneration !== (detail.engine?.generation ?? null)
+    ) {
       return yield* named(
         operation,
         "BrowserStaleEngineGeneration",
-        "the expected engine generation cannot match: no authenticated engine is attached.",
+        detail.engine === null
+          ? "the expected engine generation cannot match: no authenticated engine is attached."
+          : "the expected engine generation was replaced.",
       );
     }
   });
@@ -329,17 +389,19 @@ export function createBrowserSessionsApiProvider(
             ),
           ),
         );
+        const hasHost = yield* dependencies.engineHosts.hasHost;
         yield* postChecks(operation, scope.context, metadata, signal);
         return {
           metadata: { supported: true },
-          // Presentation requires an attached engine on a desktop host —
-          // a named deferral, not a capability this slice claims.
+          // Presentation needs a host-issued slot (P08-PRESENTATION-SLOT) —
+          // a named deferral even while an engine host is registered.
           presentation: { supported: false, reason: "desktop-required" },
-          // Discovery lists only commands with real dispatch today.
-          // back/forward/reload/hardReload/zoom/setAppearance/setAudioMuted
-          // stay in the contract but fail by name until an authenticated
-          // host dispatch and engine attachment exist.
-          commands: ["resize"],
+          // Discovery is environment-wide: page verbs are listed while any
+          // authenticated desktop engine host is registered (web, mobile and
+          // remote-only environments advertise resize alone). Whether a given
+          // session can run them is `session.engine.state`; an ownerless
+          // session still refuses them by name.
+          commands: hasHost ? ["resize", ...ENGINE_COMMANDS] : ["resize"],
         } satisfies BrowserSessionCapabilities;
       }
 
@@ -420,7 +482,7 @@ export function createBrowserSessionsApiProvider(
           ),
         );
         const listed = yield* listDetails();
-        yield* guard(operation, listed, safe);
+        yield* guardEpoch(operation, listed, safe);
         const detail = sessionDetail(listed, safe.tabId);
         if (!detail) {
           // Idempotent within the current epoch; a stale epoch already failed.
@@ -443,24 +505,39 @@ export function createBrowserSessionsApiProvider(
         } satisfies BrowserSessionCloseResult;
       }
 
-      const command = Effect.fn("BrowserSessions.command")(function* (
-        guardInput: {
-          readonly tabId: string;
-          readonly serverEpoch: string;
-          readonly expectedEngineGeneration: string | null;
-        },
-        dispatch: Effect.Effect<unknown, ExtensionOperationError>,
+      type GuardInput = {
+        readonly tabId: string;
+        readonly serverEpoch: string;
+        readonly expectedEngineGeneration: string | null;
+      };
+
+      /** Epoch, existence and generation, in that order, before any dispatch. */
+      const guardedDetail = Effect.fn("BrowserSessions.guardedDetail")(function* (
+        guardInput: GuardInput,
       ) {
         const listed = yield* listDetails();
-        yield* guard(operation, listed, guardInput);
-        if (!sessionDetail(listed, guardInput.tabId)) {
+        yield* guardEpoch(operation, listed, guardInput);
+        const detail = sessionDetail(listed, guardInput.tabId);
+        if (!detail) {
           return yield* named(
             operation,
             "BrowserSessionNotFound",
             `session '${guardInput.tabId}' does not exist on this thread.`,
           );
         }
-        yield* dispatch;
+        yield* guardGeneration(operation, detail, guardInput.expectedEngineGeneration);
+        return { listed, detail };
+      });
+
+      const command = Effect.fn("BrowserSessions.command")(function* (
+        guardInput: GuardInput,
+        dispatch: (guarded: {
+          readonly listed: PreviewManager.PreviewListDetailsResult;
+          readonly detail: PreviewManager.PreviewSessionDetail;
+        }) => Effect.Effect<BrowserSessionReceipt["outcome"], ExtensionOperationError>,
+      ) {
+        const guarded = yield* guardedDetail(guardInput);
+        const outcome = yield* dispatch(guarded);
         yield* postChecks(operation, scope.context, metadata, signal);
         const after = yield* listDetails();
         const detail = sessionDetail(after, guardInput.tabId);
@@ -473,12 +550,51 @@ export function createBrowserSessionsApiProvider(
         }
         return {
           commandId: NodeCrypto.randomUUID(),
-          outcome: "accepted",
+          outcome,
           serverEpoch: after.serverEpoch,
           revision: after.revision,
           session: projectSession(detail),
         } satisfies BrowserSessionReceipt;
       });
+
+      const metadataWrite = (write: Effect.Effect<unknown, ExtensionOperationError>) => () =>
+        Effect.as(write, "accepted" as const);
+
+      /**
+       * Page verbs go to the host that owns the guest. The receipt reflects the
+       * host's answer: applied → accepted, rejected → rejected, disconnect or
+       * silence → unknown (the caller reconciles before retrying).
+       */
+      const engineWrite =
+        (engineCommand: BrowserEngineCommand) =>
+        ({
+          listed,
+          detail,
+        }: {
+          readonly listed: PreviewManager.PreviewListDetailsResult;
+          readonly detail: PreviewManager.PreviewSessionDetail;
+        }) =>
+          Effect.gen(function* () {
+            const engine = detail.engine;
+            if (engine === null) {
+              return yield* named(
+                operation,
+                "BrowserSessionCommandUnsupported",
+                `'${method}' requires an authenticated desktop engine host; none renders this session (desktop-required).`,
+              );
+            }
+            const dispatched = yield* dependencies.engineHosts.dispatch({
+              hostConnectionId: engine.hostConnectionId,
+              target: {
+                threadId,
+                tabId: detail.snapshot.tabId,
+                serverEpoch: listed.serverEpoch,
+              },
+              engineGeneration: engine.generation,
+              command: engineCommand,
+            });
+            return dispatched.outcome === "applied" ? "accepted" : dispatched.outcome;
+          });
 
       const decodeGuard = <A, E>(
         decoder: (value: unknown) => Effect.Effect<A, E>,
@@ -501,72 +617,46 @@ export function createBrowserSessionsApiProvider(
           );
           return yield* command(
             safe,
-            dependencies.preview
-              .navigate({ threadId, tabId: safe.tabId, url: safe.url })
-              .pipe(
-                Effect.catchTag("PreviewSessionLookupError", lookupRemoved),
-                Effect.mapError(operationError(operation)),
-              ),
+            metadataWrite(
+              dependencies.preview
+                .navigate({ threadId, tabId: safe.tabId, url: safe.url })
+                .pipe(
+                  Effect.catchTag("PreviewSessionLookupError", lookupRemoved),
+                  Effect.mapError(operationError(operation)),
+                ),
+            ),
           );
         }
-        // These verbs have no engine dispatch in this slice:
-        // back/forward/zoom/setAppearance/setAudioMuted have no server-side
-        // path at all, and PreviewManager.refresh is an existence check that
-        // emits nothing — a metadata "accepted" for it would be a false
-        // proof of reload. Every one fails by name until an
-        // authenticated host dispatch exists; verb-specific fields still
-        // validate so malformed input is rejected by the contract schema.
         case "back":
-        case "forward": {
-          yield* decodeGuard(decodeGuardInput, "command input fails the declared schema.");
-          return yield* named(
-            operation,
-            "BrowserSessionCommandUnsupported",
-            `'${method}' requires an authenticated engine host that does not exist in this slice.`,
+        case "forward":
+        case "reload":
+        case "hardReload": {
+          const safe = yield* decodeGuard(
+            decodeGuardInput,
+            "command input fails the declared schema.",
           );
+          return yield* command(safe, engineWrite({ _tag: method }));
         }
         case "zoom": {
-          yield* decodeGuard(decodeZoomInput, "zoom input fails the declared schema.");
-          return yield* named(
-            operation,
-            "BrowserSessionCommandUnsupported",
-            "'zoom' requires an authenticated engine host that does not exist in this slice.",
-          );
+          const safe = yield* decodeGuard(decodeZoomInput, "zoom input fails the declared schema.");
+          return yield* command(safe, engineWrite({ _tag: "zoom", zoomFactor: safe.zoomFactor }));
         }
         case "setAppearance": {
-          yield* decodeGuard(
+          const safe = yield* decodeGuard(
             decodeAppearanceInput,
             "setAppearance input fails the declared schema.",
           );
-          return yield* named(
-            operation,
-            "BrowserSessionCommandUnsupported",
-            "'setAppearance' requires an authenticated engine host that does not exist in this slice.",
+          return yield* command(
+            safe,
+            engineWrite({ _tag: "setAppearance", appearance: safe.appearance }),
           );
         }
         case "setAudioMuted": {
-          yield* decodeGuard(decodeMutedInput, "setAudioMuted input fails the declared schema.");
-          return yield* named(
-            operation,
-            "BrowserSessionCommandUnsupported",
-            "'setAudioMuted' requires an authenticated engine host that does not exist in this slice.",
+          const safe = yield* decodeGuard(
+            decodeMutedInput,
+            "setAudioMuted input fails the declared schema.",
           );
-        }
-        case "reload": {
-          yield* decodeGuard(decodeGuardInput, "command input fails the declared schema.");
-          return yield* named(
-            operation,
-            "BrowserSessionCommandUnsupported",
-            "'reload' has no engine dispatch — PreviewManager.refresh is an existence check, not a reload.",
-          );
-        }
-        case "hardReload": {
-          yield* decodeGuard(decodeGuardInput, "command input fails the declared schema.");
-          return yield* named(
-            operation,
-            "BrowserSessionCommandUnsupported",
-            "'hardReload' is separately unsupported: no host-side hard/soft distinction exists to honor it.",
-          );
+          return yield* command(safe, engineWrite({ _tag: "setAudioMuted", muted: safe.muted }));
         }
         case "resize": {
           const safe = yield* decodeGuard(
@@ -575,12 +665,14 @@ export function createBrowserSessionsApiProvider(
           );
           return yield* command(
             safe,
-            dependencies.preview
-              .resize({ threadId, tabId: safe.tabId, viewport: safe.viewport })
-              .pipe(
-                Effect.catchTag("PreviewSessionLookupError", lookupRemoved),
-                Effect.mapError(operationError(operation)),
-              ),
+            metadataWrite(
+              dependencies.preview
+                .resize({ threadId, tabId: safe.tabId, viewport: safe.viewport })
+                .pipe(
+                  Effect.catchTag("PreviewSessionLookupError", lookupRemoved),
+                  Effect.mapError(operationError(operation)),
+                ),
+            ),
           );
         }
         default:
@@ -968,5 +1060,6 @@ export const makeBrowserSessionsApiProvider = Effect.fn("BrowserSessionsApi.make
     projects: yield* ProjectionProjectRepository,
     threads: yield* ProjectionThreadRepository,
     preview: yield* PreviewManager.PreviewManager,
+    engineHosts: yield* BrowserEngineHosts.BrowserEngineHosts,
   });
 });

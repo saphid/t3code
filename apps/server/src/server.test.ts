@@ -160,6 +160,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
+import * as BrowserEngineHosts from "./preview/BrowserEngineHosts.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import { layer as PreviewAutomationBrokerLayer } from "./mcp/PreviewAutomationBroker.ts";
 import { layer as BrowserFrameLeasesLayer } from "./browserFrames/BrowserFrameLeases.ts";
@@ -987,6 +988,9 @@ const buildAppUnderTest = (options?: {
               PubSub.unbounded<PreviewManager.PreviewInternalEvent>(),
               (pubsub) => PubSub.subscribe(pubsub),
             ),
+          }),
+          Layer.mock(BrowserEngineHosts.BrowserEngineHosts)({
+            hasHost: Effect.succeed(false),
           }),
           Layer.mock(PortScanner.PortDiscovery)({
             scan: () => Effect.succeed([]),

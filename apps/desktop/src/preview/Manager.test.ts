@@ -1393,6 +1393,57 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("setZoomFactor jumps to any ladder factor in one native call", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const setZoomFactor = vi.fn();
+        fromId.mockReturnValue({
+          id: 44,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor,
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setIgnoreMenuShortcuts: vi.fn(),
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand: vi.fn(async () => undefined),
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+        const states: PreviewManager.PreviewTabState[] = [];
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            states.push(state);
+          }),
+        );
+        yield* manager.createTab("tab_set_zoom");
+        yield* manager.registerWebview("tab_set_zoom", 44);
+        setZoomFactor.mockClear();
+
+        yield* manager.setZoomFactor("tab_set_zoom", 2);
+        expect(setZoomFactor.mock.calls).toEqual([[2]]);
+        expect(states.at(-1)?.zoomFactor).toBe(2);
+
+        yield* manager.setZoomFactor("tab_set_zoom", 0.5);
+        expect(setZoomFactor.mock.calls).toEqual([[2], [0.5]]);
+        expect(states.at(-1)?.zoomFactor).toBe(0.5);
+      }),
+    ),
+  );
+
   // The guest reports whatever zoom level Chromium handed it from the app
   // window, so the tab's own zoom is the source of truth in both directions:
   // asserted onto every guest, never read back off one.

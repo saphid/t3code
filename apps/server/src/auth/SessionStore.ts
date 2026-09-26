@@ -7,6 +7,7 @@ import {
   type AuthClientSession,
   type AuthEnvironmentScope,
   type ClientSurface,
+  type ServerAuthBootstrapMethod,
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -66,6 +67,12 @@ export interface VerifiedSession {
   readonly subject: string;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
+  /**
+   * Bootstrap grant the session was exchanged from, read from the session
+   * row. Absent for directly issued sessions (CLI, dev token), whatever
+   * subject they carry.
+   */
+  readonly grantMethod?: ServerAuthBootstrapMethod;
 }
 
 /** A persisted session principal for host-internal revalidation; it contains no credential or client metadata. */
@@ -388,6 +395,8 @@ export class SessionStore extends Context.Service<
       readonly ttl?: Duration.Duration;
       readonly subject?: string;
       readonly method?: ServerAuthSessionMethod;
+      /** Set only when exchanging a consumed bootstrap grant. */
+      readonly grantMethod?: ServerAuthBootstrapMethod;
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
       readonly client?: AuthClientMetadata;
       readonly proofKeyThumbprint?: string;
@@ -813,6 +822,7 @@ export const make = Effect.gen(function* () {
         subject: claims.sub,
         scopes: claims.scopes,
         method: claims.method,
+        ...(input?.grantMethod ? { grantMethod: input.grantMethod } : {}),
         client: {
           label: client.label ?? null,
           ipAddress: client.ipAddress ?? null,
@@ -904,6 +914,7 @@ export const make = Effect.gen(function* () {
           expiresAt: row.value.expiresAt,
           subject: row.value.subject,
           scopes: row.value.scopes,
+          ...(row.value.grantMethod ? { grantMethod: row.value.grantMethod } : {}),
         } satisfies VerifiedSession;
       }
       const [encodedPayload, signature] = token.split(".");
@@ -964,6 +975,7 @@ export const make = Effect.gen(function* () {
         subject: claims.sub,
         scopes: claims.scopes,
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
+        ...(row.value.grantMethod ? { grantMethod: row.value.grantMethod } : {}),
       } satisfies VerifiedSession;
     },
   );
@@ -1107,6 +1119,7 @@ export const make = Effect.gen(function* () {
           : row.value.expiresAt,
       subject: row.value.subject,
       scopes: row.value.scopes,
+      ...(row.value.grantMethod ? { grantMethod: row.value.grantMethod } : {}),
     } satisfies VerifiedSession;
   });
 

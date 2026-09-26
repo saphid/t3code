@@ -237,6 +237,15 @@ import {
   BrowserFramesOpenInputResult,
 } from "./browserFrames.ts";
 import {
+  BrowserEngineHostClaimInput,
+  BrowserEngineHostCommandResultInput,
+  BrowserEngineHostError,
+  BrowserEngineHostRegisterInput,
+  BrowserEngineHostReleaseInput,
+  BrowserEngineHostReportInput,
+  BrowserEngineHostStreamEvent,
+} from "./browserEngineHost.ts";
+import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
   ServerConfig,
@@ -370,6 +379,11 @@ export const WS_METHODS = {
   previewAutomationFocusHost: "previewAutomation.focusHost",
   browserFramesOpenInput: "browserFrames.openInput",
   browserFramesCloseInput: "browserFrames.closeInput",
+  browserEngineHostRegister: "browserEngineHost.register",
+  browserEngineHostClaim: "browserEngineHost.claim",
+  browserEngineHostRelease: "browserEngineHost.release",
+  browserEngineHostReport: "browserEngineHost.report",
+  browserEngineHostCommandResult: "browserEngineHost.commandResult",
 
   // Device methods
   deviceConfigure: "device.configure",
@@ -1242,6 +1256,39 @@ const WsBrowserFramesCloseInputRpc = Rpc.make(WS_METHODS.browserFramesCloseInput
   error: Schema.Union([BrowserFramesError, EnvironmentAuthorizationError]),
 });
 
+const BrowserEngineHostRpcError = Schema.Union([
+  BrowserEngineHostError,
+  EnvironmentAuthorizationError,
+]);
+
+/** Desktop-only engine host registration; the stream carries page commands. */
+const WsBrowserEngineHostRegisterRpc = Rpc.make(WS_METHODS.browserEngineHostRegister, {
+  payload: BrowserEngineHostRegisterInput,
+  success: BrowserEngineHostStreamEvent,
+  error: BrowserEngineHostRpcError,
+  stream: true,
+});
+
+const WsBrowserEngineHostClaimRpc = Rpc.make(WS_METHODS.browserEngineHostClaim, {
+  payload: BrowserEngineHostClaimInput,
+  error: BrowserEngineHostRpcError,
+});
+
+const WsBrowserEngineHostReleaseRpc = Rpc.make(WS_METHODS.browserEngineHostRelease, {
+  payload: BrowserEngineHostReleaseInput,
+  error: BrowserEngineHostRpcError,
+});
+
+const WsBrowserEngineHostReportRpc = Rpc.make(WS_METHODS.browserEngineHostReport, {
+  payload: BrowserEngineHostReportInput,
+  error: BrowserEngineHostRpcError,
+});
+
+const WsBrowserEngineHostCommandResultRpc = Rpc.make(WS_METHODS.browserEngineHostCommandResult, {
+  payload: BrowserEngineHostCommandResultInput,
+  error: BrowserEngineHostRpcError,
+});
+
 const WsExtensionsClientProvidersConnectRpc = Rpc.make(
   WS_METHODS.extensionsClientProvidersConnect,
   {
@@ -1592,6 +1639,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewAutomationFocusHostRpc,
   WsBrowserFramesOpenInputRpc,
   WsBrowserFramesCloseInputRpc,
+  WsBrowserEngineHostRegisterRpc,
+  WsBrowserEngineHostClaimRpc,
+  WsBrowserEngineHostReleaseRpc,
+  WsBrowserEngineHostReportRpc,
+  WsBrowserEngineHostCommandResultRpc,
   WsExtensionsClientProvidersConnectRpc,
   WsExtensionsClientProvidersRespondRpc,
   WsExtensionsClientProvidersEmitRpc,

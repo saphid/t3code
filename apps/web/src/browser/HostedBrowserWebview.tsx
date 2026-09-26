@@ -2,7 +2,7 @@
 
 import type { PreviewViewportSetting, ScopedThreadRef } from "@t3tools/contracts";
 import { useShallow } from "zustand/react/shallow";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { previewBridge } from "~/components/preview/previewBridge";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
@@ -47,6 +47,8 @@ export function HostedBrowserWebview(props: {
   readonly threadRef: ScopedThreadRef;
   readonly tabId: string;
   readonly runtimeTabId: string;
+  /** Server process epoch the tab belongs to; fences engine host claims. */
+  readonly serverEpoch: string | null;
   readonly initialUrl: string | null;
   readonly viewport: PreviewViewportSetting;
   readonly pictureInPicture: boolean;
@@ -67,6 +69,7 @@ export function HostedBrowserWebview(props: {
     threadRef,
     tabId,
     runtimeTabId,
+    serverEpoch,
     initialUrl,
     viewport,
     pictureInPicture,
@@ -100,7 +103,8 @@ export function HostedBrowserWebview(props: {
     (state) => (state.activityByTabId[runtimeTabId] ?? 0) > 0,
   );
   const recordingActive = useActiveBrowserRecordingTabIds().has(runtimeTabId);
-  usePreviewBridge({ threadRef, tabId, runtimeTabId });
+  const reportEngineLifecycle = usePreviewBridge({ threadRef, tabId, runtimeTabId, serverEpoch });
+  const onGuestLifecycle = useEffectEvent(reportEngineLifecycle);
 
   useEffect(() => {
     if (!clientSettingsHydrated) return;
@@ -153,11 +157,17 @@ export function HostedBrowserWebview(props: {
     const recoverGuest = () => {
       if (disposed || recoveryTimeout !== null) return;
       const recovery = planWebviewCrashRecovery(crashRecoveryRef.current, Date.now());
-      if (!recovery) return;
+      if (!recovery) {
+        onGuestLifecycle("exhausted");
+        return;
+      }
+      onGuestLifecycle("crashed");
       crashRecoveryRef.current = recovery.state;
       recoveryTimeout = setTimeout(() => {
         recoveryTimeout = null;
         if (!disposed) {
+          // The remounted guest is a new webContents; its fresh claim ends this state.
+          onGuestLifecycle("recovering");
           setRecoverySrc(latestUrlRef.current ?? initialSrc);
           setWebviewGeneration((generation) => generation + 1);
         }

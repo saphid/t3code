@@ -81,6 +81,7 @@ import { ProjectionThreadRepositoryLive } from "./persistence/Layers/ProjectionT
 import { ProjectionTurnRepositoryLive } from "./persistence/Layers/ProjectionTurns.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { deviceHubProxyRouteLayer } from "./device/DeviceHubProxy.ts";
+import * as BrowserEngineHosts from "./preview/BrowserEngineHosts.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as ProcessRunner from "./processRunner.ts";
@@ -414,7 +415,7 @@ const TerminalLayerLive = TerminalManager.layer.pipe(
   Layer.provide(NativeTelemetryLayerLive),
 );
 
-const PreviewLayerLive = Layer.empty.pipe(
+const PreviewLayerLive = BrowserEngineHosts.layer.pipe(
   Layer.provideMerge(PreviewManager.layer),
   Layer.provideMerge(PortScannerLayerLive),
 );

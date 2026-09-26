@@ -9,6 +9,7 @@ import { useTheme } from "~/hooks/useTheme";
 import { useActivePreviewSessions } from "~/previewStateStore";
 
 import { readPreviewAnnotationTheme } from "./annotationTheme";
+import { BrowserEngineHostConnection } from "./BrowserEngineHostConnection";
 import { useBrowserPointerStore } from "./browserPointerStore";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
@@ -24,6 +25,7 @@ export function ElectronBrowserHost() {
           ? Object.values(previewState.sessions).map((snapshot) => ({
               threadRef,
               snapshot,
+              serverEpoch: previewState.serverEpoch,
               runtimeTabId: previewRuntimeTabId(
                 threadRef,
                 previewState.serverEpoch,
@@ -83,8 +85,17 @@ export function ElectronBrowserHost() {
   if (!isElectron) return null;
   return (
     <div className="contents" data-electron-browser-host>
+      <BrowserEngineHostConnection />
       {sessions.map(
-        ({ threadRef, snapshot, runtimeTabId, pictureInPicture, remoteLive, zoomFactor }) => {
+        ({
+          threadRef,
+          snapshot,
+          serverEpoch,
+          runtimeTabId,
+          pictureInPicture,
+          remoteLive,
+          zoomFactor,
+        }) => {
           const url = snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
           return (
             <HostedBrowserWebview
@@ -92,6 +103,7 @@ export function ElectronBrowserHost() {
               threadRef={threadRef}
               tabId={snapshot.tabId}
               runtimeTabId={runtimeTabId}
+              serverEpoch={serverEpoch}
               initialUrl={url}
               viewport={snapshot.viewport ?? FILL_PREVIEW_VIEWPORT}
               pictureInPicture={pictureInPicture}
