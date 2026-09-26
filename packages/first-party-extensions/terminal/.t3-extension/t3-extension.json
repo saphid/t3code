@@ -62,6 +62,10 @@
     {
       "id": "t3.ui/panels",
       "versionRange": "^1.0.0"
+    },
+    {
+      "id": "t3.ui/external",
+      "versionRange": "^1.0.0"
     }
   ],
   "dependencies": [],
