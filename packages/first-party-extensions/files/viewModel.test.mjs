@@ -1,6 +1,7 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeCrypto from "node:crypto";
 import * as NodeTest from "node:test";
+import { copyJson } from "@t3tools/extension-sdk/contracts";
 import server from "./server.ts";
 import {
   applyResourceReadEvent,
@@ -40,6 +41,7 @@ import {
   filesViewState,
   isFilesViewState,
   MAX_PERSISTED_EXPANDED,
+  MAX_PERSISTED_EXPANDED_BYTES,
   restoredExpanded,
   restoredRenderMarkdown,
   restoredSelection,
@@ -597,6 +599,23 @@ NodeTest.describe("open in presentation (F1 #17)", () => {
     const saved = filesViewState("a.ts", many, false);
     NodeAssert.equal(saved.expanded.length, MAX_PERSISTED_EXPANDED);
     NodeAssert.equal(isFilesViewState(saved), true);
+  });
+
+  NodeTest.it("deep expanded paths stay under the host's saved-state payload cap", () => {
+    // 512 paths of ~200 bytes is ~100 KiB — past the host's 64 KiB cap, where
+    // `session.save` throws instead of persisting.
+    const deep = new Set(
+      Array.from({ length: MAX_PERSISTED_EXPANDED }, (_, i) => `${"nested/".repeat(28)}d${i}`),
+    );
+    const saved = filesViewState("a.ts", deep, true);
+    NodeAssert.ok(saved.expanded.length > 0 && saved.expanded.length < MAX_PERSISTED_EXPANDED);
+    NodeAssert.ok(
+      Buffer.byteLength(JSON.stringify(saved.expanded)) <= MAX_PERSISTED_EXPANDED_BYTES,
+    );
+    const restored = copyJson(saved);
+    NodeAssert.equal(isFilesViewState(restored), true);
+    NodeAssert.equal(restoredExpanded(restored).size, saved.expanded.length);
+    NodeAssert.equal(restoredRenderMarkdown(restored), true);
   });
 
   NodeTest.it("describePresentation reports the resolved descriptor", () => {

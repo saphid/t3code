@@ -1032,6 +1032,12 @@ export function restoredSelection(restoreState: unknown): string | null {
 export const MAX_PERSISTED_EXPANDED = 512;
 
 /**
+ * Byte budget for persisted expansion: half the host's 64 KiB payload cap,
+ * leaving room for the rest of the record. 512 deep monorepo paths exceed it.
+ */
+export const MAX_PERSISTED_EXPANDED_BYTES = 32 * 1024;
+
+/**
  * The Files view's saved state (row 12): the selected file plus tree
  * expansion and the rendered-markdown preference. `expanded` and
  * `renderMarkdown` are optional so the `{ relativePath }` records written by
@@ -1076,19 +1082,25 @@ export function restoredRenderMarkdown(restoreState: unknown): boolean {
 
 /**
  * The record `session.save` persists. Expansion is sorted so equal view
- * states serialize identically, and bounded so a sprawling tree cannot grow
- * the saved record without limit.
+ * states serialize identically, and bounded by count and bytes so a
+ * sprawling tree can neither grow the record without limit nor push it past
+ * the host's payload cap (an oversized `session.save` throws).
  */
 export function filesViewState(
   selected: string | null,
   expanded: ReadonlySet<string>,
   renderMarkdown: boolean,
 ): FilesViewState {
-  return {
-    relativePath: selected ?? "",
-    expanded: [...expanded].sort().slice(0, MAX_PERSISTED_EXPANDED),
-    renderMarkdown,
-  };
+  const kept: string[] = [];
+  let bytes = 0;
+  for (const path of [...expanded].sort()) {
+    if (kept.length >= MAX_PERSISTED_EXPANDED) break;
+    // JSON quotes plus the separating comma.
+    bytes += textEncoder.encode(path).length + 3;
+    if (bytes > MAX_PERSISTED_EXPANDED_BYTES) break;
+    kept.push(path);
+  }
+  return { relativePath: selected ?? "", expanded: kept, renderMarkdown };
 }
 
 /**
