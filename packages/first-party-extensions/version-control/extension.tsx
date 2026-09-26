@@ -81,6 +81,7 @@ import {
   stackedActionOffers,
   stackedActionSuggestion,
   startMutation,
+  syncBlockReasons,
   worktreeRows,
   VCS_PATHS_MAX,
   type ChangeLane,
@@ -805,6 +806,10 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   );
 
   const lanes = useMemo(() => lanesFromChanges(changes.changes?.entries ?? []), [changes.changes]);
+  // A prompt whose paths left their lane is dropped, not hidden: the same
+  // paths re-entering later must not bring the old prompt back armed.
+  if (pendingDiscard !== null && planDiscard(lanes, pendingDiscard) === null)
+    setPendingDiscard(null);
   const selected = retainSelection(selection, lanes);
   const selectedEntry =
     selected === null ? null : (lanes[selected.lane].find((e) => e.path === selected.path) ?? null);
@@ -932,11 +937,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
     setPendingDiscard(null);
     const plan = planDiscard(lanes, request);
     if (plan === null || plan.disabled !== null) return;
-    const label =
-      request.paths.length === 1
-        ? `Discarding ${request.paths[0]}`
-        : `Discarding ${request.paths.length} paths`;
-    runMutation("discard", label, async (signal) => {
+    runMutation("discard", plan.progress, async (signal) => {
       const result = await bindApi(vcsChangesApi, host, session.context, CHANGES_API_RANGE).invoke(
         "discard",
         { paths: [...request.paths] },
@@ -1419,13 +1420,11 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                     </button>
                   )}
                   <span style={{ color: muted, fontSize: 11 }}>
-                    {[
+                    {syncBlockReasons([
                       canPull ? pull.disabled : null,
                       canPush ? push.disabled : null,
                       publish.offered ? publish.disabled : null,
-                    ]
-                      .filter((reason) => reason !== null)
-                      .join(" · ")}
+                    ])}
                   </span>
                 </section>
               )}

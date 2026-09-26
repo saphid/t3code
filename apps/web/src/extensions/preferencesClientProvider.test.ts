@@ -137,6 +137,17 @@ describe("preferences client provider", () => {
     expect(getClientSettings().wordWrap).toBe(false);
   });
 
+  it("never reports a pre-hydration default when settings cannot load", async () => {
+    persistenceMocks.getClientSettings.mockRejectedValue(new Error("storage offline"));
+    const provider = createPreferencesClientProvider(makeDeps([READ, WRITE]));
+    await expect(
+      provider.invoke(
+        invokeCall("applyPreferences", { writer: INSTALL, patch: { wordWrap: true } }),
+      ),
+    ).rejects.toMatchObject({ code: "client-provider-unavailable" });
+    expect(persistenceMocks.setClientSettings).not.toHaveBeenCalled();
+  });
+
   it("names an empty patch instead of claiming a write", async () => {
     const provider = createPreferencesClientProvider(makeDeps([READ, WRITE]));
     await expect(

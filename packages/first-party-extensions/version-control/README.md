@@ -23,8 +23,10 @@ The PR browser consumes the `t3.prs/read` grant:
   text reaches the renderer; continuation frames use `nextCursor`;
 - freshness via `prs.subscribeRefreshes` and an explicit Refresh that
   calls `prs.invalidate` then re-reads the list;
-- `prs.stack`/`prs.reviewerCandidates`/`prs.labelCandidates`/`prs.listStats`
-  remain unwired — nothing in the panel needs them yet;
+- the PR's stack via `prs.stack`, shown as a Stack section with its base
+  and layers when the host supports it;
+- `prs.reviewerCandidates`/`prs.labelCandidates`/`prs.listStats` remain
+  unwired — nothing in the panel needs them yet;
 - PR writes via `t3.prs/write`: comments, review-thread replies, and
   thread resolve/unresolve, each gated on the write capability probe's
   per-operation flags.

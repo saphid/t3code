@@ -1,7 +1,7 @@
 /**
  * Add-to-chat through the composer draft bridge (parity row 13). The native
  * panel's "Add to chat" appends a serialized file mention to the thread's
- * draft; `t3.composer/context@1.1.0` `insertMention` is that append,
+ * draft; `t3.composer/context` `insertMention` (since 1.1.0) is that append,
  * byte-exact, routed through the host. The panel has no composer of its own
  * — the mention lands in whatever client hosts the draft for the thread this
  * view is scoped to.

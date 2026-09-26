@@ -3,7 +3,9 @@ import * as NodeTest from "node:test";
 
 import {
   FAVICON_CACHE_MAX_ENTRIES,
+  FAVICON_FAILURE_TTL_MS,
   emptyFaviconCache,
+  expireStaleFaviconFailure,
   faviconFallbackGlyph,
   faviconOriginKey,
   recordProviderFaviconFailure,
@@ -72,6 +74,30 @@ NodeTest.describe("recordProviderFaviconFailure", () => {
   NodeTest.it("ignores urls without an origin key", () => {
     const cache = emptyFaviconCache();
     NodeAssert.equal(recordProviderFaviconFailure(cache, "file:///tmp/x", 1_000), cache);
+  });
+});
+
+NodeTest.describe("expireStaleFaviconFailure", () => {
+  NodeTest.it("retries an origin only once its failure is older than the TTL", () => {
+    let cache = recordProviderFaviconFailure(emptyFaviconCache(), "https://example.com/", 1_000);
+    cache = recordProviderFaviconFailure(cache, "https://example.org/", 1_000);
+    const stale = 1_000 + FAVICON_FAILURE_TTL_MS;
+    NodeAssert.equal(expireStaleFaviconFailure(cache, "https://example.com/a", stale - 1), cache);
+    const expired = expireStaleFaviconFailure(cache, "https://example.com/a", stale);
+    NodeAssert.deepEqual(resolveFavicon(expired, "https://example.com/"), {
+      kind: "image",
+      src: "https://www.google.com/s2/favicons?domain=example.com&sz=32",
+    });
+    // Another origin's failure waits for its own surface to mount or navigate.
+    NodeAssert.deepEqual(resolveFavicon(expired, "https://example.org/"), { kind: "glyph" });
+  });
+
+  NodeTest.it("returns the same cache for unknown origins and non-urls", () => {
+    const cache = recordProviderFaviconFailure(emptyFaviconCache(), "https://example.com/", 1_000);
+    const late = 10 * FAVICON_FAILURE_TTL_MS;
+    NodeAssert.equal(expireStaleFaviconFailure(cache, "https://example.org/", late), cache);
+    NodeAssert.equal(expireStaleFaviconFailure(cache, "not a url", late), cache);
+    NodeAssert.equal(expireStaleFaviconFailure(cache, null, late), cache);
   });
 });
 

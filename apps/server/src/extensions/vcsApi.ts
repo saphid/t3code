@@ -956,9 +956,21 @@ export function createVcsApiProviders(dependencies: VcsApiDependencies): HostApi
             });
           }
           // `git clean` exits 0 while skipping nested repositories; a path
-          // still reported changed must not be receipted as discarded.
+          // still reported changed must not be receipted as discarded. A
+          // removed path must be gone outright — one staged by someone else
+          // mid-discard is skipped by clean yet no longer reads untracked. A
+          // removed directory (`dir/`) is gone only when no porcelain entry
+          // sits beneath it: a descendant staged mid-discard reports as
+          // `dir/file`, never as `dir/` itself.
           const after = yield* discardableState(scope.cwd, paths);
+          const afterPaths = [...after.keys()];
+          const removedSet = new Set(removed);
           const remaining = paths.filter((path) => {
+            if (removedSet.has(path)) {
+              return afterPaths.some(
+                (entry) => entry === path || (path.endsWith("/") && entry.startsWith(path)),
+              );
+            }
             const entry = after.get(path);
             return entry !== undefined && (entry.unstaged || entry.untracked);
           });

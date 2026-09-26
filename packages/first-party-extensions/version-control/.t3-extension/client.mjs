@@ -7435,9 +7435,11 @@ var __t3Client = (() => {
     const count = request.paths.length;
     const noun = count === 1 ? `"${request.paths[0]}"` : `${count} paths`;
     const prompt = request.lane === "untracked" ? `Delete ${noun} from disk? Untracked files cannot be recovered.` : `Discard changes to ${noun}? Unstaged edits are lost; staged changes stay.`;
+    const progressVerb = request.lane === "untracked" ? "Deleting" : "Discarding";
     return {
       prompt,
       confirmLabel: count === 1 ? action.verb : `${action.verb} ${count} paths`,
+      progress: `${progressVerb} ${count === 1 ? request.paths[0] : `${count} paths`}`,
       disabled: count > VCS_PATHS_MAX ? `Over ${VCS_PATHS_MAX} paths \u2014 discard runs as one request, pick fewer` : null
     };
   }
@@ -7718,6 +7720,13 @@ var __t3Client = (() => {
       return { offered: true, disabled: "Detached HEAD \u2014 checkout a ref before publishing" };
     }
     return { offered: true, disabled: null };
+  }
+  function syncBlockReasons(reasons) {
+    const present = reasons.filter((reason) => reason !== null);
+    const detached = present.filter((reason) => reason.startsWith("Detached HEAD"));
+    if (detached.length < 2) return present.join(" \xB7 ");
+    const first = present.indexOf(detached[0]);
+    return present.map((reason, index) => index === first ? "Detached HEAD \u2014 checkout a ref first" : reason).filter((reason, index) => index === first || !reason.startsWith("Detached HEAD")).join(" \xB7 ");
   }
   function planPublish(input) {
     const remoteName = input.remoteName.trim() || "origin";
@@ -11319,6 +11328,8 @@ ${thread.id}`) === activity,
       listRevision
     );
     const lanes = (0, import_react2.useMemo)(() => lanesFromChanges(changes.changes?.entries ?? []), [changes.changes]);
+    if (pendingDiscard !== null && planDiscard(lanes, pendingDiscard) === null)
+      setPendingDiscard(null);
     const selected = retainSelection(selection, lanes);
     const selectedEntry = selected === null ? null : lanes[selected.lane].find((e) => e.path === selected.path) ?? null;
     const selectedStat = selected === null ? null : numstatFor(status.local, selected.path);
@@ -11406,8 +11417,7 @@ ${thread.id}`) === activity,
       setPendingDiscard(null);
       const plan = planDiscard(lanes, request);
       if (plan === null || plan.disabled !== null) return;
-      const label = request.paths.length === 1 ? `Discarding ${request.paths[0]}` : `Discarding ${request.paths.length} paths`;
-      runMutation("discard", label, async (signal) => {
+      runMutation("discard", plan.progress, async (signal) => {
         const result = await bindApi(vcsChangesApi, host, session.context, CHANGES_API_RANGE).invoke(
           "discard",
           { paths: [...request.paths] },
@@ -11778,11 +11788,11 @@ ${thread.id}`) === activity,
                         children: "Publish repository\u2026"
                       }
                     ),
-                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 11 }, children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 11 }, children: syncBlockReasons([
                       canPull ? pull.disabled : null,
                       canPush ? push.disabled : null,
                       publish.offered ? publish.disabled : null
-                    ].filter((reason) => reason !== null).join(" \xB7 ") })
+                    ]) })
                   ]
                 }
               ),

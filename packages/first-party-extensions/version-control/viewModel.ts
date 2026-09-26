@@ -195,6 +195,8 @@ export interface DiscardConfirm {
   readonly prompt: string;
   /** Label for the confirming button, e.g. "Discard" or "Delete 2 paths". */
   readonly confirmLabel: string;
+  /** In-flight label once confirmed, e.g. "Deleting 2 paths". */
+  readonly progress: string;
   /** Why confirming is blocked; null when it may run. */
   readonly disabled: string | null;
 }
@@ -219,9 +221,11 @@ export function planDiscard(
     request.lane === "untracked"
       ? `Delete ${noun} from disk? Untracked files cannot be recovered.`
       : `Discard changes to ${noun}? Unstaged edits are lost; staged changes stay.`;
+  const progressVerb = request.lane === "untracked" ? "Deleting" : "Discarding";
   return {
     prompt,
     confirmLabel: count === 1 ? action.verb : `${action.verb} ${count} paths`,
+    progress: `${progressVerb} ${count === 1 ? request.paths[0] : `${count} paths`}`,
     disabled:
       count > VCS_PATHS_MAX
         ? `Over ${VCS_PATHS_MAX} paths — discard runs as one request, pick fewer`
@@ -855,6 +859,21 @@ export function publishOffer(local: VcsStatusLocal | null): PublishOffer {
     return { offered: true, disabled: "Detached HEAD — checkout a ref before publishing" };
   }
   return { offered: true, disabled: null };
+}
+
+/**
+ * The Sync section's muted reason line. Pull, push and publish each name a
+ * detached HEAD in their own words; the line says it once.
+ */
+export function syncBlockReasons(reasons: ReadonlyArray<string | null>): string {
+  const present = reasons.filter((reason) => reason !== null);
+  const detached = present.filter((reason) => reason.startsWith("Detached HEAD"));
+  if (detached.length < 2) return present.join(" · ");
+  const first = present.indexOf(detached[0]!);
+  return present
+    .map((reason, index) => (index === first ? "Detached HEAD — checkout a ref first" : reason))
+    .filter((reason, index) => index === first || !reason.startsWith("Detached HEAD"))
+    .join(" · ");
 }
 
 export interface PublishPlan {

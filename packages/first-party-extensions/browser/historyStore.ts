@@ -208,6 +208,21 @@ export function restoreTarget(
   return {};
 }
 
+/**
+ * The workspace path a view keeps when it adopts another session: only the
+ * lease page this view itself minted can be re-minted from `fileSource`.
+ * Any other tab — a lease minted by another view included — drops the
+ * binding, so Reload and the restore record never re-mint a file that tab
+ * never showed.
+ */
+export function adoptedFileSource(
+  fileSource: string | null,
+  mintedUrl: string | null,
+  url: string | null,
+): string | null {
+  return fileSource !== null && url !== null && url === mintedUrl ? fileSource : null;
+}
+
 export const HISTORY_SAVE_BUDGET_BYTES = 56_000;
 
 const historyByteEncoder = new TextEncoder();

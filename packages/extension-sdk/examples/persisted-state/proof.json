@@ -25,7 +25,6 @@
     "sdkTestsPassed": 59,
     "scopedLintErrors": 0
   },
-  "evidenceRoot": "/Users/saphid/artifacts/t3-sdk-refinements-devin-20260911/f2c",
   "notProven": [
     "installation into a real T3 environment or any host UI rendering",
     "remote/relay/tunnel and mobile client behavior",

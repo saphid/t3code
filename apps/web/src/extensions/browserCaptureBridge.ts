@@ -231,6 +231,10 @@ export function createBrowserCaptureBridge(
                 error instanceof Error ? error.message : "The page could not be captured.",
               );
             }
+            // Rasterizing cannot be interrupted, but an abort that lands
+            // meanwhile still cancels before anything is stored.
+            if (request.signal?.aborted || binding.lifetime.aborted)
+              return fail("cancelled", "The capture was cancelled.");
             png = new Blob([new Uint8Array(image.data)], { type: "image/png" });
             partial = {
               mimeType: "image/png",

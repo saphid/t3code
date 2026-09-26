@@ -705,6 +705,89 @@ it.layer(NodeServices.layer)("t3.vcs adapters", (it) => {
     }),
   );
 
+  it.effect("fails by name when an untracked path is staged mid-discard", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "t3-vcs-ws-" });
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-vcs-repo-",
+        directory: workspace,
+      });
+      yield* withVcsServices(workspace, ({ git, registry, provisioning, review, worktreesDir }) =>
+        Effect.gen(function* () {
+          yield* initRepo(git, root);
+          yield* fs.writeFileString(path.join(root, "new.txt"), "new\n");
+          // Another actor stages the file between the precheck and the
+          // clean, which then skips it and exits 0.
+          const racingGit: GitVcsDriver["Service"] = {
+            ...git,
+            execute: (input) =>
+              input.args.includes("clean")
+                ? git
+                    .execute({ operation: "t", cwd: root, args: ["add", "new.txt"] })
+                    .pipe(Effect.andThen(git.execute(input)))
+                : git.execute(input),
+          };
+          const providers = createVcsApiProviders(
+            makeDeps(root, { git: racingGit, registry, provisioning, review, worktreesDir }),
+          );
+          const changes = providerOf(providers, "t3.vcs/changes");
+          const error = yield* invokeError(
+            changes,
+            "discard",
+            { paths: ["new.txt"] },
+            makeContext(root),
+          );
+          expect(error.detail).toBe("Discard left 1 path changed: new.txt");
+          expect(yield* fs.readFileString(path.join(root, "new.txt"))).toBe("new\n");
+        }),
+      );
+    }),
+  );
+
+  it.effect("fails by name when a removed directory's descendant is staged mid-discard", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "t3-vcs-ws-" });
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-vcs-repo-",
+        directory: workspace,
+      });
+      yield* withVcsServices(workspace, ({ git, registry, provisioning, review, worktreesDir }) =>
+        Effect.gen(function* () {
+          yield* initRepo(git, root);
+          yield* fs.makeDirectory(path.join(root, "dir"));
+          yield* fs.writeFileString(path.join(root, "dir", "file.txt"), "new\n");
+          // Porcelain reports `?? dir/`; staging `dir/file.txt` before the
+          // clean leaves `A  dir/file.txt` and no `dir/` entry at all.
+          const racingGit: GitVcsDriver["Service"] = {
+            ...git,
+            execute: (input) =>
+              input.args.includes("clean")
+                ? git
+                    .execute({ operation: "t", cwd: root, args: ["add", "dir/file.txt"] })
+                    .pipe(Effect.andThen(git.execute(input)))
+                : git.execute(input),
+          };
+          const providers = createVcsApiProviders(
+            makeDeps(root, { git: racingGit, registry, provisioning, review, worktreesDir }),
+          );
+          const changes = providerOf(providers, "t3.vcs/changes");
+          const error = yield* invokeError(
+            changes,
+            "discard",
+            { paths: ["dir/"] },
+            makeContext(root),
+          );
+          expect(error.detail).toBe("Discard left 1 path changed: dir/");
+          expect(yield* fs.readFileString(path.join(root, "dir", "file.txt"))).toBe("new\n");
+        }),
+      );
+    }),
+  );
+
   it.effect("lists, creates, and switches refs against a real repository", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

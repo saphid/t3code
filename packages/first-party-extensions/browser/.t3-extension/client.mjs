@@ -7575,7 +7575,7 @@ var __t3Client = (() => {
     };
   }
   function useRemoteBrowserFrames(host, session, options) {
-    const { useCallback: useCallback2, useEffect: useEffect5, useRef: useRef3, useState: useState6 } = host.React;
+    const { useCallback: useCallback2, useEffect: useEffect6, useRef: useRef3, useState: useState6 } = host.React;
     const [element, setElement] = useState6(null);
     const [status, setStatus] = useState6({ kind: "idle" });
     const [view, setView] = useState6({
@@ -7588,7 +7588,7 @@ var __t3Client = (() => {
     sessionRef.current = options.session;
     const targetKey = options.session ? `${options.session.serverEpoch} ${options.session.tabId}` : "";
     const ref = useCallback2((node) => setElement(node), []);
-    useEffect5(() => {
+    useEffect6(() => {
       setStatus({ kind: "idle" });
       setView({ status: "connecting", inputConnected: false, droppedFrames: 0, rejectedInput: 0 });
       if (!element || !options.enabled || !options.session)
@@ -13726,6 +13726,7 @@ ${ind(d)}}`;
   // faviconStore.ts
   var FAVICON_CACHE_MAX_ENTRIES = 40;
   var FAVICON_PROVIDER_SIZE = 32;
+  var FAVICON_FAILURE_TTL_MS = 5 * 6e4;
   function emptyFaviconCache() {
     return { byOrigin: {} };
   }
@@ -13763,6 +13764,13 @@ ${ind(d)}}`;
       byOrigin: Object.fromEntries(keys.filter((k) => !evict.has(k)).map((k) => [k, byOrigin[k]]))
     };
   }
+  function expireStaleFaviconFailure(cache2, rawUrl, now) {
+    const key = rawUrl ? faviconOriginKey(rawUrl) : null;
+    const entry = key ? cache2.byOrigin[key] : void 0;
+    if (!key || !entry || now - entry.providerFailedAt < FAVICON_FAILURE_TTL_MS) return cache2;
+    const { [key]: _expired, ...byOrigin } = cache2.byOrigin;
+    return { byOrigin };
+  }
   var GLYPH = { kind: "glyph" };
   function faviconFallbackGlyph(rawUrl) {
     if (!rawUrl) return "\u2022";
@@ -13787,12 +13795,14 @@ ${ind(d)}}`;
   var listeners = /* @__PURE__ */ new Set();
   var cache = emptyFaviconCache();
   var version = 0;
-  function faviconImageFailed(rawUrl) {
-    const next = recordProviderFaviconFailure(cache, rawUrl, Date.now());
+  function publish(next) {
     if (next === cache) return;
     cache = next;
     version += 1;
     for (const listener of listeners) listener();
+  }
+  function faviconImageFailed(rawUrl) {
+    publish(recordProviderFaviconFailure(cache, rawUrl, Date.now()));
   }
   function subscribe(listener) {
     listeners.add(listener);
@@ -13802,6 +13812,9 @@ ${ind(d)}}`;
   }
   function useFaviconResolution(url) {
     (0, import_react2.useSyncExternalStore)(subscribe, () => version);
+    (0, import_react2.useEffect)(() => {
+      publish(expireStaleFaviconFailure(cache, url, Date.now()));
+    }, [url]);
     return resolveFavicon(cache, url);
   }
   function BrowserFavicon(props) {
@@ -13932,6 +13945,9 @@ ${ind(d)}}`;
     if (fileSource) return { relativePath: fileSource };
     if (url && !isLeaseUrl(url)) return { url };
     return {};
+  }
+  function adoptedFileSource(fileSource, mintedUrl, url) {
+    return fileSource !== null && url !== null && url === mintedUrl ? fileSource : null;
   }
   var HISTORY_SAVE_BUDGET_BYTES = 56e3;
   var historyByteEncoder = new TextEncoder();
@@ -15170,6 +15186,7 @@ ${ind(d)}}`;
       restored?.url ? null : restored?.relativePath ?? null
     );
     const fileSourceRef = (0, import_react6.useRef)(fileSource);
+    const fileLeaseUrl = (0, import_react6.useRef)(null);
     const fileRun = (0, import_react6.useRef)(null);
     const [address, setAddress] = (0, import_react6.useState)(restored?.url ?? restored?.relativePath ?? "");
     const [history, setHistory] = (0, import_react6.useState)(
@@ -15421,6 +15438,7 @@ ${ind(d)}}`;
       }
     });
     const presentFile = (relativePath) => {
+      if (relativePath !== fileSourceRef.current) fileLeaseUrl.current = null;
       fileSourceRef.current = relativePath;
       setFileSource(relativePath);
     };
@@ -15462,11 +15480,9 @@ ${ind(d)}}`;
         setLive(tab);
         setFault(null);
         const url = tab.navigation.url ?? tab.requestedUrl ?? null;
-        if (url) {
-          setAddress(url);
-          setState((current) => submitAddress(current, url));
-        }
-        if (!(url && isLeaseUrl(url))) presentFile(null);
+        setAddress(url ?? "");
+        if (url) setState((current) => submitAddress(current, url));
+        presentFile(adoptedFileSource(fileSourceRef.current, fileLeaseUrl.current, url));
         const base = {
           ...restoreTarget(fileSourceRef.current, url),
           tabId: next.tabId,
@@ -15502,6 +15518,7 @@ ${ind(d)}}`;
             setFault(result2.message);
             return;
           }
+          fileLeaseUrl.current = result2.url;
           setState((current) => submitAddress(current, result2.url));
           go(result2.url);
         },
@@ -15830,7 +15847,7 @@ ${titledTitle}`;
                           },
                           children: [
                             /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(BrowserFavicon, { url: tabUrl }),
-                            /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { style: { overflow: "hidden", textOverflow: "ellipsis" }, children: label })
+                            /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { style: { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }, children: label })
                           ]
                         }
                       ),

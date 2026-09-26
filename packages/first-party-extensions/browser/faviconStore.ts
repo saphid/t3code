@@ -10,7 +10,10 @@
  * (`faviconUrlForOrigin`: the public favicon service, public hosts only).
  * This module owns that tier's per-origin outcome: an origin whose provider
  * image failed to load renders the fallback glyph on every surface and
- * stops being requested.
+ * stops being requested until the failure ages out, so a transient network
+ * blip does not suppress the image for the whole session. Nothing schedules
+ * the age-out: a surface expires its origin's stale failure when it mounts
+ * or navigates.
  */
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import { isLocalLoopbackHost, normalizeHostname } from "@t3tools/shared/hostClassification";
@@ -19,6 +22,8 @@ import { isLocalLoopbackHost, normalizeHostname } from "@t3tools/shared/hostClas
 export const FAVICON_CACHE_MAX_ENTRIES = 40;
 /** The size the native tab strip asks the public provider for. */
 export const FAVICON_PROVIDER_SIZE = 32;
+/** How long a recorded provider failure keeps its origin on the glyph. */
+export const FAVICON_FAILURE_TTL_MS = 5 * 60_000;
 
 export type FaviconOriginEntry = { readonly providerFailedAt: number };
 export type FaviconCache = { readonly byOrigin: Readonly<Record<string, FaviconOriginEntry>> };
@@ -80,6 +85,23 @@ export function recordProviderFaviconFailure(
   return {
     byOrigin: Object.fromEntries(keys.filter((k) => !evict.has(k)).map((k) => [k, byOrigin[k]!])),
   };
+}
+
+/**
+ * Drop this origin's failure once it is older than `FAVICON_FAILURE_TTL_MS`
+ * at `now`, so its provider image is tried again. A no-op returns the same
+ * cache reference.
+ */
+export function expireStaleFaviconFailure(
+  cache: FaviconCache,
+  rawUrl: string | null,
+  now: number,
+): FaviconCache {
+  const key = rawUrl ? faviconOriginKey(rawUrl) : null;
+  const entry = key ? cache.byOrigin[key] : undefined;
+  if (!key || !entry || now - entry.providerFailedAt < FAVICON_FAILURE_TTL_MS) return cache;
+  const { [key]: _expired, ...byOrigin } = cache.byOrigin;
+  return { byOrigin };
 }
 
 export type FaviconResolution =
