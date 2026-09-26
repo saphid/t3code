@@ -1588,7 +1588,6 @@ var AGENT_SESSIONS_API = "t3.agents/sessions";
 var AGENT_SESSIONS_SCAN = "t3.agents/scan-sessions";
 var AGENT_SESSIONS_IMPORT = "t3.agents/import-sessions";
 var AGENT_SESSIONS_SCAN_CAP = 50;
-var AGENT_SESSION_TITLE_MAX_LENGTH = 200;
 var providerInstanceIdSchema = {
   type: "string",
   minLength: 1,
@@ -1630,7 +1629,6 @@ var agentSessionsApi = defineApi({
                 "providerInstanceId",
                 "providerSessionId",
                 "source",
-                "title",
                 "lastActiveAt",
                 "status",
                 "threadId"
@@ -1639,7 +1637,6 @@ var agentSessionsApi = defineApi({
                 providerInstanceId: providerInstanceIdSchema,
                 providerSessionId: providerSessionIdSchema,
                 source: { enum: ["claudeAgent", "codex"] },
-                title: { type: "string", minLength: 1, maxLength: AGENT_SESSION_TITLE_MAX_LENGTH },
                 lastActiveAt: { type: "string", minLength: 1, maxLength: 40 },
                 status: { enum: ["importable", "imported"] },
                 threadId: threadIdSchema
@@ -1663,24 +1660,39 @@ var agentSessionsApi = defineApi({
         }
       },
       outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["status", "threadId", "sequence", "messageCount", "error"],
-        properties: {
-          status: { enum: ["imported", "rejected"] },
-          threadId: threadIdSchema,
-          sequence: { type: ["integer", "null"], minimum: 0 },
-          messageCount: { type: "integer", minimum: 0 },
-          error: {
-            enum: [
-              null,
-              "AgentSessionOutOfScope",
-              "AgentSessionAlreadyImported",
-              "AgentSessionProjectConflict",
-              "AgentSessionImportRejected"
-            ]
+        oneOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["status", "threadId", "sequence", "messageCount", "error"],
+            properties: {
+              status: { const: "imported" },
+              threadId: { type: "string", minLength: 1, maxLength: 256 },
+              sequence: { type: "integer", minimum: 0 },
+              messageCount: { type: "integer", minimum: 0 },
+              error: { const: null }
+            }
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["status", "threadId", "sequence", "messageCount", "error"],
+            properties: {
+              status: { const: "rejected" },
+              threadId: threadIdSchema,
+              sequence: { const: null },
+              messageCount: { const: 0 },
+              error: {
+                enum: [
+                  "AgentSessionOutOfScope",
+                  "AgentSessionAlreadyImported",
+                  "AgentSessionProjectConflict",
+                  "AgentSessionImportRejected"
+                ]
+              }
+            }
           }
-        }
+        ]
       }
     }
   ]
