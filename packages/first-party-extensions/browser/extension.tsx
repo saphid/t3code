@@ -9,6 +9,7 @@ import {
   browserFramesApi,
   browserLocalServersApi,
   browserSessionsApi,
+  composerContextApi,
   filePresentationApi,
   resourcesLeaseApi,
   uiKeybindingsApi,
@@ -25,6 +26,7 @@ import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useBrowserCapture } from "./capture.js";
 import { mintWorkspaceFileUrl } from "./fileOpen.js";
 import { BrowserFavicon } from "./favicon.js";
 import {
@@ -699,6 +701,15 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         : remote.status.kind === "unsupported"
           ? `This client cannot composite a native browser surface and has no remote frame transport (${remote.status.detail}). The session is still open — view it from the desktop app.`
           : null;
+  const capture = useBrowserCapture(host, session, held);
+  const captureStatus =
+    capture.state.kind === "capturing"
+      ? capture.state.target === "element"
+        ? "Pick an element in the page — Esc cancels."
+        : "Capturing the page…"
+      : capture.state.kind === "done"
+        ? capture.state.message
+        : null;
   const surfaceNotice =
     leaseState?.kind === "ended"
       ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.`
@@ -793,6 +804,25 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         >
           ⛶
         </button>
+        <button
+          type="button"
+          aria-label="Screenshot page to chat"
+          disabled={capture.blockReason !== null || capture.state.kind === "capturing"}
+          onClick={() => capture.capture("page")}
+          style={buttonStyle}
+        >
+          ▣
+        </button>
+        <button
+          type="button"
+          aria-label="Pick element to chat"
+          aria-pressed={capture.state.kind === "capturing" && capture.state.target === "element"}
+          disabled={capture.blockReason !== null || capture.state.kind === "capturing"}
+          onClick={() => capture.capture("element")}
+          style={buttonStyle}
+        >
+          ⌖
+        </button>
         <input
           type="text"
           aria-label="Address"
@@ -867,6 +897,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         style={{ padding: "6px 10px", color: muted, fontSize: 11, flexShrink: 0 }}
       >
         {fault ??
+          captureStatus ??
           (held && live
             ? `${live.navigation.title || live.navigation.url || "session"} — engine ${live.engine.state}, navigation ${live.navigation.kind}`
             : describeStatus(state))}
@@ -1037,6 +1068,7 @@ const authored = defineExtension({
     requireApi(uiKeybindingsApi),
     requireApi(uiPanelsApi),
     requireApi(uiNotificationsApi),
+    requireApi(composerContextApi),
   ],
   surfaces: [
     {

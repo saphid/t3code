@@ -225,12 +225,12 @@ NodeTest.describe("useAddToChat", () => {
           inserted: 1,
         });
 
-        // The insert request carries the contract identity, the 1.1.0 range
-        // (insertMention does not exist at 1.0.0), and the panel's context.
+        // The insert request carries the contract identity, the catalogue's
+        // current range (insertMention needs at least 1.1.0), and the panel's context.
         const insert = requests.find((request) => request.method === "insertMention");
         NodeAssert.ok(insert !== undefined);
         NodeAssert.equal(insert.id, "t3.composer/context");
-        NodeAssert.equal(insert.versionRange, "^1.1.0");
+        NodeAssert.equal(insert.versionRange, "^1.2.0");
         NodeAssert.deepEqual(insert.input, { threadId: "thread-a", paths: ["src/a.ts"] });
         NodeAssert.equal(insert.context, session.context);
 

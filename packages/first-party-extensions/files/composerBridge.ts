@@ -90,6 +90,7 @@ export function useAddToChat(
               getDraftState: false,
               insertMention: false,
               insertTerminalContext: false,
+              insertImage: false,
             },
           });
         },
