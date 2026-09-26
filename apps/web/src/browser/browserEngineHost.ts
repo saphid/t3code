@@ -196,6 +196,12 @@ export interface ProfileCommandDeps {
 }
 
 const IMPORT_LABEL_MAX = 128;
+/**
+ * Firefox names an unnamed profile after its directory, which may be an
+ * absolute custom path; such a label never leaves this machine.
+ */
+const importProfileLabel = (name: string, index: number) =>
+  /[\\/]/.test(name) ? `Profile ${index + 1}` : name.slice(0, IMPORT_LABEL_MAX);
 const importHandle = (index: number) => `p${index}`;
 const importIndex = (handle: string) => {
   const match = /^p(\d{1,2})$/.exec(handle);
@@ -246,7 +252,7 @@ export async function executeProfileCommand(
             .slice(0, BROWSER_ENGINE_IMPORT_SOURCE_PROFILE_MAX)
             .map((profile, index) => ({
               handle: importHandle(index),
-              name: profile.name.slice(0, IMPORT_LABEL_MAX),
+              name: importProfileLabel(profile.name, index),
               ...(profile.cookieCount === undefined || profile.cookieCount < 0
                 ? {}
                 : { cookieCount: profile.cookieCount }),
@@ -278,12 +284,13 @@ export async function executeProfileCommand(
         if (source.unavailable !== undefined) {
           return { outcome: "import-failed", reason: source.unavailable };
         }
-        const sourceProfile = source.profiles[importIndex(command.sourceProfile)];
+        const index = importIndex(command.sourceProfile);
+        const sourceProfile = source.profiles[index];
         if (sourceProfile === undefined) {
           return { outcome: "import-failed", reason: "unknownSourceProfile" };
         }
         const confirmed = await deps.confirm(
-          `${command.requester} wants to import cookies from ${source.name} (${sourceProfile.name}) into the "${target.name}" browser profile. Sites signed in there will be signed in here too.`,
+          `${command.requester} wants to import cookies from ${source.name} (${importProfileLabel(sourceProfile.name, index)}) into the "${target.name}" browser profile. Sites signed in there will be signed in here too.`,
         );
         if (!confirmed) return { outcome: "declined" };
         try {

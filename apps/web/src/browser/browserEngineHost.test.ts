@@ -373,6 +373,39 @@ describe("executeProfileCommand", () => {
     expect(JSON.stringify(answer)).not.toContain("Profile 3");
   });
 
+  it("labels a profile named after its directory without exposing the path", async () => {
+    const custom = "/Users/someone/Custom Profiles/ff-work";
+    const { deps } = makeDeps({
+      bridge: {
+        listBrowserImportSources: async () => [
+          {
+            id: "firefox",
+            name: "Firefox",
+            profiles: [
+              { directory: "Profiles/abc.default", name: "default-release" },
+              { directory: custom, name: custom },
+            ],
+          },
+        ],
+      },
+    });
+    const answer = await executeProfileCommand(deps, { _tag: "listImportSources" });
+    expect(answer).toEqual({
+      outcome: "import-sources",
+      sources: [
+        {
+          id: "firefox",
+          name: "Firefox",
+          profiles: [
+            { handle: "p0", name: "default-release" },
+            { handle: "p1", name: "Profile 2" },
+          ],
+        },
+      ],
+    });
+    expect(JSON.stringify(answer)).not.toContain("/Users");
+  });
+
   const importCommand = (sourceProfile = "p1", sourceId: "chrome" | "safari" = "chrome") =>
     ({
       _tag: "importCookies",
