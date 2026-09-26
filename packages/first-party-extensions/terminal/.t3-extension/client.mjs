@@ -1741,13 +1741,14 @@ var __t3Client = (() => {
             title: { type: "string", minLength: 1, maxLength: 512 }
           }
         }
-      }
+      },
+      truncated: { const: true }
     }
   };
   var historyUrl = { type: "string", minLength: 1, maxLength: 4096 };
   var CLIENT_BROWSER_HISTORY_API = validateApiDefinition({
     id: "t3.client/browser-history",
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
       {
         name: "list",
@@ -1842,6 +1843,7 @@ var __t3Client = (() => {
   var BROWSER_HISTORY = "t3.browser/history";
   var BROWSER_READ_HISTORY = "t3.browser/read-history";
   var BROWSER_RECORD_HISTORY = "t3.browser/record-history";
+  var BROWSER_HISTORY_MAX_BYTES = MAX_PAYLOAD_BYTES - 4096;
   var browserHistoryUrlInput = {
     type: "object",
     additionalProperties: false,
@@ -1850,7 +1852,7 @@ var __t3Client = (() => {
   };
   var browserHistoryApi = defineApi({
     id: BROWSER_HISTORY,
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
       {
         name: "list",
