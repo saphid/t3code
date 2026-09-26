@@ -11,6 +11,7 @@ import { useFileLineReveal } from "~/components/files/useFileLineReveal";
 import { Button } from "~/components/ui/button";
 import { useTheme } from "~/hooks/useTheme";
 import {
+  buildContentCacheKey,
   buildPatchCacheKey,
   getDiffCollapseIconClassName,
   resolveDiffThemeName,
@@ -172,7 +173,8 @@ export function HostCodeFile(props: CodeViewFileProps) {
     props.reveal?.requestId ?? 0,
   );
   const cacheKey = useMemo(
-    () => buildPatchCacheKey(props.contents, `extension-code-view:file:${props.path}`),
+    // File lines are cached by this key, so edge whitespace must change it (unlike patches).
+    () => buildContentCacheKey(props.contents, `extension-code-view:file:${props.path}`),
     [props.contents, props.path],
   );
   return (
