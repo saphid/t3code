@@ -23,6 +23,7 @@ import {
   clientPreferencesPatchSchema,
   clientPreferencesReceiptSchema,
   uiExternalOpenReceiptSchema,
+  browserHistoryEntriesSchema,
 } from "./clientProviders.js";
 
 export * from "./workspaceResources.js";
@@ -110,6 +111,84 @@ export const browserLocalServersApi = defineStreamApi<{
           },
         ],
       },
+    },
+  ],
+});
+
+/**
+ * The project's persisted browser URL history — the same per-project list the
+ * native preview keeps, so a visit recorded in any thread of a project is a
+ * recent in every other thread of it, and survives the thread ending. The
+ * project is never named by the caller: the host resolves it from the
+ * thread-scoped context. Every write returns the resulting list, so writes
+ * need the read grant as well as the record grant.
+ *
+ * Semantics follow the native store: URLs are normalized (credentials
+ * stripped, ≤ 2048 chars; unrecordable URLs are ignored), a revisit moves the
+ * entry to the front, loopback aliases fold into one entry, and the list is
+ * capped at 50. `setTitle` only enriches an existing entry; `remove` drops
+ * the exact normalized URL.
+ */
+export const BROWSER_HISTORY = "t3.browser/history";
+export const BROWSER_READ_HISTORY = "t3.browser/read-history";
+export const BROWSER_RECORD_HISTORY = "t3.browser/record-history";
+export const BROWSER_HISTORY_MAX_ENTRIES = 50;
+export type BrowserHistoryApiEntry = {
+  readonly url: string;
+  readonly lastVisitedAt: number;
+  readonly title?: string;
+};
+export type BrowserHistoryList = { readonly entries: readonly BrowserHistoryApiEntry[] };
+const browserHistoryUrlInput = {
+  type: "object",
+  additionalProperties: false,
+  required: ["url"],
+  properties: { url: { type: "string", minLength: 1, maxLength: 4096 } },
+} as const;
+export const browserHistoryApi = defineApi<{
+  list: { input: Record<string, never>; output: BrowserHistoryList };
+  record: { input: { url: string }; output: BrowserHistoryList };
+  setTitle: { input: { url: string; title: string }; output: BrowserHistoryList };
+  remove: { input: { url: string }; output: BrowserHistoryList };
+}>({
+  id: BROWSER_HISTORY,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "list",
+      effect: "read",
+      requiredGrants: [BROWSER_READ_HISTORY],
+      inputSchema: { type: "object", additionalProperties: false, properties: {} },
+      outputSchema: browserHistoryEntriesSchema,
+    },
+    {
+      name: "record",
+      effect: "write",
+      requiredGrants: [BROWSER_READ_HISTORY, BROWSER_RECORD_HISTORY],
+      inputSchema: browserHistoryUrlInput,
+      outputSchema: browserHistoryEntriesSchema,
+    },
+    {
+      name: "setTitle",
+      effect: "write",
+      requiredGrants: [BROWSER_READ_HISTORY, BROWSER_RECORD_HISTORY],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["url", "title"],
+        properties: {
+          url: { type: "string", minLength: 1, maxLength: 4096 },
+          title: { type: "string", minLength: 1, maxLength: 4096 },
+        },
+      },
+      outputSchema: browserHistoryEntriesSchema,
+    },
+    {
+      name: "remove",
+      effect: "write",
+      requiredGrants: [BROWSER_READ_HISTORY, BROWSER_RECORD_HISTORY],
+      inputSchema: browserHistoryUrlInput,
+      outputSchema: browserHistoryEntriesSchema,
     },
   ],
 });
@@ -8311,6 +8390,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   orchestrationStatusApi.definition,
   orchestrationControlApi.definition,
   browserLocalServersApi.definition,
+  browserHistoryApi.definition,
   browserSessionsApi.definition,
   browserFramesApi.definition,
   workspaceFilesApi.definition,

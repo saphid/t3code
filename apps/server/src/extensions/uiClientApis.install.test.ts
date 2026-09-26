@@ -377,3 +377,125 @@ it.effect("t3.ui/external open is denied without its grant and opened with it", 
     }
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
+
+/** Browser history is thread-scoped: the client maps the thread to its project. */
+const threadContext: ViewContext = {
+  ...context,
+  resource: { ...context.resource, threadId: "thread-a" },
+};
+
+/** A server-entry-only package that declares `t3.browser/history`. */
+const HISTORY_CONSUMER_MANIFEST =
+  '{"format":2,"manifest":{"id":"test.history","apiVersion":1,"version":"1.0.0","surfaces":[]},' +
+  '"serverEntry":"server.mjs","tools":[],"provides":[],' +
+  '"requires":[{"id":"t3.browser/history","versionRange":"^1.0.0"}],"dependencies":[]}';
+
+/**
+ * `t3.browser/history` through the real broker and connect stream: reads and
+ * writes are gated by their own grants before anything reaches the client,
+ * and a granted call lands on the caller's own connection.
+ */
+it.effect("t3.browser/history ops are gated by their grants and reach the client", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const clientApiProviders = yield* ClientApiProviders;
+    const seen: string[] = [];
+    const stream = yield* clientApiProviders.connect(
+      { connectionId: "conn-h", sessionId: "session-a", announcedOrigin: { surface: "web" } },
+      { providers: [{ id: "t3.client/browser-history", version: "1.0.0" }] },
+    );
+    const driver = yield* stream.pipe(
+      Stream.runForEach((frame: ClientProviderServerFrame) =>
+        Effect.gen(function* () {
+          if (frame.type !== "invoke") return;
+          seen.push(frame.method);
+          const url = (frame.input as { url?: string }).url;
+          yield* clientApiProviders.respond("conn-h", {
+            requestId: frame.requestId,
+            ok: true,
+            value: { entries: url ? [{ url, lastVisitedAt: 1 }] : [] },
+          });
+        }),
+      ),
+      Effect.forkChild,
+    );
+    try {
+      const rootDir = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "browser-history-install-" }),
+      );
+      const source = path.join(rootDir, "source");
+      yield* fs.makeDirectory(source);
+      yield* fs.writeFileString(path.join(source, "t3-extension.json"), HISTORY_CONSUMER_MANIFEST);
+      yield* fs.writeFileString(
+        path.join(source, "server.mjs"),
+        "export default {tools:[],apis:[]};",
+      );
+      const runtime = yield* Effect.promise(() =>
+        createExtensionRuntime({
+          rootDir: path.join(rootDir, "state"),
+          environmentId: ENV,
+          services: [],
+          apiProviders: createUiClientApiProviders({
+            environmentId: ENV,
+            clientApiProviders,
+            authorizeGrant: () => Promise.resolve(true),
+          }),
+          authorize: (installation, grant) => installation.grants.capabilities.includes(grant),
+        }),
+      );
+      try {
+        const installed = yield* Effect.promise(() =>
+          runtime.install(source, { capabilities: [], projectIds: ["project-a"] }),
+        );
+        const invoke = (method: string, input: Record<string, string>) =>
+          runtime.invokeApi(
+            installed.id,
+            installed.contentHash,
+            {
+              id: "t3.browser/history",
+              versionRange: "^1.0.0",
+              method,
+              input,
+              context: threadContext,
+              clientConnectionId: "conn-h",
+            },
+            new AbortController().signal,
+            root,
+          );
+        yield* Effect.promise(() =>
+          expect(invoke("list", {})).rejects.toThrow(
+            "API capability denied: t3.browser/read-history",
+          ),
+        );
+        yield* Effect.promise(() =>
+          runtime.updateGrants(installed.id, {
+            capabilities: ["t3.browser/read-history"],
+            projectIds: ["project-a"],
+          }),
+        );
+        yield* Effect.promise(() =>
+          expect(invoke("record", { url: "https://example.com/" })).rejects.toThrow(
+            "API capability denied: t3.browser/record-history",
+          ),
+        );
+        expect(seen).toEqual([]);
+        expect(yield* Effect.promise(() => invoke("list", {}))).toEqual({ entries: [] });
+        yield* Effect.promise(() =>
+          runtime.updateGrants(installed.id, {
+            capabilities: ["t3.browser/read-history", "t3.browser/record-history"],
+            projectIds: ["project-a"],
+          }),
+        );
+        expect(
+          yield* Effect.promise(() => invoke("record", { url: "https://example.com/" })),
+        ).toEqual({ entries: [{ url: "https://example.com/", lastVisitedAt: 1 }] });
+        expect(seen).toEqual(["list", "record"]);
+      } finally {
+        yield* Effect.promise(() => runtime.dispose());
+      }
+    } finally {
+      yield* Fiber.interrupt(driver);
+    }
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);

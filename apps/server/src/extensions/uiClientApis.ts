@@ -5,6 +5,7 @@ import {
   type ClientProviderCaller,
 } from "@t3tools/contracts";
 import {
+  browserHistoryApi,
   UI_KEYBINDINGS_API,
   UI_KEYBINDINGS_GLOBAL,
   UI_NOTIFICATIONS_API,
@@ -293,6 +294,7 @@ const CLIENT_KEYBINDINGS = "t3.client/keybindings";
 const CLIENT_PANELS = "t3.client/panels";
 const CLIENT_PREFERENCES = "t3.client/preferences";
 const CLIENT_EXTERNAL = "t3.client/external";
+const CLIENT_BROWSER_HISTORY = "t3.client/browser-history";
 
 interface NotificationOutcome {
   readonly actionId?: string;
@@ -906,6 +908,36 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
     },
   };
 
+  // `t3.browser/history` lives with the `t3.ui/*` adapters because it rides the
+  // same client-provider seam: history is the client's native per-project store.
+  const browserHistoryProvider: HostApiProvider = {
+    providerId: "host.browser.history",
+    definition: browserHistoryApi.definition,
+    availability: ambient(deps, CLIENT_BROWSER_HISTORY),
+    invoke(method, input, context, signal, metadata): Promise<Json> {
+      if (!["list", "record", "setTitle", "remove"].includes(method))
+        return Promise.reject(
+          providerError("client-provider-unavailable", `Unknown browser history op: ${method}`),
+        );
+      // The client resolves the project from the context thread; a caller
+      // without one has no project history to reach.
+      if (!context.resource.threadId)
+        return Promise.reject(
+          providerError(
+            "client-target-denied",
+            "Browser history requires a thread-scoped context.",
+          ),
+        );
+      return forward(deps, CLIENT_BROWSER_HISTORY, method)(
+        method,
+        input,
+        context,
+        signal,
+        metadata,
+      );
+    },
+  };
+
   return [
     themeProvider,
     keybindingsProvider,
@@ -913,5 +945,6 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
     panelsProvider,
     preferencesProvider,
     externalProvider,
+    browserHistoryProvider,
   ];
 }

@@ -141,6 +141,7 @@ function makeProviders(
     panels: byId("host.ui.panels"),
     preferences: byId("host.ui.preferences"),
     external: byId("host.ui.external"),
+    history: byId("host.browser.history"),
   };
 }
 
@@ -264,6 +265,48 @@ describe("external adapter", () => {
         },
       },
     ]);
+  });
+});
+
+describe("browser history adapter", () => {
+  it("forwards each op to the caller's client under the context thread", async () => {
+    const bridge = fakeBridge();
+    const { history } = makeProviders(bridge);
+    await history.invoke("record", { url: "https://example.com" }, context, signal, metadata());
+    await history.invoke("list", {}, context, signal, metadata());
+    expect(bridge.invoked).toEqual([
+      {
+        connectionId: "conn-1",
+        apiId: "t3.client/browser-history",
+        method: "record",
+        input: {
+          target: { kind: "connection", connectionId: "conn-1" },
+          url: "https://example.com",
+        },
+      },
+      {
+        connectionId: "conn-1",
+        apiId: "t3.client/browser-history",
+        method: "list",
+        input: { target: { kind: "connection", connectionId: "conn-1" } },
+      },
+    ]);
+  });
+
+  it("refuses a context without a thread before reaching a client", async () => {
+    const bridge = fakeBridge();
+    const { history } = makeProviders(bridge);
+    const projectOnly = {
+      ...context,
+      resource: { ...context.resource, threadId: undefined },
+    } as unknown as ViewContext;
+    await expect(history.invoke("list", {}, projectOnly, signal, metadata())).rejects.toMatchObject(
+      { code: "client-target-denied" },
+    );
+    await expect(history.invoke("clear", {}, context, signal, metadata())).rejects.toMatchObject({
+      code: "client-provider-unavailable",
+    });
+    expect(bridge.invoked).toHaveLength(0);
   });
 });
 

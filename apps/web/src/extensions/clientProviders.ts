@@ -2,7 +2,12 @@ import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contract
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ClientProviderEmitEvent } from "@t3tools/contracts";
 import { BROWSER_CAPTURE_ARTIFACT_REF_PATTERN } from "@t3tools/extension-sdk/catalogue";
-import { checkExternalUrl, UI_EXTERNAL_OPEN } from "@t3tools/extension-sdk/catalogue";
+import {
+  BROWSER_READ_HISTORY,
+  BROWSER_RECORD_HISTORY,
+  checkExternalUrl,
+  UI_EXTERNAL_OPEN,
+} from "@t3tools/extension-sdk/catalogue";
 import type { Json } from "@t3tools/extension-sdk/contracts";
 import {
   applyThemeColorPreview,
@@ -57,6 +62,13 @@ import { createKeybindingsClientProvider } from "./extensionCommandRegistry";
 import { isElectron } from "../env";
 import { randomUUID } from "../lib/utils";
 import { readLocalApi } from "../localApi";
+import {
+  environmentHostnameFor,
+  readThreadHistory,
+  recordVisitForThread,
+  removeUrlForThread,
+  setTitleForThreadUrl,
+} from "../browserHistoryStore";
 
 /** Local stores the providers drive; injected so tests can substitute fakes. */
 export interface ClientProviderDeps extends ClientProviderAuthDeps {
@@ -1264,6 +1276,59 @@ export function createExternalClientProvider(
 }
 
 // ---------------------------------------------------------------------------
+// Browser history — the native per-project store behind the preview's recents.
+
+/**
+ * `t3.browser/history` reads and writes the same store the native preview
+ * uses, through the same thread-scoped entry points, so project keying,
+ * pending buffering before the thread's project registers, loopback folding,
+ * and the 50-entry cap are the native behavior rather than a copy of it.
+ */
+export function createBrowserHistoryClientProvider(
+  deps: ClientProviderAuthDeps,
+): ClientLocalProvider {
+  return {
+    invoke(call) {
+      const read = call.method === "list";
+      if (!read && !["record", "setTitle", "remove"].includes(call.method))
+        throw new ClientProviderOpError(
+          "client-provider-unavailable",
+          `Unknown browser history op ${call.method}`,
+        );
+      // Writes answer with the whole list, so they need the read grant too.
+      const installation = authorizeCaller(
+        deps,
+        call.caller,
+        call.context,
+        read ? [BROWSER_READ_HISTORY] : [BROWSER_READ_HISTORY, BROWSER_RECORD_HISTORY],
+      );
+      const threadId = call.context.resource.threadId;
+      if (!threadId)
+        throw new ClientProviderOpError(
+          "client-target-denied",
+          "Browser history requires a thread-scoped context",
+        );
+      const ref = scopeThreadRef(EnvironmentId.make(deps.environmentId), ThreadId.make(threadId));
+      const shell = readThreadShell(ref);
+      if (!shell?.projectId) throw new ClientProviderOpError("provider-rejected", "Unknown thread");
+      if (!installation.grants.projectIds.some((id) => id === shell.projectId))
+        throw new ClientProviderOpError("client-target-denied", "Thread outside granted scope");
+      const input = readInputObject(call.input);
+      if (call.method === "record") recordVisitForThread(ref, readInputString(input, "url")!);
+      else if (call.method === "setTitle")
+        setTitleForThreadUrl(
+          ref,
+          readInputString(input, "url")!,
+          readInputString(input, "title")!,
+          environmentHostnameFor(ref),
+        );
+      else if (call.method === "remove") removeUrlForThread(ref, readInputString(input, "url")!);
+      return { entries: readThreadHistory(ref).map((entry) => ({ ...entry })) };
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 
 /** All host-owned `t3.client/*` providers for one environment connection. */
 export function createClientProviders(
@@ -1278,6 +1343,7 @@ export function createClientProviders(
     ["t3.client/terminal-appearance", createTerminalAppearanceClientProvider(deps)],
     ["t3.client/preferences", createPreferencesClientProvider(deps)],
     ["t3.client/external", createExternalClientProvider(deps)],
+    ["t3.client/browser-history", createBrowserHistoryClientProvider(deps)],
   ]);
 }
 
@@ -1290,6 +1356,7 @@ export const CLIENT_PROVIDER_DESCRIPTORS = [
   { id: "t3.client/terminal-appearance", version: "1.0.0" },
   { id: "t3.client/preferences", version: "1.0.0" },
   { id: "t3.client/external", version: "1.0.0" },
+  { id: "t3.client/browser-history", version: "1.0.0" },
 ] as const;
 
 export const CLIENT_PROVIDER_CLIENT_TAG = isElectron ? "desktop" : "web";
