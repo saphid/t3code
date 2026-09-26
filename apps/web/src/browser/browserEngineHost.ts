@@ -10,7 +10,13 @@
  */
 import {
   BROWSER_ENGINE_FAVICON_MAX_LENGTH,
+  BROWSER_ENGINE_IMPORT_SOURCE_MAX,
+  BROWSER_ENGINE_IMPORT_SOURCE_PROFILE_MAX,
+  BROWSER_ENGINE_PROFILE_LIST_MAX,
+  BrowserImportFailureReason,
   type BrowserEngineCommand,
+  type BrowserEngineProfileCommand,
+  type BrowserProfile,
   type BrowserEngineHostCommandResultInput,
   type BrowserEngineHostStreamEvent,
   type BrowserEnginePageStatus,
@@ -205,6 +211,153 @@ export async function executeEngineCommand(
   return { outcome: "applied" };
 }
 
+type ProfileCommandBridge = Pick<
+  DesktopPreviewBridge,
+  "clearCookies" | "clearCache" | "listBrowserImportSources" | "importBrowserCookies"
+>;
+
+export interface ProfileCommandDeps {
+  readonly environmentId: EnvironmentId;
+  readonly bridge: Partial<ProfileCommandBridge>;
+  /** The hydrated profile list and the profile new tabs open under. */
+  readonly profiles: () => Promise<{
+    readonly profiles: ReadonlyArray<BrowserProfile>;
+    readonly defaultProfileId: string;
+  }>;
+  /**
+   * Asks the user at this desktop; `false` when refused, dismissed by
+   * `signal`, or no prompt could show.
+   */
+  readonly confirm: (message: string, signal: AbortSignal) => Promise<boolean>;
+  /** Aborted when the server cancels this command. */
+  readonly signal: AbortSignal;
+  /**
+   * Import only: reports the confirmation and resolves once the server
+   * revalidated the caller — `true` to proceed, `false` when cancelled.
+   */
+  readonly proceed: () => Promise<boolean>;
+}
+
+const IMPORT_LABEL_MAX = 128;
+/**
+ * Firefox names an unnamed profile after its directory, which may be an
+ * absolute custom path; such a label never leaves this machine.
+ */
+const importProfileLabel = (name: string, index: number) =>
+  /[\\/]/.test(name) ? `Profile ${index + 1}` : name.slice(0, IMPORT_LABEL_MAX);
+const importHandle = (index: number) => `p${index}`;
+const importIndex = (handle: string) => {
+  const match = /^p(\d{1,2})$/.exec(handle);
+  return match ? Number(match[1]) : -1;
+};
+
+/** The desktop bridge flattens import errors to their message; the reason rides in it. */
+const importFailureReason = (cause: unknown): BrowserImportFailureReason => {
+  const message = String((cause as { message?: unknown } | undefined)?.message ?? "");
+  return (
+    BrowserImportFailureReason.literals.find((reason) => message.includes(`failed: ${reason}.`)) ??
+    "readFailed"
+  );
+};
+
+/**
+ * Runs one server-issued `t3.browser/profiles` command against this desktop's
+ * partitions. A clear or import always names a known profile — the bridge's
+ * "no profile means every partition" form is never reached. Import asks the
+ * user here before any source browser is read.
+ */
+export async function executeProfileCommand(
+  deps: ProfileCommandDeps,
+  command: BrowserEngineProfileCommand,
+): Promise<CommandResult> {
+  const { bridge, environmentId } = deps;
+  try {
+    if (command._tag === "listProfiles") {
+      const { profiles, defaultProfileId } = await deps.profiles();
+      return {
+        outcome: "profiles",
+        profiles: profiles
+          .slice(0, BROWSER_ENGINE_PROFILE_LIST_MAX)
+          .map((profile) => ({ id: profile.id, name: profile.name })),
+        defaultProfileId,
+      };
+    }
+    if (command._tag === "listImportSources") {
+      if (!bridge.listBrowserImportSources) return rejected("not-applicable");
+      const sources = await bridge.listBrowserImportSources();
+      return {
+        outcome: "import-sources",
+        sources: sources.slice(0, BROWSER_ENGINE_IMPORT_SOURCE_MAX).map((source) => ({
+          id: source.id,
+          name: source.name.slice(0, IMPORT_LABEL_MAX),
+          ...(source.unavailable === undefined ? {} : { unavailable: source.unavailable }),
+          profiles: source.profiles
+            .slice(0, BROWSER_ENGINE_IMPORT_SOURCE_PROFILE_MAX)
+            .map((profile, index) => ({
+              handle: importHandle(index),
+              name: importProfileLabel(profile.name, index),
+              ...(profile.cookieCount === undefined || profile.cookieCount < 0
+                ? {}
+                : { cookieCount: profile.cookieCount }),
+            })),
+        })),
+      };
+    }
+    const { profiles } = await deps.profiles();
+    const target = profiles.find((profile) => profile.id === command.profileId);
+    if (target === undefined) return rejected("unknown-profile");
+    switch (command._tag) {
+      case "clearCookies":
+        if (!bridge.clearCookies) return rejected("not-applicable");
+        await bridge.clearCookies(environmentId, target.id);
+        return { outcome: "applied" };
+      case "clearCache":
+        if (!bridge.clearCache) return rejected("not-applicable");
+        await bridge.clearCache(environmentId, target.id);
+        return { outcome: "applied" };
+      case "importCookies": {
+        if (!bridge.listBrowserImportSources || !bridge.importBrowserCookies) {
+          return rejected("not-applicable");
+        }
+        // Re-listed here so the handle resolves against what is installed now.
+        const source = (await bridge.listBrowserImportSources()).find(
+          (candidate) => candidate.id === command.sourceId,
+        );
+        if (source === undefined) return { outcome: "import-failed", reason: "unknownSource" };
+        if (source.unavailable !== undefined) {
+          return { outcome: "import-failed", reason: source.unavailable };
+        }
+        const index = importIndex(command.sourceProfile);
+        const sourceProfile = source.profiles[index];
+        if (sourceProfile === undefined) {
+          return { outcome: "import-failed", reason: "unknownSourceProfile" };
+        }
+        const confirmed = await deps.confirm(
+          `${command.requester} wants to import cookies from ${source.name} (${importProfileLabel(sourceProfile.name, index)}) into the "${target.name}" browser profile. Sites signed in there will be signed in here too.`,
+          deps.signal,
+        );
+        if (deps.signal.aborted) return rejected("cancelled");
+        if (!confirmed) return { outcome: "declined" };
+        // Nothing is read until the server has rechecked the caller.
+        if (!(await deps.proceed())) return rejected("cancelled");
+        try {
+          const result = await bridge.importBrowserCookies({
+            environmentId,
+            sourceId: source.id,
+            sourceProfileDirectory: sourceProfile.directory,
+            targetProfileId: target.id,
+          });
+          return { outcome: "imported", imported: result.imported, skipped: result.skipped };
+        } catch (cause) {
+          return { outcome: "import-failed", reason: importFailureReason(cause) };
+        }
+      }
+    }
+  } catch {
+    return rejected("failed");
+  }
+}
+
 /** Command ids already executed; a resubscribed stream must never replay one. */
 export const HANDLED_COMMANDS_LIMIT = 256;
 
@@ -216,21 +369,44 @@ export const HANDLED_COMMANDS_LIMIT = 256;
  */
 export function createEngineHostEventHandler(input: {
   readonly environmentId: EnvironmentId;
-  readonly bridge: EngineCommandBridge | null;
+  readonly bridge: (EngineCommandBridge & Partial<ProfileCommandBridge>) | null;
   readonly sendResult: (result: BrowserEngineHostCommandResultInput) => unknown;
+  readonly profiles: ProfileCommandDeps["profiles"];
+  readonly confirm: ProfileCommandDeps["confirm"];
 }): (result: AsyncResult.AsyncResult<BrowserEngineHostStreamEvent, unknown>) => void {
   const { environmentId, bridge, sendResult } = input;
   const handled = new Set<string>();
+  /** Running profile commands, cancellable by the server until they settle. */
+  const running = new Map<
+    string,
+    { readonly abort: AbortController; proceed?: (proceed: boolean) => void }
+  >();
   return (result) => {
     const { setHostConnectionId } = useBrowserEngineHostStore.getState();
+    // A lost or replaced registration can no longer receive proceed.
+    const cancelRunning = () => {
+      for (const entry of running.values()) {
+        entry.abort.abort();
+        entry.proceed?.(false);
+      }
+      running.clear();
+    };
     if (AsyncResult.isFailure(result)) {
+      cancelRunning();
       setHostConnectionId(environmentId, null);
       return;
     }
     if (!AsyncResult.isSuccess(result)) return;
     const event = result.value;
     if (event.type === "registered") {
+      cancelRunning();
       setHostConnectionId(environmentId, event.hostConnectionId);
+      return;
+    }
+    if (event.type === "profile-command-proceed" || event.type === "profile-command-cancel") {
+      const entry = running.get(event.commandId);
+      if (event.type === "profile-command-cancel") entry?.abort.abort();
+      entry?.proceed?.(event.type === "profile-command-proceed");
       return;
     }
     const hostConnectionId =
@@ -239,6 +415,34 @@ export function createEngineHostEventHandler(input: {
     handled.add(event.commandId);
     if (handled.size > HANDLED_COMMANDS_LIMIT) {
       handled.delete(handled.values().next().value!);
+    }
+    if (event.type === "profile-command") {
+      const { commandId } = event;
+      const entry: { abort: AbortController; proceed?: (proceed: boolean) => void } = {
+        abort: new AbortController(),
+      };
+      running.set(commandId, entry);
+      const proceed = () =>
+        new Promise<boolean>((resolve) => {
+          if (entry.abort.signal.aborted) return resolve(false);
+          entry.proceed = resolve;
+          sendResult({ hostConnectionId, commandId, result: { outcome: "confirmed" } });
+        });
+      void executeProfileCommand(
+        {
+          environmentId,
+          bridge,
+          profiles: input.profiles,
+          confirm: input.confirm,
+          signal: entry.abort.signal,
+          proceed,
+        },
+        event.command,
+      ).then((outcome) => {
+        running.delete(commandId);
+        sendResult({ hostConnectionId, commandId, result: outcome });
+      });
+      return;
     }
     const runtimeTabId = previewRuntimeTabId(
       { environmentId, threadId: event.target.threadId },

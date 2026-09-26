@@ -89,6 +89,12 @@ export interface HostApiProvider {
     metadata: HostApiInvocationMetadata,
     resumeCursor?: string,
   ): AsyncIterable<ApiStreamEvent>;
+  /**
+   * Deadline for a method that waits on the user (a confirmation, an OS
+   * prompt), replacing the broker's default for that call. `undefined` keeps
+   * the default.
+   */
+  readonly deadlineMs?: (method: string) => number | undefined;
   invoke(
     method: string,
     input: Json,
@@ -200,6 +206,7 @@ export function createApiBroker(options: {
         definition,
         requiresRootAuthority: undefined,
         availability: undefined,
+        deadlineMs: undefined,
         invoke: undefined,
         subscribe: undefined,
       })),
@@ -374,10 +381,8 @@ export function createApiBroker(options: {
     const abort = () => controller.abort(new Error("API invocation cancelled"));
     signal.addEventListener("abort", abort, { once: true });
     if (signal.aborted) abort();
-    const timer = setTimeout(
-      () => controller.abort(new Error("API deadline exceeded")),
-      options.timeoutMs,
-    );
+    const expire = () => controller.abort(new Error("API deadline exceeded"));
+    let timer = setTimeout(expire, options.timeoutMs);
     const affected = new Set(authority.callers.map((item) => item.id));
     pending.set(controller, affected);
     let providerId: string | undefined;
@@ -430,6 +435,13 @@ export function createApiBroker(options: {
             );
           if (method.effect === "write" && !authority.allowWrite)
             throw new Error("Read-only API authority cannot invoke writes");
+          // Cancelled during the checks above: cleanup already ran, so arm nothing.
+          active();
+          const deadlineMs = provider.deadlineMs?.(method.name);
+          if (deadlineMs !== undefined) {
+            clearTimeout(timer);
+            timer = setTimeout(expire, deadlineMs);
+          }
           compile(provider.definition);
           const validator = validators.get(JSON.stringify([provider.definition, method.name]))!;
           const input = copyJson(request.input);

@@ -77,15 +77,15 @@ const MAX_QUEUED_EVENTS = 128;
 const MAX_QUEUED_BYTES = 512 * 1024;
 const WRITE_METHODS = new Set(["open", "navigate", "close", ...BROWSER_SESSION_COMMANDS]);
 
-const failure = (operation: string, detail: string) =>
+export const failure = (operation: string, detail: string) =>
   new ExtensionOperationError({ operation, detail });
 const isOperationError = Schema.is(ExtensionOperationError);
 /** Named denials keep a stable prefix so callers can branch on the name. */
-const named = (operation: string, name: string, detail: string) =>
+export const named = (operation: string, name: string, detail: string) =>
   failure(operation, `${name}: ${detail}`);
 
 /** Native `_tag`s stay visible; only untagged causes collapse to a message. */
-const operationError = (operation: string) => (cause: unknown) => {
+export const operationError = (operation: string) => (cause: unknown) => {
   if (isOperationError(cause)) return cause;
   const tag =
     cause !== null &&
@@ -274,7 +274,7 @@ const origin = (url: string | null) => {
  * while it belongs to the current page's origin (the native same-origin
  * rule) — bytes never enter the projection.
  */
-const projectSession = (
+export const projectSession = (
   detail: PreviewManager.PreviewSessionDetail,
   captureFavicon: (dataUrl: string) => string | null,
 ): BrowserSession => {
@@ -517,6 +517,15 @@ export function createBrowserSessionsApiProvider(
             named(operation, "BrowserSessionInputError", "open input fails the declared schema."),
           ),
         );
+        if (safe.profileId !== undefined) {
+          // Choosing a profile is the t3.browser/profiles grant's authority;
+          // operate alone must not reach another profile's cookie jar.
+          return yield* named(
+            operation,
+            "BrowserProfileGrantRequired",
+            "opening under a named profile goes through t3.browser/profiles.open (t3.browser/profiles grant).",
+          );
+        }
         const before = yield* listDetails();
         if (before.sessions.length >= BROWSER_SESSION_LIMIT) {
           return yield* named(
@@ -1211,7 +1220,9 @@ export function createBrowserSessionsApiProvider(
   };
 }
 
-export const makeBrowserSessionsApiProvider = Effect.fn("BrowserSessionsApi.make")(function* () {
+export const makeBrowserSessionsApiProvider = Effect.fn("BrowserSessionsApi.make")(function* (
+  input?: { readonly favicons?: BrowserFaviconAssets },
+) {
   const environment = yield* ServerEnvironment;
   return createBrowserSessionsApiProvider({
     environmentId: yield* environment.getEnvironmentId,
@@ -1219,5 +1230,6 @@ export const makeBrowserSessionsApiProvider = Effect.fn("BrowserSessionsApi.make
     threads: yield* ProjectionThreadRepository,
     preview: yield* PreviewManager.PreviewManager,
     engineHosts: yield* BrowserEngineHosts.BrowserEngineHosts,
+    ...(input?.favicons === undefined ? {} : { favicons: input.favicons }),
   });
 });

@@ -85,6 +85,10 @@
       "versionRange": "^1.2.0"
     },
     {
+      "id": "t3.browser/profiles",
+      "versionRange": "^1.0.0"
+    },
+    {
       "id": "t3.browser/local-servers",
       "versionRange": "^1.0.0"
     },

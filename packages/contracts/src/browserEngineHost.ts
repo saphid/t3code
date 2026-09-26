@@ -16,8 +16,18 @@
  */
 import * as Schema from "effect/Schema";
 
-import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BrowserFrameEngineGeneration } from "./browserFrames.ts";
+import {
+  BrowserImportFailureReason,
+  BrowserImportSourceId,
+  BrowserImportUnavailableReason,
+} from "./browserImport.ts";
+import {
+  BROWSER_PROFILE_MAX_COUNT,
+  BROWSER_PROFILE_NAME_MAX_LENGTH,
+  BrowserProfileId,
+} from "./browserProfile.ts";
 import {
   PREVIEW_URL_MAX_LENGTH,
   PreviewAppearancePreference,
@@ -54,6 +64,38 @@ export const BrowserEngineCommand = Schema.Union([
   Schema.TaggedStruct("setPictureInPicture", { open: Schema.Boolean }),
 ]);
 export type BrowserEngineCommand = typeof BrowserEngineCommand.Type;
+
+/**
+ * Opaque handle for one profile inside an import source. The host re-lists
+ * the source on import and resolves the handle there, so source profile
+ * directory names never cross the wire.
+ */
+export const BrowserEngineImportProfileHandle = TrimmedNonEmptyString.check(Schema.isMaxLength(16));
+export type BrowserEngineImportProfileHandle = typeof BrowserEngineImportProfileHandle.Type;
+
+/**
+ * Environment-level profile commands for `t3.browser/profiles`. They target a
+ * browser profile (an Electron partition the desktop owns), never a session,
+ * so they carry no session fence. A profile is always named: the desktop's
+ * "every partition" clear is unreachable from here.
+ */
+export const BrowserEngineProfileCommand = Schema.Union([
+  Schema.TaggedStruct("listProfiles", {}),
+  Schema.TaggedStruct("clearCookies", { profileId: BrowserProfileId }),
+  Schema.TaggedStruct("clearCache", { profileId: BrowserProfileId }),
+  Schema.TaggedStruct("listImportSources", {}),
+  /**
+   * The host asks the user to confirm before reading the source browser;
+   * `requester` names the extension in that prompt.
+   */
+  Schema.TaggedStruct("importCookies", {
+    profileId: BrowserProfileId,
+    sourceId: BrowserImportSourceId,
+    sourceProfile: BrowserEngineImportProfileHandle,
+    requester: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  }),
+]);
+export type BrowserEngineProfileCommand = typeof BrowserEngineProfileCommand.Type;
 
 /** The logical session a guest renders, fenced by server epoch. */
 export const BrowserEngineSessionTarget = Schema.Struct({
@@ -104,6 +146,26 @@ export const BrowserEngineHostStreamEvent = Schema.Union([
     engineGeneration: BrowserFrameEngineGeneration,
     command: BrowserEngineCommand,
   }),
+  Schema.Struct({
+    type: Schema.Literal("profile-command"),
+    commandId: BrowserEngineCommandId,
+    command: BrowserEngineProfileCommand,
+  }),
+  /**
+   * Cookie import is two-phase: after the user confirms, the host answers
+   * `confirmed` and waits. The server revalidates the caller's authority and
+   * sends `profile-command-proceed`, or `profile-command-cancel` when that
+   * authority is gone, the caller gave up or the wait expired. A cancel also
+   * dismisses a confirmation that is still showing.
+   */
+  Schema.Struct({
+    type: Schema.Literal("profile-command-proceed"),
+    commandId: BrowserEngineCommandId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("profile-command-cancel"),
+    commandId: BrowserEngineCommandId,
+  }),
 ]);
 export type BrowserEngineHostStreamEvent = typeof BrowserEngineHostStreamEvent.Type;
 
@@ -144,8 +206,63 @@ export const BrowserEngineCommandRejection = Schema.Literals([
   "session-not-found",
   "not-applicable",
   "failed",
+  /** Profile commands: the named profile is not one the host has. */
+  "unknown-profile",
+  /** The server cancelled the command before it took effect. */
+  "cancelled",
 ]);
 export type BrowserEngineCommandRejection = typeof BrowserEngineCommandRejection.Type;
+
+const ProfileNameField = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(BROWSER_PROFILE_NAME_MAX_LENGTH),
+);
+const LabelField = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
+
+/** Built-ins plus the user's own profiles. */
+export const BROWSER_ENGINE_PROFILE_LIST_MAX = BROWSER_PROFILE_MAX_COUNT + 2;
+export const BROWSER_ENGINE_IMPORT_SOURCE_MAX = 16;
+export const BROWSER_ENGINE_IMPORT_SOURCE_PROFILE_MAX = 32;
+
+/**
+ * Answers to profile commands. `profiles` answers `listProfiles`,
+ * `import-sources` answers `listImportSources`; `imported`, `declined`
+ * (the user refused the host prompt) and `import-failed` answer
+ * `importCookies`; `applied` answers a clear.
+ */
+export const BrowserEngineProfileAnswer = Schema.Union([
+  Schema.Struct({
+    outcome: Schema.Literal("profiles"),
+    profiles: Schema.Array(Schema.Struct({ id: BrowserProfileId, name: ProfileNameField })).check(
+      Schema.isMaxLength(BROWSER_ENGINE_PROFILE_LIST_MAX),
+    ),
+    defaultProfileId: BrowserProfileId,
+  }),
+  Schema.Struct({
+    outcome: Schema.Literal("import-sources"),
+    sources: Schema.Array(
+      Schema.Struct({
+        id: BrowserImportSourceId,
+        name: LabelField,
+        unavailable: Schema.optional(BrowserImportUnavailableReason),
+        profiles: Schema.Array(
+          Schema.Struct({
+            handle: BrowserEngineImportProfileHandle,
+            name: LabelField,
+            cookieCount: Schema.optional(NonNegativeInt),
+          }),
+        ).check(Schema.isMaxLength(BROWSER_ENGINE_IMPORT_SOURCE_PROFILE_MAX)),
+      }),
+    ).check(Schema.isMaxLength(BROWSER_ENGINE_IMPORT_SOURCE_MAX)),
+  }),
+  Schema.Struct({
+    outcome: Schema.Literal("imported"),
+    imported: NonNegativeInt,
+    skipped: NonNegativeInt,
+  }),
+  Schema.Struct({ outcome: Schema.Literal("declined") }),
+  Schema.Struct({ outcome: Schema.Literal("import-failed"), reason: BrowserImportFailureReason }),
+]);
+export type BrowserEngineProfileAnswer = typeof BrowserEngineProfileAnswer.Type;
 
 /** `applied` means the guest accepted the command, not that a page finished loading. */
 export const BrowserEngineHostCommandResultInput = Schema.Struct({
@@ -157,6 +274,9 @@ export const BrowserEngineHostCommandResultInput = Schema.Struct({
       outcome: Schema.Literal("rejected"),
       reason: BrowserEngineCommandRejection,
     }),
+    /** Import only: the user confirmed; the host waits for proceed or cancel. */
+    Schema.Struct({ outcome: Schema.Literal("confirmed") }),
+    ...BrowserEngineProfileAnswer.members,
   ]),
 });
 export type BrowserEngineHostCommandResultInput = typeof BrowserEngineHostCommandResultInput.Type;

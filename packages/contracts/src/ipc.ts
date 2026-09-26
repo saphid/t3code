@@ -1399,6 +1399,8 @@ export type ConfirmDialogVariant = "default" | "destructive";
 
 export interface ConfirmDialogOptions {
   readonly variant?: ConfirmDialogVariant;
+  /** Withdraws the request: a showing or queued confirmation resolves `false`. */
+  readonly signal?: AbortSignal;
 }
 
 /**

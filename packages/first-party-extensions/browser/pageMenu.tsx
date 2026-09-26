@@ -6,7 +6,7 @@
  * the menu showing what the page really has.
  */
 import type { BrowserSession } from "@t3tools/extension-sdk/catalogue";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
   DEFAULT_ZOOM_FACTOR,
@@ -84,8 +84,9 @@ export function ZoomIndicator(props: { zoomFactor: number | null }) {
 
 /**
  * "⋯" menu: Hard reload, Appearance, the zoom row (−, any ladder factor in
- * one call, +, reset), Mute, DevTools and native picture-in-picture.
- * `blockReason` disables every item and says why; `run` sends one verb.
+ * one call, +, reset), Mute, DevTools and native picture-in-picture, then
+ * `children` (the profile group).
+ * `blockReason` disables every page item and says why; `run` sends one verb.
  */
 export function PageMenu(props: {
   session: BrowserSession | null;
@@ -93,8 +94,10 @@ export function PageMenu(props: {
   run: (verb: PageVerb) => void;
   /** One ladder step from the last requested factor (shared with the chords). */
   zoomStep: (direction: "in" | "out") => void;
+  /** Rendered under the page items while open; profile actions do not need a live page. */
+  children?: ReactNode;
 }) {
-  const { session, blockReason, run, zoomStep } = props;
+  const { session, blockReason, run, zoomStep, children } = props;
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -271,6 +274,7 @@ export function PageMenu(props: {
           >
             {pictureInPicture ? "Close picture in picture" : "Pop out (picture in picture)"}
           </button>
+          {children}
         </div>
       )}
     </div>

@@ -1,5 +1,7 @@
 import { makeAgentSessionsApiProvider } from "./agentSessionsApi.ts";
 import { makeBrowserLocalServersApiProvider } from "./browserLocalServersApi.ts";
+import { makeBrowserFaviconAssets } from "./browserSessions/faviconAssets.ts";
+import { makeBrowserProfilesApiProvider } from "./browserSessions/profiles.ts";
 import { makeBrowserSessionsApiProvider } from "./browserSessions/v1.ts";
 import { makeBrowserFramesApiProvider } from "./browserFrames/v1.ts";
 import { makeOrchestrationApiProviders, projectAgents } from "./orchestration/v1.ts";
@@ -106,7 +108,10 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   const snapshots = yield* ProjectionSnapshotQuery;
   const workspace = yield* WorkspaceFileSystem;
   const browserLocalServersApi = yield* makeBrowserLocalServersApiProvider();
-  const browserSessionsApi = yield* makeBrowserSessionsApiProvider();
+  // One favicon asset store for every browser sessions/profiles projection so refs minted by one provider resolve in the other.
+  const browserFavicons = makeBrowserFaviconAssets();
+  const browserSessionsApi = yield* makeBrowserSessionsApiProvider({ favicons: browserFavicons });
+  const browserProfilesApi = yield* makeBrowserProfilesApiProvider({ favicons: browserFavicons });
   const browserFramesApi = yield* makeBrowserFramesApiProvider();
   const workspaceApi = yield* makeWorkspaceApiProvider();
   const workspaceTreeApi = yield* makeWorkspaceTreeApiProvider();
@@ -233,6 +238,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
           apiProviders: [
             browserLocalServersApi,
             browserSessionsApi,
+            browserProfilesApi,
             browserFramesApi,
             workspaceApi,
             workspaceTreeApi,

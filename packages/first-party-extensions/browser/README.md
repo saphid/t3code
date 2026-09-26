@@ -57,6 +57,22 @@ The panel renders through public contracts only:
   crashed guest name their refusal inline. The native in-app mini-player
   (the preview floating over the chat) is not available: it needs a host
   placement that floats a plugin view outside its panel.
+- `t3.browser/profiles` (`profiles.ts`, `profileMenu.tsx`) — the page
+  menu's profile group: the session's profile name ("Removed profile" when it
+  was deleted), "Open page in" another profile, Clear cookies, Clear cache,
+  and "Import cookies…" from a browser installed on the desktop. Each rides
+  its own grant and holding one implies none of the others:
+  `t3.browser/profiles` (list + open in a profile, on top of
+  `t3.browser/sessions` + `t3.browser/operate`), `t3.browser/clear-cookies`,
+  `t3.browser/clear-cache`, `t3.browser/import-cookies`. A profile is fixed
+  when a session opens, so switching opens the page in a new session; a page
+  reopened after its session died keeps that session's profile. The desktop
+  engine host runs all of it: elsewhere, or without a grant, the action names
+  `desktop-required` or the missing grant on the status line. Clearing
+  signs every page in that profile out, as the native menu does. Import
+  targets the session's profile and the desktop asks the user to confirm
+  before reading the other browser; only counts come back. Importing into a
+  new profile stays in Settings → Integrations → Browser.
 - `t3.browser/capture` (host capability on `ClientHost.browserCapture`;
   `t3.browser/sessions` + `t3.browser/capture` grants) backs the header's
   two capture buttons: screenshot the page, or pick an element with the
