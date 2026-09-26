@@ -271,3 +271,109 @@ it.effect(
       }
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
+
+/** A server-entry-only package that declares `t3.ui/external`. */
+const EXTERNAL_CONSUMER_MANIFEST =
+  '{"format":2,"manifest":{"id":"test.external","apiVersion":1,"version":"1.0.0","surfaces":[]},' +
+  '"serverEntry":"server.mjs","tools":[],"provides":[],' +
+  '"requires":[{"id":"t3.ui/external","versionRange":"^1.0.0"}],"dependencies":[]}';
+
+/**
+ * `t3.ui/external` through the real broker and connect stream: the
+ * `t3.ui/external.open` grant gates the invoke before anything reaches the
+ * client, and a granted call lands on the caller's own connection.
+ */
+it.effect("t3.ui/external open is denied without its grant and opened with it", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const clientApiProviders = yield* ClientApiProviders;
+    const opened: string[] = [];
+    const stream = yield* clientApiProviders.connect(
+      { connectionId: "conn-x", sessionId: "session-a", announcedOrigin: { surface: "web" } },
+      { providers: [{ id: "t3.client/external", version: "1.0.0" }] },
+    );
+    const driver = yield* stream.pipe(
+      Stream.runForEach((frame: ClientProviderServerFrame) =>
+        Effect.gen(function* () {
+          if (frame.type !== "invoke") return;
+          const url = (frame.input as { url: string }).url;
+          opened.push(url);
+          yield* clientApiProviders.respond("conn-x", {
+            requestId: frame.requestId,
+            ok: true,
+            value: { status: "opened", url, opener: "browser-window" },
+          });
+        }),
+      ),
+      Effect.forkChild,
+    );
+    try {
+      const rootDir = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "ui-external-install-" }),
+      );
+      const source = path.join(rootDir, "source");
+      yield* fs.makeDirectory(source);
+      yield* fs.writeFileString(path.join(source, "t3-extension.json"), EXTERNAL_CONSUMER_MANIFEST);
+      yield* fs.writeFileString(
+        path.join(source, "server.mjs"),
+        "export default {tools:[],apis:[]};",
+      );
+      const runtime = yield* Effect.promise(() =>
+        createExtensionRuntime({
+          rootDir: path.join(rootDir, "state"),
+          environmentId: ENV,
+          services: [],
+          apiProviders: createUiClientApiProviders({
+            environmentId: ENV,
+            clientApiProviders,
+            authorizeGrant: () => Promise.resolve(true),
+          }),
+          authorize: (installation, grant) => installation.grants.capabilities.includes(grant),
+        }),
+      );
+      try {
+        const installed = yield* Effect.promise(() =>
+          runtime.install(source, { capabilities: [], projectIds: ["project-a"] }),
+        );
+        const invoke = () =>
+          runtime.invokeApi(
+            installed.id,
+            installed.contentHash,
+            {
+              id: "t3.ui/external",
+              versionRange: "^1.0.0",
+              method: "open",
+              input: { url: "https://example.com" },
+              context,
+              clientConnectionId: "conn-x",
+            },
+            new AbortController().signal,
+            root,
+          );
+        yield* Effect.promise(() =>
+          expect(invoke()).rejects.toThrow("API capability denied: t3.ui/external.open"),
+        );
+        expect(opened).toEqual([]);
+
+        yield* Effect.promise(() =>
+          runtime.updateGrants(installed.id, {
+            capabilities: ["t3.ui/external.open"],
+            projectIds: ["project-a"],
+          }),
+        );
+        const receipt = yield* Effect.promise(() => invoke());
+        expect(receipt).toEqual({
+          status: "opened",
+          url: "https://example.com/",
+          opener: "browser-window",
+        });
+        expect(opened).toEqual(["https://example.com/"]);
+      } finally {
+        yield* Effect.promise(() => runtime.dispose());
+      }
+    } finally {
+      yield* Fiber.interrupt(driver);
+    }
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);

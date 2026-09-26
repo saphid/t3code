@@ -17,6 +17,7 @@ import {
   type TerminalSessionsListEvent,
   type UiKeybindingChord,
   type UiKeybindingsHost,
+  type UiExternalOpenReceipt,
   type UiTerminalAppearance,
 } from "@t3tools/extension-sdk/catalogue";
 import { bindApi, bindStreamApi, type ApiClient } from "@t3tools/extension-sdk/capabilities";
@@ -681,6 +682,31 @@ export function terminalPathLinkTarget(
   const segments = terminalLinkSegments(relative, windows);
   if (segments === null) return reject();
   return { status: "open", relativePath: segments.join("/") };
+}
+
+/**
+ * Terminal 22, URL half: hands a detected URL to the user's own client
+ * through `t3.ui/external` (the native drawer's system-browser fallback).
+ * Resolves null once opened — native opens silently — or the surface line
+ * naming the refusal or the failed invoke.
+ */
+export async function openTerminalUrl(
+  external: {
+    invoke(
+      method: "open",
+      input: { url: string },
+      signal: AbortSignal,
+    ): Promise<UiExternalOpenReceipt>;
+  },
+  url: string,
+  signal: AbortSignal,
+): Promise<string | null> {
+  try {
+    const receipt = await external.invoke("open", { url }, signal);
+    return receipt.status === "opened" ? null : `${url} was not opened (${receipt.reason}).`;
+  } catch (error) {
+    return `${url} could not be opened — ${error instanceof Error ? error.message : "unavailable"}`;
+  }
 }
 
 /** Host calls the panel makes through t3.terminal/control. */

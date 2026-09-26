@@ -2,6 +2,7 @@ import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contract
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ClientProviderEmitEvent } from "@t3tools/contracts";
 import { BROWSER_CAPTURE_ARTIFACT_REF_PATTERN } from "@t3tools/extension-sdk/catalogue";
+import { checkExternalUrl, UI_EXTERNAL_OPEN } from "@t3tools/extension-sdk/catalogue";
 import type { Json } from "@t3tools/extension-sdk/contracts";
 import {
   applyThemeColorPreview,
@@ -55,6 +56,7 @@ import {
 import { createKeybindingsClientProvider } from "./extensionCommandRegistry";
 import { isElectron } from "../env";
 import { randomUUID } from "../lib/utils";
+import { readLocalApi } from "../localApi";
 
 /** Local stores the providers drive; injected so tests can substitute fakes. */
 export interface ClientProviderDeps extends ClientProviderAuthDeps {
@@ -1213,6 +1215,54 @@ export function createPreferencesClientProvider(deps: ClientProviderDeps): Clien
   };
 }
 
+// External open — the same opener as the native "Open in system browser".
+
+export interface ExternalOpener {
+  readonly kind: "desktop-shell" | "browser-window";
+  /** Rejects when the OS opener declines the URL. */
+  open(url: string): Promise<void>;
+}
+
+/**
+ * Desktop hands the URL to Electron's shell (which re-checks its own
+ * allowlist); web opens a `noopener` window. Undefined outside a window.
+ */
+function localExternalOpener(): ExternalOpener | undefined {
+  const api = readLocalApi();
+  if (!api) return undefined;
+  return {
+    kind: window.desktopBridge ? "desktop-shell" : "browser-window",
+    open: (url) => api.shell.openExternal(url),
+  };
+}
+
+export function createExternalClientProvider(
+  deps: ClientProviderAuthDeps,
+  opener: () => ExternalOpener | undefined = localExternalOpener,
+): ClientLocalProvider {
+  return {
+    async invoke(call) {
+      authorizeCaller(deps, call.caller, call.context, [UI_EXTERNAL_OPEN]);
+      if (call.method !== "open")
+        throw new ClientProviderOpError(
+          "client-provider-unavailable",
+          `Unknown external op ${call.method}`,
+        );
+      // The server adapter already checked; the client owns the final say.
+      const checked = checkExternalUrl(readInputString(readInputObject(call.input), "url")!);
+      if (!checked.ok) return { status: "refused", reason: checked.reason };
+      const target = opener();
+      if (!target) return { status: "refused", reason: "opener-refused" };
+      try {
+        await target.open(checked.url);
+      } catch {
+        return { status: "refused", reason: "opener-refused" };
+      }
+      return { status: "opened", url: checked.url, opener: target.kind };
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 
 /** All host-owned `t3.client/*` providers for one environment connection. */
@@ -1227,6 +1277,7 @@ export function createClientProviders(
     ["t3.client/composer", createComposerClientProvider(deps)],
     ["t3.client/terminal-appearance", createTerminalAppearanceClientProvider(deps)],
     ["t3.client/preferences", createPreferencesClientProvider(deps)],
+    ["t3.client/external", createExternalClientProvider(deps)],
   ]);
 }
 
@@ -1238,6 +1289,7 @@ export const CLIENT_PROVIDER_DESCRIPTORS = [
   { id: "t3.client/composer", version: "1.2.0" },
   { id: "t3.client/terminal-appearance", version: "1.0.0" },
   { id: "t3.client/preferences", version: "1.0.0" },
+  { id: "t3.client/external", version: "1.0.0" },
 ] as const;
 
 export const CLIENT_PROVIDER_CLIENT_TAG = isElectron ? "desktop" : "web";

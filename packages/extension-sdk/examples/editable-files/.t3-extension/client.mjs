@@ -1672,6 +1672,42 @@ var __t3Client = (() => {
       }
     ]
   });
+  var uiExternalOpenReceiptSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "url", "opener"],
+        properties: {
+          status: { const: "opened" },
+          url: { type: "string", minLength: 1, maxLength: 4096 },
+          opener: { enum: ["desktop-shell", "browser-window"] }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "reason"],
+        properties: {
+          status: { const: "refused" },
+          reason: { enum: ["invalid-url", "scheme-not-allowed", "opener-refused"] }
+        }
+      }
+    ]
+  };
+  var CLIENT_EXTERNAL_API = validateApiDefinition({
+    id: "t3.client/external",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "open",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({ url: { type: "string", minLength: 1, maxLength: 4096 } }, ["url"]),
+        outputSchema: uiExternalOpenReceiptSchema
+      }
+    ]
+  });
   var CLIENT_PROVIDER_APIS = new Map([
     CLIENT_THEME_API,
     CLIENT_NOTIFICATIONS_API,
@@ -1679,7 +1715,8 @@ var __t3Client = (() => {
     CLIENT_PANELS_API,
     CLIENT_COMPOSER_API,
     CLIENT_TERMINAL_APPEARANCE_API,
-    CLIENT_PREFERENCES_API
+    CLIENT_PREFERENCES_API,
+    CLIENT_EXTERNAL_API
   ].map((definition) => [definition.id, definition]));
 
   // node_modules/@t3tools/extension-sdk/dist/catalogue.js
@@ -6822,9 +6859,37 @@ var __t3Client = (() => {
   });
   var UI_THEME_API = uiThemeApi.definition;
   var UI_KEYBINDINGS_API = uiKeybindingsApi.definition;
+  var UI_EXTERNAL = "t3.ui/external";
+  var UI_EXTERNAL_OPEN = "t3.ui/external.open";
+  var uiExternalApi = defineApi({
+    id: UI_EXTERNAL,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput(["open"])
+      },
+      {
+        name: "open",
+        effect: "write",
+        requiredGrants: [UI_EXTERNAL_OPEN],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["url"],
+          properties: { url: { type: "string", minLength: 1, maxLength: 2048 } }
+        },
+        outputSchema: uiExternalOpenReceiptSchema
+      }
+    ]
+  });
   var UI_NOTIFICATIONS_API = uiNotificationsApi.definition;
   var UI_PANELS_API = uiPanelsApi.definition;
   var UI_PREFERENCES_API = uiPreferencesApi.definition;
+  var UI_EXTERNAL_API = uiExternalApi.definition;
   var orchestrationStatusApi = defineOrchestrationStatusApi(vcsDiffPreviewStreamEventSchema);
   var ORCHESTRATION_STATUS_API = orchestrationStatusApi.definition;
   var GENERIC_API_CATALOGUE = [
@@ -6866,7 +6931,8 @@ var __t3Client = (() => {
     uiKeybindingsApi.definition,
     uiNotificationsApi.definition,
     uiPanelsApi.definition,
-    uiPreferencesApi.definition
+    uiPreferencesApi.definition,
+    uiExternalApi.definition
   ];
   function canonical(value) {
     if (Array.isArray(value))

@@ -11,6 +11,8 @@ import {
   UI_PANELS_API,
   UI_PREFERENCES_API,
   UI_THEME_API,
+  checkExternalUrl,
+  UI_EXTERNAL_API,
 } from "@t3tools/extension-sdk/catalogue";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
@@ -290,6 +292,7 @@ const CLIENT_NOTIFICATIONS = "t3.client/notifications";
 const CLIENT_KEYBINDINGS = "t3.client/keybindings";
 const CLIENT_PANELS = "t3.client/panels";
 const CLIENT_PREFERENCES = "t3.client/preferences";
+const CLIENT_EXTERNAL = "t3.client/external";
 
 interface NotificationOutcome {
   readonly actionId?: string;
@@ -878,11 +881,37 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
     },
   };
 
+  const externalProvider: HostApiProvider = {
+    providerId: "host.ui.external",
+    definition: UI_EXTERNAL_API,
+    availability: ambient(deps, CLIENT_EXTERNAL),
+    invoke(method, input, context, signal, metadata): Promise<Json> {
+      if (method === "getCapabilities")
+        return capabilities(deps, "host.ui.external", { open: CLIENT_EXTERNAL }, metadata);
+      if (method !== "open")
+        return Promise.reject(
+          providerError("client-provider-unavailable", `Unknown external op: ${method}`),
+        );
+      // A refused URL never reaches a client: the receipt names the reason.
+      const checked = checkExternalUrl((input as { url: string }).url);
+      if (!checked.ok)
+        return Promise.resolve({ status: "refused", reason: checked.reason } satisfies Json);
+      return forward(deps, CLIENT_EXTERNAL, "open")(
+        method,
+        { url: checked.url },
+        context,
+        signal,
+        metadata,
+      );
+    },
+  };
+
   return [
     themeProvider,
     keybindingsProvider,
     notificationsProvider,
     panelsProvider,
     preferencesProvider,
+    externalProvider,
   ];
 }

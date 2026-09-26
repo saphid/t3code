@@ -5,6 +5,7 @@ import {
   terminalOutputApi,
   terminalOutputEventsApi,
   terminalSessionsApi,
+  uiExternalApi,
   uiKeybindingsApi,
   uiPanelsApi,
   uiThemeApi,
@@ -56,6 +57,7 @@ import {
   dispatchTerminalCommand,
   isResumableOutputClose,
   noteOutputFrameForStreak,
+  openTerminalUrl,
   plainTerminalText,
   registerPanelCommands,
   terminalChordAction,
@@ -750,14 +752,19 @@ function TerminalPane(props: {
         onContextMenu: selectionMenu.onContextMenu,
         beforeKey: (event) => handleBeforeKey(event, panel, terminalId),
         onLinkActivate: (text) => {
-          // Terminal 22, path half: a detected path link opens through
-          // t3.file/presentation (the files pack's provider), reported on the
-          // surface. The URL half still has no external-open contract, so it
-          // stays an honest refusal instead of a silent drop.
+          // Terminal 22: a detected URL opens through t3.ui/external on the
+          // user's own client; a path link opens through t3.file/presentation
+          // (the files pack's provider). Both report failures on the surface.
           if (surface === null) return;
           const paneSurface = surface;
           if (isTerminalUrl(text)) {
-            writeSystemMessage(paneSurface, "Opening URLs is unavailable in this extension host.");
+            const signal = session.signal;
+            void openTerminalUrl(bindApi(uiExternalApi, host, session.context), text, signal).then(
+              (failure) => {
+                if (failure !== null && !signal.aborted && surfaceRef.current === paneSurface)
+                  writeSystemMessage(paneSurface, failure);
+              },
+            );
             return;
           }
           const workspace = workspaceLaunchFromRevision(session.context.workspaceRevision);
@@ -1699,6 +1706,8 @@ const authored = defineExtension({
     // still loads the panel.
     requireApi(uiKeybindingsApi, "^1.0.0"),
     requireApi(uiPanelsApi),
+    // Terminal 22 URL half: detected URLs open on the user's own client.
+    requireApi(uiExternalApi),
   ],
   assets: [
     { path: GHOSTTY_VT_ASSET, mediaType: "application/wasm" },

@@ -51,6 +51,12 @@ function fakeBridge(options?: {
         input: request.input,
       });
       if (request.method === "dismiss") return Effect.succeed({ dismissed: true });
+      if (request.method === "open")
+        return Effect.succeed({
+          status: "opened",
+          url: (request.input as { url: string }).url,
+          opener: "desktop-shell",
+        });
       if (request.method === "registerCommands") {
         const commands = (request.input as { commands: { id: string }[] }).commands;
         return Effect.succeed({
@@ -134,6 +140,7 @@ function makeProviders(
     notifications: byId("host.ui.notifications"),
     panels: byId("host.ui.panels"),
     preferences: byId("host.ui.preferences"),
+    external: byId("host.ui.external"),
   };
 }
 
@@ -215,6 +222,48 @@ describe("theme adapter", () => {
       code: "client-target-denied",
     });
     expect(bridge.invoked).toHaveLength(0);
+  });
+});
+
+describe("external adapter", () => {
+  it("refuses bad URLs and non-allowlisted schemes without reaching a client", async () => {
+    const bridge = fakeBridge();
+    const { external } = makeProviders(bridge);
+    const open = (url: string) => external.invoke("open", { url }, context, signal, metadata());
+    await expect(open("not a url")).resolves.toEqual({ status: "refused", reason: "invalid-url" });
+    await expect(open("//example.com/relative")).resolves.toEqual({
+      status: "refused",
+      reason: "invalid-url",
+    });
+    for (const url of ["file:///etc/passwd", "javascript:alert(1)", "mailto:a@b.c", "vscode://x"])
+      await expect(open(url)).resolves.toEqual({
+        status: "refused",
+        reason: "scheme-not-allowed",
+      });
+    expect(bridge.invoked).toHaveLength(0);
+  });
+
+  it("forwards the normalized URL to the caller's own client", async () => {
+    const bridge = fakeBridge();
+    const { external } = makeProviders(bridge);
+    await expect(
+      external.invoke("open", { url: "HTTPS://Example.com" }, context, signal, metadata()),
+    ).resolves.toEqual({
+      status: "opened",
+      url: "https://example.com/",
+      opener: "desktop-shell",
+    });
+    expect(bridge.invoked).toEqual([
+      {
+        connectionId: "conn-1",
+        apiId: "t3.client/external",
+        method: "open",
+        input: {
+          target: { kind: "connection", connectionId: "conn-1" },
+          url: "https://example.com/",
+        },
+      },
+    ]);
   });
 });
 

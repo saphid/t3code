@@ -1,8 +1,9 @@
 /**
  * `t3.ui/*` contract adoption for the Browser panel — theme token republish,
  * the command sets handed to host keybinding arbitration, and the toggle's
- * open/activate/close decision over `t3.ui/panels`. Everything here is pure
- * or client-injected so the logic is testable without a mounted view.
+ * open/activate/close decision over `t3.ui/panels`, and the external-open
+ * hand-off over `t3.ui/external`. Everything here is pure or client-injected
+ * so the logic is testable without a mounted view.
  */
 import type {
   ApiMethodTypes,
@@ -11,8 +12,15 @@ import type {
   TypedApiStreamFrame,
   TypedStreamApi,
 } from "@t3tools/extension-sdk/capabilities";
-import type { uiNotificationsApi, uiPanelsApi, uiThemeApi } from "@t3tools/extension-sdk/catalogue";
+import {
+  checkExternalUrl,
+  type uiExternalApi,
+  type uiNotificationsApi,
+  type uiPanelsApi,
+  type uiThemeApi,
+} from "@t3tools/extension-sdk/catalogue";
 import type { GlobalCommandDescriptor } from "@t3tools/extension-sdk/environment";
+import { isLeaseUrl } from "./viewModel.ts";
 
 /** Full manifest id of the thread-scoped browser surface (`t3.browser` + `view`). */
 export const BROWSER_SURFACE_ID = "t3.browser/view";
@@ -235,4 +243,38 @@ export async function notifyToggleFailure(
     },
     signal,
   );
+}
+
+// ---------------------------------------------------------------------------
+// t3.ui/external — "Open in system browser"
+
+/**
+ * The URL the native "Open in system browser" button would hand off, or null
+ * when there is nothing to open: workspace-file presentations and their
+ * minted lease URLs stay in-panel, and non-web URLs never qualify.
+ */
+export function externalOpenTarget(url: string | null, fileSource: string | null): string | null {
+  if (url === null || fileSource !== null || isLeaseUrl(url)) return null;
+  const checked = checkExternalUrl(url);
+  return checked.ok ? checked.url : null;
+}
+
+/**
+ * Hands `url` to the caller's own client through `t3.ui/external`. Resolves
+ * null once opened, or the inline fault line naming a refusal or a failed
+ * invoke (a missing `t3.ui/external.open` grant rejects the invoke).
+ */
+export async function openExternally(
+  external: BoundApi<typeof uiExternalApi>,
+  url: string,
+  signal: AbortSignal,
+): Promise<string | null> {
+  try {
+    const receipt = await external.invoke("open", { url }, signal);
+    return receipt.status === "opened"
+      ? null
+      : `Could not open in system browser (${receipt.reason})`;
+  } catch (error) {
+    return `Could not open in system browser — ${error instanceof Error ? error.message : "unavailable"}`;
+  }
 }

@@ -29,16 +29,21 @@ Interactive terminal plugin driven entirely by public contracts:
   `host.keybindings.resolveTerminalFocusKey` (see below).
 - `t3.ui/panels@^1.0.0` — the dispatched `toggle` closes the hosting surface
   via `closeSurface`; failures surface on the panel status row.
+- `t3.ui/external@^1.0.0` (`t3.ui/external.open` grant) — activating a
+  detected `http:`/`https:` link opens it on the user's own client (the OS
+  opener on desktop, a new tab on web); a refusal or denied grant is written
+  on the pane. Path links open through `t3.file/presentation` instead.
 
-All seven APIs are mandatory requirements — invocation authority only exists
+All of these APIs are mandatory requirements — invocation authority only exists
 for declared contracts, so a host without the `t3.ui/*` providers resolves
 this package `missing-api` rather than mounting a half-contracted panel. The
 degraded paths above cover denied grants, failing calls, and dead streams on
 a capable host.
 
 `t3.ui/notifications` is deliberately not adopted: the native terminal only
-toasts on link-preview failure, and this panel has no link-activation path —
-its inline status rows match native usage. The Ghostty-level editing
+toasts on link-preview failure, and this panel has no in-app link preview —
+link failures are written on the pane, matching the native system-browser
+fallback. The Ghostty-level editing
 intercepts (clear, word-nav, delete) are implemented locally on the VT
 surface via `handleBeforeKey`; what remains absent is adopting them as
 configurable commands through `t3.ui/keybindings`.

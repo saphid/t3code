@@ -23,6 +23,7 @@ import { useComposerDraftStore, type ComposerContextInsertionHandler } from "../
 import {
   createClientProviders,
   createComposerClientProvider,
+  createExternalClientProvider,
   createNotificationsClientProvider,
   createPanelsClientProvider,
   createTerminalAppearanceClientProvider,
@@ -1382,6 +1383,69 @@ describe("panels provider", () => {
     expect(provider.invoke(invokeCall("hideDock", { threadId: "thread-a" }))).toEqual({
       applied: true,
     });
+  });
+});
+
+describe("external provider", () => {
+  const EXTERNAL = ["t3.ui/external.open"];
+
+  it("rejects callers without the external-open grant", async () => {
+    const open = vi.fn(async () => {});
+    const provider = createExternalClientProvider(makeDeps(THEME_CAPS), () => ({
+      kind: "desktop-shell",
+      open,
+    }));
+    await expect(
+      provider.invoke(invokeCall("open", { url: "https://example.com" })),
+    ).rejects.toMatchObject({ code: "client-target-denied" });
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("re-checks the URL and never hands a refused scheme to the opener", async () => {
+    const open = vi.fn(async () => {});
+    const provider = createExternalClientProvider(makeDeps(EXTERNAL), () => ({
+      kind: "desktop-shell",
+      open,
+    }));
+    await expect(
+      provider.invoke(invokeCall("open", { url: "javascript:alert(1)" })),
+    ).resolves.toEqual({ status: "refused", reason: "scheme-not-allowed" });
+    await expect(provider.invoke(invokeCall("open", { url: "/relative" }))).resolves.toEqual({
+      status: "refused",
+      reason: "invalid-url",
+    });
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("opens through the desktop shell and reports a declined URL", async () => {
+    const openExternal = vi.fn(async (url: string) => url.includes("example.com"));
+    vi.stubGlobal("window", { desktopBridge: { openExternal }, open: vi.fn() });
+    const provider = createExternalClientProvider(makeDeps(EXTERNAL));
+    await expect(
+      provider.invoke(invokeCall("open", { url: "https://example.com/a b" })),
+    ).resolves.toEqual({
+      status: "opened",
+      url: "https://example.com/a%20b",
+      opener: "desktop-shell",
+    });
+    expect(openExternal).toHaveBeenCalledWith("https://example.com/a%20b");
+    await expect(
+      provider.invoke(invokeCall("open", { url: "https://other.test/" })),
+    ).resolves.toEqual({ status: "refused", reason: "opener-refused" });
+  });
+
+  it("falls back to a noopener window on web", async () => {
+    const open = vi.fn();
+    vi.stubGlobal("window", { open });
+    const provider = createExternalClientProvider(makeDeps(EXTERNAL));
+    await expect(
+      provider.invoke(invokeCall("open", { url: "http://localhost:3000" })),
+    ).resolves.toEqual({
+      status: "opened",
+      url: "http://localhost:3000/",
+      opener: "browser-window",
+    });
+    expect(open).toHaveBeenCalledWith("http://localhost:3000/", "_blank", "noopener,noreferrer");
   });
 });
 
