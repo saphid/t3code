@@ -86,13 +86,14 @@ type ThreadRow = {
   projectId: ProjectId;
   worktreePath: null;
   deletedAt: string | null;
+  archivedAt: string | null;
   updatedAt: string;
 };
 
 /**
  * In-memory host modelling the native scanner and importer. `byRoot` is what a
  * discovery walk finds under each project root; like the native scanner, the
- * last walk is reused until a scan asks for a refresh. `completed` holds imports
+ * last walk is reused until a scan refreshes it. `completed` holds imports
  * whose transcript was recorded (the scanner then reports them AlreadyImported);
  * `threads` is the projection, which an interrupted import can leave behind.
  */
@@ -107,13 +108,13 @@ const makeHost = (
   let sequence = 40;
   let failImport = false;
   let interruptHistory = false;
+  let discoveryTruncated = false;
   const idOf = (source: { providerInstanceId: string; providerSessionId: string }) =>
     `import:${source.providerInstanceId}:${source.providerSessionId}`;
-  const discover = (workspaceRoot: string, refresh: boolean) => {
-    if (refresh || discovered === null)
-      discovered = Object.fromEntries(
-        Object.entries(byRoot).map(([root, outcomes]) => [root, [...outcomes]]),
-      );
+  const walk = () =>
+    Object.fromEntries(Object.entries(byRoot).map(([root, outcomes]) => [root, [...outcomes]]));
+  const discover = (workspaceRoot: string) => {
+    discovered ??= walk();
     return (discovered[workspaceRoot] ?? []).map((outcome): AgentSessionRecentThread =>
       outcome._tag === "Importable" && completed.has(idOf(outcome.source))
         ? { _tag: "AlreadyImported", source: outcome.source }
@@ -133,15 +134,19 @@ const makeHost = (
     threads: {
       getById: ({ threadId }) => Effect.succeed(Option.fromNullishOr(threads.get(threadId))),
     },
-    recentThreads: (workspaceRoot, _projectId, { refresh }) =>
+    refreshDiscovery: Effect.sync(() => {
+      discovered = walk();
+      return { truncated: discoveryTruncated };
+    }),
+    recentThreads: (workspaceRoot) =>
       Stream.suspend(() =>
         slow
           ? // Emits what it has, signals, then stalls like a hung disk read.
-            Stream.fromIterable(discover(workspaceRoot, refresh)).pipe(
+            Stream.fromIterable(discover(workspaceRoot)).pipe(
               Stream.concat(Stream.fromEffectDrain(slow.onStall)),
               Stream.concat(Stream.never),
             )
-          : Stream.fromIterable(discover(workspaceRoot, refresh)),
+          : Stream.fromIterable(discover(workspaceRoot)),
       ),
     ...(slow ? { scanDeadline: slow.deadline } : {}),
     importThread: (input) =>
@@ -157,6 +162,7 @@ const makeHost = (
           projectId: input.projectId,
           worktreePath: null,
           deletedAt: null,
+          archivedAt: null,
           updatedAt: input.thread.updatedAt,
         });
         if (interruptHistory) {
@@ -173,6 +179,9 @@ const makeHost = (
     threads,
     completed,
     imports,
+    truncateDiscovery: () => {
+      discoveryTruncated = true;
+    },
     interruptNextHistory: () => {
       interruptHistory = true;
     },
@@ -272,12 +281,14 @@ it("marks finished imports in this project and hides another project's", async (
     projectId: PROJECT,
     worktreePath: null,
     deletedAt: null,
+    archivedAt: null,
     updatedAt: "2026-09-21T00:00:00.000Z",
   });
   host.threads.set("import:codex:theirs", {
     projectId: OTHER,
     worktreePath: null,
     deletedAt: null,
+    archivedAt: null,
     updatedAt: "2026-09-21T00:00:00.000Z",
   });
   const result = await host.scan();
@@ -326,6 +337,7 @@ it("names duplicates, cross-project sessions, and other projects' threads", asyn
     projectId: OTHER,
     worktreePath: null,
     deletedAt: null,
+    archivedAt: null,
     updatedAt: "2026-09-21T00:00:00.000Z",
   });
   // Another project's thread id is not disclosed.
@@ -353,6 +365,37 @@ it("finishes an interrupted import on retry instead of calling it a duplicate", 
     sequence: 42,
     messageCount: 2,
     error: null,
+  });
+});
+
+it("keeps an archived import a named duplicate instead of re-creating its thread", async () => {
+  const host = makeHost({ "/work/a": [importable(session("s1"))] });
+  await host.importKey(key("s1"));
+  // Archived threads drop out of the native imported-source and thread-detail queries.
+  host.completed.delete("import:codex:s1");
+  host.threads.set("import:codex:s1", {
+    ...host.threads.get("import:codex:s1")!,
+    archivedAt: "2026-09-22T00:00:00.000Z",
+  });
+  expect((await host.scan()).sessions[0]).toMatchObject({
+    status: "imported",
+    threadId: "import:codex:s1",
+  });
+  expect(await host.importKey(key("s1"))).toMatchObject({
+    status: "rejected",
+    threadId: "import:codex:s1",
+    error: "AgentSessionAlreadyImported",
+  });
+  expect(host.imports).toEqual(["import:codex:s1"]);
+});
+
+it("marks a scan truncated when the native walk hit its budget", async () => {
+  const host = makeHost({ "/work/a": [importable(session("s1"))] });
+  expect((await host.scan()).truncated).toBe(false);
+  host.truncateDiscovery();
+  expect(await host.scan()).toMatchObject({
+    truncated: true,
+    sessions: [{ providerSessionId: "s1" }],
   });
 });
 
