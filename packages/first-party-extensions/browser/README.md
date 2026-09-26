@@ -37,6 +37,17 @@ The panel renders through public contracts only:
   the empty state's "Local servers" section while it is visible. Loopback
   URLs open as-is — unlike the native panel they are not re-mapped to a
   remote environment's host, and the section says so.
+- `t3.browser/history` (`t3.browser/read-history` grant to list;
+  `t3.browser/read-history` + `t3.browser/record-history` to record, title,
+  or remove) is the project's URL history — the same per-project list the
+  native preview keeps on this client, so a visit in one thread is a recent
+  in every thread of the project and survives the thread ending. An address
+  the engine accepted (typed, a recent, a local server) is recorded; a
+  loaded page's title enriches its entry; the recents "×" removes it.
+  Workspace-file presentations never enter history. Until the list arrives,
+  and whenever the contract cannot serve it (denied grant, no connected
+  provider), the recents show this view's own saved list and a note names
+  why.
 - Favicons — the package half of the native favicon row; capture is
   engine-blocked. The native panel's PNG favicons are captured by the
   desktop host (`FaviconCapture.ts`) and delivered over desktop-internal
@@ -99,17 +110,15 @@ The panel renders through public contracts only:
   or denied grant shows on the fault line.
 
 Chrome row + navigation state stay panel-local (`viewModel.ts`, pure and
-tested); the persisted URL history lives in `historyStore.ts`; addresses
+tested); the project history client lives in `projectHistory.ts` and the
+view's own fallback list in `historyStore.ts`; addresses
 normalize with the same `normalizePreviewUrl` the native panel uses
 (`@t3tools/shared/preview`).
 
 Package-owned helpers ported from the native panel (`historyStore.ts`,
-`runtimeTabId.ts`, `previewAnnotation.ts`, `elementContext.ts`). One honesty note:
-the persisted URL history is **per view record** (per thread), not
-per-project like the native `byProjectKey` store. `session.save` cannot
-aggregate across threads, so project-shared history is a named deferral
-— the stored list is provisional behavior for a
-single surface, useful groundwork, not parity with the native store.
+`runtimeTabId.ts`, `previewAnnotation.ts`, `elementContext.ts`). Project
+history is client-local like the native store: another device connected to
+the same environment keeps its own list.
 
 ```sh
 pnpm --filter @t3tools/extension-browser test
