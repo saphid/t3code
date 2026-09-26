@@ -26,6 +26,7 @@ import type { HostApiProvider } from "@t3tools/extension-runtime";
 import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import * as ServerConfig from "../config.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ReviewService, layer as reviewServiceLayer } from "../review/ReviewService.ts";
 import { GitVcsDriver, layer as gitVcsDriverLayer } from "../vcs/GitVcsDriver.ts";
 import {
@@ -56,7 +57,13 @@ const makeVcsLayer = (workspaceRoot: string, baseDir: string) => {
     gitVcsDriverLayer,
     registry,
     vcsProvisioningLayer.pipe(Layer.provide(registry)),
-    reviewServiceLayer.pipe(Layer.provideMerge(gitVcsDriverLayer), Layer.provideMerge(registry)),
+    reviewServiceLayer.pipe(
+      Layer.provideMerge(gitVcsDriverLayer),
+      Layer.provideMerge(registry),
+      Layer.provide(
+        Layer.mock(ProjectionSnapshotQuery)({ getProjectShells: () => Effect.succeed([]) }),
+      ),
+    ),
   ).pipe(
     Layer.provideMerge(VcsProcess.layer),
     Layer.provideMerge(ServerConfig.layerTest(workspaceRoot, baseDir)),
