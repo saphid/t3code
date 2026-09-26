@@ -6574,13 +6574,134 @@ export interface BrowserFramesHost {
   present(request: BrowserFramesPresentRequest): BrowserFramesPresentResult;
 }
 
+/* ------------------------------------------------------------------------
+ * t3.browser/capture — screenshot a browser session into the environment's
+ * attachment store.
+ *
+ * A CLIENT HOST capability (`ClientHost.browserCapture`), like
+ * `t3.browser/surface`: the engine that rasterizes a page — the Electron
+ * guest and its in-page element picker — lives beside the renderer, not
+ * behind the server. The host uploads the PNG to the environment's attachment
+ * store and hands back only an `artifactRef`; image bytes never cross
+ * `invokeApi` or any JSON payload. Put a capture in the chat with
+ * `t3.composer/context` `insertImage`.
+ *
+ * Capturing requires `t3.browser/capture` AND `t3.browser/sessions`. The
+ * session must be presented on this client (a `t3.browser/surface` lease or
+ * the built-in Browser panel), because that is where the engine renders it;
+ * otherwise the named `not-presented` failure comes back. Clients without the
+ * engine report `desktop-required` up front.
+ * --------------------------------------------------------------------- */
+export const BROWSER_CAPTURE = "t3.browser/capture";
+export const BROWSER_CAPTURE_VERSION = "1.0.0";
+/** Both grants are required to capture. */
+export const BROWSER_CAPTURE_REQUIRED_GRANTS = [BROWSER_SESSIONS, BROWSER_CAPTURE] as const;
+/**
+ * An artifactRef is the pending attachment id the environment minted for the
+ * upload. The store sweeps pending uploads after 24 hours, so insert a capture
+ * into the chat soon after taking it.
+ */
+export const BROWSER_CAPTURE_ARTIFACT_REF_PATTERN =
+  "^pending-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
+
+/** `page` rasterizes the visible viewport; `element` runs the in-page picker and keeps its crop. */
+export type BrowserCaptureTarget = "page" | "element";
+
+/** One element the user picked, bounded for display and prompts. */
+export interface BrowserCapturePickedElement {
+  readonly tagName: string;
+  readonly selector: string | null;
+  readonly componentName: string | null;
+  /** First source-mapped frame of the element's JSX, when the page ships one. */
+  readonly source: {
+    readonly fileName: string;
+    readonly lineNumber: number | null;
+    readonly columnNumber: number | null;
+  } | null;
+}
+
+export interface BrowserCaptureArtifact {
+  /** Attachment id in the environment's store — see BROWSER_CAPTURE_ARTIFACT_REF_PATTERN. */
+  readonly artifactRef: string;
+  readonly mimeType: "image/png";
+  readonly sizeBytes: number;
+  readonly width: number;
+  readonly height: number;
+  readonly target: BrowserCaptureTarget;
+  readonly pageUrl: string | null;
+  readonly pageTitle: string | null;
+  /** Element target only: what the user typed into the picker, possibly empty. */
+  readonly comment?: string;
+  /** Element target only: the picked elements, at most 16. */
+  readonly elements?: readonly BrowserCapturePickedElement[];
+}
+
+export type BrowserCaptureFailureReason =
+  /** `grant` names the missing installation grant. */
+  | "grant-denied"
+  /** Context is not a thread scope inside this environment and granted project. */
+  | "scope-invalid"
+  /** The session identity is malformed or not a `t3.browser/sessions` ref. */
+  | "session-invalid"
+  /** The synced server epoch already moved past the session's. */
+  | "epoch-changed"
+  /** The host cannot verify scope right now; retry once the thread is live. */
+  | "host-unavailable"
+  /** This client has no browser engine; capture from the desktop app. */
+  | "desktop-required"
+  /** The session is not rendered on this client, so there are no pixels to capture. */
+  | "not-presented"
+  /** Another capture of this session is still running. */
+  | "busy"
+  /** The user dismissed the element picker, or the request signal aborted. */
+  | "cancelled"
+  /** The engine failed to produce an image, or the picker kept no crop. */
+  | "capture-failed"
+  /** The image exceeds the attachment store's image limit. */
+  | "too-large"
+  /** The environment's attachment store rejected the upload. */
+  | "upload-failed";
+
+export interface BrowserCaptureFailure {
+  readonly reason: BrowserCaptureFailureReason;
+  readonly detail: string;
+  /** Set when reason is "grant-denied". */
+  readonly grant?: string;
+}
+
+export interface BrowserCaptureRequest {
+  /** The calling view's own context; it must resolve to a thread in a granted project. */
+  readonly context: ViewContext;
+  readonly session: BrowserSurfaceSessionRef;
+  readonly target: BrowserCaptureTarget;
+  /** Caller lifetime — pass `ViewSession.signal`. Aborting cancels an open picker. */
+  readonly signal?: AbortSignal;
+}
+
+export type BrowserCaptureResult =
+  | { readonly ok: true; readonly artifact: BrowserCaptureArtifact }
+  | { readonly ok: false; readonly failure: BrowserCaptureFailure };
+
+/**
+ * The host side of `t3.browser/capture@1.0.0`. Present on `ClientHost` as
+ * `browserCapture`; absence means the host predates the contract (treat as
+ * `host-unavailable`).
+ */
+export interface BrowserCaptureHost {
+  readonly id: typeof BROWSER_CAPTURE;
+  readonly version: string;
+  /** Static for the host's lifetime, like `BrowserSurfaceHost.presentation`. */
+  readonly support: BrowserSurfacePresentationSupport;
+  capture(request: BrowserCaptureRequest): Promise<BrowserCaptureResult>;
+}
+
 /**
  * Grants enforced by host-local capability contracts that have no brokered
  * methods — the settings UI lists these alongside catalogue `requiredGrants`
  * so they can be granted at install time. A grant id here is not an
  * invocable API id.
  */
-export const HOST_CAPABILITY_GRANTS: readonly string[] = [BROWSER_SURFACE];
+export const HOST_CAPABILITY_GRANTS: readonly string[] = [BROWSER_SURFACE, BROWSER_CAPTURE];
 
 export const COMPOSER_CONTEXT = "t3.composer/context";
 export const COMPOSER_WRITE = "t3.composer/write";
@@ -6636,6 +6757,17 @@ export type ComposerMentionInsertResult = {
   readonly inserted: number;
   readonly target: string;
 };
+export type ComposerImageInsertInput = {
+  readonly threadId?: string;
+  /** A `t3.browser/capture` artifactRef. */
+  readonly artifactRef: string;
+  /** Attachment name shown in the composer; defaults to a capture name. */
+  readonly name?: string;
+};
+export type ComposerImageInsertResult = {
+  readonly inserted: boolean;
+  readonly target: string;
+};
 export type ComposerCapabilities = {
   readonly adapter: string;
   readonly transport: "server" | "client" | "unavailable";
@@ -6645,6 +6777,7 @@ export type ComposerCapabilities = {
     readonly getDraftState: boolean;
     readonly insertMention: boolean;
     readonly insertTerminalContext: boolean;
+    readonly insertImage: boolean;
   };
 };
 export type MessagesFileAnnotation = {
@@ -6812,6 +6945,11 @@ const diffAnnotationSchema = {
  * 1.1.0 adds the two insert shapes the native panels use: file mentions
  * (`insertMention`, byte-identical to Files "Add to chat") and terminal
  * context chips (`insertTerminalContext`, the Terminal drawer's selection).
+ *
+ * 1.2.0 adds `insertImage`: attach a `t3.browser/capture` artifact to the
+ * draft as an image, the way a native element pick attaches its crop. Only
+ * the artifactRef crosses the wire; the client hosting the draft fetches the
+ * bytes from the environment's attachment store.
  */
 export const composerContextApi = defineApi<{
   getCapabilities: { input: Record<string, never>; output: ComposerCapabilities };
@@ -6825,9 +6963,10 @@ export const composerContextApi = defineApi<{
     input: ComposerTerminalContextInsertInput;
     output: ComposerTerminalContextInsertResult;
   };
+  insertImage: { input: ComposerImageInsertInput; output: ComposerImageInsertResult };
 }>({
   id: COMPOSER_CONTEXT,
-  version: "1.1.0",
+  version: "1.2.0",
   methods: [
     {
       name: "getCapabilities",
@@ -6841,6 +6980,7 @@ export const composerContextApi = defineApi<{
         "getDraftState",
         "insertMention",
         "insertTerminalContext",
+        "insertImage",
       ]),
     },
     {
@@ -6967,6 +7107,34 @@ export const composerContextApi = defineApi<{
         properties: {
           inserted: { type: "boolean" },
           reason: { enum: ["duplicate"] },
+          target: { type: "string", minLength: 1, maxLength: 256 },
+        },
+      },
+    },
+    {
+      name: "insertImage",
+      effect: "write",
+      requiredGrants: [COMPOSER_WRITE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["artifactRef"],
+        properties: {
+          threadId: composerThreadIdInput,
+          artifactRef: {
+            type: "string",
+            maxLength: 128,
+            pattern: BROWSER_CAPTURE_ARTIFACT_REF_PATTERN,
+          },
+          name: { type: "string", minLength: 1, maxLength: 128 },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["inserted", "target"],
+        properties: {
+          inserted: { type: "boolean" },
           target: { type: "string", minLength: 1, maxLength: 256 },
         },
       },

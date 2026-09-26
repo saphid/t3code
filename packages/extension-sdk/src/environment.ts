@@ -13,6 +13,7 @@ import {
 } from "./capabilities.js";
 import {
   assertProvidedApiOwner,
+  type BrowserCaptureHost,
   type BrowserFramesHost,
   type BrowserSurfaceHost,
   type UiKeybindingsHost,
@@ -198,6 +199,12 @@ export interface ClientHost {
    * hosts without a remote-frame transport (treat as "host-unavailable").
    */
   readonly browserFrames?: BrowserFramesHost;
+  /**
+   * `t3.browser/capture` host capability — captures a presented session into
+   * the environment's attachment store and returns an artifactRef. Absent on
+   * hosts that predate it (treat as "host-unavailable").
+   */
+  readonly browserCapture?: BrowserCaptureHost;
   /**
    * `t3.ui/keybindings@1.1.0` host capability — synchronous, client-local
    * keymap resolution. Absent on hosts that predate it or without the

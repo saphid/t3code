@@ -574,10 +574,14 @@ const composerAnnotationSchema = {
 const composerThreadIdInput = {
   threadId: { type: "string", minLength: 1, maxLength: 128 },
 } as const;
+// Mirrors the catalogue's BROWSER_CAPTURE_ARTIFACT_REF_PATTERN; importing the
+// catalogue here would close a module cycle. A test pins the two equal.
+const BROWSER_CAPTURE_ARTIFACT_REF_PATTERN =
+  "^pending-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
 
 export const CLIENT_COMPOSER_API = validateApiDefinition({
   id: "t3.client/composer",
-  version: "1.1.0",
+  version: "1.2.0",
   methods: [
     {
       name: "insertContext",
@@ -696,6 +700,32 @@ export const CLIENT_COMPOSER_API = validateApiDefinition({
       },
     },
     {
+      name: "insertImage",
+      effect: "write",
+      requiredGrants: [],
+      inputSchema: withTarget(
+        {
+          ...composerThreadIdInput,
+          artifactRef: {
+            type: "string",
+            maxLength: 128,
+            pattern: BROWSER_CAPTURE_ARTIFACT_REF_PATTERN,
+          },
+          name: { type: "string", minLength: 1, maxLength: 128 },
+        },
+        ["threadId", "artifactRef"],
+      ),
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["inserted", "target"],
+        properties: {
+          inserted: { type: "boolean" },
+          target: { type: "string", minLength: 1, maxLength: 256 },
+        },
+      },
+    },
+    {
       name: "listAnnotations",
       effect: "read",
       requiredGrants: [],
@@ -795,3 +825,6 @@ export const CLIENT_PROVIDER_SUPPORTED_RANGE = "^1.0.0";
  * range instead of trusting registration alone.
  */
 export const CLIENT_COMPOSER_V11_RANGE = "^1.1.0";
+
+/** The composer range that carries `insertImage`; gated per connection like the 1.1.0 ops. */
+export const CLIENT_COMPOSER_V12_RANGE = "^1.2.0";
