@@ -5,6 +5,7 @@ import {
   createProjectHistory,
   displayedHistory,
   projectHistoryErrorState,
+  settleCommandReceipt,
   titleUpdate,
 } from "./projectHistory.ts";
 import { isLeaseUrl } from "./viewModel.ts";
@@ -190,6 +191,55 @@ NodeTest.describe("displayedHistory", () => {
       displayedHistory({ kind: "ready", entries: [], truncated: false }, own),
       [],
     );
+  });
+});
+
+NodeTest.describe("settleCommandReceipt", () => {
+  /** `dispatch`'s receipt handling, recording through a real `createProjectHistory`. */
+  function dispatchHarness(lastRevision) {
+    const api = scriptedApi();
+    const history = createProjectHistory(api, new AbortController().signal, () => {});
+    const effects = [];
+    const settle = (receipt, url) =>
+      settleCommandReceipt(receipt, lastRevision, {
+        adopt: () => effects.push(["adopt", receipt.revision]),
+        refuse: (outcome) => effects.push(["refuse", outcome]),
+        onAccepted: url ? () => history.record(url) : undefined,
+      });
+    const records = () => api.calls.filter((call) => call.method === "record");
+    return { settle, effects, records };
+  }
+
+  NodeTest.it("records an accepted visit once when the stream already applied a newer page", () => {
+    const lastRevision = { current: 4 };
+    const { settle, effects, records } = dispatchHarness(lastRevision);
+    // The events stream's upsert at revision 6 lands before the navigate receipt at 5.
+    lastRevision.current = Math.max(lastRevision.current, 6);
+    settle({ revision: 5, outcome: "accepted" }, "https://typed.test/");
+    NodeAssert.deepEqual(effects, []);
+    NodeAssert.equal(lastRevision.current, 6);
+    NodeAssert.deepEqual(
+      records().map((call) => call.input),
+      [{ url: "https://typed.test/" }],
+    );
+  });
+
+  NodeTest.it("adopts a current receipt and records once", () => {
+    const lastRevision = { current: 4 };
+    const { settle, effects, records } = dispatchHarness(lastRevision);
+    settle({ revision: 5, outcome: "accepted" }, "https://typed.test/");
+    NodeAssert.deepEqual(effects, [["adopt", 5]]);
+    NodeAssert.equal(lastRevision.current, 5);
+    NodeAssert.equal(records().length, 1);
+  });
+
+  NodeTest.it("never records a refused command, and a stale refusal stays silent", () => {
+    const lastRevision = { current: 4 };
+    const { settle, effects, records } = dispatchHarness(lastRevision);
+    settle({ revision: 5, outcome: "rejected" }, "https://typed.test/");
+    settle({ revision: 3, outcome: "rejected" }, "https://typed.test/");
+    NodeAssert.deepEqual(effects, [["refuse", "rejected"]]);
+    NodeAssert.equal(records().length, 0);
   });
 });
 

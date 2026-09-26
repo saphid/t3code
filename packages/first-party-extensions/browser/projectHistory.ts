@@ -124,6 +124,33 @@ export function createProjectHistory(
 export type ProjectHistory = ReturnType<typeof createProjectHistory>;
 
 /**
+ * Settles an engine command receipt for `dispatch`. The events stream may
+ * already have applied a newer revision, so the receipt's snapshot is adopted
+ * (or its refusal shown) only when it is not older than `lastRevision`. The
+ * accepted command's own side effect — recording the visit — belongs to the
+ * command, not the snapshot, so it runs exactly once whenever the command was
+ * accepted.
+ */
+export function settleCommandReceipt(
+  receipt: { readonly revision: number; readonly outcome: string },
+  lastRevision: { current: number },
+  handlers: {
+    readonly adopt: () => void;
+    readonly refuse: (outcome: string) => void;
+    readonly onAccepted?: (() => void) | undefined;
+  },
+): void {
+  const stale = receipt.revision < lastRevision.current;
+  if (!stale) lastRevision.current = receipt.revision;
+  if (receipt.outcome !== "accepted") {
+    if (!stale) handlers.refuse(receipt.outcome);
+    return;
+  }
+  if (!stale) handlers.adopt();
+  handlers.onAccepted?.();
+}
+
+/**
  * The page title native writes back once a recorded page loads: only a
  * loaded page with a title, never a workspace-file presentation. Returns the
  * `url`/`title` pair to send, or null.

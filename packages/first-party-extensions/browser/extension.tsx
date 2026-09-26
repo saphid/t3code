@@ -44,6 +44,7 @@ import { LocalServersSection, NoPreview, RecentlyUsedHeading, useLocalServers } 
 import {
   createProjectHistory,
   displayedHistory,
+  settleCommandReceipt,
   titleUpdate,
   type ProjectHistoryState,
 } from "./projectHistory.js";
@@ -512,30 +513,36 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     const signal = AbortSignal.any([controller.signal, session.signal]);
     void run(signal).then(
       (receipt) => {
-        // Stale receipts (older revision than already applied) never win.
-        if (signal.aborted || receipt.revision < lastRevision.current) return;
-        lastRevision.current = receipt.revision;
-        if (receipt.outcome !== "accepted") {
-          setFault(`Browser command ${receipt.outcome}`);
-          return;
-        }
-        const next = {
-          tabId: receipt.session.tabId,
-          serverEpoch: receipt.serverEpoch,
-          engineGeneration: receipt.session.engine.generation,
-        };
-        heldRef.current = next;
-        setHeld(next);
-        setLive(receipt.session);
-        setFault(null);
-        onAccepted?.();
-        const requested = receipt.session.requestedUrl;
-        const base: { url?: string; relativePath?: string; tabId: string; serverEpoch: string } = {
-          ...restoreTarget(fileSourceRef.current, requested),
-          tabId: next.tabId,
-          serverEpoch: next.serverEpoch,
-        };
-        session.save({ ...base, history: fitHistoryToSaveBudget(base, historyRef.current) });
+        if (signal.aborted) return;
+        // Stale receipts (older revision than already applied) never replace
+        // UI state, but an accepted command still records its visit.
+        settleCommandReceipt(receipt, lastRevision, {
+          refuse: (outcome) => setFault(`Browser command ${outcome}`),
+          onAccepted,
+          adopt: () => {
+            const next = {
+              tabId: receipt.session.tabId,
+              serverEpoch: receipt.serverEpoch,
+              engineGeneration: receipt.session.engine.generation,
+            };
+            heldRef.current = next;
+            setHeld(next);
+            setLive(receipt.session);
+            setFault(null);
+            const requested = receipt.session.requestedUrl;
+            const base: {
+              url?: string;
+              relativePath?: string;
+              tabId: string;
+              serverEpoch: string;
+            } = {
+              ...restoreTarget(fileSourceRef.current, requested),
+              tabId: next.tabId,
+              serverEpoch: next.serverEpoch,
+            };
+            session.save({ ...base, history: fitHistoryToSaveBudget(base, historyRef.current) });
+          },
+        });
       },
       (error) => {
         if (!signal.aborted)
