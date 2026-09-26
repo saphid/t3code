@@ -9230,7 +9230,7 @@ ${writeKey}`;
                 gap: 6,
                 minWidth: 0,
                 marginTop: 2,
-                fontSize: 12,
+                fontSize: 11,
                 color: muted,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
@@ -10304,14 +10304,14 @@ ${thread.id}`) === activity,
                           style: {
                             fontFamily: "var(--font-mono, ui-monospace, monospace)",
                             color: muted,
-                            fontSize: 12
+                            fontSize: 11
                           },
                           children: commit.oid.slice(0, 8)
                         }
                       ),
                       " ",
                       commit.messageHeadline,
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted, fontSize: 12 }, children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted, fontSize: 11 }, children: [
                         " ",
                         "\xB7 ",
                         formatRelativeTime(commit.committedDate)

@@ -13814,7 +13814,7 @@ var __t3Client = (() => {
                       borderRadius: 5,
                       cursor: "pointer",
                       font: "inherit",
-                      fontSize: 12,
+                      fontSize: 11,
                       color: snapshot.activeGroupId === group.id ? "inherit" : muted,
                       background: snapshot.activeGroupId === group.id ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))" : "transparent"
                     },
