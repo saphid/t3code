@@ -27,8 +27,10 @@ import type { SurfaceRenderer } from "@t3tools/extension-sdk/react";
 import type * as React from "react";
 import type { BrowserSurfaceBinding } from "./browserSurfaceBridge";
 import type { BrowserFramesBinding } from "./browserFramesBridge";
+import type { BrowserCaptureBinding } from "./browserCaptureBridge";
 import type { KeybindingsHostBinding } from "./keybindingsHostBridge";
 import type {
+  BrowserCaptureHost,
   BrowserFramesHost,
   BrowserSurfaceHost,
   UiKeybindingsHost,
@@ -186,6 +188,8 @@ export function createInstalledExtensionController(options: {
    * and detaches its views with the installation lifetime.
    */
   readonly browserFrames?: (binding: BrowserFramesBinding) => BrowserFramesHost;
+  /** Per-installation `t3.browser/capture` host, bound like `browserSurface`. */
+  readonly browserCapture?: (binding: BrowserCaptureBinding) => BrowserCaptureHost;
   /**
    * `t3.ui/keybindings@1.1.0` client capability — bound per installation so
    * `host.keybindings` exists only under that installation's grant and
@@ -353,6 +357,10 @@ export function createInstalledExtensionController(options: {
               grants: item.grants,
               lifetime: lifetime.signal,
             });
+            const browserCapture = options.browserCapture?.({
+              grants: item.grants,
+              lifetime: lifetime.signal,
+            });
             const keybindings = options.keybindings?.({
               grants: item.grants,
               lifetime: lifetime.signal,
@@ -515,6 +523,7 @@ export function createInstalledExtensionController(options: {
               },
               ...(browserSurface ? { browserSurface } : {}),
               ...(browserFrames ? { browserFrames } : {}),
+              ...(browserCapture ? { browserCapture } : {}),
               ...(keybindings ? { keybindings } : {}),
             };
             const extension = (factory as ClientFactory)(clientHost);

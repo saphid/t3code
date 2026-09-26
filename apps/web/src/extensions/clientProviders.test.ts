@@ -710,6 +710,56 @@ describe("composer provider", () => {
     );
   });
 
+  it("inserts a capture artifact as a draft image, fetched by ref", async () => {
+    const artifactRef = "pending-0f1e2d3c-4b5a-4968-8776-655443322110";
+    const fetchArtifact = vi.fn(
+      async (_environmentId: string, _ref: string, name: string) =>
+        new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], name, { type: "image/png" }),
+    );
+    const provider = createComposerClientProvider(makeDeps(["t3.composer/write"]), fetchArtifact);
+    const result = await provider.invoke(
+      invokeCall("insertImage", { threadId: "thread-a", artifactRef, name: "page.png" }),
+    );
+    expect(result).toEqual({ inserted: true, target: `${ENV}:thread-a` });
+    expect(fetchArtifact).toHaveBeenCalledWith(ENV, artifactRef, "page.png");
+    const draft = useComposerDraftStore
+      .getState()
+      .getComposerDraft(scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a")));
+    const image = draft?.images.find((entry) => entry.name === "page.png");
+    expect(image).toMatchObject({ type: "image", mimeType: "image/png", sizeBytes: 4 });
+  });
+
+  it("refuses insertImage without the grant, outside scope, or with a non-capture ref", async () => {
+    const artifactRef = "pending-0f1e2d3c-4b5a-4968-8776-655443322110";
+    const fetchArtifact = vi.fn(async () => {
+      throw new Error("The artifact is not a PNG capture.");
+    });
+    expectDenied(() =>
+      createComposerClientProvider(makeDeps([]), fetchArtifact).invoke(
+        invokeCall("insertImage", { threadId: "thread-a", artifactRef }),
+      ),
+    );
+    const provider = createComposerClientProvider(makeDeps(["t3.composer/write"]), fetchArtifact);
+    expectDenied(() =>
+      provider.invoke(invokeCall("insertImage", { threadId: "thread-b", artifactRef })),
+    );
+    expectDenied(
+      () =>
+        provider.invoke(
+          invokeCall("insertImage", {
+            threadId: "thread-a",
+            artifactRef: "data:image/png;base64,iVBORw0KGgo=",
+          }),
+        ),
+      "provider-rejected",
+    );
+    expect(fetchArtifact).not.toHaveBeenCalled();
+    // A ref whose bytes are not a capture is a named rejection, not an insert.
+    await expect(
+      provider.invoke(invokeCall("insertImage", { threadId: "thread-a", artifactRef })),
+    ).rejects.toMatchObject({ code: "provider-rejected", message: /not a PNG capture/ });
+  });
+
   it("attaches a file annotation and returns its id", () => {
     const provider = createComposerClientProvider(makeDeps(["t3.messages/write"]));
     const result = provider.invoke(
