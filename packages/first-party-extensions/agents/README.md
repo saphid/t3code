@@ -70,8 +70,9 @@ terminal.
   session handle (today, Claude workflow runs) offers "Open session". The pack
   sends only the agent id; the host looks the session URL up on this thread's
   own roster and hands it to the OS opener. `unknown-agent`, `no-session`,
-  `opener-refused`, and a missing grant render by name inline. Transcript
-  directories stay host-only (see agent logs below).
+  `opener-refused` (including a popup the browser blocked), and a missing
+  grant render by name inline. There is no transcript navigation (see agent
+  logs below).
 - Tab badge (`ViewSession.setTabIndicators`, no grant) — the host draws a
   running count (running + waiting agents, the native toggle badge's count)
   on this panel's tab, or an unread count for work that finished while the
@@ -86,9 +87,10 @@ settled rows with the outcome).
 Still deferred — named in the panel, not faked: workflow launch (no native
 binding exists), agent logs and output files (net-new design), agent session
 scan/import (needs a narrow public scan contract), and the mobile Agents
-surface. The chat toggle badge and spawn CTA rows stay host chat UI; with
-this pack installed (enabled and granted the thread's project) they open this
-view instead of the built-in Agents panel.
+surface. The header live-agent badge and spawn CTA rows stay host chat UI;
+with this pack installed (enabled and granted the thread's project) they open
+this view instead of the built-in Agents panel. The right panel toggle under
+the badge still restores whichever panel was last shown.
 Thread settled state is not projected by the status contract, so Settle and
 Unsettle are both offered when the provider supports them and the receipt
 reports the outcome.
