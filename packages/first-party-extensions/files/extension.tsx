@@ -71,6 +71,10 @@ import {
   parentPath,
   presentationPath,
   previewKind,
+  filesViewState,
+  isFilesViewState,
+  restoredExpanded,
+  restoredRenderMarkdown,
   restoredSelection,
   watchThemeVars,
   toggleExpanded,
@@ -93,17 +97,6 @@ const SEARCH_DEBOUNCE_MS = 150;
 // root from `t3.ui/theme` tokens) ahead of the legacy host vars. When the
 // contract is unavailable the hop never resolves and the legacy chain renders.
 // `font-*` vars are not theme roles and keep their plain host references.
-
-function restoreState(value: unknown): value is { readonly relativePath: string } | null {
-  if (value === null) return true;
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    Object.keys(value).length === 1 &&
-    typeof (value as { relativePath?: unknown }).relativePath === "string"
-  );
-}
 
 const emptyEntries: readonly TreeEntry[] = [];
 
@@ -1141,7 +1134,9 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     session,
   );
   const themeVars = useThemeVars(host, session, visible);
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() =>
+    restoredExpanded(session.restoreState),
+  );
   const [query, setQuery] = useState("");
   const [searchMode, setSearchMode] = useState<"names" | "contents">("names");
   const [kindFilter, setKindFilter] = useState<SearchKindFilter>("all");
@@ -1196,8 +1191,24 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const rows = useMemo(() => visibleRows(entries, expanded, ""), [entries, expanded]);
   const [fileOpen, setFileOpen] = useState<{ path: string; state: FileOpenState } | null>(null);
   // Rendered-vs-source is a preference, not a property of one file — the same
-  // shape as the native panel's localStorage flag, kept in view state only.
-  const [renderMarkdown, setRenderMarkdown] = useState(false);
+  // shape as the native panel's localStorage flag, persisted with the view.
+  const [renderMarkdown, setRenderMarkdown] = useState(() =>
+    restoredRenderMarkdown(session.restoreState),
+  );
+  // Row 12: selection, expansion and preview mode persist through one
+  // `session.save`; the ref skips re-saving a state that is already stored.
+  const savedViewStateRef = useRef<string | null>(null);
+  useEffect(() => {
+    const state = filesViewState(selected, expanded, renderMarkdown);
+    const serialized = JSON.stringify(state);
+    // The first run only records the restored state — nothing changed yet.
+    if (savedViewStateRef.current === null) {
+      savedViewStateRef.current = serialized;
+      return;
+    }
+    if (serialized === savedViewStateRef.current) return;
+    if (session.save(state)) savedViewStateRef.current = serialized;
+  }, [session, selected, expanded, renderMarkdown]);
 
   // Row 14: review comments on file lines. The textarea's character selection
   // expands to full lines; submit lands a real composer draft review comment
@@ -1361,7 +1372,6 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
 
   const select = (path: string, line?: number) => {
     setSelected(path);
-    session.save({ relativePath: path });
     // Selecting is navigating: any held selection and any open draft die
     // here even when the path (and its contents) did not change.
     clearEditorSelection();
@@ -2255,7 +2265,7 @@ export default defineExtension({
       clients: ["web", "desktop"],
       capabilities: [],
       stateVersion: 1,
-      validateRestore: restoreState,
+      validateRestore: isFilesViewState,
       createView(host, session) {
         return { renderer: () => <FilesView host={host} session={session} /> };
       },
