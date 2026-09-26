@@ -4,7 +4,7 @@ import { validateApiDefinition, type ApiDefinition } from "./capabilities.js";
  * Private `t3.client/*` client-provider area definitions.
  *
  * These are host-owned ambient providers (theme, notifications, keybindings,
- * panels, composer, terminal appearance) reached only through the
+ * panels, composer, terminal appearance, external open) reached only through the
  * client-provider connect stream — never registered with the public API
  * broker, never discoverable, never grantable, and never plugin-provided.
  *
@@ -768,6 +768,49 @@ export const CLIENT_TERMINAL_APPEARANCE_API = validateApiDefinition({
   ],
 });
 
+/** The `t3.ui/external` open receipt, shared by the public and private areas. */
+export const uiExternalOpenReceiptSchema = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "url", "opener"],
+      properties: {
+        status: { const: "opened" },
+        url: { type: "string", minLength: 1, maxLength: 4096 },
+        opener: { enum: ["desktop-shell", "browser-window"] },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "reason"],
+      properties: {
+        status: { const: "refused" },
+        reason: { enum: ["invalid-url", "scheme-not-allowed", "opener-refused"] },
+      },
+    },
+  ],
+} as const;
+
+/**
+ * Backs `t3.ui/external`. The adapter forwards only URLs that already passed
+ * `checkExternalUrl`; the client re-checks before reaching its OS opener.
+ */
+export const CLIENT_EXTERNAL_API = validateApiDefinition({
+  id: "t3.client/external",
+  version: "1.0.0",
+  methods: [
+    {
+      name: "open",
+      effect: "write",
+      requiredGrants: [],
+      inputSchema: withTarget({ url: { type: "string", minLength: 1, maxLength: 4096 } }, ["url"]),
+      outputSchema: uiExternalOpenReceiptSchema,
+    },
+  ],
+});
+
 /** Host-owned client-provider definitions, keyed by area id. */
 export const CLIENT_PROVIDER_APIS: ReadonlyMap<string, ApiDefinition> = new Map(
   [
@@ -777,6 +820,7 @@ export const CLIENT_PROVIDER_APIS: ReadonlyMap<string, ApiDefinition> = new Map(
     CLIENT_PANELS_API,
     CLIENT_COMPOSER_API,
     CLIENT_TERMINAL_APPEARANCE_API,
+    CLIENT_EXTERNAL_API,
   ].map((definition) => [definition.id, definition]),
 );
 

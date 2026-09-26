@@ -19,6 +19,7 @@ import {
   commandDescriptorSchema,
   commandResultSchema,
   themeHalvesSchema,
+  uiExternalOpenReceiptSchema,
 } from "./clientProviders.js";
 
 export * from "./workspaceResources.js";
@@ -7857,10 +7858,87 @@ export const uiPanelsApi = defineApi<{
   ],
 });
 
+export const UI_EXTERNAL = "t3.ui/external";
+export const UI_EXTERNAL_OPEN = "t3.ui/external.open";
+/** Schemes `t3.ui/external` hands to the OS opener; everything else is refused. */
+export const UI_EXTERNAL_SCHEMES: readonly string[] = ["http:", "https:"];
+
+/**
+ * Closed refusal set: `invalid-url` (not an absolute URL), `scheme-not-allowed`
+ * (outside `UI_EXTERNAL_SCHEMES`), `opener-refused` (the client's OS opener
+ * declined the URL).
+ */
+export type UiExternalRefusalReason = "invalid-url" | "scheme-not-allowed" | "opener-refused";
+
+export type UiExternalOpenReceipt =
+  | {
+      readonly status: "opened";
+      readonly url: string;
+      readonly opener: "desktop-shell" | "browser-window";
+    }
+  | { readonly status: "refused"; readonly reason: UiExternalRefusalReason };
+
+/**
+ * The URL check every `t3.ui/external` hop runs (pack, server adapter,
+ * client provider): an absolute URL on an allowlisted scheme, normalized to
+ * its `href`. Relative URLs, `file:`, `javascript:`, and every other scheme
+ * are refused with a closed reason.
+ */
+export function checkExternalUrl(
+  value: string,
+):
+  | { readonly ok: true; readonly url: string }
+  | { readonly ok: false; readonly reason: "invalid-url" | "scheme-not-allowed" } {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return { ok: false, reason: "invalid-url" };
+  }
+  return UI_EXTERNAL_SCHEMES.includes(parsed.protocol)
+    ? { ok: true, url: parsed.href }
+    : { ok: false, reason: "scheme-not-allowed" };
+}
+
+/**
+ * Hands a checked URL to the caller's own client: the OS opener on desktop,
+ * a `noopener` `window.open` on web. A refusal is a typed receipt, not an
+ * error; a missing `t3.ui/external.open` grant fails the invoke.
+ */
+export const uiExternalApi = defineApi<{
+  getCapabilities: { input: Record<string, never>; output: UiCapabilities };
+  open: { input: { url: string }; output: UiExternalOpenReceipt };
+}>({
+  id: UI_EXTERNAL,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: composerEmptyInputSchema,
+      outputSchema: uiCapabilitiesOutput(["open"]),
+    },
+    {
+      name: "open",
+      effect: "write",
+      requiredGrants: [UI_EXTERNAL_OPEN],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["url"],
+        properties: { url: { type: "string", minLength: 1, maxLength: 2048 } },
+      },
+      outputSchema: uiExternalOpenReceiptSchema,
+    },
+  ],
+});
+
 export const UI_THEME_API = uiThemeApi.definition;
 export const UI_KEYBINDINGS_API = uiKeybindingsApi.definition;
 export const UI_NOTIFICATIONS_API = uiNotificationsApi.definition;
 export const UI_PANELS_API = uiPanelsApi.definition;
+export const UI_EXTERNAL_API = uiExternalApi.definition;
 
 /**
  * Contracts only: their presence does not advertise a functioning or
@@ -7907,6 +7985,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   uiKeybindingsApi.definition,
   uiNotificationsApi.definition,
   uiPanelsApi.definition,
+  uiExternalApi.definition,
 ];
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
