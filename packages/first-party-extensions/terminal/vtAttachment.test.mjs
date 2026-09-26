@@ -89,7 +89,10 @@ NodeTest.describe("TerminalVtAttachment — snapshot + attach", () => {
     vt.applyFrame(frame(1, snapshot()), snapshot());
     NodeAssert.equal(vt.state.status, "live");
     NodeAssert.equal(vt.state.degraded, false);
-    NodeAssert.deepEqual(s.calls, [["resetAndWrite", "prompt$ "]]);
+    // R7 first-window boundary: a complete first snapshot is delivered
+    // reply-enabled (its queries get answers), a plain write on the fresh
+    // parser — no suppressed re-base.
+    NodeAssert.deepEqual(s.calls, [["write", "prompt$ "]]);
   });
 
   NodeTest.it("a truncated snapshot is live but degraded — parity is unclaimed", () => {
@@ -104,6 +107,80 @@ NodeTest.describe("TerminalVtAttachment — snapshot + attach", () => {
     NodeAssert.match(vt.state.statusText, /truncated/);
   });
 
+  NodeTest.it("a program probing before first mount gets its answer at attach", () => {
+    // R7 first-window gap boundary: the program sent a cursor-position
+    // query (CSI 6n) before this client ever attached, so the probe bytes
+    // sit in the FIRST snapshot's retained contents. The snapshot is
+    // proven complete since process start (nothing truncated, zero
+    // clears, window origin at unit 0), so it is claimed as the window's
+    // first gap — the attach replays it with replies enabled instead of
+    // suppressing the query until a reshow cycle re-delivers the bytes.
+    const vt = new TerminalVtAttachment("term-1");
+    vt.beginStream();
+    const probe = snapshot({
+      contents: "out\u001b[6n",
+      retainedByteLength: 7,
+      boundarySequence: 3,
+    });
+    vt.applyFrame(frame(1, probe), probe);
+    const s = bracketedSink();
+    vt.attach(s);
+    // The query replayed OUTSIDE the suppression bracket — the PTY reply
+    // writer is attached to exactly those bytes.
+    NodeAssert.deepEqual(s.calls, [
+      ["beginReplay"],
+      ["resetAndWrite", ""],
+      ["endReplay"],
+      ["write", "out\u001b[6n"],
+    ]);
+  });
+
+  NodeTest.it("a live surface answers the first snapshot's queries immediately", () => {
+    // The same first-window claim on a pane whose surface mounted before
+    // the stream began: the whole snapshot is the gap, delivered with a
+    // plain reply-enabled write — no suppression bracket, and no RIS
+    // re-base is owed by a parser that never parsed anything.
+    const vt = new TerminalVtAttachment("term-1");
+    const s = bracketedSink();
+    vt.attach(s);
+    vt.beginStream();
+    const probe = snapshot({
+      contents: "out\u001b[c",
+      retainedByteLength: 6,
+      boundarySequence: 3,
+    });
+    vt.applyFrame(frame(1, probe), probe);
+    NodeAssert.deepEqual(s.calls, [["write", "out\u001b[c"]]);
+    NodeAssert.equal(vt.state.status, "live");
+    NodeAssert.equal(vt.state.degraded, false);
+  });
+
+  NodeTest.it(
+    "a truncated first snapshot keeps the suppressed replay — coverage is not provable",
+    () => {
+      // Retention already evicted early bytes, so the first snapshot cannot
+      // prove it carries the whole stream: no first-window claim, the replay
+      // stays suppressed, and the pane degrades as before.
+      const vt = new TerminalVtAttachment("term-1");
+      vt.beginStream();
+      const snap = snapshot({
+        contents: "tail\u001b[6n",
+        truncated: true,
+        contentsUnitStart: 64,
+        retainedByteLength: 8,
+      });
+      vt.applyFrame(frame(1, snap), snap);
+      const s = bracketedSink();
+      vt.attach(s);
+      NodeAssert.deepEqual(s.calls, [
+        ["beginReplay"],
+        ["resetAndWrite", "tail\u001b[6n"],
+        ["endReplay"],
+      ]);
+      NodeAssert.equal(vt.state.degraded, true);
+    },
+  );
+
   NodeTest.it("reassembles chunked output before it reaches the parser", () => {
     const vt = new TerminalVtAttachment("term-1");
     const s = sink();
@@ -112,7 +189,12 @@ NodeTest.describe("TerminalVtAttachment — snapshot + attach", () => {
     vt.applyFrame(frame(1, snapshot()), snapshot());
     vt.applyFrame(frame(2, output(10, "hello ", 0, 3)), output(10, "hello ", 0, 3));
     vt.applyFrame(frame(3, output(10, "wor", 1, 3)), output(10, "wor", 1, 3));
-    NodeAssert.equal(s.calls.filter(([m]) => m === "write").length, 0);
+    // Only the first snapshot's reply-enabled delivery happened; no chunk
+    // bytes reached the parser while the group was incomplete.
+    NodeAssert.deepEqual(
+      s.calls.filter(([m]) => m === "write"),
+      [["write", "prompt$ "]],
+    );
     vt.applyFrame(frame(4, output(10, "ld", 2, 3)), output(10, "ld", 2, 3));
     NodeAssert.deepEqual(s.calls.at(-1), ["write", "hello world"]);
   });
@@ -125,12 +207,13 @@ NodeTest.describe("TerminalVtAttachment — snapshot + attach", () => {
     vt.applyFrame(frame(3, output(11, "live-2")), output(11, "live-2"));
     const s = sink();
     vt.attach(s);
-    // The detached-window bytes were never parsed — they replay as one
-    // contiguous write WITH the reply writer attached (unanswered queries
-    // inside still get their response), not per-chunk suppressed writes.
+    // R7: the first snapshot was claimed as the window's first gap and
+    // extended by the detached bytes — one reply-enabled write over the
+    // suppressed (empty-prefix) re-base, so queries inside still get their
+    // response.
     NodeAssert.deepEqual(s.calls, [
-      ["resetAndWrite", "prompt$ "],
-      ["write", "live-1live-2"],
+      ["resetAndWrite", ""],
+      ["write", "prompt$ live-1live-2"],
     ]);
   });
 
@@ -279,7 +362,9 @@ NodeTest.describe("TerminalVtAttachment — snapshot + attach", () => {
       vt.applyFrame(frame(1, snap2), snap2);
       NodeAssert.equal(vt.state.degraded, false);
       NodeAssert.deepEqual(s.calls.at(-1), ["write", "post-clear"]);
-      NodeAssert.equal(s.calls.filter(([m]) => m === "resetAndWrite").length, 1);
+      // The first snapshot's delivery was the R7 reply-enabled write — no
+      // suppressed re-base ever happened on this pane.
+      NodeAssert.equal(s.calls.filter(([m]) => m === "resetAndWrite").length, 0);
       // Remount: the replay base is post-clear only — the pre-clear
       // mode-establishing bytes are gone from retention.
       vt.detach();
@@ -366,10 +451,11 @@ NodeTest.describe("TerminalVtAttachment — failure paths", () => {
     vt.attach(s);
     vt.beginStream();
     vt.applyFrame(frame(1, snapshot()), snapshot());
+    const seeded = s.calls.length; // the first snapshot's reply-enabled write
     const bad = output(10, "x".repeat(8193));
     vt.applyFrame(frame(2, bad), bad);
     NodeAssert.equal(vt.state.status, "error");
-    NodeAssert.equal(s.calls.filter(([m]) => m === "write").length, 0);
+    NodeAssert.equal(s.calls.length, seeded);
   });
 
   NodeTest.it("a new group starting over an incomplete group fails instead of swapping", () => {
@@ -380,11 +466,12 @@ NodeTest.describe("TerminalVtAttachment — failure paths", () => {
     vt.attach(s);
     vt.beginStream();
     vt.applyFrame(frame(1, snapshot()), snapshot());
+    const seeded = s.calls.length; // the first snapshot's reply-enabled write
     vt.applyFrame(frame(2, output(10, "lost-head", 0, 2)), output(10, "lost-head", 0, 2));
     vt.applyFrame(frame(3, output(11, "next", 0, 1)), output(11, "next", 0, 1));
     NodeAssert.equal(vt.state.status, "error");
     NodeAssert.match(vt.state.statusText, /discontinuous/);
-    NodeAssert.equal(s.calls.filter(([m]) => m === "write").length, 0);
+    NodeAssert.equal(s.calls.length, seeded);
   });
 
   NodeTest.it("a native sequence that does not strictly increase fails", () => {
@@ -436,9 +523,12 @@ NodeTest.describe("TerminalVtAttachment — failure paths", () => {
     vt.applyFrame(frame(2, output(10, "still-live")), output(10, "still-live"));
     const s = sink();
     vt.attach(s);
+    // R7: the first snapshot was claimed as the window's first gap and
+    // extended by the buffered bytes — one reply-enabled write over the
+    // suppressed (empty-prefix) re-base.
     NodeAssert.deepEqual(s.calls, [
-      ["resetAndWrite", "prompt$ "],
-      ["write", "still-live"],
+      ["resetAndWrite", ""],
+      ["write", "prompt$ still-live"],
     ]);
     // A successful mount clears the failure.
     NodeAssert.equal(vt.state.status, "live");

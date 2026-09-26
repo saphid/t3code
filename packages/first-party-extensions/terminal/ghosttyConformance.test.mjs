@@ -962,12 +962,15 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
     core.dispose();
   });
 
-  NodeTest.it("a query inside snapshot history stays suppressed — documented drop", async () => {
-    // Snapshot contents are retained history, not live output: a query
-    // embedded in them is treated as already-rendered history and never
-    // answered — the explicit drop semantics (native resetAndWrite
-    // parity). Only live output the attachment saw go undelivered earns
-    // a reply.
+  NodeTest.it("a query inside the FIRST full-coverage snapshot is answered at attach", async () => {
+    // R7 first-window gap boundary: a snapshot proven complete since
+    // process start (nothing truncated, zero clears, window origin at
+    // unit 0) is the window's first subscription gap, not settled
+    // history — the query's owning process is still waiting on its
+    // answer, so the attach replays it reply-enabled and the core sends
+    // the DSR response to the PTY. The documented drop still applies to
+    // snapshots whose provenance is not provable: truncated, cleared,
+    // windowed, or from an earlier incarnation (the tests above).
     const attachment = new TerminalVtAttachment("term-1");
     const snap = {
       kind: "snapshot",
@@ -985,7 +988,8 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
     const { core, writes } = await makeCore();
     attachment.attach(core);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    NodeAssert.equal(writes.length, 0);
+    NodeAssert.equal(writes.length, 1);
+    NodeAssert.match(writes[0], /^\x1b\[\d+;\d+R$/);
     core.dispose();
   });
 
