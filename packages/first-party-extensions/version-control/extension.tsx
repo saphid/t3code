@@ -653,14 +653,20 @@ function useMutationToasts(
 const border = "1px solid var(--t3-version-control-border, var(--border, #dfe3e8))";
 const muted = "var(--t3-version-control-muted-foreground, var(--muted-foreground, #667085))";
 
+/*
+ * Native control idiom (cert vcs-3): text-sm ghost controls — transparent at
+ * rest, no border — sized like the native panel's controls instead of the
+ * shrunken bordered buttons. Keyboard affordance comes from the focus-ring
+ * style block on the panel root.
+ */
 const control = {
   padding: "4px 8px",
-  border,
+  border: "1px solid transparent",
   borderRadius: 5,
   background: "transparent",
   color: "inherit",
   font: "inherit",
-  fontSize: 12,
+  fontSize: 14,
   cursor: "pointer",
 } as const;
 
@@ -1151,6 +1157,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   return (
     <section
       aria-label="Version Control"
+      data-t3-version-control-panel
       style={{
         height: "100%",
         display: "flex",
@@ -1159,10 +1166,14 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
         color: "var(--t3-version-control-text, var(--foreground, #20252d))",
         background: "var(--t3-version-control-canvas, var(--background, #fff))",
         fontFamily: "var(--font-sans, system-ui, sans-serif)",
-        fontSize: 13,
         ...themeVars,
       }}
     >
+      {/* Native focus treatment: the host's 2px accent ring with a 1px canvas
+          gap on focus-visible (same rule as the other first-party panels). */}
+      <style>
+        {`[data-t3-version-control-panel] :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-version-control-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}`}
+      </style>
       <header
         style={{
           display: "flex",
@@ -1192,7 +1203,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
               style={{
                 ...control,
                 padding: "2px 7px",
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: view === value ? 600 : 400,
                 background:
                   view === value
@@ -1212,7 +1223,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
             </button>
           )}
         {view === "repository" && (
-          <span style={{ color: muted, fontSize: 11 }}>
+          <span style={{ color: muted, fontSize: 12 }}>
             {refreshError ?? describeStatus(status)}
           </span>
         )}
@@ -1251,7 +1262,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                   mutation.kind === "failed"
                     ? "var(--t3-version-control-error, var(--destructive, #b42318))"
                     : muted,
-                fontSize: 11,
+                fontSize: 12,
               }}
             >
               {describeMutation(mutation)}
@@ -1306,7 +1317,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                       {push.label}
                     </button>
                   )}
-                  <span style={{ color: muted, fontSize: 11 }}>
+                  <span style={{ color: muted, fontSize: 12 }}>
                     {[canPull ? pull.disabled : null, canPush ? push.disabled : null]
                       .filter((reason) => reason !== null)
                       .join(" · ")}
@@ -1316,7 +1327,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
               {changes.error !== null && (
                 <output
                   aria-label="Changes status"
-                  style={{ display: "block", padding: "4px 6px", color: muted, fontSize: 11 }}
+                  style={{ display: "block", padding: "4px 6px", color: muted, fontSize: 12 }}
                 >
                   {changes.error}
                 </output>
@@ -1338,7 +1349,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                       style={{
                         margin: 0,
                         padding: "2px 6px",
-                        fontSize: 11,
+                        fontSize: 12,
                         fontWeight: 600,
                         color: muted,
                         textTransform: "uppercase",
@@ -1363,7 +1374,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                               `${bulk.op === "stage" ? "Staging" : "Unstaging"} ${lanes[lane].length} paths`,
                             )
                           }
-                          style={{ ...control, padding: "1px 6px", fontSize: 11 }}
+                          style={{ ...control, padding: "1px 6px", fontSize: 12 }}
                         >
                           {bulk.label}
                         </button>
@@ -1420,7 +1431,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                               style={{
                                 ...control,
                                 padding: "1px 6px",
-                                fontSize: 11,
+                                fontSize: 12,
                                 flexShrink: 0,
                               }}
                             >
@@ -1440,7 +1451,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                     style={{
                       margin: 0,
                       padding: "2px 6px",
-                      fontSize: 11,
+                      fontSize: 12,
                       fontWeight: 600,
                       color: muted,
                       textTransform: "uppercase",
@@ -1454,7 +1465,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                       style={{
                         margin: 0,
                         padding: "2px 6px",
-                        fontSize: 11,
+                        fontSize: 12,
                         color: "var(--t3-version-control-warning, var(--warning, #b54708))",
                       }}
                     >
@@ -1475,7 +1486,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                       margin: "4px 0",
                       padding: "4px 6px",
                       font: "inherit",
-                      fontSize: 12,
+                      fontSize: 14,
                       border,
                       borderRadius: 5,
                       background: "transparent",
@@ -1494,7 +1505,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                         {commit.label}
                       </button>
                       {commit.disabled !== null && (
-                        <span style={{ color: muted, fontSize: 11 }}>{commit.disabled}</span>
+                        <span style={{ color: muted, fontSize: 12 }}>{commit.disabled}</span>
                       )}
                     </div>
                   )}
@@ -1549,7 +1560,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                               display: "flex",
                               alignItems: "center",
                               gap: 4,
-                              fontSize: 11,
+                              fontSize: 12,
                               color: muted,
                             }}
                           >
@@ -1566,7 +1577,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                           </label>
                         )}
                       {chooserReason !== null && (
-                        <span style={{ color: muted, fontSize: 11 }}>{chooserReason}</span>
+                        <span style={{ color: muted, fontSize: 12 }}>{chooserReason}</span>
                       )}
                     </div>
                   )}
@@ -1590,7 +1601,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                             padding: "4px 6px",
                             border: "1px solid var(--border, #dfe3e8)",
                             borderRadius: 5,
-                            fontSize: 11,
+                            fontSize: 12,
                           }}
                         >
                           <div style={{ marginBottom: 4 }}>
@@ -1648,7 +1659,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                         padding: "4px 6px",
                         border: "1px solid var(--border, #dfe3e8)",
                         borderRadius: 5,
-                        fontSize: 11,
+                        fontSize: 12,
                       }}
                     >
                       <div>{describeStackedProgress(stacked.model)}</div>
@@ -1699,7 +1710,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                   style={{
                     margin: 0,
                     padding: "2px 6px",
-                    fontSize: 11,
+                    fontSize: 12,
                     fontWeight: 600,
                     color: muted,
                     textTransform: "uppercase",
@@ -1742,7 +1753,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                       type="button"
                       disabled={busy || create.refName === null}
                       onClick={runCreateRef}
-                      style={{ ...control, padding: "2px 6px", fontSize: 11, flexShrink: 0 }}
+                      style={{ ...control, padding: "2px 6px", fontSize: 12, flexShrink: 0 }}
                     >
                       Create &amp; switch
                     </button>
@@ -1751,7 +1762,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                 {canCreateRef && create.disabled !== null && newRefName.trim() !== "" && (
                   <output
                     aria-label="Branch create status"
-                    style={{ display: "block", padding: "0 6px 4px", color: muted, fontSize: 11 }}
+                    style={{ display: "block", padding: "0 6px 4px", color: muted, fontSize: 12 }}
                   >
                     {create.disabled}
                   </output>
@@ -1759,7 +1770,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                 {refs.error !== null && (
                   <output
                     aria-label="Refs status"
-                    style={{ display: "block", padding: "4px 6px", color: muted, fontSize: 11 }}
+                    style={{ display: "block", padding: "4px 6px", color: muted, fontSize: 12 }}
                   >
                     {refs.error}
                   </output>
@@ -1793,7 +1804,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                           )}
                         </span>
                         {canSwitchRef && !row.current && !switchState.ok && (
-                          <span style={{ color: muted, fontSize: 11, flexShrink: 0 }}>
+                          <span style={{ color: muted, fontSize: 12, flexShrink: 0 }}>
                             {switchState.reason}
                           </span>
                         )}
@@ -1802,7 +1813,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                             type="button"
                             disabled={busy}
                             onClick={() => runSwitchRef(refSwitchTarget(row))}
-                            style={{ ...control, padding: "1px 6px", fontSize: 11, flexShrink: 0 }}
+                            style={{ ...control, padding: "1px 6px", fontSize: 12, flexShrink: 0 }}
                           >
                             Switch
                           </button>
@@ -1812,7 +1823,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                             type="button"
                             disabled={busy}
                             onClick={() => runCreateWorktree({ refName: row.name })}
-                            style={{ ...control, padding: "1px 6px", fontSize: 11, flexShrink: 0 }}
+                            style={{ ...control, padding: "1px 6px", fontSize: 12, flexShrink: 0 }}
                           >
                             Worktree
                           </button>
@@ -1829,7 +1840,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                     style={{
                       margin: 0,
                       padding: "2px 6px",
-                      fontSize: 11,
+                      fontSize: 12,
                       fontWeight: 600,
                       color: muted,
                       textTransform: "uppercase",
@@ -1888,7 +1899,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                             baseRefName: worktreePlan.baseRefName ?? undefined,
                           });
                         }}
-                        style={{ ...control, padding: "2px 6px", fontSize: 11, flexShrink: 0 }}
+                        style={{ ...control, padding: "2px 6px", fontSize: 12, flexShrink: 0 }}
                       >
                         Create worktree
                       </button>
@@ -1903,14 +1914,14 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                           display: "block",
                           padding: "0 6px 4px",
                           color: muted,
-                          fontSize: 11,
+                          fontSize: 12,
                         }}
                       >
                         {worktreePlan.disabled}
                       </output>
                     )}
                   {worktrees.length === 0 && (
-                    <p style={{ margin: 0, padding: "2px 6px 4px", color: muted, fontSize: 11 }}>
+                    <p style={{ margin: 0, padding: "2px 6px 4px", color: muted, fontSize: 12 }}>
                       No additional worktrees.
                     </p>
                   )}
@@ -1943,7 +1954,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                             type="button"
                             disabled={busy}
                             onClick={() => runRemoveWorktree(worktree.path, false)}
-                            style={{ ...control, padding: "1px 6px", fontSize: 11, flexShrink: 0 }}
+                            style={{ ...control, padding: "1px 6px", fontSize: 12, flexShrink: 0 }}
                           >
                             Remove
                           </button>
@@ -1956,7 +1967,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                             style={{
                               ...control,
                               padding: "1px 6px",
-                              fontSize: 11,
+                              fontSize: 12,
                               flexShrink: 0,
                               color: "var(--t3-version-control-error, var(--destructive, #b42318))",
                             }}
@@ -1976,7 +1987,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                     style={{
                       margin: 0,
                       padding: "2px 6px",
-                      fontSize: 11,
+                      fontSize: 12,
                       fontWeight: 600,
                       color: muted,
                       textTransform: "uppercase",
@@ -1993,7 +2004,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                         type="button"
                         disabled={busy}
                         onClick={() => runFetch()}
-                        style={{ ...control, padding: "1px 6px", fontSize: 11 }}
+                        style={{ ...control, padding: "1px 6px", fontSize: 12 }}
                       >
                         Fetch all
                       </button>
@@ -2002,13 +2013,13 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                   {remotes.error !== null && (
                     <output
                       aria-label="Remotes status"
-                      style={{ display: "block", padding: "4px 6px", color: muted, fontSize: 11 }}
+                      style={{ display: "block", padding: "4px 6px", color: muted, fontSize: 12 }}
                     >
                       {remotes.error}
                     </output>
                   )}
                   {remotes.remotes !== null && remoteList.length === 0 && (
-                    <p style={{ margin: 0, padding: "2px 6px 4px", color: muted, fontSize: 11 }}>
+                    <p style={{ margin: 0, padding: "2px 6px 4px", color: muted, fontSize: 12 }}>
                       No remotes configured.
                     </p>
                   )}
@@ -2045,7 +2056,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                             type="button"
                             disabled={busy}
                             onClick={() => runFetch(remote.name)}
-                            style={{ ...control, padding: "1px 6px", fontSize: 11, flexShrink: 0 }}
+                            style={{ ...control, padding: "1px 6px", fontSize: 12, flexShrink: 0 }}
                           >
                             Fetch
                           </button>
@@ -2064,7 +2075,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
               style={{
                 padding: "6px 10px",
                 color: muted,
-                fontSize: 11,
+                fontSize: 12,
                 borderTop: border,
                 flexShrink: 0,
               }}
@@ -2083,7 +2094,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
         style={{
           padding: "6px 10px",
           color: muted,
-          fontSize: 11,
+          fontSize: 12,
           borderTop: border,
           flexShrink: 0,
         }}

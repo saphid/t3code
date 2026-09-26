@@ -93,22 +93,22 @@ const hairline = "1px solid var(--t3-version-control-border, var(--border, #f0f2
 
 const control = {
   padding: "4px 8px",
-  border,
+  border: "1px solid transparent",
   borderRadius: 5,
   background: "transparent",
   color: "inherit",
   font: "inherit",
-  fontSize: 12,
+  fontSize: 14,
   cursor: "pointer",
 } as const;
 
-const iconButton = { ...control, padding: "2px 6px", fontSize: 11 } as const;
+const iconButton = { ...control, padding: "2px 6px", fontSize: 12 } as const;
 
 const inputStyle = {
   flex: 1,
   minWidth: 0,
   font: "inherit",
-  fontSize: 12,
+  fontSize: 14,
   padding: "3px 6px",
   border,
   borderRadius: 5,
@@ -126,7 +126,7 @@ const noteStyle = {
 const headingStyle = {
   margin: 0,
   padding: "2px 10px",
-  fontSize: 11,
+  fontSize: 12,
   fontWeight: 600,
   color: muted,
   textTransform: "uppercase",
@@ -753,7 +753,7 @@ function PrListRow(props: {
             gap: 6,
             minWidth: 0,
             marginTop: 2,
-            fontSize: 11,
+            fontSize: 12,
             color: muted,
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -853,7 +853,7 @@ function CheckRow({ check }: { check: PrsCheck }) {
         <span
           style={{
             color: muted,
-            fontSize: 11,
+            fontSize: 12,
             flexShrink: 1,
             minWidth: 0,
             overflow: "hidden",
@@ -872,7 +872,7 @@ function CommentRow({ comment }: { comment: PrsComment }) {
   const verdict = prsReviewVerdictLabel(comment.reviewState);
   return (
     <li style={{ padding: "4px 10px", fontSize: 12, borderTop: hairline }}>
-      <div style={{ color: muted, fontSize: 11 }}>
+      <div style={{ color: muted, fontSize: 12 }}>
         {prsActorLabel(comment.author)}
         {verdict !== null ? ` ${verdict}` : comment.kind === "review" ? " reviewed" : " commented"}
         {comment.path !== null ? ` on ${comment.path}` : ""} ·{" "}
@@ -883,7 +883,7 @@ function CommentRow({ comment }: { comment: PrsComment }) {
         {comment.body}
       </div>
       {comment.reactions !== undefined && comment.reactions.length > 0 && (
-        <div style={{ color: muted, fontSize: 11, marginTop: 2 }}>
+        <div style={{ color: muted, fontSize: 12, marginTop: 2 }}>
           {comment.reactions.map((r) => `${r.content} ×${r.count}`).join(" · ")}
         </div>
       )}
@@ -931,7 +931,7 @@ function ReviewThreadSection(props: {
       <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
         {thread.comments.map((comment) => (
           <li key={comment.id} style={{ padding: "3px 10px", fontSize: 12 }}>
-            <div style={{ color: muted, fontSize: 11 }}>
+            <div style={{ color: muted, fontSize: 12 }}>
               {prsActorLabel(comment.author)} · {formatRelativeTime(comment.createdAt)}
               {comment.url !== null ? ` — ${comment.url}` : ""}
             </div>
@@ -939,7 +939,7 @@ function ReviewThreadSection(props: {
               {comment.body}
             </div>
             {comment.reactions !== undefined && comment.reactions.length > 0 && (
-              <div style={{ color: muted, fontSize: 11, marginTop: 1 }}>
+              <div style={{ color: muted, fontSize: 12, marginTop: 1 }}>
                 {comment.reactions.map((r) => `${r.content} ×${r.count}`).join(" · ")}
               </div>
             )}
@@ -957,17 +957,17 @@ function ReviewThreadSection(props: {
         </button>
       )}
       {canPage === false && thread.nextCommentsCursor !== undefined && (
-        <p style={{ ...noteStyle, fontSize: 11 }}>
+        <p style={{ ...noteStyle, fontSize: 12 }}>
           More comments exist; paging is not supported by this host.
         </p>
       )}
       {pageError !== null && (
-        <p role="alert" style={{ ...noteStyle, fontSize: 11 }}>
+        <p role="alert" style={{ ...noteStyle, fontSize: 12 }}>
           {pageError} — retry with the button above.
         </p>
       )}
       {unrecoverable && (
-        <p role="note" style={{ ...noteStyle, fontSize: 11 }}>
+        <p role="note" style={{ ...noteStyle, fontSize: 12 }}>
           Some comments could not be shown — the host cut this thread's tail without a cursor.
         </p>
       )}
@@ -1010,7 +1010,7 @@ function ReviewThreadSection(props: {
 const diffRowBase = {
   display: "flex",
   fontFamily: "var(--font-mono, ui-monospace, monospace)",
-  fontSize: 11,
+  fontSize: 12,
   lineHeight: "18px",
   whiteSpace: "pre",
 } as const;
@@ -1144,7 +1144,7 @@ function PrsDiffSection(props: { diff: PrsDiffState; supported: boolean; onLoadM
   const renderable = renderableFromPatch(delivery.patch);
   return (
     <div>
-      <p style={{ ...noteStyle, fontSize: 11 }}>
+      <p style={{ ...noteStyle, fontSize: 12 }}>
         {delivery.diffHashes[0] !== undefined
           ? `sha256 ${delivery.diffHashes[0].slice(0, 12)} · ${delivery.byteLength} bytes`
           : "empty diff"}
@@ -1159,7 +1159,7 @@ function PrsDiffSection(props: { diff: PrsDiffState; supported: boolean; onLoadM
             style={{
               margin: 0,
               padding: "4px 10px",
-              fontSize: 11,
+              fontSize: 12,
               whiteSpace: "pre-wrap",
               overflowWrap: "anywhere",
             }}
@@ -1176,7 +1176,7 @@ function PrsDiffSection(props: { diff: PrsDiffState; supported: boolean; onLoadM
         </div>
       )}
       {delivery.omittedFileStats.length > 0 && (
-        <p role="note" style={{ ...noteStyle, fontSize: 11 }}>
+        <p role="note" style={{ ...noteStyle, fontSize: 12 }}>
           {prsOmittedFilesLabel(delivery.omittedFileStats)}
         </p>
       )}
@@ -1206,7 +1206,7 @@ interface PrsWriteState {
 function PrsWriteErrorLine({ error }: { error: string | null }) {
   if (error === null) return null;
   return (
-    <p role="alert" style={{ ...noteStyle, fontSize: 11 }}>
+    <p role="alert" style={{ ...noteStyle, fontSize: 12 }}>
       {error}
     </p>
   );
@@ -1764,7 +1764,7 @@ export function PullRequestsPanel(props: {
               {gate.detail !== null ? ` — ${gate.detail}` : ""}
             </p>
             {gate.providers.map((provider) => (
-              <p key={provider.host} style={{ ...noteStyle, fontSize: 11 }}>
+              <p key={provider.host} style={{ ...noteStyle, fontSize: 12 }}>
                 {prsProviderLabel(provider)}
               </p>
             ))}
@@ -1774,12 +1774,12 @@ export function PullRequestsPanel(props: {
         {ready && (
           <>
             {refreshError !== null && (
-              <p role="alert" style={{ ...noteStyle, fontSize: 11 }}>
+              <p role="alert" style={{ ...noteStyle, fontSize: 12 }}>
                 {refreshError}
               </p>
             )}
             {refreshes.detail !== null && (
-              <p role="note" style={{ ...noteStyle, fontSize: 11 }}>
+              <p role="note" style={{ ...noteStyle, fontSize: 12 }}>
                 {refreshes.detail}
               </p>
             )}
@@ -1792,7 +1792,7 @@ export function PullRequestsPanel(props: {
                   </p>
                 )}
                 {gate.providers.map((provider) => (
-                  <p key={provider.host} style={{ ...noteStyle, fontSize: 11 }}>
+                  <p key={provider.host} style={{ ...noteStyle, fontSize: 12 }}>
                     {prsProviderLabel(provider)}
                   </p>
                 ))}
@@ -1806,13 +1806,13 @@ export function PullRequestsPanel(props: {
                     <p
                       key={entryError.projectId}
                       role="alert"
-                      style={{ ...noteStyle, fontSize: 11 }}
+                      style={{ ...noteStyle, fontSize: 12 }}
                     >
                       {entryError.projectTitle}: {entryError.message}
                     </p>
                   ))}
                 {list.result !== null && list.result.truncated && (
-                  <p role="note" style={{ ...noteStyle, fontSize: 11 }}>
+                  <p role="note" style={{ ...noteStyle, fontSize: 12 }}>
                     Results truncated by the host — narrow the search to see more.
                   </p>
                 )}
@@ -1888,14 +1888,14 @@ export function PullRequestsPanel(props: {
                         }}
                       >
                         {stateBadge(detail)}
-                        <strong style={{ fontSize: 13, overflowWrap: "anywhere" }}>
+                        <strong style={{ fontSize: 14, overflowWrap: "anywhere" }}>
                           {detail.title}
                         </strong>
-                        <span style={{ color: muted, fontSize: 11 }}>
+                        <span style={{ color: muted, fontSize: 12 }}>
                           {detail.repository}#{detail.number}
                         </span>
                       </div>
-                      <div style={{ color: muted, fontSize: 11, marginTop: 2 }}>{detail.url}</div>
+                      <div style={{ color: muted, fontSize: 12, marginTop: 2 }}>{detail.url}</div>
                     </div>
                     <div style={{ padding: "4px 10px" }}>
                       {metaRow("Author", prsActorLabel(detail.author))}
@@ -1943,7 +1943,7 @@ export function PullRequestsPanel(props: {
                         style={{
                           margin: "2px 10px",
                           padding: "6px 8px",
-                          fontSize: 11,
+                          fontSize: 12,
                           whiteSpace: "pre-wrap",
                           overflowWrap: "anywhere",
                           background: "var(--t3-version-control-muted, var(--muted, #f4f5f7))",
@@ -1956,7 +1956,7 @@ export function PullRequestsPanel(props: {
                       </pre>
                     )}
                     {detail.bodyTruncated === true && (
-                      <p role="note" style={{ ...noteStyle, fontSize: 11 }}>
+                      <p role="note" style={{ ...noteStyle, fontSize: 12 }}>
                         Description truncated by the contract bound — read the rest on the host.
                       </p>
                     )}
@@ -1976,7 +1976,7 @@ export function PullRequestsPanel(props: {
                     }}
                   >
                     {writeOps !== null && writeOps["prs.runAction"] !== true && (
-                      <p role="note" style={{ ...noteStyle, fontSize: 11, padding: 0 }}>
+                      <p role="note" style={{ ...noteStyle, fontSize: 12, padding: 0 }}>
                         This host takes no pull-request actions.
                       </p>
                     )}
@@ -2008,12 +2008,12 @@ export function PullRequestsPanel(props: {
                 )}
 
                 {sections.stackError !== null && (
-                  <p role="alert" style={{ ...noteStyle, fontSize: 11 }}>
+                  <p role="alert" style={{ ...noteStyle, fontSize: 12 }}>
                     {sections.stackError}
                   </p>
                 )}
                 {ops !== null && ops["prs.stack"] !== true && (
-                  <p role="note" style={{ ...noteStyle, fontSize: 11 }}>
+                  <p role="note" style={{ ...noteStyle, fontSize: 12 }}>
                     Stack information is not supported by this host (prs.stack).
                   </p>
                 )}
@@ -2044,7 +2044,7 @@ export function PullRequestsPanel(props: {
                       : ""}
                   </h3>
                   {detail !== null && detail.checks.length === 0 && (
-                    <p style={{ ...noteStyle, fontSize: 11 }}>No checks reported.</p>
+                    <p style={{ ...noteStyle, fontSize: 12 }}>No checks reported.</p>
                   )}
                   <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
                     {detail?.checks.map((check) => (
@@ -2059,23 +2059,23 @@ export function PullRequestsPanel(props: {
                 <section aria-label="Linked threads" style={{ paddingBottom: 4 }}>
                   <h3 style={headingStyle}>Linked threads</h3>
                   {ops !== null && ops["prs.linkedThreads"] !== true && (
-                    <p role="note" style={{ ...noteStyle, fontSize: 11 }}>
+                    <p role="note" style={{ ...noteStyle, fontSize: 12 }}>
                       Linked threads are not supported by this host.
                     </p>
                   )}
                   {sections.linkedError !== null && (
-                    <p role="alert" style={{ ...noteStyle, fontSize: 11 }}>
+                    <p role="alert" style={{ ...noteStyle, fontSize: 12 }}>
                       {sections.linkedError}
                     </p>
                   )}
                   {sections.linked !== null && sections.linked.threads.length === 0 && (
-                    <p style={{ ...noteStyle, fontSize: 11 }}>No linked threads.</p>
+                    <p style={{ ...noteStyle, fontSize: 12 }}>No linked threads.</p>
                   )}
                   <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
                     {sections.linked?.threads.map((thread) => (
                       <li key={thread.id} style={{ padding: "2px 10px", fontSize: 12 }}>
                         {thread.title}
-                        <span style={{ color: muted, fontSize: 11 }}>
+                        <span style={{ color: muted, fontSize: 12 }}>
                           {" "}
                           — {thread.id}
                           {thread.archivedAt !== null ? " · archived" : ""}
@@ -2084,19 +2084,19 @@ export function PullRequestsPanel(props: {
                     ))}
                   </ul>
                   {sections.linked?.truncated === true && (
-                    <p role="note" style={{ ...noteStyle, fontSize: 11 }}>
+                    <p role="note" style={{ ...noteStyle, fontSize: 12 }}>
                       Linked-thread list truncated.
                     </p>
                   )}
                 </section>
 
                 {ops !== null && ops["prs.activity"] !== true && (
-                  <p role="note" style={{ ...noteStyle, fontSize: 11 }}>
+                  <p role="note" style={{ ...noteStyle, fontSize: 12 }}>
                     Review threads and comments are not supported by this host (prs.activity).
                   </p>
                 )}
                 {sections.activityError !== null && (
-                  <p role="alert" style={{ ...noteStyle, fontSize: 11 }}>
+                  <p role="alert" style={{ ...noteStyle, fontSize: 12 }}>
                     {sections.activityError}
                   </p>
                 )}
@@ -2110,7 +2110,7 @@ export function PullRequestsPanel(props: {
                           : ""}
                       </h3>
                       {activity.reviewThreads.length === 0 && (
-                        <p style={{ ...noteStyle, fontSize: 11 }}>No review threads.</p>
+                        <p style={{ ...noteStyle, fontSize: 12 }}>No review threads.</p>
                       )}
                       {activity.reviewThreads.map((thread) => {
                         const paged =
@@ -2156,7 +2156,7 @@ export function PullRequestsPanel(props: {
                         Comments{activity.commentCount > 0 ? ` (${activity.commentCount})` : ""}
                       </h3>
                       {activity.comments.length === 0 && (
-                        <p style={{ ...noteStyle, fontSize: 11 }}>No comments.</p>
+                        <p style={{ ...noteStyle, fontSize: 12 }}>No comments.</p>
                       )}
                       <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
                         {activity.comments.map((comment) => (
@@ -2164,7 +2164,7 @@ export function PullRequestsPanel(props: {
                         ))}
                       </ul>
                       {activity.commentsTruncated && (
-                        <p role="note" style={{ ...noteStyle, fontSize: 11 }}>
+                        <p role="note" style={{ ...noteStyle, fontSize: 12 }}>
                           Comment list truncated by the host.
                         </p>
                       )}
@@ -2233,13 +2233,13 @@ export function PullRequestsPanel(props: {
                                 style={{
                                   fontFamily: "var(--font-mono, ui-monospace, monospace)",
                                   color: muted,
-                                  fontSize: 11,
+                                  fontSize: 12,
                                 }}
                               >
                                 {commit.oid.slice(0, 8)}
                               </span>{" "}
                               {commit.messageHeadline}
-                              <span style={{ color: muted, fontSize: 11 }}>
+                              <span style={{ color: muted, fontSize: 12 }}>
                                 {" "}
                                 · {formatRelativeTime(commit.committedDate)}
                               </span>
@@ -2250,7 +2250,7 @@ export function PullRequestsPanel(props: {
                     )}
 
                     {activity.truncated && (
-                      <p role="note" style={{ ...noteStyle, fontSize: 11 }}>
+                      <p role="note" style={{ ...noteStyle, fontSize: 12 }}>
                         Activity truncated — some comments, threads, or commits were not delivered.
                       </p>
                     )}
@@ -2267,7 +2267,7 @@ export function PullRequestsPanel(props: {
                 </section>
 
                 {prsWriteUnavailableNote(write) !== null && (
-                  <p role="note" style={{ ...noteStyle, fontSize: 11, paddingBottom: 8 }}>
+                  <p role="note" style={{ ...noteStyle, fontSize: 12, paddingBottom: 8 }}>
                     {prsWriteUnavailableNote(write)}
                   </p>
                 )}

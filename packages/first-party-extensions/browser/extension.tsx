@@ -713,6 +713,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   return (
     <section
       aria-label="Browser"
+      data-t3-browser-panel
       style={{
         height: "100%",
         display: "flex",
@@ -725,6 +726,12 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         ...themeVars,
       }}
     >
+      {/* Native focus treatment (cert browser-3): the host's 2px accent ring
+          with a 1px canvas gap on focus-visible, matching the native address
+          wrapper instead of the browser default 1px auto outline. */}
+      <style>
+        {`[data-t3-browser-panel] :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-browser-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}`}
+      </style>
       <header
         style={{
           display: "flex",
@@ -797,7 +804,16 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             if (event.key === "Enter") submit(address);
             if (event.key === "Escape") event.currentTarget.blur();
           }}
-          style={{ flex: 1, minWidth: 0, font: "inherit", fontSize: 12 }}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            font: "inherit",
+            fontSize: 12,
+            // The native address bar carries its ring on a rounded wrapper;
+            // without a radius the focus ring would draw a hard rectangle.
+            borderRadius: 5,
+            padding: "0 4px",
+          }}
         />
       </header>
       {tabs.length > 0 && (
