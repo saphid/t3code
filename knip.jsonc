@@ -56,12 +56,8 @@
       // UI component modules are copied and adapted as cohesive sets. Keep their
       // named subcomponents even before they have callers; the file audit still
       // reports an entire component module when nothing imports it.
-      // The appWorkspaceRead service is unwired since it landed (dcf8508adf):
-      // no importer exists anywhere yet. Owned by the web lane — wire it or
-      // delete it; do not extend this exemption.
       "ignoreIssues": {
         "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"],
-        "src/extensions/services/appWorkspaceRead.ts": ["files"],
       },
     },
     "apps/mobile": {
@@ -103,9 +99,10 @@
     },
     "packages/first-party-extensions/*": {
       "includeEntryExports": true,
-      // Pack sources build into committed .t3-extension bundles (clientEntry)
-      // and the host loads the bundle by filename, so no import graph reaches
-      // the sources. `!` keeps entry exports untracked for the same reason.
+      // Pack sources build into committed .t3-extension bundles where a pack
+      // ships one (every first-party pack except agents today) and the host
+      // loads the bundle by filename, so no import graph reaches the sources.
+      // `!` keeps entry exports untracked for the same reason.
       "entry": ["extension.ts!", "server.ts!"],
     },
     "packages/effect-codex-app-server": {
