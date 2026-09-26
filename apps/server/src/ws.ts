@@ -590,11 +590,11 @@ const makeWsRpcLayer = (
       const terminalManager = yield* TerminalManager.TerminalManager;
       const previewManager = yield* PreviewManager.PreviewManager;
       const browserEngineHosts = yield* BrowserEngineHosts.BrowserEngineHosts;
-      // Host identity is this socket plus its server-derived session subject;
+      // Host identity is this socket plus its session row's grant method;
       // nothing in a host payload can claim to be the desktop.
       const engineHostSocket: BrowserEngineHosts.BrowserEngineHostSocket = {
         socketId: wsConnectionId,
-        sessionSubject: currentSession.subject,
+        grantMethod: currentSession.grantMethod,
       };
       const deviceService = yield* DeviceService.DeviceService;
       const deviceHostContext =

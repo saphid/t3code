@@ -13,10 +13,16 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { expect } from "vite-plus/test";
 
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
+import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as BrowserEngineHosts from "./BrowserEngineHosts.ts";
 import * as PreviewManager from "./Manager.ts";
 
-const DESKTOP = { socketId: "desktop-ws", sessionSubject: "desktop-bootstrap" };
+const DESKTOP = { socketId: "desktop-ws", grantMethod: "desktop-bootstrap" } as const;
 const threadId = ThreadId.make("thread-hosts");
 
 const reasonOf = <A>(effect: Effect.Effect<A, BrowserEngineHostError>) =>
@@ -53,13 +59,14 @@ it.layer(
     Layer.provide(NodeServices.layer),
   ),
 )("BrowserEngineHosts", (it) => {
-  it.effect("only the desktop bootstrap session can register or act as a host", () =>
+  it.effect("only a desktop-bootstrap grant session can register or act as a host", () =>
     Effect.gen(function* () {
       const hosts = yield* BrowserEngineHosts.BrowserEngineHosts;
       const target = yield* openClaimable;
-      // Pairing-link, CLI, relay and tunnel sessions carry other subjects.
-      for (const sessionSubject of ["one-time-token", "cloud-connect", "cli-issued-session"]) {
-        const remote = { socketId: `remote-${sessionSubject}`, sessionSubject };
+      // Pairing-link sessions carry the one-time-token grant; CLI, relay and
+      // tunnel sessions are issued directly and carry none.
+      for (const grantMethod of ["one-time-token", undefined] as const) {
+        const remote = { socketId: `remote-${grantMethod ?? "direct"}`, grantMethod };
         expect(yield* reasonOf(hosts.register(remote))).toBe("desktop-required");
         expect(
           yield* reasonOf(
@@ -78,7 +85,7 @@ it.layer(
       const { hostConnectionId, fiber } = yield* registerHost(hosts, DESKTOP);
       expect(yield* hosts.hasHost).toBe(true);
       // A second desktop window cannot replay the first window's host id.
-      const otherWindow = { socketId: "desktop-ws-2", sessionSubject: "desktop-bootstrap" };
+      const otherWindow = { socketId: "desktop-ws-2", grantMethod: "desktop-bootstrap" } as const;
       expect(
         yield* reasonOf(
           hosts.claim(otherWindow, { hostConnectionId, target, engineGeneration: "1" }),
@@ -127,6 +134,74 @@ it.layer(
           command: { _tag: "back" },
         }),
       ).toEqual({ outcome: "unknown" });
+    }),
+  );
+});
+
+const DESKTOP_BOOTSTRAP_TOKEN = "desktop-bootstrap-token";
+
+const bearerRequest = (token: string) =>
+  ({ cookies: {}, headers: { authorization: `Bearer ${token}` } }) as unknown as Parameters<
+    EnvironmentAuth.EnvironmentAuth["Service"]["authenticateHttpRequest"]
+  >[0];
+
+it.layer(
+  Layer.mergeAll(
+    BrowserEngineHosts.layer.pipe(Layer.provideMerge(PreviewManager.layer)),
+    EnvironmentAuth.layer.pipe(
+      Layer.provideMerge(SqlitePersistenceMemory),
+      Layer.provide(ServerSecretStore.layer),
+      Layer.provide(ServerEnvironment.identityLayer),
+      Layer.provide(
+        Layer.effect(
+          ServerConfig.ServerConfig,
+          Effect.map(ServerConfig.ServerConfig, (config) => ({
+            ...config,
+            desktopBootstrapToken: DESKTOP_BOOTSTRAP_TOKEN,
+          })),
+        ).pipe(
+          Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-engine-host-auth-" })),
+        ),
+      ),
+    ),
+  ).pipe(Layer.provide(NodeServices.layer)),
+)("BrowserEngineHosts session gate", (it) => {
+  it.effect("a CLI-issued session with the desktop subject cannot register", () =>
+    Effect.gen(function* () {
+      const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      const hosts = yield* BrowserEngineHosts.BrowserEngineHosts;
+      const socketFor = (session: EnvironmentAuth.AuthenticatedSession, socketId: string) => ({
+        socketId,
+        grantMethod: session.grantMethod,
+      });
+
+      // `t3 auth session issue --subject desktop-bootstrap` makes this call.
+      const cliIssued = yield* auth.issueSession({ subject: "desktop-bootstrap" });
+      const cliSession = yield* auth.authenticateHttpRequest(bearerRequest(cliIssued.token));
+      expect(cliSession.subject).toBe("desktop-bootstrap");
+      expect(yield* reasonOf(hosts.register(socketFor(cliSession, "cli-ws")))).toBe(
+        "desktop-required",
+      );
+
+      const desktop = yield* auth.exchangeBootstrapCredentialForAccessToken(
+        DESKTOP_BOOTSTRAP_TOKEN,
+        undefined,
+        { deviceType: "desktop" },
+      );
+      const desktopSession = yield* auth.authenticateHttpRequest(
+        bearerRequest(desktop.access_token),
+      );
+      // The desktop's WebSocket authenticates with a ticket; it reads the same row.
+      const sessions = yield* SessionStore.SessionStore;
+      const ticket = yield* sessions.issueWebSocketToken(desktopSession.sessionId);
+      expect((yield* sessions.verifyWebSocketToken(ticket.token)).grantMethod).toBe(
+        "desktop-bootstrap",
+      );
+      const { hostConnectionId } = yield* registerHost(
+        hosts,
+        socketFor(desktopSession, "desktop-ws"),
+      );
+      expect(hostConnectionId).toBeTruthy();
     }),
   );
 });

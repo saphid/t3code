@@ -3,10 +3,13 @@
  *
  * The desktop renderer owns Chromium guests; it registers here over its own
  * WebSocket and receives ordinary page commands on the registration stream.
- * Registration is accepted only from the desktop bootstrap session, whose
- * seed reaches the server over the desktop's trusted launch channel — web,
- * mobile, relay and tunnel sockets never become hosts, so on those
- * connections engine commands stay named-unsupported.
+ * Registration is accepted only from a session exchanged from the
+ * desktop-bootstrap grant, whose seed reaches the server over the desktop's
+ * trusted launch channel. The gate reads the grant method from the session
+ * row, not the subject: `t3 auth session issue --subject` can mint any
+ * subject, but never a grant method. Web, mobile, relay, tunnel and
+ * CLI-issued sockets never become hosts, so on those connections engine
+ * commands stay named-unsupported.
  *
  * This registry owns sockets, command queues and pending acknowledgements.
  * Which host owns which guest, and under which generation, lives in
@@ -22,6 +25,7 @@ import {
   type BrowserEngineHostReportInput,
   type BrowserEngineHostStreamEvent,
   type BrowserEngineSessionTarget,
+  type ServerAuthBootstrapMethod,
 } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -34,17 +38,24 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
-import { DESKTOP_BOOTSTRAP_SUBJECT } from "../auth/PairingGrantStore.ts";
 import * as PreviewManager from "./Manager.ts";
 
-/** Bounded wait for a host acknowledgement; silence becomes `unknown`, never success. */
+/**
+ * Bounded wait for a host acknowledgement: long enough for a busy renderer's
+ * IPC round-trip, short enough that a receipt never hangs. Silence becomes
+ * `unknown`, never success.
+ */
 const COMMAND_ACK_TIMEOUT_MS = 10_000;
 
 /** The authenticated socket a host call arrived on. Derived by the WS layer, never the payload. */
 export interface BrowserEngineHostSocket {
   readonly socketId: string;
-  readonly sessionSubject: string;
+  /** The session row's bootstrap grant method; absent for directly issued sessions. */
+  readonly grantMethod: ServerAuthBootstrapMethod | undefined;
 }
+
+const isDesktopSession = (socket: BrowserEngineHostSocket) =>
+  socket.grantMethod === "desktop-bootstrap";
 
 export type BrowserEngineDispatchOutcome =
   | { readonly outcome: "applied" }
@@ -111,7 +122,7 @@ export const make = Effect.gen(function* () {
   const authorizeHost = (socket: BrowserEngineHostSocket, hostConnectionId: string) =>
     Effect.flatMap(Ref.get(hosts), (current) => {
       const host = current.get(hostConnectionId);
-      if (socket.sessionSubject !== DESKTOP_BOOTSTRAP_SUBJECT) return Effect.fail(desktopRequired);
+      if (!isDesktopSession(socket)) return Effect.fail(desktopRequired);
       return host !== undefined && host.socketId === socket.socketId
         ? Effect.succeed(host)
         : Effect.fail(
@@ -139,7 +150,7 @@ export const make = Effect.gen(function* () {
     });
 
   const register: BrowserEngineHosts["Service"]["register"] = (socket) =>
-    socket.sessionSubject !== DESKTOP_BOOTSTRAP_SUBJECT
+    !isDesktopSession(socket)
       ? Effect.fail(desktopRequired)
       : Effect.succeed(
           Stream.unwrap(

@@ -168,7 +168,7 @@ const harness = Effect.gen(function* () {
   ),
 );
 
-const DESKTOP_SOCKET = { socketId: "desktop-ws", sessionSubject: "desktop-bootstrap" };
+const DESKTOP_SOCKET = { socketId: "desktop-ws", grantMethod: "desktop-bootstrap" } as const;
 
 const decodePageStatus = Schema.decodeUnknownSync(BrowserEnginePageStatus);
 
