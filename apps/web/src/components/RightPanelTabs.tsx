@@ -36,7 +36,6 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -200,31 +199,6 @@ type TabContextMenuAction =
   | "close-all";
 
 const TAB_SCROLL_EDGE_TOLERANCE = 1;
-// Matches the tab row's gap-1 so the last control keeps its spacing from the overlay.
-const TITLEBAR_OVERLAY_GAP = 4;
-
-type OverlayRect = Pick<DOMRectReadOnly, "left" | "top" | "bottom" | "width">;
-
-/**
- * Right padding the inline tab bar needs so its trailing controls ("+", scroll
- * buttons) clear the fixed titlebar controls. The overlay's width follows the
- * controls it hosts (maximize, extension menu, dock toggle), so a fixed inset
- * lets it cover the strip. Null means nothing overlaps the row.
- */
-export function titlebarOverlayInset(
-  tabBar: Pick<DOMRectReadOnly, "top" | "bottom" | "right">,
-  overlays: readonly OverlayRect[],
-): number | null {
-  let inset: number | null = null;
-  for (const overlay of overlays) {
-    if (overlay.width <= 0 || overlay.left >= tabBar.right) continue;
-    if (overlay.bottom <= tabBar.top || overlay.top >= tabBar.bottom) continue;
-    const overlap = Math.ceil(tabBar.right - overlay.left) + TITLEBAR_OVERLAY_GAP;
-    inset = Math.max(inset ?? 0, overlap);
-  }
-  return inset;
-}
-
 function tabScrollViewport(root: HTMLDivElement | null): HTMLDivElement | null {
   return root?.querySelector<HTMLDivElement>('[data-slot="scroll-area-viewport"]') ?? null;
 }
@@ -861,10 +835,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const browserProfiles = useBrowserDefaults().profiles;
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
-  const tabBarRef = useRef<HTMLDivElement>(null);
   // Inline without layoutControls: the route's fixed titlebar controls sit over this row.
   const sharesTitlebarOverlay = props.mode === "inline" && !props.layoutControls;
-  const [overlayInset, setOverlayInset] = useState<number | null>(null);
   const [renamingDevice, setRenamingDevice] = useState<string | null>(null);
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
   const [tabScrollState, setTabScrollState] = useState({
@@ -1112,30 +1084,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     };
   }, [updateTabScrollState]);
 
-  useLayoutEffect(() => {
-    const tabBar = tabBarRef.current;
-    if (!sharesTitlebarOverlay || !tabBar) {
-      setOverlayInset(null);
-      return;
-    }
-    const overlays = [
-      ...tabBar.ownerDocument.querySelectorAll<HTMLElement>("[data-workspace-titlebar-controls]"),
-    ];
-    const measure = () => {
-      const next = titlebarOverlayInset(
-        tabBar.getBoundingClientRect(),
-        overlays.map((overlay) => overlay.getBoundingClientRect()),
-      );
-      setOverlayInset((current) => (current === next ? current : next));
-    };
-    // Both boxes resize when the overlay gains or loses controls or the window resizes.
-    const resizeObserver = new ResizeObserver(measure);
-    resizeObserver.observe(tabBar);
-    for (const overlay of overlays) resizeObserver.observe(overlay);
-    measure();
-    return () => resizeObserver.disconnect();
-  }, [sharesTitlebarOverlay]);
-
   useEffect(() => {
     const viewport = tabScrollViewport(tabListRef.current);
     if (!viewport) return;
@@ -1172,18 +1120,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           // The sheet overlays from the viewport top, so its tab bar keeps
           // the titlebar's height: a compact row re-centers the layout
           // controls a few pixels higher and the cluster jumps on open.
-          props.mode === "inline" && !props.layoutControls ? "pr-28" : "pr-3",
+          // The shared controls cluster publishes its width, so the strip ends
+          // before it however many controls it hosts; the anchor already
+          // includes the WCO native inset. 5px is the cluster's mr-px plus gap-1.
+          sharesTitlebarOverlay
+            ? "pr-[calc(var(--workspace-controls-right)+var(--workspace-titlebar-controls-width,6rem)+5px)]"
+            : "pr-3",
           ownsDesktopTitleBar && "drag-region",
           ownsDesktopTitleBar &&
-            (props.layoutControls
-              ? "wco:pr-[var(--workspace-native-controls-inset)]"
-              : "wco:pr-[calc(var(--workspace-native-controls-inset)+6rem)]"),
+            props.layoutControls &&
+            "wco:pr-[var(--workspace-native-controls-inset)]",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}
-        // The classes above are the first-paint fallback; the measured
-        // overlay width replaces them once known.
-        style={overlayInset === null ? undefined : { paddingRight: overlayInset }}
-        ref={tabBarRef}
         data-right-panel-tabbar
       >
         <ScrollArea
