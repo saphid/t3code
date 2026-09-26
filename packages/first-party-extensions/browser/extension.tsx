@@ -41,6 +41,17 @@ import {
 } from "./historyStore.js";
 import { LocalServersSection, NoPreview, RecentlyUsedHeading, useLocalServers } from "./landing.js";
 import { landingModel } from "./localServers.js";
+import {
+  DEFAULT_ZOOM_FACTOR,
+  engineStatusLabel,
+  isRecoveryExhausted,
+  nextZoomFactor,
+  pageControlsBlock,
+  runPageCommand,
+  type PageTarget,
+  type PageVerb,
+} from "./pageControls.js";
+import { PageMenu, ZoomIndicator } from "./pageMenu.js";
 import { BrowserViewportToolbar, ViewportDeviceFrame, useElementSize } from "./viewportToolbar.js";
 import {
   FALLBACK_RESPONSIVE_VIEWPORT_SIZE,
@@ -530,10 +541,13 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
 
   const go = (url: string) => {
     const api = bindApi(browserSessionsApi, host, session.context);
-    // An ended lease means the held session is suspect — open fresh rather
-    // than navigate a session the host already fenced off.
+    // An ended lease means the held session is suspect, and a guest whose
+    // recovery gave up stays dead — open fresh rather than navigate either.
     const current = heldRef.current;
-    const usable = current && surfaceLease?.state.kind !== "ended" ? current : null;
+    const usable =
+      current && surfaceLease?.state.kind !== "ended" && !isRecoveryExhausted(live)
+        ? current
+        : null;
     dispatch((signal) =>
       usable
         ? api.invoke(
@@ -632,24 +646,73 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     // oxlint-disable-next-line react/exhaustive-effect-dependencies
   }, []);
 
+  /**
+   * Engine verbs (back … setAudioMuted) go to the host that owns the guest.
+   * The stream stays the source of truth: an accepted receipt only refreshes
+   * the held session early, and every refusal lands on the status line by
+   * name. `tab` targets another session in the strip (its mute toggle)
+   * without adopting it.
+   */
+  const pendingZoom = useRef<number | null>(null);
+  useEffect(() => {
+    if (live?.zoomFactor === pendingZoom.current) pendingZoom.current = null;
+  }, [live?.zoomFactor]);
+  const runPage = (verb: PageVerb, tab?: BrowserSession) => {
+    const epoch = tabsEpoch.current;
+    const target: PageTarget | null = tab
+      ? epoch
+        ? { tabId: tab.tabId, serverEpoch: epoch, engineGeneration: tab.engine.generation }
+        : null
+      : heldRef.current;
+    if (!target) return;
+    if (verb.method === "zoom" && !tab) pendingZoom.current = verb.zoomFactor;
+    const api = bindApi(browserSessionsApi, host, session.context);
+    void runPageCommand(api, target, tab ?? live, verb, session.signal).then((outcome) => {
+      if (session.signal.aborted) return;
+      if (outcome.kind !== "accepted") {
+        if (verb.method === "zoom" && !tab) pendingZoom.current = null;
+        setFault(outcome.message);
+        return;
+      }
+      setFault(null);
+      const { receipt } = outcome;
+      const current = heldRef.current;
+      if (!current || receipt.session.tabId !== current.tabId) return;
+      if (receipt.revision < lastRevision.current) return;
+      lastRevision.current = receipt.revision;
+      const next = { ...current, engineGeneration: receipt.session.engine.generation };
+      heldRef.current = next;
+      setHeld(next);
+      setLive(receipt.session);
+    });
+  };
+
+  /** One ladder step from the last requested factor, so quick presses compound. */
+  const zoomStep = (direction: "in" | "out") =>
+    runPage({
+      method: "zoom",
+      zoomFactor: nextZoomFactor(pendingZoom.current ?? live?.zoomFactor ?? null, direction),
+    });
+
+  const pageBlock = held ? pageControlsBlock(live) : null;
+
   const command = (method: "back" | "forward" | "reload") => {
     if (method === "reload" && fileSourceRef.current) return openFile(fileSourceRef.current);
     if (!held) return;
+    if (method === "reload" && isRecoveryExhausted(live)) {
+      // The dead guest cannot reload; its page reopens in a fresh session.
+      const url = live?.navigation.url ?? live?.requestedUrl ?? null;
+      if (url) go(url);
+      return;
+    }
+    if (pageBlock !== null) {
+      setFault(pageBlock);
+      return;
+    }
     if (method === "back") commit(goBack(state));
     else if (method === "forward") commit(goForward(state));
     else commit(reload(state));
-    const api = bindApi(browserSessionsApi, host, session.context);
-    dispatch((signal) =>
-      api.invoke(
-        method,
-        {
-          tabId: held.tabId,
-          serverEpoch: held.serverEpoch,
-          expectedEngineGeneration: held.engineGeneration,
-        },
-        signal,
-      ),
-    );
+    runPage({ method });
   };
 
   // `t3.ui/keybindings` — view-local commands register under this view's own
@@ -665,6 +728,10 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         else commit(reload(state));
       } else if (commandId === "focusAddress") {
         focusAddressInput(addressRef.current);
+      } else if (held && (commandId === "zoomIn" || commandId === "zoomOut")) {
+        zoomStep(commandId === "zoomIn" ? "in" : "out");
+      } else if (held && commandId === "resetZoom") {
+        runPage({ method: "zoom", zoomFactor: DEFAULT_ZOOM_FACTOR });
       }
     };
   });
@@ -765,7 +832,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         <button
           type="button"
           aria-label="Back"
-          disabled={held ? !(live?.canGoBack ?? false) : !canGoBack(state)}
+          disabled={held ? pageBlock !== null || !(live?.canGoBack ?? false) : !canGoBack(state)}
           onClick={() => (held ? command("back") : commit(goBack(state)))}
           style={buttonStyle}
         >
@@ -774,7 +841,9 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         <button
           type="button"
           aria-label="Forward"
-          disabled={held ? !(live?.canGoForward ?? false) : !canGoForward(state)}
+          disabled={
+            held ? pageBlock !== null || !(live?.canGoForward ?? false) : !canGoForward(state)
+          }
           onClick={() => (held ? command("forward") : commit(goForward(state)))}
           style={buttonStyle}
         >
@@ -783,7 +852,12 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         <button
           type="button"
           aria-label="Reload"
-          disabled={state.status.kind !== "target" && fileSource === null}
+          disabled={
+            fileSource === null &&
+            (held
+              ? pageBlock !== null && !isRecoveryExhausted(live)
+              : state.status.kind !== "target")
+          }
           onClick={() => (held || fileSource ? command("reload") : commit(reload(state)))}
           style={buttonStyle}
         >
@@ -872,6 +946,13 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         >
           ↗
         </button>
+
+        <PageMenu
+          session={held ? live : null}
+          blockReason={pageBlock}
+          run={(verb) => runPage(verb)}
+          zoomStep={zoomStep}
+        />
       </header>
       {tabs.length > 0 && (
         <div
@@ -888,32 +969,52 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           {tabs.map((tab) => {
             const tabUrl = tab.navigation.url ?? tab.requestedUrl ?? null;
             const active = held?.tabId === tab.tabId;
+            const label = tabLabel(tab.navigation.title, tabUrl);
             return (
-              <button
+              <span
                 key={tab.tabId}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => {
-                  if (!active) adopt(tab);
-                }}
-                style={{
-                  ...buttonStyle,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 4,
-                  maxWidth: 180,
-                  whiteSpace: "nowrap",
-                  ...(active
-                    ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" }
-                    : {}),
-                }}
+                role="presentation"
+                style={{ display: "inline-flex", alignItems: "center", gap: 2 }}
               >
-                <BrowserFavicon url={tabUrl} />
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {tabLabel(tab.navigation.title, tabUrl)}
-                </span>
-              </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => {
+                    if (!active) adopt(tab);
+                  }}
+                  style={{
+                    ...buttonStyle,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                    maxWidth: 180,
+                    whiteSpace: "nowrap",
+                    ...(active
+                      ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" }
+                      : {}),
+                  }}
+                >
+                  <BrowserFavicon url={tabUrl} />
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
+                </button>
+                {/* Native parity: the speaker shows only while the page plays
+                  audio, and reflects the engine-reported mute state. */}
+                {tab.audible === true && (
+                  <button
+                    type="button"
+                    aria-label={tab.audioMuted ? `Unmute ${label}` : `Mute ${label}`}
+                    aria-pressed={tab.audioMuted === true}
+                    disabled={pageControlsBlock(tab) !== null}
+                    onClick={() =>
+                      runPage({ method: "setAudioMuted", muted: !tab.audioMuted }, tab)
+                    }
+                    style={{ ...buttonStyle, border: "none", padding: "0 2px" }}
+                  >
+                    {tab.audioMuted ? "🔇" : "🔊"}
+                  </button>
+                )}
+              </span>
             );
           })}
         </div>
@@ -926,7 +1027,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         {fault ??
           captureStatus ??
           (held && live
-            ? `${live.navigation.title || live.navigation.url || "session"} — engine ${live.engine.state}, navigation ${live.navigation.kind}`
+            ? `${live.navigation.title || live.navigation.url || "session"} — ${engineStatusLabel(live)}`
             : describeStatus(state))}
       </div>
       {held ? (
@@ -943,6 +1044,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
               style={{ position: "absolute", inset: 0 }}
             />
           )}
+          <ZoomIndicator key={held.tabId} zoomFactor={live?.zoomFactor ?? null} />
           {deviceMode && viewportSetting && (
             <>
               {/*

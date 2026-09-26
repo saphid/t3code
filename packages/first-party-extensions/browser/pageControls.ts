@@ -1,0 +1,221 @@
+/**
+ * Page controls over the `t3.browser/sessions` engine verbs — back, forward,
+ * reload, hard reload, zoom, appearance and mute. Every verb is dispatched to
+ * the desktop engine host that owns the session; this module decides whether
+ * a verb may be sent, names why not, and turns receipts and errors into the
+ * panel's inline messages. Pure and client-injected so the rules are testable
+ * without a mounted view.
+ *
+ * Engine truth comes only from the session's `engine` block: without an
+ * owning host the state is `unavailable` (`desktop-required`), a dead guest is
+ * `crashed` (with `recovery-exhausted` once the host gave up), and a guest
+ * being replaced is `recovering`. Controls are disabled in each of those
+ * states with the reason on screen — never a spinner that implies progress.
+ */
+import {
+  BROWSER_SESSION_ZOOM_LEVELS,
+  type BrowserSession,
+  type BrowserSessionReceipt,
+  type browserSessionsApi,
+} from "@t3tools/extension-sdk/catalogue";
+
+import type { BoundApi } from "./uiContracts.js";
+
+export type PageAppearance = "system" | "light" | "dark";
+
+export type PageVerb =
+  | { readonly method: "back" | "forward" | "reload" | "hardReload" }
+  | { readonly method: "zoom"; readonly zoomFactor: number }
+  | { readonly method: "setAppearance"; readonly appearance: PageAppearance }
+  | { readonly method: "setAudioMuted"; readonly muted: boolean };
+
+/** The fence every engine verb carries. */
+export interface PageTarget {
+  readonly tabId: string;
+  readonly serverEpoch: string;
+  readonly engineGeneration: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Engine gate
+
+/**
+ * Why page verbs cannot be sent to this session right now, or null when they
+ * can. `starting` is allowed: the host has claimed the guest and answers
+ * commands before its first page report.
+ */
+export function pageControlsBlock(session: BrowserSession | null): string | null {
+  if (session === null) return "Waiting for the browser session to report its state.";
+  const { engine } = session;
+  switch (engine.state) {
+    case "ready":
+    case "starting":
+      return null;
+    case "unavailable":
+      return `Page controls need the T3 Code desktop app, where the page renders (${engine.reason ?? "desktop-required"}).`;
+    case "recovering":
+      return "The page crashed and the browser engine is recovering it (recovering).";
+    case "crashed":
+      return engine.reason === "recovery-exhausted"
+        ? "The page crashed and recovery gave up (recovery-exhausted). Reload opens a fresh session."
+        : "The page crashed (crash).";
+  }
+}
+
+/** A guest whose recovery gave up stays dead; only a new session brings the page back. */
+export function isRecoveryExhausted(session: BrowserSession | null): boolean {
+  return session?.engine.state === "crashed" && session.engine.reason === "recovery-exhausted";
+}
+
+/** The status line's engine clause, named exactly as the contract reports it. */
+export function engineStatusLabel(session: BrowserSession): string {
+  const { engine, navigation } = session;
+  const engineText =
+    engine.state === "ready"
+      ? "engine ready"
+      : `engine ${engine.state}${engine.reason ? ` (${engine.reason})` : ""}`;
+  const failure = navigation.failureCode ? ` (${navigation.failureCode})` : "";
+  return `${engineText}, navigation ${navigation.kind}${failure}`;
+}
+
+// ---------------------------------------------------------------------------
+// Zoom ladder
+
+/** The contract ladder — the only factors `zoom` accepts. */
+export const ZOOM_LADDER: readonly number[] = BROWSER_SESSION_ZOOM_LEVELS;
+export const DEFAULT_ZOOM_FACTOR = 1;
+const ZOOM_EPSILON = 0.001;
+
+export function isLadderFactor(factor: number): boolean {
+  return ZOOM_LADDER.some((level) => Math.abs(level - factor) < ZOOM_EPSILON);
+}
+
+/**
+ * The native zoomIn/zoomOut step: the ladder entry at or below `current`,
+ * then one step in `direction`, clamped at the ends. An unreported factor
+ * steps from 100%.
+ */
+export function nextZoomFactor(current: number | null, direction: "in" | "out"): number {
+  const base = current ?? DEFAULT_ZOOM_FACTOR;
+  const found = ZOOM_LADDER.findIndex(
+    (level) => Math.abs(level - base) < ZOOM_EPSILON || level > base,
+  );
+  const step =
+    found < 0
+      ? ZOOM_LADDER.length - 1
+      : Math.abs(ZOOM_LADDER[found]! - base) < ZOOM_EPSILON
+        ? found
+        : found - 1;
+  const index =
+    direction === "in" ? Math.min(step + 1, ZOOM_LADDER.length - 1) : Math.max(step - 1, 0);
+  return ZOOM_LADDER[index]!;
+}
+
+export function zoomPercent(factor: number): string {
+  return `${Math.round(factor * 100)}%`;
+}
+
+// ---------------------------------------------------------------------------
+// Dispatch
+
+const VERB_LABELS: Record<PageVerb["method"], string> = {
+  back: "Back",
+  forward: "Forward",
+  reload: "Reload",
+  hardReload: "Hard reload",
+  zoom: "Zoom",
+  setAppearance: "Appearance",
+  setAudioMuted: "Mute",
+};
+
+/** Inline message for a thrown verb, keyed on the server's stable error names. */
+export function pageCommandErrorMessage(method: PageVerb["method"], error: unknown): string {
+  const label = VERB_LABELS[method];
+  const text = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  if (text.includes("BrowserSessionCommandUnsupported"))
+    return `${label} needs the T3 Code desktop app, where the page renders (desktop-required).`;
+  if (text.includes("BrowserStaleEngineGeneration"))
+    return `${label} was not sent: the page's engine was replaced (stale-generation). Try again.`;
+  if (text.includes("BrowserSessionNotFound"))
+    return `${label} was not sent: the session is gone (session-not-found).`;
+  return `${label} failed — ${text || "unknown error"}`;
+}
+
+/** Inline message for a non-accepted receipt; null for `accepted`. */
+export function pageReceiptMessage(
+  method: PageVerb["method"],
+  outcome: BrowserSessionReceipt["outcome"],
+): string | null {
+  const label = VERB_LABELS[method];
+  switch (outcome) {
+    case "accepted":
+      return null;
+    case "rejected":
+      return `${label} was rejected by the browser engine.`;
+    case "unknown":
+      return `${label}: the browser engine did not answer (unknown). The page state will catch up from the session.`;
+  }
+}
+
+export type PageCommandOutcome =
+  | { readonly kind: "accepted"; readonly receipt: BrowserSessionReceipt }
+  | { readonly kind: "blocked" | "failed"; readonly message: string }
+  | {
+      readonly kind: "rejected" | "unknown";
+      readonly message: string;
+      readonly receipt: BrowserSessionReceipt;
+    };
+
+/**
+ * Send one verb. A blocked engine or an off-ladder zoom factor never reaches
+ * the wire; everything else is exactly one `t3.browser/sessions` call — a zoom
+ * jump to any ladder factor included, never emulated by stepping.
+ */
+export async function runPageCommand(
+  api: BoundApi<typeof browserSessionsApi>,
+  target: PageTarget,
+  session: BrowserSession | null,
+  verb: PageVerb,
+  signal: AbortSignal,
+): Promise<PageCommandOutcome> {
+  const block = pageControlsBlock(session);
+  if (block !== null) return { kind: "blocked", message: block };
+  if (verb.method === "zoom" && !isLadderFactor(verb.zoomFactor))
+    return {
+      kind: "blocked",
+      message: `${zoomPercent(verb.zoomFactor)} is not on the zoom ladder.`,
+    };
+  const guard = {
+    tabId: target.tabId,
+    serverEpoch: target.serverEpoch,
+    expectedEngineGeneration: target.engineGeneration,
+  };
+  let receipt: BrowserSessionReceipt;
+  try {
+    switch (verb.method) {
+      case "zoom":
+        receipt = await api.invoke("zoom", { ...guard, zoomFactor: verb.zoomFactor }, signal);
+        break;
+      case "setAppearance":
+        receipt = await api.invoke(
+          "setAppearance",
+          { ...guard, appearance: verb.appearance },
+          signal,
+        );
+        break;
+      case "setAudioMuted":
+        receipt = await api.invoke("setAudioMuted", { ...guard, muted: verb.muted }, signal);
+        break;
+      default:
+        receipt = await api.invoke(verb.method, guard, signal);
+    }
+  } catch (error) {
+    return { kind: "failed", message: pageCommandErrorMessage(verb.method, error) };
+  }
+  if (receipt.outcome === "accepted") return { kind: "accepted", receipt };
+  return {
+    kind: receipt.outcome,
+    receipt,
+    message: pageReceiptMessage(verb.method, receipt.outcome)!,
+  };
+}

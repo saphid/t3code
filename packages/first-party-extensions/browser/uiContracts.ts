@@ -32,7 +32,7 @@ type BoundInvoke<T extends ApiMethodTypes> = <K extends keyof T & string>(
 ) => Promise<T[K]["output"]>;
 
 /** The structural shape `bindApi` returns — tests inject a fake client behind it. */
-type BoundApi<A> = A extends TypedApi<infer T> ? { invoke: BoundInvoke<T> } : never;
+export type BoundApi<A> = A extends TypedApi<infer T> ? { invoke: BoundInvoke<T> } : never;
 
 /** The structural shape `bindStreamApi` returns — tests inject a fake client behind it. */
 type BoundStreams<A> =
@@ -182,6 +182,27 @@ export const BROWSER_VIEW_COMMANDS: readonly GlobalCommandDescriptor[] = [
     id: "focusAddress",
     title: "Focus Address Bar",
     defaultKey: "mod+l",
+    when: `extension.${BROWSER_SURFACE_ID}.focus`,
+    scope: "surface",
+  },
+  {
+    id: "zoomIn",
+    title: "Zoom In",
+    defaultKey: "mod+=",
+    when: `extension.${BROWSER_SURFACE_ID}.focus`,
+    scope: "surface",
+  },
+  {
+    id: "zoomOut",
+    title: "Zoom Out",
+    defaultKey: "mod+-",
+    when: `extension.${BROWSER_SURFACE_ID}.focus`,
+    scope: "surface",
+  },
+  {
+    id: "resetZoom",
+    title: "Reset Zoom",
+    defaultKey: "mod+0",
     when: `extension.${BROWSER_SURFACE_ID}.focus`,
     scope: "surface",
   },

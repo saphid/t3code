@@ -161,7 +161,7 @@ NodeTest.describe("themeVarOverrides", () => {
 
 NodeTest.describe("command descriptors", () => {
   NodeTest.it("view commands are surface-scoped, focus-gated, and parse", () => {
-    NodeAssert.equal(BROWSER_VIEW_COMMANDS.length, 2);
+    NodeAssert.equal(BROWSER_VIEW_COMMANDS.length, 5);
     for (const command of BROWSER_VIEW_COMMANDS) {
       NodeAssert.equal(command.scope, "surface");
       NodeAssert.equal(command.when, `extension.${BROWSER_SURFACE_ID}.focus`);
@@ -170,7 +170,7 @@ NodeTest.describe("command descriptors", () => {
     }
     NodeAssert.deepEqual(
       BROWSER_VIEW_COMMANDS.map((command) => command.id),
-      ["reload", "focusAddress"],
+      ["reload", "focusAddress", "zoomIn", "zoomOut", "resetZoom"],
     );
   });
 
