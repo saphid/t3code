@@ -23,6 +23,7 @@ import {
   countAnsweredQuestions,
   createDiffAssembly,
   deriveAgentsPanelModel,
+  describeAgentSessionReceipt,
   describeNavigationReceipt,
   describeReceipt,
   describeScriptRun,
@@ -454,6 +455,7 @@ NodeTest.describe("deferred sections", () => {
     NodeAssert.match(SCRIPTS_SCOPE_NOTE, /settings/i);
     NodeAssert.match(HOST_CHROME_NOTE, /host chat UI/);
     NodeAssert.match(HOST_CHROME_NOTE, /running\/unread badge/);
+    NodeAssert.match(HOST_CHROME_NOTE, /open this view/);
   });
 });
 
@@ -743,6 +745,18 @@ NodeTest.describe("plan source deep link", () => {
     NodeAssert.equal(new Set(lines).size, 3);
     NodeAssert.match(lines[1], /another project/);
     NodeAssert.equal(describeNavigationReceipt({ status: "opened", threadId: "t" }), "Opened");
+  });
+
+  NodeTest.it("names every agent-session refusal distinctly", () => {
+    const lines = ["unknown-thread", "unknown-agent", "no-session", "opener-refused"].map(
+      (reason) => describeAgentSessionReceipt({ status: "refused", reason }),
+    );
+    NodeAssert.equal(new Set(lines).size, 4);
+    NodeAssert.match(lines[2], /no session page/);
+    NodeAssert.equal(
+      describeAgentSessionReceipt({ status: "opened", agentId: "a", opener: "desktop-shell" }),
+      "Opened",
+    );
   });
 });
 

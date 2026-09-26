@@ -57,6 +57,12 @@ function fakeBridge(options?: {
           url: (request.input as { url: string }).url,
           opener: "desktop-shell",
         });
+      if (request.method === "openSession")
+        return Effect.succeed({
+          status: "opened",
+          agentId: (request.input as { agentId: string }).agentId,
+          opener: "desktop-shell",
+        });
       if (request.method === "openThread")
         return Effect.succeed({
           status: "opened",
@@ -143,6 +149,16 @@ function makeProviders(
     clientApiProviders: bridge.service,
     authorizeGrant: authorizeGrant ?? (() => Promise.resolve(true)),
     resolveThreadProject: (threadId) => Promise.resolve(THREAD_PROJECTS[threadId] ?? null),
+    readThreadAgentSessions: (threadId) =>
+      Promise.resolve(
+        threadId === "thread-a"
+          ? [
+              { id: "workflow-1", sessionUrl: "https://claude.ai/code/session_1" },
+              { id: "task-1" },
+              { id: "task-bad", sessionUrl: "file:///etc/passwd" },
+            ]
+          : null,
+      ),
   });
   const byId = (providerId: string): HostApiProvider =>
     providers.find((provider) => provider.providerId === providerId)!;
@@ -337,8 +353,53 @@ describe("navigation adapter", () => {
       navigation.invoke("getCapabilities", {}, context, signal, metadata()),
     ).resolves.toMatchObject({
       adapter: "host.ui.navigation",
-      operations: { openThread: true },
+      operations: { openThread: true, openAgentSession: true },
     });
+  });
+
+  it("resolves an agent's session URL on the caller's own thread and forwards only that", async () => {
+    const bridge = fakeBridge();
+    const { navigation } = makeProviders(bridge);
+    await expect(
+      navigation.invoke("openAgentSession", { agentId: "workflow-1" }, context, signal, metadata()),
+    ).resolves.toEqual({ status: "opened", agentId: "workflow-1", opener: "desktop-shell" });
+    expect(bridge.invoked).toEqual([
+      {
+        connectionId: "conn-1",
+        apiId: "t3.client/navigation",
+        method: "openSession",
+        input: {
+          target: { kind: "connection", connectionId: "conn-1" },
+          agentId: "workflow-1",
+          url: "https://claude.ai/code/session_1",
+        },
+      },
+    ]);
+  });
+
+  it("refuses unknown agents, sessionless rows, and non-http URLs before any client frame", async () => {
+    const bridge = fakeBridge();
+    const { navigation } = makeProviders(bridge);
+    const open = (agentId: string, ctx: ViewContext = context) =>
+      navigation.invoke("openAgentSession", { agentId }, ctx, signal, metadata());
+    await expect(open("nobody")).resolves.toEqual({ status: "refused", reason: "unknown-agent" });
+    await expect(open("task-1")).resolves.toEqual({ status: "refused", reason: "no-session" });
+    await expect(open("task-bad")).resolves.toEqual({ status: "refused", reason: "no-session" });
+    // The session is looked up on the context thread only; a deleted thread or
+    // a context without one has no roster to open from.
+    const otherThread = {
+      ...context,
+      resource: { ...context.resource, threadId: "thread-b" },
+    } as ViewContext;
+    await expect(open("workflow-1", otherThread)).resolves.toEqual({
+      status: "refused",
+      reason: "unknown-thread",
+    });
+    const { threadId: _dropped, ...unthreaded } = context.resource;
+    await expect(
+      open("workflow-1", { ...context, resource: unthreaded } as ViewContext),
+    ).resolves.toEqual({ status: "refused", reason: "unknown-thread" });
+    expect(bridge.invoked).toHaveLength(0);
   });
 });
 

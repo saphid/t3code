@@ -3,7 +3,7 @@ import { EnvironmentId, ProjectId, ThreadId, type ClientProviderCaller } from "@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
-import { createNavigationClientProvider } from "./clientProviders";
+import { createNavigationClientProvider, type ExternalOpener } from "./clientProviders";
 import { ClientProviderOpError, type ClientProviderInvokeCall } from "./clientProviderTypes";
 import type { InstalledPackage } from "./installedController";
 
@@ -76,7 +76,10 @@ function installation(capabilities: readonly string[]): InstalledPackage {
   } as unknown as InstalledPackage;
 }
 
-function provider(capabilities: readonly string[] = [GRANT]) {
+function provider(
+  capabilities: readonly string[] = [GRANT],
+  opener: ExternalOpener | undefined = undefined,
+) {
   const navigate = vi.fn(async () => {});
   const installed = installation(capabilities);
   return {
@@ -89,6 +92,7 @@ function provider(capabilities: readonly string[] = [GRANT]) {
         installations: () => [installed],
       },
       navigate,
+      () => opener,
     ),
   };
 }
@@ -184,6 +188,68 @@ describe("navigation provider", () => {
       id: VIEW,
       projectId: "project-a",
       threadId: "thread-b",
+    });
+  });
+
+  describe("openSession", () => {
+    const SESSION_GRANT = "t3.ui/navigation.open-session";
+    const openSession = (url: string): ClientProviderInvokeCall => ({
+      method: "openSession",
+      input: {
+        target: { kind: "self" },
+        agentId: "workflow-1",
+        url,
+      } as ClientProviderInvokeCall["input"],
+      context,
+      caller,
+      signal: new AbortController().signal,
+    });
+
+    it("needs its own grant; thread navigation does not carry it", async () => {
+      const open = vi.fn(async () => {});
+      const { provider: denied } = provider([GRANT], { kind: "browser-window", open });
+      await expect(denied.invoke(openSession("https://claude.ai/code/s"))).rejects.toMatchObject({
+        code: "client-target-denied",
+      });
+      expect(open).not.toHaveBeenCalled();
+    });
+
+    it("hands a checked http(s) session URL to the OS opener", async () => {
+      const open = vi.fn(async () => {});
+      const { provider: granted, navigate } = provider([SESSION_GRANT], {
+        kind: "desktop-shell",
+        open,
+      });
+      await expect(granted.invoke(openSession("https://claude.ai/code/s"))).resolves.toEqual({
+        status: "opened",
+        agentId: "workflow-1",
+        opener: "desktop-shell",
+      });
+      expect(open).toHaveBeenCalledWith("https://claude.ai/code/s");
+      expect(navigate).not.toHaveBeenCalled();
+    });
+
+    it("refuses non-http URLs and a missing or failing opener by name", async () => {
+      const open = vi.fn(async () => {});
+      const { provider: granted } = provider([SESSION_GRANT], { kind: "browser-window", open });
+      await expect(granted.invoke(openSession("javascript:alert(1)"))).resolves.toEqual({
+        status: "refused",
+        reason: "no-session",
+      });
+      expect(open).not.toHaveBeenCalled();
+      const { provider: noOpener } = provider([SESSION_GRANT]);
+      await expect(noOpener.invoke(openSession("https://claude.ai/code/s"))).resolves.toEqual({
+        status: "refused",
+        reason: "opener-refused",
+      });
+      const { provider: failing } = provider([SESSION_GRANT], {
+        kind: "browser-window",
+        open: () => Promise.reject(new Error("blocked")),
+      });
+      await expect(failing.invoke(openSession("https://claude.ai/code/s"))).resolves.toEqual({
+        status: "refused",
+        reason: "opener-refused",
+      });
     });
   });
 });

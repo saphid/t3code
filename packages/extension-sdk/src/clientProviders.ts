@@ -947,9 +947,35 @@ export const uiNavigationReceiptSchema = {
   ],
 } as const;
 
+/** The `t3.ui/navigation` agent-session receipt, shared by the public and private areas. */
+export const uiNavigationSessionReceiptSchema = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "agentId", "opener"],
+      properties: {
+        status: { const: "opened" },
+        agentId: { type: "string", minLength: 1, maxLength: 256 },
+        opener: { enum: ["desktop-shell", "browser-window"] },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "reason"],
+      properties: {
+        status: { const: "refused" },
+        reason: { enum: ["unknown-thread", "unknown-agent", "no-session", "opener-refused"] },
+      },
+    },
+  ],
+} as const;
+
 /**
  * Backs `t3.ui/navigation`. The adapter forwards only threads it resolved in
- * the caller's own project; the client re-checks before routing.
+ * the caller's own project, and only session URLs it resolved from the
+ * caller's own thread roster; the client re-checks before routing or opening.
  */
 export const CLIENT_NAVIGATION_API = validateApiDefinition({
   id: "t3.client/navigation",
@@ -967,6 +993,19 @@ export const CLIENT_NAVIGATION_API = validateApiDefinition({
         ["threadId"],
       ),
       outputSchema: uiNavigationReceiptSchema,
+    },
+    {
+      name: "openSession",
+      effect: "write",
+      requiredGrants: [],
+      inputSchema: withTarget(
+        {
+          agentId: { type: "string", minLength: 1, maxLength: 256 },
+          url: { type: "string", minLength: 1, maxLength: 4096 },
+        },
+        ["agentId", "url"],
+      ),
+      outputSchema: uiNavigationSessionReceiptSchema,
     },
   ],
 });

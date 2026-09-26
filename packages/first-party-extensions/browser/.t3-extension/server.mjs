@@ -1606,6 +1606,29 @@ var uiNavigationReceiptSchema = {
     }
   ]
 };
+var uiNavigationSessionReceiptSchema = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "agentId", "opener"],
+      properties: {
+        status: { const: "opened" },
+        agentId: { type: "string", minLength: 1, maxLength: 256 },
+        opener: { enum: ["desktop-shell", "browser-window"] }
+      }
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "reason"],
+      properties: {
+        status: { const: "refused" },
+        reason: { enum: ["unknown-thread", "unknown-agent", "no-session", "opener-refused"] }
+      }
+    }
+  ]
+};
 var CLIENT_NAVIGATION_API = validateApiDefinition({
   id: "t3.client/navigation",
   version: "1.0.0",
@@ -1619,6 +1642,16 @@ var CLIENT_NAVIGATION_API = validateApiDefinition({
         surfaceId: { type: "string", minLength: 1, maxLength: 160 }
       }, ["threadId"]),
       outputSchema: uiNavigationReceiptSchema
+    },
+    {
+      name: "openSession",
+      effect: "write",
+      requiredGrants: [],
+      inputSchema: withTarget({
+        agentId: { type: "string", minLength: 1, maxLength: 256 },
+        url: { type: "string", minLength: 1, maxLength: 4096 }
+      }, ["agentId", "url"]),
+      outputSchema: uiNavigationSessionReceiptSchema
     }
   ]
 });
@@ -6831,6 +6864,7 @@ var uiExternalApi = defineApi({
 });
 var UI_NAVIGATION = "t3.ui/navigation";
 var UI_NAVIGATION_OPEN = "t3.ui/navigation.open";
+var UI_NAVIGATION_OPEN_SESSION = "t3.ui/navigation.open-session";
 var uiNavigationApi = defineApi({
   id: UI_NAVIGATION,
   version: "1.0.0",
@@ -6840,7 +6874,7 @@ var uiNavigationApi = defineApi({
       effect: "read",
       requiredGrants: [],
       inputSchema: composerEmptyInputSchema,
-      outputSchema: uiCapabilitiesOutput(["openThread"])
+      outputSchema: uiCapabilitiesOutput(["openThread", "openAgentSession"])
     },
     {
       name: "openThread",
@@ -6856,6 +6890,18 @@ var uiNavigationApi = defineApi({
         }
       },
       outputSchema: uiNavigationReceiptSchema
+    },
+    {
+      name: "openAgentSession",
+      effect: "write",
+      requiredGrants: [UI_NAVIGATION_OPEN_SESSION],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["agentId"],
+        properties: { agentId: { type: "string", minLength: 1, maxLength: 256 } }
+      },
+      outputSchema: uiNavigationSessionReceiptSchema
     }
   ]
 });

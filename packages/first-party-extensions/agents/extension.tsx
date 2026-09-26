@@ -22,7 +22,7 @@ import {
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   DEFERRED_SECTIONS,
@@ -45,6 +45,7 @@ import {
   collectDiffStream,
   countAnsweredQuestions,
   deriveAgentsPanelModel,
+  describeAgentSessionReceipt,
   describeNavigationReceipt,
   describeReceipt,
   describeScriptRun,
@@ -298,6 +299,66 @@ function PlanSourceLink({
         outcome && <output aria-label="Navigation result">{outcome}</output>
       )}
     </span>
+  );
+}
+
+/**
+ * "Open session" for a roster row that carries a provider session handle. The
+ * pack names the agent; the host resolves and opens its session page, so no
+ * URL passes through here. Unsupported clients, a missing grant, and refusals
+ * render by name.
+ */
+function useAgentSessionControl(
+  host: ClientHost,
+  session: ViewSession,
+): (agent: RuntimeSubagent) => ReactNode {
+  const api = useMemo(() => bindApi(uiNavigationApi, host, session.context), [host, session]);
+  const capabilities = useApiRead(host, session, uiNavigationApi, "getCapabilities", {});
+  const [outcomes, setOutcomes] = useState<Readonly<Record<string, string>>>({});
+  const supported =
+    capabilities.status === "ready" && capabilities.value.operations.openAgentSession === true;
+  const unavailable =
+    capabilities.status === "unavailable"
+      ? capabilities.error
+      : capabilities.status === "ready" && !supported
+        ? "Session pages are not available on this client"
+        : null;
+  return useCallback(
+    (agent: RuntimeSubagent) => {
+      if (!agent.runHandles?.sessionUrl) return null;
+      const note = (text: string | null) =>
+        setOutcomes(({ [agent.id]: _previous, ...rest }) =>
+          text === null ? rest : { ...rest, [agent.id]: text },
+        );
+      const open = () => {
+        note(null);
+        api.invoke("openAgentSession", { agentId: agent.id }, session.signal).then(
+          (receipt) => {
+            if (receipt.status === "refused") note(describeAgentSessionReceipt(receipt));
+          },
+          (error: unknown) => note(error instanceof Error ? error.message : "Could not open"),
+        );
+      };
+      const text = unavailable ?? outcomes[agent.id];
+      return (
+        <span style={{ display: "inline-flex", gap: 4, alignItems: "baseline" }}>
+          <button
+            type="button"
+            onClick={open}
+            disabled={!supported}
+            style={{ ...control, padding: "0 6px", fontSize: 11 }}
+          >
+            Open session
+          </button>
+          {text && (
+            <output aria-label="Session result" style={{ fontSize: 11, color: muted }}>
+              {text}
+            </output>
+          )}
+        </span>
+      );
+    },
+    [api, session, supported, unavailable, outcomes],
   );
 }
 
@@ -857,8 +918,11 @@ function AgentElapsed(props: { readonly agent: RuntimeSubagent }) {
   );
 }
 
-function AgentRow(props: { readonly agent: RuntimeSubagent }) {
-  const { agent } = props;
+function AgentRow(props: {
+  readonly agent: RuntimeSubagent;
+  readonly sessionControl: (agent: RuntimeSubagent) => ReactNode;
+}) {
+  const { agent, sessionControl } = props;
   const visual = agentStatusVisual(agent.status);
   const role = agentVisibleRole(agent);
   return (
@@ -934,6 +998,7 @@ function AgentRow(props: { readonly agent: RuntimeSubagent }) {
             {agentActivityText(agent)}
           </span>
         )}
+        {sessionControl(agent)}
       </span>
       <span style={{ fontFamily: mono, fontSize: 11, color: muted, textAlign: "right" }}>
         <AgentElapsed agent={agent} />
@@ -946,13 +1011,14 @@ function WorkflowGroupView(props: {
   readonly group: AgentsWorkflowGroup;
   readonly scriptSupport: ReturnType<typeof operationSupport>;
   readonly onShowScript: (workflowId: string) => void;
+  readonly sessionControl: (agent: RuntimeSubagent) => ReactNode;
   readonly script:
     | { readonly contents: string; readonly truncated: boolean }
     | "loading"
     | string
     | null;
 }) {
-  const { group, scriptSupport, onShowScript, script } = props;
+  const { group, scriptSupport, onShowScript, sessionControl, script } = props;
   const workflow = group.workflow;
   return (
     <li style={{ padding: "4px 0" }}>
@@ -967,6 +1033,7 @@ function WorkflowGroupView(props: {
             onClick={() => onShowScript(workflow.id)}
           />
         )}
+        {sessionControl(workflow)}
       </div>
       {typeof script === "string" && script !== "loading" && (
         <p style={{ margin: "2px 0 0", fontSize: 11, color: muted }}>{script}</p>
@@ -995,7 +1062,7 @@ function WorkflowGroupView(props: {
           </div>
           <ul style={{ listStyle: "none", margin: 0, padding: "0 0 0 12px" }}>
             {phase.members.map((member) => (
-              <AgentRow key={member.id} agent={member} />
+              <AgentRow key={member.id} agent={member} sessionControl={sessionControl} />
             ))}
           </ul>
         </div>
@@ -1003,7 +1070,7 @@ function WorkflowGroupView(props: {
       {group.unphasedMembers.length > 0 && (
         <ul style={{ listStyle: "none", margin: 0, padding: "0 0 0 12px" }}>
           {group.unphasedMembers.map((member) => (
-            <AgentRow key={member.id} agent={member} />
+            <AgentRow key={member.id} agent={member} sessionControl={sessionControl} />
           ))}
         </ul>
       )}
@@ -1251,6 +1318,7 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
   );
   const capabilities = capabilitiesRead.status === "ready" ? capabilitiesRead.value : null;
   const { run, outcomeText } = useControls(host, session, feed);
+  const sessionControl = useAgentSessionControl(host, session);
   const [runs, setRuns] = useState<Record<string, ScriptRun>>({});
   // Fresh per panel mount: recreated panels never re-pick overflow ids their
   // previous incarnation may have left running; concurrent clients allocate
@@ -1387,11 +1455,12 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
                       group={group}
                       scriptSupport={operationSupport(capabilities, "getWorkflowScript")}
                       onShowScript={showWorkflowScript}
+                      sessionControl={sessionControl}
                       script={scripts[group.workflow.id] ?? null}
                     />
                   ))}
                   {model.directAgents.map((agent) => (
-                    <AgentRow key={agent.id} agent={agent} />
+                    <AgentRow key={agent.id} agent={agent} sessionControl={sessionControl} />
                   ))}
                 </ul>
               )}

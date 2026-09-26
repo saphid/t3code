@@ -30,6 +30,7 @@ import type {
   RuntimeSubagent,
   RuntimeSubagentStatus,
   UiNavigationReceipt,
+  UiNavigationSessionReceipt,
   UserInputQuestion,
   VcsDiffPreviewStreamEvent,
   VcsDiffStreamSource,
@@ -423,7 +424,7 @@ export const SCRIPTS_SCOPE_NOTE =
 
 /** The host-rendered half of Agents navigation, stated where a user would look for it. */
 export const HOST_CHROME_NOTE =
-  "The chat toggle badge and spawn CTA rows are host chat UI a plugin cannot install; this tab carries its own running/unread badge.";
+  "The chat toggle badge and spawn CTA rows are host chat UI a plugin cannot install; with this pack installed they open this view, and this tab carries its own running/unread badge.";
 
 /**
  * The status contract does not project whether the thread is settled, so a
@@ -891,6 +892,21 @@ export function describeNavigationReceipt(receipt: UiNavigationReceipt): string 
       return "That thread is in another project";
     case "surface-not-found":
       return "Agents is not available on that thread";
+  }
+}
+
+/** One line for an `openAgentSession` receipt; refusals keep their closed reason. */
+export function describeAgentSessionReceipt(receipt: UiNavigationSessionReceipt): string {
+  if (receipt.status === "opened") return "Opened";
+  switch (receipt.reason) {
+    case "unknown-thread":
+      return "This thread no longer exists";
+    case "unknown-agent":
+      return "That agent is no longer on this thread";
+    case "no-session":
+      return "That agent has no session page";
+    case "opener-refused":
+      return "This client could not open the session page";
   }
 }
 

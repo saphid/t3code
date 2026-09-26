@@ -5,6 +5,13 @@ import {
   setActiveExtensionThreadRef,
 } from "../extensions/extensionCommandRegistry";
 import { InstalledExtensionMenu } from "../extensions/InstalledExtensionMenu";
+import { useInstalledExtensions } from "../extensions/installedEnvironment";
+import {
+  AGENTS_PACK_SURFACE_ID,
+  findInstalledThreadSurface,
+  isAgentsRosterSurface,
+  openInstalledSurface,
+} from "../extensions/installedSurfaceOpen";
 import {
   assertContextBudget,
   readContextSnapshots,
@@ -3999,10 +4006,43 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
   }, [activeProject, activeThreadRef]);
+  // With the Agents pack installed, every native Agents entry point (spawn CTA
+  // rows, the empty-state card behind the header badge) opens the pack's
+  // roster, so there is one Agents surface per thread, not two.
+  const installedExtensions = useInstalledExtensions(activeThreadRef?.environmentId ?? null);
+  const agentsPackSurface = useMemo(
+    () =>
+      activeProject
+        ? findInstalledThreadSurface(
+            installedExtensions.installations,
+            AGENTS_PACK_SURFACE_ID,
+            activeProject.id,
+            isElectron ? "desktop" : "web",
+          )
+        : null,
+    [activeProject, installedExtensions.installations],
+  );
   const addAgentsSurface = useCallback(() => {
     if (!activeThreadRef) return;
+    if (
+      agentsPackSurface &&
+      activeProject &&
+      openInstalledSurface(
+        { environmentId: activeThreadRef.environmentId, client: isElectron ? "desktop" : "web" },
+        activeThreadRef,
+        agentsPackSurface.installationId,
+        agentsPackSurface.surface,
+        "side-panel",
+        {
+          projectId: activeProject.id,
+          workspaceRoot: activeProject.workspaceRoot,
+          worktreePath: activeThreadWorktreePath,
+        },
+      )
+    )
+      return;
     useRightPanelStore.getState().open(activeThreadRef, "agents");
-  }, [activeThreadRef]);
+  }, [activeProject, activeThreadRef, activeThreadWorktreePath, agentsPackSurface]);
   const supportsThreadPullRequests =
     serverConfig?.environment.capabilities.threadPullRequests === true;
   const visiblePullRequests = visibleThreadPullRequests(
@@ -9085,7 +9125,9 @@ export default function ChatView(props: ChatViewProps) {
       // Suppressed while the Agents surface is visible: the roster itself is
       // on screen, so the toggle badge would be pointing at nothing.
       liveAgentCount={
-        rightPanelOpen && activeRightPanelSurface?.kind === "agents" ? 0 : agentPanelModel.liveCount
+        rightPanelOpen && isAgentsRosterSurface(activeRightPanelSurface)
+          ? 0
+          : agentPanelModel.liveCount
       }
       onToggleTerminal={toggleTerminalVisibility}
       onToggleRightPanel={toggleRightPanel}

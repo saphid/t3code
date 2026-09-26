@@ -1,4 +1,9 @@
-import { EnvironmentId, ProjectId, type ClientProviderServerFrame } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ThreadId,
+  type ClientProviderServerFrame,
+} from "@t3tools/contracts";
 import type { HostApiRootAuthority } from "@t3tools/extension-runtime";
 import { createExtensionRuntime } from "@t3tools/extension-runtime";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
@@ -155,6 +160,7 @@ it.effect(
               clientApiProviders,
               authorizeGrant: () => Promise.resolve(true),
               resolveThreadProject: () => Promise.resolve(null),
+              readThreadAgentSessions: () => Promise.resolve(null),
             }),
             authorize: (installation, grant, invokeContext) =>
               installation.grants.capabilities.includes(grant) &&
@@ -330,6 +336,7 @@ it.effect("t3.ui/external open is denied without its grant and opened with it", 
             clientApiProviders,
             authorizeGrant: () => Promise.resolve(true),
             resolveThreadProject: () => Promise.resolve(null),
+            readThreadAgentSessions: () => Promise.resolve(null),
           }),
           authorize: (installation, grant) => installation.grants.capabilities.includes(grant),
         }),
@@ -407,11 +414,18 @@ it.effect("t3.ui/navigation openThread is grant-gated and project-scoped", () =>
         Effect.gen(function* () {
           if (frame.type !== "invoke") return;
           frames.push(frame.input);
-          const { threadId, surfaceId } = frame.input as { threadId: string; surfaceId?: string };
+          const { threadId, surfaceId, agentId } = frame.input as {
+            threadId?: string;
+            surfaceId?: string;
+            agentId?: string;
+          };
           yield* clientApiProviders.respond("conn-x", {
             requestId: frame.requestId,
             ok: true,
-            value: { status: "opened", threadId, ...(surfaceId ? { surfaceId } : {}) },
+            value:
+              frame.method === "openSession"
+                ? { status: "opened", agentId: agentId!, opener: "browser-window" }
+                : { status: "opened", threadId: threadId!, ...(surfaceId ? { surfaceId } : {}) },
           });
         }),
       ),
@@ -446,6 +460,12 @@ it.effect("t3.ui/navigation openThread is grant-gated and project-scoped", () =>
             clientApiProviders,
             authorizeGrant: () => Promise.resolve(true),
             resolveThreadProject: (threadId) => Promise.resolve(threadProjects[threadId] ?? null),
+            readThreadAgentSessions: (threadId) =>
+              Promise.resolve(
+                threadId === "thread-a"
+                  ? [{ id: "workflow-1", sessionUrl: "https://claude.ai/code/session_1" }]
+                  : null,
+              ),
           }),
           authorize: (installation, grant, invokeContext) =>
             installation.grants.capabilities.includes(grant) &&
@@ -505,6 +525,57 @@ it.effect("t3.ui/navigation openThread is grant-gated and project-scoped", () =>
         expect(frames).toEqual([
           { target: { kind: "self" }, threadId: "thread-b", surfaceId: "test.navigation/view" },
         ]);
+        // Opening an agent's session page is its own capability: the thread
+        // navigation grant does not carry it.
+        const threadContext: ViewContext = {
+          ...context,
+          resource: { ...context.resource, threadId: ThreadId.make("thread-a") },
+        };
+        const openAgentSession = (agentId: string) =>
+          runtime.invokeApi(
+            installed.id,
+            installed.contentHash,
+            {
+              id: "t3.ui/navigation",
+              versionRange: "^1.0.0",
+              method: "openAgentSession",
+              input: { agentId },
+              context: threadContext,
+              clientConnectionId: "conn-x",
+            },
+            new AbortController().signal,
+            root,
+          );
+        yield* Effect.promise(() =>
+          expect(openAgentSession("workflow-1")).rejects.toThrow(
+            "API capability denied: t3.ui/navigation.open-session",
+          ),
+        );
+        yield* Effect.promise(() =>
+          runtime.updateGrants(installed.id, {
+            capabilities: ["t3.ui/navigation.open-session"],
+            projectIds: ["project-a"],
+          }),
+        );
+        yield* Effect.promise(() =>
+          expect(openAgentSession("nobody")).resolves.toEqual({
+            status: "refused",
+            reason: "unknown-agent",
+          }),
+        );
+        expect(frames).toHaveLength(1);
+        yield* Effect.promise(() =>
+          expect(openAgentSession("workflow-1")).resolves.toEqual({
+            status: "opened",
+            agentId: "workflow-1",
+            opener: "browser-window",
+          }),
+        );
+        expect(frames.at(-1)).toEqual({
+          target: { kind: "self" },
+          agentId: "workflow-1",
+          url: "https://claude.ai/code/session_1",
+        });
       } finally {
         yield* Effect.promise(() => runtime.dispose());
       }

@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId, type ProjectId, type ScopedThreadRef } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ClientProviderEmitEvent } from "@t3tools/contracts";
 import { BROWSER_CAPTURE_ARTIFACT_REF_PATTERN } from "@t3tools/extension-sdk/catalogue";
@@ -6,10 +6,12 @@ import {
   checkExternalUrl,
   UI_EXTERNAL_OPEN,
   UI_NAVIGATION_OPEN,
+  UI_NAVIGATION_OPEN_SESSION,
   type UiNavigationReceipt,
+  type UiNavigationSessionReceipt,
   type UiNavigationRefusalReason,
 } from "@t3tools/extension-sdk/catalogue";
-import type { Json, SurfaceDescriptor } from "@t3tools/extension-sdk/contracts";
+import type { Json } from "@t3tools/extension-sdk/contracts";
 import {
   applyThemeColorPreview,
   transferThemePreviewOwner,
@@ -33,12 +35,11 @@ import {
 import { toastManager, type ThreadToastData } from "../components/ui/toast";
 import { terminalThemeFromApp } from "../components/ThreadTerminalDrawer";
 import {
-  extensionPanelSurface,
   selectThreadExtensionDock,
   selectThreadRightPanelState,
   useRightPanelStore,
 } from "../rightPanelStore";
-import { installedSurfaceRecord, installedWorkspaceContext } from "./installedContext";
+import { openInstalledSurface } from "./installedSurfaceOpen";
 import { readProject, readThreadShell } from "../state/entities";
 import { useComposerDraftStore, type ComposerImageAttachment } from "../composerDraftStore";
 import { fetchBrowserCaptureArtifact } from "../browser/browserCaptureArtifacts";
@@ -563,51 +564,6 @@ function installationSurface(deps: ClientProviderDeps, installationId: string, s
   if (!installation || !surface)
     throw new ClientProviderOpError("panel-surface-not-found", "Unknown extension surface");
   return { installation, surface };
-}
-
-/**
- * Opens an installation's surface on a thread the way the Open menu does: an
- * identical live surface is activated, a changed record replaces it. False
- * when the store refuses the record.
- */
-function openInstalledSurface(
-  deps: Pick<ClientProviderDeps, "environmentId" | "client">,
-  ref: ScopedThreadRef,
-  installationId: string,
-  surface: SurfaceDescriptor,
-  placement: "side-panel" | "bottom-dock",
-  scope: { projectId: ProjectId; workspaceRoot: string; worktreePath: string | null },
-): boolean {
-  const store = useRightPanelStore.getState();
-  const context = installedWorkspaceContext({
-    environmentId: deps.environmentId,
-    projectId: scope.projectId,
-    threadId: ref.threadId,
-    projectWorkspaceRoot: scope.workspaceRoot,
-    threadWorktreePath: scope.worktreePath,
-    client: deps.client,
-  });
-  const record = installedSurfaceRecord(installationId, surface, placement, context);
-  const requested = extensionPanelSurface(ref, record);
-  if (!requested) return false;
-  const layout =
-    placement === "bottom-dock"
-      ? selectThreadExtensionDock(store.extensionDockByThreadKey, ref)
-      : selectThreadRightPanelState(store.byThreadKey, ref);
-  const existing = layout.surfaces.find((entry) => entry.id === requested.id);
-  if (
-    existing?.kind === "extension" &&
-    existing.record.version === requested.record.version &&
-    existing.record.stateVersion === requested.record.stateVersion &&
-    existing.record.placement === requested.record.placement &&
-    existing.record.context.client === requested.record.context.client &&
-    existing.record.context.workspaceRevision === requested.record.context.workspaceRevision
-  ) {
-    if (placement === "bottom-dock") store.activateDockExtension(ref, existing.id);
-    else store.activateSurface(ref, existing.id);
-    return true;
-  }
-  return store.openExtension(ref, record);
 }
 
 export function createPanelsClientProvider(deps: ClientProviderDeps): ClientLocalProvider {
@@ -1299,9 +1255,27 @@ const refused = (reason: UiNavigationRefusalReason): UiNavigationReceipt => ({
 export function createNavigationClientProvider(
   deps: ClientProviderDeps,
   navigate: ThreadNavigator,
+  opener: () => ExternalOpener | undefined = localExternalOpener,
 ): ClientLocalProvider {
   return {
-    async invoke(call): Promise<UiNavigationReceipt> {
+    async invoke(call): Promise<UiNavigationReceipt | UiNavigationSessionReceipt> {
+      if (call.method === "openSession") {
+        authorizeCaller(deps, call.caller, call.context, [UI_NAVIGATION_OPEN_SESSION]);
+        // The adapter resolved this URL from the caller's own thread roster;
+        // the client still refuses anything its external opener would.
+        const input = readInputObject(call.input);
+        const agentId = readInputString(input, "agentId")!;
+        const checked = checkExternalUrl(readInputString(input, "url")!);
+        if (!checked.ok) return { status: "refused", reason: "no-session" };
+        const target = opener();
+        if (!target) return { status: "refused", reason: "opener-refused" };
+        try {
+          await target.open(checked.url);
+        } catch {
+          return { status: "refused", reason: "opener-refused" };
+        }
+        return { status: "opened", agentId, opener: target.kind };
+      }
       const installation = authorizeCaller(deps, call.caller, call.context, [UI_NAVIGATION_OPEN]);
       if (call.method !== "openThread")
         throw new ClientProviderOpError(
