@@ -85,7 +85,7 @@ import {
 } from "./viewModel.js";
 
 const manifestId = "t3.files";
-const PREVIEW_ASSET_PATH = "assets/asset-fixture.png";
+const PACKAGE_ASSET_PATH = "assets/asset-fixture.png";
 const SEARCH_LIMIT = 100;
 const SEARCH_DEBOUNCE_MS = 150;
 
@@ -194,7 +194,7 @@ function usePackageAsset(host: ClientHost, session: ViewSession, visible: boolea
     void (async () => {
       try {
         if (!host.readAsset) throw new Error("This host cannot load package assets.");
-        const result = await host.readAsset(PREVIEW_ASSET_PATH, signal);
+        const result = await host.readAsset(PACKAGE_ASSET_PATH, signal);
         if (signal.aborted) return;
         url = URL.createObjectURL(new Blob([result.bytes as BlobPart], { type: "image/png" }));
         setAsset({
@@ -2232,7 +2232,7 @@ export default defineExtension({
   id: manifestId,
   version: "0.7.0",
   provides: [filePresentationApi.definition],
-  assets: [{ path: PREVIEW_ASSET_PATH, mediaType: "application/octet-stream" }],
+  assets: [{ path: PACKAGE_ASSET_PATH, mediaType: "application/octet-stream" }],
   serverEntry: "server.ts",
   requires: [
     requireApi(workspaceTreeApi),

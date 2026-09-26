@@ -686,7 +686,7 @@ function TerminalPane(props: {
         beforeKey: (event) => handleBeforeKey(event, panel, terminalId),
         onLinkActivate: () => {
           // Detection and hover still work; opening needs host contracts
-          // (t3.browser/control for URLs B1/B3, t3.file/open for paths) that
+          // (t3.browser/control for URLs, t3.file/open for paths) that
           // no host provider ships yet — say so instead of silently dropping.
           if (surface) {
             writeSystemMessage(surface, "Opening links is unavailable in this extension host.");

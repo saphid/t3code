@@ -1049,7 +1049,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   NodeTest.it(
     "default line retention cannot migrate an evicted query's claim — mount in the gap",
     async () => {
-      // Same r8 line-eviction repro, opposite mount order: the renderer
+      // Same line-eviction case, opposite mount order: the renderer
       // attaches inside the beginStream→snapshot gap; the epoch fence
       // holds the claim, then the resnapshot's contentsUnitStart=5 proves
       // the query's absolute position is gone — the claim drops.

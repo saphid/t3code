@@ -132,7 +132,7 @@ NodeTest.describe("history traversal", () => {
   });
 
   NodeTest.it("lease urls stay in the nav stack but never list as targets", () => {
-    // review-gap-browser-landing-1 F2: a minted workspace-file url expires
+    // A minted workspace-file url expires
     // with its token — clicking it later opens a guaranteed 404. It must be
     // filtered from the rendered list while remaining in history so
     // back/forward and currentUrl keep matching the session's traversal.

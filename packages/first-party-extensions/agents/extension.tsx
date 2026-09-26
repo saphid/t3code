@@ -1127,7 +1127,7 @@ function DiffViewPane(props: { readonly view: DiffView }) {
 }
 
 // ---------------------------------------------------------------------------
-// Scripts (unchanged behavior — row 18 glue from the agents-shell merge)
+// Scripts
 // ---------------------------------------------------------------------------
 
 async function runScript(
