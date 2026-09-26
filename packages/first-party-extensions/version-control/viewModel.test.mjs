@@ -3,7 +3,12 @@ import * as NodeTest from "node:test";
 import {
   COMMIT_FOLLOW_UP,
   FOLLOW_UP_ACTION_ID,
+  PUBLISH_PROVIDERS,
+  describePublishResult,
+  planPublish,
   postFollowUpReceipt,
+  publishOffer,
+  publishProviderOption,
   stackedChooserReason,
   stackedFollowUp,
   CHANGE_LANES,
@@ -738,6 +743,117 @@ NodeTest.describe("vcs view model — push gating", () => {
     NodeAssert.equal(
       pushState(clean, remote({ aheadCount: 0 })).disabled,
       "No local commits to push",
+    );
+  });
+});
+
+NodeTest.describe("vcs view model — publish repository", () => {
+  NodeTest.it("offers publish on a repository with no primary remote", () => {
+    NodeAssert.deepEqual(publishOffer(local({ hasPrimaryRemote: false })), {
+      offered: true,
+      disabled: null,
+    });
+  });
+
+  NodeTest.it("hides the offer once an origin remote exists — native's menu condition", () => {
+    NodeAssert.deepEqual(publishOffer(local({ hasPrimaryRemote: true })), {
+      offered: false,
+      disabled: null,
+    });
+  });
+
+  NodeTest.it("hides the offer on a non-repository or before status arrives", () => {
+    NodeAssert.equal(publishOffer(null).offered, false);
+    NodeAssert.equal(publishOffer(local({ isRepo: false, refName: null })).offered, false);
+  });
+
+  NodeTest.it(
+    "disables rather than hides on detached HEAD — the push half would strand a created repo",
+    () => {
+      NodeAssert.deepEqual(publishOffer(local({ refName: null })), {
+        offered: true,
+        disabled: "Detached HEAD — checkout a ref before publishing",
+      });
+    },
+  );
+
+  NodeTest.it(
+    "still offers publish with a dirty tree — publish pushes commits, not the working tree",
+    () => {
+      NodeAssert.equal(publishOffer(local({ hasWorkingTreeChanges: true })).disabled, null);
+    },
+  );
+
+  NodeTest.it("offers every concrete provider; unknown is never a publish target", () => {
+    NodeAssert.deepEqual(
+      PUBLISH_PROVIDERS.map((option) => option.value),
+      ["github", "gitlab", "azure-devops", "bitbucket", "forgejo"],
+    );
+    NodeAssert.equal(publishProviderOption("github").label, "GitHub");
+    // An out-of-catalogue kind still resolves to an option rather than crashing the form.
+    NodeAssert.equal(publishProviderOption("unknown").value, "github");
+  });
+
+  NodeTest.it("parses owner/name like the native dialog — nested groups keep the tail", () => {
+    NodeAssert.deepEqual(planPublish({ repository: "owner/repo", remoteName: "origin" }), {
+      disabled: null,
+      repository: "owner/repo",
+      remoteName: "origin",
+    });
+    NodeAssert.deepEqual(
+      planPublish({ repository: "  group/sub/repo  ", remoteName: "upstream" }),
+      { disabled: null, repository: "group/sub/repo", remoteName: "upstream" },
+    );
+  });
+
+  NodeTest.it("blocks submit until the repository parses as owner/name", () => {
+    for (const repository of ["", "   ", "noslash", "/repo", "owner/", "owner/  "]) {
+      const plan = planPublish({ repository, remoteName: "origin" });
+      NodeAssert.equal(plan.repository, null, repository);
+      NodeAssert.equal(plan.disabled, "Enter a repository as owner/name");
+    }
+  });
+
+  NodeTest.it("defaults a blank remote name to origin, matching native", () => {
+    const plan = planPublish({ repository: "owner/repo", remoteName: "   " });
+    NodeAssert.equal(plan.disabled, null);
+    NodeAssert.equal(plan.remoteName, "origin");
+  });
+
+  NodeTest.it("describes a pushed publish with the real remote and branch", () => {
+    NodeAssert.equal(
+      describePublishResult({
+        repository: {
+          provider: "github",
+          nameWithOwner: "octo/hello",
+          url: "https://github.com/octo/hello",
+          sshUrl: "git@github.com:octo/hello.git",
+        },
+        remoteName: "origin",
+        remoteUrl: "git@github.com:octo/hello.git",
+        branch: "main",
+        upstreamBranch: "origin/main",
+        status: "pushed",
+      }),
+      "Published octo/hello (https://github.com/octo/hello) — pushed main to origin",
+    );
+  });
+
+  NodeTest.it("describes remote_added as the partial it is — nothing pushed yet", () => {
+    NodeAssert.equal(
+      describePublishResult({
+        repository: {
+          provider: "gitlab",
+          nameWithOwner: "grp/proj",
+          url: "https://gitlab.com/grp/proj",
+          sshUrl: "git@gitlab.com:grp/proj.git",
+        },
+        remoteName: "origin-1",
+        remoteUrl: "git@gitlab.com:grp/proj.git",
+        branch: "main",
+        status: "remote_added",
+      }),
+      'Created grp/proj (https://gitlab.com/grp/proj) — remote "origin-1" added; commit and push to share code',
     );
   });
 });
