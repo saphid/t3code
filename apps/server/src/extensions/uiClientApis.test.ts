@@ -57,6 +57,11 @@ function fakeBridge(options?: {
           url: (request.input as { url: string }).url,
           opener: "desktop-shell",
         });
+      if (request.method === "openThread")
+        return Effect.succeed({
+          status: "opened",
+          threadId: (request.input as { threadId: string }).threadId,
+        });
       if (request.method === "registerCommands") {
         const commands = (request.input as { commands: { id: string }[] }).commands;
         return Effect.succeed({
@@ -123,6 +128,12 @@ const metadata = (
   ...(principal ? { principal } : {}),
 });
 
+const THREAD_PROJECTS: Record<string, string> = {
+  "thread-a": "project-a",
+  "thread-b": "project-a",
+  "thread-other": "project-b",
+};
+
 function makeProviders(
   bridge: ReturnType<typeof fakeBridge>,
   authorizeGrant?: () => Promise<boolean>,
@@ -131,6 +142,7 @@ function makeProviders(
     environmentId: ENV,
     clientApiProviders: bridge.service,
     authorizeGrant: authorizeGrant ?? (() => Promise.resolve(true)),
+    resolveThreadProject: (threadId) => Promise.resolve(THREAD_PROJECTS[threadId] ?? null),
   });
   const byId = (providerId: string): HostApiProvider =>
     providers.find((provider) => provider.providerId === providerId)!;
@@ -141,6 +153,7 @@ function makeProviders(
     panels: byId("host.ui.panels"),
     preferences: byId("host.ui.preferences"),
     external: byId("host.ui.external"),
+    navigation: byId("host.ui.navigation"),
   };
 }
 
@@ -264,6 +277,68 @@ describe("external adapter", () => {
         },
       },
     ]);
+  });
+});
+
+describe("navigation adapter", () => {
+  it("refuses unknown and cross-project threads without reaching a client", async () => {
+    const bridge = fakeBridge();
+    const { navigation } = makeProviders(bridge);
+    const open = (threadId: string) =>
+      navigation.invoke("openThread", { threadId }, context, signal, metadata());
+    await expect(open("thread-gone")).resolves.toEqual({
+      status: "refused",
+      reason: "unknown-thread",
+    });
+    await expect(open("thread-other")).resolves.toEqual({
+      status: "refused",
+      reason: "out-of-scope",
+    });
+    // A context without a project scope has no thread it may steer to.
+    const unscoped = {
+      ...context,
+      resource: { namespace: "t3.extensions", id: "ext.a", environmentId: ENV },
+    } as ViewContext;
+    await expect(
+      navigation.invoke("openThread", { threadId: "thread-b" }, unscoped, signal, metadata()),
+    ).resolves.toEqual({ status: "refused", reason: "out-of-scope" });
+    expect(bridge.invoked).toHaveLength(0);
+  });
+
+  it("forwards a same-project thread and surface to the caller's own client", async () => {
+    const bridge = fakeBridge();
+    const { navigation } = makeProviders(bridge);
+    await expect(
+      navigation.invoke(
+        "openThread",
+        { threadId: "thread-b", surfaceId: "ext.a/view" },
+        context,
+        signal,
+        metadata(),
+      ),
+    ).resolves.toEqual({ status: "opened", threadId: "thread-b" });
+    expect(bridge.invoked).toEqual([
+      {
+        connectionId: "conn-1",
+        apiId: "t3.client/navigation",
+        method: "openThread",
+        input: {
+          target: { kind: "connection", connectionId: "conn-1" },
+          threadId: "thread-b",
+          surfaceId: "ext.a/view",
+        },
+      },
+    ]);
+  });
+
+  it("reports openThread availability through getCapabilities", async () => {
+    const { navigation } = makeProviders(fakeBridge());
+    await expect(
+      navigation.invoke("getCapabilities", {}, context, signal, metadata()),
+    ).resolves.toMatchObject({
+      adapter: "host.ui.navigation",
+      operations: { openThread: true },
+    });
   });
 });
 

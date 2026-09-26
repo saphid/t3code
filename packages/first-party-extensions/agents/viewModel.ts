@@ -29,6 +29,7 @@ import type {
   PendingApproval,
   RuntimeSubagent,
   RuntimeSubagentStatus,
+  UiNavigationReceipt,
   UserInputQuestion,
   VcsDiffPreviewStreamEvent,
   VcsDiffStreamSource,
@@ -402,7 +403,7 @@ export const DEFERRED_SECTIONS: readonly DeferredSection[] = [
     blocker: "no native binding exists to extract — net-new design, not fakeable",
   },
   {
-    title: "Agent logs and session deep links",
+    title: "Agent logs and output files",
     blocker: "no native web/desktop binding exists — net-new design",
   },
   {
@@ -422,7 +423,7 @@ export const SCRIPTS_SCOPE_NOTE =
 
 /** The host-rendered half of Agents navigation, stated where a user would look for it. */
 export const HOST_CHROME_NOTE =
-  "The chat badge and spawn CTA rows are host chat UI a plugin cannot install; this surface is the plugin-owned half of Agents navigation.";
+  "The chat toggle badge and spawn CTA rows are host chat UI a plugin cannot install; this tab carries its own running/unread badge.";
 
 /**
  * The status contract does not project whether the thread is settled, so a
@@ -828,6 +829,69 @@ export function deriveAgentsPanelModel(agents: readonly RuntimeSubagent[]): Agen
     hasAgents: true,
     liveCount: runningCount + waitingCount,
   };
+}
+
+// --- Tab badge + deep link ------------------------------------------------
+
+export type AgentsTabBadge = { readonly kind: "running" | "unread"; readonly count?: number };
+
+/** Roster ids that count as work: workflow coordinators with members are containers. */
+function workIds(agents: readonly RuntimeSubagent[]): ReadonlySet<string> {
+  const containers = new Set(
+    agents.flatMap((agent) =>
+      agent.kind !== "workflow" && agent.parentAgentId !== null ? [agent.parentAgentId] : [],
+    ),
+  );
+  return new Set(
+    agents
+      .filter((agent) => !(agent.kind === "workflow" && containers.has(agent.id)))
+      .map((agent) => agent.id),
+  );
+}
+
+/** Finished work on screen right now — the mark `agentsTabBadge` counts unread against. */
+export function finishedAgentIds(agents: readonly RuntimeSubagent[]): ReadonlySet<string> {
+  const work = workIds(agents);
+  return new Set(
+    agents
+      .filter((agent) => work.has(agent.id) && isTerminalAgentStatus(agent.status))
+      .map((agent) => agent.id),
+  );
+}
+
+/**
+ * The host-rendered tab badge. While work is live it counts it the way the
+ * native toggle badge does (running + waiting); otherwise work that finished
+ * since the view was last on screen reads as unread. Null clears the badge.
+ */
+export function agentsTabBadge(
+  agents: readonly RuntimeSubagent[],
+  seenFinished: ReadonlySet<string>,
+): AgentsTabBadge | null {
+  const live = deriveAgentsPanelModel(agents).liveCount;
+  if (live > 0) return { kind: "running", count: Math.min(live, 999) };
+  let unread = 0;
+  for (const id of finishedAgentIds(agents)) if (!seenFinished.has(id)) unread += 1;
+  return unread > 0 ? { kind: "unread", count: Math.min(unread, 999) } : null;
+}
+
+/** The other thread whose plan this turn implements, or null. */
+export function planSourceThreadId(state: AgentsState | null, ownThreadId: string | undefined) {
+  const source = state?.turn?.sourceProposedPlan?.threadId;
+  return source && source !== ownThreadId ? source : null;
+}
+
+/** One line for a `t3.ui/navigation` receipt; refusals keep their closed reason. */
+export function describeNavigationReceipt(receipt: UiNavigationReceipt): string {
+  if (receipt.status === "opened") return "Opened";
+  switch (receipt.reason) {
+    case "unknown-thread":
+      return "That thread no longer exists";
+    case "out-of-scope":
+      return "That thread is in another project";
+    case "surface-not-found":
+      return "Agents is not available on that thread";
+  }
 }
 
 // --- Stream fold -----------------------------------------------------------

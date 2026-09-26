@@ -1,9 +1,14 @@
+import { useEffect } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { expect, it } from "vite-plus/test";
 import type { Extension, ViewSession } from "@t3tools/extension-sdk/host";
 import type { SurfaceRenderer } from "@t3tools/extension-sdk/react";
 import type { ViewRecord } from "@t3tools/extension-sdk/contracts";
-import { extensionTabKey, useExtensionTabIndicators } from "./extensionTabIndicators";
+import {
+  extensionTabKey,
+  setExtensionTabIndicators,
+  useExtensionTabIndicators,
+} from "./extensionTabIndicators";
 import { registerWorkspaceExtension, WorkspaceExtensionSurface } from "./workspaceRegistry";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -94,6 +99,52 @@ it("carries a view's tab indicators to the tab strip, through hiding, until unmo
     await act(async () => {
       root?.unmount();
       unregister();
+    });
+  }
+});
+
+it("republishes a badge only when its kind or count changes", async () => {
+  const key = "badge.test/view\nkey";
+  let renders = 0;
+  function Tab() {
+    const indicators = useExtensionTabIndicators(key);
+    useEffect(() => {
+      renders += 1;
+    });
+    return <output>{JSON.stringify(indicators?.badge ?? null)}</output>;
+  }
+  let root!: ReactTestRenderer;
+  await act(async () => {
+    root = create(<Tab />);
+  });
+  const text = () => root.root.findByType("output").children.join("");
+  try {
+    await act(async () => {
+      setExtensionTabIndicators(key, { badge: { kind: "running", count: 2 } });
+    });
+    expect(JSON.parse(text())).toEqual({ kind: "running", count: 2 });
+    const settled = renders;
+    // An identical event-driven republish is not a render.
+    await act(async () => {
+      setExtensionTabIndicators(key, { badge: { kind: "running", count: 2 } });
+    });
+    expect(renders).toBe(settled);
+    await act(async () => {
+      setExtensionTabIndicators(key, { badge: { kind: "running", count: 3 } });
+    });
+    expect(JSON.parse(text())).toEqual({ kind: "running", count: 3 });
+    await act(async () => {
+      setExtensionTabIndicators(key, { badge: { kind: "unread", count: 3 } });
+    });
+    expect(JSON.parse(text())).toEqual({ kind: "unread", count: 3 });
+    await act(async () => {
+      setExtensionTabIndicators(key, {});
+    });
+    expect(text()).toBe("null");
+  } finally {
+    await act(async () => {
+      setExtensionTabIndicators(key, null);
+      root.unmount();
     });
   }
 });

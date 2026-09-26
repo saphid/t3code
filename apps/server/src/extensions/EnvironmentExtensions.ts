@@ -18,6 +18,7 @@ import {
   type ExtensionInstallInput,
   type ExtensionManageInput,
   type ExtensionInvokeInput,
+  ThreadId,
 } from "@t3tools/contracts";
 import {
   createExtensionRuntime,
@@ -34,6 +35,7 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -157,6 +159,15 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
       const entry = extensionRuntime?.list().find((item) => item.id === installationId);
       return entry !== undefined && (await authorize(entry, grant, context));
     },
+    resolveThreadProject: (threadId) =>
+      Effect.runPromise(
+        threads.getById({ threadId: ThreadId.make(threadId) }).pipe(
+          Effect.map((found) =>
+            Option.isSome(found) && found.value.deletedAt === null ? found.value.projectId : null,
+          ),
+          Effect.orElseSucceed(() => null),
+        ),
+      ),
   });
   // Same late-bound caller-chain grant check as the lease provider —
   // publishRepository and the composite's pr phase ask for `t3.prs/write`

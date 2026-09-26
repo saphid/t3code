@@ -1,0 +1,189 @@
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { EnvironmentId, ProjectId, ThreadId, type ClientProviderCaller } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { ViewContext } from "@t3tools/extension-sdk/contracts";
+import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
+import { createNavigationClientProvider } from "./clientProviders";
+import { ClientProviderOpError, type ClientProviderInvokeCall } from "./clientProviderTypes";
+import type { InstalledPackage } from "./installedController";
+
+const shells = vi.hoisted(
+  () => new Map<string, { projectId: string; worktreePath: string | null }>(),
+);
+vi.mock("../state/entities", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../state/entities")>()),
+  readThreadShell: (ref: { threadId: string }) => shells.get(ref.threadId) ?? null,
+  readProject: (ref: { projectId: string }) =>
+    ref.projectId.startsWith("project-") ? { workspaceRoot: `/work/${ref.projectId}` } : null,
+}));
+vi.mock("../components/ThreadTerminalDrawer", () => ({ terminalThemeFromApp: () => ({}) }));
+
+const ENV = "env-a";
+const INSTALL = "ext.a";
+const VIEW = `${INSTALL}/view`;
+const GRANT = "t3.ui/navigation.open";
+
+const caller: ClientProviderCaller = {
+  installationId: INSTALL,
+  contentHash: "hash-a",
+  installationGeneration: 1,
+};
+
+const context: ViewContext = {
+  client: "web",
+  resource: {
+    namespace: INSTALL,
+    id: VIEW,
+    environmentId: ENV,
+    projectId: "project-a",
+    threadId: "thread-a",
+  },
+};
+
+function installation(capabilities: readonly string[]): InstalledPackage {
+  const surface = (id: string, overrides: Record<string, unknown> = {}) => ({
+    id,
+    title: id,
+    placements: ["side-panel"],
+    clients: ["web", "desktop"],
+    scope: "thread",
+    capabilities: [],
+    stateVersion: 1,
+    ...overrides,
+  });
+  return {
+    id: INSTALL,
+    contentHash: "hash-a",
+    enabled: true,
+    installationGeneration: 1,
+    grants: {
+      capabilities: [...capabilities],
+      projectIds: [ProjectId.make("project-a"), ProjectId.make("project-b")],
+    },
+    package: {
+      manifest: {
+        id: INSTALL,
+        apiVersion: 1,
+        version: "1.0.0",
+        surfaces: [
+          surface(VIEW),
+          surface(`${INSTALL}/dock`, { placements: ["bottom-dock"] }),
+          surface(`${INSTALL}/project`, { scope: "project" }),
+          surface(`${INSTALL}/desktop`, { clients: ["desktop"] }),
+        ],
+      },
+    },
+  } as unknown as InstalledPackage;
+}
+
+function provider(capabilities: readonly string[] = [GRANT]) {
+  const navigate = vi.fn(async () => {});
+  const installed = installation(capabilities);
+  return {
+    navigate,
+    provider: createNavigationClientProvider(
+      {
+        environmentId: EnvironmentId.make(ENV),
+        client: "web",
+        emit: vi.fn(),
+        installations: () => [installed],
+      },
+      navigate,
+    ),
+  };
+}
+
+const openThread = (input: Record<string, unknown>): ClientProviderInvokeCall => ({
+  method: "openThread",
+  input: { target: { kind: "self" }, ...input } as ClientProviderInvokeCall["input"],
+  context,
+  caller,
+  signal: new AbortController().signal,
+});
+
+describe("navigation provider", () => {
+  beforeEach(() => {
+    shells.clear();
+    shells.set("thread-a", { projectId: "project-a", worktreePath: null });
+    shells.set("thread-b", { projectId: "project-a", worktreePath: "/work/tree-b" });
+    shells.set("thread-other", { projectId: "project-b", worktreePath: null });
+  });
+
+  it("rejects callers without the navigation grant before routing", async () => {
+    const { provider: denied, navigate } = provider([]);
+    await expect(denied.invoke(openThread({ threadId: "thread-b" }))).rejects.toBeInstanceOf(
+      ClientProviderOpError,
+    );
+    await expect(denied.invoke(openThread({ threadId: "thread-b" }))).rejects.toMatchObject({
+      code: "client-target-denied",
+    });
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("refuses unknown and cross-project threads by name, even when both are granted", async () => {
+    const { provider: granted, navigate } = provider();
+    await expect(granted.invoke(openThread({ threadId: "thread-gone" }))).resolves.toEqual({
+      status: "refused",
+      reason: "unknown-thread",
+    });
+    await expect(granted.invoke(openThread({ threadId: "thread-other" }))).resolves.toEqual({
+      status: "refused",
+      reason: "out-of-scope",
+    });
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("only opens the caller's own thread-scoped side-panel surfaces for this client", async () => {
+    const { provider: granted, navigate } = provider();
+    for (const surfaceId of [
+      "other.ext/view",
+      `${INSTALL}/missing`,
+      `${INSTALL}/dock`,
+      `${INSTALL}/project`,
+      `${INSTALL}/desktop`,
+    ])
+      await expect(
+        granted.invoke(openThread({ threadId: "thread-b", surfaceId })),
+      ).resolves.toEqual({ status: "refused", reason: "surface-not-found" });
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("routes to a same-project thread", async () => {
+    const { provider: granted, navigate } = provider();
+    await expect(granted.invoke(openThread({ threadId: "thread-b" }))).resolves.toEqual({
+      status: "opened",
+      threadId: "thread-b",
+    });
+    expect(navigate).toHaveBeenCalledWith(
+      scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-b")),
+    );
+  });
+
+  it("opens the caller's surface on the target thread before routing there", async () => {
+    const { provider: granted, navigate } = provider();
+    const ref = scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-b"));
+    navigate.mockImplementation(async () => {
+      // The panel is already in place when the route renders.
+      const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref);
+      expect(
+        panel.surfaces.some(
+          (surface) => surface.kind === "extension" && surface.record.surfaceId === VIEW,
+        ),
+      ).toBe(true);
+    });
+    await expect(
+      granted.invoke(openThread({ threadId: "thread-b", surfaceId: VIEW })),
+    ).resolves.toEqual({ status: "opened", threadId: "thread-b", surfaceId: VIEW });
+    expect(navigate).toHaveBeenCalledOnce();
+    const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref);
+    const opened = panel.surfaces.find(
+      (surface) => surface.kind === "extension" && surface.record.surfaceId === VIEW,
+    );
+    expect(opened?.kind === "extension" && opened.record.context.resource).toMatchObject({
+      namespace: INSTALL,
+      id: VIEW,
+      projectId: "project-a",
+      threadId: "thread-b",
+    });
+  });
+});

@@ -551,3 +551,30 @@ NodeTest.test(
     NodeAssert.equal(session.setTabIndicators({ audio: "audible" }), false);
   },
 );
+
+NodeTest.test("tab badges validate closed kind and bounded integer count", async () => {
+  const f = fixture();
+  const id = await f.host.open(record());
+  const [session] = f.sessions;
+  NodeAssert.equal(session.setTabIndicators({ badge: { kind: "running", count: 3 } }), true);
+  await Promise.resolve();
+  NodeAssert.deepEqual(f.host.snapshot(id).tab, { badge: { kind: "running", count: 3 } });
+  // Hidden views keep publishing: the badge is what a background tab is for.
+  f.host.hide(id);
+  NodeAssert.equal(session.setTabIndicators({ badge: { kind: "unread" } }), true);
+  await Promise.resolve();
+  NodeAssert.deepEqual(f.host.snapshot(id).tab, { badge: { kind: "unread" } });
+  for (const badge of [
+    null,
+    [],
+    { kind: "busy" },
+    { kind: "running", count: 0 },
+    { kind: "running", count: 1000 },
+    { kind: "running", count: 1.5 },
+    { kind: "running", count: "2" },
+    { kind: "running", tone: "red" },
+  ])
+    NodeAssert.throws(() => session.setTabIndicators({ badge }), /Tab badge/);
+  // A rejected publish leaves the last valid badge in place.
+  NodeAssert.deepEqual(f.host.snapshot(id).tab, { badge: { kind: "unread" } });
+});

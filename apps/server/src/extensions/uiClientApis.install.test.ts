@@ -154,6 +154,7 @@ it.effect(
               environmentId: ENV,
               clientApiProviders,
               authorizeGrant: () => Promise.resolve(true),
+              resolveThreadProject: () => Promise.resolve(null),
             }),
             authorize: (installation, grant, invokeContext) =>
               installation.grants.capabilities.includes(grant) &&
@@ -328,6 +329,7 @@ it.effect("t3.ui/external open is denied without its grant and opened with it", 
             environmentId: ENV,
             clientApiProviders,
             authorizeGrant: () => Promise.resolve(true),
+            resolveThreadProject: () => Promise.resolve(null),
           }),
           authorize: (installation, grant) => installation.grants.capabilities.includes(grant),
         }),
@@ -369,6 +371,140 @@ it.effect("t3.ui/external open is denied without its grant and opened with it", 
           opener: "browser-window",
         });
         expect(opened).toEqual(["https://example.com/"]);
+      } finally {
+        yield* Effect.promise(() => runtime.dispose());
+      }
+    } finally {
+      yield* Fiber.interrupt(driver);
+    }
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+/** A server-entry-only package that declares `t3.ui/navigation`. */
+const NAVIGATION_CONSUMER_MANIFEST =
+  '{"format":2,"manifest":{"id":"test.navigation","apiVersion":1,"version":"1.0.0","surfaces":[]},' +
+  '"serverEntry":"server.mjs","tools":[],"provides":[],' +
+  '"requires":[{"id":"t3.ui/navigation","versionRange":"^1.0.0"}],"dependencies":[]}';
+
+/**
+ * `t3.ui/navigation` through the real broker and connect stream: the grant
+ * gates the invoke by name, targets outside the caller's project or unknown
+ * threads refuse before any client frame, and a scoped target lands on the
+ * caller's own connection.
+ */
+it.effect("t3.ui/navigation openThread is grant-gated and project-scoped", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const clientApiProviders = yield* ClientApiProviders;
+    const frames: Json[] = [];
+    const stream = yield* clientApiProviders.connect(
+      { connectionId: "conn-x", sessionId: "session-a", announcedOrigin: { surface: "web" } },
+      { providers: [{ id: "t3.client/navigation", version: "1.0.0" }] },
+    );
+    const driver = yield* stream.pipe(
+      Stream.runForEach((frame: ClientProviderServerFrame) =>
+        Effect.gen(function* () {
+          if (frame.type !== "invoke") return;
+          frames.push(frame.input);
+          const { threadId, surfaceId } = frame.input as { threadId: string; surfaceId?: string };
+          yield* clientApiProviders.respond("conn-x", {
+            requestId: frame.requestId,
+            ok: true,
+            value: { status: "opened", threadId, ...(surfaceId ? { surfaceId } : {}) },
+          });
+        }),
+      ),
+      Effect.forkChild,
+    );
+    try {
+      const rootDir = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "ui-navigation-install-" }),
+      );
+      const source = path.join(rootDir, "source");
+      yield* fs.makeDirectory(source);
+      yield* fs.writeFileString(
+        path.join(source, "t3-extension.json"),
+        NAVIGATION_CONSUMER_MANIFEST,
+      );
+      yield* fs.writeFileString(
+        path.join(source, "server.mjs"),
+        "export default {tools:[],apis:[]};",
+      );
+      const threadProjects: Record<string, string> = {
+        "thread-a": "project-a",
+        "thread-b": "project-a",
+        "thread-other": "project-b",
+      };
+      const runtime = yield* Effect.promise(() =>
+        createExtensionRuntime({
+          rootDir: path.join(rootDir, "state"),
+          environmentId: ENV,
+          services: [],
+          apiProviders: createUiClientApiProviders({
+            environmentId: ENV,
+            clientApiProviders,
+            authorizeGrant: () => Promise.resolve(true),
+            resolveThreadProject: (threadId) => Promise.resolve(threadProjects[threadId] ?? null),
+          }),
+          authorize: (installation, grant, invokeContext) =>
+            installation.grants.capabilities.includes(grant) &&
+            installation.grants.projectIds.includes(invokeContext.resource.projectId ?? ""),
+        }),
+      );
+      try {
+        const installed = yield* Effect.promise(() =>
+          runtime.install(source, { capabilities: [], projectIds: ["project-a"] }),
+        );
+        const openThread = (input: Json) =>
+          runtime.invokeApi(
+            installed.id,
+            installed.contentHash,
+            {
+              id: "t3.ui/navigation",
+              versionRange: "^1.0.0",
+              method: "openThread",
+              input,
+              context,
+              clientConnectionId: "conn-x",
+            },
+            new AbortController().signal,
+            root,
+          );
+        yield* Effect.promise(() =>
+          expect(openThread({ threadId: "thread-b" })).rejects.toThrow(
+            "API capability denied: t3.ui/navigation.open",
+          ),
+        );
+        // Granted in both projects, the view is still scoped to its own.
+        yield* Effect.promise(() =>
+          runtime.updateGrants(installed.id, {
+            capabilities: ["t3.ui/navigation.open"],
+            projectIds: ["project-a", "project-b"],
+          }),
+        );
+        yield* Effect.promise(async () => {
+          await expect(openThread({ threadId: "thread-other" })).resolves.toEqual({
+            status: "refused",
+            reason: "out-of-scope",
+          });
+          await expect(openThread({ threadId: "thread-gone" })).resolves.toEqual({
+            status: "refused",
+            reason: "unknown-thread",
+          });
+        });
+        expect(frames).toEqual([]);
+        const receipt = yield* Effect.promise(() =>
+          openThread({ threadId: "thread-b", surfaceId: "test.navigation/view" }),
+        );
+        expect(receipt).toEqual({
+          status: "opened",
+          threadId: "thread-b",
+          surfaceId: "test.navigation/view",
+        });
+        expect(frames).toEqual([
+          { target: { kind: "self" }, threadId: "thread-b", surfaceId: "test.navigation/view" },
+        ]);
       } finally {
         yield* Effect.promise(() => runtime.dispose());
       }

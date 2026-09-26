@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { useAtomValue } from "@effect/atom-react";
+import { useRouter } from "@tanstack/react-router";
 import { createCatalogueRefreshQueue } from "./catalogueRefresh";
 import {
   createExtensionCatalogueAtoms,
@@ -69,6 +70,7 @@ import {
 import type { Json } from "@t3tools/extension-sdk/contracts";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { readThreadShell } from "../state/entities";
+import { buildThreadRouteParams } from "../threadRoutes";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 
 const decodeInvoke = Schema.decodeSync(ExtensionInvokeInput);
@@ -193,6 +195,7 @@ export async function installEnvironmentExtension(
   return result;
 }
 function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId }) {
+  const router = useRouter();
   const prepared = usePreparedConnection(environmentId);
   const installed = useInstalledExtensions(environmentId);
   const catalogue = useAtomValue(
@@ -206,12 +209,17 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
       return;
     }
     const connection = prepared.value;
-    const providers = createClientProviders({
-      environmentId,
-      client: CLIENT_PROVIDER_CLIENT_TAG,
-      emit: (correlationId, event) => emitClientProviderEvent(environmentId, correlationId, event),
-      installations: () => snapshots.get(environmentId)?.installations,
-    });
+    const providers = createClientProviders(
+      {
+        environmentId,
+        client: CLIENT_PROVIDER_CLIENT_TAG,
+        emit: (correlationId, event) =>
+          emitClientProviderEvent(environmentId, correlationId, event),
+        installations: () => snapshots.get(environmentId)?.installations,
+      },
+      (ref) =>
+        router.navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) }),
+    );
     const flushStagedCommands = async (signal: AbortSignal) => {
       const snapshot = snapshots.get(environmentId);
       if (!snapshot) return;
@@ -488,7 +496,7 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
         changed(environmentId, EMPTY_INSTALLED);
       }
     };
-  }, [environmentId, prepared]);
+  }, [environmentId, prepared, router]);
   useEffect(() => {
     if (catalogue._tag === "Success") void refreshInstalledExtensions(environmentId);
   }, [environmentId, catalogue]);

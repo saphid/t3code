@@ -18,7 +18,9 @@ export function extensionTabKey(record: Pick<ViewRecord, "surfaceId" | "context"
 const sameIndicators = (left: ViewTabIndicators | undefined, right: ViewTabIndicators | null) =>
   left?.pageUrl === right?.pageUrl &&
   left?.faviconDataUrl === right?.faviconDataUrl &&
-  left?.audio === right?.audio;
+  left?.audio === right?.audio &&
+  left?.badge?.kind === right?.badge?.kind &&
+  left?.badge?.count === right?.badge?.count;
 
 export function setExtensionTabIndicators(key: string, next: ViewTabIndicators | null): void {
   const current = indicators.get(key);

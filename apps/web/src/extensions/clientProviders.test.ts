@@ -1497,7 +1497,7 @@ describe("keybindings provider", () => {
 
   it("rejects callers without the keybindings grant and registers for granted ones", () => {
     configureExtensionCommandEnvironment(ENV, keybindingsDeps());
-    const providers = createClientProviders(makeDeps([]));
+    const providers = createClientProviders(makeDeps([]), async () => {});
     const denied = providers.get("t3.client/keybindings")!;
     expectDenied(() =>
       denied.invoke(
@@ -1506,7 +1506,7 @@ describe("keybindings provider", () => {
         }),
       ),
     );
-    const granted = createClientProviders(makeDeps(["t3.ui/keybindings"])).get(
+    const granted = createClientProviders(makeDeps(["t3.ui/keybindings"]), async () => {}).get(
       "t3.client/keybindings",
     )!;
     const registered = granted.invoke(

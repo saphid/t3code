@@ -23,6 +23,7 @@ import {
   clientPreferencesPatchSchema,
   clientPreferencesReceiptSchema,
   uiExternalOpenReceiptSchema,
+  uiNavigationReceiptSchema,
 } from "./clientProviders.js";
 
 export * from "./workspaceResources.js";
@@ -8339,10 +8340,68 @@ export const uiExternalApi = defineApi<{
   ],
 });
 
+export const UI_NAVIGATION = "t3.ui/navigation";
+export const UI_NAVIGATION_OPEN = "t3.ui/navigation.open";
+
+/**
+ * Closed refusal set: `unknown-thread` (no live thread by that id),
+ * `out-of-scope` (the thread is outside the caller's project), and
+ * `surface-not-found` (`surfaceId` is not one of the caller's own
+ * thread-scoped side-panel surfaces for this client).
+ */
+export type UiNavigationRefusalReason = "unknown-thread" | "out-of-scope" | "surface-not-found";
+
+export type UiNavigationReceipt =
+  | { readonly status: "opened"; readonly threadId: string; readonly surfaceId?: string }
+  | { readonly status: "refused"; readonly reason: UiNavigationRefusalReason };
+
+/**
+ * Moves the caller's own client to a thread in the caller's project, and
+ * optionally opens one of the caller's own surfaces there. The pack names a
+ * thread, never a URL or route; the host resolves and performs the
+ * navigation. A refusal is a typed receipt; a missing
+ * `t3.ui/navigation.open` grant fails the invoke.
+ */
+export const uiNavigationApi = defineApi<{
+  getCapabilities: { input: Record<string, never>; output: UiCapabilities };
+  openThread: {
+    input: { threadId: string; surfaceId?: string };
+    output: UiNavigationReceipt;
+  };
+}>({
+  id: UI_NAVIGATION,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: composerEmptyInputSchema,
+      outputSchema: uiCapabilitiesOutput(["openThread"]),
+    },
+    {
+      name: "openThread",
+      effect: "write",
+      requiredGrants: [UI_NAVIGATION_OPEN],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["threadId"],
+        properties: {
+          threadId: { type: "string", minLength: 1, maxLength: 128 },
+          surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+        },
+      },
+      outputSchema: uiNavigationReceiptSchema,
+    },
+  ],
+});
+
 export const UI_NOTIFICATIONS_API = uiNotificationsApi.definition;
 export const UI_PANELS_API = uiPanelsApi.definition;
 export const UI_PREFERENCES_API = uiPreferencesApi.definition;
 export const UI_EXTERNAL_API = uiExternalApi.definition;
+export const UI_NAVIGATION_API = uiNavigationApi.definition;
 
 /**
  * Contracts only: their presence does not advertise a functioning or
@@ -8393,6 +8452,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   uiPanelsApi.definition,
   uiPreferencesApi.definition,
   uiExternalApi.definition,
+  uiNavigationApi.definition,
 ];
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";

@@ -1,9 +1,15 @@
-import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type ProjectId, type ScopedThreadRef } from "@t3tools/contracts";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ClientProviderEmitEvent } from "@t3tools/contracts";
 import { BROWSER_CAPTURE_ARTIFACT_REF_PATTERN } from "@t3tools/extension-sdk/catalogue";
-import { checkExternalUrl, UI_EXTERNAL_OPEN } from "@t3tools/extension-sdk/catalogue";
-import type { Json } from "@t3tools/extension-sdk/contracts";
+import {
+  checkExternalUrl,
+  UI_EXTERNAL_OPEN,
+  UI_NAVIGATION_OPEN,
+  type UiNavigationReceipt,
+  type UiNavigationRefusalReason,
+} from "@t3tools/extension-sdk/catalogue";
+import type { Json, SurfaceDescriptor } from "@t3tools/extension-sdk/contracts";
 import {
   applyThemeColorPreview,
   transferThemePreviewOwner,
@@ -559,6 +565,51 @@ function installationSurface(deps: ClientProviderDeps, installationId: string, s
   return { installation, surface };
 }
 
+/**
+ * Opens an installation's surface on a thread the way the Open menu does: an
+ * identical live surface is activated, a changed record replaces it. False
+ * when the store refuses the record.
+ */
+function openInstalledSurface(
+  deps: Pick<ClientProviderDeps, "environmentId" | "client">,
+  ref: ScopedThreadRef,
+  installationId: string,
+  surface: SurfaceDescriptor,
+  placement: "side-panel" | "bottom-dock",
+  scope: { projectId: ProjectId; workspaceRoot: string; worktreePath: string | null },
+): boolean {
+  const store = useRightPanelStore.getState();
+  const context = installedWorkspaceContext({
+    environmentId: deps.environmentId,
+    projectId: scope.projectId,
+    threadId: ref.threadId,
+    projectWorkspaceRoot: scope.workspaceRoot,
+    threadWorktreePath: scope.worktreePath,
+    client: deps.client,
+  });
+  const record = installedSurfaceRecord(installationId, surface, placement, context);
+  const requested = extensionPanelSurface(ref, record);
+  if (!requested) return false;
+  const layout =
+    placement === "bottom-dock"
+      ? selectThreadExtensionDock(store.extensionDockByThreadKey, ref)
+      : selectThreadRightPanelState(store.byThreadKey, ref);
+  const existing = layout.surfaces.find((entry) => entry.id === requested.id);
+  if (
+    existing?.kind === "extension" &&
+    existing.record.version === requested.record.version &&
+    existing.record.stateVersion === requested.record.stateVersion &&
+    existing.record.placement === requested.record.placement &&
+    existing.record.context.client === requested.record.context.client &&
+    existing.record.context.workspaceRevision === requested.record.context.workspaceRevision
+  ) {
+    if (placement === "bottom-dock") store.activateDockExtension(ref, existing.id);
+    else store.activateSurface(ref, existing.id);
+    return true;
+  }
+  return store.openExtension(ref, record);
+}
+
 export function createPanelsClientProvider(deps: ClientProviderDeps): ClientLocalProvider {
   return {
     invoke(call) {
@@ -596,43 +647,14 @@ export function createPanelsClientProvider(deps: ClientProviderDeps): ClientLoca
           const project = readProject(scopeProjectRef(deps.environmentId, shell.projectId));
           if (!project)
             throw new ClientProviderOpError("panel-surface-not-found", "Unknown project");
-          const context = installedWorkspaceContext({
-            environmentId: deps.environmentId,
-            projectId: shell.projectId,
-            threadId,
-            projectWorkspaceRoot: project.workspaceRoot,
-            threadWorktreePath: shell.worktreePath ?? null,
-            client: deps.client,
-          });
-          // Mirrors the InstalledExtensionMenu open path: an identical live
-          // surface is activated; a changed record replaces it.
-          const record = installedSurfaceRecord(
-            call.caller.installationId,
-            surface,
-            placement,
-            context,
-          );
-          const requested = extensionPanelSurface(ref, record);
-          if (!requested)
-            throw new ClientProviderOpError("panel-surface-not-found", "Surface rejected");
-          const layout =
-            placement === "bottom-dock"
-              ? selectThreadExtensionDock(store.extensionDockByThreadKey, ref)
-              : selectThreadRightPanelState(store.byThreadKey, ref);
-          const existing = layout.surfaces.find((entry) => entry.id === requested.id);
           if (
-            existing?.kind === "extension" &&
-            existing.record.version === requested.record.version &&
-            existing.record.stateVersion === requested.record.stateVersion &&
-            existing.record.placement === requested.record.placement &&
-            existing.record.context.client === requested.record.context.client &&
-            existing.record.context.workspaceRevision === requested.record.context.workspaceRevision
-          ) {
-            if (placement === "bottom-dock") store.activateDockExtension(ref, existing.id);
-            else store.activateSurface(ref, existing.id);
-          } else if (!store.openExtension(ref, record)) {
+            !openInstalledSurface(deps, ref, call.caller.installationId, surface, placement, {
+              projectId: shell.projectId,
+              workspaceRoot: project.workspaceRoot,
+              worktreePath: shell.worktreePath ?? null,
+            })
+          )
             throw new ClientProviderOpError("panel-surface-not-found", "Surface could not open");
-          }
           return { surfaceId } as unknown as Json;
         }
         case "activateSurface":
@@ -1264,10 +1286,77 @@ export function createExternalClientProvider(
 }
 
 // ---------------------------------------------------------------------------
+// Navigation — route the caller's own client to a thread in its project.
+
+/** Moves the app to a thread; injected so the provider never owns a router. */
+export type ThreadNavigator = (ref: ScopedThreadRef) => Promise<void>;
+
+const refused = (reason: UiNavigationRefusalReason): UiNavigationReceipt => ({
+  status: "refused",
+  reason,
+});
+
+export function createNavigationClientProvider(
+  deps: ClientProviderDeps,
+  navigate: ThreadNavigator,
+): ClientLocalProvider {
+  return {
+    async invoke(call): Promise<UiNavigationReceipt> {
+      const installation = authorizeCaller(deps, call.caller, call.context, [UI_NAVIGATION_OPEN]);
+      if (call.method !== "openThread")
+        throw new ClientProviderOpError(
+          "client-provider-unavailable",
+          `Unknown navigation op ${call.method}`,
+        );
+      const input = readInputObject(call.input);
+      const threadId = readInputString(input, "threadId")!;
+      const surfaceId = readInputString(input, "surfaceId", false);
+      // The server adapter already scoped the target; the client owns the final say.
+      const ref = scopeThreadRef(deps.environmentId, ThreadId.make(threadId));
+      const shell = readThreadShell(ref);
+      if (!shell?.projectId) return refused("unknown-thread");
+      if (
+        shell.projectId !== call.context.resource.projectId ||
+        !installation.grants.projectIds.some((id) => id === shell.projectId)
+      )
+        return refused("out-of-scope");
+      if (surfaceId !== undefined) {
+        // Only the caller's own thread-scoped side-panel surfaces, as the
+        // right panel is where a thread's session view lives.
+        const surface = installation.package.manifest.surfaces.find(
+          (candidate) => candidate.id === surfaceId,
+        );
+        const project = readProject(scopeProjectRef(deps.environmentId, shell.projectId));
+        if (
+          !surface ||
+          surface.scope !== "thread" ||
+          !surface.placements.includes("side-panel") ||
+          !surface.clients.includes(deps.client)
+        )
+          return refused("surface-not-found");
+        if (!project) return refused("unknown-thread");
+        // Opened before routing so the thread renders with its panel in place.
+        if (
+          !openInstalledSurface(deps, ref, installation.id, surface, "side-panel", {
+            projectId: shell.projectId,
+            workspaceRoot: project.workspaceRoot,
+            worktreePath: shell.worktreePath ?? null,
+          })
+        )
+          return refused("surface-not-found");
+      }
+      await navigate(ref);
+      return { status: "opened", threadId, ...(surfaceId === undefined ? {} : { surfaceId }) };
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 
 /** All host-owned `t3.client/*` providers for one environment connection. */
 export function createClientProviders(
   deps: ClientProviderDeps,
+  navigate: ThreadNavigator,
 ): ReadonlyMap<string, ClientLocalProvider> {
   return new Map<string, ClientLocalProvider>([
     ["t3.client/theme", createThemeClientProvider(deps)],
@@ -1278,6 +1367,7 @@ export function createClientProviders(
     ["t3.client/terminal-appearance", createTerminalAppearanceClientProvider(deps)],
     ["t3.client/preferences", createPreferencesClientProvider(deps)],
     ["t3.client/external", createExternalClientProvider(deps)],
+    ["t3.client/navigation", createNavigationClientProvider(deps, navigate)],
   ]);
 }
 
@@ -1290,6 +1380,7 @@ export const CLIENT_PROVIDER_DESCRIPTORS = [
   { id: "t3.client/terminal-appearance", version: "1.0.0" },
   { id: "t3.client/preferences", version: "1.0.0" },
   { id: "t3.client/external", version: "1.0.0" },
+  { id: "t3.client/navigation", version: "1.0.0" },
 ] as const;
 
 export const CLIENT_PROVIDER_CLIENT_TAG = isElectron ? "desktop" : "web";

@@ -2,6 +2,7 @@ import {
   orchestrationControlApi,
   orchestrationStatusApi,
   terminalControlApi,
+  uiNavigationApi,
   uiThemeApi,
   workspaceFilesApi,
   type ApprovalDecision,
@@ -35,6 +36,7 @@ import {
   agentStatusVisual,
   agentVisibleRole,
   agentsFooterSummary,
+  agentsTabBadge,
   applyAgentsEvent,
   approvalKindLabel,
   approvalOptions,
@@ -43,11 +45,14 @@ import {
   collectDiffStream,
   countAnsweredQuestions,
   deriveAgentsPanelModel,
+  describeNavigationReceipt,
   describeReceipt,
   describeScriptRun,
   elapsedBetween,
+  finishedAgentIds,
   operationSupport,
   parseT3ProjectFile,
+  planSourceThreadId,
   resolveQuestionAnswer,
   runWorkspaceScript,
   scriptRunNonce,
@@ -171,29 +176,50 @@ interface AgentsFeed {
 }
 
 /**
- * `subscribeAgents` consumer: the host owns cancellation/backpressure via the
- * async iterator. Snapshot-first frames fold through `applyAgentsEvent`; a
- * server `closed` frame (queue overflow) triggers a bounded resubscribe, and
- * hiding the panel abandons the stream entirely.
+ * `subscribeAgents` consumer for the view session's lifetime: the host owns
+ * cancellation/backpressure via the async iterator. Snapshot-first frames fold
+ * through `applyAgentsEvent`; a server `closed` frame (queue overflow)
+ * triggers a bounded resubscribe. The stream outlives hiding so the tab badge
+ * stays honest in the background, but a hidden panel only folds into a ref and
+ * republishes the badge — the hidden tree never re-renders per frame. Showing
+ * the panel commits the folded state once and marks finished work seen.
  */
 function useAgentsFeed(host: ClientHost, session: ViewSession, visible: boolean): AgentsFeed {
   const [feed, setFeed] = useState<AgentsFeedState>(EMPTY_AGENTS_FEED);
   const [problem, setProblem] = useState<string | null>(null);
+  const latest = useRef<{ feed: AgentsFeedState; problem: string | null }>({
+    feed: EMPTY_AGENTS_FEED,
+    problem: null,
+  });
+  const seenFinished = useRef<ReadonlySet<string>>(new Set());
+
+  const publish = useCallback(() => {
+    const agents = latest.current.feed.state?.agents ?? [];
+    if (session.visible) {
+      seenFinished.current = finishedAgentIds(agents);
+      setFeed(latest.current.feed);
+      setProblem(latest.current.problem);
+    }
+    const badge = agentsTabBadge(agents, seenFinished.current);
+    session.setTabIndicators(badge ? { badge } : null);
+  }, [session]);
 
   useEffect(() => {
-    if (!visible) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
+    const update = (next: Partial<typeof latest.current>) => {
+      latest.current = { ...latest.current, ...next };
+      publish();
+    };
     void (async () => {
       const streams = bindStreamApi(orchestrationStatusApi, host, session.context);
       for (let attempt = 1; attempt <= 3 && !signal.aborted; attempt += 1) {
-        setFeed(EMPTY_AGENTS_FEED);
-        setProblem(null);
+        update({ feed: EMPTY_AGENTS_FEED, problem: null });
         let closedByServer = false;
         try {
           for await (const frame of streams.subscribe("subscribeAgents", {}, signal)) {
             if (signal.aborted) return;
-            setFeed((current) => applyAgentsEvent(current, frame.value));
+            update({ feed: applyAgentsEvent(latest.current.feed, frame.value) });
             if (frame.value.kind === "closed") {
               closedByServer = true;
               break;
@@ -201,24 +227,78 @@ function useAgentsFeed(host: ClientHost, session: ViewSession, visible: boolean)
           }
         } catch (error) {
           if (signal.aborted) return;
-          setProblem(error instanceof Error ? error.message : "Agent stream is unavailable");
+          update({
+            problem: error instanceof Error ? error.message : "Agent stream is unavailable",
+          });
           return;
         }
         if (signal.aborted) return;
         if (!closedByServer) {
-          setProblem("Agent stream ended without a close frame");
+          update({ problem: "Agent stream ended without a close frame" });
           return;
         }
         await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
       }
       if (!signal.aborted) {
-        setProblem("Agent stream closed repeatedly (queue overflow) — reopen the panel to retry");
+        update({
+          problem:
+            "Agent stream closed repeatedly (queue overflow) — reopen the Agents tab to retry",
+        });
       }
     })();
     return () => controller.abort();
-  }, [host, session, visible]);
+  }, [host, session, publish]);
+
+  useEffect(() => {
+    if (visible) publish();
+  }, [visible, publish]);
 
   return { feed, problem };
+}
+
+/**
+ * "Open agents there" for a turn implementing another thread's plan. The host
+ * routes through `t3.ui/navigation` and opens this pack's view on that thread;
+ * a refusal or a missing grant is rendered by name, never swallowed.
+ */
+function PlanSourceLink({
+  host,
+  session,
+  threadId,
+}: {
+  readonly host: ClientHost;
+  readonly session: ViewSession;
+  readonly threadId: string;
+}) {
+  const api = useMemo(() => bindApi(uiNavigationApi, host, session.context), [host, session]);
+  const capabilities = useApiRead(host, session, uiNavigationApi, "getCapabilities", {});
+  const [outcome, setOutcome] = useState<string | null>(null);
+  const supported =
+    capabilities.status === "ready" && capabilities.value.operations.openThread === true;
+  const open = () => {
+    setOutcome(null);
+    api.invoke("openThread", { threadId, surfaceId: `${manifestId}/view` }, session.signal).then(
+      (receipt) => {
+        if (receipt.status === "refused") setOutcome(describeNavigationReceipt(receipt));
+      },
+      (error: unknown) => setOutcome(error instanceof Error ? error.message : "Navigation failed"),
+    );
+  };
+  return (
+    <span style={{ color: muted, fontSize: 11, display: "inline-flex", gap: 4 }}>
+      Plan from another thread ·
+      <button type="button" onClick={open} disabled={!supported} style={control}>
+        Open agents there
+      </button>
+      {capabilities.status === "unavailable" ? (
+        <output aria-label="Navigation result">{capabilities.error}</output>
+      ) : capabilities.status === "ready" && !supported ? (
+        <output aria-label="Navigation result">Navigation is not available on this client</output>
+      ) : (
+        outcome && <output aria-label="Navigation result">{outcome}</output>
+      )}
+    </span>
+  );
 }
 
 /**
@@ -1202,6 +1282,7 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
 
   const state = feed.state;
   const model = state ? deriveAgentsPanelModel(state.agents) : null;
+  const planSource = planSourceThreadId(state, session.context.resource.threadId);
 
   return (
     <section
@@ -1238,6 +1319,7 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
           </span>
         )}
         {state?.turn && <span style={{ color: muted, fontSize: 11 }}>turn {state.turn.state}</span>}
+        {planSource && <PlanSourceLink host={host} session={session} threadId={planSource} />}
         {feed.streamEpoch && (
           <span style={{ color: muted, fontSize: 10, fontFamily: mono }}>rev {feed.revision}</span>
         )}
@@ -1477,6 +1559,7 @@ export default defineExtension({
     requireApi(orchestrationStatusApi),
     requireApi(orchestrationControlApi),
     requireApi(uiThemeApi),
+    requireApi(uiNavigationApi),
   ],
   surfaces: [
     {

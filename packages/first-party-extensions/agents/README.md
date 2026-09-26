@@ -21,7 +21,9 @@ terminal.
   and verified end-to-end (chunk order, byte lengths, per-source and
   whole-payload sha256) before a byte renders — the same verification the
   diff panel performs. A server `closed` frame (queue overflow) resubscribes
-  with a bounded retry; hiding the panel abandons the stream.
+  with a bounded retry. The stream lives as long as the view so the tab badge
+  stays current in the background; a hidden panel folds frames without
+  re-rendering and only republishes the badge.
 - `t3.orchestration/control@^1.0.0` — under the `t3.orchestration/operate`
   grant: `turn.start`, `turn.interrupt`, `session.stop`, `approval.respond`,
   `userInput.respond`/`dismiss`, `thread.settle`/`unsettle`, and
@@ -58,6 +60,15 @@ terminal.
   native Agents surface is read-only and never toasts), and registers no
   `t3.ui/keybindings` commands (the surface has no shortcuts natively; the
   host-owned `thread.settle` command already covers the thread level).
+- `t3.ui/navigation@^1.0.0` — under the `t3.ui/navigation.open` grant: when
+  the current turn implements a plan from another thread, "Open agents there"
+  asks the host to route to that thread with this view open. The host only
+  routes to a live thread in the view's own project; `unknown-thread`,
+  `out-of-scope`, and a missing grant render by name inline.
+- Tab badge (`ViewSession.setTabIndicators`, no grant) — the host draws a
+  running count (running + waiting agents, the native toggle badge's count)
+  on this panel's tab, or an unread count for work that finished while the
+  panel was hidden. Showing the panel marks it seen.
 
 The roster renders the native model exactly: workflow coordinators group
 their members into phases and never double-count work or tokens; statuses
@@ -66,9 +77,9 @@ activity line keeps the native precedence (live rows lead with progress,
 settled rows with the outcome).
 
 Still deferred — named in the panel, not faked: workflow launch (no native
-binding exists), agent logs and session deep links (net-new design, plus
-navigation contracts), agent session scan/import (needs a narrow public scan
-contract), and the mobile Agents surface.
+binding exists), agent logs and output files (net-new design), agent session
+scan/import (needs a narrow public scan contract), and the mobile Agents
+surface. The chat toggle badge and spawn CTA rows stay host chat UI.
 Thread settled state is not projected by the status contract, so Settle and
 Unsettle are both offered when the provider supports them and the receipt
 reports the outcome.

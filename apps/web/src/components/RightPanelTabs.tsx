@@ -726,6 +726,36 @@ function ExtensionTabAudio({ record }: { record: ViewRecord }) {
   );
 }
 
+/**
+ * A plugin tab's badge: an info count pill (native's live-agent badge) for
+ * running work, a foreground dot for unread. Static; it changes only when the
+ * view publishes.
+ */
+function ExtensionTabBadge({ record }: { record: ViewRecord }) {
+  const badge = useExtensionTabIndicators(extensionTabKey(record))?.badge;
+  if (!badge) return null;
+  const running = badge.kind === "running";
+  const label =
+    badge.count === undefined
+      ? running
+        ? "Running"
+        : "Unread"
+      : `${badge.count} ${running ? "running" : "unread"}`;
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      className={cn(
+        "ml-1 flex shrink-0 items-center justify-center rounded-full font-semibold tabular-nums",
+        badge.count === undefined ? "size-1.5" : "h-3.5 min-w-3.5 px-1 text-[9px] leading-none",
+        running ? "bg-info text-white" : "bg-foreground text-background",
+      )}
+    >
+      {badge.count === undefined ? null : badge.count > 99 ? "99+" : badge.count}
+    </span>
+  );
+}
+
 function sameOrigin(left: string, right: string): boolean {
   try {
     return new URL(left).origin === new URL(right).origin;
@@ -1361,6 +1391,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       <TooltipPopup>{title}</TooltipPopup>
                     </Tooltip>
                   )}
+                  {surface.kind === "extension" ? (
+                    <ExtensionTabBadge record={surface.record} />
+                  ) : null}
                 </div>
               );
             })}
