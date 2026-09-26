@@ -6,6 +6,7 @@ import {
   textEditsApi,
   uiKeybindingsApi,
   uiNotificationsApi,
+  uiPreferencesApi,
   uiThemeApi,
   workspaceChangesApi,
   workspaceResourcesApi,
@@ -87,6 +88,8 @@ import {
   watchThemeVars,
   toggleExpanded,
   visibleRows,
+  watchPreferences,
+  writeWordWrap,
   type ContentSearchResults,
   type FileOpenState,
   type MediaLeaseState,
@@ -394,6 +397,43 @@ function useThemeVars(
     return () => controller.abort();
   }, [host, session, visible]);
   return vars;
+}
+
+/**
+ * `t3.ui/preferences` consumer for the client's word-wrap setting — the same
+ * value (and the same toggle) the native file preview uses. `value` is null
+ * while the preference is unavailable (ungranted, provider-less host, lost
+ * stream): the panel then keeps its pre-contract wrapping and hides the
+ * toggle. Toggling writes through `setPreferences`; the displayed value
+ * changes only when the stream carries the persisted one, never optimistically.
+ */
+function useWordWrap(host: ClientHost, session: ViewSession, visible: boolean) {
+  const [value, setValue] = useState<boolean | null>(null);
+  const [writeError, setWriteError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!visible) return;
+    const controller = new AbortController();
+    void watchPreferences({
+      client: host,
+      context: session.context,
+      signal: AbortSignal.any([controller.signal, session.signal]),
+      apply: (preferences) => setValue(preferences?.wordWrap ?? null),
+    });
+    return () => controller.abort();
+  }, [host, session, visible]);
+  const toggle = () => {
+    if (value === null) return;
+    setWriteError(null);
+    void writeWordWrap({
+      client: host,
+      context: session.context,
+      signal: session.signal,
+      wordWrap: !value,
+    }).then((error) => {
+      if (!session.signal.aborted) setWriteError(error);
+    });
+  };
+  return { value, writeError, toggle };
 }
 
 /**
@@ -1160,6 +1200,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     session,
   );
   const themeVars = useThemeVars(host, session, visible);
+  const wordWrap = useWordWrap(host, session, visible);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() =>
     restoredExpanded(session.restoreState),
   );
@@ -2001,6 +2042,16 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               {renderMarkdown ? "Show markdown source" : "Show rendered markdown"}
             </button>
           )}
+          {selectedKind === "text" && markdownBlocks === null && wordWrap.value !== null && (
+            <button type="button" aria-pressed={wordWrap.value} onClick={wordWrap.toggle}>
+              {wordWrap.value ? "Disable word wrap" : "Enable word wrap"}
+            </button>
+          )}
+          {wordWrap.writeError !== null && (
+            <span role="alert" style={{ color: "#b42318", fontSize: 11 }}>
+              {wordWrap.writeError}
+            </span>
+          )}
           {fileOpen !== null && fileOpen.path === selected && fileOpen.state.status !== "idle" && (
             <span style={{ color: muted, fontSize: 12 }}>{describeFileOpen(fileOpen.state)}</span>
           )}
@@ -2130,6 +2181,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                   if (event.key === "Escape") event.currentTarget.blur();
                 }}
                 spellCheck={false}
+                wrap={wordWrap.value === false ? "off" : "soft"}
                 style={{
                   flex: 1,
                   minHeight: 0,
@@ -2265,6 +2317,9 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               borderTop: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
               fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace)",
               fontSize: 12,
+              ...(wordWrap.value === true
+                ? { whiteSpace: "pre-wrap", overflowWrap: "anywhere" }
+                : {}),
             }}
           >
             {currentRead?.contents ?? ""}
@@ -2349,6 +2404,7 @@ export default defineExtension({
     requireApi(uiThemeApi),
     requireApi(uiKeybindingsApi),
     requireApi(uiNotificationsApi),
+    requireApi(uiPreferencesApi),
     requireApi(messagesEnrichmentApi),
     requireApi(composerContextApi),
   ],

@@ -1,6 +1,8 @@
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import {
+  uiPreferencesApi,
   uiThemeApi,
+  type UiPreferences,
   type WorkspaceResourceReadEvent,
   type WorkspaceResourceReason,
 } from "@t3tools/extension-sdk/catalogue";
@@ -1288,6 +1290,72 @@ export function watchThemeVars(options: {
       invalidate();
     }
   })();
+}
+
+// ---------------------------------------------------------------------------
+// t3.ui/preferences consumption
+// ---------------------------------------------------------------------------
+
+/**
+ * Drives the client's word-wrap preference — the one client setting the
+ * native file preview honors. `apply` receives each value the stream
+ * carries (snapshot, then one frame per change) and `null` whenever the feed
+ * can't vouch for one: at subscription start, on a denied read, and on a
+ * closed or lost stream. `null` means "no preference": the panel keeps its
+ * pre-contract wrapping and hides the toggle.
+ */
+export function watchPreferences(options: {
+  readonly client: Pick<ApiClient, "subscribeApi">;
+  readonly context: ViewContext;
+  readonly signal: AbortSignal;
+  readonly apply: (preferences: UiPreferences | null) => void;
+}): Promise<void> {
+  const streams = bindStreamApi(uiPreferencesApi, options.client, options.context);
+  const clear = () => {
+    if (!options.signal.aborted) options.apply(null);
+  };
+  clear();
+  return (async () => {
+    try {
+      for await (const frame of streams.subscribe("subscribePreferences", {}, options.signal)) {
+        if (options.signal.aborted) return;
+        if (frame.type === "closed") break;
+        if (frame.type === "snapshot" || frame.type === "data") {
+          const value = frame.value;
+          const wordWrap =
+            typeof value === "object" && value !== null && "wordWrap" in value
+              ? value.wordWrap
+              : undefined;
+          options.apply(typeof wordWrap === "boolean" ? { wordWrap } : null);
+        }
+      }
+      clear();
+    } catch {
+      clear();
+    }
+  })();
+}
+
+/**
+ * Writes the word-wrap preference. Resolves to `null` on an applied receipt
+ * (the stream carries the new value) or to the reason the write did not land.
+ */
+export async function writeWordWrap(options: {
+  readonly client: Pick<ApiClient, "invokeApi">;
+  readonly context: ViewContext;
+  readonly signal: AbortSignal;
+  readonly wordWrap: boolean;
+}): Promise<string | null> {
+  try {
+    const receipt = await bindApi(uiPreferencesApi, options.client, options.context).invoke(
+      "setPreferences",
+      { wordWrap: options.wordWrap },
+      options.signal,
+    );
+    return receipt.applied ? null : `Word wrap not saved — ${receipt.reason ?? "rejected"}`;
+  } catch (error) {
+    return `Word wrap not saved — ${error instanceof Error ? error.message : String(error)}`;
+  }
 }
 
 // ---------------------------------------------------------------------------

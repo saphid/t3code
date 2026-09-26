@@ -38,6 +38,13 @@ without its grant or provider):
 - `t3.ui/notifications@^1.0.0` — under `t3.ui/notify`: a failed "Open in…"
   toasts, matching the native panel's thread toast; every other status stays
   inline because the native panel keeps it there.
+- `t3.ui/preferences@^1.0.0` — under `t3.ui/preferences.read`: the client's
+  word-wrap setting (the one the native file preview honors) drives the editor
+  and read-only source view, live over `subscribePreferences`. With
+  `t3.ui/preferences.write` the toolbar's word-wrap toggle writes it back
+  through `setPreferences`; the view changes only when the persisted value
+  arrives. Without the read grant the toggle is hidden and wrapping stays as
+  before.
 
 The surface declares no `capabilities` — that field gates mounting on host
 services, and these adoptions ride on `requires` + install grants instead.
