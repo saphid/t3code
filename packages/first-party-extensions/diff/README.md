@@ -20,10 +20,15 @@ This is a read-oriented panel. It consumes `t3.vcs/read` plus the
 - per-file hunks parsed with the vendored `@pierre/diffs`
   `parsePatchFiles` (the same pure parser the native panel feeds — its
   React `CodeView` imports react-dom and cannot be bundled into an
-  extension), rendered as package-owned rows in collapsible per-file
-  sections in either a unified or split (side-by-side) layout — within a
-  hunk each deletion run pairs line-by-line with the addition run that
-  follows it, the shorter side padded,
+  extension). Where the host offers `ClientHost.codeView`, the files
+  render through the host's native viewer (highlighting on the shared
+  worker pool, virtualization, sticky headers, context expansion through
+  the same `getFileContents` path, Open / Copy path on each header).
+  Hosts without the member, and the panel while "Line comments" is on,
+  use package-owned rows in collapsible per-file sections in either a
+  unified or split (side-by-side) layout — within a hunk each deletion
+  run pairs line-by-line with the addition run that follows it, the
+  shorter side padded,
 - full-file context expansion via `getFileContents` /
   `streamFileContents` (same unary-first policy; per-side sha256) for
   two-sided text changes; binary files are detected from the delivered
@@ -99,8 +104,8 @@ This is a read-oriented panel. It consumes `t3.vcs/read` plus the
   no in-panel affordance, so an error toast is the honest channel;
   status rows stay inline, matching the native panel.
 
-Deferred slices: Pierre renderer features (react-dom is bundler-banned)
-— syntax highlighting, virtualization, sticky headers;
+Deferred slices: line comments on the host view (codeView version 1
+has no annotations, so comments stay on own rows);
 repo-root→workspace path remapping for open (no public repo-root
 contract).
 

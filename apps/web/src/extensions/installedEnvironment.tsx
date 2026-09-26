@@ -45,6 +45,7 @@ import { createBrowserCaptureBridge } from "./browserCaptureBridge";
 import { createBrowserSurfaceBridge } from "./browserSurfaceBridge";
 import { createBrowserFramesBridge } from "./browserFramesBridge";
 import { createKeybindingsHostBridge } from "./keybindingsHostBridge";
+import { hostCodeView } from "./codeView/hostCodeView";
 import {
   CLIENT_PROVIDER_CLIENT_TAG,
   CLIENT_PROVIDER_DESCRIPTORS,
@@ -439,6 +440,7 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
       browserFrames: createBrowserFramesBridge(environmentId),
       browserCapture: createBrowserCaptureBridge(environmentId),
       keybindings: createKeybindingsHostBridge(),
+      codeView: hostCodeView,
       register: (extension, client) => {
         const unregister = registerWorkspaceExtension(
           extension,

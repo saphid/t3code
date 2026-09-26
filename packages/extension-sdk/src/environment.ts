@@ -163,6 +163,74 @@ export type GlobalCommandHandler = (call: {
   readonly context: ViewContext;
 }) => void;
 
+/** Full-file contents for one changed file, used to expand context between hunks. */
+export interface CodeViewFileContents {
+  readonly oldContents: string;
+  readonly newContents: string;
+}
+
+/**
+ * A unified git patch rendered by the host's own diff viewer: highlighted
+ * off the main thread, virtualized, themed with the app. Files are named by
+ * their workspace-relative path as the patch spells it (`a/`/`b/` stripped).
+ */
+export interface CodeViewDiffProps {
+  readonly patch: string;
+  readonly layout: "unified" | "split";
+  readonly wordWrap: boolean;
+  /** Files whose bodies are folded to their header. */
+  readonly collapsedPaths?: readonly string[];
+  /** Offered on each file header when present; the plugin owns the fold state. */
+  readonly onToggleCollapsed?: (path: string) => void;
+  /** Scrolls `path` to the top once per distinct `requestId`. */
+  readonly reveal?: { readonly path: string; readonly requestId: number };
+  /** Text buttons drawn on every file header; a click reports the action id and path. */
+  readonly fileActions?: readonly { readonly id: string; readonly label: string }[];
+  readonly onFileAction?: (actionId: string, path: string) => void;
+  /** Loads full contents when the reader expands context; absent keeps hunks only. */
+  readonly loadContents?: (path: string) => Promise<CodeViewFileContents>;
+  readonly className?: string;
+}
+
+/** One read-only file rendered by the host's source viewer. */
+export interface CodeViewFileProps {
+  /** Drives language detection. */
+  readonly path: string;
+  readonly contents: string;
+  /** Absent follows the host's own word-wrap setting. */
+  readonly wordWrap?: boolean;
+  /** Centers and marks `line` (1-based) once per distinct `requestId`. */
+  readonly reveal?: { readonly line: number; readonly requestId: number };
+  readonly className?: string;
+}
+
+/**
+ * `ClientHost.codeView` version 1. A rendering primitive over data the
+ * plugin already holds, not a capability: no grant, no broker, no
+ * catalogue entry. The host owns tokenization, its worker pool, theme sync
+ * and virtualization; the plugin composes the components into its JSX.
+ */
+export interface ClientCodeView {
+  readonly version: 1;
+  readonly Diff: React.ComponentType<CodeViewDiffProps>;
+  readonly File: React.ComponentType<CodeViewFileProps>;
+}
+
+/**
+ * The host's code view when it offers version 1 or a compatible later one,
+ * else null. Null is the plugin's cue to keep rendering its own rows.
+ */
+export function resolveCodeView(host: Pick<ClientHost, "codeView">): ClientCodeView | null {
+  const member: unknown = host.codeView;
+  if (!member || typeof member !== "object") return null;
+  const { version, Diff, File } = member as Record<string, unknown>;
+  const isComponent = (value: unknown) =>
+    typeof value === "function" || (typeof value === "object" && value !== null);
+  return typeof version === "number" && version >= 1 && isComponent(Diff) && isComponent(File)
+    ? (member as ClientCodeView)
+    : null;
+}
+
 export interface ClientHost {
   /** Use this React identity; a client entry must not bundle or import another React runtime. */
   readonly React: typeof React;
@@ -211,6 +279,12 @@ export interface ClientHost {
    * `t3.ui/keybindings` grant (treat as "host-unavailable").
    */
   readonly keybindings?: UiKeybindingsHost;
+  /**
+   * Host-rendered highlighted, virtualized code. Absent on hosts without a
+   * native viewer (mobile, older hosts) — read it through `resolveCodeView`
+   * and keep plugin-owned rows as the fallback.
+   */
+  readonly codeView?: ClientCodeView;
 }
 export type ClientFactory = (host: ClientHost) => Extension<SurfaceRenderer>;
 

@@ -46,6 +46,13 @@ without its grant or provider):
   arrives. Without the read grant the toggle is hidden and wrapping stays as
   before.
 
+Files the editor cannot open (past the edit bound, binary-adjacent,
+non-UTF-8) show read-only. Where the host offers `ClientHost.codeView`, that
+view is the host's native source preview — highlighted on the shared worker
+pool and virtualized — with the same word-wrap setting and line reveals.
+Hosts without the member keep a plain `<pre>`. The editable editor stays a
+textarea.
+
 The surface declares no `capabilities` — that field gates mounting on host
 services, and these adoptions ride on `requires` + install grants instead.
 

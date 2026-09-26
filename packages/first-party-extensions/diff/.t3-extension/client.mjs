@@ -6980,6 +6980,14 @@ var __t3Client = (() => {
     "application/octet-stream",
     "font/woff2"
   ];
+  function resolveCodeView(host) {
+    const member = host.codeView;
+    if (!member || typeof member !== "object")
+      return null;
+    const { version, Diff, File } = member;
+    const isComponent = (value) => typeof value === "function" || typeof value === "object" && value !== null;
+    return typeof version === "number" && version >= 1 && isComponent(Diff) && isComponent(File) ? member : null;
+  }
   function validateEntry(value) {
     if (typeof value !== "string" || value.length > 240 || !/\.(mjs|js)$/.test(value) || value.split("/").some((part) => !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(part) || part === "." || part === ".."))
       throw new Error("Entry must be a package-relative bundled ESM .mjs or .js file");
@@ -7210,7 +7218,7 @@ var __t3Client = (() => {
   }
 
   // extension.tsx
-  var import_react2 = __toESM(require_react(), 1);
+  var import_react3 = __toESM(require_react(), 1);
 
   // uiContracts.ts
   var DIFF_SURFACE_ID = "t3.diff/view";
@@ -7649,13 +7657,56 @@ var __t3Client = (() => {
     return null;
   }
 
-  // commentSession.ts
+  // codeView.ts
   var import_react = __toESM(require_react(), 1);
+  function diffRenderer(host, commenting) {
+    const codeView = resolveCodeView(host);
+    if (codeView === null) return { kind: "rows", reason: "host-unavailable" };
+    return commenting ? { kind: "rows", reason: "commenting" } : { kind: "host", codeView };
+  }
+  var DIFF_FILE_ACTIONS = [
+    { id: "open", label: "Open" },
+    { id: "copy", label: "Copy path" }
+  ];
+  function hostDiffProps(options) {
+    const { files, collapsedKeys, reveal, loadContents } = options;
+    const byPath = new Map(files.map((row) => [row.path, row]));
+    const revealRow = reveal === null ? void 0 : files.find((row) => row.key === reveal.key);
+    return {
+      patch: options.patch,
+      layout: options.layout,
+      wordWrap: options.wrap,
+      collapsedPaths: files.filter((row) => collapsedKeys.has(row.key)).map((row) => row.path),
+      onToggleCollapsed: (path3) => {
+        const row = byPath.get(path3);
+        if (row) options.onToggleCollapsed(row.key);
+      },
+      fileActions: DIFF_FILE_ACTIONS,
+      onFileAction: (actionId, path3) => {
+        const row = byPath.get(path3);
+        const action = DIFF_FILE_ACTIONS.find((candidate) => candidate.id === actionId);
+        if (row && action) options.onFileAction(action.id, row);
+      },
+      ...revealRow && reveal ? { reveal: { path: revealRow.path, requestId: reveal.requestId } } : {},
+      ...loadContents ? {
+        loadContents: (path3) => {
+          const row = byPath.get(path3);
+          return row ? loadContents(row) : Promise.reject(new Error(`${path3} is not part of this diff`));
+        }
+      } : {}
+    };
+  }
+  function DiffFileBodies(props) {
+    return props.renderer.kind === "host" ? (0, import_react.createElement)(props.renderer.codeView.Diff, props.renderHostProps()) : props.renderRows();
+  }
+
+  // commentSession.ts
+  var import_react2 = __toESM(require_react(), 1);
   function sameCommentBuffer(left, right) {
     return left.diffHash === right.diffHash && left.fileKey === right.fileKey && (left.contents === right.contents || left.contents !== null && right.contents !== null && left.contents.oldContents === right.contents.oldContents && left.contents.newContents === right.contents.newContents);
   }
   function useLineSelection(buffer) {
-    const [pinned, setPinned] = (0, import_react.useState)(null);
+    const [pinned, setPinned] = (0, import_react2.useState)(null);
     const live = pinned !== null && buffer !== null && sameCommentBuffer(pinned.buffer, buffer) ? pinned : null;
     if (pinned !== null && live === null) {
       setPinned(null);
@@ -7675,7 +7726,7 @@ var __t3Client = (() => {
     };
   }
   function useDiffCommentDraft(buffer) {
-    const [pinned, setPinned] = (0, import_react.useState)(null);
+    const [pinned, setPinned] = (0, import_react2.useState)(null);
     const sameFile = pinned !== null && buffer !== null && pinned.buffer.fileKey === buffer.fileKey;
     if (pinned !== null && !sameFile) setPinned(null);
     const draft = sameFile && pinned !== null ? pinned.draft : null;
@@ -7690,15 +7741,15 @@ var __t3Client = (() => {
     };
   }
   function useCommentTarget(file, rows, anchor, extent) {
-    return (0, import_react.useMemo)(
+    return (0, import_react2.useMemo)(
       () => anchor === null || extent === null ? null : buildDiffCommentTarget({ file, rows, startOrdinal: anchor, endOrdinal: extent }),
       [file, rows, anchor, extent]
     );
   }
   var CHECKING_REASON = "Checking comment support with the host\u2026";
   function useCommentBlockReason(host, session, threadId) {
-    const [capabilities, setCapabilities] = (0, import_react.useState)(null);
-    (0, import_react.useEffect)(() => {
+    const [capabilities, setCapabilities] = (0, import_react2.useState)(null);
+    (0, import_react2.useEffect)(() => {
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       void bindApi(messagesEnrichmentApi, host, session.context).invoke("getCapabilities", {}, signal).then(
@@ -7727,11 +7778,11 @@ var __t3Client = (() => {
     };
   }
   function usePostedComments(host, session, threadId, listable) {
-    const [entries, setEntries] = (0, import_react.useState)([]);
-    const [listError, setListError] = (0, import_react.useState)(null);
-    const [removing, setRemoving] = (0, import_react.useState)(null);
-    const [removeError, setRemoveError] = (0, import_react.useState)(null);
-    (0, import_react.useEffect)(() => {
+    const [entries, setEntries] = (0, import_react2.useState)([]);
+    const [listError, setListError] = (0, import_react2.useState)(null);
+    const [removing, setRemoving] = (0, import_react2.useState)(null);
+    const [removeError, setRemoveError] = (0, import_react2.useState)(null);
+    (0, import_react2.useEffect)(() => {
       if (!listable || threadId === void 0) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -9402,8 +9453,8 @@ ${prefix}`;
     return value;
   }
   function useCapabilities(host, session, visible, tick) {
-    const [result, setResult] = (0, import_react2.useState)(null);
-    (0, import_react2.useEffect)(() => {
+    const [result, setResult] = (0, import_react3.useState)(null);
+    (0, import_react3.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -9425,8 +9476,8 @@ ${prefix}`;
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
   function useStatusRefresh(host, session, enabled) {
-    const [model, setModel] = (0, import_react2.useState)(CONNECTING_DIFF_STATUS);
-    (0, import_react2.useEffect)(() => {
+    const [model, setModel] = (0, import_react3.useState)(CONNECTING_DIFF_STATUS);
+    (0, import_react3.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -9478,8 +9529,8 @@ ${prefix}`;
     return model;
   }
   function useRefs(host, session, enabled, revision2) {
-    const [result, setResult] = (0, import_react2.useState)(null);
-    (0, import_react2.useEffect)(() => {
+    const [result, setResult] = (0, import_react3.useState)(null);
+    (0, import_react3.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -9516,9 +9567,9 @@ ${prefix}`;
     return result?.key === revision2 ? result : { refs: null, error: null };
   }
   function useDiffPreview(host, session, enabled, requestKey, input) {
-    const [result, setResult] = (0, import_react2.useState)(null);
-    const streamKeys = (0, import_react2.useRef)(/* @__PURE__ */ new Set());
-    (0, import_react2.useEffect)(() => {
+    const [result, setResult] = (0, import_react3.useState)(null);
+    const streamKeys = (0, import_react3.useRef)(/* @__PURE__ */ new Set());
+    (0, import_react3.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -9551,8 +9602,8 @@ ${prefix}`;
     };
   }
   function useOrchestrationCapabilities(host, session, enabled, tick) {
-    const [result, setResult] = (0, import_react2.useState)(null);
-    (0, import_react2.useEffect)(() => {
+    const [result, setResult] = (0, import_react3.useState)(null);
+    (0, import_react3.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -9574,8 +9625,8 @@ ${prefix}`;
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
   function useAgentsStatus(host, session, enabled) {
-    const [model, setModel] = (0, import_react2.useState)(CONNECTING_AGENTS);
-    (0, import_react2.useEffect)(() => {
+    const [model, setModel] = (0, import_react3.useState)(CONNECTING_AGENTS);
+    (0, import_react3.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -9627,10 +9678,10 @@ ${prefix}`;
     return model;
   }
   function useTurnDiff(host, session, enabled, requestKey, selection) {
-    const [result, setResult] = (0, import_react2.useState)(null);
+    const [result, setResult] = (0, import_react3.useState)(null);
     const selectionKey = selection === null ? null : selection.kind === "thread" ? "thread" : `turn:${selection.turnId}`;
     const selectionTurnId = selection?.kind === "turn" ? selection.turnId : null;
-    (0, import_react2.useEffect)(() => {
+    (0, import_react3.useEffect)(() => {
       if (!enabled || selectionKey === null) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -9660,8 +9711,8 @@ ${prefix}`;
     };
   }
   function useThemeTokens(host, session, enabled) {
-    const [tokens, setTokens] = (0, import_react2.useState)(null);
-    (0, import_react2.useEffect)(() => {
+    const [tokens, setTokens] = (0, import_react3.useState)(null);
+    (0, import_react3.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       watchThemeTokens(
@@ -9842,11 +9893,11 @@ ${prefix}`;
   }) {
     const muted = ui.muted;
     const expanded = expansion?.status === "loaded" ? expansion.contents : void 0;
-    const rows = (0, import_react2.useMemo)(
+    const rows = (0, import_react3.useMemo)(
       () => collapsed || row.binary || row.textless ? [] : fileRows(row, expanded),
       [collapsed, row, expanded]
     );
-    const paired = (0, import_react2.useMemo)(() => layout === "split" ? splitRows(rows) : null, [layout, rows]);
+    const paired = (0, import_react3.useMemo)(() => layout === "split" ? splitRows(rows) : null, [layout, rows]);
     const target = useCommentTarget(row.file, rows, comment?.anchor ?? null, comment?.extent ?? null);
     const inSelection = (ordinal) => comment !== null && comment.anchor !== null && comment.extent !== null && ordinal >= Math.min(comment.anchor, comment.extent) && ordinal <= Math.max(comment.anchor, comment.extent);
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
@@ -10124,41 +10175,42 @@ ${prefix}`;
   }
   function DiffPanelView(props) {
     const { host, session } = props;
-    const [visible, setVisible] = (0, import_react2.useState)(session.visible);
-    const [tick, setTick] = (0, import_react2.useState)(0);
-    (0, import_react2.useEffect)(() => session.onVisibility(setVisible), [session]);
+    const [visible, setVisible] = (0, import_react3.useState)(session.visible);
+    const [tick, setTick] = (0, import_react3.useState)(0);
+    (0, import_react3.useEffect)(() => session.onVisibility(setVisible), [session]);
     const tokens = useThemeTokens(host, session, visible);
     const ui = panelTheme(tokens);
     const restored = session.restoreState && typeof session.restoreState === "object" && !Array.isArray(session.restoreState) ? session.restoreState : null;
-    const [mode, setMode] = (0, import_react2.useState)(restored?.mode === "turns" ? "turns" : "workspace");
-    const [turnWanted, setTurnWanted] = (0, import_react2.useState)(
+    const [mode, setMode] = (0, import_react3.useState)(restored?.mode === "turns" ? "turns" : "workspace");
+    const [turnWanted, setTurnWanted] = (0, import_react3.useState)(
       restored?.mode === "turns" ? restored.turnId !== void 0 ? { kind: "turn", turnId: restored.turnId, turnCount: 0 } : { kind: "thread" } : null
     );
-    const [sourceId, setSourceId] = (0, import_react2.useState)(restored?.sourceId ?? null);
-    const [fileKey, setFileKey] = (0, import_react2.useState)(restored?.fileKey ?? null);
-    const [baseRef, setBaseRef] = (0, import_react2.useState)(restored?.baseRef ?? "");
-    const [ignoreWhitespace, setIgnoreWhitespace] = (0, import_react2.useState)(
+    const [sourceId, setSourceId] = (0, import_react3.useState)(restored?.sourceId ?? null);
+    const [fileKey, setFileKey] = (0, import_react3.useState)(restored?.fileKey ?? null);
+    const [baseRef, setBaseRef] = (0, import_react3.useState)(restored?.baseRef ?? "");
+    const [ignoreWhitespace, setIgnoreWhitespace] = (0, import_react3.useState)(
       restored?.ignoreWhitespace ?? false
     );
-    const [layout, setLayout] = (0, import_react2.useState)(
+    const [layout, setLayout] = (0, import_react3.useState)(
       restored?.layout === "split" ? "split" : "unified"
     );
-    const [wrap, setWrap] = (0, import_react2.useState)(false);
-    const [collapsedFiles, setCollapsedFiles] = (0, import_react2.useState)(/* @__PURE__ */ new Set());
-    const [collapsedDirs, setCollapsedDirs] = (0, import_react2.useState)(/* @__PURE__ */ new Set());
-    const [expansions, setExpansions] = (0, import_react2.useState)(/* @__PURE__ */ new Map());
-    const [action, setAction] = (0, import_react2.useState)(
+    const [wrap, setWrap] = (0, import_react3.useState)(false);
+    const [lineComments, setLineComments] = (0, import_react3.useState)(false);
+    const [collapsedFiles, setCollapsedFiles] = (0, import_react3.useState)(/* @__PURE__ */ new Set());
+    const [collapsedDirs, setCollapsedDirs] = (0, import_react3.useState)(/* @__PURE__ */ new Set());
+    const [expansions, setExpansions] = (0, import_react3.useState)(/* @__PURE__ */ new Map());
+    const [action, setAction] = (0, import_react3.useState)(
       null
     );
-    const [revert, setRevert] = (0, import_react2.useState)(null);
-    const expandControllers = (0, import_react2.useRef)(/* @__PURE__ */ new Map());
-    const contentStreamKeys = (0, import_react2.useRef)(/* @__PURE__ */ new Set());
-    const sectionRefs = (0, import_react2.useRef)(/* @__PURE__ */ new Map());
+    const [revert, setRevert] = (0, import_react3.useState)(null);
+    const expandControllers = (0, import_react3.useRef)(/* @__PURE__ */ new Map());
+    const contentStreamKeys = (0, import_react3.useRef)(/* @__PURE__ */ new Set());
+    const sectionRefs = (0, import_react3.useRef)(/* @__PURE__ */ new Map());
     const { capabilities, error: capsError } = useCapabilities(host, session, visible, tick);
     const gate = diffCapabilityState(capabilities, capsError);
     const ready = gate.kind === "ready";
     const status = useStatusRefresh(host, session, visible && ready);
-    const previewInput = (0, import_react2.useMemo)(
+    const previewInput = (0, import_react3.useMemo)(
       () => ({
         ...baseRef !== "" ? { baseRef } : {},
         ...ignoreWhitespace ? { ignoreWhitespace: true } : {}
@@ -10181,7 +10233,7 @@ ${prefix}`;
       session,
       turnsOpen && orchGate.kind === "ready" && orchGate.operations["subscribeAgents"] === true
     );
-    const choices = (0, import_react2.useMemo)(() => turnChoices(agents.checkpoints), [agents.checkpoints]);
+    const choices = (0, import_react3.useMemo)(() => turnChoices(agents.checkpoints), [agents.checkpoints]);
     const turnSelection = reconcileTurnSelection(choices, turnWanted);
     const turnDiffOps = orchGate.kind === "ready" && orchGate.operations["getTurnDiff"] === true && orchGate.operations["getThreadDiff"] === true;
     const turnRequestKey = `${tick}:${agents.revision}:${turnSelection === null ? "none" : turnSelection.kind === "thread" ? "thread" : `turn:${turnSelection.turnId}`}`;
@@ -10209,16 +10261,16 @@ ${prefix}`;
     const treeRows = diffTreeRows(files, collapsedDirs);
     const fileKeys = files.map((row) => row.key);
     const allCollapsed = areAllDiffFilesCollapsed(fileKeys, collapsedFiles);
-    const baseRefChoices = (0, import_react2.useMemo)(() => buildBaseRefChoices(refs?.refs ?? []), [refs]);
+    const baseRefChoices = (0, import_react3.useMemo)(() => buildBaseRefChoices(refs?.refs ?? []), [refs]);
     const commentThreadId = session.context.resource.threadId;
     const { reason: commentReason, capabilities: commentCapabilities } = useCommentBlockReason(
       host,
       session,
       commentThreadId
     );
-    const [commentFileKey, setCommentFileKey] = (0, import_react2.useState)(null);
+    const [commentFileKey, setCommentFileKey] = (0, import_react3.useState)(null);
     const commentRow = commentFileKey === null ? null : files.find((entry) => entry.key === commentFileKey) ?? null;
-    const commentBuffer = (0, import_react2.useMemo)(() => {
+    const commentBuffer = (0, import_react3.useMemo)(() => {
       if (source === null || commentRow === null || commentRow.binary || commentRow.textless)
         return null;
       const expansion = expansions.get(`${source.diffHash}:${commentRow.key}`);
@@ -10240,13 +10292,13 @@ ${prefix}`;
     } = useDiffCommentDraft(commentBuffer);
     const commentListable = commentCapabilities !== null && commentCapabilities.transport === "client" && commentCapabilities.operations.listAnnotations === true && commentThreadId !== void 0;
     const posted = usePostedComments(host, session, commentThreadId, commentListable);
-    const [commentBody, setCommentBody] = (0, import_react2.useState)("");
-    const [commentSubmit, setCommentSubmit] = (0, import_react2.useState)({
+    const [commentBody, setCommentBody] = (0, import_react3.useState)("");
+    const [commentSubmit, setCommentSubmit] = (0, import_react3.useState)({
       busy: false,
       error: null
     });
-    const submittedDraftRef = (0, import_react2.useRef)(null);
-    const commentSection = (0, import_react2.useMemo)(
+    const submittedDraftRef = (0, import_react3.useRef)(null);
+    const commentSection = (0, import_react3.useMemo)(
       () => commentSectionFor(mode, turnSelection, source),
       [mode, turnSelection, source]
     );
@@ -10345,7 +10397,7 @@ ${prefix}`;
       onRemove: posted.remove
     };
     const sourceKey = source?.diffHash ?? null;
-    (0, import_react2.useEffect)(() => {
+    (0, import_react3.useEffect)(() => {
       if (sourceKey === null) return;
       const controllers = expandControllers.current;
       return () => {
@@ -10353,9 +10405,10 @@ ${prefix}`;
         controllers.clear();
       };
     }, [sourceKey]);
-    const revealTarget = (0, import_react2.useRef)(null);
-    const [revealTick, setRevealTick] = (0, import_react2.useState)(0);
-    (0, import_react2.useEffect)(() => {
+    const revealTarget = (0, import_react3.useRef)(null);
+    const [revealTick, setRevealTick] = (0, import_react3.useState)(0);
+    const [hostReveal, setHostReveal] = (0, import_react3.useState)(null);
+    (0, import_react3.useEffect)(() => {
       if (revealTick === 0) return;
       const key = revealTarget.current;
       if (key === null || collapsedFiles.has(key)) return;
@@ -10427,6 +10480,7 @@ ${prefix}`;
       setFileKey(row.key);
       revealTarget.current = row.key;
       setRevealTick((tick2) => tick2 + 1);
+      setHostReveal((previous) => ({ key: row.key, requestId: (previous?.requestId ?? 0) + 1 }));
       persistSelection({
         mode,
         sourceId: source?.id ?? null,
@@ -10598,6 +10652,30 @@ ${prefix}`;
         })
       );
     };
+    const loadHostContents = (row) => {
+      if (source === null || !canExpandFile(row))
+        return Promise.reject(new Error(`${displayPath(row)} has no expandable context`));
+      const signal = session.signal;
+      const api = bindApi(vcsDiffApi, host, session.context);
+      const streams = bindStreamApi(vcsDiffApi, host, session.context);
+      return fetchFileContents({
+        input: fileContentsInput(source, row),
+        deliveryKey: contentsDeliveryKey(source, row),
+        invoke: (next) => api.invoke("getFileContents", next, signal),
+        stream: (next) => streams.subscribe("streamFileContents", next, signal),
+        streamKeys: contentStreamKeys.current,
+        signal
+      }).then((outcome) => {
+        if (outcome.kind === "cancelled") throw new Error("Loading file contents was cancelled");
+        if (outcome.kind === "error") throw new Error(outcome.detail);
+        if (!expansionMatchesPatch(row, outcome.result))
+          throw new Error("Loaded contents do not match this diff \u2014 refresh the diff to try again.");
+        return outcome.result;
+      });
+    };
+    const hostViewOffered = diffRenderer(host, false).kind === "host";
+    const commenting = lineComments || lineSelection.selection !== null || commentDraft !== null;
+    const renderer = diffRenderer(host, commenting);
     const muted = ui.muted;
     const sources = preview.kind === "ready" ? preview.result.sources : [];
     const filteredBaseChoices = filterBaseRefChoices(baseRefChoices, baseRef);
@@ -10766,6 +10844,28 @@ ${prefix}`;
                   ),
                   "Wrap"
                 ] }),
+                hostViewOffered && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                  "button",
+                  {
+                    type: "button",
+                    "aria-pressed": commenting,
+                    disabled: commentDraft !== null,
+                    onClick: () => {
+                      if (!commenting) return setLineComments(true);
+                      setLineComments(false);
+                      lineSelection.clear();
+                    },
+                    style: {
+                      ...ui.control,
+                      fontWeight: commenting ? 600 : 400,
+                      background: commenting ? ui.accent : "transparent"
+                    },
+                    children: [
+                      "Line comments",
+                      posted.entries.length > 0 ? ` (${posted.entries.length})` : ""
+                    ]
+                  }
+                ),
                 files.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                   "button",
                   {
@@ -10974,33 +11074,65 @@ ${prefix}`;
                   )
                 }
               ),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { flex: 1, minHeight: 0, overflow: "auto" }, "aria-label": "File diffs", children: [
-                files.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: "Select a file to inspect its changes." }),
-                source !== null && files.map((row) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                  FileSection,
-                  {
-                    row,
-                    selected: selected?.key === row.key,
-                    collapsed: collapsedFiles.has(row.key),
-                    layout,
-                    wrap,
-                    expansion: expansions.get(`${source.diffHash}:${row.key}`),
-                    expandable: mode === "workspace",
-                    action,
-                    comment: commentUiFor(row),
-                    ui,
-                    onToggleCollapsed: (key) => setCollapsedFiles(toggleCollapsedKey(collapsedFiles, key)),
-                    onExpand: expandFile,
-                    onOpen: openInEditor,
-                    onCopy: copyPath,
-                    registerSection: (el) => {
-                      if (el !== null) sectionRefs.current.set(row.key, el);
-                      else sectionRefs.current.delete(row.key);
-                    }
-                  },
-                  row.key
-                ))
-              ] })
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                "div",
+                {
+                  "aria-label": "File diffs",
+                  style: renderer.kind === "host" ? { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" } : { flex: 1, minHeight: 0, overflow: "auto" },
+                  children: [
+                    renderer.kind === "host" && action !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      "p",
+                      {
+                        role: action.status === "error" ? "alert" : "note",
+                        style: { margin: 0, padding: "2px 10px", color: muted, fontSize: 11 },
+                        children: action.detail
+                      }
+                    ),
+                    files.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: "Select a file to inspect its changes." }),
+                    source !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      DiffFileBodies,
+                      {
+                        renderer,
+                        renderHostProps: () => hostDiffProps({
+                          patch: source.diff,
+                          files,
+                          collapsedKeys: collapsedFiles,
+                          layout,
+                          wrap,
+                          reveal: hostReveal,
+                          onToggleCollapsed: (key) => setCollapsedFiles(toggleCollapsedKey(collapsedFiles, key)),
+                          onFileAction: (action2, row) => action2 === "open" ? openInEditor(row) : copyPath(row),
+                          ...mode === "workspace" ? { loadContents: loadHostContents } : {}
+                        }),
+                        renderRows: () => files.map((row) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                          FileSection,
+                          {
+                            row,
+                            selected: selected?.key === row.key,
+                            collapsed: collapsedFiles.has(row.key),
+                            layout,
+                            wrap,
+                            expansion: expansions.get(`${source.diffHash}:${row.key}`),
+                            expandable: mode === "workspace",
+                            action,
+                            comment: commentUiFor(row),
+                            ui,
+                            onToggleCollapsed: (key) => setCollapsedFiles(toggleCollapsedKey(collapsedFiles, key)),
+                            onExpand: expandFile,
+                            onOpen: openInEditor,
+                            onCopy: copyPath,
+                            registerSection: (el) => {
+                              if (el !== null) sectionRefs.current.set(row.key, el);
+                              else sectionRefs.current.delete(row.key);
+                            }
+                          },
+                          row.key
+                        ))
+                      }
+                    )
+                  ]
+                }
+              )
             ] })
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -11023,7 +11155,7 @@ ${prefix}`;
   }
   var authored = defineExtension({
     id: manifestId,
-    version: "0.5.0",
+    version: "0.6.0",
     requires: [
       requireApi(vcsDiffApi),
       requireApi(vcsRepositoryApi, REPOSITORY_API_RANGE),

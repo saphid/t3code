@@ -45,6 +45,7 @@ import {
 } from "./commentSession.js";
 import { useAddToChat } from "./composerBridge.js";
 import { parseMarkdown, type MarkdownBlock, type MarkdownInline } from "./markdown.js";
+import { ReadOnlyFileBody } from "./codeView.js";
 import {
   FILE_SAVE_DEBOUNCE_MS,
   FileEditCoordinator,
@@ -1225,8 +1226,14 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   } | null>(null);
   // The latest centered line reveal request — set by search hits and
   // link targets, tracked as handled once the content surface scrolls.
-  const [revealRequest, setRevealRequest] = useState<{ path: string; line: number } | null>(null);
-  const handledRevealRef = useRef<{ path: string; line: number } | null>(null);
+  // `id` tells repeated requests for the same line apart for the host view.
+  const [revealRequest, setRevealRequest] = useState<{
+    path: string;
+    line: number;
+    id: number;
+  } | null>(null);
+  const handledRevealRef = useRef<{ path: string; line: number; id: number } | null>(null);
+  const revealSequence = useRef(0);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const readOnlyRef = useRef<HTMLPreElement | null>(null);
   const treeListRef = useRef<HTMLUListElement | null>(null);
@@ -1452,7 +1459,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     closeCommentDraft();
     // A plain selection also cancels any reveal still pending for another path.
     if (line !== undefined && line > 0) {
-      setRevealRequest({ path, line });
+      setRevealRequest({ path, line, id: ++revealSequence.current });
       // A line target can only reveal in the source surface — the rendered
       // preview has no line geometry to scroll to.
       setRenderMarkdown(false);
@@ -1643,7 +1650,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
             select(path, line);
           },
           revealLine: (line) => {
-            setRevealRequest({ path: selected, line });
+            setRevealRequest({ path: selected, line, id: ++revealSequence.current });
             setRenderMarkdown(false);
           },
         };
@@ -2306,24 +2313,37 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
             <RenderedMarkdown blocks={markdownBlocks} links={linkActions} />
           </div>
         ) : (
-          <pre
-            ref={readOnlyRef}
-            aria-label="File contents"
-            style={{
-              overflow: "auto",
-              flex: 1,
-              margin: 0,
-              padding: 12,
-              borderTop: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
-              fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace)",
-              fontSize: 12,
-              ...(wordWrap.value === true
-                ? { whiteSpace: "pre-wrap", overflowWrap: "anywhere" }
-                : {}),
-            }}
-          >
-            {currentRead?.contents ?? ""}
-          </pre>
+          <ReadOnlyFileBody
+            host={host}
+            path={selected}
+            contents={currentRead?.contents ?? ""}
+            wordWrap={wordWrap.value}
+            reveal={
+              revealRequest !== null && revealRequest.path === selected
+                ? { line: revealRequest.line, requestId: revealRequest.id }
+                : null
+            }
+            renderFallback={() => (
+              <pre
+                ref={readOnlyRef}
+                aria-label="File contents"
+                style={{
+                  overflow: "auto",
+                  flex: 1,
+                  margin: 0,
+                  padding: 12,
+                  borderTop: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
+                  fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace)",
+                  fontSize: 12,
+                  ...(wordWrap.value === true
+                    ? { whiteSpace: "pre-wrap", overflowWrap: "anywhere" }
+                    : {}),
+                }}
+              >
+                {currentRead?.contents ?? ""}
+              </pre>
+            )}
+          />
         ))}
       {selected && selectedKind !== "text" && (
         <figure
@@ -2390,7 +2410,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
 
 export default defineExtension({
   id: manifestId,
-  version: "0.8.0",
+  version: "0.9.0",
   provides: [filePresentationApi.definition],
   assets: [{ path: PACKAGE_ASSET_PATH, mediaType: "application/octet-stream" }],
   serverEntry: "server.ts",
