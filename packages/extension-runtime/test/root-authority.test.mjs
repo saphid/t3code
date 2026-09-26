@@ -357,3 +357,50 @@ NodeTest.test(
     NodeAssert.deepEqual(nestedMetadata.principal.scopes, ["root.test/read"]);
   },
 );
+
+NodeTest.test(
+  "cancellation during suspended root revalidation arms no method deadline",
+  async () => {
+    let consulted = 0;
+    const f = makeBroker({
+      deadlineMs: () => {
+        consulted++;
+        return 330_000;
+      },
+    });
+    let release;
+    const suspended = new Promise((resolve) => (release = resolve));
+    let revalidating;
+    const entered = new Promise((resolve) => (revalidating = resolve));
+    const armed = [];
+    const originalSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = (callback, ms, ...args) => {
+      armed.push(ms);
+      return originalSetTimeout(callback, ms, ...args);
+    };
+    try {
+      const caller = new AbortController();
+      const invocation = f.broker.invoke(
+        record,
+        request("read"),
+        caller.signal,
+        undefined,
+        root(() => {
+          revalidating();
+          return suspended;
+        }),
+      );
+      await entered;
+      caller.abort();
+      await NodeAssert.rejects(invocation, /API invocation cancelled/);
+      release();
+      // Let the orphaned authorization continuation run to completion.
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+    }
+    NodeAssert.equal(consulted, 0);
+    NodeAssert.deepEqual(armed, [500]);
+    NodeAssert.equal(f.calls(), 0);
+  },
+);

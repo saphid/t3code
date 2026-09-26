@@ -435,6 +435,8 @@ export function createApiBroker(options: {
             );
           if (method.effect === "write" && !authority.allowWrite)
             throw new Error("Read-only API authority cannot invoke writes");
+          // Cancelled during the checks above: cleanup already ran, so arm nothing.
+          active();
           const deadlineMs = provider.deadlineMs?.(method.name);
           if (deadlineMs !== undefined) {
             clearTimeout(timer);
