@@ -7,6 +7,14 @@ export const ORCHESTRATION_STATUS = "t3.orchestration/status";
 export const ORCHESTRATION_CONTROL = "t3.orchestration/control";
 export const ORCHESTRATION_READ = "t3.orchestration/read";
 export const ORCHESTRATION_OPERATE = "t3.orchestration/operate";
+/**
+ * Launching a workflow starts a provider turn on the user's behalf, so it is a
+ * separate grant ANDed with operate — a pack that can start turns does not
+ * silently gain launch. Callers still confirm with the user before invoking.
+ */
+export const ORCHESTRATION_LAUNCH_WORKFLOW = "t3.orchestration/launch-workflow";
+/** Saved/built-in workflow names are slugs; the host composes the turn text from this alone. */
+export const WORKFLOW_NAME_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$";
 
 export type RuntimeSubagentStatus =
   | "pending"
@@ -220,6 +228,16 @@ export type OrchestrationControlMethods = {
   "thread.unsettle": { input: OrchestrationGuard; output: OrchestrationReceipt };
   "checkpoint.revert": {
     input: OrchestrationGuard & { readonly turnCount: number };
+    output: OrchestrationReceipt;
+  };
+  /**
+   * 1.1.0. Starts a turn asking the thread's agent to run the named saved or
+   * built-in workflow. Claude threads only (`operations["workflow.launch"]`);
+   * the receipt is the whole lifecycle surfaced here — the run itself shows
+   * up in `subscribeAgents` once the provider starts it.
+   */
+  "workflow.launch": {
+    input: OrchestrationGuard & { readonly workflowName: string };
     output: OrchestrationReceipt;
   };
 };
@@ -436,17 +454,30 @@ const operationInputs: Record<keyof OrchestrationControlMethods, JsonObject> = {
   "thread.settle": obj(guard, []),
   "thread.unsettle": obj(guard, []),
   "checkpoint.revert": obj({ ...guard, turnCount: num }, ["turnCount"]),
+  "workflow.launch": obj(
+    { ...guard, workflowName: { type: "string", pattern: WORKFLOW_NAME_PATTERN } },
+    ["workflowName"],
+  ),
 };
 export const orchestrationControlApi = defineApi<OrchestrationControlMethods>({
   id: ORCHESTRATION_CONTROL,
-  version: "1.0.0",
-  methods: ORCHESTRATION_CONTROL_OPS.map((name) => ({
-    name,
-    effect: "write",
-    requiredGrants: [ORCHESTRATION_OPERATE],
-    inputSchema: operationInputs[name],
-    outputSchema: receipt,
-  })),
+  version: "1.1.0",
+  methods: [
+    ...ORCHESTRATION_CONTROL_OPS.map((name) => ({
+      name,
+      effect: "write" as const,
+      requiredGrants: [ORCHESTRATION_OPERATE],
+      inputSchema: operationInputs[name],
+      outputSchema: receipt,
+    })),
+    {
+      name: "workflow.launch",
+      effect: "write",
+      requiredGrants: [ORCHESTRATION_OPERATE, ORCHESTRATION_LAUNCH_WORKFLOW],
+      inputSchema: operationInputs["workflow.launch"],
+      outputSchema: receipt,
+    },
+  ],
 });
 type StatusMethods = {
   getCapabilities: { input: Record<string, never>; output: OrchestrationCapabilities };

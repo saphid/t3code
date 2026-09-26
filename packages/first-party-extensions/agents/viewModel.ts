@@ -18,6 +18,7 @@
  * grouping/count rules identical rather than approximated.
  */
 import { projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
+import { WORKFLOW_NAME_PATTERN } from "@t3tools/extension-sdk/catalogue";
 import type {
   AgentsEvent,
   AgentsState,
@@ -397,10 +398,6 @@ export interface DeferredSection {
  * data in flight.
  */
 export const DEFERRED_SECTIONS: readonly DeferredSection[] = [
-  {
-    title: "Workflow launch",
-    blocker: "no native binding exists to extract — net-new design, not fakeable",
-  },
   {
     title: "Agent logs and session deep links",
     blocker: "no native web/desktop binding exists — net-new design",
@@ -898,6 +895,19 @@ export function operationSupport(
     kind: "unsupported",
     detail: `${operation} is not supported by this provider`,
   };
+}
+
+/** Mirrors the contract's workflow-name slug so the Launch button never sends a schema reject. */
+export const isWorkflowName = (name: string): boolean => WORKFLOW_NAME.test(name);
+const WORKFLOW_NAME = new RegExp(WORKFLOW_NAME_PATTERN);
+
+/** The user-visible effect of a launch, shown in the confirm step before anything is sent. */
+export const workflowLaunchEffect = (name: string): string =>
+  `Starts a turn asking this thread's agent to run the workflow "${name}", with the thread's current model, permissions, and mode. In plan mode the agent may reply with a plan instead of running it; "accepted" means the request was sent, not that the workflow started.`;
+
+/** Launch receipt line: the launch id plus accepted/rejected — the whole lifecycle this panel owns. */
+export function describeLaunchReceipt(receipt: OrchestrationReceipt): string {
+  return `launch ${receipt.commandId} · ${describeReceipt(receipt)}`;
 }
 
 /** Receipt line shown next to a control: `accepted · seq N` or the named rejection. */

@@ -6,6 +6,8 @@ import {
   DEFERRED_SECTIONS,
   EMPTY_AGENTS_FEED,
   HOST_CHROME_NOTE,
+  isWorkflowName,
+  workflowLaunchEffect,
   SCRIPTS_SCOPE_NOTE,
   SCRIPT_RUN_MAX_CANDIDATES,
   T3_PROJECT_FILE_MAX_SCRIPTS,
@@ -22,6 +24,7 @@ import {
   countAnsweredQuestions,
   createDiffAssembly,
   deriveAgentsPanelModel,
+  describeLaunchReceipt,
   describeReceipt,
   describeScriptRun,
   elapsedBetween,
@@ -442,6 +445,10 @@ NodeTest.describe("deferred sections", () => {
     const netNew = DEFERRED_SECTIONS.find((section) => /deep links/.test(section.title));
     NodeAssert.ok(netNew, "logs/deep links keep their own section");
     NodeAssert.match(netNew.blocker, /net-new design/);
+  });
+
+  NodeTest.it("no longer defers workflow launch", () => {
+    NodeAssert.ok(!DEFERRED_SECTIONS.some((section) => /workflow launch/i.test(section.title)));
   });
 
   NodeTest.it("name the scripts-list and host-chrome boundaries", () => {
@@ -1076,5 +1083,31 @@ NodeTest.describe("trackThemeVars", () => {
     first.reject(new Error("stale denial"));
     await flush();
     NodeAssert.deepEqual(emits, [TEXT_VAR]);
+  });
+});
+
+NodeTest.describe("workflow launch", () => {
+  NodeTest.it("accepts only the contract's workflow-name slugs", () => {
+    for (const name of ["review", "review-changes", "v2.1_nightly", "A".repeat(64)])
+      NodeAssert.ok(isWorkflowName(name), name);
+    for (const name of ["", "../x", ".hidden", "-flag", "a b", "a/b", "A".repeat(65)])
+      NodeAssert.ok(!isWorkflowName(name), name);
+  });
+
+  NodeTest.it("states the effect before sending and names the launch id on the receipt", () => {
+    NodeAssert.match(workflowLaunchEffect("review"), /Starts a turn .* "review"/);
+    NodeAssert.equal(
+      describeLaunchReceipt({ commandId: "c1", status: "accepted", sequence: 4, error: null }),
+      "launch c1 · accepted · seq 4",
+    );
+    NodeAssert.equal(
+      describeLaunchReceipt({
+        commandId: "c2",
+        status: "rejected",
+        sequence: 4,
+        error: "OrchestrationWorkflowEngineUnavailable",
+      }),
+      "launch c2 · rejected — OrchestrationWorkflowEngineUnavailable",
+    );
   });
 });
