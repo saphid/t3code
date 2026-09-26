@@ -287,6 +287,7 @@ struct FeatureRootModelTests {
         await model.applicationDidBecomeActive(at: start.addingTimeInterval(10))
         await model.applicationDidBecomeActive(at: start.addingTimeInterval(11))
         #expect(client.foregroundReconnects == [false, true])
+        #expect(client.backgroundSuspends == 2)
     }
 
     @Test
@@ -3773,6 +3774,8 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
         _ = try await rewindHandler(threadID, messageID)
     }
     var foregroundReconnects: [Bool] = []
+    var backgroundSuspends = 0
+    func suspendForBackground() { backgroundSuspends += 1 }
     func resumeAfterBackground(reconnect: Bool) async { foregroundReconnects.append(reconnect) }
     private let eventStream: AsyncStream<FeatureEvent>
     private let eventContinuation: AsyncStream<FeatureEvent>.Continuation
@@ -3974,7 +3977,7 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
         selection: FeatureSelection?,
         runtimeMode: FeatureRuntimeMode,
         attachments _: [FeatureUploadAttachment],
-        identity _: FeatureSubmissionIdentity,
+        identity: FeatureSubmissionIdentity,
         context: OrchestrationMessageContext? = nil
     ) async throws {
         sentRuntimeModes.append(runtimeMode)
