@@ -2715,83 +2715,118 @@ var __t3Client = (() => {
       conflicted: { type: "boolean" }
     }
   };
+  var vcsChangesListMethod = {
+    name: "list",
+    effect: "read",
+    requiredGrants: [VCS_READ],
+    inputSchema: vcsEmptyInputSchema,
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["isRepo", "entries", "truncated"],
+      properties: {
+        isRepo: { type: "boolean" },
+        entries: { type: "array", maxItems: 5e3, items: vcsChangeEntrySchema },
+        truncated: { type: "boolean" }
+      }
+    }
+  };
+  var vcsChangesPathsMethod = (name) => ({
+    name,
+    effect: "write",
+    requiredGrants: [VCS_MUTATE],
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["paths"],
+      properties: { paths: vcsPathsInput }
+    },
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["paths"],
+      properties: { paths: vcsPathsInput }
+    }
+  });
+  var vcsChangesStageMethod = vcsChangesPathsMethod("stage");
+  var vcsChangesUnstageMethod = vcsChangesPathsMethod("unstage");
+  var vcsChangesCommitMethod = {
+    name: "commit",
+    effect: "write",
+    requiredGrants: [VCS_MUTATE],
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["message"],
+      properties: {
+        message: { type: "string", minLength: 1, maxLength: 1e4 },
+        paths: vcsPathsInput
+      }
+    },
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["commitSha", "refName"],
+      properties: {
+        commitSha: { type: "string", minLength: 1, maxLength: 64 },
+        refName: vcsRefNameOrNull
+      }
+    }
+  };
+  var vcsChangesDiscardMethod = {
+    name: "discard",
+    effect: "write",
+    requiredGrants: [VCS_MUTATE],
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["paths"],
+      properties: { paths: vcsPathsInput }
+    },
+    outputSchema: {
+      oneOf: [
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["status", "restored", "removed"],
+          properties: {
+            status: { const: "discarded" },
+            restored: { type: "array", maxItems: 100, items: vcsPath },
+            removed: { type: "array", maxItems: 100, items: vcsPath }
+          }
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["status", "reason", "paths"],
+          properties: {
+            status: { const: "refused" },
+            reason: { enum: ["conflicted", "no-working-tree-change"] },
+            paths: vcsPathsInput
+          }
+        }
+      ]
+    }
+  };
   var vcsChangesApi = defineApi({
+    id: VCS_CHANGES,
+    version: "1.1.0",
+    methods: [
+      vcsChangesListMethod,
+      vcsChangesStageMethod,
+      vcsChangesUnstageMethod,
+      vcsChangesCommitMethod,
+      vcsChangesDiscardMethod
+    ]
+  });
+  var vcsChangesApiV1 = defineApi({
     id: VCS_CHANGES,
     version: "1.0.0",
     methods: [
-      {
-        name: "list",
-        effect: "read",
-        requiredGrants: [VCS_READ],
-        inputSchema: vcsEmptyInputSchema,
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["isRepo", "entries", "truncated"],
-          properties: {
-            isRepo: { type: "boolean" },
-            entries: { type: "array", maxItems: 5e3, items: vcsChangeEntrySchema },
-            truncated: { type: "boolean" }
-          }
-        }
-      },
-      {
-        name: "stage",
-        effect: "write",
-        requiredGrants: [VCS_MUTATE],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["paths"],
-          properties: { paths: vcsPathsInput }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["paths"],
-          properties: { paths: vcsPathsInput }
-        }
-      },
-      {
-        name: "unstage",
-        effect: "write",
-        requiredGrants: [VCS_MUTATE],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["paths"],
-          properties: { paths: vcsPathsInput }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["paths"],
-          properties: { paths: vcsPathsInput }
-        }
-      },
-      {
-        name: "commit",
-        effect: "write",
-        requiredGrants: [VCS_MUTATE],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["message"],
-          properties: {
-            message: { type: "string", minLength: 1, maxLength: 1e4 },
-            paths: vcsPathsInput
-          }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["commitSha", "refName"],
-          properties: {
-            commitSha: { type: "string", minLength: 1, maxLength: 64 },
-            refName: vcsRefNameOrNull
-          }
-        }
-      }
+      vcsChangesListMethod,
+      vcsChangesStageMethod,
+      vcsChangesUnstageMethod,
+      vcsChangesCommitMethod
     ]
   });
   var vcsDiffPreviewSourceSchema = {
@@ -3030,7 +3065,7 @@ var __t3Client = (() => {
       "repository.removeWorktree": { type: "boolean" }
     }
   };
-  var vcsOperationsSupportSchema = {
+  var vcsOperationsSupportSchemaV1_1 = {
     type: "object",
     additionalProperties: false,
     required: [
@@ -3044,6 +3079,15 @@ var __t3Client = (() => {
       "repository.push": { type: "boolean" },
       "repository.fetch": { type: "boolean" },
       "repository.listRemotes": { type: "boolean" }
+    }
+  };
+  var vcsOperationsSupportSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [...vcsOperationsSupportSchemaV1_1.required, "changes.discard"],
+    properties: {
+      ...vcsOperationsSupportSchemaV1_1.properties,
+      "changes.discard": { type: "boolean" }
     }
   };
   var vcsDriverCapabilitiesSchema = {
@@ -3078,7 +3122,7 @@ var __t3Client = (() => {
       operations: vcsOperationsSupportSchemaV1
     }
   };
-  var vcsCapabilitiesResultSchema = {
+  var vcsCapabilitiesResultSchemaV1_1 = {
     type: "object",
     additionalProperties: false,
     required: ["detected", "kind", "detail", "driver", "operations"],
@@ -3087,6 +3131,13 @@ var __t3Client = (() => {
       kind: { type: ["string", "null"], enum: ["git", "jj", "unknown", null] },
       detail: { type: ["string", "null"], maxLength: 512 },
       driver: vcsDriverCapabilitiesSchema,
+      operations: vcsOperationsSupportSchemaV1_1
+    }
+  };
+  var vcsCapabilitiesResultSchema = {
+    ...vcsCapabilitiesResultSchemaV1_1,
+    properties: {
+      ...vcsCapabilitiesResultSchemaV1_1.properties,
       operations: vcsOperationsSupportSchema
     }
   };
@@ -3096,6 +3147,13 @@ var __t3Client = (() => {
     requiredGrants: [VCS_READ],
     inputSchema: vcsEmptyInputSchema,
     outputSchema: vcsCapabilitiesResultSchemaV1
+  };
+  var vcsRepositoryGetCapabilitiesMethodV1_1 = {
+    name: "getCapabilities",
+    effect: "read",
+    requiredGrants: [VCS_READ],
+    inputSchema: vcsEmptyInputSchema,
+    outputSchema: vcsCapabilitiesResultSchemaV1_1
   };
   var vcsRepositoryGetCapabilitiesMethod = {
     name: "getCapabilities",
@@ -3258,9 +3316,23 @@ var __t3Client = (() => {
   };
   var vcsRepositoryApi = defineApi({
     id: VCS_REPOSITORY,
-    version: "1.1.0",
+    version: "1.2.0",
     methods: [
       vcsRepositoryGetCapabilitiesMethod,
+      vcsRepositoryPullMethod,
+      vcsRepositoryInitMethod,
+      vcsRepositoryCreateWorktreeMethod,
+      vcsRepositoryRemoveWorktreeMethod,
+      vcsRepositoryPushMethod,
+      vcsRepositoryFetchMethod,
+      vcsRepositoryListRemotesMethod
+    ]
+  });
+  var vcsRepositoryApiV1_1 = defineApi({
+    id: VCS_REPOSITORY,
+    version: "1.1.0",
+    methods: [
+      vcsRepositoryGetCapabilitiesMethodV1_1,
       vcsRepositoryPullMethod,
       vcsRepositoryInitMethod,
       vcsRepositoryCreateWorktreeMethod,
@@ -3284,9 +3356,11 @@ var __t3Client = (() => {
   var VCS_STATUS_API = vcsStatusApi.definition;
   var VCS_REFS_API = vcsRefsApi.definition;
   var VCS_CHANGES_API = vcsChangesApi.definition;
+  var VCS_CHANGES_API_V1 = vcsChangesApiV1.definition;
   var VCS_DIFF_API = vcsDiffApi.definition;
   var VCS_DIFF_API_V1 = vcsDiffApiV1.definition;
   var VCS_REPOSITORY_API = vcsRepositoryApi.definition;
+  var VCS_REPOSITORY_API_V1_1 = vcsRepositoryApiV1_1.definition;
   var VCS_REPOSITORY_API_V1 = vcsRepositoryApiV1.definition;
   var RESOURCES_LEASE = "t3.resources/lease";
   var BROWSER_SESSIONS = "t3.browser/sessions";
@@ -6635,8 +6709,10 @@ var __t3Client = (() => {
     vcsStatusApi.definition,
     vcsRefsApi.definition,
     vcsChangesApi.definition,
+    vcsChangesApiV1.definition,
     vcsDiffApi.definition,
     vcsRepositoryApi.definition,
+    vcsRepositoryApiV1_1.definition,
     vcsRepositoryApiV1.definition,
     vcsDiffApiV1.definition,
     vcsActionsApi.definition,
@@ -6968,6 +7044,46 @@ var __t3Client = (() => {
     const bulk = laneMutation(lane);
     if (bulk === null) return null;
     return { ...bulk, label: bulk.op === "stage" ? "Stage" : "Unstage" };
+  }
+  function discardAction(lane) {
+    switch (lane) {
+      case "changes":
+        return { row: "Discard", bulk: "Discard all", verb: "Discard" };
+      case "untracked":
+        return { row: "Delete", bulk: "Delete all", verb: "Delete" };
+      case "staged":
+      case "conflicted":
+        return null;
+    }
+  }
+  function planDiscard(lanes, request) {
+    if (request === null || request.paths.length === 0) return null;
+    const action = discardAction(request.lane);
+    if (action === null) return null;
+    const present = new Set(lanes[request.lane].map((entry) => entry.path));
+    if (!request.paths.every((path3) => present.has(path3))) return null;
+    const count = request.paths.length;
+    const noun = count === 1 ? `"${request.paths[0]}"` : `${count} paths`;
+    const prompt = request.lane === "untracked" ? `Delete ${noun} from disk? Untracked files cannot be recovered.` : `Discard changes to ${noun}? Unstaged edits are lost; staged changes stay.`;
+    return {
+      prompt,
+      confirmLabel: count === 1 ? action.verb : `${action.verb} ${count} paths`,
+      disabled: count > VCS_PATHS_MAX ? `Over ${VCS_PATHS_MAX} paths \u2014 discard runs as one request, pick fewer` : null
+    };
+  }
+  function discardReceipt(result) {
+    if (result.status === "refused") {
+      const reason = result.reason === "conflicted" ? "resolve merge conflicts first" : "no working-tree change to discard";
+      return { ok: false, detail: `Nothing discarded \u2014 ${reason}: ${result.paths.join(", ")}` };
+    }
+    const parts = [];
+    if (result.restored.length > 0)
+      parts.push(`reverted ${result.restored.length} file${result.restored.length === 1 ? "" : "s"}`);
+    if (result.removed.length > 0)
+      parts.push(
+        `deleted ${result.removed.length} untracked path${result.removed.length === 1 ? "" : "s"}`
+      );
+    return { ok: true, detail: `Discarded: ${parts.join(", ")}` };
   }
   function planCommit(lanes, message2) {
     if (lanes.conflicted.length > 0) {
@@ -10377,6 +10493,7 @@ ${thread.id}`) === activity,
   var import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
   var manifestId = "t3.version-control";
   var REPOSITORY_API_RANGE = "^1.0.0";
+  var CHANGES_API_RANGE = "^1.0.0";
   var LANES = new Set(CHANGE_LANES);
   var VIEWS = /* @__PURE__ */ new Set(["pull-requests", "repository"]);
   function restoreState(value) {
@@ -10497,7 +10614,7 @@ ${thread.id}`) === activity,
       if (!visible || !isRepo || revision2 === "") return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
-      void bindApi(vcsChangesApi, host, session.context).invoke("list", {}, signal).then(
+      void bindApi(vcsChangesApi, host, session.context, CHANGES_API_RANGE).invoke("list", {}, signal).then(
         (changes) => {
           if (!signal.aborted) setResult({ key: revision2, changes, error: null });
         },
@@ -10757,6 +10874,7 @@ ${thread.id}`) === activity,
     const [stackedChoice, setStackedChoice] = (0, import_react2.useState)(null);
     const [featureBranch, setFeatureBranch] = (0, import_react2.useState)(false);
     const [pendingConfirm, setPendingConfirm] = (0, import_react2.useState)(null);
+    const [pendingDiscard, setPendingDiscard] = (0, import_react2.useState)(null);
     const [deferredFollowUp, setDeferredFollowUp] = (0, import_react2.useState)(null);
     const [stacked, setStacked] = (0, import_react2.useState)(null);
     const [newRefName, setNewRefName] = (0, import_react2.useState)("");
@@ -10840,6 +10958,7 @@ ${thread.id}`) === activity,
     const canStage = ops?.["changes.stage"] === true;
     const canUnstage = ops?.["changes.unstage"] === true;
     const canCommit = ops?.["changes.commit"] === true;
+    const canDiscard = ops?.["changes.discard"] === true;
     const canCreateRef = ops?.["refs.create"] === true;
     const canSwitchRef = ops?.["refs.switch"] === true;
     const canPull = ops?.["repository.pull"] === true;
@@ -10906,13 +11025,29 @@ ${thread.id}`) === activity,
       });
     };
     const runPaths = (op, paths, label) => runMutation(op, label, async (signal) => {
-      const changesApi = bindApi(vcsChangesApi, host, session.context);
+      const changesApi = bindApi(vcsChangesApi, host, session.context, CHANGES_API_RANGE);
       for (let index = 0; index < paths.length; index += VCS_PATHS_MAX) {
         await changesApi.invoke(op, { paths: paths.slice(index, index + VCS_PATHS_MAX) }, signal);
       }
       const noun = `${paths.length} path${paths.length === 1 ? "" : "s"}`;
       return op === "stage" ? `Staged ${noun}` : `Unstaged ${noun}`;
     });
+    const runDiscard = (request) => {
+      setPendingDiscard(null);
+      const plan = planDiscard(lanes, request);
+      if (plan === null || plan.disabled !== null) return;
+      const label = request.paths.length === 1 ? `Discarding ${request.paths[0]}` : `Discarding ${request.paths.length} paths`;
+      runMutation("discard", label, async (signal) => {
+        const result = await bindApi(vcsChangesApi, host, session.context, CHANGES_API_RANGE).invoke(
+          "discard",
+          { paths: [...request.paths] },
+          signal
+        );
+        const receipt2 = discardReceipt(result);
+        if (!receipt2.ok) throw new Error(receipt2.detail);
+        return receipt2.detail;
+      });
+    };
     const runCommit = () => {
       const plan = planCommit(lanes, commitMessage);
       if (plan.disabled !== null) return;
@@ -10920,7 +11055,7 @@ ${thread.id}`) === activity,
       runMutation(
         "commit",
         "Committing",
-        (signal) => bindApi(vcsChangesApi, host, session.context).invoke(
+        (signal) => bindApi(vcsChangesApi, host, session.context, CHANGES_API_RANGE).invoke(
           "commit",
           plan.paths === void 0 ? { message: message2 } : { message: message2, paths: [...plan.paths] },
           signal
@@ -11462,6 +11597,8 @@ ${thread.id}`) === activity,
                 const rowAction = entryMutation(lane);
                 const bulkAllowed = bulk !== null && (bulk.op === "stage" ? canStage : canUnstage);
                 const rowAllowed = rowAction !== null && (rowAction.op === "stage" ? canStage : canUnstage);
+                const discard = canDiscard ? discardAction(lane) : null;
+                const discardConfirm = pendingDiscard?.lane === lane ? planDiscard(lanes, pendingDiscard) : null;
                 return lanes[lane].length === 0 ? null : /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { "aria-label": laneTitle(lane), style: { marginBottom: 8 }, children: [
                   /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                     "h3",
@@ -11486,18 +11623,87 @@ ${thread.id}`) === activity,
                           lanes[lane].length,
                           ")"
                         ] }),
-                        bulkAllowed && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                          "button",
+                        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { display: "flex", gap: 4 }, children: [
+                          discard !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                            "button",
+                            {
+                              type: "button",
+                              disabled: busy,
+                              onClick: () => setPendingDiscard({
+                                lane,
+                                paths: lanes[lane].map((entry) => entry.path)
+                              }),
+                              style: { ...control2, padding: "1px 6px", fontSize: 12 },
+                              children: discard.bulk
+                            }
+                          ),
+                          bulkAllowed && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                            "button",
+                            {
+                              type: "button",
+                              disabled: busy,
+                              onClick: () => runPaths(
+                                bulk.op,
+                                lanes[lane].map((entry) => entry.path),
+                                `${bulk.op === "stage" ? "Staging" : "Unstaging"} ${lanes[lane].length} paths`
+                              ),
+                              style: { ...control2, padding: "1px 6px", fontSize: 12 },
+                              children: bulk.label
+                            }
+                          )
+                        ] })
+                      ]
+                    }
+                  ),
+                  pendingDiscard !== null && discardConfirm !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                    "div",
+                    {
+                      role: "alertdialog",
+                      "aria-label": `Confirm ${discard?.verb.toLowerCase() ?? "discard"}`,
+                      style: {
+                        margin: "4px 0",
+                        padding: "4px 6px",
+                        border: "1px solid var(--border, #dfe3e8)",
+                        borderRadius: 5,
+                        fontSize: 12
+                      },
+                      children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { marginBottom: 4 }, children: discardConfirm.prompt }),
+                        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                          "div",
                           {
-                            type: "button",
-                            disabled: busy,
-                            onClick: () => runPaths(
-                              bulk.op,
-                              lanes[lane].map((entry) => entry.path),
-                              `${bulk.op === "stage" ? "Staging" : "Unstaging"} ${lanes[lane].length} paths`
-                            ),
-                            style: { ...control2, padding: "1px 6px", fontSize: 12 },
-                            children: bulk.label
+                            style: {
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                              flexWrap: "wrap"
+                            },
+                            children: [
+                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                                "button",
+                                {
+                                  type: "button",
+                                  disabled: busy || discardConfirm.disabled !== null,
+                                  onClick: () => runDiscard(pendingDiscard),
+                                  style: {
+                                    ...control2,
+                                    color: "var(--t3-version-control-warning, var(--warning, #b54708))"
+                                  },
+                                  children: discardConfirm.confirmLabel
+                                }
+                              ),
+                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                                "button",
+                                {
+                                  type: "button",
+                                  autoFocus: true,
+                                  onClick: () => setPendingDiscard(null),
+                                  style: control2,
+                                  children: "Cancel"
+                                }
+                              ),
+                              discardConfirm.disabled !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2 }, children: discardConfirm.disabled })
+                            ]
                           }
                         )
                       ]
@@ -11556,6 +11762,21 @@ ${thread.id}`) === activity,
                               flexShrink: 0
                             },
                             children: rowAction.label
+                          }
+                        ),
+                        discard !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                          "button",
+                          {
+                            type: "button",
+                            disabled: busy,
+                            onClick: () => setPendingDiscard({ lane, paths: [entry.path] }),
+                            style: {
+                              ...control2,
+                              padding: "1px 6px",
+                              fontSize: 12,
+                              flexShrink: 0
+                            },
+                            children: discard.row
                           }
                         )
                       ]
@@ -12249,13 +12470,13 @@ ${thread.id}`) === activity,
   }
   var extension_default = defineExtension({
     id: manifestId,
-    version: "0.4.0",
+    version: "0.5.0",
     requires: [
       requireApi(prsReadApi),
       requireApi(prsWriteApi),
       requireApi(vcsActionsApi),
       requireApi(vcsStatusApi),
-      requireApi(vcsChangesApi),
+      requireApi(vcsChangesApi, CHANGES_API_RANGE),
       requireApi(vcsRefsApi),
       requireApi(vcsRepositoryApi, REPOSITORY_API_RANGE),
       requireApi(uiThemeApi),
