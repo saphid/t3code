@@ -260,6 +260,27 @@ it("never splits a UTF-8 sequence or keeps an unbounded partial line", () => {
   });
 });
 
+it("keeps whole lines when the byte cut lands exactly on a line boundary", () => {
+  const encoded = new TextEncoder().encode("old\none\ntwo\n");
+  expect(shapeLogTail(encoded, 0, { ...limits, maxBytes: 8 })).toEqual({
+    contents: "one\ntwo\n",
+    truncated: true,
+  });
+  // One byte fewer cuts inside "one", which is dropped.
+  expect(shapeLogTail(encoded, 0, { ...limits, maxBytes: 7 })).toEqual({
+    contents: "two\n",
+    truncated: true,
+  });
+});
+
+it("redacts a transcript record whose key is cut off before its closing quote", () => {
+  const record = JSON.stringify({ content: "-----BEGIN PRIVATE KEY-----\nAAAA \nBBBB" });
+  expect(shapeLogTail(new TextEncoder().encode(`${record}\n`), 0, limits)).toEqual({
+    contents: `{"content":"[REDACTED]"}\n`,
+    truncated: false,
+  });
+});
+
 it("withholds a leading line whose secret name fell before the read", async () => {
   const f = await fixture();
   const file = await f.write(

@@ -88,9 +88,9 @@ export const claudeWorkspaceSlug = (cwd: string) => cwd.replace(/[^A-Za-z0-9]/g,
  * offset in the source. A region starting mid-source first drops its leading
  * partial line: that line's start (and any secret name on it) is unread, so
  * redaction cannot classify it, even when it is the only line. The rest is
- * decoded and redacted, then cut to `maxBytes` UTF-8 bytes. That cut drops
- * leading UTF-8 continuation bytes and, when it holds a later line, its
- * partial first line; `maxLines` then keeps the last N lines.
+ * decoded and redacted, then cut to `maxBytes` UTF-8 bytes. A cut inside a
+ * line drops leading UTF-8 continuation bytes and, when it holds a later
+ * line, its partial first line; `maxLines` then keeps the last N lines.
  */
 export function shapeLogTail(
   region: Uint8Array,
@@ -102,18 +102,21 @@ export function shapeLogTail(
     redactLogSecrets(new TextDecoder().decode(region.subarray(offset))),
   );
   // Earlier source bytes were withheld; the redacted bytes are cut only when
-  // they overflow `maxBytes`, and only that cut leaves a partial first line.
+  // they overflow `maxBytes`.
   let truncated = start > 0;
-  const overflow = bytes.length > limits.maxBytes;
-  if (overflow) {
-    bytes = bytes.subarray(bytes.length - limits.maxBytes);
-    truncated = true;
-  }
   let cut = 0;
-  if (overflow) {
-    while (cut < bytes.length && (bytes[cut]! & 0xc0) === 0x80) cut++;
-    const newline = bytes.indexOf(0x0a, cut);
-    if (newline !== -1 && newline < bytes.length - 1) cut = newline + 1;
+  if (bytes.length > limits.maxBytes) {
+    const from = bytes.length - limits.maxBytes;
+    // A cut exactly after a newline keeps whole lines; only a cut inside a
+    // line leaves a partial first line to drop.
+    const midLine = bytes[from - 1] !== 0x0a;
+    bytes = bytes.subarray(from);
+    truncated = true;
+    if (midLine) {
+      while (cut < bytes.length && (bytes[cut]! & 0xc0) === 0x80) cut++;
+      const newline = bytes.indexOf(0x0a, cut);
+      if (newline !== -1 && newline < bytes.length - 1) cut = newline + 1;
+    }
   }
   let contents = new TextDecoder().decode(bytes.subarray(cut));
   const lines = contents.split("\n");

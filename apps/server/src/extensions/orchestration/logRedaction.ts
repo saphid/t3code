@@ -24,12 +24,13 @@ const base64 = "[A-Za-z0-9+/=]+";
 /**
  * A PEM private-key block: the BEGIN marker ending its line, then whole
  * header or base64 lines (runs separated by whitespace, which is consumed),
- * through END or the end of the read. Prose that merely mentions the marker
- * keeps its line, and a block without END stops at the first line that is
- * not key material.
+ * through END or the end of the read. A JSON string's closing quote also
+ * ends a base64 line, so a key cut off before END redacts through the end of
+ * its string. Prose that merely mentions the marker keeps its line, and a
+ * block without END stops at the first line that is not key material.
  */
 const PEM_BLOCK = new RegExp(
-  String.raw`-----BEGIN[A-Z ]{0,40}PRIVATE KEY-----${pemSpace}*(?:${pemBreak}${pemSpace}*(?:[A-Za-z-]+:[ \t][^\r\n\\]*|${base64}(?:${pemSpace}+${base64})*${pemSpace}*(?=\r|\n|\\[rn]|-----END|$))?)+(?:-----END[A-Z ]{0,40}PRIVATE KEY-----)?`,
+  String.raw`-----BEGIN[A-Z ]{0,40}PRIVATE KEY-----${pemSpace}*(?:${pemBreak}${pemSpace}*(?:[A-Za-z-]+:[ \t][^\r\n\\]*|${base64}(?:${pemSpace}+${base64})*${pemSpace}*(?=\r|\n|\\[rn]|"|-----END|$))?)+(?:-----END[A-Z ]{0,40}PRIVATE KEY-----)?`,
   "g",
 );
 

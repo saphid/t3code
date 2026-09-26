@@ -99,7 +99,32 @@ it("redacts every line of a key whose lines carry spaces or tabs", () => {
     expect(JSON.parse(redactLogSecrets(JSON.stringify({ content: cut })))).toEqual({
       content: R,
     });
+    // Truncated inside the last key line: no break before the end of the
+    // read or the closing JSON quote.
+    const open = cut.slice(0, -1);
+    expect(redactLogSecrets(open), open).toBe(whole.slice(0, -`${R}\n`.length - 1));
+    expect(JSON.parse(redactLogSecrets(JSON.stringify({ content: open })))).toEqual({
+      content: R,
+    });
   }
+});
+
+it("redacts a key cut off inside a JSON string, even on one spaced line", () => {
+  // The reviewer's repro: the closing quote ends the last base64 line.
+  expect(
+    redactLogSecrets(JSON.stringify({ content: "-----BEGIN PRIVATE KEY-----\nAAAA \nBBBB" })),
+  ).toBe(`{"content":"${R}"}`);
+  const line = Array.from({ length: 29 }, (_, i) => `${"MIIE".repeat(14)}${i}`).join(" ");
+  const record = JSON.stringify({ content: `-----BEGIN RSA PRIVATE KEY-----\n${line}` });
+  expect(redactLogSecrets(record)).toBe(`{"content":"${R}"}`);
+});
+
+it("redacts plain prose lines directly under a BEGIN marker (accepted trade-off)", () => {
+  // Letters, digits, and spaces cannot be told apart from spaced base64, so
+  // such a line after BEGIN is redacted; whitespace-only lines are kept.
+  expect(redactLogSecrets("-----BEGIN PRIVATE KEY-----\nBuild passed 42\n  \ndone.\n")).toBe(
+    `${R}\n${R}\n  \ndone.\n`,
+  );
 });
 
 it("scans a full read region in linear time", () => {
