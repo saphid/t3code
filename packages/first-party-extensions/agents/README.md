@@ -34,7 +34,10 @@ terminal.
   shows an inline confirm stating the effect, and renders the launch id with
   its accepted/rejected receipt. The host turns it into a turn asking the
   agent to run that saved workflow — Claude threads only; other providers
-  show the named unsupported row.
+  show the named unsupported row. The host does not look the name up: the
+  agent resolves it. Launch keeps the thread's current mode, so a plan-mode
+  thread may answer with a plan instead of running the workflow, and an
+  accepted receipt acknowledges the request, not a started workflow.
 - `t3.workspace/files@^1.0.0` `readText` — reads the checked-in `t3.json`
   under the `t3.workspace/read-text` grant and lists its `scripts[]` entries.
   Settings-owned project scripts (machine defaults, per-project overrides)

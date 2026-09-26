@@ -98,7 +98,8 @@ Disposition legend: **EXISTING** = a shipped public SDK contract already covers 
 - PLANNED (already-planned slices): #2, #3, #4 (roster/status/activity via t3.orchestration/* status/subscribe); #6 (start), #7 (cancel), #8 (approval response), #12 (settle), #14 (workflow listing payload), #19 (model selection/reporting) — 9
 - NEW-NARROW (narrow contract or explicit slice extension needed): #16 (workflow script read), #17 (project script listing), #22 (agent session scan/import) — 3
 - PKG-HELPER (package-owned or host-owned internal, no contract): #1 (surface registration), #5 (agentKind stamp), #13 (surface navigation/badge/CTA) — 3
-- DEFER: #9, #10, #11 (checkpoint list/restore/diff → P12 orchestration boundary), #15 (workflow launch — no native binding), #20 (log/output inspection — no native binding), #21 (session deep link — no native web/desktop binding), #23 (mobile surfaces) — 7
+- DEFER: #9, #10, #11 (checkpoint list/restore/diff → P12 orchestration boundary), #20 (log/output inspection — no native binding), #21 (session deep link — no native web/desktop binding), #23 (mobile surfaces) — 6
+- NET-NEW (S8a): #15 (workflow launch via `t3.orchestration/control` 1.1.0 `workflow.launch`; a host-composed turn, not native parity) — 1
 
 ## Handoff rules / honest limits
 

@@ -903,7 +903,7 @@ const WORKFLOW_NAME = new RegExp(WORKFLOW_NAME_PATTERN);
 
 /** The user-visible effect of a launch, shown in the confirm step before anything is sent. */
 export const workflowLaunchEffect = (name: string): string =>
-  `Starts a turn asking this thread's agent to run the workflow "${name}", with the thread's current model and permissions.`;
+  `Starts a turn asking this thread's agent to run the workflow "${name}", with the thread's current model, permissions, and mode. In plan mode the agent may reply with a plan instead of running it; "accepted" means the request was sent, not that the workflow started.`;
 
 /** Launch receipt line: the launch id plus accepted/rejected — the whole lifecycle this panel owns. */
 export function describeLaunchReceipt(receipt: OrchestrationReceipt): string {
