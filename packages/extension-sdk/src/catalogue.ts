@@ -26,6 +26,7 @@ import {
 } from "./clientProviders.js";
 
 export * from "./workspaceResources.js";
+export * from "./agentSessions.js";
 
 export {
   EDITABLE_TEXT_MAX_BYTES,

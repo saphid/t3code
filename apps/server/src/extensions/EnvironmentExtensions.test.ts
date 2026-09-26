@@ -2,6 +2,8 @@ import { CheckpointDiffQuery } from "../checkpointing/CheckpointDiffQuery.ts";
 import { OrchestrationCommandReceiptRepository } from "../persistence/Services/OrchestrationCommandReceipts.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProviderService } from "../provider/Services/ProviderService.ts";
+import { ProviderSessionDirectory } from "../provider/Services/ProviderSessionDirectory.ts";
+import { AgentSessionScanner } from "../project/AgentSessionScanner.ts";
 import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
 import { PortDiscovery } from "../preview/PortScanner.ts";
 import * as ExtensionCatalogueChanges from "./catalogueChanges.ts";
@@ -230,6 +232,8 @@ function fixture() {
     makeProviderRegistryLayer(),
     ExtensionCatalogueChanges.layer,
     Layer.mock(PortDiscovery)({}),
+    Layer.mock(AgentSessionScanner)({}),
+    Layer.mock(ProviderSessionDirectory)({}),
     Layer.succeed(TerminalManager, {
       inspect: () => Effect.succeed(null),
       readOutput: () => Effect.succeed(null),

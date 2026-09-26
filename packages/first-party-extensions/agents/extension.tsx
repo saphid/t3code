@@ -1,9 +1,12 @@
 import {
+  agentSessionsApi,
   orchestrationControlApi,
   orchestrationStatusApi,
   terminalControlApi,
   uiThemeApi,
   workspaceFilesApi,
+  type AgentSessionSummary,
+  type AgentSessionsScanResult,
   type ApprovalDecision,
   type OrchestrationCapabilities,
   type OrchestrationControlMethods,
@@ -45,6 +48,8 @@ import {
   deriveAgentsPanelModel,
   describeReceipt,
   describeScriptRun,
+  describeSessionImport,
+  describeSessionsError,
   elapsedBetween,
   operationSupport,
   parseT3ProjectFile,
@@ -1077,6 +1082,172 @@ function CheckpointsSection(props: {
   );
 }
 
+type SessionScan =
+  | { readonly kind: "idle" | "scanning" }
+  | { readonly kind: "ready"; readonly result: AgentSessionsScanResult }
+  | { readonly kind: "error"; readonly message: string };
+
+const sessionRowKey = (entry: AgentSessionSummary) =>
+  `${entry.providerInstanceId}:${entry.providerSessionId}`;
+
+/**
+ * Claude/Codex sessions that ran in this project, imported one at a time
+ * through `t3.agents/sessions` behind the same two-step confirm as revert.
+ * Scanning reads transcripts on the host, so it runs only when asked.
+ */
+function SessionImportSection(props: { readonly host: ClientHost; readonly session: ViewSession }) {
+  const { host, session } = props;
+  const api = useMemo(() => bindApi(agentSessionsApi, host, session.context), [host, session]);
+  const [scan, setScan] = useState<SessionScan>({ kind: "idle" });
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [outcomes, setOutcomes] = useState<Record<string, string>>({});
+
+  const runScan = () => {
+    setScan({ kind: "scanning" });
+    setConfirming(null);
+    api
+      .invoke("scan", {}, session.signal)
+      .then((result) => setScan({ kind: "ready", result }))
+      .catch((error: unknown) => setScan({ kind: "error", message: describeSessionsError(error) }));
+  };
+  const runImport = (entry: AgentSessionSummary) => {
+    const key = sessionRowKey(entry);
+    setConfirming(null);
+    setOutcomes((current) => ({ ...current, [key]: "importing…" }));
+    api
+      .invoke(
+        "import",
+        {
+          providerInstanceId: entry.providerInstanceId,
+          providerSessionId: entry.providerSessionId,
+        },
+        session.signal,
+      )
+      .then((receipt) => {
+        setOutcomes((current) => ({ ...current, [key]: describeSessionImport(receipt) }));
+        const threadId = receipt.threadId;
+        if (receipt.status === "imported" || receipt.error === "AgentSessionAlreadyImported")
+          setScan((current) =>
+            current.kind !== "ready"
+              ? current
+              : {
+                  kind: "ready",
+                  result: {
+                    ...current.result,
+                    sessions: current.result.sessions.map((row) =>
+                      sessionRowKey(row) === key ? { ...row, status: "imported", threadId } : row,
+                    ),
+                  },
+                },
+          );
+      })
+      .catch((error: unknown) =>
+        setOutcomes((current) => ({ ...current, [key]: describeSessionsError(error) })),
+      );
+  };
+
+  return (
+    <section
+      aria-label="Import sessions"
+      style={{ padding: "6px 10px", borderBottom: border, flexShrink: 0 }}
+    >
+      <div style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
+        <div style={{ ...sectionTitle, flex: 1, padding: "2px 0" }}>Import sessions</div>
+        <button type="button" style={control} disabled={scan.kind === "scanning"} onClick={runScan}>
+          {scan.kind === "idle" ? "Scan" : "Rescan"}
+        </button>
+      </div>
+      {scan.kind === "idle" && (
+        <p style={{ margin: "0 0 4px", color: muted, fontSize: 12 }}>
+          Find Claude and Codex sessions from the last 30 days that ran in this project.
+        </p>
+      )}
+      {scan.kind === "scanning" && (
+        <p style={{ margin: "0 0 4px", color: muted, fontSize: 12 }}>Scanning…</p>
+      )}
+      {scan.kind === "error" && (
+        <p style={{ margin: "0 0 4px", color: toneColor.danger, fontSize: 12 }}>{scan.message}</p>
+      )}
+      {scan.kind === "ready" && scan.result.sessions.length === 0 && (
+        <p style={{ margin: "0 0 4px", color: muted, fontSize: 12 }}>
+          No sessions found for this project.
+        </p>
+      )}
+      {scan.kind === "ready" && scan.result.sessions.length > 0 && (
+        <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+          {scan.result.sessions.map((entry) => {
+            const key = sessionRowKey(entry);
+            const outcome = outcomes[key];
+            return (
+              <li
+                key={key}
+                style={{ padding: "4px 0", display: "flex", flexDirection: "column", gap: 2 }}
+              >
+                <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                  <span
+                    style={{
+                      fontSize: 12,
+                      flex: 1,
+                      minWidth: 0,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {entry.title}
+                  </span>
+                  <span style={{ fontSize: 11, color: muted }}>
+                    {entry.source === "claudeAgent" ? "Claude" : "Codex"} · {entry.lastActiveAt}
+                  </span>
+                  {entry.status === "imported" ? (
+                    <span style={{ fontSize: 11, color: muted }}>imported</span>
+                  ) : confirming === key ? (
+                    <>
+                      <button
+                        type="button"
+                        style={{ ...control, borderColor: toneColor.info, color: toneColor.info }}
+                        onClick={() => runImport(entry)}
+                      >
+                        Confirm import
+                      </button>
+                      <button type="button" style={control} onClick={() => setConfirming(null)}>
+                        Keep
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      style={control}
+                      disabled={outcome === "importing…"}
+                      onClick={() => setConfirming(key)}
+                    >
+                      Import
+                    </button>
+                  )}
+                </div>
+                {confirming === key && (
+                  <span style={{ fontSize: 11, color: muted }}>
+                    Creates a new thread in this project with the session&apos;s recent messages.
+                  </span>
+                )}
+                {outcome && (
+                  <output style={{ fontSize: 11, color: muted }}>import: {outcome}</output>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {scan.kind === "ready" && (scan.result.truncated || scan.result.skipped > 0) && (
+        <p style={{ margin: "4px 0 0", color: muted, fontSize: 11 }}>
+          {scan.result.truncated ? "Showing the newest sessions only. " : ""}
+          {scan.result.skipped > 0 ? `${scan.result.skipped} transcripts could not be read.` : ""}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function DiffViewPane(props: { readonly view: DiffView }) {
   const { view } = props;
   if (view.kind === "loading") {
@@ -1430,6 +1601,8 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
           <p style={{ margin: "6px 0 0", color: muted, fontSize: 11 }}>{SCRIPTS_SCOPE_NOTE}</p>
         </section>
 
+        <SessionImportSection host={host} session={session} />
+
         <section aria-label="Deferred capabilities" style={{ padding: "6px 10px" }}>
           <div style={sectionTitle}>Not available yet</div>
           <ul
@@ -1476,6 +1649,7 @@ export default defineExtension({
     requireApi(terminalControlApi),
     requireApi(orchestrationStatusApi),
     requireApi(orchestrationControlApi),
+    requireApi(agentSessionsApi),
     requireApi(uiThemeApi),
   ],
   surfaces: [

@@ -24,6 +24,8 @@ import {
   deriveAgentsPanelModel,
   describeReceipt,
   describeScriptRun,
+  describeSessionImport,
+  describeSessionsError,
   elapsedBetween,
   formatAgentModelLabel,
   formatAgentTokenCount,
@@ -433,12 +435,11 @@ NodeTest.describe("deferred sections", () => {
     }
   });
 
-  NodeTest.it("separates the scan/import section from the net-new sections", () => {
-    const scan = DEFERRED_SECTIONS.find((section) => /scan\/import/.test(section.title));
-    NodeAssert.ok(scan, "scan/import gets its own section");
-    NodeAssert.match(scan.blocker, /provisioning scan exists/);
-    NodeAssert.match(scan.blocker, /narrow public scan contract/);
-    NodeAssert.doesNotMatch(scan.blocker, /no native .* binding exists/);
+  NodeTest.it("no longer defer session scan/import", () => {
+    NodeAssert.equal(
+      DEFERRED_SECTIONS.some((section) => /scan\/import/.test(section.title)),
+      false,
+    );
     const netNew = DEFERRED_SECTIONS.find((section) => /deep links/.test(section.title));
     NodeAssert.ok(netNew, "logs/deep links keep their own section");
     NodeAssert.match(netNew.blocker, /net-new design/);
@@ -1076,5 +1077,52 @@ NodeTest.describe("trackThemeVars", () => {
     first.reject(new Error("stale denial"));
     await flush();
     NodeAssert.deepEqual(emits, [TEXT_VAR]);
+  });
+});
+
+NodeTest.describe("session import", () => {
+  NodeTest.it("names the sequence of an imported session and every rejection", () => {
+    NodeAssert.equal(
+      describeSessionImport({
+        status: "imported",
+        threadId: "import:codex:s1",
+        sequence: 42,
+        messageCount: 2,
+        error: null,
+      }),
+      "imported · seq 42 · 2 messages",
+    );
+    for (const [error, text] of [
+      ["AgentSessionAlreadyImported", /already imported into this project/],
+      ["AgentSessionOutOfScope", /scan again/],
+      ["AgentSessionProjectConflict", /another project/],
+      ["AgentSessionImportRejected", /could not import/],
+    ]) {
+      NodeAssert.match(
+        describeSessionImport({
+          status: "rejected",
+          threadId: null,
+          sequence: null,
+          messageCount: 0,
+          error,
+        }),
+        text,
+      );
+    }
+  });
+
+  NodeTest.it("names the missing grant instead of a generic failure", () => {
+    NodeAssert.equal(
+      describeSessionsError(new Error("API capability denied: t3.agents/import-sessions")),
+      "This installation is missing the t3.agents/import-sessions grant.",
+    );
+    NodeAssert.equal(
+      describeSessionsError(new Error("API capability denied: t3.agents/scan-sessions")),
+      "This installation is missing the t3.agents/scan-sessions grant.",
+    );
+    NodeAssert.match(
+      describeSessionsError(new Error("AgentSessionsAuthorityDenied: orchestration:operate")),
+      /unavailable — AgentSessionsAuthorityDenied/,
+    );
   });
 });

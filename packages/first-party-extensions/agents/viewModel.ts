@@ -18,7 +18,9 @@
  * grouping/count rules identical rather than approximated.
  */
 import { projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
+import { AGENT_SESSIONS_IMPORT, AGENT_SESSIONS_SCAN } from "@t3tools/extension-sdk/catalogue";
 import type {
+  AgentSessionImportReceipt,
   AgentsEvent,
   AgentsState,
   ApprovalOption,
@@ -404,11 +406,6 @@ export const DEFERRED_SECTIONS: readonly DeferredSection[] = [
   {
     title: "Agent logs and session deep links",
     blocker: "no native web/desktop binding exists — net-new design",
-  },
-  {
-    title: "Agent session scan/import (welcome wizard)",
-    blocker:
-      "native provisioning scan exists (agentSessions scan/import RPC) but is not in the shipped contract surface — needs a narrow public scan contract",
   },
   {
     title: "Mobile Agents surface",
@@ -905,6 +902,38 @@ export function describeReceipt(receipt: OrchestrationReceipt): string {
   return receipt.status === "accepted"
     ? `accepted · seq ${receipt.sequence}`
     : `rejected — ${receipt.error ?? "no detail"}`;
+}
+
+// --- Session import ---------------------------------------------------------
+
+const SESSION_IMPORT_REJECTIONS: Record<
+  Extract<AgentSessionImportReceipt, { status: "rejected" }>["error"],
+  string
+> = {
+  AgentSessionAlreadyImported: "already imported into this project",
+  AgentSessionOutOfScope: "not found in this project any more — scan again",
+  AgentSessionProjectConflict: "already imported into another project",
+  AgentSessionImportRejected: "the host could not import this session",
+};
+
+/** Outcome line for a `t3.agents/sessions` import receipt. */
+export function describeSessionImport(receipt: AgentSessionImportReceipt): string {
+  return receipt.status === "imported"
+    ? `imported · seq ${receipt.sequence} · ${receipt.messageCount} messages`
+    : `rejected — ${SESSION_IMPORT_REJECTIONS[receipt.error]}`;
+}
+
+/**
+ * A failed scan or import → named text. The broker names a missing grant as
+ * `API capability denied: <grant>`; anything else keeps its (bounded) detail.
+ */
+export function describeSessionsError(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error);
+  for (const grant of [AGENT_SESSIONS_IMPORT, AGENT_SESSIONS_SCAN]) {
+    if (text.includes(`capability denied: ${grant}`))
+      return `This installation is missing the ${grant} grant.`;
+  }
+  return `Session import is unavailable${text ? ` — ${text.slice(0, 300)}` : ""}.`;
 }
 
 // --- Pending approvals ------------------------------------------------------
