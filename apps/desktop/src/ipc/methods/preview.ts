@@ -15,6 +15,7 @@ import {
   DesktopPreviewRegisterWebviewInputSchema,
   DesktopPreviewScreenshotArtifactSchema,
   DesktopPreviewSetAudioMutedInputSchema,
+  DesktopPreviewSetZoomFactorInputSchema,
   DesktopPreviewSetColorSchemeInputSchema,
   BrowserImportResult,
   BrowserImportSource,
@@ -153,6 +154,15 @@ export const resetZoom = tabMethod(
   "desktop.ipc.preview.resetZoom",
   (manager, tabId) => manager.resetZoom(tabId),
 );
+export const setZoomFactor = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_ZOOM_FACTOR_CHANNEL,
+  payload: DesktopPreviewSetZoomFactorInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setZoomFactor")(function* ({ tabId, zoomFactor }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setZoomFactor(tabId, zoomFactor);
+  }),
+});
 export const hardReload = tabMethod(
   IpcChannels.PREVIEW_HARD_RELOAD_CHANNEL,
   "desktop.ipc.preview.hardReload",
@@ -511,6 +521,7 @@ export const methods = [
   zoomIn,
   zoomOut,
   resetZoom,
+  setZoomFactor,
   hardReload,
   setColorScheme,
   setAudioMuted,

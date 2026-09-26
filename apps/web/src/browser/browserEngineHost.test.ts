@@ -37,9 +37,7 @@ const makeBridge = () => ({
   goForward: vi.fn(async () => {}),
   refresh: vi.fn(async () => {}),
   hardReload: vi.fn(async () => {}),
-  zoomIn: vi.fn(async () => {}),
-  zoomOut: vi.fn(async () => {}),
-  resetZoom: vi.fn(async () => {}),
+  setZoomFactor: vi.fn(async () => {}),
   setColorScheme: vi.fn(async () => {}),
   setAudioMuted: vi.fn(async () => {}),
 });
@@ -103,20 +101,20 @@ describe("executeEngineCommand", () => {
     });
   });
 
-  it("maps zoom targets onto single ladder steps or reset, never an emulated multi-step", async () => {
+  it("sets any ladder zoom target with one native call, however far it is", async () => {
     const bridge = makeBridge();
     recordHostedTabState(RUNTIME_TAB, tabState({ zoomFactor: 1.25 }));
-    expect(await run(bridge, { _tag: "zoom", zoomFactor: 1.5 })).toEqual({ outcome: "applied" });
-    expect(await run(bridge, { _tag: "zoom", zoomFactor: 1.1 })).toEqual({ outcome: "applied" });
-    expect(await run(bridge, { _tag: "zoom", zoomFactor: 1 })).toEqual({ outcome: "applied" });
-    expect(await run(bridge, { _tag: "zoom", zoomFactor: 1.25 })).toEqual({ outcome: "applied" });
-    expect(await run(bridge, { _tag: "zoom", zoomFactor: 3 })).toEqual({
+    expect(await run(bridge, { _tag: "zoom", zoomFactor: 3 })).toEqual({ outcome: "applied" });
+    expect(await run(bridge, { _tag: "zoom", zoomFactor: 0.25 })).toEqual({ outcome: "applied" });
+    expect(bridge.setZoomFactor.mock.calls).toEqual([
+      [RUNTIME_TAB, 3],
+      [RUNTIME_TAB, 0.25],
+    ]);
+    bridge.setZoomFactor.mockRejectedValueOnce(new Error("guest detached"));
+    expect(await run(bridge, { _tag: "zoom", zoomFactor: 2 })).toEqual({
       outcome: "rejected",
-      reason: "not-applicable",
+      reason: "failed",
     });
-    expect(bridge.zoomIn).toHaveBeenCalledTimes(1);
-    expect(bridge.zoomOut).toHaveBeenCalledTimes(1);
-    expect(bridge.resetZoom).toHaveBeenCalledTimes(1);
   });
 });
 

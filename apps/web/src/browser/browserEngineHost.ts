@@ -117,9 +117,7 @@ type EngineCommandBridge = Pick<
   | "goForward"
   | "refresh"
   | "hardReload"
-  | "zoomIn"
-  | "zoomOut"
-  | "resetZoom"
+  | "setZoomFactor"
   | "setColorScheme"
   | "setAudioMuted"
 >;
@@ -127,12 +125,7 @@ type EngineCommandBridge = Pick<
 const rejected = (reason: Extract<CommandResult, { outcome: "rejected" }>["reason"]) =>
   ({ outcome: "rejected", reason }) as const;
 
-/**
- * Runs one server-issued page command on the guest it is fenced to. The
- * desktop bridge only steps zoom along the ladder, so a zoom target is
- * honored when it is the reset level or one step from the observed factor;
- * any other target is `not-applicable` rather than an emulated multi-step.
- */
+/** Runs one server-issued page command on the guest it is fenced to. */
 export async function executeEngineCommand(
   bridge: EngineCommandBridge,
   runtimeTabId: string,
@@ -158,16 +151,9 @@ export async function executeEngineCommand(
       case "hardReload":
         await bridge.hardReload(runtimeTabId);
         break;
-      case "zoom": {
-        const current = closestZoomStep(state.zoomFactor);
-        const target = closestZoomStep(command.zoomFactor);
-        if (target === current) break;
-        if (command.zoomFactor === 1) await bridge.resetZoom(runtimeTabId);
-        else if (target === current + 1) await bridge.zoomIn(runtimeTabId);
-        else if (target === current - 1) await bridge.zoomOut(runtimeTabId);
-        else return rejected("not-applicable");
+      case "zoom":
+        await bridge.setZoomFactor(runtimeTabId, command.zoomFactor);
         break;
-      }
       case "setAppearance":
         await bridge.setColorScheme(runtimeTabId, command.appearance);
         break;
