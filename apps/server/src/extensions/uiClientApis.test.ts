@@ -38,6 +38,7 @@ function fakeBridge(options?: {
 }) {
   const correlations = new Map<string, CorrelationEntry>();
   const invoked: RecordedInvoke[] = [];
+  const subscribed: { apiId: string; name: string; input: Json; coalesce?: boolean }[] = [];
   const service: ClientApiProviders["Service"] = {
     connect: () => Effect.die("unused"),
     respond: () => Effect.void,
@@ -59,7 +60,20 @@ function fakeBridge(options?: {
       }
       return Effect.succeed({ applied: true });
     },
-    openSubscription: () => Effect.die("unused"),
+    openSubscription: (request) => {
+      subscribed.push({
+        apiId: request.apiId,
+        name: request.name,
+        input: request.input,
+        ...(request.coalesce !== undefined ? { coalesce: request.coalesce } : {}),
+      });
+      return Effect.succeed({
+        events: (async function* () {
+          yield { type: "snapshot" as const, value: { wordWrap: true } };
+        })(),
+        close: () => Effect.void,
+      });
+    },
     registerCorrelation: (correlationId, entry) => {
       correlations.set(correlationId, entry);
       return Effect.void;
@@ -80,7 +94,7 @@ function fakeBridge(options?: {
     connectionForSession: (sessionId, connectionId) =>
       Effect.succeed(options?.sessionConnections?.[sessionId]?.includes(connectionId) ?? true),
   };
-  return { service, correlations, invoked };
+  return { service, correlations, invoked, subscribed };
 }
 
 const hostPrincipal: HostApiPrincipal = {
@@ -119,8 +133,54 @@ function makeProviders(
     keybindings: byId("host.ui.keybindings"),
     notifications: byId("host.ui.notifications"),
     panels: byId("host.ui.panels"),
+    preferences: byId("host.ui.preferences"),
   };
 }
+
+describe("preferences adapter", () => {
+  it("forwards writes as the broker-verified writer's patch", async () => {
+    const bridge = fakeBridge();
+    const { preferences } = makeProviders(bridge);
+    await preferences.invoke(
+      "setPreferences",
+      { wordWrap: false } as Json,
+      context,
+      signal,
+      metadata(),
+    );
+    const forwarded = bridge.invoked[0]!;
+    expect(forwarded.apiId).toBe("t3.client/preferences");
+    expect(forwarded.method).toBe("applyPreferences");
+    expect(forwarded.input).toEqual({
+      target: { kind: "connection", connectionId: "conn-1" },
+      writer: "ext.a",
+      patch: { wordWrap: false },
+    });
+  });
+
+  it("streams the client's coalesced watch feed", async () => {
+    const bridge = fakeBridge();
+    const { preferences } = makeProviders(bridge);
+    const events = [];
+    for await (const event of preferences.subscribe!(
+      "subscribePreferences",
+      {},
+      context,
+      signal,
+      metadata(),
+    ))
+      events.push(event);
+    expect(bridge.subscribed).toEqual([
+      {
+        apiId: "t3.client/preferences",
+        name: "watchPreferences",
+        input: { target: { kind: "connection", connectionId: "conn-1" } },
+        coalesce: true,
+      },
+    ]);
+    expect(events).toEqual([{ type: "snapshot", value: { wordWrap: true } }]);
+  });
+});
 
 describe("theme adapter", () => {
   it("stamps the broker-verified caller as the preference writer", async () => {

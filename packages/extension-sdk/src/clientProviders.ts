@@ -4,7 +4,7 @@ import { validateApiDefinition, type ApiDefinition } from "./capabilities.js";
  * Private `t3.client/*` client-provider area definitions.
  *
  * These are host-owned ambient providers (theme, notifications, keybindings,
- * panels, composer, terminal appearance) reached only through the
+ * panels, composer, terminal appearance, preferences) reached only through the
  * client-provider connect stream — never registered with the public API
  * broker, never discoverable, never grantable, and never plugin-provided.
  *
@@ -768,6 +768,76 @@ export const CLIENT_TERMINAL_APPEARANCE_API = validateApiDefinition({
   ],
 });
 
+/**
+ * The client-settings projection packs may read. Deliberately a named subset
+ * of the host's persisted client settings, not a pass-through: each key lands
+ * here only when a pack has a native-parity use for it.
+ */
+export const clientPreferencesSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["wordWrap"],
+  properties: {
+    wordWrap: { type: "boolean" },
+  },
+} as const;
+
+/** The writable subset of `clientPreferencesSchema`. */
+export const clientPreferencesPatchSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    wordWrap: { type: "boolean" },
+  },
+} as const;
+
+/** Write receipt: the outcome plus the preferences the client now holds. */
+export const clientPreferencesReceiptSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["applied", "preferences"],
+  properties: {
+    applied: { type: "boolean" },
+    reason: { type: "string", maxLength: 200 },
+    preferences: clientPreferencesSchema,
+  },
+} as const;
+
+export const CLIENT_PREFERENCES_API = validateApiDefinition({
+  id: "t3.client/preferences",
+  version: "1.0.0",
+  methods: [
+    {
+      name: "getPreferences",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: withTarget({}),
+      outputSchema: clientPreferencesSchema,
+    },
+    {
+      name: "applyPreferences",
+      effect: "write",
+      requiredGrants: [],
+      inputSchema: withTarget(
+        {
+          writer: { type: "string", minLength: 1, maxLength: 160 },
+          patch: clientPreferencesPatchSchema,
+        },
+        ["writer", "patch"],
+      ),
+      outputSchema: clientPreferencesReceiptSchema,
+    },
+  ],
+  streams: [
+    {
+      name: "watchPreferences",
+      inputSchema: withTarget({}),
+      eventSchema: clientPreferencesSchema,
+      requiredGrants: [],
+    },
+  ],
+});
+
 /** Host-owned client-provider definitions, keyed by area id. */
 export const CLIENT_PROVIDER_APIS: ReadonlyMap<string, ApiDefinition> = new Map(
   [
@@ -777,6 +847,7 @@ export const CLIENT_PROVIDER_APIS: ReadonlyMap<string, ApiDefinition> = new Map(
     CLIENT_PANELS_API,
     CLIENT_COMPOSER_API,
     CLIENT_TERMINAL_APPEARANCE_API,
+    CLIENT_PREFERENCES_API,
   ].map((definition) => [definition.id, definition]),
 );
 

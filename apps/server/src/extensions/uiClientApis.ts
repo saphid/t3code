@@ -9,6 +9,7 @@ import {
   UI_KEYBINDINGS_GLOBAL,
   UI_NOTIFICATIONS_API,
   UI_PANELS_API,
+  UI_PREFERENCES_API,
   UI_THEME_API,
 } from "@t3tools/extension-sdk/catalogue";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
@@ -288,6 +289,7 @@ const CLIENT_TERMINAL_APPEARANCE = "t3.client/terminal-appearance";
 const CLIENT_NOTIFICATIONS = "t3.client/notifications";
 const CLIENT_KEYBINDINGS = "t3.client/keybindings";
 const CLIENT_PANELS = "t3.client/panels";
+const CLIENT_PREFERENCES = "t3.client/preferences";
 
 interface NotificationOutcome {
   readonly actionId?: string;
@@ -820,5 +822,67 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
     },
   };
 
-  return [themeProvider, keybindingsProvider, notificationsProvider, panelsProvider];
+  const preferencesProvider: HostApiProvider = {
+    providerId: "host.ui.preferences",
+    definition: UI_PREFERENCES_API,
+    availability: ambient(deps, CLIENT_PREFERENCES),
+    invoke(method, input, context, signal, metadata): Promise<Json> {
+      switch (method) {
+        case "getCapabilities":
+          return capabilities(
+            deps,
+            "host.ui.preferences",
+            {
+              getPreferences: CLIENT_PREFERENCES,
+              setPreferences: CLIENT_PREFERENCES,
+              subscribePreferences: CLIENT_PREFERENCES,
+            },
+            metadata,
+          );
+        case "getPreferences":
+          return forward(deps, CLIENT_PREFERENCES, "getPreferences")(
+            method,
+            input,
+            context,
+            signal,
+            metadata,
+          );
+        case "setPreferences": {
+          const writer = callerOf(metadata).installationId;
+          return forward(deps, CLIENT_PREFERENCES, "applyPreferences")(
+            method,
+            { writer, patch: input } as Json,
+            context,
+            signal,
+            metadata,
+          );
+        }
+        default:
+          return Promise.reject(
+            providerError("client-provider-unavailable", `Unknown preferences op: ${method}`),
+          );
+      }
+    },
+    subscribe(name, input, context, signal, metadata) {
+      if (name === "subscribePreferences")
+        return streamThrough(deps, {
+          apiId: CLIENT_PREFERENCES,
+          clientName: "watchPreferences",
+          input,
+          context,
+          signal,
+          metadata,
+          coalesce: true,
+        });
+      throw providerError("client-provider-unavailable", `Unknown preferences stream: ${name}`);
+    },
+  };
+
+  return [
+    themeProvider,
+    keybindingsProvider,
+    notificationsProvider,
+    panelsProvider,
+    preferencesProvider,
+  ];
 }

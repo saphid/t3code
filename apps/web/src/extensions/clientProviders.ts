@@ -16,7 +16,12 @@ import {
   type ThemePreferenceMode,
 } from "../themePalette";
 import { themeStore } from "../hooks/useTheme";
-import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
+import {
+  ensureClientSettingsHydrated,
+  getClientSettings,
+  persistClientSettingsUpdate,
+  subscribeClientSettings,
+} from "../hooks/useSettings";
 import { toastManager, type ThreadToastData } from "../components/ui/toast";
 import { terminalThemeFromApp } from "../components/ThreadTerminalDrawer";
 import {
@@ -1066,6 +1071,96 @@ export function createTerminalAppearanceClientProvider(
 }
 
 // ---------------------------------------------------------------------------
+// Preferences — a named subset of the persisted client settings.
+
+function preferencesSnapshot(): Json {
+  return { wordWrap: getClientSettings().wordWrap };
+}
+
+/**
+ * Reads wait for hydration: the pre-hydration snapshot is schema defaults,
+ * and a pack must not render (or persist over) a value the user never chose.
+ */
+async function hydratedPreferences(): Promise<Json> {
+  try {
+    await ensureClientSettingsHydrated();
+  } catch {
+    throw new ClientProviderOpError("client-provider-unavailable", "Client settings did not load");
+  }
+  return preferencesSnapshot();
+}
+
+export function createPreferencesClientProvider(deps: ClientProviderDeps): ClientLocalProvider {
+  const read = (call: ClientProviderInvokeCall | ClientProviderStreamCall) =>
+    authorizeCaller(deps, call.caller, call.context, ["t3.ui/preferences.read"]);
+  const write = (call: ClientProviderInvokeCall) =>
+    authorizeCaller(deps, call.caller, call.context, ["t3.ui/preferences.write"]);
+  return {
+    async invoke(call) {
+      switch (call.method) {
+        case "getPreferences":
+          read(call);
+          return hydratedPreferences();
+        case "applyPreferences": {
+          write(call);
+          const input = readInputObject(call.input);
+          if (readInputString(input, "writer") !== call.caller.installationId)
+            throw new ClientProviderOpError(
+              "client-target-denied",
+              "Writer must be the calling installation",
+            );
+          const patch = readInputObject(input.patch ?? null);
+          const wordWrap = patch.wordWrap;
+          if (wordWrap !== undefined && typeof wordWrap !== "boolean")
+            throw new ClientProviderOpError("provider-rejected", "Invalid wordWrap");
+          if (wordWrap === undefined)
+            return {
+              applied: false,
+              reason: "empty-patch",
+              preferences: await hydratedPreferences(),
+            } as unknown as Json;
+          // Persist-then-publish: the receipt reports only what storage holds,
+          // and the watch stream sees the change through the settings store.
+          try {
+            const next = await persistClientSettingsUpdate((current) => ({ ...current, wordWrap }));
+            return { applied: true, preferences: { wordWrap: next.wordWrap } } as unknown as Json;
+          } catch {
+            return {
+              applied: false,
+              reason: "persist-failed",
+              preferences: preferencesSnapshot(),
+            } as unknown as Json;
+          }
+        }
+        default:
+          throw new ClientProviderOpError(
+            "client-provider-unavailable",
+            `Unknown preferences op ${call.method}`,
+          );
+      }
+    },
+    async openStream(call) {
+      read(call);
+      if (call.name !== "watchPreferences")
+        throw new ClientProviderOpError(
+          "client-provider-unavailable",
+          `Unknown preferences stream ${call.name}`,
+        );
+      const snapshot = await hydratedPreferences();
+      call.emit({ type: "snapshot", value: snapshot });
+      let last = JSON.stringify(snapshot);
+      return subscribeClientSettings(() => {
+        const next = preferencesSnapshot();
+        const encoded = JSON.stringify(next);
+        if (encoded === last) return;
+        last = encoded;
+        call.emit({ type: "data", value: next });
+      });
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 
 /** All host-owned `t3.client/*` providers for one environment connection. */
 export function createClientProviders(
@@ -1078,6 +1173,7 @@ export function createClientProviders(
     ["t3.client/panels", createPanelsClientProvider(deps)],
     ["t3.client/composer", createComposerClientProvider(deps)],
     ["t3.client/terminal-appearance", createTerminalAppearanceClientProvider(deps)],
+    ["t3.client/preferences", createPreferencesClientProvider(deps)],
   ]);
 }
 
@@ -1088,6 +1184,7 @@ export const CLIENT_PROVIDER_DESCRIPTORS = [
   { id: "t3.client/panels", version: "1.0.0" },
   { id: "t3.client/composer", version: "1.1.0" },
   { id: "t3.client/terminal-appearance", version: "1.0.0" },
+  { id: "t3.client/preferences", version: "1.0.0" },
 ] as const;
 
 export const CLIENT_PROVIDER_CLIENT_TAG = isElectron ? "desktop" : "web";
