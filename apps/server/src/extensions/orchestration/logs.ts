@@ -42,6 +42,7 @@ import { redactLogSecrets } from "./logRedaction.ts";
 
 const fail = (detail: string) =>
   new ExtensionOperationError({ operation: "orchestration.logs", detail });
+const isOperationError = Schema.is(ExtensionOperationError);
 const isEmptyObject = (input: unknown) =>
   typeof input === "object" &&
   input !== null &&
@@ -223,7 +224,7 @@ export function createOrchestrationLogsApiProvider(deps: Dependencies): HostApiP
       return { region: region.subarray(0, bytesRead), start, byteLength: stat.size };
     } catch (error) {
       // Raw filesystem errors carry host paths; only fixed codes leave here.
-      if (error instanceof ExtensionOperationError) throw error;
+      if (isOperationError(error)) throw error;
       throw fail("AgentLogsSourceChanged");
     } finally {
       await file.close().catch(() => undefined);
