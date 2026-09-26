@@ -5,8 +5,9 @@
  * Sources come from the thread's own folded roster (`outputFile`); callers
  * name a roster id, never a path, and results never carry a host path.
  * Containment is bound to the run: the handle must sit in a session directory
- * `<root>/<workspace slug>/<session>/`, and it may resolve only to itself or
- * to that session's transcript for the same run
+ * `<root>/<workspace slug>/<session>/` as written, its directory must resolve
+ * to that same place, and it may resolve only to itself or to that session's
+ * transcript for the same run
  * (`<root>/<slug>/<session>/subagents/agent-<id>.jsonl`, Claude's layout).
  * The file is opened without following a final symlink, then the opened
  * object is re-verified against that location. Contents are secret-scrubbed
@@ -63,8 +64,8 @@ const tailInput = Schema.decodeUnknownSync(
 );
 /**
  * Bytes read ahead of the delivered window so a secret straddling the tail
- * cut is redacted whole; redaction therefore misses only values longer than
- * this whose name falls before it.
+ * cut is redacted whole. A line that starts before them is withheld rather
+ * than delivered unclassified (`shapeLogTail`).
  */
 export const AGENT_LOG_REDACTION_CONTEXT_BYTES = 8192;
 
@@ -84,18 +85,19 @@ export const claudeWorkspaceSlug = (cwd: string) => cwd.replace(/[^A-Za-z0-9]/g,
 
 /**
  * Shapes a byte region that ends at the end of the source; `start` is its
- * offset in the source. The region is decoded and redacted first, then cut
- * to `maxBytes` UTF-8 bytes. A cut drops leading UTF-8 continuation bytes
- * and, when it holds a later line, its partial first line; `maxLines` then
- * keeps the last N lines.
+ * offset in the source. A region starting mid-source first drops its leading
+ * partial line: that line's start (and any secret name on it) is unread, so
+ * redaction cannot classify it, even when it is the only line. The rest is
+ * decoded and redacted, then cut to `maxBytes` UTF-8 bytes. That cut drops
+ * leading UTF-8 continuation bytes and, when it holds a later line, its
+ * partial first line; `maxLines` then keeps the last N lines.
  */
 export function shapeLogTail(
   region: Uint8Array,
   start: number,
   limits: { readonly maxBytes: number; readonly maxLines: number },
 ): { readonly contents: string; readonly truncated: boolean } {
-  let offset = 0;
-  if (start > 0) while (offset < region.length && (region[offset]! & 0xc0) === 0x80) offset++;
+  const offset = start > 0 ? region.indexOf(0x0a) + 1 || region.length : 0;
   let bytes = new TextEncoder().encode(
     redactLogSecrets(new TextDecoder().decode(region.subarray(offset))),
   );
@@ -164,37 +166,56 @@ export function createOrchestrationLogsApiProvider(deps: Dependencies): HostApiP
         !["stopped", "interrupted", "error"].includes(thread.session.status),
     });
   };
-  /** Real paths this run's handle may resolve to; throws unless the handle sits in a session dir. */
+  /**
+   * Real paths this run's handle may resolve to. The session and the handle's
+   * place in it are bound from the handle as written, before any ancestor is
+   * resolved, and its directory must resolve to that same place — an
+   * ancestor aliased into another session cannot rebind the run.
+   */
   const allowedTargets = async (handle: string, cwd: string) => {
+    if (!NodePath.isAbsolute(handle)) throw fail("AgentLogsOutOfScope");
     const slugs = new Set([claudeWorkspaceSlug(cwd)]);
     await NodeFSP.realpath(cwd).then(
       (real) => slugs.add(claudeWorkspaceSlug(real)),
       () => undefined,
     );
     const roots = (
-      await Promise.all(deps.roots().map((root) => NodeFSP.realpath(root).catch(() => null)))
+      await Promise.all(
+        deps.roots().map(async (root) => {
+          const real = await NodeFSP.realpath(root).catch(() => null);
+          return real === null
+            ? null
+            : { real, spellings: new Set([NodePath.resolve(root), real]) };
+        }),
+      )
     ).filter((root) => root !== null);
-    const parent = await NodeFSP.realpath(NodePath.dirname(handle)).catch(() => {
-      throw fail("AgentLogsSourceUnavailable");
-    });
+    const directory = NodePath.dirname(handle);
     const name = NodePath.basename(handle);
     for (const root of roots)
-      for (const slug of slugs) {
-        const base = NodePath.join(root, slug) + NodePath.sep;
-        if (!(parent + NodePath.sep).startsWith(base)) continue;
-        const session = parent.slice(base.length).split(NodePath.sep)[0];
-        if (!session) continue;
-        const run = name.slice(0, name.length - NodePath.extname(name).length);
-        return new Set([
-          NodePath.join(parent, name),
-          ...roots.map((each) =>
-            NodePath.join(each, slug, session, "subagents", `agent-${run}.jsonl`),
-          ),
-        ]);
-      }
+      for (const spelling of root.spellings)
+        for (const slug of slugs) {
+          const base = NodePath.join(spelling, slug) + NodePath.sep;
+          if (!(directory + NodePath.sep).startsWith(base)) continue;
+          const [session, ...rest] = directory.slice(base.length).split(NodePath.sep);
+          if (!session) continue;
+          const bound = NodePath.join(root.real, slug, session, ...rest);
+          const parent = await NodeFSP.realpath(directory).catch(() => {
+            throw fail("AgentLogsSourceUnavailable");
+          });
+          if (parent !== bound) throw fail("AgentLogsOutOfScope");
+          const run = name.slice(0, name.length - NodePath.extname(name).length);
+          return new Set([
+            NodePath.join(parent, name),
+            ...roots.map((each) =>
+              NodePath.join(each.real, slug, session, "subagents", `agent-${run}.jsonl`),
+            ),
+          ]);
+        }
     throw fail("AgentLogsOutOfScope");
   };
-  const readRegion = async (handle: string, cwd: string, maxBytes: number) => {
+  const readRegion = async (written: string, cwd: string, maxBytes: number) => {
+    // `..` segments are resolved lexically first, so they bind like any path.
+    const handle = NodePath.normalize(written);
     const allowed = await allowedTargets(handle, cwd);
     const resolved = await NodeFSP.realpath(handle).catch(() => {
       throw fail("AgentLogsSourceUnavailable");

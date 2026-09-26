@@ -10,16 +10,26 @@ export const LOG_REDACTED = "[REDACTED]";
 // A secret-bearing name: the keyword must not run on into more letters, so
 // `token`/`apiKey`/`ACCESS_TOKEN` match while `tokens`/`author` do not.
 const keyword = String.raw`(?:api[_-]?key|secret|token|passw(?:or)?d|credentials?|private[_-]?key|access[_-]?key|auth(?:orization)?|cookie|session[_-]?id)(?![a-z])`;
-// A JSON/escaped-JSON string body, optionally unterminated at line end.
-const quoted = String.raw`\\?"(?:[^"\\\n]|\\[^"\n])*(?:\\?")?`;
+// A JSON string value, optionally unterminated at line end. Plain: `"…"`,
+// where `\"` is an escaped quote. Escaped inside another string: `\"…\"`,
+// where `\\\"` (an encoded backslash, then an encoded quote) is the value's
+// escaped quote and only a lone `\"` closes it.
+const quoted = String.raw`(?:"(?:[^"\\\n]|\\.)*"?|\\"(?:[^"\\\n]|\\\\\\.|\\\\|\\[^"\n])*(?:\\")?)`;
+
+// A PEM line break: raw, or escaped inside a JSON string.
+const pemBreak = String.raw`(?:\r?\n|\\r\\n|\\n)`;
+/**
+ * A PEM private-key block: the BEGIN marker ending its line, then whole
+ * header or base64 lines, through END or the end of the read. Prose that
+ * merely mentions the marker keeps its line, and a block without END stops
+ * at the first line that is not key material.
+ */
+const PEM_BLOCK = new RegExp(
+  String.raw`-----BEGIN[A-Z ]{0,40}PRIVATE KEY-----[ \t]*(?:${pemBreak}[ \t]*(?:[A-Za-z-]+:[ \t][^\r\n\\]*|[A-Za-z0-9+/=]+(?=[ \t]*(?:\r|\n|\\[rn]|-----END|$)))?)+(?:-----END[A-Z ]{0,40}PRIVATE KEY-----)?`,
+  "g",
+);
 
 const RULES: ReadonlyArray<readonly [RegExp, (match: string, ...groups: string[]) => string]> = [
-  // PEM private keys, and the tail of one whose BEGIN line fell outside the read.
-  [
-    /-----BEGIN[A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END[A-Z ]*PRIVATE KEY-----|$)/g,
-    (match) => perLine(match),
-  ],
-  [/(?:[A-Za-z0-9+/=]|\\n|\r?\n)*-----END[A-Z ]*PRIVATE KEY-----/g, (match) => perLine(match)],
   // JSON fields, plain or escaped inside another string: "apiKey": "…".
   [
     new RegExp(
@@ -68,8 +78,36 @@ const quoteLike = (value: string) => {
   return `${open}${LOG_REDACTED}${close}`;
 };
 
+const PEM_END = /-----END[A-Z ]{0,40}PRIVATE KEY-----/g;
+const isKeyChar = (char: string) => /^[A-Za-z0-9+/=\r\n]$/.test(char);
+
+/**
+ * The tail of a key whose BEGIN line fell before the read: each END marker
+ * plus the key material directly above it. Finds the markers first and walks
+ * back from each once, never past the previous one, so the scan is linear.
+ */
+function redactPemTails(text: string): string {
+  let result = "";
+  let floor = 0;
+  for (const marker of text.matchAll(PEM_END)) {
+    let start = marker.index;
+    while (start > floor) {
+      if (start - 2 >= floor && text[start - 2] === "\\" && /[nr]/.test(text[start - 1]!))
+        start -= 2;
+      else if (isKeyChar(text[start - 1]!)) start -= 1;
+      else break;
+    }
+    // A bare END marker with no key material above it is prose; keep it.
+    if (!/[A-Za-z0-9+/=]/.test(text.slice(start, marker.index).replace(/\\[nr]/g, ""))) continue;
+    const end = marker.index + marker[0].length;
+    result += text.slice(floor, start) + perLine(text.slice(start, end));
+    floor = end;
+  }
+  return result + text.slice(floor);
+}
+
 export function redactLogSecrets(text: string): string {
-  let result = text;
+  let result = redactPemTails(text.replace(PEM_BLOCK, perLine));
   for (const [pattern, replace] of RULES) result = result.replace(pattern, replace);
   return result;
 }

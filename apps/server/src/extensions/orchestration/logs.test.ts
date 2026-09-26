@@ -248,15 +248,45 @@ it("never splits a UTF-8 sequence or keeps an unbounded partial line", () => {
     contents: "second\n",
     truncated: true,
   });
-  // A single oversized line keeps its (cut) tail rather than returning nothing.
+  // A line whose start was never read cannot be classified, so it is withheld
+  // even when it is the only line.
   expect(shapeLogTail(new TextEncoder().encode("abcdef\n"), 10, limits)).toEqual({
-    contents: "abcdef\n",
+    contents: "",
     truncated: true,
   });
   expect(shapeLogTail(new TextEncoder().encode("a\nb\nc"), 0, { ...limits, maxLines: 2 })).toEqual({
     contents: "b\nc",
     truncated: true,
   });
+});
+
+it("withholds a leading line whose secret name fell before the read", async () => {
+  const f = await fixture();
+  const file = await f.write(
+    NodePath.join(f.projects, SLUG, "s", "a.jsonl"),
+    `PASSWORD=${"z".repeat(20_000)}`,
+  );
+  f.rosters.set("thread", [task("a", { outputFile: file })]);
+  for (const maxBytes of [128, 8192]) {
+    const tail = (await f.call("readTail", {
+      runId: "a",
+      source: "output",
+      maxBytes,
+    })) as AgentLogTail;
+    expect(tail).toEqual({
+      runId: "a",
+      source: "output",
+      contents: "",
+      byteLength: 20_009,
+      truncated: true,
+    });
+  }
+  // A later complete line is still delivered.
+  await NodeFSP.appendFile(file, "\ndone\n");
+  expect(
+    ((await f.call("readTail", { runId: "a", source: "output", maxBytes: 128 })) as AgentLogTail)
+      .contents,
+  ).toBe("done\n");
 });
 
 it("gates on the orchestration:read principal and a thread scope, by name", async () => {
@@ -452,6 +482,17 @@ it("redacts secrets through the broker, including ones straddling the tail cut",
       line: (s) => `{"type":"tool_result","content":"{\\"apiKey\\": \\"${s}\\"}"}`,
     },
     {
+      runId: "escaped-quote",
+      secret: "remaining-secret-123",
+      line: (s) => String.raw`{"password":"first\"${s}"}`,
+    },
+    {
+      runId: "escaped-quote-transcript",
+      secret: "remaining-secret-123",
+      line: (s) =>
+        JSON.stringify({ type: "tool_result", content: String.raw`{"password":"first\"${s}"}` }),
+    },
+    {
       runId: "header",
       secret: secrets.header,
       line: (s) => `curl -H "Authorization: Bearer ${s}"`,
@@ -521,6 +562,40 @@ it("binds a run's handle to its own output, rejecting repoints to other runs", a
   for (const runId of ["a", "c", "loose"])
     await expect(read(runId)).rejects.toThrow("AgentLogsOutOfScope");
   expect(((await read("b")) as AgentLogTail).contents).toBe("b\n");
+});
+
+it("binds the session before resolving ancestors, so an aliased ancestor cannot rebind it", async () => {
+  const f = await fixture();
+  const sessionB = NodePath.join(f.tasks, SLUG, "sess-b", "tasks");
+  await f.write(NodePath.join(sessionB, "a.output"), "SESSION-B-OUTPUT\n");
+  const transcriptB = await f.write(
+    NodePath.join(f.projects, SLUG, "sess-b", "subagents", "agent-c.jsonl"),
+    "SESSION-B-TRANSCRIPT\n",
+  );
+  await f.link(NodePath.join(sessionB, "c.output"), transcriptB);
+  // Session A's tasks directory is a stable alias of session B's.
+  await f.link(NodePath.join(f.tasks, SLUG, "sess-a", "tasks"), sessionB);
+  // So is a whole session directory under the transcript root.
+  await f.link(
+    NodePath.join(f.projects, SLUG, "sess-d"),
+    NodePath.join(f.projects, SLUG, "sess-b"),
+  );
+  f.rosters.set("thread", [
+    task("a", { outputFile: NodePath.join(f.tasks, SLUG, "sess-a", "tasks", "a.output") }),
+    task("c", { outputFile: NodePath.join(f.tasks, SLUG, "sess-a", "tasks", "c.output") }),
+    task("d", {
+      outputFile: NodePath.join(f.projects, SLUG, "sess-d", "subagents", "agent-c.jsonl"),
+    }),
+    task("b", { outputFile: NodePath.join(sessionB, "c.output") }),
+  ]);
+  const read = (runId: string) => f.call("readTail", { runId, source: "output" });
+  for (const runId of ["a", "c", "d"]) {
+    const failure = (await read(runId).catch((error: unknown) => error)) as Error;
+    expect(failure.message, runId).toContain("AgentLogsOutOfScope");
+    expect(JSON.stringify(failure), runId).not.toContain("SESSION-B");
+  }
+  // Session B's own handle still reads its own transcript.
+  expect(((await read("b")) as AgentLogTail).contents).toBe("SESSION-B-TRANSCRIPT\n");
 });
 
 it("fails closed when an ancestor is swapped around the open, without leaking paths", async () => {

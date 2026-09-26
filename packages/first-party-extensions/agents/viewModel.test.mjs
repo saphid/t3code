@@ -1090,16 +1090,18 @@ NodeTest.describe("agent log tails", () => {
     truncated,
   });
 
-  NodeTest.it("names omitted bytes from the source size only when the tail is cut", () => {
+  NodeTest.it("marks a cut tail with the source size, never an omitted-byte count", () => {
     NodeAssert.equal(agentLogTailMarker(tail("done\n", 5, false)), null);
     NodeAssert.equal(
       agentLogTailMarker(tail("é\n", 20_003, true)),
-      "… earlier output omitted (20,000 of 20,003 bytes)",
+      "… earlier output omitted (source is 20,003 bytes)",
     );
-    // A maxLines cut on a small source still reports the (exact) omission.
+    // Redaction changes the delivered length: `first\n`, a 100-character
+    // password and `last\n` keep two lines, yet only 6 bytes came before.
+    const redacted = tail("PASSWORD=[REDACTED]\nlast\n", 121, true);
     NodeAssert.equal(
-      agentLogTailMarker(tail("c", 5, true)),
-      "… earlier output omitted (4 of 5 bytes)",
+      agentLogTailMarker(redacted),
+      "… earlier output omitted (source is 121 bytes)",
     );
   });
 });

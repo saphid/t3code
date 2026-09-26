@@ -33,7 +33,7 @@ terminal.
   grant (roster read never implies it): agent rows whose roster entry carries
   an output handle get an Output toggle that reads the run's bounded tail
   with `readTail` (≤ 8 KiB, last 200 lines; a cut tail leads with an
-  "earlier output omitted (N of M bytes)" marker). While open it re-reads
+  "earlier output omitted (source is M bytes)" marker). While open it re-reads
   only when the roster stream reports the run changed — no polling. Missing
   grants, out-of-scope handles and vanished files render the named failure.
   Only Claude runs carry output handles today.

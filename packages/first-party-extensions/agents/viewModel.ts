@@ -442,14 +442,13 @@ export const SETTLED_STATE_NOTE =
 export const AGENT_LOG_TAIL_REQUEST = { source: "output", maxLines: 200 } as const;
 
 /**
- * Renders the contract's truncation marker. The omitted count is the source
- * size minus the delivered bytes; a tail that starts at byte 0 has none.
+ * Renders the contract's truncation marker with the source size. Contents are
+ * redacted, so their length says nothing exact about how much of the source
+ * came before them; the marker names no omitted-byte count.
  */
 export function agentLogTailMarker(tail: AgentLogTail): string | null {
   if (!tail.truncated) return null;
-  const shown = new TextEncoder().encode(tail.contents).length;
-  const omitted = Math.max(0, tail.byteLength - shown);
-  return `… earlier output omitted (${omitted.toLocaleString("en-US")} of ${tail.byteLength.toLocaleString("en-US")} bytes)`;
+  return `… earlier output omitted (source is ${tail.byteLength.toLocaleString("en-US")} bytes)`;
 }
 
 // ---------------------------------------------------------------------------
