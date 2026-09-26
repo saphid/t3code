@@ -3,7 +3,7 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, it, expect, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, type ExtensionInstallation } from "@t3tools/contracts";
 import type { ApiStreamFrame } from "@t3tools/extension-sdk/capabilities";
-import type { ClientHost } from "@t3tools/extension-sdk/environment";
+import { resolveCodeView, type ClientHost } from "@t3tools/extension-sdk/environment";
 import type { Extension } from "@t3tools/extension-sdk/host";
 import type { SurfaceRenderer } from "@t3tools/extension-sdk/react";
 import type { ViewRecord } from "@t3tools/extension-sdk/contracts";
@@ -46,7 +46,10 @@ const context = {
     threadId: "thread-a",
   },
 };
-function harness(environmentId = "env-a") {
+function harness(
+  environmentId = "env-a",
+  extra: Pick<Parameters<typeof createInstalledExtensionController>[0], "codeView"> = {},
+) {
   let catalog: readonly ExtensionInstallation[] = [installation];
   let host!: ClientHost;
   const stop = vi.fn();
@@ -80,7 +83,7 @@ function harness(environmentId = "env-a") {
     register,
     changed: (snapshot: InstalledSnapshot) => snapshots.push(snapshot),
   };
-  const controller = createInstalledExtensionController(options);
+  const controller = createInstalledExtensionController({ ...options, ...extra });
   return {
     controller,
     options,
@@ -94,6 +97,18 @@ function harness(environmentId = "env-a") {
   };
 }
 describe("installed environment controller", () => {
+  it("offers the host code view to installed clients only where the host has one", async () => {
+    const bare = harness();
+    await bare.controller.refresh();
+    expect(resolveCodeView(bare.getHost())).toBeNull();
+    bare.controller.dispose();
+
+    const codeView = { version: 1 as const, Diff: () => null, File: () => null };
+    const offered = harness("env-a", { codeView });
+    await offered.controller.refresh();
+    expect(resolveCodeView(offered.getHost())).toBe(codeView);
+    offered.controller.dispose();
+  });
   it("retains unchanged factories and unloads disabled/replaced/removed generations", async () => {
     const h = harness();
     await h.controller.refresh();

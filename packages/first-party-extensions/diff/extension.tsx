@@ -36,6 +36,7 @@ import {
   type ThemeTokens,
 } from "./uiContracts.js";
 import { COMMENT_QUOTE_MAX_CHARS } from "./diffComments.js";
+import { DiffFileBodies, diffRenderer, hostDiffProps } from "./codeView.js";
 import {
   useCommentBlockReason,
   useCommentTarget,
@@ -1104,6 +1105,9 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
     restored?.layout === "split" ? "split" : "unified",
   );
   const [wrap, setWrap] = useState(false);
+  // D10: line comments switch the panel to its own rows while the host view
+  // has no annotations (codeView version 1).
+  const [lineComments, setLineComments] = useState(false);
   const [collapsedFiles, setCollapsedFiles] = useState<ReadonlySet<string>>(new Set());
   const [collapsedDirs, setCollapsedDirs] = useState<ReadonlySet<string>>(new Set());
   const [expansions, setExpansions] = useState<ReadonlyMap<string, Expansion>>(new Map());
@@ -1403,6 +1407,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
   // back — the cleared ref makes the effect a no-op for them.
   const revealTarget = useRef<string | null>(null);
   const [revealTick, setRevealTick] = useState(0);
+  const [hostReveal, setHostReveal] = useState<{ key: string; requestId: number } | null>(null);
   useEffect(() => {
     if (revealTick === 0) return;
     const key = revealTarget.current;
@@ -1495,6 +1500,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
     setFileKey(row.key);
     revealTarget.current = row.key;
     setRevealTick((tick) => tick + 1);
+    setHostReveal((previous) => ({ key: row.key, requestId: (previous?.requestId ?? 0) + 1 }));
     persistSelection({
       mode,
       sourceId: source?.id ?? null,
@@ -1689,6 +1695,33 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
     );
   };
 
+  // Host context expansion: same unary-first fetch and snapshot check as
+  // `expandFile`, answered as a promise because the host owns the gap rows.
+  const loadHostContents = (row: DiffFileRow) => {
+    if (source === null || !canExpandFile(row))
+      return Promise.reject(new Error(`${displayPath(row)} has no expandable context`));
+    const signal = session.signal;
+    const api = bindApi(vcsDiffApi, host, session.context);
+    const streams = bindStreamApi(vcsDiffApi, host, session.context);
+    return fetchFileContents({
+      input: fileContentsInput(source, row),
+      deliveryKey: contentsDeliveryKey(source, row),
+      invoke: (next) => api.invoke("getFileContents", next, signal),
+      stream: (next) => streams.subscribe("streamFileContents", next, signal),
+      streamKeys: contentStreamKeys.current,
+      signal,
+    }).then((outcome) => {
+      if (outcome.kind === "cancelled") throw new Error("Loading file contents was cancelled");
+      if (outcome.kind === "error") throw new Error(outcome.detail);
+      if (!expansionMatchesPatch(row, outcome.result))
+        throw new Error("Loaded contents do not match this diff — refresh the diff to try again.");
+      return outcome.result;
+    });
+  };
+  const hostViewOffered = diffRenderer(host, false).kind === "host";
+  const commenting = lineComments || lineSelection.selection !== null || commentDraft !== null;
+  const renderer = diffRenderer(host, commenting);
+
   const muted = ui.muted;
   const sources = preview.kind === "ready" ? preview.result.sources : [];
   const filteredBaseChoices = filterBaseRefChoices(baseRefChoices, baseRef);
@@ -1875,6 +1908,26 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
           />
           Wrap
         </label>
+        {hostViewOffered && (
+          <button
+            type="button"
+            aria-pressed={commenting}
+            // An open draft keeps its rows until it is submitted or cancelled.
+            disabled={commentDraft !== null}
+            onClick={() => {
+              if (!commenting) return setLineComments(true);
+              setLineComments(false);
+              lineSelection.clear();
+            }}
+            style={{
+              ...ui.control,
+              fontWeight: commenting ? 600 : 400,
+              background: commenting ? ui.accent : "transparent",
+            }}
+          >
+            Line comments{posted.entries.length > 0 ? ` (${posted.entries.length})` : ""}
+          </button>
+        )}
         {files.length > 0 && (
           <button
             type="button"
@@ -2131,38 +2184,75 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
                 )}
               </ul>
 
-              <div style={{ flex: 1, minHeight: 0, overflow: "auto" }} aria-label="File diffs">
+              <div
+                aria-label="File diffs"
+                // The host view virtualizes against its own scroller; own rows scroll here.
+                style={
+                  renderer.kind === "host"
+                    ? { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }
+                    : { flex: 1, minHeight: 0, overflow: "auto" }
+                }
+              >
+                {renderer.kind === "host" && action !== null && (
+                  <p
+                    role={action.status === "error" ? "alert" : "note"}
+                    style={{ margin: 0, padding: "2px 10px", color: muted, fontSize: 11 }}
+                  >
+                    {action.detail}
+                  </p>
+                )}
                 {files.length === 0 && (
                   <p style={{ padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }}>
                     Select a file to inspect its changes.
                   </p>
                 )}
-                {source !== null &&
-                  files.map((row) => (
-                    <FileSection
-                      key={row.key}
-                      row={row}
-                      selected={selected?.key === row.key}
-                      collapsed={collapsedFiles.has(row.key)}
-                      layout={layout}
-                      wrap={wrap}
-                      expansion={expansions.get(`${source.diffHash}:${row.key}`)}
-                      expandable={mode === "workspace"}
-                      action={action}
-                      comment={commentUiFor(row)}
-                      ui={ui}
-                      onToggleCollapsed={(key) =>
-                        setCollapsedFiles(toggleCollapsedKey(collapsedFiles, key))
-                      }
-                      onExpand={expandFile}
-                      onOpen={openInEditor}
-                      onCopy={copyPath}
-                      registerSection={(el) => {
-                        if (el !== null) sectionRefs.current.set(row.key, el);
-                        else sectionRefs.current.delete(row.key);
-                      }}
-                    />
-                  ))}
+                {source !== null && (
+                  <DiffFileBodies
+                    renderer={renderer}
+                    renderHostProps={() =>
+                      hostDiffProps({
+                        patch: source.diff,
+                        files,
+                        collapsedKeys: collapsedFiles,
+                        layout,
+                        wrap,
+                        reveal: hostReveal,
+                        onToggleCollapsed: (key) =>
+                          setCollapsedFiles(toggleCollapsedKey(collapsedFiles, key)),
+                        onFileAction: (action, row) =>
+                          action === "open" ? openInEditor(row) : copyPath(row),
+                        ...(mode === "workspace" ? { loadContents: loadHostContents } : {}),
+                      })
+                    }
+                    renderRows={() =>
+                      files.map((row) => (
+                        <FileSection
+                          key={row.key}
+                          row={row}
+                          selected={selected?.key === row.key}
+                          collapsed={collapsedFiles.has(row.key)}
+                          layout={layout}
+                          wrap={wrap}
+                          expansion={expansions.get(`${source.diffHash}:${row.key}`)}
+                          expandable={mode === "workspace"}
+                          action={action}
+                          comment={commentUiFor(row)}
+                          ui={ui}
+                          onToggleCollapsed={(key) =>
+                            setCollapsedFiles(toggleCollapsedKey(collapsedFiles, key))
+                          }
+                          onExpand={expandFile}
+                          onOpen={openInEditor}
+                          onCopy={copyPath}
+                          registerSection={(el) => {
+                            if (el !== null) sectionRefs.current.set(row.key, el);
+                            else sectionRefs.current.delete(row.key);
+                          }}
+                        />
+                      ))
+                    }
+                  />
+                )}
               </div>
             </>
           )}
@@ -2190,7 +2280,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
 
 const authored = defineExtension({
   id: manifestId,
-  version: "0.5.0",
+  version: "0.6.0",
   requires: [
     requireApi(vcsDiffApi),
     requireApi(vcsRepositoryApi, REPOSITORY_API_RANGE),
