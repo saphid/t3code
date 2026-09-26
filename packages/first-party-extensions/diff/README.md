@@ -62,6 +62,23 @@ This is a read-oriented panel. It consumes `t3.vcs/read` plus the
   root commits, so `getFileContents`'s merge-base path cannot expand
   turn sources — the panel says so instead of issuing requests that
   cannot resolve,
+- line comments (parity row D9) via `t3.messages/enrichment`
+  (`t3.messages/write` grant): a per-row affordance builds a
+  contiguous run of diff rows (shift extends), and the form submits
+  the native `buildDiffReviewComment` shape through `attachAnnotation`
+  into the composer draft — `selection` in old/new file line numbers
+  with per-endpoint sides, review-row indices, `rangeLabel`, and the
+  quoted hunk capped at the contract's 4096 chars (whole head lines
+  kept while they fit, else a character-boundary cut that never splits
+  a surrogate; `<review_comment` tags in quoted content are
+  neutralized so a quoted line cannot forge markup).
+  `listAnnotations` surfaces earlier unsent comments and
+  `removeAnnotation` retracts them. The selection and the open draft
+  are pinned to the delivered source hash + file + loaded expansion:
+  a refresh or expansion that reshapes the rows retires the pin (a
+  drift under an open form turns it stale instead of letting submit
+  ship anchors captured against different lines), while a
+  byte-identical redelivery legitimately keeps it,
 - `t3.ui/*` adoption: theme values resolve through
   `t3.ui/theme.getTokens` + `subscribeState` (stored preference,
   session overlay, and external previews all re-resolve the panel's
@@ -83,9 +100,9 @@ This is a read-oriented panel. It consumes `t3.vcs/read` plus the
   status rows stay inline, matching the native panel.
 
 Deferred slices: Pierre renderer features (react-dom is bundler-banned)
-— syntax highlighting, virtualization, sticky headers; diff-line comments
-(`t3.messages/enrichment`); repo-root→workspace path remapping for open
-(no public repo-root contract).
+— syntax highlighting, virtualization, sticky headers;
+repo-root→workspace path remapping for open (no public repo-root
+contract).
 
 ```sh
 pnpm --filter @t3tools/extension-diff test

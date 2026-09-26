@@ -11,7 +11,8 @@
  * `hydratePartialDiff` is not a public subpath, so gap expansion is
  * re-derived here over the delivered full-file contents.
  *
- * Turn/checkpoint diffs ride the `t3.orchestration/*` contracts below; diff-line comments wait on t3.messages/enrichment.
+ * Turn/checkpoint diffs ride the `t3.orchestration/*` contracts below;
+ * diff-line comments (`t3.messages/enrichment`) live in diffComments.ts.
  */
 import type { FileDiffMetadata } from "@pierre/diffs/types";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
@@ -208,9 +209,14 @@ function splitLines(text: string): readonly string[] {
   return lines;
 }
 
-/** Patch-parsed and contents-derived lines both can carry a trailing newline; display strips it. */
+/**
+ * Patch-parsed and contents-derived lines can carry a trailing newline (and
+ * contents-derived CRLF lines a lone trailing `\r` after the split on `\n`);
+ * display, quotes, and comparisons strip all of them so an unchanged CRLF
+ * file compares equal and renders without the carriage returns.
+ */
 function lineText(lines: readonly string[], index: number): string {
-  return (lines[index] ?? "").replace(/\r?\n$/, "");
+  return (lines[index] ?? "").replace(/(\r\n|\r|\n)$/, "");
 }
 
 /**
@@ -340,9 +346,22 @@ export type DiffSplitRow =
       readonly kind: "sides";
       readonly old: SplitSide;
       readonly new: SplitSide;
+      /**
+       * The unified row each side came from — the comment selection's index
+       * space. Both are the same row for context; a paired row keeps its own
+       * ordinal per side so a comment can target the addition or the deletion
+       * it replaced; `undefined` pads the empty side of a pairing.
+       */
+      readonly oldOrdinal: number | undefined;
+      readonly newOrdinal: number | undefined;
     }
   /** Full-width separator - the same gap row the unified layout renders. */
-  | { readonly ordinal: number; readonly kind: "gap"; readonly count: number };
+  | {
+      readonly ordinal: number;
+      readonly kind: "gap";
+      readonly count: number;
+      readonly unifiedOrdinal: number;
+    };
 
 /**
  * Unified display rows -> split (side-by-side) rows. Context appears on both
@@ -354,16 +373,20 @@ export type DiffSplitRow =
  */
 export function splitRows(rows: readonly DiffDisplayRow[]): readonly DiffSplitRow[] {
   const out: DiffSplitRow[] = [];
-  let oldRun: { readonly text: string; readonly line: number }[] = [];
-  let newRun: { readonly text: string; readonly line: number }[] = [];
+  let oldRun: { readonly text: string; readonly line: number; readonly ordinal: number }[] = [];
+  let newRun: { readonly text: string; readonly line: number; readonly ordinal: number }[] = [];
   const flush = () => {
     const height = Math.max(oldRun.length, newRun.length);
     for (let index = 0; index < height; index += 1) {
       const old = oldRun[index];
       const current = newRun[index];
+      // height is the longer run, so every index hits at least one side.
+      if (old === undefined && current === undefined) break;
       out.push({
         ordinal: out.length,
         kind: "sides",
+        oldOrdinal: old?.ordinal,
+        newOrdinal: current?.ordinal,
         old:
           old === undefined
             ? { kind: "empty" }
@@ -382,19 +405,21 @@ export function splitRows(rows: readonly DiffDisplayRow[]): readonly DiffSplitRo
     if (row.hunkStart === true && (oldRun.length > 0 || newRun.length > 0)) flush();
     if (row.kind === "gap") {
       flush();
-      out.push({ ordinal: out.length, kind: "gap", count: row.count });
+      out.push({ ordinal: out.length, kind: "gap", count: row.count, unifiedOrdinal: row.ordinal });
     } else if (row.kind === "deletion") {
       // A deletion run starting after additions belongs to a new pairing -
       // back-to-back change blocks each keep their own runs.
       if (newRun.length > 0) flush();
-      oldRun.push({ text: row.text, line: row.oldLine });
+      oldRun.push({ text: row.text, line: row.oldLine, ordinal: row.ordinal });
     } else if (row.kind === "addition") {
-      newRun.push({ text: row.text, line: row.newLine });
+      newRun.push({ text: row.text, line: row.newLine, ordinal: row.ordinal });
     } else {
       flush();
       out.push({
         ordinal: out.length,
         kind: "sides",
+        oldOrdinal: row.ordinal,
+        newOrdinal: row.ordinal,
         old: { kind: "context", text: row.text, line: row.oldLine },
         new: { kind: "context", text: row.text, line: row.newLine },
       });
@@ -411,6 +436,71 @@ export function canExpandFile(row: DiffFileRow): boolean {
     !row.textless &&
     (row.changeType === "change" || row.changeType === "rename-changed")
   );
+}
+
+/**
+ * Whether delivered full-file contents agree with the patch snapshot on
+ * every hunk line. Once loaded, the view renders hunk text from these
+ * contents while comment quotes always come from the patch's own lines — a
+ * file that changed between snapshot and fetch would make the two disagree
+ * silently (displayed text ≠ quoted text, with no stale signal, since the
+ * buffer pin only watches the contents themselves). Inconsistent contents
+ * are refused: the view keeps patch-text rows and gap separators, so what
+ * is shown and what is quoted stay on one snapshot. Gap-only differences
+ * are fine — expanded gap lines display but never anchor or quote.
+ */
+export function expansionMatchesPatch(row: DiffFileRow, contents: DiffFileContents): boolean {
+  const newLines = splitLines(contents.newContents);
+  const oldLines = splitLines(contents.oldContents);
+  for (const hunk of row.file.hunks) {
+    let oldLineNumber = hunk.deletionStart;
+    let newLineNumber = hunk.additionStart;
+    let deletionLineIndex = hunk.deletionLineIndex;
+    let additionLineIndex = hunk.additionLineIndex;
+    for (const segment of hunk.hunkContent) {
+      if (segment.type === "context") {
+        for (let index = 0; index < segment.lines; index += 1) {
+          // The same content source diffComments quotes from.
+          const text = lineText(
+            row.file.additionLines,
+            additionLineIndex >= 0 ? additionLineIndex : deletionLineIndex,
+          );
+          if (
+            lineText(newLines, newLineNumber - 1) !== text ||
+            lineText(oldLines, oldLineNumber - 1) !== text
+          ) {
+            return false;
+          }
+          oldLineNumber += 1;
+          newLineNumber += 1;
+          deletionLineIndex += 1;
+          additionLineIndex += 1;
+        }
+        continue;
+      }
+      for (let index = 0; index < segment.deletions; index += 1) {
+        if (
+          lineText(oldLines, oldLineNumber - 1) !==
+          lineText(row.file.deletionLines, deletionLineIndex)
+        ) {
+          return false;
+        }
+        oldLineNumber += 1;
+        deletionLineIndex += 1;
+      }
+      for (let index = 0; index < segment.additions; index += 1) {
+        if (
+          lineText(newLines, newLineNumber - 1) !==
+          lineText(row.file.additionLines, additionLineIndex)
+        ) {
+          return false;
+        }
+        newLineNumber += 1;
+        additionLineIndex += 1;
+      }
+    }
+  }
+  return true;
 }
 
 /** The `t3.vcs/diff` `getFileContents` input for one listed file. */
@@ -460,6 +550,33 @@ export function fileStatLabel(row: DiffFileRow): string {
 export function describeSource(source: VcsDiffPreviewSource): string {
   const hash = source.diffHash.slice(0, 12);
   return `${source.title} · ${hash}${source.truncated ? " · truncated" : ""}`;
+}
+
+/* ---------------- comment section identity ---------------- */
+
+/**
+ * The section identity a diff comment carries. The native viewer filters
+ * review comments by strict sectionId equality (AnnotatableCodeView), and
+ * the native DiffPanel writes `turn:<turnId>` for checkpoint scopes,
+ * `unstaged` for the working tree, `branch` for ref-range sources — any
+ * other id reaches the composer draft but never renders inline. The
+ * whole-thread diff has no native viewer section; its comments ride into
+ * the composer draft under `thread`.
+ */
+export function commentSectionFor(
+  mode: DiffMode,
+  turnSelection: TurnSelection | null,
+  source: Pick<VcsDiffPreviewSource, "kind"> | null,
+): { readonly id: string; readonly title: string } {
+  if (mode === "turns") {
+    if (turnSelection?.kind === "turn") {
+      return { id: `turn:${turnSelection.turnId}`, title: `Turn ${turnSelection.turnCount}` };
+    }
+    return { id: "thread", title: "All turns" };
+  }
+  return source !== null && source.kind === "working-tree"
+    ? { id: "unstaged", title: "Working tree" }
+    : { id: "branch", title: "Branch changes" };
 }
 
 /* ---------------- source + selection state ---------------- */
