@@ -34,7 +34,13 @@ import {
   formatCommentRangeLabel,
   type FileCommentRange,
 } from "./fileComments.js";
-import { useCommentBlockReason, useCommentDraft, useEditorSelection } from "./commentSession.js";
+import {
+  useCommentDraft,
+  LISTED_ANNOTATIONS_CAP,
+  useCommentTransport,
+  useEditorSelection,
+  usePostedComments,
+} from "./commentSession.js";
 import { parseMarkdown, type MarkdownBlock, type MarkdownInline } from "./markdown.js";
 import {
   FILE_SAVE_DEBOUNCE_MS,
@@ -1218,16 +1224,21 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   // never retargets it, and a drifted buffer turns the draft stale instead
   // of letting submit ship offsets captured against different bytes.
   const commentThreadId = session.context.resource.threadId;
-  const commentBlockReason = useCommentBlockReason(host, session, commentThreadId);
+  const { reason: commentBlockReason, capabilities: commentCapabilities } = useCommentTransport(
+    host,
+    session,
+    commentThreadId,
+  );
   const [commentBody, setCommentBody] = useState("");
   const [commentSubmit, setCommentSubmit] = useState<{
     busy: boolean;
     error: string | null;
   }>({ busy: false, error: null });
-  const [postedComments, setPostedComments] = useState<
-    readonly { path: string; annotationId: string; rangeLabel: string; text: string }[]
-  >([]);
-  // The grant-free capability probe lives in useCommentBlockReason: a
+  // The draft is the record of what was posted: listed through
+  // `listAnnotations` and removable through `removeAnnotation` when the
+  // composer offers them.
+  const posted = usePostedComments(host, session, commentThreadId, commentCapabilities, visible);
+  // The grant-free capability probe lives in useCommentTransport: a
   // rejected probe names the degraded transport instead of parking the
   // toolbar on "Checking…" forever.
   const commentSurface = editor.surface?.path === selected ? editor.surface : null;
@@ -1279,15 +1290,12 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       )
       .then(
         (result) => {
-          setPostedComments((previous) => [
-            ...previous,
-            {
-              path: draft.path,
-              annotationId: result.annotationId,
-              rangeLabel: formatCommentRangeLabel(draft.range.startLine, draft.range.endLine),
-              text: body,
-            },
-          ]);
+          posted.recordAttached({
+            path: draft.path,
+            annotationId: result.annotationId,
+            rangeLabel: formatCommentRangeLabel(draft.range.startLine, draft.range.endLine),
+            text: body,
+          });
           closeCommentDraft();
         },
         (error) => {
@@ -2074,7 +2082,8 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               />
             </>
           )}
-          {postedComments.some((comment) => comment.path === selected) && (
+          {(posted.comments.some((comment) => comment.path === selected) ||
+            posted.error !== null) && (
             <section
               aria-label="Review comments added here"
               style={{
@@ -2087,16 +2096,39 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                 gap: 4,
               }}
             >
-              {postedComments
+              {posted.comments
                 .filter((comment) => comment.path === selected)
                 .map((comment) => (
-                  <span key={comment.annotationId}>
-                    {comment.rangeLabel} — {comment.text}
+                  <span
+                    key={comment.annotationId}
+                    style={{ display: "flex", gap: 6, alignItems: "center" }}
+                  >
+                    <span>
+                      {comment.rangeLabel}
+                      {comment.text !== null ? ` — ${comment.text}` : ""}
+                    </span>
+                    {posted.removable && (
+                      <button
+                        type="button"
+                        aria-label={`Remove comment on ${comment.rangeLabel}`}
+                        onClick={() => posted.remove(comment.annotationId)}
+                      >
+                        Remove
+                      </button>
+                    )}
                   </span>
                 ))}
-              <span style={{ color: muted }}>
-                Removal is from the composer chip — this view cannot remove comments.
-              </span>
+              {posted.error !== null && <span role="alert">{posted.error}</span>}
+              {posted.capped && (
+                <span style={{ color: muted }}>
+                  Showing the first {LISTED_ANNOTATIONS_CAP} comments in the draft.
+                </span>
+              )}
+              {!posted.removable && (
+                <span style={{ color: muted }}>
+                  Removal is from the composer chip — this view cannot remove comments.
+                </span>
+              )}
             </section>
           )}
           {editorSurface.saveState.kind === "conflict" && (

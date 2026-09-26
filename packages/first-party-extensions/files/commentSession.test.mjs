@@ -3,7 +3,13 @@ import * as NodeTest from "node:test";
 import React from "react";
 import TestRenderer from "react-test-renderer";
 
-import { useCommentBlockReason, useCommentDraft, useEditorSelection } from "./commentSession.ts";
+import {
+  LISTED_ANNOTATIONS_CAP,
+  useCommentDraft,
+  useCommentTransport,
+  useEditorSelection,
+  usePostedComments,
+} from "./commentSession.ts";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const { act, create } = TestRenderer;
@@ -374,7 +380,7 @@ NodeTest.describe("useEditorSelection memoization", () => {
   });
 });
 
-NodeTest.describe("useCommentBlockReason", () => {
+NodeTest.describe("useCommentTransport", () => {
   const session = {
     context: {
       resource: {
@@ -399,7 +405,7 @@ NodeTest.describe("useCommentBlockReason", () => {
   };
   let latest;
   function Probe(props) {
-    const current = useCommentBlockReason(props.host, session, props.threadId);
+    const current = useCommentTransport(props.host, session, props.threadId).reason;
     React.useEffect(() => {
       latest = current;
     });
@@ -520,4 +526,275 @@ NodeTest.describe("useCommentBlockReason", () => {
       if (root) await act(async () => root.unmount());
     }
   });
+});
+
+NodeTest.describe("usePostedComments", () => {
+  const session = {
+    context: {
+      resource: {
+        namespace: "t3.extensions",
+        id: "t3.files",
+        environmentId: "env",
+        projectId: "project",
+        threadId: "thread",
+      },
+      client: "web",
+      workspaceRevision: "rev",
+    },
+    signal: new AbortController().signal,
+    restoring: false,
+    visible: true,
+    onVisibility: () => () => {},
+    restoreState: null,
+    publish: () => true,
+    save: () => true,
+    invoke: () => Promise.reject(new Error("no capabilities")),
+    onDispose: () => {},
+  };
+  const v11 = {
+    adapter: "host.messages",
+    transport: "client",
+    detail: null,
+    operations: { attachAnnotation: true, listAnnotations: true, removeAnnotation: true },
+  };
+  const v10 = {
+    adapter: "host.messages",
+    transport: "client",
+    detail: null,
+    operations: { attachAnnotation: true, listAnnotations: false, removeAnnotation: false },
+  };
+  const listed = (annotationId, filePath, rangeLabel, kind = "file") => ({
+    annotationId,
+    kind,
+    filePath,
+    rangeLabel,
+    sectionTitle: filePath,
+  });
+
+  /** A fake composer draft: list/remove answer from `draft` synchronously-resolved. */
+  function draftHost(draft) {
+    const calls = [];
+    return {
+      calls,
+      invokeApi(request) {
+        calls.push([request.method, request.input]);
+        if (request.method === "listAnnotations")
+          return Promise.resolve({
+            annotations: draft
+              .filter((entry) => entry.thread === request.input.threadId)
+              .map(({ thread: _t, ...entry }) => entry),
+          });
+        if (request.method === "removeAnnotation") {
+          const index = draft.findIndex(
+            (entry) => entry.annotationId === request.input.annotationId,
+          );
+          if (index >= 0) draft.splice(index, 1);
+          return Promise.resolve({ removed: index >= 0 });
+        }
+        return Promise.reject(new Error(`unexpected ${request.method}`));
+      },
+    };
+  }
+
+  let latest;
+  function Probe(props) {
+    const current = usePostedComments(
+      props.host,
+      session,
+      props.threadId,
+      props.capabilities,
+      props.visible ?? true,
+    );
+    React.useEffect(() => {
+      latest = current;
+    });
+    return null;
+  }
+  const flush = () => act(async () => {});
+  const summary = () => latest.comments.map((c) => [c.annotationId, c.path, c.rangeLabel, c.text]);
+
+  NodeTest.it(
+    "lists the thread's draft, file annotations only, bodies from own attaches",
+    async () => {
+      const draft = [
+        { thread: "thread-a", ...listed("a1", "src/a.ts", "L1 to L2") },
+        { thread: "thread-a", ...listed("d1", "src/a.ts", "L3", "diff") },
+        { thread: "thread-b", ...listed("b1", "src/b.ts", "L9") },
+      ];
+      const host = draftHost(draft);
+      let root;
+      try {
+        await act(async () => {
+          root = create(e(Probe, { host, threadId: "thread-a", capabilities: v11 }));
+        });
+        await flush();
+        NodeAssert.deepEqual(summary(), [["a1", "src/a.ts", "L1 to L2", null]]);
+        NodeAssert.equal(latest.listed, true);
+        NodeAssert.equal(latest.removable, true);
+
+        // Attach lands in the draft; the re-list keeps the body this view knows.
+        draft.push({ thread: "thread-a", ...listed("a2", "src/a.ts", "L5") });
+        await act(async () => {
+          latest.recordAttached({
+            annotationId: "a2",
+            path: "src/a.ts",
+            rangeLabel: "L5",
+            text: "why?",
+          });
+        });
+        await flush();
+        NodeAssert.deepEqual(summary(), [
+          ["a1", "src/a.ts", "L1 to L2", null],
+          ["a2", "src/a.ts", "L5", "why?"],
+        ]);
+
+        // Switching threads lists the other thread's draft, no bleed.
+        await act(async () =>
+          root.update(e(Probe, { host, threadId: "thread-b", capabilities: v11 })),
+        );
+        await flush();
+        NodeAssert.deepEqual(summary(), [["b1", "src/b.ts", "L9", null]]);
+      } finally {
+        if (root) await act(async () => root.unmount());
+      }
+    },
+  );
+
+  NodeTest.it("a chip removed in the composer drops out when the view is shown again", async () => {
+    const draft = [{ thread: "thread-a", ...listed("a1", "src/a.ts", "L1") }];
+    const host = draftHost(draft);
+    let root;
+    try {
+      await act(async () => {
+        root = create(e(Probe, { host, threadId: "thread-a", capabilities: v11 }));
+      });
+      await flush();
+      await act(async () => {
+        latest.recordAttached({
+          annotationId: "a1",
+          path: "src/a.ts",
+          rangeLabel: "L1",
+          text: "x",
+        });
+      });
+      await flush();
+      NodeAssert.deepEqual(summary(), [["a1", "src/a.ts", "L1", "x"]]);
+
+      draft.splice(0, 1); // user removed the chip in the composer
+      await act(async () =>
+        root.update(e(Probe, { host, threadId: "thread-a", capabilities: v11, visible: false })),
+      );
+      await act(async () =>
+        root.update(e(Probe, { host, threadId: "thread-a", capabilities: v11, visible: true })),
+      );
+      await flush();
+      // The locally known attach must not resurrect a chip the draft no longer holds.
+      NodeAssert.deepEqual(summary(), []);
+    } finally {
+      if (root) await act(async () => root.unmount());
+    }
+  });
+
+  NodeTest.it("remove goes through removeAnnotation and re-lists", async () => {
+    const draft = [
+      { thread: "thread-a", ...listed("a1", "src/a.ts", "L1") },
+      { thread: "thread-a", ...listed("a2", "src/a.ts", "L2") },
+    ];
+    const host = draftHost(draft);
+    let root;
+    try {
+      await act(async () => {
+        root = create(e(Probe, { host, threadId: "thread-a", capabilities: v11 }));
+      });
+      await flush();
+      await act(async () => latest.remove("a1"));
+      await flush();
+      NodeAssert.deepEqual(
+        host.calls.filter(([method]) => method === "removeAnnotation"),
+        [["removeAnnotation", { threadId: "thread-a", annotationId: "a1" }]],
+      );
+      NodeAssert.deepEqual(summary(), [["a2", "src/a.ts", "L2", null]]);
+      NodeAssert.equal(latest.error, null);
+    } finally {
+      if (root) await act(async () => root.unmount());
+    }
+  });
+
+  NodeTest.it("names a failed remove and keeps the comment listed", async () => {
+    const draft = [{ thread: "thread-a", ...listed("a1", "src/a.ts", "L1") }];
+    const base = draftHost(draft);
+    const host = {
+      calls: base.calls,
+      invokeApi(request) {
+        if (request.method === "removeAnnotation")
+          return Promise.reject(new Error("API capability denied: t3.messages/write"));
+        return base.invokeApi(request);
+      },
+    };
+    let root;
+    try {
+      await act(async () => {
+        root = create(e(Probe, { host, threadId: "thread-a", capabilities: v11 }));
+      });
+      await flush();
+      await act(async () => latest.remove("a1"));
+      await flush();
+      NodeAssert.equal(latest.error, "API capability denied: t3.messages/write");
+      NodeAssert.deepEqual(summary(), [["a1", "src/a.ts", "L1", null]]);
+    } finally {
+      if (root) await act(async () => root.unmount());
+    }
+  });
+
+  NodeTest.it("flags a listing at the op's cap", async () => {
+    const draft = Array.from({ length: LISTED_ANNOTATIONS_CAP }, (_, i) => ({
+      thread: "thread-a",
+      ...listed(`a${i}`, "src/a.ts", `L${i + 1}`),
+    }));
+    let root;
+    try {
+      await act(async () => {
+        root = create(
+          e(Probe, { host: draftHost(draft), threadId: "thread-a", capabilities: v11 }),
+        );
+      });
+      await flush();
+      NodeAssert.equal(latest.capped, true);
+    } finally {
+      if (root) await act(async () => root.unmount());
+    }
+  });
+
+  NodeTest.it(
+    "a 1.0 composer keeps this session's attaches per thread and never lists",
+    async () => {
+      const host = draftHost([]);
+      let root;
+      try {
+        await act(async () => {
+          root = create(e(Probe, { host, threadId: "thread-a", capabilities: v10 }));
+        });
+        await act(async () => {
+          latest.recordAttached({
+            annotationId: "a1",
+            path: "src/a.ts",
+            rangeLabel: "L1",
+            text: "x",
+          });
+        });
+        await flush();
+        NodeAssert.deepEqual(summary(), [["a1", "src/a.ts", "L1", "x"]]);
+        NodeAssert.equal(latest.listed, false);
+        NodeAssert.equal(latest.removable, false);
+        await act(async () => latest.remove("a1"));
+        await act(async () =>
+          root.update(e(Probe, { host, threadId: "thread-b", capabilities: v10 })),
+        );
+        NodeAssert.deepEqual(summary(), []);
+        NodeAssert.deepEqual(host.calls, []);
+      } finally {
+        if (root) await act(async () => root.unmount());
+      }
+    },
+  );
 });
