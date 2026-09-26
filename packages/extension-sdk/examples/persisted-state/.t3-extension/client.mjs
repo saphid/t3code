@@ -1713,6 +1713,63 @@ var __t3Client = (() => {
       }
     ]
   });
+  var browserHistoryEntriesSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["entries"],
+    properties: {
+      entries: {
+        type: "array",
+        maxItems: 50,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["url", "lastVisitedAt"],
+          properties: {
+            url: { type: "string", minLength: 1, maxLength: 2048 },
+            lastVisitedAt: { type: "number" },
+            title: { type: "string", minLength: 1, maxLength: 512 }
+          }
+        }
+      },
+      truncated: { const: true }
+    }
+  };
+  var historyUrl = { type: "string", minLength: 1, maxLength: 4096 };
+  var CLIENT_BROWSER_HISTORY_API = validateApiDefinition({
+    id: "t3.client/browser-history",
+    version: "1.1.0",
+    methods: [
+      {
+        name: "list",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({}),
+        outputSchema: browserHistoryEntriesSchema
+      },
+      {
+        name: "record",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({ url: historyUrl }, ["url"]),
+        outputSchema: browserHistoryEntriesSchema
+      },
+      {
+        name: "setTitle",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({ url: historyUrl, title: { type: "string", minLength: 1, maxLength: 4096 } }, ["url", "title"]),
+        outputSchema: browserHistoryEntriesSchema
+      },
+      {
+        name: "remove",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({ url: historyUrl }, ["url"]),
+        outputSchema: browserHistoryEntriesSchema
+      }
+    ]
+  });
   var CLIENT_PROVIDER_APIS = new Map([
     CLIENT_THEME_API,
     CLIENT_NOTIFICATIONS_API,
@@ -1721,7 +1778,8 @@ var __t3Client = (() => {
     CLIENT_COMPOSER_API,
     CLIENT_TERMINAL_APPEARANCE_API,
     CLIENT_PREFERENCES_API,
-    CLIENT_EXTERNAL_API
+    CLIENT_EXTERNAL_API,
+    CLIENT_BROWSER_HISTORY_API
   ].map((definition) => [definition.id, definition]));
 
   // node_modules/@t3tools/extension-sdk/dist/catalogue.js
@@ -1769,6 +1827,58 @@ var __t3Client = (() => {
             }
           ]
         }
+      }
+    ]
+  });
+  var BROWSER_HISTORY = "t3.browser/history";
+  var BROWSER_READ_HISTORY = "t3.browser/read-history";
+  var BROWSER_RECORD_HISTORY = "t3.browser/record-history";
+  var BROWSER_HISTORY_MAX_BYTES = MAX_PAYLOAD_BYTES - 4096;
+  var browserHistoryUrlInput = {
+    type: "object",
+    additionalProperties: false,
+    required: ["url"],
+    properties: { url: { type: "string", minLength: 1, maxLength: 4096 } }
+  };
+  var browserHistoryApi = defineApi({
+    id: BROWSER_HISTORY,
+    version: "1.1.0",
+    methods: [
+      {
+        name: "list",
+        effect: "read",
+        requiredGrants: [BROWSER_READ_HISTORY],
+        inputSchema: { type: "object", additionalProperties: false, properties: {} },
+        outputSchema: browserHistoryEntriesSchema
+      },
+      {
+        name: "record",
+        effect: "write",
+        requiredGrants: [BROWSER_READ_HISTORY, BROWSER_RECORD_HISTORY],
+        inputSchema: browserHistoryUrlInput,
+        outputSchema: browserHistoryEntriesSchema
+      },
+      {
+        name: "setTitle",
+        effect: "write",
+        requiredGrants: [BROWSER_READ_HISTORY, BROWSER_RECORD_HISTORY],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["url", "title"],
+          properties: {
+            url: { type: "string", minLength: 1, maxLength: 4096 },
+            title: { type: "string", minLength: 1, maxLength: 4096 }
+          }
+        },
+        outputSchema: browserHistoryEntriesSchema
+      },
+      {
+        name: "remove",
+        effect: "write",
+        requiredGrants: [BROWSER_READ_HISTORY, BROWSER_RECORD_HISTORY],
+        inputSchema: browserHistoryUrlInput,
+        outputSchema: browserHistoryEntriesSchema
       }
     ]
   });
@@ -6926,6 +7036,7 @@ var __t3Client = (() => {
     orchestrationStatusApi.definition,
     orchestrationControlApi.definition,
     browserLocalServersApi.definition,
+    browserHistoryApi.definition,
     browserSessionsApi.definition,
     browserSessionsApiV1.definition,
     browserFramesApi.definition,

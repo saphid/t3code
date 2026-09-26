@@ -10,7 +10,7 @@ import {
 } from "./capabilities.js";
 import type { JsonObject } from "./environment.js";
 import type { GlobalCommandDescriptor } from "./environment.js";
-import type { ViewContext } from "./contracts.js";
+import { MAX_PAYLOAD_BYTES, type ViewContext } from "./contracts.js";
 import type { WorkspaceReadTextInput, WorkspaceReadTextResult } from "./workspace.js";
 import { textEditsApi, textEditsApiV1 } from "./textEdits.js";
 import { workspaceResourcesApi, WORKSPACE_RESOURCES } from "./workspaceResources.js";
@@ -24,6 +24,7 @@ import {
   clientPreferencesPatchSchema,
   clientPreferencesReceiptSchema,
   uiExternalOpenReceiptSchema,
+  browserHistoryEntriesSchema,
 } from "./clientProviders.js";
 
 export * from "./workspaceResources.js";
@@ -111,6 +112,114 @@ export const browserLocalServersApi = defineStreamApi<{
           },
         ],
       },
+    },
+  ],
+});
+
+/**
+ * The project's persisted browser URL history — the same per-project list the
+ * native preview keeps, so a visit recorded in any thread of a project is a
+ * recent in every other thread of it, and survives the thread ending. The
+ * project is never named by the caller: the host resolves it from the
+ * thread-scoped context. Every write returns the resulting list, so writes
+ * need the read grant as well as the record grant.
+ *
+ * Semantics follow the native store: URLs are normalized (credentials
+ * stripped, ≤ 2048 chars; unrecordable URLs are ignored), a revisit moves the
+ * entry to the front, loopback aliases fold into one entry, and the list is
+ * capped at 50. `setTitle` only enriches an existing entry; `remove` drops
+ * the exact normalized URL.
+ *
+ * 1.1.0: a full list of long URLs can outgrow the payload envelope, so every
+ * answer keeps the most recent entries that fit `BROWSER_HISTORY_MAX_BYTES`
+ * and sets `truncated: true` when it dropped older ones. The stored list is
+ * unchanged; only the answer is shortened.
+ */
+export const BROWSER_HISTORY = "t3.browser/history";
+export const BROWSER_READ_HISTORY = "t3.browser/read-history";
+export const BROWSER_RECORD_HISTORY = "t3.browser/record-history";
+export const BROWSER_HISTORY_MAX_ENTRIES = 50;
+export type BrowserHistoryApiEntry = {
+  readonly url: string;
+  readonly lastVisitedAt: number;
+  readonly title?: string;
+};
+export type BrowserHistoryList = {
+  readonly entries: readonly BrowserHistoryApiEntry[];
+  readonly truncated?: true;
+};
+/** Serialized-answer budget: the envelope less headroom for the call wrapper. */
+export const BROWSER_HISTORY_MAX_BYTES = MAX_PAYLOAD_BYTES - 4096;
+
+/**
+ * The answer a history provider returns for an MRU-first list: the longest
+ * prefix whose serialization fits `BROWSER_HISTORY_MAX_BYTES`, flagged
+ * `truncated` when anything was dropped.
+ */
+export function fitBrowserHistoryList(
+  entries: readonly BrowserHistoryApiEntry[],
+): BrowserHistoryList {
+  const encoder = new TextEncoder();
+  let bytes = encoder.encode(JSON.stringify({ entries: [], truncated: true })).length;
+  const kept: BrowserHistoryApiEntry[] = [];
+  for (const { url, lastVisitedAt, title } of entries) {
+    const entry = title === undefined ? { url, lastVisitedAt } : { url, lastVisitedAt, title };
+    bytes += encoder.encode(JSON.stringify(entry)).length + (kept.length > 0 ? 1 : 0);
+    if (bytes > BROWSER_HISTORY_MAX_BYTES) return { entries: kept, truncated: true };
+    kept.push(entry);
+  }
+  return { entries: kept };
+}
+const browserHistoryUrlInput = {
+  type: "object",
+  additionalProperties: false,
+  required: ["url"],
+  properties: { url: { type: "string", minLength: 1, maxLength: 4096 } },
+} as const;
+export const browserHistoryApi = defineApi<{
+  list: { input: Record<string, never>; output: BrowserHistoryList };
+  record: { input: { url: string }; output: BrowserHistoryList };
+  setTitle: { input: { url: string; title: string }; output: BrowserHistoryList };
+  remove: { input: { url: string }; output: BrowserHistoryList };
+}>({
+  id: BROWSER_HISTORY,
+  version: "1.1.0",
+  methods: [
+    {
+      name: "list",
+      effect: "read",
+      requiredGrants: [BROWSER_READ_HISTORY],
+      inputSchema: { type: "object", additionalProperties: false, properties: {} },
+      outputSchema: browserHistoryEntriesSchema,
+    },
+    {
+      name: "record",
+      effect: "write",
+      requiredGrants: [BROWSER_READ_HISTORY, BROWSER_RECORD_HISTORY],
+      inputSchema: browserHistoryUrlInput,
+      outputSchema: browserHistoryEntriesSchema,
+    },
+    {
+      name: "setTitle",
+      effect: "write",
+      requiredGrants: [BROWSER_READ_HISTORY, BROWSER_RECORD_HISTORY],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["url", "title"],
+        properties: {
+          url: { type: "string", minLength: 1, maxLength: 4096 },
+          title: { type: "string", minLength: 1, maxLength: 4096 },
+        },
+      },
+      outputSchema: browserHistoryEntriesSchema,
+    },
+    {
+      name: "remove",
+      effect: "write",
+      requiredGrants: [BROWSER_READ_HISTORY, BROWSER_RECORD_HISTORY],
+      inputSchema: browserHistoryUrlInput,
+      outputSchema: browserHistoryEntriesSchema,
     },
   ],
 });
@@ -8374,6 +8483,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   orchestrationStatusApi.definition,
   orchestrationControlApi.definition,
   browserLocalServersApi.definition,
+  browserHistoryApi.definition,
   browserSessionsApi.definition,
   browserSessionsApiV1.definition,
   browserFramesApi.definition,

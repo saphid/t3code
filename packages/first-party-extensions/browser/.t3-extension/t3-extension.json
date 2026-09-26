@@ -89,6 +89,10 @@
       "versionRange": "^1.0.0"
     },
     {
+      "id": "t3.browser/history",
+      "versionRange": "^1.1.0"
+    },
+    {
       "id": "t3.browser/frames",
       "versionRange": "^1.0.0"
     },

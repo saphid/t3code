@@ -4,9 +4,9 @@
   "packageId": "t3.browser",
   "version": "0.1.0",
   "hashes": {
-    "t3-extension.json": "1435093b3b2f37f75a95ef99d55d33a41c33d972c6564ac83fc48e351822858f",
-    "client.mjs": "0972927ae53568a8b4545ddcaecabb4597ed62f1d227e38df14dd396a453dfd2",
-    "server.mjs": "1d3705323057032bbb2c15be3d18b10e93664d8bf0f7592477b871211075024e"
+    "t3-extension.json": "a9af73edabc47820981ffe9102e61c30e422b1eb90fcf3844759ab8a342ac82d",
+    "client.mjs": "56b23d565952c51a85bc6ed4db5920e1dd8a8d394efa40942950423cca5b30ca",
+    "server.mjs": "17b0e96ac4fe8515a7c558c7e5221bf7d827f2b227a9021e4d5118ae42f6df40"
   },
   "generator": "t3-extension",
   "sourceEntrySha256": "fb20f105ee5f533a9f4e318318e5684b06a72b91698d80a7e6451c11a824d5cb"

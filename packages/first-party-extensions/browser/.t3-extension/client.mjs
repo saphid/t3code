@@ -1752,6 +1752,63 @@ var __t3Client = (() => {
       }
     ]
   });
+  var browserHistoryEntriesSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["entries"],
+    properties: {
+      entries: {
+        type: "array",
+        maxItems: 50,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["url", "lastVisitedAt"],
+          properties: {
+            url: { type: "string", minLength: 1, maxLength: 2048 },
+            lastVisitedAt: { type: "number" },
+            title: { type: "string", minLength: 1, maxLength: 512 }
+          }
+        }
+      },
+      truncated: { const: true }
+    }
+  };
+  var historyUrl = { type: "string", minLength: 1, maxLength: 4096 };
+  var CLIENT_BROWSER_HISTORY_API = validateApiDefinition({
+    id: "t3.client/browser-history",
+    version: "1.1.0",
+    methods: [
+      {
+        name: "list",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({}),
+        outputSchema: browserHistoryEntriesSchema
+      },
+      {
+        name: "record",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({ url: historyUrl }, ["url"]),
+        outputSchema: browserHistoryEntriesSchema
+      },
+      {
+        name: "setTitle",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({ url: historyUrl, title: { type: "string", minLength: 1, maxLength: 4096 } }, ["url", "title"]),
+        outputSchema: browserHistoryEntriesSchema
+      },
+      {
+        name: "remove",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({ url: historyUrl }, ["url"]),
+        outputSchema: browserHistoryEntriesSchema
+      }
+    ]
+  });
   var CLIENT_PROVIDER_APIS = new Map([
     CLIENT_THEME_API,
     CLIENT_NOTIFICATIONS_API,
@@ -1760,7 +1817,8 @@ var __t3Client = (() => {
     CLIENT_COMPOSER_API,
     CLIENT_TERMINAL_APPEARANCE_API,
     CLIENT_PREFERENCES_API,
-    CLIENT_EXTERNAL_API
+    CLIENT_EXTERNAL_API,
+    CLIENT_BROWSER_HISTORY_API
   ].map((definition) => [definition.id, definition]));
 
   // node_modules/@t3tools/extension-sdk/dist/catalogue.js
@@ -1808,6 +1866,58 @@ var __t3Client = (() => {
             }
           ]
         }
+      }
+    ]
+  });
+  var BROWSER_HISTORY = "t3.browser/history";
+  var BROWSER_READ_HISTORY = "t3.browser/read-history";
+  var BROWSER_RECORD_HISTORY = "t3.browser/record-history";
+  var BROWSER_HISTORY_MAX_BYTES = MAX_PAYLOAD_BYTES - 4096;
+  var browserHistoryUrlInput = {
+    type: "object",
+    additionalProperties: false,
+    required: ["url"],
+    properties: { url: { type: "string", minLength: 1, maxLength: 4096 } }
+  };
+  var browserHistoryApi = defineApi({
+    id: BROWSER_HISTORY,
+    version: "1.1.0",
+    methods: [
+      {
+        name: "list",
+        effect: "read",
+        requiredGrants: [BROWSER_READ_HISTORY],
+        inputSchema: { type: "object", additionalProperties: false, properties: {} },
+        outputSchema: browserHistoryEntriesSchema
+      },
+      {
+        name: "record",
+        effect: "write",
+        requiredGrants: [BROWSER_READ_HISTORY, BROWSER_RECORD_HISTORY],
+        inputSchema: browserHistoryUrlInput,
+        outputSchema: browserHistoryEntriesSchema
+      },
+      {
+        name: "setTitle",
+        effect: "write",
+        requiredGrants: [BROWSER_READ_HISTORY, BROWSER_RECORD_HISTORY],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["url", "title"],
+          properties: {
+            url: { type: "string", minLength: 1, maxLength: 4096 },
+            title: { type: "string", minLength: 1, maxLength: 4096 }
+          }
+        },
+        outputSchema: browserHistoryEntriesSchema
+      },
+      {
+        name: "remove",
+        effect: "write",
+        requiredGrants: [BROWSER_READ_HISTORY, BROWSER_RECORD_HISTORY],
+        inputSchema: browserHistoryUrlInput,
+        outputSchema: browserHistoryEntriesSchema
       }
     ]
   });
@@ -6976,6 +7086,7 @@ var __t3Client = (() => {
     orchestrationStatusApi.definition,
     orchestrationControlApi.definition,
     browserLocalServersApi.definition,
+    browserHistoryApi.definition,
     browserSessionsApi.definition,
     browserSessionsApiV1.definition,
     browserFramesApi.definition,
@@ -13990,6 +14101,79 @@ ${ind(d)}}`;
     ] });
   }
 
+  // projectHistory.ts
+  function projectHistoryErrorState(op, error) {
+    const text = error instanceof Error ? error.message : String(error);
+    if (text.includes("capability denied")) {
+      const named = /capability denied: (\S+)/.exec(text)?.[1];
+      const grant = named ?? (op === "list" ? BROWSER_READ_HISTORY : BROWSER_RECORD_HISTORY);
+      return {
+        kind: "unavailable",
+        message: `Showing this view's history only \u2014 this installation is missing the ${grant} grant.`
+      };
+    }
+    return {
+      kind: "unavailable",
+      message: `Showing this view's history only \u2014 project history is unavailable${text ? ` (${text.slice(0, 300)})` : ""}.`
+    };
+  }
+  function displayedHistory(state2, own) {
+    return state2.kind === "ready" ? state2.entries : own;
+  }
+  function createProjectHistory(api, signal, onState) {
+    let issued = 0;
+    const run2 = (op, request) => {
+      const sequence = ++issued;
+      const current = () => !signal.aborted && sequence === issued;
+      void request(signal).then(
+        (result2) => {
+          if (current())
+            onState({
+              kind: "ready",
+              entries: sanitizeHistoryEntries(result2?.entries),
+              truncated: result2?.truncated === true
+            });
+        },
+        (error) => {
+          if (current()) onState(projectHistoryErrorState(op, error));
+        }
+      );
+    };
+    return {
+      refresh: () => run2("list", (abort) => api.invoke("list", {}, abort)),
+      record: (url) => run2("record", (abort) => api.invoke("record", { url }, abort)),
+      setTitle: (url, title) => run2("setTitle", (abort) => api.invoke("setTitle", { url, title }, abort)),
+      remove: (url) => run2("remove", (abort) => api.invoke("remove", { url }, abort))
+    };
+  }
+  function createCommandDispatch(options) {
+    const { signal, lastRevision } = options;
+    return (run2, onAccepted) => {
+      void run2(signal).then(
+        (receipt2) => {
+          if (signal.aborted) return;
+          const stale = receipt2.revision < lastRevision.current;
+          if (!stale) lastRevision.current = receipt2.revision;
+          if (receipt2.outcome !== "accepted") {
+            if (!stale) options.refuse(receipt2.outcome);
+            return;
+          }
+          if (!stale) options.adopt(receipt2);
+          onAccepted?.();
+        },
+        (error) => {
+          if (!signal.aborted) options.fail(error);
+        }
+      );
+    };
+  }
+  function titleUpdate(navigation, presentingFile, isLeaseUrl2) {
+    if (!navigation || navigation.kind !== "loaded" || presentingFile) return null;
+    const { url, title } = navigation;
+    if (!url || !title.trim() || isLeaseUrl2(url)) return null;
+    return { url, title };
+  }
+
   // pageControls.ts
   function pageControlsBlock(session) {
     if (session === null) return "Waiting for the browser session to report its state.";
@@ -15013,6 +15197,20 @@ ${ind(d)}}`;
     const viewportCommitter = (0, import_react6.useRef)(null);
     const themeVars = useThemeVars(host, session, visible);
     const localServers = useLocalServers(host, session, visible && held === null);
+    const [projectHistoryState, setProjectHistoryState] = (0, import_react6.useState)({
+      kind: "loading"
+    });
+    const projectHistory = (0, import_react6.useMemo)(
+      () => createProjectHistory(
+        bindApi(browserHistoryApi, host, session.context),
+        session.signal,
+        setProjectHistoryState
+      ),
+      [host, session]
+    );
+    (0, import_react6.useEffect)(() => {
+      if (visible) projectHistory.refresh();
+    }, [projectHistory, visible]);
     (0, import_react6.useEffect)(() => {
       heldRef.current = held;
     }, [held]);
@@ -15192,45 +15390,36 @@ ${ind(d)}}`;
       persist(entries, next.status.url, heldRef.current);
     };
     const removeRecent = (rawUrl) => {
+      projectHistory.remove(rawUrl);
       const entries = removeHistoryUrl(history, rawUrl);
       setHistory(entries);
       historyRef.current = entries;
       persist(entries, currentUrl(state2), heldRef.current);
     };
-    const dispatch = (run2) => {
-      const controller = new AbortController();
-      const signal = AbortSignal.any([controller.signal, session.signal]);
-      void run2(signal).then(
-        (receipt2) => {
-          if (signal.aborted || receipt2.revision < lastRevision.current) return;
-          lastRevision.current = receipt2.revision;
-          if (receipt2.outcome !== "accepted") {
-            setFault(`Browser command ${receipt2.outcome}`);
-            return;
-          }
-          const next = {
-            tabId: receipt2.session.tabId,
-            serverEpoch: receipt2.serverEpoch,
-            engineGeneration: receipt2.session.engine.generation
-          };
-          heldRef.current = next;
-          setHeld(next);
-          setLive(receipt2.session);
-          setFault(null);
-          const requested = receipt2.session.requestedUrl;
-          const base = {
-            ...restoreTarget(fileSourceRef.current, requested),
-            tabId: next.tabId,
-            serverEpoch: next.serverEpoch
-          };
-          session.save({ ...base, history: fitHistoryToSaveBudget(base, historyRef.current) });
-        },
-        (error) => {
-          if (!signal.aborted)
-            setFault(error instanceof Error ? error.message : "Browser command failed");
-        }
-      );
-    };
+    const dispatch = createCommandDispatch({
+      signal: session.signal,
+      lastRevision,
+      refuse: (outcome) => setFault(`Browser command ${outcome}`),
+      fail: (error) => setFault(error instanceof Error ? error.message : "Browser command failed"),
+      adopt: (receipt2) => {
+        const next = {
+          tabId: receipt2.session.tabId,
+          serverEpoch: receipt2.serverEpoch,
+          engineGeneration: receipt2.session.engine.generation
+        };
+        heldRef.current = next;
+        setHeld(next);
+        setLive(receipt2.session);
+        setFault(null);
+        const requested = receipt2.session.requestedUrl;
+        const base = {
+          ...restoreTarget(fileSourceRef.current, requested),
+          tabId: next.tabId,
+          serverEpoch: next.serverEpoch
+        };
+        session.save({ ...base, history: fitHistoryToSaveBudget(base, historyRef.current) });
+      }
+    });
     const presentFile = (relativePath) => {
       fileSourceRef.current = relativePath;
       setFileSource(relativePath);
@@ -15241,9 +15430,10 @@ ${ind(d)}}`;
       const next = submitAddress(state2, raw);
       commit(next);
       if (next.status.kind !== "target") return;
-      go(next.status.url);
+      const url = next.status.url;
+      go(url, isLeaseUrl(url) ? void 0 : () => projectHistory.record(url));
     };
-    const go = (url) => {
+    const go = (url, onAccepted) => {
       const api = bindApi(browserSessionsApi, host, session.context);
       const current = heldRef.current;
       const usable = current && surfaceLease?.state.kind !== "ended" && !isRecoveryExhausted(live) ? current : null;
@@ -15257,7 +15447,8 @@ ${ind(d)}}`;
             expectedEngineGeneration: usable.engineGeneration
           },
           signal
-        ) : api.invoke("open", { url }, signal)
+        ) : api.invoke("open", { url }, signal),
+        onAccepted
       );
     };
     const adopt = (0, import_react6.useCallback)(
@@ -15406,13 +15597,27 @@ ${ind(d)}}`;
       );
       return () => controller.abort();
     }, [host, session, visible]);
-    const showRecents = state2.status.kind !== "target" && recentHistoryEntries(history).length > 0;
+    const titled = titleUpdate(live?.navigation ?? null, fileSource !== null, isLeaseUrl);
+    const titledUrl = titled?.url ?? null;
+    const titledTitle = titled?.title ?? null;
+    const lastTitled = (0, import_react6.useRef)(null);
+    (0, import_react6.useEffect)(() => {
+      if (titledUrl === null || titledTitle === null) return;
+      if (projectHistoryState.kind !== "ready" || projectHistoryState.entries.length === 0) return;
+      const key = `${titledUrl}
+${titledTitle}`;
+      if (lastTitled.current === key) return;
+      lastTitled.current = key;
+      projectHistory.setTitle(titledUrl, titledTitle);
+    }, [projectHistory, projectHistoryState, titledUrl, titledTitle]);
+    const recents = recentHistoryEntries(displayedHistory(projectHistoryState, history));
+    const showRecents = state2.status.kind !== "target" && recents.length > 0;
     const externalTarget = externalOpenTarget(
       live ? live.navigation.url ?? live.requestedUrl : currentUrl(state2),
       fileSource
     );
     const landing = landingModel({
-      recentCount: showRecents ? recentHistoryEntries(history).length : 0,
+      recentCount: showRecents ? recents.length : 0,
       localServers
     });
     const leaseState = surfaceLease?.state;
@@ -15730,7 +15935,7 @@ ${ind(d)}}`;
                   {
                     "aria-label": "Recently used",
                     style: { listStyle: "none", margin: 0, padding: 0, fontSize: 12 },
-                    children: recentHistoryEntries(history).map((entry) => {
+                    children: recents.map((entry) => {
                       const parsed = new URL(entry.url);
                       const path3 = parsed.pathname === "/" ? "" : parsed.pathname;
                       const label = `${parsed.host}${path3}${parsed.search}${parsed.hash}`;
@@ -15766,6 +15971,8 @@ ${ind(d)}}`;
                     })
                   }
                 ),
+                projectHistoryState.kind === "unavailable" && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("p", { role: "note", style: { margin: 0, fontSize: 11, color: muted5 }, children: projectHistoryState.message }),
+                projectHistoryState.kind === "ready" && projectHistoryState.truncated && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("p", { role: "note", style: { margin: 0, fontSize: 11, color: muted5 }, children: "Project history truncated \u2014 showing the most recent entries that fit." }),
                 /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
                   LocalServersSection,
                   {
@@ -15816,6 +16023,7 @@ ${ind(d)}}`;
     requires: [
       requireApi(browserSessionsApi),
       requireApi(browserLocalServersApi),
+      requireApi(browserHistoryApi),
       requireApi(browserFramesApi),
       requireApi(resourcesLeaseApi),
       requireApi(uiThemeApi),

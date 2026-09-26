@@ -4,7 +4,8 @@ import { validateApiDefinition, type ApiDefinition } from "./capabilities.js";
  * Private `t3.client/*` client-provider area definitions.
  *
  * These are host-owned ambient providers (theme, notifications, keybindings,
- * panels, composer, terminal appearance, preferences, external open) reached only through the
+ * panels, composer, terminal appearance, preferences, external open, browser
+ * history) reached only through the
  * client-provider connect stream — never registered with the public API
  * broker, never discoverable, never grantable, and never plugin-provided.
  *
@@ -911,6 +912,80 @@ export const CLIENT_EXTERNAL_API = validateApiDefinition({
   ],
 });
 
+/**
+ * The `t3.browser/history` result, shared by the public and private areas:
+ * the project's URL history, most-recently-visited first, at most 50 entries
+ * (the native browser history cap). `truncated` is present only when older
+ * entries were dropped to keep the response inside the payload envelope.
+ */
+export const browserHistoryEntriesSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["entries"],
+  properties: {
+    entries: {
+      type: "array",
+      maxItems: 50,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["url", "lastVisitedAt"],
+        properties: {
+          url: { type: "string", minLength: 1, maxLength: 2048 },
+          lastVisitedAt: { type: "number" },
+          title: { type: "string", minLength: 1, maxLength: 512 },
+        },
+      },
+    },
+    truncated: { const: true },
+  },
+} as const;
+
+const historyUrl = { type: "string", minLength: 1, maxLength: 4096 } as const;
+
+/**
+ * Backs `t3.browser/history` with the client's native per-project browser
+ * history, so a pack and the native preview read and write the same list.
+ * The project is the one the client maps the context thread to.
+ */
+export const CLIENT_BROWSER_HISTORY_API = validateApiDefinition({
+  id: "t3.client/browser-history",
+  version: "1.1.0",
+  methods: [
+    {
+      name: "list",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: withTarget({}),
+      outputSchema: browserHistoryEntriesSchema,
+    },
+    {
+      name: "record",
+      effect: "write",
+      requiredGrants: [],
+      inputSchema: withTarget({ url: historyUrl }, ["url"]),
+      outputSchema: browserHistoryEntriesSchema,
+    },
+    {
+      name: "setTitle",
+      effect: "write",
+      requiredGrants: [],
+      inputSchema: withTarget(
+        { url: historyUrl, title: { type: "string", minLength: 1, maxLength: 4096 } },
+        ["url", "title"],
+      ),
+      outputSchema: browserHistoryEntriesSchema,
+    },
+    {
+      name: "remove",
+      effect: "write",
+      requiredGrants: [],
+      inputSchema: withTarget({ url: historyUrl }, ["url"]),
+      outputSchema: browserHistoryEntriesSchema,
+    },
+  ],
+});
+
 /** Host-owned client-provider definitions, keyed by area id. */
 export const CLIENT_PROVIDER_APIS: ReadonlyMap<string, ApiDefinition> = new Map(
   [
@@ -922,6 +997,7 @@ export const CLIENT_PROVIDER_APIS: ReadonlyMap<string, ApiDefinition> = new Map(
     CLIENT_TERMINAL_APPEARANCE_API,
     CLIENT_PREFERENCES_API,
     CLIENT_EXTERNAL_API,
+    CLIENT_BROWSER_HISTORY_API,
   ].map((definition) => [definition.id, definition]),
 );
 

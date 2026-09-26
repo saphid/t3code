@@ -7,6 +7,7 @@ import {
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import {
   browserFramesApi,
+  browserHistoryApi,
   browserLocalServersApi,
   browserSessionsApi,
   composerContextApi,
@@ -25,7 +26,7 @@ import {
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useBrowserCapture } from "./capture.js";
 import { mintWorkspaceFileUrl } from "./fileOpen.js";
@@ -40,6 +41,13 @@ import {
   sanitizeHistoryEntries,
 } from "./historyStore.js";
 import { LocalServersSection, NoPreview, RecentlyUsedHeading, useLocalServers } from "./landing.js";
+import {
+  createCommandDispatch,
+  createProjectHistory,
+  displayedHistory,
+  titleUpdate,
+  type ProjectHistoryState,
+} from "./projectHistory.js";
 import { landingModel } from "./localServers.js";
 import {
   DEFAULT_ZOOM_FACTOR,
@@ -249,6 +257,24 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const viewportCommitter = useRef<ViewportCommitter | null>(null);
   const themeVars = useThemeVars(host, session, visible);
   const localServers = useLocalServers(host, session, visible && held === null);
+  // Project-shared history (`t3.browser/history`); the view's own list stands
+  // in until it arrives and whenever the contract cannot serve it.
+  const [projectHistoryState, setProjectHistoryState] = useState<ProjectHistoryState>({
+    kind: "loading",
+  });
+  const projectHistory = useMemo(
+    () =>
+      createProjectHistory(
+        bindApi(browserHistoryApi, host, session.context),
+        session.signal,
+        setProjectHistoryState,
+      ),
+    [host, session],
+  );
+  // Other threads of the project record while this view is hidden: re-read on show.
+  useEffect(() => {
+    if (visible) projectHistory.refresh();
+  }, [projectHistory, visible]);
   useEffect(() => {
     heldRef.current = held;
   }, [held]);
@@ -483,47 +509,37 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   };
 
   const removeRecent = (rawUrl: string) => {
+    projectHistory.remove(rawUrl);
     const entries = removeHistoryUrl(history, rawUrl);
     setHistory(entries);
     historyRef.current = entries;
     persist(entries, currentUrl(state), heldRef.current);
   };
 
-  const dispatch = (run: (signal: AbortSignal) => Promise<BrowserSessionReceipt>) => {
-    const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, session.signal]);
-    void run(signal).then(
-      (receipt) => {
-        // Stale receipts (older revision than already applied) never win.
-        if (signal.aborted || receipt.revision < lastRevision.current) return;
-        lastRevision.current = receipt.revision;
-        if (receipt.outcome !== "accepted") {
-          setFault(`Browser command ${receipt.outcome}`);
-          return;
-        }
-        const next = {
-          tabId: receipt.session.tabId,
-          serverEpoch: receipt.serverEpoch,
-          engineGeneration: receipt.session.engine.generation,
-        };
-        heldRef.current = next;
-        setHeld(next);
-        setLive(receipt.session);
-        setFault(null);
-        const requested = receipt.session.requestedUrl;
-        const base: { url?: string; relativePath?: string; tabId: string; serverEpoch: string } = {
-          ...restoreTarget(fileSourceRef.current, requested),
-          tabId: next.tabId,
-          serverEpoch: next.serverEpoch,
-        };
-        session.save({ ...base, history: fitHistoryToSaveBudget(base, historyRef.current) });
-      },
-      (error) => {
-        if (!signal.aborted)
-          setFault(error instanceof Error ? error.message : "Browser command failed");
-      },
-    );
-  };
+  const dispatch = createCommandDispatch<BrowserSessionReceipt>({
+    signal: session.signal,
+    lastRevision,
+    refuse: (outcome) => setFault(`Browser command ${outcome}`),
+    fail: (error) => setFault(error instanceof Error ? error.message : "Browser command failed"),
+    adopt: (receipt) => {
+      const next = {
+        tabId: receipt.session.tabId,
+        serverEpoch: receipt.serverEpoch,
+        engineGeneration: receipt.session.engine.generation,
+      };
+      heldRef.current = next;
+      setHeld(next);
+      setLive(receipt.session);
+      setFault(null);
+      const requested = receipt.session.requestedUrl;
+      const base: { url?: string; relativePath?: string; tabId: string; serverEpoch: string } = {
+        ...restoreTarget(fileSourceRef.current, requested),
+        tabId: next.tabId,
+        serverEpoch: next.serverEpoch,
+      };
+      session.save({ ...base, history: fitHistoryToSaveBudget(base, historyRef.current) });
+    },
+  });
 
   const presentFile = (relativePath: string | null) => {
     fileSourceRef.current = relativePath;
@@ -536,10 +552,13 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     const next = submitAddress(state, raw);
     commit(next);
     if (next.status.kind !== "target") return;
-    go(next.status.url);
+    const url = next.status.url;
+    // Native records an address the engine accepted into the project list;
+    // workspace-file lease URLs never enter history.
+    go(url, isLeaseUrl(url) ? undefined : () => projectHistory.record(url));
   };
 
-  const go = (url: string) => {
+  const go = (url: string, onAccepted?: () => void) => {
     const api = bindApi(browserSessionsApi, host, session.context);
     // An ended lease means the held session is suspect, and a guest whose
     // recovery gave up stays dead — open fresh rather than navigate either.
@@ -548,19 +567,21 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       current && surfaceLease?.state.kind !== "ended" && !isRecoveryExhausted(live)
         ? current
         : null;
-    dispatch((signal) =>
-      usable
-        ? api.invoke(
-            "navigate",
-            {
-              tabId: usable.tabId,
-              serverEpoch: usable.serverEpoch,
-              url,
-              expectedEngineGeneration: usable.engineGeneration,
-            },
-            signal,
-          )
-        : api.invoke("open", { url }, signal),
+    dispatch(
+      (signal) =>
+        usable
+          ? api.invoke(
+              "navigate",
+              {
+                tabId: usable.tabId,
+                serverEpoch: usable.serverEpoch,
+                url,
+                expectedEngineGeneration: usable.engineGeneration,
+              },
+              signal,
+            )
+          : api.invoke("open", { url }, signal),
+      onAccepted,
     );
   };
 
@@ -756,7 +777,22 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     return () => controller.abort();
   }, [host, session, visible]);
 
-  const showRecents = state.status.kind !== "target" && recentHistoryEntries(history).length > 0;
+  // Native enriches a recorded entry with the page title once it loads.
+  const titled = titleUpdate(live?.navigation ?? null, fileSource !== null, isLeaseUrl);
+  const titledUrl = titled?.url ?? null;
+  const titledTitle = titled?.title ?? null;
+  const lastTitled = useRef<string | null>(null);
+  useEffect(() => {
+    if (titledUrl === null || titledTitle === null) return;
+    if (projectHistoryState.kind !== "ready" || projectHistoryState.entries.length === 0) return;
+    const key = `${titledUrl}\n${titledTitle}`;
+    if (lastTitled.current === key) return;
+    lastTitled.current = key;
+    projectHistory.setTitle(titledUrl, titledTitle);
+  }, [projectHistory, projectHistoryState, titledUrl, titledTitle]);
+
+  const recents = recentHistoryEntries(displayedHistory(projectHistoryState, history));
+  const showRecents = state.status.kind !== "target" && recents.length > 0;
   // Native "Open in system browser": the page the held session shows, else
   // the committed target.
   const externalTarget = externalOpenTarget(
@@ -764,7 +800,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     fileSource,
   );
   const landing = landingModel({
-    recentCount: showRecents ? recentHistoryEntries(history).length : 0,
+    recentCount: showRecents ? recents.length : 0,
     localServers,
   });
 
@@ -1106,7 +1142,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
               aria-label="Recently used"
               style={{ listStyle: "none", margin: 0, padding: 0, fontSize: 12 }}
             >
-              {recentHistoryEntries(history).map((entry) => {
+              {recents.map((entry) => {
                 const parsed = new URL(entry.url);
                 const path = parsed.pathname === "/" ? "" : parsed.pathname;
                 const label = `${parsed.host}${path}${parsed.search}${parsed.hash}`;
@@ -1139,6 +1175,16 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                 );
               })}
             </ul>
+          )}
+          {projectHistoryState.kind === "unavailable" && (
+            <p role="note" style={{ margin: 0, fontSize: 11, color: muted }}>
+              {projectHistoryState.message}
+            </p>
+          )}
+          {projectHistoryState.kind === "ready" && projectHistoryState.truncated && (
+            <p role="note" style={{ margin: 0, fontSize: 11, color: muted }}>
+              Project history truncated — showing the most recent entries that fit.
+            </p>
           )}
           <LocalServersSection
             servers={landing.serverList}
@@ -1191,6 +1237,7 @@ const authored = defineExtension({
   requires: [
     requireApi(browserSessionsApi),
     requireApi(browserLocalServersApi),
+    requireApi(browserHistoryApi),
     requireApi(browserFramesApi),
     requireApi(resourcesLeaseApi),
     requireApi(uiThemeApi),
