@@ -12,14 +12,19 @@ import {
   BROWSER_ENGINE_FAVICON_MAX_LENGTH,
   type BrowserEngineCommand,
   type BrowserEngineHostCommandResultInput,
+  type BrowserEngineHostStreamEvent,
   type BrowserEnginePageStatus,
   type DesktopPreviewBridge,
   type DesktopPreviewTabState,
+  type EnvironmentId,
   PREVIEW_ZOOM_LEVELS,
   type PreviewNavStatus,
   type PreviewZoomFactor,
 } from "@t3tools/contracts";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { create } from "zustand";
+
+import { previewRuntimeTabId } from "./previewRuntimeTabId";
 
 const TITLE_MAX_LENGTH = 512;
 
@@ -165,4 +170,50 @@ export async function executeEngineCommand(
     return rejected("failed");
   }
   return { outcome: "applied" };
+}
+
+/** Command ids already executed; a resubscribed stream must never replay one. */
+export const HANDLED_COMMANDS_LIMIT = 256;
+
+/**
+ * Consumes one environment's host registration stream: tracks the registered
+ * host id in the store, runs each command once on its fenced guest, and
+ * answers with the outcome. A failed registration clears the host id, so
+ * hosted tabs stop claiming until the stream registers again.
+ */
+export function createEngineHostEventHandler(input: {
+  readonly environmentId: EnvironmentId;
+  readonly bridge: EngineCommandBridge | null;
+  readonly sendResult: (result: BrowserEngineHostCommandResultInput) => unknown;
+}): (result: AsyncResult.AsyncResult<BrowserEngineHostStreamEvent, unknown>) => void {
+  const { environmentId, bridge, sendResult } = input;
+  const handled = new Set<string>();
+  return (result) => {
+    const { setHostConnectionId } = useBrowserEngineHostStore.getState();
+    if (AsyncResult.isFailure(result)) {
+      setHostConnectionId(environmentId, null);
+      return;
+    }
+    if (!AsyncResult.isSuccess(result)) return;
+    const event = result.value;
+    if (event.type === "registered") {
+      setHostConnectionId(environmentId, event.hostConnectionId);
+      return;
+    }
+    const hostConnectionId =
+      useBrowserEngineHostStore.getState().hostConnectionIdByEnvironment[environmentId];
+    if (!bridge || hostConnectionId === undefined || handled.has(event.commandId)) return;
+    handled.add(event.commandId);
+    if (handled.size > HANDLED_COMMANDS_LIMIT) {
+      handled.delete(handled.values().next().value!);
+    }
+    const runtimeTabId = previewRuntimeTabId(
+      { environmentId, threadId: event.target.threadId },
+      event.target.serverEpoch,
+      event.target.tabId,
+    );
+    void executeEngineCommand(bridge, runtimeTabId, event.engineGeneration, event.command).then(
+      (outcome) => sendResult({ hostConnectionId, commandId: event.commandId, result: outcome }),
+    );
+  };
 }

@@ -1,17 +1,26 @@
 import {
   BrowserEnginePageStatus,
   type BrowserEngineCommand,
+  type BrowserEngineHostStreamEvent,
   type DesktopPreviewTabState,
+  EnvironmentId,
+  ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  createEngineHostEventHandler,
   executeEngineCommand,
   forgetHostedTab,
+  HANDLED_COMMANDS_LIMIT,
   recordHostedTabState,
   toEnginePageStatus,
+  useBrowserEngineHostStore,
 } from "./browserEngineHost";
+import { previewRuntimeTabId } from "./previewRuntimeTabId";
 
 const RUNTIME_TAB = "runtime-tab";
 
@@ -155,5 +164,78 @@ describe("toEnginePageStatus", () => {
     );
     expect(status.favicon).toBeNull();
     expect(decode(status)).toEqual(status);
+  });
+});
+
+describe("createEngineHostEventHandler", () => {
+  const environmentId = EnvironmentId.make("env-host");
+  const threadId = ThreadId.make("thread-host");
+  const hostedTab = previewRuntimeTabId({ environmentId, threadId }, "epoch-1", "tab-1");
+  const hostIdOf = () =>
+    useBrowserEngineHostStore.getState().hostConnectionIdByEnvironment[environmentId];
+  const command = (commandId: string): BrowserEngineHostStreamEvent => ({
+    type: "command",
+    commandId,
+    target: { threadId, tabId: "tab-1", serverEpoch: "epoch-1" },
+    engineGeneration: "41",
+    command: { _tag: "reload" },
+  });
+  const setup = () => {
+    const bridge = makeBridge();
+    const sendResult = vi.fn();
+    const onResult = createEngineHostEventHandler({ environmentId, bridge, sendResult });
+    const deliver = (event: BrowserEngineHostStreamEvent) => onResult(AsyncResult.success(event));
+    return { bridge, sendResult, onResult, deliver };
+  };
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  afterEach(() => {
+    forgetHostedTab(hostedTab);
+    useBrowserEngineHostStore.getState().setHostConnectionId(environmentId, null);
+  });
+
+  it("tracks the registered host id and clears it when registration fails", () => {
+    const { onResult, deliver } = setup();
+    onResult(AsyncResult.initial(true));
+    expect(hostIdOf()).toBeUndefined();
+    deliver({ type: "registered", hostConnectionId: "host-1" });
+    expect(hostIdOf()).toBe("host-1");
+    onResult(AsyncResult.failure(Cause.fail("desktop-required")));
+    expect(hostIdOf()).toBeUndefined();
+  });
+
+  it("runs a command on its fenced guest once and answers under the host id", async () => {
+    const { bridge, sendResult, deliver } = setup();
+    recordHostedTabState(hostedTab, tabState({ tabId: hostedTab }));
+    // Nothing runs before the stream has registered this window.
+    deliver(command("early"));
+    await settle();
+    expect(bridge.refresh).not.toHaveBeenCalled();
+
+    deliver({ type: "registered", hostConnectionId: "host-1" });
+    deliver(command("command-1"));
+    deliver(command("command-1"));
+    await settle();
+    expect(bridge.refresh).toHaveBeenCalledTimes(1);
+    expect(bridge.refresh).toHaveBeenCalledWith(hostedTab);
+    expect(sendResult.mock.calls).toEqual([
+      [{ hostConnectionId: "host-1", commandId: "command-1", result: { outcome: "applied" } }],
+    ]);
+  });
+
+  it("forgets the oldest handled id once the replay window is full", async () => {
+    const { bridge, deliver } = setup();
+    recordHostedTabState(hostedTab, tabState({ tabId: hostedTab }));
+    deliver({ type: "registered", hostConnectionId: "host-1" });
+    for (let index = 0; index <= HANDLED_COMMANDS_LIMIT; index += 1) {
+      deliver(command(`command-${index}`));
+    }
+    await settle();
+    expect(bridge.refresh).toHaveBeenCalledTimes(HANDLED_COMMANDS_LIMIT + 1);
+    // The newest ids are still guarded; the evicted oldest one is not.
+    deliver(command(`command-${HANDLED_COMMANDS_LIMIT}`));
+    deliver(command("command-0"));
+    await settle();
+    expect(bridge.refresh).toHaveBeenCalledTimes(HANDLED_COMMANDS_LIMIT + 2);
   });
 });
