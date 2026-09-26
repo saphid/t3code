@@ -23,6 +23,7 @@ import type {
   DesktopPreviewRecordingArtifact,
   DesktopPreviewRecordingFrame,
   DesktopPreviewRecordingInputEvent,
+  DesktopPreviewPageImage,
   DesktopPreviewScreenshotArtifact,
   DesktopPreviewTabDefaults,
   PreviewAutomationClickInput,
@@ -3054,6 +3055,34 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     };
   });
 
+  /** The viewport as PNG bytes, capped like automation snapshots; nothing touches disk. */
+  const capturePageImage = Effect.fn("PreviewManager.capturePageImage")(function* (tabId: string) {
+    const wc = yield* requireWebContents(tabId);
+    const sourceImage = yield* capturePageWithRetry(
+      {
+        operation: "capturePageImage.capturePage",
+        tabId,
+        webContentsId: wc.id,
+      },
+      tabId,
+      wc,
+    );
+    const sourceSize = sourceImage.getSize();
+    const image =
+      sourceSize.width > MAX_SCREENSHOT_WIDTH
+        ? sourceImage.resize({ width: MAX_SCREENSHOT_WIDTH })
+        : sourceImage;
+    const size = image.getSize();
+    return {
+      mimeType: "image/png" as const,
+      data: image.toPNG(),
+      width: size.width,
+      height: size.height,
+      pageUrl: wc.getURL() || null,
+      pageTitle: wc.getTitle() || null,
+    };
+  });
+
   const capturePreviewFrame = Effect.fn("PreviewManager.capturePreviewFrame")(function* (
     tabId: string,
   ) {
@@ -5712,6 +5741,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     automationType,
     automationWaitFor,
     cancelPickElement,
+    capturePageImage,
     captureScreenshot,
     closeTab,
     copyArtifactToClipboard,
@@ -6110,6 +6140,9 @@ export class PreviewManager extends Context.Service<
     readonly captureScreenshot: (
       tabId: string,
     ) => Effect.Effect<DesktopPreviewScreenshotArtifact, PreviewManagerError>;
+    readonly capturePageImage: (
+      tabId: string,
+    ) => Effect.Effect<DesktopPreviewPageImage, PreviewManagerError>;
     readonly revealArtifact: (path: string) => Effect.Effect<void, PreviewManagerError>;
     readonly copyArtifactToClipboard: (path: string) => Effect.Effect<void, PreviewManagerError>;
     readonly openPictureInPicture: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
@@ -6287,6 +6320,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     pickElement: operations.pickElement,
     cancelPickElement: operations.cancelPickElement,
     captureScreenshot: operations.captureScreenshot,
+    capturePageImage: operations.capturePageImage,
     revealArtifact: operations.revealArtifact,
     copyArtifactToClipboard: operations.copyArtifactToClipboard,
     openPictureInPicture: operations.openPictureInPicture,

@@ -806,6 +806,29 @@ export const DesktopPreviewScreenshotArtifactSchema: Schema.Codec<DesktopPreview
   });
 
 /**
+ * The visible viewport as PNG bytes, capped at 1280px wide. For renderer
+ * callers that upload the capture themselves; the bytes only cross local
+ * Electron IPC.
+ */
+export interface DesktopPreviewPageImage {
+  mimeType: "image/png";
+  data: Uint8Array;
+  width: number;
+  height: number;
+  pageUrl: string | null;
+  pageTitle: string | null;
+}
+
+export const DesktopPreviewPageImageSchema: Schema.Codec<DesktopPreviewPageImage> = Schema.Struct({
+  mimeType: Schema.Literal("image/png"),
+  data: Schema.Uint8Array,
+  width: Schema.Int,
+  height: Schema.Int,
+  pageUrl: Schema.NullOr(Schema.String),
+  pageTitle: Schema.NullOr(Schema.String),
+});
+
+/**
  * Single stack frame captured by react-grab's `getElementContext`. We surface
  * the source file/line so coding agents can jump straight to the JSX that
  * produced the picked DOM node.
@@ -1318,6 +1341,7 @@ export interface DesktopPreviewBridge {
   /** Cancel an in-flight preview annotation session. */
   cancelPickElement: (tabId: string) => Promise<void>;
   captureScreenshot: (tabId: string) => Promise<DesktopPreviewScreenshotArtifact>;
+  capturePageImage: (tabId: string) => Promise<DesktopPreviewPageImage>;
   revealArtifact: (path: string) => Promise<void>;
   copyArtifactToClipboard: (path: string) => Promise<void>;
   pictureInPicture: {
