@@ -427,11 +427,11 @@ NodeTest.describe("terminal panel — split-group restore", () => {
     panel.dispose();
   });
 
-  // Restore used to bypass every group-size gate — a crafted record with six
-  // terminals in one group would render six panes in a split that can only ever
-  // show four. The record is normalized into cap-sized groups (no drops, first
-  // chunk keeps the id), and the invariant survives reconcile snapshots, which
-  // re-run the same normalization.
+  // Restore applies the same group-size gate as live splits — a crafted
+  // record with six terminals in one group is normalized into cap-sized
+  // groups (no drops, first chunk keeps the id) rather than rendering six
+  // panes in a split that can only ever show four, and the invariant
+  // survives reconcile snapshots, which re-run the same normalization.
   NodeTest.it("a crafted 6-pane restore lands as cap-sized groups, not six panes", () => {
     const panel = new TerminalPanel({
       control: fakeControl(),

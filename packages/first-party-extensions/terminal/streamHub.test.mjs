@@ -294,9 +294,9 @@ NodeTest.describe("fixed feed late-joiner replay", () => {
   NodeTest.test("a late joiner after 64 upserts goes live via a feed restart", async () => {
     // The sessions feed snapshots only at subscription establishment, and
     // repeated activity upserts (no new terminals needed) overflowed the replay
-    // history. Pre-fix the overflow discarded everything and the second
-    // placement's panel sat on "connecting" forever — open/split stayed gated
-    // even though its tabs kept receiving live metadata.
+    // history. The overflow restarts the shared subscription so the second
+    // placement's panel goes live — open/split must not stay gated while its
+    // tabs keep receiving live metadata.
     const { hub } = clockHub();
     const meta = (terminalId, label = "") => ({
       terminalId,
@@ -348,7 +348,7 @@ NodeTest.describe("fixed feed late-joiner replay", () => {
     const second = join(secondPanel);
     await new Promise((resolve) => queueMicrotask(resolve));
     // The join restarted the shared subscription; its fresh snapshot took
-    // the second placement live (pre-fix it was still "connecting" here).
+    // the second placement live.
     NodeAssert.equal(starts.length, 2);
     NodeAssert.equal(secondPanel.snapshot.stream, "live");
     NodeAssert.deepEqual(secondPanel.snapshot.terminalIds, ["term-1"]);
@@ -406,8 +406,8 @@ NodeTest.test("full pool of optional slots evicts least-recently-demoted", () =>
 
 NodeTest.test("demoting a mandatory slot wakes waiters so a visible pane can take it", () => {
   // A group switch demotes the old group's panes AFTER the newly visible pane
-  // already failed to acquire. Pre-fix, demotion never woke the waiter — the
-  // visible pane stayed disconnected despite evictable slots.
+  // already failed to acquire. The demotion wakes the waiter, so the visible
+  // pane connects over the evictable slot.
   const { hub } = clockHub();
   const leases = [];
   for (let index = 0; index < BROKER_STREAM_CAP; index += 1) {
@@ -554,9 +554,9 @@ NodeTest.test(
   "fixed feeds evict optional pane slots when panes registered first (cold restore)",
   () => {
     // A cold eight-session restore runs pane effects before the view's
-    // fixed-feed effects, so hidden panes take optional slots first. Pre-fix,
-    // the sessions/theme/appearance subscriptions then started over the cap and
-    // the broker rejected them all.
+    // fixed-feed effects, so hidden panes take optional slots first. Each
+    // fixed-feed admission then evicts one optional slot, so the
+    // sessions/theme/appearance subscriptions land inside the cap.
     const { hub, advance } = clockHub();
     const evicted = [];
     NodeAssert.ok(hub.acquirePaneStream("active", { mandatory: true, onEvicted() {} }) !== null);

@@ -44,7 +44,7 @@ The panel renders through public contracts only:
   panel (the hold is plugin state, no engine op), and the snapshot's
   loopback folding mirrors the native favicon key, minus the
   environment-hostname fold no contract exposes.
-- `t3.browser/sessions` `resize` (row 11) — the header's device-toolbar
+- `t3.browser/sessions` `resize` — the header's device-toolbar
   toggle and the toolbar it reveals (Responsive/preset picker, freeform
   width × height inputs, rotate, close) drive every viewport change through
   `resize` on a serialized per-session queue with the native 15 s commit
@@ -94,7 +94,7 @@ the persisted URL history is **per view record** (per thread), not
 per-project like the native `byProjectKey` store. `session.save` cannot
 aggregate across threads, so project-shared history is a named deferral
 — the stored list is provisional behavior for a
-single surface, useful groundwork, not parity for that row.
+single surface, useful groundwork, not parity with the native store.
 
 ```sh
 pnpm --filter @t3tools/extension-browser test

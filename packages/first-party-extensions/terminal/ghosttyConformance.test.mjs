@@ -1049,7 +1049,7 @@ NodeTest.describe("vendored libghostty-vt — reset + replay", () => {
   NodeTest.it(
     "default line retention cannot migrate an evicted query's claim — mount in the gap",
     async () => {
-      // Same r8 line-eviction repro, opposite mount order: the renderer
+      // Same line-eviction case, opposite mount order: the renderer
       // attaches inside the beginStream→snapshot gap; the epoch fence
       // holds the claim, then the resnapshot's contentsUnitStart=5 proves
       // the query's absolute position is gone — the claim drops.
@@ -1384,9 +1384,10 @@ NodeTest.describe("attachment retention gap", () => {
     async () => {
       // A hidden pane's stream drops mid-history while the program disables
       // application cursor keys and floods output past the 8192-byte retention
-      // tail. Pre-fix, the caught-up check looked only at the snapshot END, so
-      // the surviving parser kept the obsolete mode with degraded=false —
-      // arrows would encode with the wrong mode and no indication.
+      // tail. The caught-up check must look for the hole, not just the
+      // snapshot END — otherwise the surviving parser keeps the obsolete mode
+      // with degraded=false and arrows encode with the wrong mode and no
+      // indication.
       const { core, writes } = await makeCore();
       const attachment = new TerminalVtAttachment("t");
       attachment.attach(core);

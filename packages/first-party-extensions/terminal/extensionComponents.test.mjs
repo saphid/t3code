@@ -166,10 +166,9 @@ NodeTest.describe("cold restore stream budget", () => {
   NodeTest.test(
     "eight-session restore admits sessions/theme/appearance inside the cap",
     async () => {
-      // Cold restore: pane effects run before the view's fixed-feed effects,
-      // hidden panes take optional slots, and pre-fix the three fixed
-      // subscriptions were rejected over the cap — the panel never went live
-      // and New stayed disabled.
+      // Cold restore: pane effects run before the view's fixed-feed effects
+      // and hidden panes take optional slots — the three fixed subscriptions
+      // must land inside the cap for the panel to go live and New to enable.
       const active = new Set();
       const attempts = [];
       const rejects = [];
@@ -271,9 +270,9 @@ NodeTest.describe("group switch waiter wake", () => {
     async () => {
       // Group switch, on real TerminalPane components: three fixed feeds plus
       // a1..a4/c fill the pool, b is hidden and unallocated. Reorder b first
-      // and show only b and c — pre-fix, b's failed acquire never retried
-      // because the later demotions of a1..a4 did not wake waiters, leaving the
-      // visible pane disconnected despite evictable streams.
+      // and show only b and c — b's failed acquire must retry when the later
+      // demotions of a1..a4 wake waiters, so the visible pane connects over
+      // evicted streams.
       const { host, active } = paneStreamHost();
       const session = {
         signal: new AbortController().signal,
@@ -351,10 +350,9 @@ NodeTest.describe("group switch waiter wake", () => {
 NodeTest.describe("hidden waiters retry at current visibility", () => {
   NodeTest.test("refused hidden waiters cannot seize demoted slots as mandatory", async () => {
     // Five visible panes fill the pool, four hidden panes and b are refused and
-    // wait. Switching to [b, c] demotes a1..a4 — pre-fix, every hidden waiter's
-    // retry acquired MANDATORY, so the demotions handed h1..h4 permanent
-    // mandatory slots and the newly visible b starved behind "Stream budget"
-    // with nothing left to evict.
+    // wait. Switching to [b, c] demotes a1..a4 — hidden waiters retry at their
+    // current (still-hidden) priority, so the demoted slots go to the newly
+    // visible b rather than to h1..h4.
     const { host, active } = paneStreamHost();
     const session = {
       signal: new AbortController().signal,
@@ -435,9 +433,9 @@ NodeTest.describe("two full views sidebar switch", () => {
   NodeTest.test("the selected pane wins the stream budget in both placements", async () => {
     // Two complete TerminalView placements for one thread, eleven restored
     // sessions. Selecting b through its real sidebar callback demotes a1..a4 in
-    // the left placement — pre-fix, the left placement's earlier refused hidden
-    // waiters re-acquired MANDATORY slots on those demotions, the streams
-    // stayed on c/h2..h5, and the visible b showed "Stream budget".
+    // the left placement — the left placement's earlier refused hidden waiters
+    // retry at hidden priority on those demotions, so the streams leave
+    // c/h2..h5 and the visible b connects.
     const active = new Map();
     let counter = 0;
     const host = {
@@ -660,20 +658,17 @@ NodeTest.describe(
     });
 
     NodeTest.test(
-      "R1: a foreign shifted remap splits from the first press, before and after focus, with no PTY bytes",
+      "a foreign shifted remap splits from the first press, before and after focus, with no PTY bytes",
       async () => {
-        // r7 F1 (WARM_MOUNT_FIRST_FOCUS_CTRL_SHIFT_J_HOST_CAPTURE_VT): the
-        // Browser's mod+shift+j remapped to terminal.split. The mount-time
-        // listConflicts answer ([]) landed before focusin while the focused
-        // request was outstanding, so neither the last-known-row clause nor
-        // the null-only shifted fallback held the key and `ESC[106;6u` reached
-        // the shell. The plugin now asks the host resolver synchronously, so
-        // no answer window exists: the scheduling is irrelevant, and the
-        // plugin never calls listConflicts at all.
+        // The Browser's mod+shift+j remapped to terminal.split. The plugin
+        // asks the host resolver synchronously, so there is no window where
+        // a stale listConflicts answer decides the key: the chord splits and
+        // no `ESC[106;6u` reaches the shell, and the plugin never calls
+        // listConflicts at all.
         setPlatform("Linux x86_64");
         let rules = [...DEFAULT_RESOLVED_KEYBINDINGS, userRule("terminal.split", "mod+shift+j")];
-        // r7's legacy scheduling: the mount-time answer ([]) lands before
-        // focus, and every later request stays outstanding.
+        // Keymap scheduling: the mount-time answer ([]) lands before focus,
+        // and every later request stays outstanding.
         let keymapCalls = 0;
         const view = await mountKeyView({
           keybindings: hostKeybindings(keymap, () => rules),
@@ -684,14 +679,14 @@ NodeTest.describe(
           // Right after mount, before the surface has focus.
           NodeAssert.deepEqual(await view.press(CTRL_SHIFT_J(), "\u001b[106;6u"), CLAIMED);
           NodeAssert.equal(view.opened(), 1);
-          // After the first focus edge — the window r7 found open.
+          // After the first focus edge.
           await act(async () => fireDocument("focusin"));
           NodeAssert.deepEqual(await view.press(CTRL_SHIFT_J(), "\u001b[106;6u"), CLAIMED);
           NodeAssert.equal(view.opened(), 2);
-          // r6 F2 intact: an unowned shifted chord still reaches the shell.
+          // An unowned shifted chord still reaches the shell.
           NodeAssert.deepEqual(await view.press(CTRL_SHIFT_T(), "\u001b[116;6u"), PASSED);
-          // R3 / the "remap introduced while the last answer had no native
-          // row" case: a plain-mod foreign chord leaks until the user maps
+          // A remap introduced while the last answer had no native row: a
+          // plain-mod foreign chord leaks until the user maps
           // it, then the very next press splits — the keymap is read live.
           NodeAssert.deepEqual(await view.press(CTRL_PERIOD(), "\u001b[46;5u"), PASSED);
           rules = [...rules, userRule("terminal.split", "mod+.")];
@@ -710,16 +705,13 @@ NodeTest.describe(
     );
 
     NodeTest.test(
-      "R2: a rejected keymap call and hide/show never swallow unowned shifted chords",
+      "a rejected keymap call and hide/show never swallow unowned shifted chords",
       async () => {
-        // r7 F2 (NOT_FIRST_EVER_NULL_WINDOW): a rejected refresh, or effect
-        // cleanup on hide/show, reset the list to null, and clause 3 then
-        // held the whole shifted-mod class during the next pending request —
-        // Ctrl+Shift+T did nothing, once per press. Clause 3 is gone: with
-        // any legacy keymap call rejecting and across a hide/show cycle,
-        // unowned chords reach the shell and owned ones still dispatch.
-        // The legacy call sequence r7 drove: answered, then rejected, then
-        // every later request outstanding.
+        // With a keymap call rejecting and across a hide/show cycle, no
+        // shifted-mod class is held while a request is pending: unowned
+        // chords such as Ctrl+Shift+T reach the shell and owned ones still
+        // dispatch. Call sequence: answered, then rejected, then every later
+        // request outstanding.
         setPlatform("Linux x86_64");
         let keymapCalls = 0;
         const view = await mountKeyView({
@@ -740,7 +732,7 @@ NodeTest.describe(
           NodeAssert.deepEqual(await view.press(CTRL_SHIFT_T(), "\u001b[116;6u"), PASSED);
           await view.setVisible(false);
           await view.setVisible(true);
-          // The first presses after re-show, where the r7 null window sat.
+          // The first presses after re-show.
           NodeAssert.deepEqual(await view.press(CTRL_SHIFT_T(), "\u001b[116;6u"), PASSED);
           NodeAssert.deepEqual(await view.press(linuxKey("t"), "\u0014"), PASSED);
           NodeAssert.deepEqual(await view.press(CTRL_SHIFT_C(), "\u001b[99;6u"), PASSED);

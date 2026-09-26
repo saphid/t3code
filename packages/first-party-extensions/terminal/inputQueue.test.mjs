@@ -105,7 +105,7 @@ NodeTest.describe("serialized batching", () => {
   });
 });
 
-NodeTest.describe("pending bound + failure semantics (B6)", () => {
+NodeTest.describe("pending bound + failure semantics", () => {
   NodeTest.it("rejects new input past the 256 KiB serialized cap without evicting", async () => {
     const gate = new Promise(() => {});
     const { queue } = makeQueue({ write: () => gate });

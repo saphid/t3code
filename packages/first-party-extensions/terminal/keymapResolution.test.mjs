@@ -97,16 +97,16 @@ NodeTest.describe(
       NodeAssert.equal(terminalChordAction(macEvent("j"), host, true), "close");
     });
 
-    NodeTest.test("R4: a remap onto a chord with no registered default applies", () => {
-      // The original r1 mod+e → terminal.split remap, BLOCKED while the plugin
-      // could only see listConflicts rows (none exist for mod+e).
+    NodeTest.test("a remap onto a chord with no registered default applies", () => {
+      // A mod+e → terminal.split remap: listConflicts reports no rows for
+      // mod+e, so only the resolved keymap can see it.
       const host = macHost([...DEFAULT_RESOLVED_KEYBINDINGS, userRule("terminal.split", "mod+e")]);
       NodeAssert.equal(terminalChordAction(macEvent("e"), host, true), "split");
     });
 
-    NodeTest.test("R4: a terminalFocus-guarded remap applies", () => {
-      // Invisible to listConflicts, which evaluated rules with terminalFocus
-      // false and reported the !terminalFocus sibling (diff.toggle).
+    NodeTest.test("a terminalFocus-guarded remap applies", () => {
+      // Invisible to listConflicts, which evaluates rules with terminalFocus
+      // false and reports the !terminalFocus sibling (diff.toggle).
       const host = macHost([
         ...DEFAULT_RESOLVED_KEYBINDINGS,
         userRule("terminal.close", "mod+d", "terminalFocus"),

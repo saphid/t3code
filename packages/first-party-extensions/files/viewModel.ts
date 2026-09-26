@@ -8,7 +8,7 @@ import { bindApi, bindStreamApi, type ApiClient } from "@t3tools/extension-sdk/c
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 
 /**
- * Pure view-model for the Files tree panel. Owns F1 row #6's panel-local
+ * Pure view-model for the Files tree panel. Owns the panel-local
  * behavior: ordering, expansion state, and name filtering over the flat entry
  * list the `t3.workspace/tree` snapshot delivers.
  */
@@ -108,7 +108,7 @@ export function visibleRows(
   return rows;
 }
 
-/** How the preview pane treats a selected path (F1 #1 text, #8 media). */
+/** How the preview pane treats a selected path. */
 export type PreviewKind = "text" | "image" | "video" | "audio" | "font" | "binary";
 
 const PREVIEW_KIND_BY_EXTENSION: Readonly<Record<string, PreviewKind>> = {
@@ -170,7 +170,7 @@ export interface PreviewStatus {
 const textEncoder = new TextEncoder();
 
 /**
- * Honest truncation state for the preview pane (F1 #1). `byteLength` is the
+ * Honest truncation state for the preview pane. `byteLength` is the
  * file's true size from the contract; `shownByteLength` is the UTF-8 length of
  * what was actually returned, so a truncated preview never claims to show the
  * whole file and never conflates char count with bytes.
@@ -191,7 +191,7 @@ export function describeRead(read: PreviewRead): PreviewStatus {
 }
 
 /**
- * Named state for kinds the workspace media lease cannot mint (F1 #8). The
+ * Named state for kinds the workspace media lease cannot mint. The
  * host's mint gate only accepts the image-preview and browser-document
  * extension sets, so video, audio, fonts and other binaries are honest gaps,
  * not fetch-and-hope previews.
@@ -201,7 +201,7 @@ export function mediaPreviewNotice(kind: PreviewKind): string {
 }
 
 /* ------------------------------------------------------------------------
- * Media lease preview (F1 #8 + #24): `t3.resources/lease` mints a signed
+ * Media lease preview: `t3.resources/lease` mints a signed
  * `/api/assets/<token>/<name>` URL (1h TTL, token-is-the-auth at serve) that
  * the view renders document-relative. Every transition below is a pure
  * function so renewal timing and denial mapping are testable with an
@@ -571,7 +571,7 @@ export function describeSaveState(state: {
 }
 
 /* ------------------------------------------------------------------------
- * Resource reads (F1 C06, #1/#19): fold + verify a `t3.workspace/resources`
+ * Resource reads: fold + verify a `t3.workspace/resources`
  * `read` stream into contents the panel may render or an editor may open.
  * Single-source form of the diff panel's stream reassembly: a `manifest`
  * snapshot, strictly-ordered `chunk` data frames, a terminal `complete`
@@ -908,7 +908,7 @@ export interface SearchResults {
 }
 
 /**
- * Honest status for a contract search (F1 #7): `truncated` comes straight
+ * Honest status for a contract search: `truncated` comes straight
  * off the wire — the panel never claims completeness the index did not
  * report, and names the limit instead of silently clipping the list.
  */
@@ -923,7 +923,7 @@ export function describeSearch(result: SearchResults | null, query: string, limi
 }
 
 /* ------------------------------------------------------------------------
- * Contents search (F1 #7b): the shipped `searchContents` method on the same
+ * Contents search: the shipped `searchContents` method on the same
  * `t3.workspace/search` API. One match record per matching line; the count
  * line reports matching lines and distinct files, both straight off the
  * wire — `truncated` and `regexFallbackError` are surfaced verbatim.
@@ -1010,7 +1010,7 @@ export function describeContentSearch(
 }
 
 /* ------------------------------------------------------------------------
- * Open in external editor (F1 #17): the public `t3.file/presentation.open`
+ * Open in external editor: the public `t3.file/presentation.open`
  * path. The host's provider selection IS the picker — files, browser, or a
  * future editor provider can all provide the API — so resolving honestly is
  * the entire surface: report the descriptor or name the failure, never fake
@@ -1112,7 +1112,7 @@ export function describeFileOpen(state: FileOpenState): string {
   }
 }
 
-/** Which selected paths offer the rendered-markdown view (F1 #22). */
+/** Which selected paths offer the rendered-markdown view. */
 export function isMarkdownPath(relativePath: string): boolean {
   return /\.(?:md|mdx)$/i.test(relativePath);
 }

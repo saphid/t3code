@@ -513,7 +513,7 @@ export function createBrowserSessionsApiProvider(
         // back/forward/zoom/setAppearance/setAudioMuted have no server-side
         // path at all, and PreviewManager.refresh is an existence check that
         // emits nothing — a metadata "accepted" for it would be a false
-        // proof of reload (design doc §3). Every one fails by name until an
+        // proof of reload. Every one fails by name until an
         // authenticated host dispatch exists; verb-specific fields still
         // validate so malformed input is rejected by the contract schema.
         case "back":

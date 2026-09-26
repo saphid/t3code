@@ -65,10 +65,10 @@ collapse to Working / Idle · resumable / Completed / Failed / Stopped; the
 activity line keeps the native precedence (live rows lead with progress,
 settled rows with the outcome).
 
-Still deferred — named in the panel, not faked: workflow launch (row 15 — no
-native binding exists), agent logs and session deep links (rows 20–21 —
-net-new design, plus navigation contracts), agent session scan/import (row
-22 — needs a narrow public scan contract), and the mobile Agents surface.
+Still deferred — named in the panel, not faked: workflow launch (no native
+binding exists), agent logs and session deep links (net-new design, plus
+navigation contracts), agent session scan/import (needs a narrow public scan
+contract), and the mobile Agents surface.
 Thread settled state is not projected by the status contract, so Settle and
 Unsettle are both offered when the provider supports them and the receipt
 reports the outcome.

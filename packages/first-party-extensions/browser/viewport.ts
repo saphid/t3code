@@ -1,5 +1,5 @@
 /**
- * Viewport sizing (row 11): fill / freeform / preset device modes for the
+ * Viewport sizing: fill / freeform / preset device modes for the
  * Browser panel, all through `t3.browser/sessions` `resize`. The pure halves
  * of the native panel's behavior live here — the toggle's responsive default,
  * freeform validation, rotation, the preset catalog, the frame geometry the

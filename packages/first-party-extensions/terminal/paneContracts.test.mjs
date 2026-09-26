@@ -349,8 +349,7 @@ NodeTest.test("active pane takes focus when its surface creation completes", asy
 });
 
 // Same reconciliation without the artificial delay: a plain mount of an
-// active pane focuses exactly once the surface exists (the pre-fix code
-// never focused a freshly mounted pane at all).
+// active pane focuses exactly once the surface exists.
 NodeTest.test("active pane focuses on plain mount, once", async () => {
   resetRecorded();
   let renderer;

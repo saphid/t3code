@@ -1,5 +1,5 @@
 /**
- * Empty-state "Local servers" section (REAL-PARITY browser row 10) on the
+ * Empty-state "Local servers" section on the
  * public `t3.browser/local-servers` stream. The native panel's
  * PreviewEmptyState renders "Recently used" (≤ 8) and then "Local servers";
  * this module owns the section's model: snapshot → sorted, deduped rows, and

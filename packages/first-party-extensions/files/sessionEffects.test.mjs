@@ -39,7 +39,7 @@ function sleep(ms) {
 }
 
 NodeTest.describe("useFileEditor", () => {
-  // Regression for the review reproduction (M1): a mutation-triggered refresh
+  // A mutation-triggered refresh
   // reruns the editor effect and aborts that run's read signal; the retained
   // coordinator must still save afterwards — its persist signal is the
   // session's, not the dead refresh-read one.
@@ -268,7 +268,7 @@ NodeTest.describe("useMutationRefresh", () => {
     return null;
   }
 
-  // M2: no baseline suppression — the first observed nonzero seq must refresh
+  // No baseline suppression — the first observed nonzero seq must refresh
   // because it may fold mutations that landed during the view's initial reads.
   NodeTest.it("refreshes once on the first observed nonzero seq, never on seq 0", async () => {
     calls = [];
@@ -365,7 +365,7 @@ NodeTest.describe("useWorkspaceChanges", () => {
     }
   });
 
-  // R2-m1: a stream that dies AFTER delivering frames is the common
+  // A stream that dies AFTER delivering frames is the common
   // established-connection loss — it must flip to degraded, and stay
   // unavailable until a fresh frame proves recovery.
   NodeTest.it(

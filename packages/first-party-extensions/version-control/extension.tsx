@@ -163,7 +163,7 @@ function useCapabilities(host: ClientHost, session: ViewSession, visible: boolea
 }
 
 /**
- * Live status via the public `t3.vcs/status` stream (row 2). A `closed`
+ * Live status via the public `t3.vcs/status` stream. A `closed`
  * frame or a dropped stream is recoverable — each fresh subscription
  * starts from a new snapshot — so retries are bounded like the terminal's.
  */
@@ -320,7 +320,7 @@ function useChangesList(
   return { changes: result.changes, error: result.key === revision ? result.error : null };
 }
 
-/** Branch/ref listing (row 9) on the same freshness revision as changes. */
+/** Branch/ref listing on the same freshness revision as changes. */
 function useRefsList(
   host: ClientHost,
   session: ViewSession,

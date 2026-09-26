@@ -1,5 +1,5 @@
 /**
- * Hook-held state for the file-comment toolbar (parity row 14), lifted out of
+ * Hook-held state for the file-comment toolbar, lifted out of
  * the view so its lifecycle is testable.
  */
 

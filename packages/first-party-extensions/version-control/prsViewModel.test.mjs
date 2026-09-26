@@ -96,7 +96,7 @@ const entry = (overrides = {}) => ({
   number: 42,
   title: "Add the thing",
   url: "https://github.com/pingdotgg/t3code/pull/42",
-  author: { login: "saphid", name: null, avatarUrl: null },
+  author: { login: "octocat", name: null, avatarUrl: null },
   headBranch: "feat/thing",
   baseBranch: "main",
   state: "open",
@@ -243,7 +243,7 @@ NodeTest.test("row badges: review, checks, stack, meta", () => {
   NodeAssert.equal(prsStackLabel(undefined), null);
   const meta = prsRowMeta(entry(), Date.parse("2026-01-02T01:00:00.000Z"));
   NodeAssert.match(meta, /pingdotgg\/t3code#42/);
-  NodeAssert.match(meta, /saphid/);
+  NodeAssert.match(meta, /octocat/);
   NodeAssert.match(meta, /\+10 −2/);
   NodeAssert.match(meta, /1h ago/);
 });

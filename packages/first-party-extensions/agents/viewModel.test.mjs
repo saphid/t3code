@@ -422,25 +422,25 @@ NodeTest.describe("runWorkspaceScript glue", () => {
 });
 
 NodeTest.describe("deferred sections", () => {
-  NodeTest.it("name only the rows the shipped contracts cannot serve", () => {
-    const blockers = DEFERRED_SECTIONS.map((section) => section.blocker).join(" | ");
-    NodeAssert.match(blockers, /net-new design/);
-    const rows = new Set(DEFERRED_SECTIONS.flatMap((section) => section.rows.split(/[–,]\s*/)));
-    // Rows the orchestration contracts serve are live; only unserved rows stay.
-    for (const row of ["15", "20", "21", "22", "23"])
-      NodeAssert.ok(rows.has(row), `deferred sections name parity row ${row}`);
-    for (const row of ["2", "3", "4", "5", "6", "9", "14", "16", "19"])
-      NodeAssert.ok(!rows.has(row), `row ${row} is live, not deferred`);
+  NodeTest.it("state a missing contract or client restriction for every named capability", () => {
+    for (const section of DEFERRED_SECTIONS) {
+      NodeAssert.ok(section.title.length > 0, "deferred section has a title");
+      NodeAssert.match(
+        section.blocker,
+        /net-new design|contract|web\/desktop only/,
+        `${section.title} names what it lacks`,
+      );
+    }
   });
 
-  NodeTest.it("separates the scan/import row (22) from the net-new rows (20-21)", () => {
-    const scan = DEFERRED_SECTIONS.find((section) => section.rows === "22");
-    NodeAssert.ok(scan, "row 22 gets its own section");
+  NodeTest.it("separates the scan/import section from the net-new sections", () => {
+    const scan = DEFERRED_SECTIONS.find((section) => /scan\/import/.test(section.title));
+    NodeAssert.ok(scan, "scan/import gets its own section");
     NodeAssert.match(scan.blocker, /provisioning scan exists/);
     NodeAssert.match(scan.blocker, /narrow public scan contract/);
     NodeAssert.doesNotMatch(scan.blocker, /no native .* binding exists/);
-    const netNew = DEFERRED_SECTIONS.find((section) => section.rows === "20–21");
-    NodeAssert.ok(netNew, "rows 20-21 keep their own section");
+    const netNew = DEFERRED_SECTIONS.find((section) => /deep links/.test(section.title));
+    NodeAssert.ok(netNew, "logs/deep links keep their own section");
     NodeAssert.match(netNew.blocker, /net-new design/);
   });
 

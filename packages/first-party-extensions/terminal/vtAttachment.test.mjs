@@ -373,8 +373,8 @@ NodeTest.describe("TerminalVtAttachment — failure paths", () => {
   });
 
   NodeTest.it("a new group starting over an incomplete group fails instead of swapping", () => {
-    // Regression: the reducer used to accept chunkIndex 0 of group N+1
-    // while group N was incomplete, silently losing bytes mid-stream.
+    // The reducer rejects chunkIndex 0 of group N+1 while group N is
+    // incomplete — accepting it would silently lose bytes mid-stream.
     const vt = new TerminalVtAttachment("term-1");
     const s = sink();
     vt.attach(s);

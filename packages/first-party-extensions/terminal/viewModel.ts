@@ -604,7 +604,7 @@ export interface TerminalTabState {
   readonly confirmAction: TerminalConfirmAction | null;
   readonly error: string | null;
   readonly queuedInputCount: number;
-  /** A write failed with unknown outcome; input halts until Resume (B6). */
+  /** A write failed with unknown outcome; input halts until Resume. */
   readonly inputStopped: boolean;
   readonly inputMessage: string | null;
 }
@@ -1088,7 +1088,7 @@ export class TerminalPanel {
   /**
    * Type into a terminal. Batches by serialized invocation bytes and stops on
    * an unknown write outcome — the queue owns ordering, bounds, and the
-   * input-stopped halt (B6); the panel only gates draining on `starting`.
+   * input-stopped halt; the panel only gates draining on `starting`.
    */
   sendInput(terminalId: string, data: string) {
     const tab = this.#tabs.get(terminalId);

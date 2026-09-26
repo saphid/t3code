@@ -15,8 +15,8 @@ const noWait = () => Promise.resolve();
 NodeTest.describe("terminal asset loading (cold-load read cap)", () => {
   NodeTest.it("every mount shares one sequential set of reads", async () => {
     // Side panel + dock, each replayed by StrictMode: four mounts. The runtime
-    // allows 4 concurrent reads per installation; per-mount loading used to
-    // put 4+ reads in flight and the view fell back to plain text.
+    // allows 4 concurrent reads per installation, so the mounts share one
+    // sequential set of reads rather than each loading its own.
     let inFlight = 0;
     let peak = 0;
     const reads = [];

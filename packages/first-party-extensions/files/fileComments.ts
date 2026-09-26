@@ -1,9 +1,9 @@
 /**
- * Review comments on file lines (parity row 14). The native panel
+ * Review comments on file lines. The native panel
  * (FilePreviewPanel's EditableFileSurface) selects lines in a rich editor and
  * submits a draft annotation that lands in the composer draft store through
- * `buildFileReviewComment`. This package's editor is a plain `<textarea>`
- * (row 18 deferred), so the selection is a character range: it expands to the
+ * `buildFileReviewComment`. This package's editor is a plain `<textarea>`,
+ * so the selection is a character range: it expands to the
  * full lines it touches, quotes those lines as the annotation excerpt, and
  * submits through the grant-gated `t3.messages/enrichment.attachAnnotation`
  * seam. Removal has no contract op — comments are removed from the composer

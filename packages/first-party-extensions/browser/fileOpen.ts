@@ -1,6 +1,6 @@
 /**
- * Open a workspace HTML file in the browser surface (REAL-PARITY files row
- * 15b). Native mints a `workspace-file` asset URL and opens a preview session
+ * Open a workspace HTML file in the browser surface. Native mints a
+ * `workspace-file` asset URL and opens a preview session
  * on it (the native openFileInPreview module); the plugin's equivalent is
  * `t3.resources/lease` `createPresentationUrl` → `t3.browser/sessions`.
  *

@@ -983,8 +983,8 @@ it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
         ),
         Effect.sleep("1 second").pipe(Effect.as("hung" as const)),
       );
-      // The parked read must settle on cancel — pre-fix it hung forever and
-      // only the broker abandoning the call masked it.
+      // The parked read must settle on cancel — a hung read would otherwise
+      // linger until the broker abandons the call.
       expect(outcome).toBe("rejected");
     }),
   );

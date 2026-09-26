@@ -195,7 +195,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const [state, setState] = useState<NavigationState>(() =>
     restored?.url ? submitAddress(initialNavigationState, restored.url) : initialNavigationState,
   );
-  // Workspace file this view presents (files row 15b). Its lease URL expires,
+  // Workspace file this view presents. Its lease URL expires,
   // so the path — never the minted URL — is what history and restore keep.
   const [fileSource, setFileSource] = useState<string | null>(
     restored?.url ? null : (restored?.relativePath ?? null),
@@ -580,7 +580,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   );
 
   /**
-   * Files row 15b: mint a `workspace-file` lease, resolve it on this
+   * Open a workspace file: mint a `workspace-file` lease, resolve it on this
    * document's origin, then open/navigate exactly like a typed address —
    * minus the history visit. Also the file view's Reload: a fresh mint
    * outlives the previous token's expiry.

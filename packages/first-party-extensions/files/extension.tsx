@@ -87,7 +87,7 @@ import {
 } from "./viewModel.js";
 
 const manifestId = "t3.files";
-const PREVIEW_ASSET_PATH = "assets/preview.png";
+const PACKAGE_ASSET_PATH = "assets/asset-fixture.png";
 const SEARCH_LIMIT = 100;
 const SEARCH_DEBOUNCE_MS = 150;
 
@@ -182,7 +182,7 @@ function useWorkspaceTree(host: ClientHost, session: ViewSession) {
 }
 
 /**
- * Verified package-asset read (F2a path): `readAsset` re-resolves and
+ * Verified package-asset read: `readAsset` re-resolves and
  * re-verifies bytes on every call, so a stale object URL is renewed by
  * re-running the effect rather than trusting a cached URL.
  */
@@ -196,7 +196,7 @@ function usePackageAsset(host: ClientHost, session: ViewSession, visible: boolea
     void (async () => {
       try {
         if (!host.readAsset) throw new Error("This host cannot load package assets.");
-        const result = await host.readAsset(PREVIEW_ASSET_PATH, signal);
+        const result = await host.readAsset(PACKAGE_ASSET_PATH, signal);
         if (signal.aborted) return;
         url = URL.createObjectURL(new Blob([result.bytes as BlobPart], { type: "image/png" }));
         setAsset({
@@ -220,7 +220,7 @@ function usePackageAsset(host: ClientHost, session: ViewSession, visible: boolea
 }
 
 /**
- * Workspace media preview via `t3.resources/lease` (F1 #8 + #24). Selecting a
+ * Workspace media preview via `t3.resources/lease`. Selecting a
  * previewable media file mints a signed `/api/assets/*` URL rendered
  * document-relative; the lease renews `MEDIA_LEASE_RENEWAL_SKEW_MS` before
  * expiry while visible, re-mints on tree refresh, and every named denial maps
@@ -427,7 +427,7 @@ function releaseCommandSet(host: ClientHost, session: ViewSession, commandSetTok
 }
 
 /**
- * `t3.ui/keybindings` consumer (F1 #10). The panel's actions register as a
+ * `t3.ui/keybindings` consumer. The panel's actions register as a
  * `surface`-scope command set and bind through `session.bindCommands`, so
  * dispatch runs the host's arbitration — focused-view binding first, with
  * user rules and native defaults outranking the plugin `defaultKey`s.
@@ -782,7 +782,7 @@ function MarkdownBlockNode(props: {
 }
 
 /**
- * Block tree → host-React elements for the rendered-markdown preview (F1 #22).
+ * Block tree → host-React elements for the rendered-markdown preview.
  * Plain elements only — no raw HTML, no user-controlled attributes.
  */
 function MarkdownBlocks(props: {
@@ -822,7 +822,7 @@ function RenderedMarkdown(props: {
 }
 
 /**
- * Breadcrumbs for the selected path (F1 #23). The root crumb is labeled
+ * Breadcrumbs for the selected path. The root crumb is labeled
  * "Workspace" because no public contract reports the project title to a
  * project-scope view — naming it anything else would fabricate. Crumb menus
  * list children from the tree snapshot the panel already holds; drilling into
@@ -1163,7 +1163,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     status: string;
     truncated: boolean;
   } | null>(null);
-  // F1 #23: the latest centered line reveal request — set by search hits and
+  // The latest centered line reveal request — set by search hits and
   // link targets, tracked as handled once the content surface scrolls.
   const [revealRequest, setRevealRequest] = useState<{ path: string; line: number } | null>(null);
   const handledRevealRef = useRef<{ path: string; line: number } | null>(null);
@@ -1305,7 +1305,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       const api = bindApi(workspaceSearchApi, host, session.context);
       if (searchMode === "contents") {
         // The contents contract has no kind field — the selector is disabled
-        // in this mode rather than silently ignored (F1 #7b).
+        // in this mode rather than silently ignored.
         void api.invoke("searchContents", { query: needle, limit: SEARCH_LIMIT }, signal).then(
           (result) => {
             if (!signal.aborted)
@@ -1388,7 +1388,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     if (ancestors.length) setExpanded((previous) => new Set([...previous, ...ancestors]));
   };
 
-  // F1 #23: rows drag a serialized composer mention on the MIME the host
+  // Rows drag a serialized composer mention on the MIME the host
   // composer claims — the drop handler there does the insertion, so the
   // plugin needs no composer contract. No text/plain fallback, matching the
   // native tree so mention drags stay distinguishable from selected text.
@@ -1402,7 +1402,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     event.dataTransfer.effectAllowed = "copy";
   };
 
-  // F1 #17: the public open path is `t3.file/presentation.open` — the host's
+  // The public open path is `t3.file/presentation.open` — the host's
   // provider selection is the picker, so this resolves the descriptor and
   // reports it (or the named failure) verbatim. Requires stays without the
   // self-provided API: files provides t3.file/presentation, and a
@@ -1467,7 +1467,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       .finally(() => controller.abort());
   };
 
-  // F1 #10: the panel's commands register through `t3.ui/keybindings` so the
+  // The panel's commands register through `t3.ui/keybindings` so the
   // host arbitrates them — user rules and native defaults outrank the plugin
   // `defaultKey`s, and a focused view's binding is what dispatch reaches.
   useFilesCommands(host, session, visible, {
@@ -1481,7 +1481,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   });
 
   const editorSurface = editor.surface?.path === selected ? editor.surface : null;
-  // F1 #22: rendered markdown draws from the buffer the surface already read —
+  // Rendered markdown draws from the buffer the surface already read —
   // the live editor contents when editable, else the bounded preview read.
   const markdownText =
     selected !== null && isMarkdownPath(selected)
@@ -1534,7 +1534,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     return () => controller.abort();
   }, [host, selected, selectedKind, session, revision, visible, editorSurface]);
 
-  // F1 #23: workspace links in rendered markdown open through the same
+  // Workspace links in rendered markdown open through the same
   // select path; a link to a directory expands the tree there instead of
   // attempting a text read.
   const linkActions: MarkdownLinkActions | undefined =
@@ -1571,7 +1571,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           },
         };
 
-  // Centered line reveal (F1 #23). Waits for the selected file's content
+  // Centered line reveal. Waits for the selected file's content
   // surface — the editable textarea or the bounded read-only <pre> — then
   // scrolls the target line into the viewport center and marks the request
   // handled. The read-only pre's text node gives exact rendered geometry via
@@ -2269,7 +2269,7 @@ export default defineExtension({
   id: manifestId,
   version: "0.8.0",
   provides: [filePresentationApi.definition],
-  assets: [{ path: PREVIEW_ASSET_PATH, mediaType: "application/octet-stream" }],
+  assets: [{ path: PACKAGE_ASSET_PATH, mediaType: "application/octet-stream" }],
   serverEntry: "server.ts",
   requires: [
     requireApi(workspaceTreeApi),

@@ -28,7 +28,7 @@ import type {
   VcsStatusStreamEvent,
 } from "@t3tools/extension-sdk/catalogue";
 
-/* ---------------- staging lanes (disposition row 3) ---------------- */
+/* ---------------- staging lanes ---------------- */
 
 /**
  * Staging lanes rendered by the panel. `staged` and `changes` are
@@ -106,7 +106,7 @@ export function describeEntry(entry: VcsChangeEntry): string {
   return "changed";
 }
 
-/* ---------------- mutation controls (rows 4, 5, 7, 10, 11, 32) ---------------- */
+/* ---------------- mutation controls ---------------- */
 
 /**
  * The mutation operations this slice invokes. `stage`/`unstage`/`commit`
@@ -914,7 +914,7 @@ export function retainSelection(
   return null;
 }
 
-/* ---------------- status stream model (rows 1, 2, 17) ---------------- */
+/* ---------------- status stream model ---------------- */
 
 export interface StatusModel {
   readonly local: VcsStatusLocal | null;
@@ -977,7 +977,7 @@ export function branchLabel(local: VcsStatusLocal): string {
   return local.refName ?? "detached HEAD";
 }
 
-/** Upstream sync text for the header (row 17 — incl. the default-ref fallback). */
+/** Upstream sync text for the header (incl. the default-ref fallback). */
 export function syncLabel(remote: VcsStatusRemote | null): string {
   if (remote === null) return "upstream pending";
   if (!remote.hasUpstream) {
@@ -1020,7 +1020,7 @@ export function describeStatus(model: StatusModel): string {
   return parts.join(" — ");
 }
 
-/* ---------------- refs (rows 9, 14) ---------------- */
+/* ---------------- refs ---------------- */
 
 export interface RefRow {
   readonly name: string;
@@ -1052,7 +1052,7 @@ export function describeRef(row: RefRow): string {
   return badges.join(" · ");
 }
 
-/* ---------------- repository capability gate (row 30) ---------------- */
+/* ---------------- repository capability gate ---------------- */
 
 export type RepositoryState =
   | { readonly kind: "loading" }

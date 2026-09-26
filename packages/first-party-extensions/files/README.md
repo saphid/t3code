@@ -11,7 +11,7 @@ exposes an "Open in…" file action that resolves through whichever provider
 the host selected for that API (grant `t3.file/open`). Breadcrumbs over the
 tree snapshot, workspace link resolution in rendered markdown, centered line
 reveals for search hits and `#L…`/`path:line` targets, and composer-mention
-drags are package-owned (F1 #23); the drag payload uses the MIME the host
+drags are package-owned; the drag payload uses the MIME the host
 composer already claims. The toolbar's "Add to chat" goes through the
 contract instead: `t3.composer/context@^1.1.0` `insertMention` (grant
 `t3.composer/write`) appends the selected file's mention to the thread's

@@ -58,7 +58,7 @@ NodeTest.describe("committed .t3-extension bundle", () => {
 
   NodeTest.it("declares terminal focus so host chords such as mod+n stay in the view", () => {
     // Without the claim the host does not tag the frame as terminal focus and
-    // mod+n resolves to chat.new (cert a4: the new-thread picker opened).
+    // mod+n resolves to chat.new (the new-thread picker opens).
     const pkg = JSON.parse(
       NodeFS.readFileSync(NodePath.join(committed, "t3-extension.json"), "utf8"),
     );

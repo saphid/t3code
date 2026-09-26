@@ -515,7 +515,7 @@ NodeTest.describe("describeContentSearch", () => {
   });
 });
 
-NodeTest.describe("open in presentation (F1 #17)", () => {
+NodeTest.describe("open in presentation", () => {
   NodeTest.it("presentationPath rejects unsafe paths", () => {
     for (const bad of ["", "/abs/x", "a/../b", "a\\b", "a//b", ".."])
       NodeAssert.equal(presentationPath(bad), null, bad);
@@ -582,7 +582,7 @@ NodeTest.describe("open in presentation (F1 #17)", () => {
   });
 });
 
-NodeTest.describe("isMarkdownPath (F1 #22)", () => {
+NodeTest.describe("isMarkdownPath", () => {
   NodeTest.it("matches the native isMarkdownPreviewFile extensions", () => {
     for (const yes of ["README.md", "docs/guide.MD", "x.mdx", "a/b.MDX"])
       NodeAssert.equal(isMarkdownPath(yes), true, yes);

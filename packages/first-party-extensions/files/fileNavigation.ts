@@ -1,5 +1,5 @@
 /**
- * Package-owned navigation helpers (F1 #23) — the panel-local half of the
+ * Package-owned navigation helpers — the panel-local half of the
  * native FilePreviewPanel's path machinery: breadcrumbs over the tree
  * snapshot, workspace link/path resolution, centered line-reveal geometry,
  * and the composer-mention drag payload. Everything here is a pure function

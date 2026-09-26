@@ -70,7 +70,7 @@ function readThemeColor(styles: CSSStyleDeclaration, variable: string, fallback:
 }
 
 /**
- * Theme path (design D5 + t3.ui adoption): the host's `--terminal-*` CSS
+ * Theme path (t3.ui adoption): the host's `--terminal-*` CSS
  * variables and the contract-published `--t3-terminal-*` overrides both
  * inherit into extension DOM, so the surface reads them from its own mount
  * — contract vars first, legacy vars next, document colors last. The

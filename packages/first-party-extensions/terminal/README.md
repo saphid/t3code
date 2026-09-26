@@ -179,7 +179,7 @@ across snapshot boundary, output groups, resets, and exits. An output chunk
 that does not continue an open group fails the stream rather than silently
 swapping groups.
 
-## Input: serialized-byte transport (B6)
+## Input: serialized-byte transport
 
 `inputQueue.ts` batches input against the serialized `write` invocation —
 `{terminalId, data}` as UTF-8 JSON — with a 48 KiB per-write budget and a
@@ -189,14 +189,15 @@ halts: the failed batch and everything behind it are discarded and never
 resent. The tab shows an "input stopped" banner and only an explicit resume
 (or restart) reopens input.
 
-B6 is only partially solved here: a client-side timeout cannot prove whether
-an in-flight write reached the PTY, and there are no host operation IDs,
-cancellation, or ordering fences to disambiguate it — hence halt + discard +
-explicit resume rather than replay. Host-side op-id fencing remains unsolved.
+The unknown-outcome failure mode is only partially solved: a client-side
+timeout cannot prove whether an in-flight write reached the PTY, and there are
+no host operation IDs, cancellation, or ordering fences to disambiguate it —
+hence halt + discard + explicit resume rather than replay. Host-side op-id
+fencing remains unsolved.
 
 ## Known limitations
 
-- **Dock sizing (B8):** dock geometry is host-owned; the plugin only sizes
+- **Dock sizing:** dock geometry is host-owned; the plugin only sizes
   its own terminal content.
 - **Remote pixels/frames:** out of scope; rendering is local WASM only.
 

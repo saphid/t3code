@@ -686,7 +686,7 @@ function TerminalPane(props: {
         beforeKey: (event) => handleBeforeKey(event, panel, terminalId),
         onLinkActivate: () => {
           // Detection and hover still work; opening needs host contracts
-          // (t3.browser/control for URLs B1/B3, t3.file/open for paths) that
+          // (t3.browser/control for URLs, t3.file/open for paths) that
           // no host provider ships yet — say so instead of silently dropping.
           if (surface) {
             writeSystemMessage(surface, "Opening links is unavailable in this extension host.");
@@ -811,7 +811,7 @@ function TerminalPane(props: {
           style={{ padding: "4px 10px", color: muted, fontSize: 11, flexShrink: 0 }}
         >
           Attached with truncated history — modes and screen state before the retained tail are
-          unknown, so interactive parity is not claimed until the next full snapshot (B4).
+          unknown, so interactive parity is not claimed until the next full snapshot.
         </output>
       )}
       {streamBlocked && (
@@ -849,7 +849,7 @@ function TerminalPane(props: {
 }
 
 /* ------------------------------------------------------------------ */
-/* Text fallback for hosts without package-asset reads (design Q3)     */
+/* Text fallback for hosts without package-asset reads                 */
 /* ------------------------------------------------------------------ */
 
 /** Live output via the public output-events stream; chunk groups reassemble in the view model. */

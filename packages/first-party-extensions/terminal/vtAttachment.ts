@@ -343,7 +343,7 @@ export class TerminalVtAttachment {
         ...this.#state,
         status: "live",
         statusText: unfaithful
-          ? "Replayed without full history — modes and screen state before the retained tail are unknown, so interactive parity is not claimed (B4)."
+          ? "Replayed without full history — modes and screen state before the retained tail are unknown, so interactive parity is not claimed."
           : "Watching live output.",
         degraded: unfaithful || this.#state.degraded,
       });
