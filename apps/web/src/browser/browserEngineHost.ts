@@ -115,6 +115,20 @@ export function toEnginePageStatus(state: DesktopPreviewTabState): BrowserEngine
   };
 }
 
+/**
+ * The next owner report for an observed desktop state, or null when it would
+ * repeat the last one sent. Desktop state events fire for changes the server
+ * does not project, so only a changed projection is worth a report.
+ */
+export function nextEnginePageReport(
+  lastStatusKey: string | null,
+  state: DesktopPreviewTabState,
+): { readonly status: BrowserEnginePageStatus; readonly statusKey: string } | null {
+  const status = toEnginePageStatus(state);
+  const statusKey = JSON.stringify(status);
+  return statusKey === lastStatusKey ? null : { status, statusKey };
+}
+
 type CommandResult = BrowserEngineHostCommandResultInput["result"];
 
 type EngineCommandBridge = Pick<

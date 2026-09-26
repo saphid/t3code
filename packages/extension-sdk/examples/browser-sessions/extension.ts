@@ -39,7 +39,8 @@ export default defineExtension({
         write("back"),
         // Relays under sessions + operate only, so the host method's own
         // t3.browser/devtools grant is what the broker checks.
-        write("setDevToolsOpen"),
+        write("openDevTools"),
+        write("closeDevTools"),
       ],
       streams: [
         {

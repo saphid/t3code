@@ -249,7 +249,7 @@ export function PageMenu(props: {
             aria-checked={devToolsOpen === true}
             disabled={disabled || devToolsOpen === null}
             onClick={() => {
-              run({ method: "setDevToolsOpen", open: devToolsOpen !== true });
+              run({ method: devToolsOpen ? "closeDevTools" : "openDevTools" });
               setOpen(false);
             }}
             style={{ ...control, textAlign: "left" }}

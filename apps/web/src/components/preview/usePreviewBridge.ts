@@ -20,8 +20,8 @@ import {
 import {
   engineGenerationOf,
   forgetHostedTab,
+  nextEnginePageReport,
   recordHostedTabState,
-  toEnginePageStatus,
   useBrowserEngineHostStore,
 } from "~/browser/browserEngineHost";
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
@@ -184,10 +184,10 @@ export function usePreviewBridge(input: {
     }
     const owned = current.claimed;
     if (owned === null || current.lastState === null || current.lifecycle !== null) return;
-    const status = toEnginePageStatus(current.lastState);
-    const statusKey = JSON.stringify(status);
-    if (statusKey === current.lastStatusKey) return;
-    current.lastStatusKey = statusKey;
+    const report = nextEnginePageReport(current.lastStatusKey, current.lastState);
+    if (report === null) return;
+    const { status } = report;
+    current.lastStatusKey = report.statusKey;
     enqueue(() =>
       current.claimed === owned
         ? reportEngine({

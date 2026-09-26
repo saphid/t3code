@@ -12,8 +12,9 @@
  * being replaced is `recovering`. Controls are disabled in each of those
  * states with the reason on screen — never a spinner that implies progress.
  *
- * DevTools additionally needs the installation's `t3.browser/devtools` grant;
- * without it the broker refuses by name and the refusal is shown as-is.
+ * DevTools (open and close are separate verbs) additionally needs the
+ * installation's `t3.browser/devtools` grant and only acts on sessions this
+ * installation opened; each refusal is shown by name.
  */
 import {
   BROWSER_SESSION_ZOOM_LEVELS,
@@ -27,11 +28,18 @@ import type { BoundApi } from "./uiContracts.js";
 export type PageAppearance = "system" | "light" | "dark";
 
 export type PageVerb =
-  | { readonly method: "back" | "forward" | "reload" | "hardReload" }
+  | {
+      readonly method:
+        | "back"
+        | "forward"
+        | "reload"
+        | "hardReload"
+        | "openDevTools"
+        | "closeDevTools";
+    }
   | { readonly method: "zoom"; readonly zoomFactor: number }
   | { readonly method: "setAppearance"; readonly appearance: PageAppearance }
-  | { readonly method: "setAudioMuted"; readonly muted: boolean }
-  | { readonly method: "setDevToolsOpen"; readonly open: boolean };
+  | { readonly method: "setAudioMuted"; readonly muted: boolean };
 
 /** The fence every engine verb carries. */
 export interface PageTarget {
@@ -130,7 +138,8 @@ const VERB_LABELS: Record<PageVerb["method"], string> = {
   zoom: "Zoom",
   setAppearance: "Appearance",
   setAudioMuted: "Mute",
-  setDevToolsOpen: "DevTools",
+  openDevTools: "Open DevTools",
+  closeDevTools: "Close DevTools",
 };
 
 /** Inline message for a thrown verb, keyed on the server's stable error names. */
@@ -140,6 +149,8 @@ export function pageCommandErrorMessage(method: PageVerb["method"], error: unkno
   const denied = /capability denied: (\S+)/.exec(text);
   if (denied)
     return `${label} needs the ${denied[1]} grant, which this installation does not hold (grant-denied).`;
+  if (text.includes("BrowserSessionNotOwned"))
+    return `${label} is only available on pages this panel opened (not-owned).`;
   if (text.includes("(engine-unsupported)"))
     return `${label} is not supported by the browser engine rendering this page (engine-unsupported).`;
   if (text.includes("BrowserSessionEngineDetached"))
@@ -217,9 +228,6 @@ export async function runPageCommand(
         break;
       case "setAudioMuted":
         receipt = await api.invoke("setAudioMuted", { ...guard, muted: verb.muted }, signal);
-        break;
-      case "setDevToolsOpen":
-        receipt = await api.invoke("setDevToolsOpen", { ...guard, open: verb.open }, signal);
         break;
       default:
         receipt = await api.invoke(verb.method, guard, signal);

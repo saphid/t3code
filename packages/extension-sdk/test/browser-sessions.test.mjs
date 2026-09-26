@@ -30,26 +30,31 @@ NodeTest.test("t3.browser/sessions is 1.1.0 with the shipped 1.0.0 frozen alongs
   const added = Object.keys(methodsOf(BROWSER_SESSIONS_API)).filter(
     (name) => !(name in methodsOf(BROWSER_SESSIONS_API_V1)),
   );
-  NodeAssert.deepEqual(added, ["setDevToolsOpen"]);
+  NodeAssert.deepEqual(added, ["openDevTools", "closeDevTools"]);
 });
 
-NodeTest.test("DevTools rides its own grant and nothing else accepts it", () => {
+NodeTest.test("DevTools open and close are distinct operations on their own grant", () => {
   NodeAssert.equal(BROWSER_DEVTOOLS, "t3.browser/devtools");
-  const method = methodsOf(BROWSER_SESSIONS_API).setDevToolsOpen;
-  NodeAssert.equal(method.effect, "write");
-  NodeAssert.deepEqual(method.requiredGrants, [
-    BROWSER_SESSIONS,
-    BROWSER_OPERATE,
-    BROWSER_DEVTOOLS,
-  ]);
-  NodeAssert.deepEqual(method.inputSchema.required, [
-    "tabId",
-    "serverEpoch",
-    "expectedEngineGeneration",
-    "open",
-  ]);
-  NodeAssert.deepEqual(method.inputSchema.properties.open, { type: "boolean" });
-  NodeAssert.equal(method.inputSchema.additionalProperties, false);
+  const methods = methodsOf(BROWSER_SESSIONS_API);
+  for (const name of ["openDevTools", "closeDevTools"]) {
+    const method = methods[name];
+    NodeAssert.equal(method.effect, "write");
+    NodeAssert.deepEqual(method.requiredGrants, [
+      BROWSER_SESSIONS,
+      BROWSER_OPERATE,
+      BROWSER_DEVTOOLS,
+    ]);
+    // The direction is the operation, not an input flag.
+    NodeAssert.deepEqual(method.inputSchema.required, [
+      "tabId",
+      "serverEpoch",
+      "expectedEngineGeneration",
+    ]);
+    NodeAssert.equal(method.inputSchema.additionalProperties, false);
+    // Each returns the shared page-verb receipt.
+    NodeAssert.deepEqual(method.outputSchema, methods.reload.outputSchema);
+  }
+  NodeAssert.equal("setDevToolsOpen" in methods, false);
   // No other brokered operation is authorized by the DevTools grant, and it is
   // not a host-local capability grant either.
   const holders = GENERIC_API_CATALOGUE.flatMap((api) =>
@@ -57,9 +62,13 @@ NodeTest.test("DevTools rides its own grant and nothing else accepts it", () => 
       .filter((operation) => operation.requiredGrants.includes(BROWSER_DEVTOOLS))
       .map((operation) => `${api.id}@${api.version}:${operation.name}`),
   );
-  NodeAssert.deepEqual(holders, ["t3.browser/sessions@1.1.0:setDevToolsOpen"]);
+  NodeAssert.deepEqual(holders, [
+    "t3.browser/sessions@1.1.0:openDevTools",
+    "t3.browser/sessions@1.1.0:closeDevTools",
+  ]);
   NodeAssert.equal(HOST_CAPABILITY_GRANTS.includes(BROWSER_DEVTOOLS), false);
-  NodeAssert.ok(BROWSER_SESSION_COMMANDS.includes("setDevToolsOpen"));
+  NodeAssert.ok(BROWSER_SESSION_COMMANDS.includes("openDevTools"));
+  NodeAssert.ok(BROWSER_SESSION_COMMANDS.includes("closeDevTools"));
 });
 
 NodeTest.test("1.1.0 sessions carry devToolsOpen; the frozen 1.0.0 does not", () => {
@@ -71,6 +80,8 @@ NodeTest.test("1.1.0 sessions carry devToolsOpen; the frozen 1.0.0 does not", ()
   NodeAssert.equal("devToolsOpen" in session(BROWSER_SESSIONS_API_V1).properties, false);
   const commands = (definition) =>
     methodsOf(definition).getCapabilities.outputSchema.properties.commands.items.enum;
-  NodeAssert.ok(commands(BROWSER_SESSIONS_API).includes("setDevToolsOpen"));
-  NodeAssert.equal(commands(BROWSER_SESSIONS_API_V1).includes("setDevToolsOpen"), false);
+  for (const name of ["openDevTools", "closeDevTools"]) {
+    NodeAssert.ok(commands(BROWSER_SESSIONS_API).includes(name));
+    NodeAssert.equal(commands(BROWSER_SESSIONS_API_V1).includes(name), false);
+  }
 });

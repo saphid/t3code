@@ -5,10 +5,12 @@
  * the public contract and never exposes webview handles, partitions, preload
  * URLs, evaluation endpoints, or presentation slots. Metadata writes (open,
  * navigate, resize, close) record acceptance, never engine execution. Page
- * commands (back … setDevToolsOpen) route to the authenticated desktop engine
+ * commands (back … closeDevTools) route to the authenticated desktop engine
  * host that owns the session (see `preview/BrowserEngineHosts.ts`); with no
- * owner they fail by name. `setDevToolsOpen`'s own `t3.browser/devtools`
- * grant is enforced by the broker from the method's `requiredGrants`. Navigation honesty compares the dispatch-side
+ * owner they fail by name. The DevTools methods' own `t3.browser/devtools`
+ * grant is enforced by the broker from their `requiredGrants`; the adapter
+ * additionally limits them to sessions the calling installation opened.
+ * Navigation honesty compares the dispatch-side
  * request revision against the last owner-host report carried by
  * `PreviewSessionDetail` (P08-NAV-ACK, see `Manager.ts`).
  */
@@ -182,7 +184,6 @@ const decodeAppearanceInput = closedDecoder({
   appearance: Schema.Literals(["system", "light", "dark"]),
 });
 const decodeMutedInput = closedDecoder({ ...CommandGuardFields, muted: Schema.Boolean });
-const decodeDevToolsInput = closedDecoder({ ...CommandGuardFields, open: Schema.Boolean });
 const decodeResizeInput = closedDecoder({
   ...CommandGuardFields,
   viewport: PreviewViewportSetting,
@@ -456,12 +457,16 @@ export function createBrowserSessionsApiProvider(
           );
         }
         const snapshot = yield* dependencies.preview
-          .open({
-            threadId,
-            ...(safe.url === undefined ? {} : { url: safe.url }),
-            ...(safe.viewport === undefined ? {} : { viewport: safe.viewport }),
-            ...(safe.profileId === undefined ? {} : { profileId: safe.profileId }),
-          })
+          .open(
+            {
+              threadId,
+              ...(safe.url === undefined ? {} : { url: safe.url }),
+              ...(safe.viewport === undefined ? {} : { viewport: safe.viewport }),
+              ...(safe.profileId === undefined ? {} : { profileId: safe.profileId }),
+            },
+            // Ownership comes from the broker's caller identity, never input.
+            { extensionInstallationId: metadata.callerId },
+          )
           .pipe(Effect.mapError(operationError(operation)));
         yield* postChecks(operation, scope.context, metadata, signal);
         const after = yield* listDetails();
@@ -606,13 +611,25 @@ export function createBrowserSessionsApiProvider(
         });
 
       /**
-       * DevTools names each refusal: no desktop host at all (desktop-required),
-       * a host that has not attached this session (no-attached-engine), and a
-       * host that cannot open DevTools (engine-unsupported). Other outcomes
-       * map like every page verb.
+       * DevTools acts only on sessions this installation opened: a native
+       * session or another installation's is refused (not-owned) before any
+       * host is asked. Then each refusal is named: no desktop host at all
+       * (desktop-required), a host that has not attached this session
+       * (no-attached-engine), and a host that cannot open DevTools
+       * (engine-unsupported). Other outcomes map like every page verb.
        */
       const devToolsWrite = (open: boolean) => (guarded: Guarded) =>
         Effect.gen(function* () {
+          const owner = guarded.detail.extensionOwner;
+          if (owner !== metadata.callerId) {
+            return yield* named(
+              operation,
+              "BrowserSessionNotOwned",
+              owner === null
+                ? "the session was opened natively, not by this installation (not-owned)."
+                : "the session was opened by another installation (not-owned).",
+            );
+          }
           const engine = guarded.detail.engine;
           if (engine === null) {
             if (!(yield* dependencies.engineHosts.hasHost)) return yield* desktopRequired();
@@ -699,12 +716,13 @@ export function createBrowserSessionsApiProvider(
           );
           return yield* command(safe, engineWrite({ _tag: "setAudioMuted", muted: safe.muted }));
         }
-        case "setDevToolsOpen": {
+        case "openDevTools":
+        case "closeDevTools": {
           const safe = yield* decodeGuard(
-            decodeDevToolsInput,
-            "setDevToolsOpen input fails the declared schema.",
+            decodeGuardInput,
+            `${method} input fails the declared schema.`,
           );
-          return yield* command(safe, devToolsWrite(safe.open));
+          return yield* command(safe, devToolsWrite(method === "openDevTools"));
         }
         case "resize": {
           const safe = yield* decodeGuard(

@@ -5571,11 +5571,14 @@ export const PRS_WRITE_API = prsWriteApi.definition;
  * projected from authenticated host state only; this slice has none, so it
  * is always `unavailable`/`desktop-required`, never fabricated.
  *
- * DevTools (1.1.0): `setDevToolsOpen` opens (detached) or closes the guest's
- * DevTools and additionally requires `t3.browser/devtools` — holding the
- * sessions and operate grants confers nothing about DevTools. The open/closed
- * state rides the session's `devToolsOpen`, reported by the same engine host
- * status path as `audioMuted`; null means no host has reported it.
+ * DevTools (1.1.0): `openDevTools` opens the guest's DevTools (detached) and
+ * `closeDevTools` closes them; each returns its own receipt and additionally
+ * requires `t3.browser/devtools` — holding the sessions and operate grants
+ * confers nothing about DevTools. Both act only on sessions the calling
+ * installation opened; a native or foreign-owned session is refused by name
+ * (`BrowserSessionNotOwned`). The open/closed state rides the session's
+ * `devToolsOpen`, reported by the same engine host status path as
+ * `audioMuted`; null means no host has reported it.
  * --------------------------------------------------------------------- */
 export const BROWSER_OPERATE = "t3.browser/operate";
 export const BROWSER_DEVTOOLS = "t3.browser/devtools";
@@ -5593,7 +5596,8 @@ const BROWSER_SESSION_COMMANDS_V1 = [
 ] as const;
 export const BROWSER_SESSION_COMMANDS = [
   ...BROWSER_SESSION_COMMANDS_V1,
-  "setDevToolsOpen",
+  "openDevTools",
+  "closeDevTools",
 ] as const;
 export type BrowserSessionCommand = (typeof BROWSER_SESSION_COMMANDS)[number];
 
@@ -5715,9 +5719,6 @@ export type BrowserSessionAppearanceInput = BrowserSessionCommandInput & {
 };
 export type BrowserSessionAudioMutedInput = BrowserSessionCommandInput & {
   readonly muted: boolean;
-};
-export type BrowserSessionDevToolsInput = BrowserSessionCommandInput & {
-  readonly open: boolean;
 };
 
 export type BrowserSessionStreamCloseReason =
@@ -5935,8 +5936,9 @@ const browserSessionEmptyInput = {
 } as const;
 
 /**
- * One definition per published version: 1.1.0 adds `setDevToolsOpen` and the
- * session's `devToolsOpen`; 1.0.0 stays byte-identical to what shipped.
+ * One definition per published version: 1.1.0 adds `openDevTools`,
+ * `closeDevTools` and the session's `devToolsOpen`; 1.0.0 stays
+ * byte-identical to what shipped.
  */
 const browserSessionsDefinition = (
   version: string,
@@ -6185,7 +6187,8 @@ export const browserSessionsApi: TypedApi<{
   zoom: { input: BrowserSessionZoomInput; output: BrowserSessionReceipt };
   setAppearance: { input: BrowserSessionAppearanceInput; output: BrowserSessionReceipt };
   setAudioMuted: { input: BrowserSessionAudioMutedInput; output: BrowserSessionReceipt };
-  setDevToolsOpen: { input: BrowserSessionDevToolsInput; output: BrowserSessionReceipt };
+  openDevTools: { input: BrowserSessionCommandInput; output: BrowserSessionReceipt };
+  closeDevTools: { input: BrowserSessionCommandInput; output: BrowserSessionReceipt };
 }> &
   TypedStreamApi<{
     events: { input: Record<string, never>; event: BrowserSessionStreamValue };
@@ -6193,17 +6196,12 @@ export const browserSessionsApi: TypedApi<{
   events: { input: Record<string, never>; event: BrowserSessionStreamValue };
 }>(
   browserSessionsDefinition("1.1.0", BROWSER_SESSION_COMMANDS, browserSessionObject, (receipt) => [
-    browserSessionCommandMethod(
-      receipt,
-      "setDevToolsOpen",
-      { open: { type: "boolean" } },
-      ["open"],
-      [BROWSER_DEVTOOLS],
-    ),
+    browserSessionCommandMethod(receipt, "openDevTools", {}, [], [BROWSER_DEVTOOLS]),
+    browserSessionCommandMethod(receipt, "closeDevTools", {}, [], [BROWSER_DEVTOOLS]),
   ]),
 );
 /**
- * Frozen published 1.0.0 definition — no `setDevToolsOpen`, no
+ * Frozen published 1.0.0 definition — no DevTools methods, no
  * `devToolsOpen`; kept so shared definitions stay immutable per version.
  */
 export const browserSessionsApiV1 = defineStreamApi<{

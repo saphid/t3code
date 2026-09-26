@@ -16,6 +16,7 @@ import {
   executeEngineCommand,
   forgetHostedTab,
   HANDLED_COMMANDS_LIMIT,
+  nextEnginePageReport,
   recordHostedTabState,
   toEnginePageStatus,
   useBrowserEngineHostStore,
@@ -169,9 +170,23 @@ describe("setDevToolsOpen", () => {
     ).toEqual({ outcome: "rejected", reason: "not-applicable" });
   });
 
-  it("reports the observed DevTools state on the page status", () => {
-    expect(toEnginePageStatus(tabState({ devToolsOpen: true })).devToolsOpen).toBe(true);
-    expect(toEnginePageStatus(tabState()).devToolsOpen).toBe(false);
+  it("reports each DevTools flip once and stays quiet on repeats", () => {
+    const decode = Schema.decodeUnknownSync(BrowserEnginePageStatus);
+    const first = nextEnginePageReport(null, tabState());
+    expect(first).not.toBeNull();
+    // A repeated desktop event with nothing projected changed sends nothing.
+    expect(nextEnginePageReport(first!.statusKey, tabState())).toBeNull();
+    expect(
+      nextEnginePageReport(first!.statusKey, tabState({ updatedAt: "2026-09-27T00:00:00.000Z" })),
+    ).toBeNull();
+    // DevTools opening alone is a new report the server contract accepts.
+    const opened = nextEnginePageReport(first!.statusKey, tabState({ devToolsOpen: true }));
+    expect(opened).not.toBeNull();
+    expect(decode(opened!.status)).toMatchObject({ devToolsOpen: true });
+    expect(nextEnginePageReport(opened!.statusKey, tabState({ devToolsOpen: true }))).toBeNull();
+    // Closing reports again rather than being swallowed as a repeat.
+    const closed = nextEnginePageReport(opened!.statusKey, tabState());
+    expect(closed?.status.devToolsOpen).toBe(false);
   });
 });
 

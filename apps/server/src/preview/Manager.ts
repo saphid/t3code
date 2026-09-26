@@ -50,7 +50,15 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 export class PreviewManager extends Context.Service<
   PreviewManager,
   {
-    readonly open: (input: PreviewOpenInput) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
+    /**
+     * `origin` is server-internal and never read from the wire: the extension
+     * sessions adapter passes the calling installation so extension-only
+     * verbs can refuse sessions they did not open. Native opens omit it.
+     */
+    readonly open: (
+      input: PreviewOpenInput,
+      origin?: PreviewSessionOrigin,
+    ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
     readonly navigate: (
       input: PreviewNavigateInput,
     ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
@@ -123,10 +131,18 @@ export interface PreviewSessionEngine {
   readonly lifecycle: BrowserEngineHostLifecycle | null;
 }
 
+/** Who created a session. Recorded once at open and never changed. */
+export interface PreviewSessionOrigin {
+  /** The extension installation that opened the session. */
+  readonly extensionInstallationId: string;
+}
+
 export interface PreviewSessionDetail {
   readonly snapshot: PreviewSessionSnapshot;
   readonly navigation: PreviewSessionNavigation;
   readonly engine: PreviewSessionEngine | null;
+  /** Null for sessions opened natively (the client preview panel or MCP). */
+  readonly extensionOwner: string | null;
 }
 
 export interface PreviewListDetailsResult {
@@ -147,6 +163,7 @@ interface PreviewSessionState {
   readonly snapshot: PreviewSessionSnapshot;
   readonly navigation: PreviewSessionNavigation;
   readonly engine: PreviewSessionEngine | null;
+  readonly extensionOwner: string | null;
 }
 
 /** Which side authored a state write; the commit resolves the write's revision. */
@@ -175,6 +192,7 @@ const detailOf = (session: PreviewSessionState): PreviewSessionDetail => ({
   snapshot: session.snapshot,
   navigation: session.navigation,
   engine: session.engine,
+  extensionOwner: session.extensionOwner,
 });
 
 const engineError = (reason: BrowserEngineHostError["reason"], message: string) =>
@@ -347,7 +365,8 @@ export const make = Effect.gen(function* PreviewManagerMake() {
   };
 
   const open: PreviewManager["Service"]["open"] = Effect.fn("PreviewManager.open")(
-    function* (input) {
+    function* (input, origin) {
+      const extensionOwner = origin?.extensionInstallationId ?? null;
       const tabId = newPreviewTabId();
       const updatedAt = yield* currentIsoTimestamp;
       // Clients with a configured default send the viewport up front so the
@@ -387,6 +406,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
             snapshot,
             navigation,
             engine: null,
+            extensionOwner,
           });
           const event: PreviewEvent = {
             type: "opened",
@@ -400,7 +420,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
           yield* PubSub.publish(eventsPubSub, event);
           yield* PubSub.publish(internalPubSub, {
             event,
-            detail: { snapshot, navigation, engine: null },
+            detail: { snapshot, navigation, engine: null, extensionOwner },
           });
           return [snapshot, { sessions, revision }] as const;
         }),
