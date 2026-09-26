@@ -6913,7 +6913,7 @@ var __t3Client = (() => {
   }
 
   // extension.tsx
-  var import_react = __toESM(require_react(), 1);
+  var import_react2 = __toESM(require_react(), 1);
 
   // uiContracts.ts
   var DIFF_SURFACE_ID = "t3.diff/view";
@@ -7148,6 +7148,354 @@ var __t3Client = (() => {
       }
       markDead();
     })().catch(markDead);
+  }
+
+  // diffComments.ts
+  var COMMENT_QUOTE_MAX_CHARS = 4096;
+  function lineText(lines, index) {
+    return (lines[index] ?? "").replace(/(\r\n|\r|\n)$/, "");
+  }
+  function buildDiffReviewLines(file) {
+    const rows = [];
+    for (const hunk of file.hunks) {
+      let oldLineNumber = hunk.deletionStart;
+      let newLineNumber = hunk.additionStart;
+      let deletionLineIndex = hunk.deletionLineIndex;
+      let additionLineIndex = hunk.additionLineIndex;
+      for (const segment of hunk.hunkContent) {
+        if (segment.type === "context") {
+          for (let index = 0; index < segment.lines; index += 1) {
+            rows.push({
+              change: "context",
+              oldLineNumber,
+              newLineNumber,
+              content: lineText(
+                file.additionLines,
+                additionLineIndex >= 0 ? additionLineIndex : deletionLineIndex
+              )
+            });
+            oldLineNumber += 1;
+            newLineNumber += 1;
+            deletionLineIndex += 1;
+            additionLineIndex += 1;
+          }
+          continue;
+        }
+        for (let index = 0; index < segment.deletions; index += 1) {
+          rows.push({
+            change: "delete",
+            oldLineNumber,
+            newLineNumber: null,
+            content: lineText(file.deletionLines, deletionLineIndex)
+          });
+          oldLineNumber += 1;
+          deletionLineIndex += 1;
+        }
+        for (let index = 0; index < segment.additions; index += 1) {
+          rows.push({
+            change: "add",
+            oldLineNumber: null,
+            newLineNumber,
+            content: lineText(file.additionLines, additionLineIndex)
+          });
+          newLineNumber += 1;
+          additionLineIndex += 1;
+        }
+      }
+    }
+    return rows;
+  }
+  function findDiffReviewLineIndexOnSide(file, lineNumber, side) {
+    const selectedSide = side === "deletions" ? "left" : "right";
+    let rowIndex = 0;
+    for (const hunk of file.hunks) {
+      let oldLineNumber = hunk.deletionStart;
+      let newLineNumber = hunk.additionStart;
+      for (const segment of hunk.hunkContent) {
+        if (segment.type === "context") {
+          const start = selectedSide === "left" ? oldLineNumber : newLineNumber;
+          if (lineNumber >= start && lineNumber < start + segment.lines) {
+            return rowIndex + lineNumber - start;
+          }
+          rowIndex += segment.lines;
+          oldLineNumber += segment.lines;
+          newLineNumber += segment.lines;
+          continue;
+        }
+        if (selectedSide === "left" && lineNumber >= oldLineNumber && lineNumber < oldLineNumber + segment.deletions) {
+          return rowIndex + lineNumber - oldLineNumber;
+        }
+        rowIndex += segment.deletions;
+        oldLineNumber += segment.deletions;
+        if (selectedSide === "right" && lineNumber >= newLineNumber && lineNumber < newLineNumber + segment.additions) {
+          return rowIndex + lineNumber - newLineNumber;
+        }
+        rowIndex += segment.additions;
+        newLineNumber += segment.additions;
+      }
+    }
+    return -1;
+  }
+  function formatDiffReviewRangeLabel(lines) {
+    const firstLine = lines[0];
+    const lastLine = lines.at(-1);
+    if (firstLine === void 0 || lastLine === void 0) return "line";
+    const firstNumber = firstLine.newLineNumber ?? firstLine.oldLineNumber;
+    const lastNumber = lastLine.newLineNumber ?? lastLine.oldLineNumber;
+    if (firstNumber === null || lastNumber === null) {
+      return lines.length === 1 ? "line" : `${lines.length} lines`;
+    }
+    const marker = (line) => {
+      const change = line.change === "add" ? "+" : line.change === "delete" ? "-" : "";
+      return change !== "" && lines.every((entry) => entry.change === line.change) ? change : "";
+    };
+    const prefix = marker(firstLine);
+    return firstNumber === lastNumber ? `${prefix}${firstNumber}` : `${prefix}${firstNumber} to ${prefix}${lastNumber}`;
+  }
+  function neutralizeReviewCommentTags(text) {
+    return text.replace(/<(?=\/?review_comment\b)/giu, "&lt;");
+  }
+  function markerFor(change) {
+    return change === "add" ? "+" : change === "delete" ? "-" : " ";
+  }
+  function sideRange(lines, key) {
+    const numbered = lines.filter((line) => line[key] !== null);
+    return { start: numbered[0]?.[key] ?? 0, count: numbered.length };
+  }
+  function quoteHeader(lines) {
+    const old = sideRange(lines, "oldLineNumber");
+    const added = sideRange(lines, "newLineNumber");
+    return `@@ -${old.start},${old.count} +${added.start},${added.count} @@`;
+  }
+  function quoteLine(line) {
+    return `${markerFor(line.change)}${neutralizeReviewCommentTags(line.content)}`;
+  }
+  function cutOnCharacterBoundary(text, maxChars) {
+    const cut = Math.max(0, maxChars);
+    if (text.length <= cut) return text;
+    const codeUnit = text.charCodeAt(cut - 1);
+    return codeUnit >= 55296 && codeUnit <= 56319 ? text.slice(0, cut - 1) : text.slice(0, cut);
+  }
+  function buildDiffCommentTarget(options) {
+    const { file, rows } = options;
+    const maxQuoteChars = options.maxQuoteChars ?? COMMENT_QUOTE_MAX_CHARS;
+    const start = rows[Math.min(options.startOrdinal, options.endOrdinal)];
+    const end = rows[Math.max(options.startOrdinal, options.endOrdinal)];
+    if (start === void 0 || end === void 0) return null;
+    if (start.kind === "gap" || end.kind === "gap") return null;
+    const startPoint = start.kind === "deletion" ? { line: start.oldLine, side: "deletions" } : { line: start.newLine, side: "additions" };
+    const endPoint = end.kind === "deletion" ? { line: end.oldLine, side: "deletions" } : { line: end.newLine, side: "additions" };
+    const startIndex = findDiffReviewLineIndexOnSide(file, startPoint.line, startPoint.side);
+    const endIndex = findDiffReviewLineIndexOnSide(file, endPoint.line, endPoint.side);
+    if (startIndex < 0 || endIndex < 0) return null;
+    const lo = Math.min(startIndex, endIndex);
+    const hi = Math.max(startIndex, endIndex);
+    const selected = buildDiffReviewLines(file).slice(lo, hi + 1);
+    if (selected.length === 0) return null;
+    const rangeLabel = formatDiffReviewRangeLabel(selected);
+    const quoted = selected.map(quoteLine);
+    let oldStart = null;
+    let newStart = null;
+    let oldCount = 0;
+    let newCount = 0;
+    let quotedLength = 0;
+    let keep = 0;
+    for (let index = 0; index < selected.length; index += 1) {
+      const line = selected[index];
+      if (line === void 0) break;
+      if (line.oldLineNumber !== null) {
+        if (oldStart === null) oldStart = line.oldLineNumber;
+        oldCount += 1;
+      }
+      if (line.newLineNumber !== null) {
+        if (newStart === null) newStart = line.newLineNumber;
+        newCount += 1;
+      }
+      quotedLength += (quoted[index] ?? "").length + (index > 0 ? 1 : 0);
+      const headerLength = `@@ -${oldStart ?? 0},${oldCount} +${newStart ?? 0},${newCount} @@`.length;
+      if (headerLength + 1 + quotedLength > maxQuoteChars) break;
+      keep = index + 1;
+    }
+    let quote;
+    let truncated = keep < quoted.length;
+    if (keep > 0) {
+      quote = [quoteHeader(selected.slice(0, keep)), ...quoted.slice(0, keep)].join("\n");
+    } else {
+      const header = quoteHeader(selected.slice(0, 1));
+      const budget = maxQuoteChars - header.length - 1 - 1;
+      if (budget < 1) return null;
+      quote = [header, cutOnCharacterBoundary(quoted[0] ?? "", budget)].join("\n");
+      truncated = true;
+    }
+    return {
+      selection: {
+        start: startPoint.line,
+        side: startPoint.side,
+        end: endPoint.line,
+        endSide: endPoint.side
+      },
+      startIndex: lo,
+      endIndex: hi,
+      rangeLabel,
+      quote,
+      truncated
+    };
+  }
+  function commentUnavailableReason(capabilities, threadId) {
+    if (threadId === void 0)
+      return "This panel has no thread scope, so there is no draft to comment into.";
+    if (capabilities.transport !== "client" || capabilities.operations.attachAnnotation !== true) {
+      return capabilities.detail ?? "Commenting needs a connected client hosting the composer provider.";
+    }
+    return null;
+  }
+
+  // commentSession.ts
+  var import_react = __toESM(require_react(), 1);
+  function sameCommentBuffer(left, right) {
+    return left.diffHash === right.diffHash && left.fileKey === right.fileKey && (left.contents === right.contents || left.contents !== null && right.contents !== null && left.contents.oldContents === right.contents.oldContents && left.contents.newContents === right.contents.newContents);
+  }
+  function useLineSelection(buffer) {
+    const [pinned, setPinned] = (0, import_react.useState)(null);
+    const live = pinned !== null && buffer !== null && sameCommentBuffer(pinned.buffer, buffer) ? pinned : null;
+    if (pinned !== null && live === null) {
+      setPinned(null);
+    }
+    return {
+      selection: live === null ? null : { anchor: live.anchor, extent: live.extent },
+      // The buffer is passed at call time, not captured from this render: a
+      // click in a different file pins that file's buffer, never the previous
+      // file's via a stale closure. Extending keeps the anchor only when the
+      // held run lives in the same buffer.
+      select: (buffer2, ordinal, extend) => {
+        setPinned(
+          extend && live !== null && sameCommentBuffer(live.buffer, buffer2) ? { buffer: buffer2, anchor: live.anchor, extent: ordinal } : { buffer: buffer2, anchor: ordinal, extent: ordinal }
+        );
+      },
+      clear: () => setPinned(null)
+    };
+  }
+  function useDiffCommentDraft(buffer) {
+    const [pinned, setPinned] = (0, import_react.useState)(null);
+    const sameFile = pinned !== null && buffer !== null && pinned.buffer.fileKey === buffer.fileKey;
+    if (pinned !== null && !sameFile) setPinned(null);
+    const draft = sameFile && pinned !== null ? pinned.draft : null;
+    const draftStale = draft !== null && buffer !== null && pinned !== null && !sameCommentBuffer(pinned.buffer, buffer);
+    return {
+      draft,
+      draftStale,
+      // Buffer at call time, same rule as the selection's `select`: the draft
+      // pins the exact buffer its target was built against.
+      openDraft: (buffer2, draft2) => setPinned({ buffer: buffer2, draft: draft2 }),
+      closeDraft: () => setPinned(null)
+    };
+  }
+  function useCommentTarget(file, rows, anchor, extent) {
+    return (0, import_react.useMemo)(
+      () => anchor === null || extent === null ? null : buildDiffCommentTarget({ file, rows, startOrdinal: anchor, endOrdinal: extent }),
+      [file, rows, anchor, extent]
+    );
+  }
+  var CHECKING_REASON = "Checking comment support with the host\u2026";
+  function useCommentBlockReason(host, session, threadId) {
+    const [capabilities, setCapabilities] = (0, import_react.useState)(null);
+    (0, import_react.useEffect)(() => {
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      void bindApi(messagesEnrichmentApi, host, session.context).invoke("getCapabilities", {}, signal).then(
+        (resolved) => {
+          if (!signal.aborted) setCapabilities(resolved);
+        },
+        (error) => {
+          if (signal.aborted) return;
+          setCapabilities({
+            adapter: "unknown",
+            transport: "unavailable",
+            detail: error instanceof Error ? error.message : "Comment support could not be checked with the host.",
+            operations: {
+              attachAnnotation: false,
+              listAnnotations: false,
+              removeAnnotation: false
+            }
+          });
+        }
+      );
+      return () => controller.abort();
+    }, [host, session]);
+    return {
+      reason: capabilities === null ? CHECKING_REASON : commentUnavailableReason(capabilities, threadId),
+      capabilities
+    };
+  }
+  function usePostedComments(host, session, threadId, listable) {
+    const [entries, setEntries] = (0, import_react.useState)([]);
+    const [listError, setListError] = (0, import_react.useState)(null);
+    const [removing, setRemoving] = (0, import_react.useState)(null);
+    const [removeError, setRemoveError] = (0, import_react.useState)(null);
+    (0, import_react.useEffect)(() => {
+      if (!listable || threadId === void 0) return;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      void bindApi(messagesEnrichmentApi, host, session.context).invoke("listAnnotations", { threadId }, signal).then(
+        (result) => {
+          if (signal.aborted) return;
+          setEntries((previous) => {
+            const known = new Set(previous.map((entry) => entry.annotationId));
+            const listed = result.annotations.filter(
+              (annotation) => annotation.kind === "diff" && !known.has(annotation.annotationId)
+            ).map((annotation) => ({
+              annotationId: annotation.annotationId,
+              filePath: annotation.filePath,
+              fileKey: null,
+              rangeLabel: annotation.rangeLabel,
+              text: null,
+              sectionTitle: annotation.sectionTitle
+            }));
+            return [...previous, ...listed];
+          });
+        },
+        (error) => {
+          if (!signal.aborted)
+            setListError(
+              error instanceof Error ? error.message : "Earlier comments could not be listed."
+            );
+        }
+      );
+      return () => controller.abort();
+    }, [host, session, threadId, listable]);
+    return {
+      entries,
+      listError,
+      removing,
+      removeError,
+      post: (entry) => setEntries(
+        (previous) => previous.some((existing) => existing.annotationId === entry.annotationId) ? previous : [...previous, entry]
+      ),
+      remove: (annotationId) => {
+        if (removing !== null || threadId === void 0) return;
+        setRemoving(annotationId);
+        setRemoveError(null);
+        const controller = new AbortController();
+        const signal = AbortSignal.any([controller.signal, session.signal]);
+        void bindApi(messagesEnrichmentApi, host, session.context).invoke("removeAnnotation", { threadId, annotationId }, signal).then(
+          (result) => {
+            if (signal.aborted) return;
+            setEntries(
+              (previous) => previous.filter((entry) => entry.annotationId !== annotationId)
+            );
+            if (!result.removed) setRemoveError("The host no longer lists that comment.");
+            setRemoving(null);
+          },
+          (error) => {
+            if (signal.aborted) return;
+            setRemoveError(
+              error instanceof Error ? error.message : "The comment could not be removed."
+            );
+            setRemoving(null);
+          }
+        );
+      }
+    };
   }
 
   // node_modules/@pierre/diffs/dist/constants.js
@@ -7897,8 +8245,8 @@ ${prefix}`;
     if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
     return lines;
   }
-  function lineText(lines, index) {
-    return (lines[index] ?? "").replace(/\r?\n$/, "");
+  function lineText2(lines, index) {
+    return (lines[index] ?? "").replace(/(\r\n|\r|\n)$/, "");
   }
   function fileRows(row, contents2, maxExpandedContext = MAX_EXPANDED_CONTEXT_LINES) {
     const file = row.file;
@@ -7913,7 +8261,7 @@ ${prefix}`;
         rows.push({
           ordinal: rows.length,
           kind: "context",
-          text: lineText(additionLines, newStart + offset),
+          text: lineText2(additionLines, newStart + offset),
           oldLine: oldStart + offset + 1,
           newLine: newStart + offset + 1
         });
@@ -7940,7 +8288,7 @@ ${prefix}`;
             rows.push({
               ordinal: rows.length,
               kind: "context",
-              text: lineText(additionLines, additionIndex + offset),
+              text: lineText2(additionLines, additionIndex + offset),
               oldLine: oldLine + offset,
               newLine: newLine + offset
             });
@@ -7954,7 +8302,7 @@ ${prefix}`;
             rows.push({
               ordinal: rows.length,
               kind: "deletion",
-              text: lineText(deletionLines, deletionIndex + offset),
+              text: lineText2(deletionLines, deletionIndex + offset),
               oldLine: oldLine + offset
             });
           }
@@ -7964,7 +8312,7 @@ ${prefix}`;
             rows.push({
               ordinal: rows.length,
               kind: "addition",
-              text: lineText(additionLines, additionIndex + offset),
+              text: lineText2(additionLines, additionIndex + offset),
               newLine: newLine + offset
             });
           }
@@ -7992,9 +8340,12 @@ ${prefix}`;
       for (let index = 0; index < height; index += 1) {
         const old = oldRun[index];
         const current = newRun[index];
+        if (old === void 0 && current === void 0) break;
         out.push({
           ordinal: out.length,
           kind: "sides",
+          oldOrdinal: old?.ordinal,
+          newOrdinal: current?.ordinal,
           old: old === void 0 ? { kind: "empty" } : { kind: "deletion", text: old.text, line: old.line },
           new: current === void 0 ? { kind: "empty" } : { kind: "addition", text: current.text, line: current.line }
         });
@@ -8006,17 +8357,19 @@ ${prefix}`;
       if (row.hunkStart === true && (oldRun.length > 0 || newRun.length > 0)) flush();
       if (row.kind === "gap") {
         flush();
-        out.push({ ordinal: out.length, kind: "gap", count: row.count });
+        out.push({ ordinal: out.length, kind: "gap", count: row.count, unifiedOrdinal: row.ordinal });
       } else if (row.kind === "deletion") {
         if (newRun.length > 0) flush();
-        oldRun.push({ text: row.text, line: row.oldLine });
+        oldRun.push({ text: row.text, line: row.oldLine, ordinal: row.ordinal });
       } else if (row.kind === "addition") {
-        newRun.push({ text: row.text, line: row.newLine });
+        newRun.push({ text: row.text, line: row.newLine, ordinal: row.ordinal });
       } else {
         flush();
         out.push({
           ordinal: out.length,
           kind: "sides",
+          oldOrdinal: row.ordinal,
+          newOrdinal: row.ordinal,
           old: { kind: "context", text: row.text, line: row.oldLine },
           new: { kind: "context", text: row.text, line: row.newLine }
         });
@@ -8027,6 +8380,49 @@ ${prefix}`;
   }
   function canExpandFile(row) {
     return !row.binary && !row.textless && (row.changeType === "change" || row.changeType === "rename-changed");
+  }
+  function expansionMatchesPatch(row, contents2) {
+    const newLines = splitLines(contents2.newContents);
+    const oldLines = splitLines(contents2.oldContents);
+    for (const hunk of row.file.hunks) {
+      let oldLineNumber = hunk.deletionStart;
+      let newLineNumber = hunk.additionStart;
+      let deletionLineIndex = hunk.deletionLineIndex;
+      let additionLineIndex = hunk.additionLineIndex;
+      for (const segment of hunk.hunkContent) {
+        if (segment.type === "context") {
+          for (let index = 0; index < segment.lines; index += 1) {
+            const text = lineText2(
+              row.file.additionLines,
+              additionLineIndex >= 0 ? additionLineIndex : deletionLineIndex
+            );
+            if (lineText2(newLines, newLineNumber - 1) !== text || lineText2(oldLines, oldLineNumber - 1) !== text) {
+              return false;
+            }
+            oldLineNumber += 1;
+            newLineNumber += 1;
+            deletionLineIndex += 1;
+            additionLineIndex += 1;
+          }
+          continue;
+        }
+        for (let index = 0; index < segment.deletions; index += 1) {
+          if (lineText2(oldLines, oldLineNumber - 1) !== lineText2(row.file.deletionLines, deletionLineIndex)) {
+            return false;
+          }
+          oldLineNumber += 1;
+          deletionLineIndex += 1;
+        }
+        for (let index = 0; index < segment.additions; index += 1) {
+          if (lineText2(newLines, newLineNumber - 1) !== lineText2(row.file.additionLines, additionLineIndex)) {
+            return false;
+          }
+          newLineNumber += 1;
+          additionLineIndex += 1;
+        }
+      }
+    }
+    return true;
   }
   function fileContentsInput(source, row) {
     return {
@@ -8062,6 +8458,15 @@ ${prefix}`;
   function describeSource(source) {
     const hash = source.diffHash.slice(0, 12);
     return `${source.title} \xB7 ${hash}${source.truncated ? " \xB7 truncated" : ""}`;
+  }
+  function commentSectionFor(mode, turnSelection, source) {
+    if (mode === "turns") {
+      if (turnSelection?.kind === "turn") {
+        return { id: `turn:${turnSelection.turnId}`, title: `Turn ${turnSelection.turnCount}` };
+      }
+      return { id: "thread", title: "All turns" };
+    }
+    return source !== null && source.kind === "working-tree" ? { id: "unstaged", title: "Working tree" } : { id: "branch", title: "Branch changes" };
   }
   var WORKING_TREE_KIND = "working-tree";
   function selectSource(result, wantedId) {
@@ -8697,8 +9102,8 @@ ${prefix}`;
     return value;
   }
   function useCapabilities(host, session, visible, tick) {
-    const [result, setResult] = (0, import_react.useState)(null);
-    (0, import_react.useEffect)(() => {
+    const [result, setResult] = (0, import_react2.useState)(null);
+    (0, import_react2.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -8720,8 +9125,8 @@ ${prefix}`;
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
   function useStatusRefresh(host, session, enabled) {
-    const [model, setModel] = (0, import_react.useState)(CONNECTING_DIFF_STATUS);
-    (0, import_react.useEffect)(() => {
+    const [model, setModel] = (0, import_react2.useState)(CONNECTING_DIFF_STATUS);
+    (0, import_react2.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -8773,8 +9178,8 @@ ${prefix}`;
     return model;
   }
   function useRefs(host, session, enabled, revision2) {
-    const [result, setResult] = (0, import_react.useState)(null);
-    (0, import_react.useEffect)(() => {
+    const [result, setResult] = (0, import_react2.useState)(null);
+    (0, import_react2.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -8811,9 +9216,9 @@ ${prefix}`;
     return result?.key === revision2 ? result : { refs: null, error: null };
   }
   function useDiffPreview(host, session, enabled, requestKey, input) {
-    const [result, setResult] = (0, import_react.useState)(null);
-    const streamKeys = (0, import_react.useRef)(/* @__PURE__ */ new Set());
-    (0, import_react.useEffect)(() => {
+    const [result, setResult] = (0, import_react2.useState)(null);
+    const streamKeys = (0, import_react2.useRef)(/* @__PURE__ */ new Set());
+    (0, import_react2.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -8846,8 +9251,8 @@ ${prefix}`;
     };
   }
   function useOrchestrationCapabilities(host, session, enabled, tick) {
-    const [result, setResult] = (0, import_react.useState)(null);
-    (0, import_react.useEffect)(() => {
+    const [result, setResult] = (0, import_react2.useState)(null);
+    (0, import_react2.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -8869,8 +9274,8 @@ ${prefix}`;
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
   function useAgentsStatus(host, session, enabled) {
-    const [model, setModel] = (0, import_react.useState)(CONNECTING_AGENTS);
-    (0, import_react.useEffect)(() => {
+    const [model, setModel] = (0, import_react2.useState)(CONNECTING_AGENTS);
+    (0, import_react2.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -8922,10 +9327,10 @@ ${prefix}`;
     return model;
   }
   function useTurnDiff(host, session, enabled, requestKey, selection) {
-    const [result, setResult] = (0, import_react.useState)(null);
+    const [result, setResult] = (0, import_react2.useState)(null);
     const selectionKey = selection === null ? null : selection.kind === "thread" ? "thread" : `turn:${selection.turnId}`;
     const selectionTurnId = selection?.kind === "turn" ? selection.turnId : null;
-    (0, import_react.useEffect)(() => {
+    (0, import_react2.useEffect)(() => {
       if (!enabled || selectionKey === null) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -8955,8 +9360,8 @@ ${prefix}`;
     };
   }
   function useThemeTokens(host, session, enabled) {
-    const [tokens, setTokens] = (0, import_react.useState)(null);
-    (0, import_react.useEffect)(() => {
+    const [tokens, setTokens] = (0, import_react2.useState)(null);
+    (0, import_react2.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       watchThemeTokens(
@@ -8969,10 +9374,36 @@ ${prefix}`;
     }, [host, session, enabled]);
     return tokens;
   }
+  function commentAffordance(ui, comment, label) {
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "button",
+      {
+        type: "button",
+        "aria-label": comment.reason !== null ? `${label} \u2014 unavailable: ${comment.reason}` : label,
+        disabled: comment.disabled,
+        onClick: (event) => comment.onSelect(event.shiftKey),
+        style: {
+          flexShrink: 0,
+          marginLeft: "auto",
+          padding: "0 4px",
+          border: "none",
+          background: "transparent",
+          color: ui.muted,
+          cursor: comment.disabled ? "default" : "pointer",
+          font: "inherit",
+          fontSize: 11,
+          lineHeight: "18px",
+          opacity: 0.7
+        },
+        children: "+"
+      }
+    );
+  }
   function DiffRow({
     row,
     wrap,
-    ui
+    ui,
+    comment
   }) {
     if (row.kind === "gap") {
       return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
@@ -8995,6 +9426,7 @@ ${prefix}`;
     }
     const addition = row.kind === "addition";
     const deletion = row.kind === "deletion";
+    const line = addition || row.kind === "context" ? row.newLine : row.oldLine;
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "div",
       {
@@ -9005,13 +9437,15 @@ ${prefix}`;
           background: addition ? (
             // No theme role covers success green; --success is a static host variable.
             "color-mix(in srgb, var(--success, #2da44e) 14%, transparent)"
-          ) : deletion ? `color-mix(in srgb, ${ui.destructive} 12%, transparent)` : "transparent"
+          ) : deletion ? `color-mix(in srgb, ${ui.destructive} 12%, transparent)` : "transparent",
+          ...comment?.selected ? { outline: `1px solid ${ui.accentOutline}`, outlineOffset: -1 } : {}
         },
         children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: ui.gutter, children: deletion || row.kind === "context" ? row.oldLine ?? "" : "" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: ui.gutter, children: addition || row.kind === "context" ? row.newLine ?? "" : "" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: ui.muted, userSelect: "none", width: 14 }, children: addition ? "+" : deletion ? "\u2212" : " " }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { overflow: "hidden", textOverflow: "ellipsis" }, children: row.text })
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { overflow: "hidden", textOverflow: "ellipsis" }, children: row.text }),
+          comment !== void 0 && commentAffordance(ui, comment, `Select line ${line ?? ""} for a comment`)
         ]
       }
     );
@@ -9020,7 +9454,8 @@ ${prefix}`;
     cell,
     wrap,
     separator,
-    ui
+    ui,
+    comment
   }) {
     const addition = cell.kind === "addition";
     const deletion = cell.kind === "deletion";
@@ -9041,12 +9476,18 @@ ${prefix}`;
         children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: ui.gutter, children: cell.kind === "empty" ? "" : cell.line }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: ui.muted, userSelect: "none", width: 14 }, children: addition ? "+" : deletion ? "\u2212" : " " }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }, children: cell.kind === "empty" ? "" : cell.text })
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }, children: cell.kind === "empty" ? "" : cell.text }),
+          cell.kind !== "empty" && comment !== void 0 && commentAffordance(ui, comment, `Select line ${cell.line} for a comment`)
         ]
       }
     );
   }
-  function SplitRow({ row, wrap, ui }) {
+  function SplitRow({
+    row,
+    wrap,
+    ui,
+    comment
+  }) {
     if (row.kind === "gap") {
       return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
         "div",
@@ -9072,11 +9513,12 @@ ${prefix}`;
         style: {
           ...ui.rowBase,
           display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)"
+          gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+          ...comment !== void 0 && (comment.old?.selected === true || comment.new?.selected === true) ? { outline: `1px solid ${ui.accentOutline}`, outlineOffset: -1 } : {}
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SplitCell, { cell: row.old, wrap, separator: true, ui }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SplitCell, { cell: row.new, wrap, separator: false, ui })
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SplitCell, { cell: row.old, wrap, separator: true, ui, comment: comment?.old }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SplitCell, { cell: row.new, wrap, separator: false, ui, comment: comment?.new })
         ]
       }
     );
@@ -9090,6 +9532,7 @@ ${prefix}`;
     expansion,
     expandable,
     action,
+    comment,
     onToggleCollapsed,
     onExpand,
     onOpen,
@@ -9099,11 +9542,13 @@ ${prefix}`;
   }) {
     const muted = ui.muted;
     const expanded = expansion?.status === "loaded" ? expansion.contents : void 0;
-    const rows = (0, import_react.useMemo)(
+    const rows = (0, import_react2.useMemo)(
       () => collapsed || row.binary || row.textless ? [] : fileRows(row, expanded),
       [collapsed, row, expanded]
     );
-    const paired = (0, import_react.useMemo)(() => layout === "split" ? splitRows(rows) : null, [layout, rows]);
+    const paired = (0, import_react2.useMemo)(() => layout === "split" ? splitRows(rows) : null, [layout, rows]);
+    const target = useCommentTarget(row.file, rows, comment?.anchor ?? null, comment?.extent ?? null);
+    const inSelection = (ordinal) => comment !== null && comment.anchor !== null && comment.extent !== null && ordinal >= Math.min(comment.anchor, comment.extent) && ordinal <= Math.max(comment.anchor, comment.extent);
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "section",
       {
@@ -9185,6 +9630,108 @@ ${prefix}`;
               children: action.detail
             }
           ),
+          comment !== null && comment.draft !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "div",
+            {
+              role: "group",
+              "aria-label": `Comment on ${comment.draft.target.rangeLabel}`,
+              style: {
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+                padding: "6px 10px",
+                borderBottom: `1px solid ${ui.border}`,
+                flexShrink: 0
+              },
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { fontSize: 11, color: muted }, children: [
+                  "Comment on ",
+                  comment.draft.target.rangeLabel,
+                  comment.draft.target.truncated ? ` \u2014 quote truncated to ${COMMENT_QUOTE_MAX_CHARS} characters` : ""
+                ] }),
+                comment.draftStale && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { role: "status", style: { fontSize: 11, color: muted }, children: "The diff changed since this draft opened \u2014 select the lines again to comment on them." }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "textarea",
+                  {
+                    "aria-label": "Comment text",
+                    value: comment.body,
+                    readOnly: comment.submit.busy,
+                    onChange: (event) => comment.onBodyChange(event.target.value),
+                    onKeyDown: (event) => {
+                      if (event.key === "Escape" && !comment.submit.busy) comment.onCloseDraft();
+                    },
+                    rows: 3,
+                    style: {
+                      resize: "vertical",
+                      border: `1px solid ${ui.border}`,
+                      padding: 6,
+                      color: "inherit",
+                      background: "transparent",
+                      fontFamily: "inherit",
+                      fontSize: 12
+                    }
+                  }
+                ),
+                comment.submit.error !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { role: "alert", style: { fontSize: 11, color: ui.destructive }, children: comment.submit.error }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { display: "flex", gap: 6 }, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "button",
+                    {
+                      type: "button",
+                      style: ui.iconButton,
+                      disabled: comment.draftStale || comment.body.trim() === "" || comment.submit.busy,
+                      onClick: comment.onSubmit,
+                      children: comment.submit.busy ? "Submitting\u2026" : "Submit comment"
+                    }
+                  ),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "button",
+                    {
+                      type: "button",
+                      style: ui.iconButton,
+                      disabled: comment.submit.busy,
+                      onClick: comment.onCloseDraft,
+                      children: "Cancel"
+                    }
+                  )
+                ] })
+              ]
+            }
+          ),
+          !collapsed && comment !== null && comment.draft === null && comment.anchor !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "div",
+            {
+              role: "toolbar",
+              "aria-label": "Diff comment",
+              style: {
+                display: "flex",
+                gap: 8,
+                alignItems: "center",
+                padding: "4px 10px",
+                borderBottom: `1px solid ${ui.border}`,
+                flexShrink: 0,
+                fontSize: 11
+              },
+              children: [
+                comment.reason === null && target !== null ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                  "button",
+                  {
+                    type: "button",
+                    style: ui.iconButton,
+                    onClick: () => comment.onOpenDraft({ fileKey: row.key, filePath: row.path, target }),
+                    children: [
+                      "Comment on ",
+                      target.rangeLabel
+                    ]
+                  }
+                ) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted }, children: [
+                  "Commenting unavailable \u2014 ",
+                  comment.reason ?? "this selection has no anchorable line."
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: ui.iconButton, onClick: comment.onClearSelection, children: "Clear selection" })
+              ]
+            }
+          ),
           !collapsed && row.binary && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "note", style: { padding: "4px 10px", color: muted, fontSize: 12, margin: 0 }, children: [
             row.path,
             " is a binary file \u2014 no text diff is available."
@@ -9194,51 +9741,124 @@ ${prefix}`;
             displayPath(row),
             "."
           ] }),
-          !collapsed && (layout === "split" ? paired?.map((line) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SplitRow, { row: line, wrap, ui }, line.ordinal)) : rows.map((line) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DiffRow, { row: line, wrap, ui }, line.ordinal))),
+          !collapsed && (layout === "split" ? paired?.map((line) => {
+            const cellUi = (ordinal) => ordinal === void 0 || comment === null ? void 0 : {
+              selected: inSelection(ordinal),
+              disabled: comment.reason !== null,
+              reason: comment.reason,
+              onSelect: (extend) => comment.onRowSelect(ordinal, extend)
+            };
+            return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              SplitRow,
+              {
+                row: line,
+                wrap,
+                ui,
+                comment: line.kind === "gap" ? void 0 : { old: cellUi(line.oldOrdinal), new: cellUi(line.newOrdinal) }
+              },
+              line.ordinal
+            );
+          }) : rows.map((line) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            DiffRow,
+            {
+              row: line,
+              wrap,
+              ui,
+              comment: comment === null || line.kind === "gap" ? void 0 : {
+                selected: inSelection(line.ordinal),
+                disabled: comment.reason !== null,
+                reason: comment.reason,
+                onSelect: (extend) => comment.onRowSelect(line.ordinal, extend)
+              }
+            },
+            line.ordinal
+          ))),
           !collapsed && expansion?.status === "loading" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { padding: "4px 10px", color: muted, fontSize: 11, margin: 0 }, children: "Loading file contents\u2026" }),
           !collapsed && expansion?.status === "error" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { padding: "4px 10px", color: muted, fontSize: 11, margin: 0 }, children: expansion.detail }),
-          !collapsed && expansion?.status === "loaded" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { padding: "4px 10px", color: muted, fontSize: 11, margin: 0 }, children: "Full file context loaded via t3.vcs/diff." })
+          !collapsed && expansion?.status === "loaded" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { padding: "4px 10px", color: muted, fontSize: 11, margin: 0 }, children: "Full file context loaded via t3.vcs/diff." }),
+          comment !== null && comment.posted.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "section",
+            {
+              "aria-label": "Review comments added here",
+              style: {
+                padding: "6px 10px",
+                borderTop: `1px solid ${ui.border}`,
+                flexShrink: 0,
+                fontSize: 11,
+                display: "flex",
+                flexDirection: "column",
+                gap: 4
+              },
+              children: [
+                comment.posted.map((entry) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                  "span",
+                  {
+                    style: { display: "flex", gap: 6, alignItems: "baseline" },
+                    children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { flex: 1 }, children: [
+                        entry.rangeLabel,
+                        entry.text !== null ? ` \u2014 ${entry.text}` : ""
+                      ] }),
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                        "button",
+                        {
+                          type: "button",
+                          style: ui.iconButton,
+                          disabled: comment.removing === entry.annotationId,
+                          onClick: () => comment.onRemove(entry.annotationId),
+                          children: comment.removing === entry.annotationId ? "Removing\u2026" : "Remove"
+                        }
+                      )
+                    ]
+                  },
+                  entry.annotationId
+                )),
+                comment.removeError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { role: "alert", style: { color: ui.destructive }, children: comment.removeError }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted }, children: "Comments sit in the composer draft until sent \u2014 removal also works from its chip." })
+              ]
+            }
+          )
         ]
       }
     );
   }
   function DiffPanelView(props) {
     const { host, session } = props;
-    const [visible, setVisible] = (0, import_react.useState)(session.visible);
-    const [tick, setTick] = (0, import_react.useState)(0);
-    (0, import_react.useEffect)(() => session.onVisibility(setVisible), [session]);
+    const [visible, setVisible] = (0, import_react2.useState)(session.visible);
+    const [tick, setTick] = (0, import_react2.useState)(0);
+    (0, import_react2.useEffect)(() => session.onVisibility(setVisible), [session]);
     const tokens = useThemeTokens(host, session, visible);
     const ui = panelTheme(tokens);
     const restored = session.restoreState && typeof session.restoreState === "object" && !Array.isArray(session.restoreState) ? session.restoreState : null;
-    const [mode, setMode] = (0, import_react.useState)(restored?.mode === "turns" ? "turns" : "workspace");
-    const [turnWanted, setTurnWanted] = (0, import_react.useState)(
+    const [mode, setMode] = (0, import_react2.useState)(restored?.mode === "turns" ? "turns" : "workspace");
+    const [turnWanted, setTurnWanted] = (0, import_react2.useState)(
       restored?.mode === "turns" ? restored.turnId !== void 0 ? { kind: "turn", turnId: restored.turnId, turnCount: 0 } : { kind: "thread" } : null
     );
-    const [sourceId, setSourceId] = (0, import_react.useState)(restored?.sourceId ?? null);
-    const [fileKey, setFileKey] = (0, import_react.useState)(restored?.fileKey ?? null);
-    const [baseRef, setBaseRef] = (0, import_react.useState)(restored?.baseRef ?? "");
-    const [ignoreWhitespace, setIgnoreWhitespace] = (0, import_react.useState)(
+    const [sourceId, setSourceId] = (0, import_react2.useState)(restored?.sourceId ?? null);
+    const [fileKey, setFileKey] = (0, import_react2.useState)(restored?.fileKey ?? null);
+    const [baseRef, setBaseRef] = (0, import_react2.useState)(restored?.baseRef ?? "");
+    const [ignoreWhitespace, setIgnoreWhitespace] = (0, import_react2.useState)(
       restored?.ignoreWhitespace ?? false
     );
-    const [layout, setLayout] = (0, import_react.useState)(
+    const [layout, setLayout] = (0, import_react2.useState)(
       restored?.layout === "split" ? "split" : "unified"
     );
-    const [wrap, setWrap] = (0, import_react.useState)(false);
-    const [collapsedFiles, setCollapsedFiles] = (0, import_react.useState)(/* @__PURE__ */ new Set());
-    const [collapsedDirs, setCollapsedDirs] = (0, import_react.useState)(/* @__PURE__ */ new Set());
-    const [expansions, setExpansions] = (0, import_react.useState)(/* @__PURE__ */ new Map());
-    const [action, setAction] = (0, import_react.useState)(
+    const [wrap, setWrap] = (0, import_react2.useState)(false);
+    const [collapsedFiles, setCollapsedFiles] = (0, import_react2.useState)(/* @__PURE__ */ new Set());
+    const [collapsedDirs, setCollapsedDirs] = (0, import_react2.useState)(/* @__PURE__ */ new Set());
+    const [expansions, setExpansions] = (0, import_react2.useState)(/* @__PURE__ */ new Map());
+    const [action, setAction] = (0, import_react2.useState)(
       null
     );
-    const [revert, setRevert] = (0, import_react.useState)(null);
-    const expandControllers = (0, import_react.useRef)(/* @__PURE__ */ new Map());
-    const contentStreamKeys = (0, import_react.useRef)(/* @__PURE__ */ new Set());
-    const sectionRefs = (0, import_react.useRef)(/* @__PURE__ */ new Map());
+    const [revert, setRevert] = (0, import_react2.useState)(null);
+    const expandControllers = (0, import_react2.useRef)(/* @__PURE__ */ new Map());
+    const contentStreamKeys = (0, import_react2.useRef)(/* @__PURE__ */ new Set());
+    const sectionRefs = (0, import_react2.useRef)(/* @__PURE__ */ new Map());
     const { capabilities, error: capsError } = useCapabilities(host, session, visible, tick);
     const gate = diffCapabilityState(capabilities, capsError);
     const ready = gate.kind === "ready";
     const status = useStatusRefresh(host, session, visible && ready);
-    const previewInput = (0, import_react.useMemo)(
+    const previewInput = (0, import_react2.useMemo)(
       () => ({
         ...baseRef !== "" ? { baseRef } : {},
         ...ignoreWhitespace ? { ignoreWhitespace: true } : {}
@@ -9261,7 +9881,7 @@ ${prefix}`;
       session,
       turnsOpen && orchGate.kind === "ready" && orchGate.operations["subscribeAgents"] === true
     );
-    const choices = (0, import_react.useMemo)(() => turnChoices(agents.checkpoints), [agents.checkpoints]);
+    const choices = (0, import_react2.useMemo)(() => turnChoices(agents.checkpoints), [agents.checkpoints]);
     const turnSelection = reconcileTurnSelection(choices, turnWanted);
     const turnDiffOps = orchGate.kind === "ready" && orchGate.operations["getTurnDiff"] === true && orchGate.operations["getThreadDiff"] === true;
     const turnRequestKey = `${tick}:${agents.revision}:${turnSelection === null ? "none" : turnSelection.kind === "thread" ? "thread" : `turn:${turnSelection.turnId}`}`;
@@ -9289,9 +9909,143 @@ ${prefix}`;
     const treeRows = diffTreeRows(files, collapsedDirs);
     const fileKeys = files.map((row) => row.key);
     const allCollapsed = areAllDiffFilesCollapsed(fileKeys, collapsedFiles);
-    const baseRefChoices = (0, import_react.useMemo)(() => buildBaseRefChoices(refs?.refs ?? []), [refs]);
+    const baseRefChoices = (0, import_react2.useMemo)(() => buildBaseRefChoices(refs?.refs ?? []), [refs]);
+    const commentThreadId = session.context.resource.threadId;
+    const { reason: commentReason, capabilities: commentCapabilities } = useCommentBlockReason(
+      host,
+      session,
+      commentThreadId
+    );
+    const [commentFileKey, setCommentFileKey] = (0, import_react2.useState)(null);
+    const commentRow = commentFileKey === null ? null : files.find((entry) => entry.key === commentFileKey) ?? null;
+    const commentBuffer = (0, import_react2.useMemo)(() => {
+      if (source === null || commentRow === null || commentRow.binary || commentRow.textless)
+        return null;
+      const expansion = expansions.get(`${source.diffHash}:${commentRow.key}`);
+      return {
+        diffHash: source.diffHash,
+        fileKey: commentRow.key,
+        contents: expansion?.status === "loaded" ? {
+          oldContents: expansion.contents.oldContents,
+          newContents: expansion.contents.newContents
+        } : null
+      };
+    }, [source, commentRow, expansions]);
+    const lineSelection = useLineSelection(commentBuffer);
+    const {
+      draft: commentDraft,
+      draftStale: commentDraftStale,
+      openDraft,
+      closeDraft
+    } = useDiffCommentDraft(commentBuffer);
+    const commentListable = commentCapabilities !== null && commentCapabilities.transport === "client" && commentCapabilities.operations.listAnnotations === true && commentThreadId !== void 0;
+    const posted = usePostedComments(host, session, commentThreadId, commentListable);
+    const [commentBody, setCommentBody] = (0, import_react2.useState)("");
+    const [commentSubmit, setCommentSubmit] = (0, import_react2.useState)({
+      busy: false,
+      error: null
+    });
+    const submittedDraftRef = (0, import_react2.useRef)(null);
+    const commentSection = (0, import_react2.useMemo)(
+      () => commentSectionFor(mode, turnSelection, source),
+      [mode, turnSelection, source]
+    );
+    const selectCommentLines = (row, ordinal, extend) => {
+      if (source === null || row.binary || row.textless) return;
+      const expansion = expansions.get(`${source.diffHash}:${row.key}`);
+      const buffer = {
+        diffHash: source.diffHash,
+        fileKey: row.key,
+        contents: expansion?.status === "loaded" ? {
+          oldContents: expansion.contents.oldContents,
+          newContents: expansion.contents.newContents
+        } : null
+      };
+      if (commentFileKey !== row.key) setCommentFileKey(row.key);
+      lineSelection.select(buffer, ordinal, extend && commentFileKey === row.key);
+    };
+    const clearCommentSelection = () => lineSelection.clear();
+    const openCommentDraft = (draft) => {
+      if (commentBuffer === null) return;
+      openDraft(commentBuffer, draft);
+      submittedDraftRef.current = draft;
+      setCommentBody("");
+      setCommentSubmit({ busy: false, error: null });
+    };
+    const closeCommentDraft = () => {
+      closeDraft();
+      submittedDraftRef.current = null;
+      setCommentBody("");
+      setCommentSubmit({ busy: false, error: null });
+    };
+    const postedFor = (row) => posted.entries.filter(
+      (entry) => entry.fileKey !== null ? entry.fileKey === row.key : entry.filePath === row.path
+    );
+    const submitCommentDraft = () => {
+      const draft = commentDraft;
+      const body = commentBody.trim();
+      if (draft === null || commentDraftStale || body === "" || commentSubmit.busy) return;
+      setCommentSubmit({ busy: true, error: null });
+      void bindApi(messagesEnrichmentApi, host, session.context).invoke(
+        "attachAnnotation",
+        {
+          ...commentThreadId !== void 0 ? { threadId: commentThreadId } : {},
+          annotation: {
+            kind: "diff",
+            filePath: draft.filePath,
+            sectionId: commentSection.id,
+            sectionTitle: commentSection.title,
+            rangeLabel: draft.target.rangeLabel,
+            diff: draft.target.quote,
+            selection: draft.target.selection,
+            startIndex: draft.target.startIndex,
+            endIndex: draft.target.endIndex,
+            body
+          }
+        },
+        session.signal
+      ).then(
+        (result) => {
+          posted.post({
+            annotationId: result.annotationId,
+            filePath: draft.filePath,
+            fileKey: draft.fileKey,
+            rangeLabel: draft.target.rangeLabel,
+            text: body,
+            sectionTitle: commentSection.title
+          });
+          if (submittedDraftRef.current === draft) closeCommentDraft();
+        },
+        (error) => {
+          if (submittedDraftRef.current !== draft) return;
+          setCommentSubmit({
+            busy: false,
+            error: error instanceof Error ? error.message : "Comment could not be attached"
+          });
+        }
+      );
+    };
+    const commentUiFor = (row) => row.binary || row.textless ? null : {
+      reason: commentReason,
+      anchor: commentFileKey === row.key ? lineSelection.selection?.anchor ?? null : null,
+      extent: commentFileKey === row.key ? lineSelection.selection?.extent ?? null : null,
+      onRowSelect: (ordinal, extend) => selectCommentLines(row, ordinal, extend),
+      onClearSelection: clearCommentSelection,
+      draft: commentDraft?.fileKey === row.key ? commentDraft : null,
+      draftStale: commentDraft?.fileKey === row.key ? commentDraftStale : false,
+      onOpenDraft: openCommentDraft,
+      onCloseDraft: closeCommentDraft,
+      body: commentBody,
+      onBodyChange: setCommentBody,
+      submit: commentSubmit,
+      onSubmit: submitCommentDraft,
+      posted: postedFor(row),
+      removing: posted.removing,
+      removeError: posted.removeError,
+      onRemove: posted.remove
+    };
     const sourceKey = source?.diffHash ?? null;
-    (0, import_react.useEffect)(() => {
+    (0, import_react2.useEffect)(() => {
       if (sourceKey === null) return;
       const controllers = expandControllers.current;
       return () => {
@@ -9299,9 +10053,9 @@ ${prefix}`;
         controllers.clear();
       };
     }, [sourceKey]);
-    const revealTarget = (0, import_react.useRef)(null);
-    const [revealTick, setRevealTick] = (0, import_react.useState)(0);
-    (0, import_react.useEffect)(() => {
+    const revealTarget = (0, import_react2.useRef)(null);
+    const [revealTick, setRevealTick] = (0, import_react2.useState)(0);
+    (0, import_react2.useEffect)(() => {
       if (revealTick === 0) return;
       const key = revealTarget.current;
       if (key === null || collapsedFiles.has(key)) return;
@@ -9333,6 +10087,7 @@ ${prefix}`;
       setMode(nextMode);
       setFileKey(null);
       setRevert(null);
+      setCommentFileKey(null);
       persistSelection({
         mode: nextMode,
         sourceId: source?.id ?? null,
@@ -9346,6 +10101,7 @@ ${prefix}`;
       setTurnWanted(selection);
       setFileKey(null);
       setRevert(null);
+      setCommentFileKey(null);
       persist({
         mode: "turns",
         sourceId: null,
@@ -9359,6 +10115,7 @@ ${prefix}`;
     const chooseSource = (id2) => {
       setSourceId(id2);
       setFileKey(null);
+      setCommentFileKey(null);
       persistSelection({ mode, sourceId: id2, fileKey: null, baseRef, ignoreWhitespace, layout });
     };
     const revealFile = (row) => {
@@ -9465,7 +10222,8 @@ ${prefix}`;
     const expandFile = (row) => {
       if (source === null || mode === "turns") return;
       const key = `${source.diffHash}:${row.key}`;
-      if (expansions.has(key)) return;
+      const existing = expansions.get(key);
+      if (existing !== void 0 && existing.status !== "error") return;
       const controller = new AbortController();
       expandControllers.current.set(key, controller);
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -9490,7 +10248,10 @@ ${prefix}`;
         setExpansions(
           (prev) => new Map(prev).set(
             key,
-            outcome.kind === "ready" ? { status: "loaded", contents: outcome.result } : { status: "error", detail: outcome.detail }
+            outcome.kind === "ready" ? expansionMatchesPatch(row, outcome.result) ? { status: "loaded", contents: outcome.result } : {
+              status: "error",
+              detail: "Loaded contents do not match this diff \u2014 the file changed while loading. Refresh the diff to try again."
+            } : { status: "error", detail: outcome.detail }
           )
         );
       });
@@ -9818,6 +10579,17 @@ ${prefix}`;
               )
             ] }),
             renderable?.kind === "files" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+              posted.listError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                "p",
+                {
+                  role: "alert",
+                  style: { padding: "2px 10px", color: muted, fontSize: 11, margin: 0 },
+                  children: [
+                    "Earlier comments could not be listed \u2014 ",
+                    posted.listError
+                  ]
+                }
+              ),
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                 "ul",
                 {
@@ -9913,6 +10685,7 @@ ${prefix}`;
                     expansion: expansions.get(`${source.diffHash}:${row.key}`),
                     expandable: mode === "workspace",
                     action,
+                    comment: commentUiFor(row),
                     ui,
                     onToggleCollapsed: (key) => setCollapsedFiles(toggleCollapsedKey(collapsedFiles, key)),
                     onExpand: expandFile,
@@ -9939,7 +10712,7 @@ ${prefix}`;
                 borderTop: `1px solid ${ui.border}`,
                 flexShrink: 0
               },
-              children: "Read-only diff on t3.vcs/diff 1.1 + t3.orchestration: unary small previews, sha256-verified streams for large payloads and turn diffs, status-driven refresh. Checkpoint diffs are view-only \u2014 revert runs through t3.orchestration/control. Diff-line comments are a deferred slice."
+              children: "Read-only diff on t3.vcs/diff 1.1 + t3.orchestration: unary small previews, sha256-verified streams for large payloads and turn diffs, status-driven refresh. Checkpoint diffs are view-only \u2014 revert runs through t3.orchestration/control. Line comments ride t3.messages/enrichment into the composer draft."
             }
           )
         ]
@@ -9948,7 +10721,7 @@ ${prefix}`;
   }
   var authored = defineExtension({
     id: manifestId,
-    version: "0.4.0",
+    version: "0.5.0",
     requires: [
       requireApi(vcsDiffApi),
       requireApi(vcsRepositoryApi),
@@ -9957,6 +10730,7 @@ ${prefix}`;
       requireApi(filePresentationApi),
       requireApi(orchestrationStatusApi),
       requireApi(orchestrationControlApi),
+      requireApi(messagesEnrichmentApi),
       requireApi(uiThemeApi),
       requireApi(uiKeybindingsApi),
       requireApi(uiPanelsApi),
