@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { ViewContext } from "@t3tools/extension-sdk/contracts";
+import { copyJson, type ViewContext } from "@t3tools/extension-sdk/contracts";
 
 const { readPreparedConnection, shellProjects } = vi.hoisted(() => ({
   readPreparedConnection: vi.fn<() => { httpBaseUrl: string } | null>(() => null),
@@ -60,7 +60,10 @@ const call = (method: string, input: object, threadId = "thread-a"): ClientProvi
 const threadRef = (threadId: string) =>
   scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make(threadId));
 
-type Listed = { entries: { url: string; lastVisitedAt: number; title?: string }[] };
+type Listed = {
+  entries: { url: string; lastVisitedAt: number; title?: string }[];
+  truncated?: true;
+};
 
 function errorCode(run: () => unknown): string | undefined {
   try {
@@ -137,6 +140,30 @@ describe("browser history client provider", () => {
       "https://site.test/53",
     ]);
     expect(listed.entries.some((entry) => entry.url === "https://site.test/5")).toBe(false);
+  });
+
+  it("answers a full list of maximum-length URLs inside the envelope, flagged truncated", () => {
+    const provider = createBrowserHistoryClientProvider(deps([READ, RECORD]));
+    // 50 distinct URLs at the native 2048-char normalization cap.
+    const urls = Array.from({ length: BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT }, (_, index) => {
+      const prefix = `https://site.test/${String(index).padStart(2, "0")}/`;
+      return prefix + "a".repeat(2048 - prefix.length);
+    });
+    for (const url of urls.slice(0, -1)) provider.invoke(call("record", { url }));
+    const written = provider.invoke(call("record", { url: urls.at(-1)! })) as Listed;
+    const listed = provider.invoke(call("list", {})) as Listed;
+    for (const answer of [written, listed]) {
+      expect(() => copyJson(answer)).not.toThrow();
+      expect(answer.truncated).toBe(true);
+      expect(answer.entries.length).toBeLessThan(urls.length);
+      // Most recent first, as stored.
+      expect(answer.entries.map((entry) => entry.url)).toEqual(
+        urls.toReversed().slice(0, answer.entries.length),
+      );
+    }
+    // The native list itself keeps every entry; only the answer is shortened.
+    const store = useBrowserHistoryStore.getState();
+    expect(store.byProjectKey["logical:project-a"]).toHaveLength(urls.length);
   });
 
   it("titles only existing entries and removes exact URLs", () => {

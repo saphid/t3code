@@ -9,7 +9,7 @@ import {
 } from "./capabilities.js";
 import type { JsonObject } from "./environment.js";
 import type { GlobalCommandDescriptor } from "./environment.js";
-import type { ViewContext } from "./contracts.js";
+import { MAX_PAYLOAD_BYTES, type ViewContext } from "./contracts.js";
 import type { WorkspaceReadTextInput, WorkspaceReadTextResult } from "./workspace.js";
 import { textEditsApi, textEditsApiV1 } from "./textEdits.js";
 import { workspaceResourcesApi, WORKSPACE_RESOURCES } from "./workspaceResources.js";
@@ -128,6 +128,11 @@ export const browserLocalServersApi = defineStreamApi<{
  * entry to the front, loopback aliases fold into one entry, and the list is
  * capped at 50. `setTitle` only enriches an existing entry; `remove` drops
  * the exact normalized URL.
+ *
+ * 1.1.0: a full list of long URLs can outgrow the payload envelope, so every
+ * answer keeps the most recent entries that fit `BROWSER_HISTORY_MAX_BYTES`
+ * and sets `truncated: true` when it dropped older ones. The stored list is
+ * unchanged; only the answer is shortened.
  */
 export const BROWSER_HISTORY = "t3.browser/history";
 export const BROWSER_READ_HISTORY = "t3.browser/read-history";
@@ -138,7 +143,32 @@ export type BrowserHistoryApiEntry = {
   readonly lastVisitedAt: number;
   readonly title?: string;
 };
-export type BrowserHistoryList = { readonly entries: readonly BrowserHistoryApiEntry[] };
+export type BrowserHistoryList = {
+  readonly entries: readonly BrowserHistoryApiEntry[];
+  readonly truncated?: true;
+};
+/** Serialized-answer budget: the envelope less headroom for the call wrapper. */
+export const BROWSER_HISTORY_MAX_BYTES = MAX_PAYLOAD_BYTES - 4096;
+
+/**
+ * The answer a history provider returns for an MRU-first list: the longest
+ * prefix whose serialization fits `BROWSER_HISTORY_MAX_BYTES`, flagged
+ * `truncated` when anything was dropped.
+ */
+export function fitBrowserHistoryList(
+  entries: readonly BrowserHistoryApiEntry[],
+): BrowserHistoryList {
+  const encoder = new TextEncoder();
+  let bytes = encoder.encode(JSON.stringify({ entries: [], truncated: true })).length;
+  const kept: BrowserHistoryApiEntry[] = [];
+  for (const { url, lastVisitedAt, title } of entries) {
+    const entry = title === undefined ? { url, lastVisitedAt } : { url, lastVisitedAt, title };
+    bytes += encoder.encode(JSON.stringify(entry)).length + (kept.length > 0 ? 1 : 0);
+    if (bytes > BROWSER_HISTORY_MAX_BYTES) return { entries: kept, truncated: true };
+    kept.push(entry);
+  }
+  return { entries: kept };
+}
 const browserHistoryUrlInput = {
   type: "object",
   additionalProperties: false,
@@ -152,7 +182,7 @@ export const browserHistoryApi = defineApi<{
   remove: { input: { url: string }; output: BrowserHistoryList };
 }>({
   id: BROWSER_HISTORY,
-  version: "1.0.0",
+  version: "1.1.0",
   methods: [
     {
       name: "list",

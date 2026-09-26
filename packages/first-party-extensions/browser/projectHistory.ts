@@ -18,7 +18,12 @@ import { type BrowserHistoryEntry, sanitizeHistoryEntries } from "./historyStore
 export type ProjectHistoryState =
   /** No project list yet — the view shows its own rows, without a spinner. */
   | { readonly kind: "loading" }
-  | { readonly kind: "ready"; readonly entries: readonly BrowserHistoryEntry[] }
+  | {
+      readonly kind: "ready";
+      readonly entries: readonly BrowserHistoryEntry[];
+      /** The host kept only the most recent entries that fit its answer budget. */
+      readonly truncated: boolean;
+    }
   /** The contract cannot serve this view; its own rows stand in, and say so. */
   | { readonly kind: "unavailable"; readonly message: string };
 
@@ -95,7 +100,12 @@ export function createProjectHistory(
     const current = () => !signal.aborted && sequence === issued;
     void request(signal).then(
       (result) => {
-        if (current()) onState({ kind: "ready", entries: sanitizeHistoryEntries(result?.entries) });
+        if (current())
+          onState({
+            kind: "ready",
+            entries: sanitizeHistoryEntries(result?.entries),
+            truncated: result?.truncated === true,
+          });
       },
       (error) => {
         if (current()) onState(projectHistoryErrorState(op, error));

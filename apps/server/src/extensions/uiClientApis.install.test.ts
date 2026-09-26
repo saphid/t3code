@@ -1,6 +1,11 @@
 import { EnvironmentId, ProjectId, type ClientProviderServerFrame } from "@t3tools/contracts";
 import type { HostApiRootAuthority } from "@t3tools/extension-runtime";
 import { createExtensionRuntime } from "@t3tools/extension-runtime";
+import {
+  BROWSER_HISTORY_MAX_ENTRIES,
+  fitBrowserHistoryList,
+  type BrowserHistoryList,
+} from "@t3tools/extension-sdk/catalogue";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -388,12 +393,19 @@ const threadContext: ViewContext = {
 const HISTORY_CONSUMER_MANIFEST =
   '{"format":2,"manifest":{"id":"test.history","apiVersion":1,"version":"1.0.0","surfaces":[]},' +
   '"serverEntry":"server.mjs","tools":[],"provides":[],' +
-  '"requires":[{"id":"t3.browser/history","versionRange":"^1.0.0"}],"dependencies":[]}';
+  '"requires":[{"id":"t3.browser/history","versionRange":"^1.1.0"}],"dependencies":[]}';
+
+/** A native-maximum project list: 50 distinct 2048-char URLs, most recent first. */
+const MAX_HISTORY = Array.from({ length: BROWSER_HISTORY_MAX_ENTRIES }, (_, index) => {
+  const prefix = `https://site.test/${String(index).padStart(2, "0")}/`;
+  return { url: prefix + "a".repeat(2048 - prefix.length), lastVisitedAt: index };
+});
 
 /**
  * `t3.browser/history` through the real broker and connect stream: reads and
  * writes are gated by their own grants before anything reaches the client,
- * and a granted call lands on the caller's own connection.
+ * a granted call lands on the caller's own connection, and a maximum-size
+ * list comes back budgeted rather than rejected at the envelope.
  */
 it.effect("t3.browser/history ops are gated by their grants and reach the client", () =>
   Effect.gen(function* () {
@@ -401,9 +413,11 @@ it.effect("t3.browser/history ops are gated by their grants and reach the client
     const path = yield* Path.Path;
     const clientApiProviders = yield* ClientApiProviders;
     const seen: string[] = [];
+    // What the client answers; unset answers with the requested URL alone.
+    let answer: BrowserHistoryList | undefined;
     const stream = yield* clientApiProviders.connect(
       { connectionId: "conn-h", sessionId: "session-a", announcedOrigin: { surface: "web" } },
-      { providers: [{ id: "t3.client/browser-history", version: "1.0.0" }] },
+      { providers: [{ id: "t3.client/browser-history", version: "1.1.0" }] },
     );
     const driver = yield* stream.pipe(
       Stream.runForEach((frame: ClientProviderServerFrame) =>
@@ -414,7 +428,7 @@ it.effect("t3.browser/history ops are gated by their grants and reach the client
           yield* clientApiProviders.respond("conn-h", {
             requestId: frame.requestId,
             ok: true,
-            value: { entries: url ? [{ url, lastVisitedAt: 1 }] : [] },
+            value: answer ?? { entries: url ? [{ url, lastVisitedAt: 1 }] : [] },
           });
         }),
       ),
@@ -454,7 +468,7 @@ it.effect("t3.browser/history ops are gated by their grants and reach the client
             installed.contentHash,
             {
               id: "t3.browser/history",
-              versionRange: "^1.0.0",
+              versionRange: "^1.1.0",
               method,
               input,
               context: threadContext,
@@ -491,6 +505,29 @@ it.effect("t3.browser/history ops are gated by their grants and reach the client
           yield* Effect.promise(() => invoke("record", { url: "https://example.com/" })),
         ).toEqual({ entries: [{ url: "https://example.com/", lastVisitedAt: 1 }] });
         expect(seen).toEqual(["list", "record"]);
+
+        // The whole native-maximum list is over the envelope: the bridge refuses it.
+        answer = { entries: MAX_HISTORY };
+        yield* Effect.promise(() =>
+          expect(invoke("list", {})).rejects.toThrow("exceeds the envelope bound"),
+        );
+        // Budgeted as the client provider answers, a read and a write both land.
+        answer = fitBrowserHistoryList(MAX_HISTORY);
+        for (const [method, input] of [
+          ["list", {}],
+          ["record", { url: MAX_HISTORY[0]!.url }],
+        ] as const) {
+          const result = (yield* Effect.promise(() => invoke(method, input))) as {
+            entries: { url: string }[];
+            truncated?: true;
+          };
+          expect(result.truncated).toBe(true);
+          expect(result.entries.length).toBeGreaterThan(0);
+          expect(result.entries.length).toBeLessThan(MAX_HISTORY.length);
+          expect(result.entries.map((entry) => entry.url)).toEqual(
+            MAX_HISTORY.slice(0, result.entries.length).map((entry) => entry.url),
+          );
+        }
       } finally {
         yield* Effect.promise(() => runtime.dispose());
       }

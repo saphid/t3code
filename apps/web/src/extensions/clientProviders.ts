@@ -6,6 +6,7 @@ import {
   BROWSER_READ_HISTORY,
   BROWSER_RECORD_HISTORY,
   checkExternalUrl,
+  fitBrowserHistoryList,
   UI_EXTERNAL_OPEN,
 } from "@t3tools/extension-sdk/catalogue";
 import type { Json } from "@t3tools/extension-sdk/contracts";
@@ -1323,7 +1324,8 @@ export function createBrowserHistoryClientProvider(
           environmentHostnameFor(ref),
         );
       else if (call.method === "remove") removeUrlForThread(ref, readInputString(input, "url")!);
-      return { entries: readThreadHistory(ref).map((entry) => ({ ...entry })) };
+      // A full list of long URLs outgrows the envelope; answer with what fits.
+      return fitBrowserHistoryList(readThreadHistory(ref));
     },
   };
 }
@@ -1356,7 +1358,7 @@ export const CLIENT_PROVIDER_DESCRIPTORS = [
   { id: "t3.client/terminal-appearance", version: "1.0.0" },
   { id: "t3.client/preferences", version: "1.0.0" },
   { id: "t3.client/external", version: "1.0.0" },
-  { id: "t3.client/browser-history", version: "1.0.0" },
+  { id: "t3.client/browser-history", version: "1.1.0" },
 ] as const;
 
 export const CLIENT_PROVIDER_CLIENT_TAG = isElectron ? "desktop" : "web";

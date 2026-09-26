@@ -47,7 +47,9 @@ The panel renders through public contracts only:
   Workspace-file presentations never enter history. Until the list arrives,
   and whenever the contract cannot serve it (denied grant, no connected
   provider), the recents show this view's own saved list and a note names
-  why.
+  why. When the full list of long URLs is larger than one answer can carry,
+  the host returns the most recent entries that fit and the recents note
+  that the list was truncated.
 - Favicons — the package half of the native favicon row; capture is
   engine-blocked. The native panel's PNG favicons are captured by the
   desktop host (`FaviconCapture.ts`) and delivered over desktop-internal

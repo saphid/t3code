@@ -75,6 +75,24 @@ NodeTest.describe("createProjectHistory", () => {
         { url: "https://a.test/", lastVisitedAt: 2, title: "A" },
         { url: "https://b.test/", lastVisitedAt: 1 },
       ],
+      truncated: false,
+    });
+  });
+
+  NodeTest.it("carries the host's truncation flag so the view can say so", async () => {
+    const api = scriptedApi();
+    const log = stateLog();
+    const history = createProjectHistory(api, new AbortController().signal, log.onState);
+    history.record("https://a.test/");
+    const reported = log.next();
+    api.calls[0].answer.resolve({
+      entries: [{ url: "https://a.test/", lastVisitedAt: 2 }],
+      truncated: true,
+    });
+    NodeAssert.deepEqual(await reported, {
+      kind: "ready",
+      entries: [{ url: "https://a.test/", lastVisitedAt: 2 }],
+      truncated: true,
     });
   });
 
@@ -168,7 +186,10 @@ NodeTest.describe("displayedHistory", () => {
     NodeAssert.equal(displayedHistory({ kind: "unavailable", message: "x" }, own), own);
   });
   NodeTest.it("shows the project list once ready, even when it is empty", () => {
-    NodeAssert.deepEqual(displayedHistory({ kind: "ready", entries: [] }, own), []);
+    NodeAssert.deepEqual(
+      displayedHistory({ kind: "ready", entries: [], truncated: false }, own),
+      [],
+    );
   });
 });
 

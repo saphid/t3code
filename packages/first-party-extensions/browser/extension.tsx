@@ -1093,6 +1093,11 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
               {projectHistoryState.message}
             </p>
           )}
+          {projectHistoryState.kind === "ready" && projectHistoryState.truncated && (
+            <p role="note" style={{ margin: 0, fontSize: 11, color: muted }}>
+              Project history truncated — showing the most recent entries that fit.
+            </p>
+          )}
           <LocalServersSection
             servers={landing.serverList}
             notice={landing.localNotice}

@@ -915,7 +915,8 @@ export const CLIENT_EXTERNAL_API = validateApiDefinition({
 /**
  * The `t3.browser/history` result, shared by the public and private areas:
  * the project's URL history, most-recently-visited first, at most 50 entries
- * (the native browser history cap).
+ * (the native browser history cap). `truncated` is present only when older
+ * entries were dropped to keep the response inside the payload envelope.
  */
 export const browserHistoryEntriesSchema = {
   type: "object",
@@ -936,6 +937,7 @@ export const browserHistoryEntriesSchema = {
         },
       },
     },
+    truncated: { const: true },
   },
 } as const;
 
@@ -948,7 +950,7 @@ const historyUrl = { type: "string", minLength: 1, maxLength: 4096 } as const;
  */
 export const CLIENT_BROWSER_HISTORY_API = validateApiDefinition({
   id: "t3.client/browser-history",
-  version: "1.0.0",
+  version: "1.1.0",
   methods: [
     {
       name: "list",
