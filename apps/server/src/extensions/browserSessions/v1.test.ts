@@ -1,4 +1,7 @@
 import {
+  BrowserEnginePageStatus,
+  type BrowserEngineHostStreamEvent,
+  type PreviewNavStatus,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   ExtensionOperationError,
@@ -23,6 +26,9 @@ import { createExtensionRuntime } from "@t3tools/extension-runtime";
 import { it, expect, describe } from "@effect/vitest";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
@@ -30,6 +36,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ProcessRunner from "../../processRunner.ts";
+import * as BrowserEngineHosts from "../../preview/BrowserEngineHosts.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import { createBrowserSessionsApiProvider } from "./v1.ts";
 
@@ -116,10 +123,17 @@ const defaultThreads = makeThreads({
   deleted: { projectId: PROJECT_ID, worktreePath: null, deletedAt: "2026-09-14T00:00:00.000Z" },
 });
 
+/** No desktop engine host: web, mobile, relay and tunnel environments. */
+const noEngineHosts = {
+  dispatch: () => Effect.succeed({ outcome: "unknown" as const }),
+  hasHost: Effect.succeed(false),
+};
+
 const makeDeps = (
   preview: PreviewManager.PreviewManager["Service"],
   overrides: {
     readonly threads?: ReturnType<typeof makeThreads>;
+    readonly engineHosts?: BrowserEngineHosts.BrowserEngineHosts["Service"];
   } = {},
 ) => ({
   environmentId: ENV_ID,
@@ -133,14 +147,68 @@ const makeDeps = (
   },
   threads: overrides.threads ?? defaultThreads,
   preview,
+  engineHosts: overrides.engineHosts ?? noEngineHosts,
 });
 
-/** A real PreviewManager under test — provenance semantics are the point. */
+/**
+ * A real PreviewManager and engine host registry under test — provenance
+ * and host authority are the point.
+ */
 const harness = Effect.gen(function* () {
   const preview = yield* PreviewManager.PreviewManager;
-  const provider = createBrowserSessionsApiProvider(makeDeps(preview));
-  return { preview, provider };
-}).pipe(Effect.provide(PreviewManager.layer));
+  const engineHosts = yield* BrowserEngineHosts.BrowserEngineHosts;
+  const provider = createBrowserSessionsApiProvider(makeDeps(preview, { engineHosts }));
+  return { preview, engineHosts, provider };
+}).pipe(
+  Effect.provide(
+    BrowserEngineHosts.layer.pipe(
+      Layer.provideMerge(PreviewManager.layer),
+      Layer.provide(NodeServices.layer),
+    ),
+  ),
+);
+
+const DESKTOP_SOCKET = { socketId: "desktop-ws", sessionSubject: "desktop-bootstrap" };
+
+const decodePageStatus = Schema.decodeUnknownSync(BrowserEnginePageStatus);
+
+const pageStatus = (navStatus: PreviewNavStatus) =>
+  decodePageStatus({
+    navStatus,
+    canGoBack: true,
+    canGoForward: false,
+    zoomFactor: 1.25,
+    appearance: "dark" as const,
+    audioMuted: false,
+    audible: true,
+    favicon: { dataUrl: "data:image/png;base64,AAAA", pageUrl: "http://localhost:5173/" },
+  });
+
+/**
+ * Registers the desktop as an engine host and claims `tabId` under
+ * `generation`. The returned queue yields the host's command events.
+ */
+const attachDesktopHost = Effect.fn("test.attachDesktopHost")(function* (
+  engineHosts: BrowserEngineHosts.BrowserEngineHosts["Service"],
+  target: { readonly tabId: string; readonly serverEpoch: string },
+  generation = "41",
+) {
+  const events = yield* Queue.unbounded<BrowserEngineHostStreamEvent>();
+  const stream = yield* engineHosts.register(DESKTOP_SOCKET);
+  const fiber = yield* stream.pipe(
+    Stream.runForEach((event) => Queue.offer(events, event)),
+    Effect.forkScoped,
+  );
+  const registered = yield* Queue.take(events);
+  if (registered.type !== "registered") throw new Error("expected registration first");
+  const fence = {
+    hostConnectionId: registered.hostConnectionId,
+    target: { threadId: ThreadId.make(THREAD_ID), ...target },
+    engineGeneration: generation,
+  };
+  yield* engineHosts.claim(DESKTOP_SOCKET, fence);
+  return { events, fence, fiber };
+});
 
 const invoke = (
   provider: HostApiProvider,
@@ -365,9 +433,9 @@ describe("browser sessions adapter", () => {
     }),
   );
 
-  it.effect("navigate acceptance never projects as loaded until the engine reports", () =>
+  it.effect("navigate acceptance never projects as loaded until the owner host reports", () =>
     Effect.gen(function* () {
-      const { provider, preview } = yield* harness;
+      const { provider, preview, engineHosts } = yield* harness;
       const opened = (yield* invoke(provider, "open", {})) as {
         readonly serverEpoch: string;
         readonly session: { readonly tabId: string };
@@ -386,12 +454,30 @@ describe("browser sessions adapter", () => {
       // projection must still say pending because the engine has not reported.
       expect(navigated.session.navigation.kind).toBe("pending");
 
+      // The unfenced legacy report is not engine provenance (P08-NAV-ACK).
       yield* preview.reportStatus({
         threadId: ThreadId.make(THREAD_ID),
         tabId: opened.session.tabId,
-        navStatus: { _tag: "Loading", url: "http://localhost:5173/", title: "" },
-        canGoBack: false,
+        navStatus: { _tag: "Success", url: "http://localhost:5173/", title: "Dev" },
+        canGoBack: true,
         canGoForward: false,
+      });
+      const afterLegacy = (yield* invoke(provider, "list", {})) as {
+        readonly sessions: readonly {
+          readonly navigation: { readonly kind: string };
+          readonly canGoBack: boolean;
+        }[];
+      };
+      expect(afterLegacy.sessions[0]?.navigation.kind).toBe("pending");
+      expect(afterLegacy.sessions[0]?.canGoBack).toBe(false);
+
+      const { fence } = yield* attachDesktopHost(engineHosts, {
+        tabId: opened.session.tabId,
+        serverEpoch: opened.serverEpoch,
+      });
+      yield* engineHosts.report(DESKTOP_SOCKET, {
+        ...fence,
+        status: pageStatus({ _tag: "Loading", url: "http://localhost:5173/", title: "" }),
       });
       const afterReport = (yield* invoke(provider, "list", {})) as {
         readonly sessions: readonly {
@@ -400,12 +486,9 @@ describe("browser sessions adapter", () => {
       };
       expect(afterReport.sessions[0]?.navigation.kind).toBe("loading");
 
-      yield* preview.reportStatus({
-        threadId: ThreadId.make(THREAD_ID),
-        tabId: opened.session.tabId,
-        navStatus: { _tag: "Success", url: "http://localhost:5173/", title: "Dev" },
-        canGoBack: true,
-        canGoForward: false,
+      yield* engineHosts.report(DESKTOP_SOCKET, {
+        ...fence,
+        status: pageStatus({ _tag: "Success", url: "http://localhost:5173/", title: "Dev" }),
       });
       const loaded = (yield* invoke(provider, "list", {})) as {
         readonly sessions: readonly {
@@ -428,22 +511,24 @@ describe("browser sessions adapter", () => {
 
   it.effect("engine-reported failure projects the closed failure enum, never native strings", () =>
     Effect.gen(function* () {
-      const { provider, preview } = yield* harness;
+      const { provider, engineHosts } = yield* harness;
       const opened = (yield* invoke(provider, "open", { url: "localhost:9" })) as {
+        readonly serverEpoch: string;
         readonly session: { readonly tabId: string };
       };
-      yield* preview.reportStatus({
-        threadId: ThreadId.make(THREAD_ID),
+      const { fence } = yield* attachDesktopHost(engineHosts, {
         tabId: opened.session.tabId,
-        navStatus: {
+        serverEpoch: opened.serverEpoch,
+      });
+      yield* engineHosts.report(DESKTOP_SOCKET, {
+        ...fence,
+        status: pageStatus({
           _tag: "LoadFailed",
           url: "http://localhost:9/",
           title: "",
           code: -105,
           description: "net::ERR_NAME_NOT_RESOLVED with internal details",
-        },
-        canGoBack: false,
-        canGoForward: false,
+        }),
       });
       const listed = (yield* invoke(provider, "list", {})) as {
         readonly sessions: readonly {
@@ -568,7 +653,7 @@ describe("browser sessions adapter", () => {
     }),
   );
 
-  it.effect("commands without engine dispatch fail by name, never silently accepted", () =>
+  it.effect("commands without an owning engine host fail by name, never silently accepted", () =>
     Effect.gen(function* () {
       const { provider } = yield* harness;
       const opened = (yield* invoke(provider, "open", {})) as {
@@ -608,6 +693,138 @@ describe("browser sessions adapter", () => {
         zoomFactor: 99,
       });
       expect(badZoom.detail).toContain("BrowserSessionInputError");
+    }),
+  );
+
+  it.effect("engine commands route to the owning host and receipts carry its answer", () =>
+    Effect.gen(function* () {
+      const { provider, engineHosts } = yield* harness;
+      const opened = (yield* invoke(provider, "open", { url: "localhost:5173" })) as {
+        readonly serverEpoch: string;
+        readonly session: { readonly tabId: string };
+      };
+      const { events, fence } = yield* attachDesktopHost(engineHosts, {
+        tabId: opened.session.tabId,
+        serverEpoch: opened.serverEpoch,
+      });
+      const capabilities = (yield* invoke(provider, "getCapabilities", {})) as {
+        readonly commands: readonly string[];
+        readonly presentation: unknown;
+      };
+      expect(capabilities.commands).toEqual([
+        "resize",
+        "back",
+        "forward",
+        "reload",
+        "hardReload",
+        "zoom",
+        "setAppearance",
+        "setAudioMuted",
+      ]);
+      // Presentation stays a named deferral (P08-PRESENTATION-SLOT).
+      expect(capabilities.presentation).toEqual({ supported: false, reason: "desktop-required" });
+
+      const answer = (result: BrowserEngineHosts.BrowserEngineDispatchOutcome) =>
+        Effect.gen(function* () {
+          const event = yield* Queue.take(events);
+          if (event.type !== "command") throw new Error("expected a command event");
+          if (result.outcome !== "unknown") {
+            yield* engineHosts.commandResult(DESKTOP_SOCKET, {
+              hostConnectionId: fence.hostConnectionId,
+              commandId: event.commandId,
+              result,
+            });
+          }
+          return event;
+        });
+      const guard = {
+        tabId: opened.session.tabId,
+        serverEpoch: opened.serverEpoch,
+        expectedEngineGeneration: "41",
+      };
+
+      const hostAnswer = yield* Effect.forkChild(answer({ outcome: "applied" }));
+      const zoomed = (yield* invoke(provider, "zoom", { ...guard, zoomFactor: 1.5 })) as {
+        readonly outcome: string;
+      };
+      const zoomEvent = yield* Fiber.join(hostAnswer);
+      expect(zoomed.outcome).toBe("accepted");
+      // The host receives the fenced target and generation, never a lease.
+      expect(zoomEvent).toMatchObject({
+        target: fence.target,
+        engineGeneration: "41",
+        command: { _tag: "zoom", zoomFactor: 1.5 },
+      });
+
+      const rejecting = yield* Effect.forkChild(
+        answer({ outcome: "rejected", reason: "not-applicable" }),
+      );
+      const back = (yield* invoke(provider, "back", guard)) as { readonly outcome: string };
+      yield* Fiber.join(rejecting);
+      expect(back.outcome).toBe("rejected");
+
+      // A caller fenced on a replaced guest is refused before dispatch.
+      const stale = yield* invokeError(provider, "reload", {
+        ...guard,
+        expectedEngineGeneration: "40",
+      });
+      expect(stale.detail).toContain("BrowserStaleEngineGeneration");
+
+      // Page state comes only from the owner's report; favicon bytes stay server-side.
+      yield* engineHosts.report(DESKTOP_SOCKET, {
+        ...fence,
+        status: pageStatus({ _tag: "Success", url: "http://localhost:5173/", title: "Dev" }),
+      });
+      const listed = (yield* invoke(provider, "list", {})) as {
+        readonly sessions: readonly Record<string, unknown>[];
+      };
+      expect(listed.sessions[0]).toMatchObject({
+        engine: { state: "ready", generation: "41" },
+        zoomFactor: 1.25,
+        appearance: "dark",
+        audioMuted: false,
+        audible: true,
+        canGoBack: true,
+      });
+      expect(Object.keys(listed.sessions[0] ?? {})).not.toContain("favicon");
+    }),
+  );
+
+  it.effect("host disconnect answers in-flight commands unknown and unbinds the engine", () =>
+    Effect.gen(function* () {
+      const { provider, engineHosts } = yield* harness;
+      const opened = (yield* invoke(provider, "open", { url: "localhost:5173" })) as {
+        readonly serverEpoch: string;
+        readonly session: { readonly tabId: string };
+      };
+      const { events, fiber } = yield* attachDesktopHost(engineHosts, {
+        tabId: opened.session.tabId,
+        serverEpoch: opened.serverEpoch,
+      });
+      // The host receives the command, then its socket drops without answering.
+      const dropHost = yield* Effect.forkChild(
+        Effect.andThen(Queue.take(events), Fiber.interrupt(fiber)),
+      );
+      const reloaded = (yield* invoke(provider, "reload", {
+        tabId: opened.session.tabId,
+        serverEpoch: opened.serverEpoch,
+        expectedEngineGeneration: null,
+      })) as { readonly outcome: string };
+      yield* Fiber.join(dropHost);
+      expect(reloaded.outcome).toBe("unknown");
+
+      const listed = (yield* invoke(provider, "list", {})) as {
+        readonly sessions: readonly { readonly engine: unknown }[];
+      };
+      expect(listed.sessions[0]?.engine).toEqual({
+        state: "unavailable",
+        generation: null,
+        reason: "desktop-required",
+      });
+      const capabilities = (yield* invoke(provider, "getCapabilities", {})) as {
+        readonly commands: readonly string[];
+      };
+      expect(capabilities.commands).toEqual(["resize"]);
     }),
   );
 

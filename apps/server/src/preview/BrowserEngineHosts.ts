@@ -190,13 +190,18 @@ export const make = Effect.gen(function* () {
       const commandId = yield* randomId;
       const deferred = yield* Deferred.make<BrowserEngineDispatchOutcome>();
       host.pending.set(commandId, deferred);
-      yield* Queue.offer(host.queue, {
+      const offered = yield* Queue.offer(host.queue, {
         type: "command",
         commandId,
         target: input.target,
         engineGeneration: input.engineGeneration,
         command: input.command,
       });
+      // The host disconnected between lookup and offer; nothing was sent.
+      if (!offered) {
+        host.pending.delete(commandId);
+        return { outcome: "unknown" } as const;
+      }
       const outcome = yield* Deferred.await(deferred).pipe(
         Effect.timeoutOption(COMMAND_ACK_TIMEOUT_MS),
         Effect.ensuring(Effect.sync(() => host.pending.delete(commandId))),

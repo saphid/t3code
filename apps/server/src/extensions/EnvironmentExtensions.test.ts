@@ -39,6 +39,7 @@ import { toSdkContext } from "./scope.ts";
 import { extensionWorkerLaunch, make } from "./EnvironmentExtensions.ts";
 import { TerminalManager } from "../terminal/Manager.ts";
 import { PreviewManager } from "../preview/Manager.ts";
+import { BrowserEngineHosts } from "../preview/BrowserEngineHosts.ts";
 import { PreviewAutomationBroker } from "../mcp/PreviewAutomationBroker.ts";
 import { BrowserFrameLeases } from "../browserFrames/BrowserFrameLeases.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
@@ -296,6 +297,7 @@ function fixture() {
     Layer.mock(ProjectFaviconResolver.ProjectFaviconResolver)({}),
     Layer.mock(ServerSecretStore.ServerSecretStore)({}),
     Layer.mock(PreviewManager)({}),
+    Layer.mock(BrowserEngineHosts)({}),
     Layer.mock(PreviewAutomationBroker)({}),
     Layer.mock(BrowserFrameLeases)({}),
     Layer.mock(PullRequestService)({}),
