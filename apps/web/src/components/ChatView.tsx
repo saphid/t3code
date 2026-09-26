@@ -1371,12 +1371,24 @@ export default function ChatView(props: ChatViewProps) {
     environmentId: activeThread?.environmentId ?? null,
     threadId: activeThreadId,
   });
+  // Extension-created sessions stay out of native terminal targeting, but their
+  // ids still reserve allocation so a native open never reuses one.
+  const activeThreadExtensionTerminalIds = useMemo(
+    () =>
+      activeThreadKnownSessionsRaw.flatMap((session) =>
+        session.target.threadId === activeThreadId && session.state.summary?.origin === "extension"
+          ? [session.target.terminalId]
+          : [],
+      ),
+    [activeThreadId, activeThreadKnownSessionsRaw],
+  );
   const activeThreadKnownSessions = useMemo(() => {
     if (activeThreadId === null) {
       return [];
     }
     return activeThreadKnownSessionsRaw.filter(
-      (session) => session.target.threadId === activeThreadId,
+      (session) =>
+        session.target.threadId === activeThreadId && session.state.summary?.origin !== "extension",
     );
   }, [activeThreadId, activeThreadKnownSessionsRaw]);
   const activeServerOrderedTerminalIds = useMemo(
@@ -1463,8 +1475,14 @@ export default function ChatView(props: ChatViewProps) {
     [rightPanelState.surfaces],
   );
   const allocatableActiveTerminalIds = useMemo(
-    () => [...new Set([...activeKnownTerminalIds, ...panelTerminalIds])],
-    [activeKnownTerminalIds, panelTerminalIds],
+    () => [
+      ...new Set([
+        ...activeKnownTerminalIds,
+        ...panelTerminalIds,
+        ...activeThreadExtensionTerminalIds,
+      ]),
+    ],
+    [activeKnownTerminalIds, activeThreadExtensionTerminalIds, panelTerminalIds],
   );
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
   const rightPanelOpen = rightPanelState.isOpen;

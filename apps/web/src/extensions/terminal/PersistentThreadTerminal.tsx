@@ -129,10 +129,24 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
       ),
     [panelSurfaces],
   );
+  // Sessions an extension view created belong to that view, not to drawer tabs.
+  const extensionTerminalIds = useMemo(
+    () =>
+      new Set(
+        knownTerminalSessions.flatMap((session) =>
+          session.state.summary?.origin === "extension" ? [session.target.terminalId] : [],
+        ),
+      ),
+    [knownTerminalSessions],
+  );
   const drawerTerminalSessions = useMemo(
     () =>
-      knownTerminalSessions.filter((session) => !panelTerminalIds.has(session.target.terminalId)),
-    [knownTerminalSessions, panelTerminalIds],
+      knownTerminalSessions.filter(
+        (session) =>
+          !panelTerminalIds.has(session.target.terminalId) &&
+          !extensionTerminalIds.has(session.target.terminalId),
+      ),
+    [extensionTerminalIds, knownTerminalSessions, panelTerminalIds],
   );
   const terminalLabelsById = useMemo(() => {
     const next = new Map<string, string>();
@@ -181,17 +195,18 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
     [drawerTerminalSessions],
   );
   // Every client-side id source participates in allocation: the server list
-  // lags fresh opens, and panel terminals are filtered out of the drawer's
-  // sessions — an id collision attaches two viewports to one PTY session.
+  // lags fresh opens, and panel and extension terminals are filtered out of the
+  // drawer's sessions — an id collision attaches two viewports to one PTY session.
   const allocatableTerminalIds = useMemo(
     () => [
       ...new Set([
         ...serverOrderedTerminalIds,
         ...terminalUiState.terminalIds,
         ...panelTerminalIds,
+        ...extensionTerminalIds,
       ]),
     ],
-    [panelTerminalIds, serverOrderedTerminalIds, terminalUiState.terminalIds],
+    [extensionTerminalIds, panelTerminalIds, serverOrderedTerminalIds, terminalUiState.terminalIds],
   );
   const storeSetTerminalHeight = useTerminalUiStateStore((state) => state.setTerminalHeight);
   const storeSplitTerminal = useTerminalUiStateStore((state) => state.splitTerminal);
@@ -207,13 +222,25 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
     if (terminalIdListsEqual(serverOrderedTerminalIds, terminalUiState.terminalIds)) {
       return;
     }
+    // A strict subset usually means fresh opens the server has not listed yet,
+    // but a client tab that is known to be an extension session is never one.
     if (
-      serverTerminalIdsStrictSubsetOfClient(serverOrderedTerminalIds, terminalUiState.terminalIds)
+      serverTerminalIdsStrictSubsetOfClient(
+        serverOrderedTerminalIds,
+        terminalUiState.terminalIds,
+      ) &&
+      !terminalUiState.terminalIds.some((id) => extensionTerminalIds.has(id))
     ) {
       return;
     }
     reconcileTerminalIds(threadRef, serverOrderedTerminalIds);
-  }, [reconcileTerminalIds, serverOrderedTerminalIds, terminalUiState.terminalIds, threadRef]);
+  }, [
+    extensionTerminalIds,
+    reconcileTerminalIds,
+    serverOrderedTerminalIds,
+    terminalUiState.terminalIds,
+    threadRef,
+  ]);
   const [localFocusRequestId, setLocalFocusRequestId] = useState(0);
   const worktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
   const effectiveWorktreePath = useMemo(() => {

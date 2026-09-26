@@ -32,6 +32,7 @@ import {
   type ResourceMonitorProcessTableEntry,
   type TerminalRestartInput,
   type TerminalSessionSnapshot,
+  type TerminalSessionOrigin,
   type TerminalSessionStatus,
   type TerminalSummary,
   type TerminalWriteInput,
@@ -156,6 +157,7 @@ export class TerminalManager extends Context.Service<
      */
     readonly open: (
       input: TerminalOpenInput,
+      options?: TerminalLaunchOptions,
     ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
 
     /** Read bounded metadata for an existing session without starting or changing it. */
@@ -193,6 +195,7 @@ export class TerminalManager extends Context.Service<
      */
     readonly openOrAttach: (
       input: TerminalAttachInput,
+      options?: TerminalLaunchOptions,
     ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
 
     /**
@@ -217,6 +220,7 @@ export class TerminalManager extends Context.Service<
      */
     readonly restart: (
       input: TerminalRestartInput,
+      options?: TerminalLaunchOptions,
     ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
 
     /**
@@ -282,6 +286,15 @@ export interface ShellCandidate {
   args?: string[];
 }
 
+/**
+ * Server-side launch options that are never accepted from the public wire. The
+ * origin is recorded only when a call creates the session; attaching to or
+ * restarting an existing session keeps the origin it was created with.
+ */
+export interface TerminalLaunchOptions {
+  readonly origin?: TerminalSessionOrigin;
+}
+
 export interface TerminalStartInput extends TerminalOpenInput {
   cols: number;
   rows: number;
@@ -317,6 +330,7 @@ interface TerminalSessionState {
   /** Normalized child command name when `hasRunningSubprocess`; cleared when idle. */
   childCommandLabel: string | null;
   runtimeEnv: Record<string, string> | null;
+  origin: TerminalSessionOrigin | null;
 }
 
 interface PersistHistoryRequest {
@@ -423,6 +437,7 @@ function summary(session: TerminalSessionState): TerminalSummary {
     hasRunningSubprocess: session.hasRunningSubprocess,
     label: terminalWireLabel(session),
     updatedAt: session.updatedAt,
+    ...(session.origin ? { origin: session.origin } : {}),
   };
 }
 
@@ -2975,6 +2990,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   const openWithWorkspaceLease = Effect.fn("terminal.openLocked")(function* (
     input: TerminalOpenInput,
+    options?: TerminalLaunchOptions,
   ) {
     const terminalId = input.terminalId;
     yield* assertValidCwd(input.cwd);
@@ -3011,6 +3027,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         hasRunningSubprocess: false,
         childCommandLabel: null,
         runtimeEnv: normalizedRuntimeEnv(input.env),
+        origin: options?.origin ?? null,
       };
 
       const createdSession = session;
@@ -3097,19 +3114,21 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     return snapshot(liveSession);
   });
 
-  const openLocked = (input: TerminalOpenInput) =>
+  const openLocked = (input: TerminalOpenInput, options?: TerminalLaunchOptions) =>
     withWorkspaceLease(
       path.resolve(input.worktreePath ?? input.cwd),
-      openWithWorkspaceLease(input),
+      openWithWorkspaceLease(input, options),
     );
 
-  const open: TerminalManager["Service"]["open"] = (input) =>
+  const open: TerminalManager["Service"]["open"] = (input, options) =>
     withThreadLock(
       input.threadId,
-      resolveLaunchInputEnvironment(input).pipe(Effect.flatMap(openLocked)),
+      resolveLaunchInputEnvironment(input).pipe(
+        Effect.flatMap((resolved) => openLocked(resolved, options)),
+      ),
     );
 
-  const openOrAttach: TerminalManager["Service"]["openOrAttach"] = (input) =>
+  const openOrAttach: TerminalManager["Service"]["openOrAttach"] = (input, options) =>
     withThreadLock(
       input.threadId,
       Effect.gen(function* () {
@@ -3129,7 +3148,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             terminalId,
             cwd: input.cwd,
           });
-          return yield* openLocked(resolvedInput);
+          return yield* openLocked(resolvedInput, options);
         }
 
         const session = existing.value;
@@ -3142,7 +3161,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             terminalId,
             cwd: input.cwd,
           });
-          return yield* openLocked(resolvedInput);
+          return yield* openLocked(resolvedInput, options);
         }
 
         if (
@@ -3535,7 +3554,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }),
     );
 
-  const restartResolved = (input: TerminalRestartInput) =>
+  const restartResolved = (input: TerminalRestartInput, options?: TerminalLaunchOptions) =>
     Effect.gen(function* () {
       yield* increment(terminalRestartsTotal, { scope: "thread" });
       const terminalId = input.terminalId;
@@ -3572,6 +3591,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           hasRunningSubprocess: false,
           childCommandLabel: null,
           runtimeEnv: normalizedRuntimeEnv(input.env),
+          origin: options?.origin ?? null,
         };
         const createdSession = session;
         yield* modifyManagerState((state) => {
@@ -3612,14 +3632,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       return snapshot(session);
     });
 
-  const restart: TerminalManager["Service"]["restart"] = (input) =>
+  const restart: TerminalManager["Service"]["restart"] = (input, options) =>
     withThreadLock(
       input.threadId,
       resolveLaunchInputEnvironment(input).pipe(
         Effect.flatMap((resolved) =>
           withWorkspaceLease(
             path.resolve(resolved.worktreePath ?? resolved.cwd),
-            restartResolved(resolved),
+            restartResolved(resolved, options),
           ),
         ),
       ),

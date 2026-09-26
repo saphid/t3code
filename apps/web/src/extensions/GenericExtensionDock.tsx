@@ -1,4 +1,4 @@
-import { useCallback, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { PanelBottomCloseIcon, XIcon } from "lucide-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -13,7 +13,9 @@ import {
 import { WorkspaceExtensionSurface, useWorkspaceSurfaceTitles } from "./workspaceRegistry";
 
 // The dock frame stays host-owned: the user drags its height within these
-// bounds and the surface adapts its own content to the frame it is given.
+// bounds and the surface adapts its own content to the frame it is given. The
+// frame also grows past the user's height when the surface's chrome would
+// otherwise leave its body no room (see extensionSurfaceMinHeight).
 const DEFAULT_EXTENSION_DOCK_HEIGHT = 256;
 const MIN_EXTENSION_DOCK_HEIGHT = 160;
 const MAX_EXTENSION_DOCK_HEIGHT_RATIO = 0.75;
@@ -26,13 +28,147 @@ function maxExtensionDockHeight(): number {
   );
 }
 
-function clampExtensionDockHeight(height: number | undefined): number {
+function clampExtensionDockHeight(height: number | undefined, floor = 0): number {
   const safeHeight =
     height !== undefined && Number.isFinite(height) ? height : DEFAULT_EXTENSION_DOCK_HEIGHT;
   return Math.min(
-    Math.max(Math.round(safeHeight), MIN_EXTENSION_DOCK_HEIGHT),
+    Math.max(Math.round(safeHeight), MIN_EXTENSION_DOCK_HEIGHT, floor),
     maxExtensionDockHeight(),
   );
+}
+
+// Height the host guarantees a surface's flexible body. Surface chrome can grow
+// with content (the terminal view lists one row per session), so no fixed dock
+// minimum keeps the body visible; the frame instead auto-grows to fit.
+export const MIN_EXTENSION_SURFACE_BODY_HEIGHT = 120;
+
+type SurfaceStyle = Pick<
+  CSSStyleDeclaration,
+  | "display"
+  | "flexDirection"
+  | "flexGrow"
+  | "position"
+  | "rowGap"
+  | "paddingTop"
+  | "paddingBottom"
+  | "borderTopWidth"
+  | "borderBottomWidth"
+>;
+
+const px = (value: string) => Number.parseFloat(value) || 0;
+const isColumnFlex = (style: SurfaceStyle) =>
+  (style.display === "flex" || style.display === "inline-flex") && style.flexDirection === "column";
+
+type GetSurfaceStyle = (element: Element) => SurfaceStyle;
+const computedStyle: GetSurfaceStyle = (element) => getComputedStyle(element);
+
+/** The surface's layout root: the first column-flex element below single-child wrappers. */
+function extensionSurfaceRoot(panel: Element, getStyle: GetSurfaceStyle): Element | null {
+  let element = panel.firstElementChild;
+  for (let depth = 0; element && depth < 8; depth++) {
+    const style = getStyle(element);
+    if (style.display !== "contents" && isColumnFlex(style) && element.children.length > 1)
+      return element;
+    element =
+      style.display === "contents" || element.children.length === 1
+        ? element.firstElementChild
+        : null;
+  }
+  return null;
+}
+
+/**
+ * The frame height a surface needs so its flexible body keeps
+ * `MIN_EXTENSION_SURFACE_BODY_HEIGHT`: the non-growing children of its
+ * column-flex root plus that floor, or 0 when the surface has no such root.
+ * Child heights are intrinsic, so growing the frame never changes the answer.
+ */
+export function extensionSurfaceMinHeight(
+  panel: Element,
+  getStyle: GetSurfaceStyle = computedStyle,
+): number {
+  const root = extensionSurfaceRoot(panel, getStyle);
+  if (!root) return 0;
+  const rootStyle = getStyle(root);
+  let fixed = 0;
+  let flowCount = 0;
+  let flexible = false;
+  for (const child of root.children) {
+    const style = getStyle(child);
+    if (style.display === "none" || style.position === "absolute" || style.position === "fixed")
+      continue;
+    flowCount++;
+    if (px(style.flexGrow) > 0) flexible = true;
+    else fixed += child.getBoundingClientRect().height;
+  }
+  if (!flexible) return 0;
+  return Math.ceil(
+    fixed +
+      px(rootStyle.rowGap) * Math.max(flowCount - 1, 0) +
+      px(rootStyle.paddingTop) +
+      px(rootStyle.paddingBottom) +
+      px(rootStyle.borderTopWidth) +
+      px(rootStyle.borderBottomWidth) +
+      MIN_EXTENSION_SURFACE_BODY_HEIGHT,
+  );
+}
+
+/**
+ * Track the dock height the mounted surface needs: its own minimum plus the
+ * dock's tab strip. Re-measures when the surface's children resize or change;
+ * equal answers bail out of React, so a frame that grows to fit settles.
+ */
+function useExtensionDockContentFloor(active: boolean) {
+  const frameRef = useRef<HTMLElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const [floor, setFloor] = useState(0);
+  useEffect(() => {
+    const frame = frameRef.current;
+    const panel = panelRef.current;
+    if (
+      !active ||
+      !frame ||
+      !panel ||
+      typeof ResizeObserver === "undefined" ||
+      typeof MutationObserver === "undefined"
+    ) {
+      setFloor(0);
+      return;
+    }
+    const measure = () => {
+      const surface = extensionSurfaceMinHeight(panel);
+      const dockChrome =
+        frame.getBoundingClientRect().height - panel.getBoundingClientRect().height;
+      setFloor(surface > 0 ? Math.ceil(surface + dockChrome) : 0);
+    };
+    const resizes = new ResizeObserver(measure);
+    let root: Element | null = null;
+    // Chrome growth inside a root child (a new session row) resizes that child.
+    // Only child-list changes at or above the root can change which elements
+    // count, so deeper surface churn (terminal output) never reaches layout reads.
+    const observeSurface = () => {
+      resizes.disconnect();
+      resizes.observe(panel);
+      root = extensionSurfaceRoot(panel, computedStyle);
+      if (root) for (const child of root.children) resizes.observe(child);
+      measure();
+    };
+    const mutations = new MutationObserver((records) => {
+      const current = root;
+      if (
+        !current?.isConnected ||
+        records.some((record) => record.target === current || record.target.contains(current))
+      )
+        observeSurface();
+    });
+    mutations.observe(panel, { childList: true, subtree: true });
+    observeSurface();
+    return () => {
+      resizes.disconnect();
+      mutations.disconnect();
+    };
+  }, [active]);
+  return { floor, frameRef, panelRef };
 }
 
 export function GenericExtensionDock({ threadRef }: { threadRef: ScopedThreadRef }) {
@@ -73,9 +209,12 @@ function ThreadExtensionDock({
     animations.durationMs,
   );
   const selectedIndex = dock.surfaces.findIndex((surface) => surface.id === dock.activeSurfaceId);
-  const committedHeight = clampExtensionDockHeight(dock.height);
+  const { floor: contentFloor, frameRef, panelRef } = useExtensionDockContentFloor(dock.isOpen);
+  // The content floor raises the frame without rewriting the user's height, so
+  // the dock returns to it once the surface's chrome shrinks again.
+  const committedHeight = clampExtensionDockHeight(dock.height, contentFloor);
   const [dragHeight, setDragHeight] = useState<number | null>(null);
-  const dockHeight = dragHeight ?? committedHeight;
+  const dockHeight = dragHeight === null ? committedHeight : Math.max(dragHeight, contentFloor);
   const resizeStateRef = useRef<{
     pointerId: number;
     startY: number;
@@ -146,6 +285,7 @@ function ThreadExtensionDock({
   };
   return (
     <aside
+      ref={frameRef}
       aria-label="Extension dock"
       aria-hidden={!dock.isOpen}
       inert={!dock.isOpen}
@@ -220,6 +360,7 @@ function ThreadExtensionDock({
         </Button>
       </div>
       <div
+        ref={panelRef}
         id={panelId}
         role="tabpanel"
         aria-labelledby={`${panelId}-tab-${selectedIndex}`}
