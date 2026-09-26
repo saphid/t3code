@@ -15,7 +15,7 @@ const decodeJson = Schema.decodeUnknownEffect(Schema.Json);
 const decodeInvocation = Schema.decodeUnknownEffect(ExtensionInvokeInput);
 
 const dependencies = [McpInvocationContext, EnvironmentExtensions];
-export const ExtensionsToolkit = Toolkit.make(
+const ExtensionsToolkit = Toolkit.make(
   Tool.make("extensions_list", {
     description:
       "List enabled read-only extension tools granted to this provider session's project. Use nextCursor to page until null, and each returned contentHash for extensions_call. Scope comes from this MCP credential.",

@@ -56,7 +56,6 @@ export const subscribeInstalledApiClients = (listener: () => void) => {
     listeners.delete(listener);
   };
 };
-export const installedApiClientRevision = () => revision;
 
 /** Only successfully installed, hash-bound client sessions enter this registry. */
 export function registerInstalledApiClient(

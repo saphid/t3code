@@ -135,12 +135,6 @@ export function useWorkspaceSurfaceTitles(environmentId?: string) {
   );
   return useSyncExternalStore(subscribe, get, get);
 }
-export function workspaceSurfaceTitle(surfaceId: string, fallback: string, environmentId?: string) {
-  return (
-    (titlesByEnvironment.get(environmentId ?? "") ?? titlesByEnvironment.get(""))?.get(surfaceId) ??
-    fallback
-  );
-}
 export function WorkspaceExtensionSurface(props: {
   readonly record: ViewRecord;
   readonly visible: boolean;
@@ -215,7 +209,7 @@ export function decorateWorkspaceMessage(
   }
   return cards;
 }
-export function workspaceHasMessageDecorations() {
+function workspaceHasMessageDecorations() {
   return [...registrations.values()].some((entry) => entry.host.messageDecorationCount() > 0);
 }
 /** Reactivity must be observed even when a compiled row mounted before registration. */

@@ -104,7 +104,7 @@ export const SCRIPT_RUN_COMMAND_PATTERN = Schema.TemplateLiteral([
   Schema.Literal(".run"),
 ]);
 
-export const MAX_EXTENSION_COMMAND_ID_LENGTH = 80;
+const MAX_EXTENSION_COMMAND_ID_LENGTH = 80;
 /**
  * Plugin-registered commands are namespaced `ext.<pluginId>.<command>` so they
  * can never collide with the static/native command names above. The pluginId

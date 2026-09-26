@@ -1456,11 +1456,11 @@ export function findStringTerminatorIndex(input: string, start: number): number 
   return null;
 }
 
-export function isEscapeIntermediateByte(codePoint: number): boolean {
+function isEscapeIntermediateByte(codePoint: number): boolean {
   return codePoint >= 0x20 && codePoint <= 0x2f;
 }
 
-export function isEscapeFinalByte(codePoint: number): boolean {
+function isEscapeFinalByte(codePoint: number): boolean {
   return codePoint >= 0x30 && codePoint <= 0x7e;
 }
 
