@@ -176,7 +176,6 @@ import {
 } from "../proposedPlan";
 import {
   DEFAULT_INTERACTION_MODE,
-  DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
   type ChatMessage,
   isImageAttachment,
@@ -487,6 +486,7 @@ import {
   codexArtifactTemplatePromptToAppend,
   waitForStartedServerThread,
   shouldRefocusComposerOnWindowFocus,
+  resolveScriptTerminalTarget,
 } from "./ChatView.logic";
 import type { ThreadSyncPhase } from "../threadSync";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -1396,8 +1396,11 @@ export default function ChatView(props: ChatViewProps) {
     [activeThreadKnownSessions],
   );
   const activeKnownTerminalIds = useMemo(
-    () => [...new Set([...activeServerOrderedTerminalIds, ...terminalUiState.terminalIds])],
-    [activeServerOrderedTerminalIds, terminalUiState.terminalIds],
+    () =>
+      [...new Set([...activeServerOrderedTerminalIds, ...terminalUiState.terminalIds])].filter(
+        (terminalId) => !activeThreadExtensionTerminalIds.includes(terminalId),
+      ),
+    [activeServerOrderedTerminalIds, activeThreadExtensionTerminalIds, terminalUiState.terminalIds],
   );
   const activeTerminalLabelsById = useMemo(() => {
     const labels = new Map<string, string>();
@@ -3667,11 +3670,15 @@ export default function ChatView(props: ChatViewProps) {
         });
       }
       const targetCwd = options?.cwd ?? gitCwd ?? activeProject.workspaceRoot;
-      const baseTerminalId =
-        terminalUiState.activeTerminalId || activeKnownTerminalIds[0] || DEFAULT_THREAD_TERMINAL_ID;
-      const isBaseTerminalBusy = runningTerminalIds.includes(baseTerminalId);
-      const wantsNewTerminal = Boolean(options?.preferNewTerminal) || isBaseTerminalBusy;
-      const shouldCreateNewTerminal = wantsNewTerminal;
+      const { terminalId: targetTerminalId, isNew: shouldCreateNewTerminal } =
+        resolveScriptTerminalTarget({
+          activeTerminalId: terminalUiState.activeTerminalId,
+          knownTerminalIds: activeKnownTerminalIds,
+          extensionTerminalIds: activeThreadExtensionTerminalIds,
+          runningTerminalIds,
+          allocatableTerminalIds: allocatableActiveTerminalIds,
+          preferNewTerminal: Boolean(options?.preferNewTerminal),
+        });
       const targetWorktreePath = options?.worktreePath ?? activeThread.worktreePath ?? null;
 
       setTerminalUiLaunchContext({
@@ -3692,9 +3699,6 @@ export default function ChatView(props: ChatViewProps) {
         worktreePath: targetWorktreePath,
         ...(options?.env ? { extraEnv: options.env } : {}),
       });
-      const targetTerminalId = shouldCreateNewTerminal
-        ? nextTerminalId(allocatableActiveTerminalIds)
-        : baseTerminalId;
       const openTerminalInput: TerminalOpenInput = shouldCreateNewTerminal
         ? {
             threadId: activeThreadId,
@@ -3761,6 +3765,7 @@ export default function ChatView(props: ChatViewProps) {
       environmentId,
       openTerminal,
       activeKnownTerminalIds,
+      activeThreadExtensionTerminalIds,
       allocatableActiveTerminalIds,
       runningTerminalIds,
       terminalUiState.activeTerminalId,

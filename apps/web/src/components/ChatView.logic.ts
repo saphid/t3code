@@ -26,6 +26,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { videoMimeType } from "@t3tools/shared/video";
+import { nextTerminalId } from "@t3tools/shared/terminalLabels";
 import {
   appendCodexArtifactTemplateUsePrompt,
   codexArtifactTemplateUsePrompt,
@@ -33,6 +34,7 @@ import {
 } from "@t3tools/client-runtime/codex-artifact-templates";
 import {
   type ChatMessage,
+  DEFAULT_THREAD_TERMINAL_ID,
   isImageAttachment,
   type SessionPhase,
   type Thread,
@@ -685,6 +687,35 @@ export function reconcileMountedTerminalThreadIds(input: {
   }
 
   return nextThreadIds;
+}
+
+/**
+ * Picks the terminal a project script runs in. Extension-owned sessions are never
+ * a target, even when stale UI state still points at one; with no eligible native
+ * terminal, or when the base one is busy, a fresh id is allocated instead.
+ */
+export function resolveScriptTerminalTarget(input: {
+  activeTerminalId: string;
+  knownTerminalIds: ReadonlyArray<string>;
+  extensionTerminalIds: ReadonlyArray<string>;
+  runningTerminalIds: ReadonlyArray<string>;
+  allocatableTerminalIds: ReadonlyArray<string>;
+  preferNewTerminal: boolean;
+}): { terminalId: string; isNew: boolean } {
+  const extensionTerminalIds = new Set(input.extensionTerminalIds);
+  const baseTerminalId = [
+    input.activeTerminalId,
+    ...input.knownTerminalIds,
+    DEFAULT_THREAD_TERMINAL_ID,
+  ].find((terminalId) => terminalId.length > 0 && !extensionTerminalIds.has(terminalId));
+  if (
+    baseTerminalId === undefined ||
+    input.preferNewTerminal ||
+    input.runningTerminalIds.includes(baseTerminalId)
+  ) {
+    return { terminalId: nextTerminalId(input.allocatableTerminalIds), isNew: true };
+  }
+  return { terminalId: baseTerminalId, isNew: false };
 }
 
 export function revokeBlobPreviewUrl(previewUrl: string | undefined): void {
