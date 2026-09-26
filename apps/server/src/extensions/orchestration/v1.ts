@@ -278,14 +278,17 @@ export function createOrchestrationApiProviders(deps: Dependencies): readonly Ho
               ? "OrchestrationWorkflowEngineUnavailable"
               : `OrchestrationUnsupported: ${method}`,
           );
-        for (const name of [
-          "attachments",
-          "bootstrap",
-          "sourceProposedPlan",
-          "attachmentsByQuestionId",
-        ]) {
-          if (Object.hasOwn(safe, name)) return reject(`OrchestrationUnsupported: ${name}`);
-        }
+        // workflow.launch is closed: its own shape check below names every extra
+        // field, reserved turn fields included, OrchestrationInvalidInput.
+        if (method !== "workflow.launch")
+          for (const name of [
+            "attachments",
+            "bootstrap",
+            "sourceProposedPlan",
+            "attachmentsByQuestionId",
+          ]) {
+            if (Object.hasOwn(safe, name)) return reject(`OrchestrationUnsupported: ${name}`);
+          }
         const {
           commandId: _id,
           expectedEpoch: _epoch,
