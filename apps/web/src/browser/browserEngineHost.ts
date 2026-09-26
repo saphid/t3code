@@ -191,8 +191,18 @@ export interface ProfileCommandDeps {
     readonly profiles: ReadonlyArray<BrowserProfile>;
     readonly defaultProfileId: string;
   }>;
-  /** Asks the user at this desktop; `false` when refused or no prompt could show. */
-  readonly confirm: (message: string) => Promise<boolean>;
+  /**
+   * Asks the user at this desktop; `false` when refused, dismissed by
+   * `signal`, or no prompt could show.
+   */
+  readonly confirm: (message: string, signal: AbortSignal) => Promise<boolean>;
+  /** Aborted when the server cancels this command. */
+  readonly signal: AbortSignal;
+  /**
+   * Import only: reports the confirmation and resolves once the server
+   * revalidated the caller — `true` to proceed, `false` when cancelled.
+   */
+  readonly proceed: () => Promise<boolean>;
 }
 
 const IMPORT_LABEL_MAX = 128;
@@ -291,8 +301,12 @@ export async function executeProfileCommand(
         }
         const confirmed = await deps.confirm(
           `${command.requester} wants to import cookies from ${source.name} (${importProfileLabel(sourceProfile.name, index)}) into the "${target.name}" browser profile. Sites signed in there will be signed in here too.`,
+          deps.signal,
         );
+        if (deps.signal.aborted) return rejected("cancelled");
         if (!confirmed) return { outcome: "declined" };
+        // Nothing is read until the server has rechecked the caller.
+        if (!(await deps.proceed())) return rejected("cancelled");
         try {
           const result = await bridge.importBrowserCookies({
             environmentId,
@@ -329,16 +343,37 @@ export function createEngineHostEventHandler(input: {
 }): (result: AsyncResult.AsyncResult<BrowserEngineHostStreamEvent, unknown>) => void {
   const { environmentId, bridge, sendResult } = input;
   const handled = new Set<string>();
+  /** Running profile commands, cancellable by the server until they settle. */
+  const running = new Map<
+    string,
+    { readonly abort: AbortController; proceed?: (proceed: boolean) => void }
+  >();
   return (result) => {
     const { setHostConnectionId } = useBrowserEngineHostStore.getState();
+    // A lost or replaced registration can no longer receive proceed.
+    const cancelRunning = () => {
+      for (const entry of running.values()) {
+        entry.abort.abort();
+        entry.proceed?.(false);
+      }
+      running.clear();
+    };
     if (AsyncResult.isFailure(result)) {
+      cancelRunning();
       setHostConnectionId(environmentId, null);
       return;
     }
     if (!AsyncResult.isSuccess(result)) return;
     const event = result.value;
     if (event.type === "registered") {
+      cancelRunning();
       setHostConnectionId(environmentId, event.hostConnectionId);
+      return;
+    }
+    if (event.type === "profile-command-proceed" || event.type === "profile-command-cancel") {
+      const entry = running.get(event.commandId);
+      if (event.type === "profile-command-cancel") entry?.abort.abort();
+      entry?.proceed?.(event.type === "profile-command-proceed");
       return;
     }
     const hostConnectionId =
@@ -349,12 +384,31 @@ export function createEngineHostEventHandler(input: {
       handled.delete(handled.values().next().value!);
     }
     if (event.type === "profile-command") {
+      const { commandId } = event;
+      const entry: { abort: AbortController; proceed?: (proceed: boolean) => void } = {
+        abort: new AbortController(),
+      };
+      running.set(commandId, entry);
+      const proceed = () =>
+        new Promise<boolean>((resolve) => {
+          if (entry.abort.signal.aborted) return resolve(false);
+          entry.proceed = resolve;
+          sendResult({ hostConnectionId, commandId, result: { outcome: "confirmed" } });
+        });
       void executeProfileCommand(
-        { environmentId, bridge, profiles: input.profiles, confirm: input.confirm },
+        {
+          environmentId,
+          bridge,
+          profiles: input.profiles,
+          confirm: input.confirm,
+          signal: entry.abort.signal,
+          proceed,
+        },
         event.command,
-      ).then((outcome) =>
-        sendResult({ hostConnectionId, commandId: event.commandId, result: outcome }),
-      );
+      ).then((outcome) => {
+        running.delete(commandId);
+        sendResult({ hostConnectionId, commandId, result: outcome });
+      });
       return;
     }
     const runtimeTabId = previewRuntimeTabId(

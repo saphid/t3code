@@ -50,6 +50,8 @@ import { makeExtensionScopeResolver } from "../scope.ts";
 import { failure, named, operationError, projectSession } from "./v1.ts";
 
 const OPERATION = "browser.profiles";
+/** Room after the host's import wait for the post-checks, inside the broker deadline. */
+const IMPORT_SETTLE_MS = 30_000;
 const WRITE_METHODS = new Set(["open", "clearCookies", "clearCache", "importCookies"]);
 
 const closedDecoder = <F extends Schema.Struct.Fields>(fields: F) =>
@@ -95,6 +97,8 @@ export function createBrowserProfilesApiProvider(
   dependencies: Parameters<typeof makeExtensionScopeResolver>[0] & {
     readonly preview: Pick<PreviewManager.PreviewManager["Service"], "open" | "listDetails">;
     readonly engineHosts: Pick<BrowserEngineHosts.BrowserEngineHosts["Service"], "dispatchProfile">;
+    /** The host's import wait (`BrowserEngineHosts.ImportAckTimeoutMs`). */
+    readonly importAckTimeoutMs: number;
   },
 ): HostApiProvider {
   const resolve = makeExtensionScopeResolver(dependencies);
@@ -121,12 +125,10 @@ export function createBrowserProfilesApiProvider(
       const assertAuthority = metadata.assertAuthority;
       const scope = yield* resolve(context);
 
+      const revoked = () => failure(operation, "Browser profiles authority was revoked.");
       /** Authority and scope are rechecked after the host answered, before any data returns. */
       const postChecks = Effect.gen(function* () {
-        yield* Effect.tryPromise({
-          try: () => assertAuthority(),
-          catch: () => failure(operation, "Browser profiles authority was revoked."),
-        });
+        yield* Effect.tryPromise({ try: () => assertAuthority(), catch: revoked });
         yield* resolve(scope.context);
         signal.throwIfAborted();
       });
@@ -148,8 +150,9 @@ export function createBrowserProfilesApiProvider(
        */
       const host = Effect.fn("BrowserProfiles.host")(function* (
         command: BrowserEngineProfileCommand,
+        options?: Parameters<typeof dependencies.engineHosts.dispatchProfile>[1],
       ) {
-        const answer = yield* dependencies.engineHosts.dispatchProfile(command);
+        const answer = yield* dependencies.engineHosts.dispatchProfile(command, options);
         if (answer.outcome === "no-host") {
           return yield* named(
             operation,
@@ -171,6 +174,8 @@ export function createBrowserProfilesApiProvider(
                 "BrowserProfilesUnsupported",
                 `the desktop browser engine does not support '${method}' (engine-unsupported).`,
               );
+            case "cancelled":
+              return yield* revoked();
             default:
               return yield* named(
                 operation,
@@ -314,13 +319,22 @@ export function createBrowserProfilesApiProvider(
         }
         case "importCookies": {
           const safe = yield* decode(decodeImportInput);
-          const answer = yield* host({
-            _tag: "importCookies",
-            profileId: safe.profileId,
-            sourceId: safe.sourceId,
-            sourceProfile: safe.sourceProfile,
-            requester: metadata.rootCallerId.slice(0, 128) || "an extension",
-          });
+          // The user may sit on the prompt for minutes; authority is proven
+          // again after they confirm and before the host reads the source.
+          const stillAuthorized = postChecks.pipe(
+            Effect.as(true),
+            Effect.catchCause(() => Effect.succeed(false)),
+          );
+          const answer = yield* host(
+            {
+              _tag: "importCookies",
+              profileId: safe.profileId,
+              sourceId: safe.sourceId,
+              sourceProfile: safe.sourceProfile,
+              requester: metadata.rootCallerId.slice(0, 128) || "an extension",
+            },
+            { beforeProceed: stillAuthorized },
+          );
           let result: BrowserImportCookiesResult;
           switch (answer.outcome) {
             case "imported":
@@ -357,6 +371,10 @@ export function createBrowserProfilesApiProvider(
     providerId: "t3.host-browser-profiles",
     definition: browserProfilesApi.definition,
     requiresRootAuthority: true,
+    // Import waits on a confirmation and possibly a keychain prompt; the
+    // broker's default deadline would cut the user off mid-decision.
+    deadlineMs: (method) =>
+      method === "importCookies" ? dependencies.importAckTimeoutMs + IMPORT_SETTLE_MS : undefined,
     invoke: (method, input, context, signal, metadata) =>
       Effect.runPromise(invoke(method, input, context, signal, metadata), { signal }),
   };
@@ -370,5 +388,6 @@ export const makeBrowserProfilesApiProvider = Effect.fn("BrowserProfilesApi.make
     threads: yield* ProjectionThreadRepository,
     preview: yield* PreviewManager.PreviewManager,
     engineHosts: yield* BrowserEngineHosts.BrowserEngineHosts,
+    importAckTimeoutMs: yield* BrowserEngineHosts.ImportAckTimeoutMs,
   });
 });

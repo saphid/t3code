@@ -98,6 +98,7 @@ const threads = {
 const deps = (
   preview: PreviewManager.PreviewManager["Service"],
   engineHosts: BrowserEngineHosts.BrowserEngineHosts["Service"],
+  importAckTimeoutMs = BrowserEngineHosts.IMPORT_ACK_TIMEOUT_MS,
 ) => ({
   environmentId: ENV_ID,
   projects: {
@@ -111,25 +112,33 @@ const deps = (
   threads,
   preview,
   engineHosts,
+  importAckTimeoutMs,
 });
 
-const harness = Effect.gen(function* () {
-  const preview = yield* PreviewManager.PreviewManager;
-  const engineHosts = yield* BrowserEngineHosts.BrowserEngineHosts;
-  return {
-    preview,
-    engineHosts,
-    profiles: createBrowserProfilesApiProvider(deps(preview, engineHosts)),
-    sessions: createBrowserSessionsApiProvider(deps(preview, engineHosts)),
-  };
-}).pipe(
-  Effect.provide(
-    BrowserEngineHosts.layer.pipe(
-      Layer.provideMerge(PreviewManager.layer),
-      Layer.provide(NodeServices.layer),
+const harnessWith = (options: { readonly importAckTimeoutMs?: number }) =>
+  Effect.gen(function* () {
+    const preview = yield* PreviewManager.PreviewManager;
+    const engineHosts = yield* BrowserEngineHosts.BrowserEngineHosts;
+    const importAckTimeoutMs = yield* BrowserEngineHosts.ImportAckTimeoutMs;
+    return {
+      preview,
+      engineHosts,
+      profiles: createBrowserProfilesApiProvider(deps(preview, engineHosts, importAckTimeoutMs)),
+      sessions: createBrowserSessionsApiProvider(deps(preview, engineHosts)),
+    };
+  }).pipe(
+    Effect.provide(
+      BrowserEngineHosts.layer.pipe(
+        Layer.provideMerge(PreviewManager.layer),
+        Layer.provide(NodeServices.layer),
+      ),
     ),
-  ),
-);
+    Effect.provideService(
+      BrowserEngineHosts.ImportAckTimeoutMs,
+      options.importAckTimeoutMs ?? BrowserEngineHosts.IMPORT_ACK_TIMEOUT_MS,
+    ),
+  );
+const harness = harnessWith({});
 
 const invoke = (provider: HostApiProvider, method: string, input: unknown, ctx = context()) =>
   Effect.tryPromise({
@@ -179,7 +188,8 @@ const WORK_PROFILES: Answer = {
 /**
  * Registers the desktop as the engine host and answers every profile frame
  * with `answer(command)`, recording what arrived. Page command frames queue
- * on `pageCommands`.
+ * on `pageCommands`; import proceed/cancel frames queue on `controls`, and a
+ * silent frame can be answered later through `respond`.
  */
 const attachProfileHost = Effect.fn("test.attachProfileHost")(function* (
   engineHosts: BrowserEngineHosts.BrowserEngineHosts["Service"],
@@ -188,6 +198,8 @@ const attachProfileHost = Effect.fn("test.attachProfileHost")(function* (
   const received: BrowserEngineProfileCommand[] = [];
   const arrivals = yield* Queue.unbounded<BrowserEngineProfileCommand>();
   const pageCommands = yield* Queue.unbounded<BrowserEngineHostStreamEvent>();
+  const controls = yield* Queue.unbounded<BrowserEngineHostStreamEvent>();
+  const commandIds: string[] = [];
   const registered = yield* Deferred.make<string>();
   const stream = yield* engineHosts.register(DESKTOP_SOCKET);
   let hostConnectionId = "";
@@ -203,7 +215,12 @@ const attachProfileHost = Effect.fn("test.attachProfileHost")(function* (
           yield* Queue.offer(pageCommands, event);
           return;
         }
+        if (event.type !== "profile-command") {
+          yield* Queue.offer(controls, event);
+          return;
+        }
         received.push(event.command);
+        commandIds.push(event.commandId);
         yield* Queue.offer(arrivals, event.command);
         const result = answer(event.command);
         if (result === "silent") return;
@@ -218,7 +235,23 @@ const attachProfileHost = Effect.fn("test.attachProfileHost")(function* (
   );
   // Registration lands before the first command can be dispatched.
   yield* Deferred.await(registered);
-  return { received, arrivals, pageCommands, fiber, hostConnectionId: () => hostConnectionId };
+  /** Answers the `index`th profile frame, as a host that kept the user waiting. */
+  const respond = (index: number, result: BrowserEngineHostCommandResultInput["result"]) =>
+    engineHosts.commandResult(DESKTOP_SOCKET, {
+      hostConnectionId,
+      commandId: commandIds[index]!,
+      result,
+    });
+  return {
+    received,
+    arrivals,
+    pageCommands,
+    controls,
+    commandIds,
+    respond,
+    fiber,
+    hostConnectionId: () => hostConnectionId,
+  };
 });
 
 const listProfilesOr =
@@ -517,6 +550,47 @@ describe("browser profiles adapter", () => {
     }),
   );
 
+  it.effect("authority lost while the prompt is open cancels once the user confirms", () =>
+    Effect.gen(function* () {
+      const { profiles, engineHosts } = yield* harness;
+      const host = yield* attachProfileHost(engineHosts, () => "silent");
+      let authorized = true;
+      const metadata: HostApiInvocationMetadata = {
+        ...meta(profiles),
+        assertAuthority: async () => {
+          if (!authorized) throw new Error("revoked");
+        },
+      };
+      const importing = yield* Effect.forkChild(
+        Effect.tryPromise({
+          try: () =>
+            Promise.resolve(
+              profiles.invoke(
+                "importCookies",
+                { profileId: "work", sourceId: "chrome", sourceProfile: "p0" },
+                context(),
+                signal,
+                metadata,
+              ),
+            ),
+          catch: (cause) => new InvokeRejection({ cause }),
+        }),
+      );
+      yield* Queue.take(host.arrivals);
+      authorized = false;
+      yield* host.respond(0, { outcome: "confirmed" });
+      expect(yield* Queue.take(host.controls)).toEqual({
+        type: "profile-command-cancel",
+        commandId: host.commandIds[0],
+      });
+      const refused = yield* Fiber.join(importing).pipe(Effect.flip);
+      expect(isOperationError(refused.cause) && refused.cause.detail).toContain(
+        "authority was revoked",
+      );
+      expect(yield* Queue.size(host.controls)).toBe(0);
+    }),
+  );
+
   it.effect("declined and failed imports come back as closed outcomes", () =>
     Effect.gen(function* () {
       const { profiles, engineHosts } = yield* harness;
@@ -570,6 +644,69 @@ describe("browser profiles adapter", () => {
   );
 });
 
+/**
+ * The real extension runtime and broker around `profiles`, with the browser
+ * profiles example installed as a consumer that declares only
+ * `t3.browser/profiles`, so grants alone decide.
+ */
+const brokerRuntime = Effect.fn("test.brokerRuntime")(function* (
+  profiles: HostApiProvider,
+  options: { readonly timeoutMs?: number; readonly grants?: ReadonlyArray<string> } = {},
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const packages = path.resolve(import.meta.dirname, "../../../../../packages");
+  const exampleDir = path.join(packages, "extension-sdk/examples/browser-profiles");
+  const runner = yield* ProcessRunner.ProcessRunner;
+  const built = yield* runner.run({
+    command: "node",
+    args: [path.join(packages, "extension-sdk/bin/t3-extension.mjs"), "build", exampleDir],
+  });
+  expect(built.code, built.stderr).toBe(0);
+  const rootDir = yield* fs.realPath(
+    yield* fs.makeTempDirectoryScoped({ prefix: "s7a-profiles-" }),
+  );
+  const runtime = yield* Effect.promise(() =>
+    createExtensionRuntime({
+      rootDir,
+      environmentId: ENV_ID,
+      services: [],
+      apiProviders: [profiles],
+      authorize: (installation, grant, ctx) =>
+        installation.grants.capabilities.includes(grant) &&
+        installation.grants.projectIds.includes(ctx.resource.projectId ?? ""),
+      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    }),
+  );
+  yield* Effect.addFinalizer(() => Effect.promise(() => runtime.dispose()));
+  const installed = yield* Effect.promise(() =>
+    runtime.install(path.join(exampleDir, ".t3-extension"), {
+      capabilities: [...(options.grants ?? [])],
+      projectIds: [PROJECT_ID],
+    }),
+  );
+  const root: HostApiRootAuthority = {
+    principal: meta(profiles).principal!,
+    allowWrite: true,
+    revalidate: () => {},
+  };
+  const call = (method: string, input: Record<string, unknown>) =>
+    runtime.invokeApi(
+      installed.id,
+      installed.contentHash,
+      {
+        id: BROWSER_PROFILES,
+        versionRange: "^1.0.0",
+        method,
+        input: input as never,
+        context: context(),
+      },
+      new AbortController().signal,
+      root,
+    );
+  return { runtime, installed, call };
+});
+
 describe("browser profiles grants through the broker", () => {
   it.effect("each grant unlocks its own method and implies none of the others", () =>
     Effect.gen(function* () {
@@ -595,54 +732,7 @@ describe("browser profiles grants through the broker", () => {
       );
       expect(packManifest.requires.map((entry) => entry.id)).toContain(BROWSER_PROFILES);
 
-      // A consumer that declares only t3.browser/profiles, so grants alone decide.
-      const exampleDir = path.join(packages, "extension-sdk/examples/browser-profiles");
-      const runner = yield* ProcessRunner.ProcessRunner;
-      const built = yield* runner.run({
-        command: "node",
-        args: [path.join(packages, "extension-sdk/bin/t3-extension.mjs"), "build", exampleDir],
-      });
-      expect(built.code, built.stderr).toBe(0);
-      const rootDir = yield* fs.realPath(
-        yield* fs.makeTempDirectoryScoped({ prefix: "s7a-profiles-" }),
-      );
-      const runtime = yield* Effect.promise(() =>
-        createExtensionRuntime({
-          rootDir,
-          environmentId: ENV_ID,
-          services: [],
-          apiProviders: [profiles],
-          authorize: (installation, grant, ctx) =>
-            installation.grants.capabilities.includes(grant) &&
-            installation.grants.projectIds.includes(ctx.resource.projectId ?? ""),
-        }),
-      );
-      yield* Effect.addFinalizer(() => Effect.promise(() => runtime.dispose()));
-      const installed = yield* Effect.promise(() =>
-        runtime.install(path.join(exampleDir, ".t3-extension"), {
-          capabilities: [],
-          projectIds: [PROJECT_ID],
-        }),
-      );
-      const root: HostApiRootAuthority = {
-        principal: meta(profiles).principal!,
-        allowWrite: true,
-        revalidate: () => {},
-      };
-      const call = (method: string, input: Record<string, unknown>) =>
-        runtime.invokeApi(
-          installed.id,
-          installed.contentHash,
-          {
-            id: BROWSER_PROFILES,
-            versionRange: "^1.0.0",
-            method,
-            input: input as never,
-            context: context(),
-          },
-          new AbortController().signal,
-          root,
-        );
+      const { runtime, installed, call } = yield* brokerRuntime(profiles);
       const calls: Record<string, Record<string, unknown>> = {
         list: {},
         clearCookies: { profileId: "work" },
@@ -724,6 +814,83 @@ describe("browser profiles grants through the broker", () => {
           }),
         ).rejects.toThrow("API input does not match schema"),
       );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+    ),
+  );
+
+  const IMPORT_INPUT = { profileId: "work", sourceId: "chrome", sourceProfile: "p0" };
+  const settled = <A>(promise: Promise<A>) =>
+    Effect.promise(() =>
+      promise.then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }),
+      ),
+    );
+
+  it.effect("an import outlives the broker's default deadline and still returns its outcome", () =>
+    Effect.gen(function* () {
+      const { profiles, engineHosts } = yield* harnessWith({ importAckTimeoutMs: 400 });
+      const host = yield* attachProfileHost(engineHosts, () => "silent");
+      const { call } = yield* brokerRuntime(profiles, {
+        timeoutMs: 50,
+        grants: [BROWSER_PROFILES, BROWSER_IMPORT_COOKIES],
+      });
+
+      // The user takes longer than the default deadline to confirm: a list
+      // issued after the import expires under that deadline first.
+      const importing = call("importCookies", IMPORT_INPUT);
+      yield* Queue.take(host.arrivals);
+      const listed = yield* settled(call("list", {}));
+      expect(listed).toEqual({ error: "API deadline exceeded" });
+      yield* host.respond(0, { outcome: "confirmed" });
+      expect(yield* Queue.take(host.controls)).toMatchObject({ type: "profile-command-proceed" });
+      yield* host.respond(0, { outcome: "imported", imported: 5, skipped: 1 });
+      expect(yield* settled(importing)).toEqual({
+        value: { outcome: "imported", profileId: "work", imported: 5, skipped: 1 },
+      });
+
+      // A prompt nobody answers expires on the import wait, not the broker's:
+      // the caller gets `unknown` and the host is told to take it down.
+      const abandoned = call("importCookies", IMPORT_INPUT);
+      yield* Queue.take(host.arrivals);
+      expect(yield* settled(abandoned)).toEqual({
+        value: { outcome: "unknown", profileId: "work" },
+      });
+      expect(yield* Queue.take(host.controls)).toEqual({
+        type: "profile-command-cancel",
+        commandId: host.commandIds.at(-1),
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+    ),
+  );
+
+  it.effect("revoking the grant while the prompt is open cancels the import on the host", () =>
+    Effect.gen(function* () {
+      const { profiles, engineHosts } = yield* harness;
+      const host = yield* attachProfileHost(
+        engineHosts,
+        listProfilesOr(() => "silent"),
+      );
+      const { runtime, installed, call } = yield* brokerRuntime(profiles, {
+        grants: [BROWSER_IMPORT_COOKIES],
+      });
+      const importing = call("importCookies", IMPORT_INPUT);
+      yield* Queue.take(host.arrivals);
+      yield* Effect.promise(() =>
+        runtime.updateGrants(installed.id, { capabilities: [], projectIds: [PROJECT_ID] }),
+      );
+      expect(yield* settled(importing)).toEqual({ error: "API configuration changed" });
+      expect(yield* Queue.take(host.controls)).toEqual({
+        type: "profile-command-cancel",
+        commandId: host.commandIds[0],
+      });
+      // The user accepts the prompt anyway: nothing tells the host to proceed.
+      yield* host.respond(0, { outcome: "confirmed" });
+      expect(yield* Queue.size(host.controls)).toBe(0);
     }).pipe(
       Effect.scoped,
       Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer))),

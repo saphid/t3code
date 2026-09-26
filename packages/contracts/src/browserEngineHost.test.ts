@@ -174,6 +174,15 @@ describe("BrowserEngineProfileCommand", () => {
     };
     expect(decodeStreamEvent(event)).toEqual(event);
   });
+
+  it("carries import proceed and cancel by command id alone", () => {
+    for (const type of ["profile-command-proceed", "profile-command-cancel"]) {
+      expect(decodeStreamEvent({ type, commandId: "command-2" })).toEqual({
+        type,
+        commandId: "command-2",
+      });
+    }
+  });
 });
 
 describe("profile command answers", () => {
@@ -198,6 +207,11 @@ describe("profile command answers", () => {
       skipped: 1,
     });
     expect(answer({ outcome: "declined" })).toEqual({ outcome: "declined" });
+    expect(answer({ outcome: "confirmed" })).toEqual({ outcome: "confirmed" });
+    expect(answer({ outcome: "rejected", reason: "cancelled" })).toEqual({
+      outcome: "rejected",
+      reason: "cancelled",
+    });
     expect(answer({ outcome: "import-failed", reason: "browserRunning" })).toEqual({
       outcome: "import-failed",
       reason: "browserRunning",

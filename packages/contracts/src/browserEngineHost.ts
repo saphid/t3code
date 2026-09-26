@@ -141,6 +141,21 @@ export const BrowserEngineHostStreamEvent = Schema.Union([
     commandId: BrowserEngineCommandId,
     command: BrowserEngineProfileCommand,
   }),
+  /**
+   * Cookie import is two-phase: after the user confirms, the host answers
+   * `confirmed` and waits. The server revalidates the caller's authority and
+   * sends `profile-command-proceed`, or `profile-command-cancel` when that
+   * authority is gone, the caller gave up or the wait expired. A cancel also
+   * dismisses a confirmation that is still showing.
+   */
+  Schema.Struct({
+    type: Schema.Literal("profile-command-proceed"),
+    commandId: BrowserEngineCommandId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("profile-command-cancel"),
+    commandId: BrowserEngineCommandId,
+  }),
 ]);
 export type BrowserEngineHostStreamEvent = typeof BrowserEngineHostStreamEvent.Type;
 
@@ -183,6 +198,8 @@ export const BrowserEngineCommandRejection = Schema.Literals([
   "failed",
   /** Profile commands: the named profile is not one the host has. */
   "unknown-profile",
+  /** The server cancelled the command before it took effect. */
+  "cancelled",
 ]);
 export type BrowserEngineCommandRejection = typeof BrowserEngineCommandRejection.Type;
 
@@ -247,6 +264,8 @@ export const BrowserEngineHostCommandResultInput = Schema.Struct({
       outcome: Schema.Literal("rejected"),
       reason: BrowserEngineCommandRejection,
     }),
+    /** Import only: the user confirmed; the host waits for proceed or cancel. */
+    Schema.Struct({ outcome: Schema.Literal("confirmed") }),
     ...BrowserEngineProfileAnswer.members,
   ]),
 });

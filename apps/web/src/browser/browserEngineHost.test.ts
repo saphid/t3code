@@ -198,6 +198,56 @@ describe("createEngineHostEventHandler", () => {
   };
   const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+  /** A desktop with one Chrome profile whose prompt the test answers by hand. */
+  const importSetup = () => {
+    const bridge = {
+      ...makeBridge(),
+      listBrowserImportSources: vi.fn(async (): Promise<ReadonlyArray<BrowserImportSource>> => [
+        { id: "chrome", name: "Google Chrome", profiles: [{ directory: "Default", name: "Me" }] },
+      ]),
+      importBrowserCookies: vi.fn(async () => ({ imported: 3, skipped: 0, skippedDomains: [] })),
+    };
+    const sendResult = vi.fn();
+    let answer!: (confirmed: boolean) => void;
+    let promptSignal!: AbortSignal;
+    const onResult = createEngineHostEventHandler({
+      environmentId,
+      bridge,
+      sendResult,
+      profiles: async () => ({
+        profiles: [{ id: "work", name: "Work", kind: "persistent" }],
+        defaultProfileId: "work",
+      }),
+      confirm: (_message, signal) => {
+        promptSignal = signal;
+        return new Promise<boolean>((resolve) => {
+          answer = resolve;
+        });
+      },
+    });
+    const deliver = (event: BrowserEngineHostStreamEvent) => onResult(AsyncResult.success(event));
+    deliver({ type: "registered", hostConnectionId: "host-1" });
+    deliver({
+      type: "profile-command",
+      commandId: "import-1",
+      command: {
+        _tag: "importCookies",
+        profileId: "work",
+        sourceId: "chrome",
+        sourceProfile: "p0",
+        requester: "t3.browser",
+      },
+    });
+    const results = () => sendResult.mock.calls.map(([input]) => input.result);
+    return {
+      bridge,
+      deliver,
+      results,
+      accept: () => answer(true),
+      promptSignal: () => promptSignal,
+    };
+  };
+
   afterEach(() => {
     forgetHostedTab(hostedTab);
     useBrowserEngineHostStore.getState().setHostConnectionId(environmentId, null);
@@ -229,6 +279,48 @@ describe("createEngineHostEventHandler", () => {
     expect(bridge.refresh).toHaveBeenCalledWith(hostedTab);
     expect(sendResult.mock.calls).toEqual([
       [{ hostConnectionId: "host-1", commandId: "command-1", result: { outcome: "applied" } }],
+    ]);
+  });
+
+  it("imports only once the server lets a confirmed import proceed", async () => {
+    const { bridge, deliver, results, accept } = importSetup();
+    await settle();
+    accept();
+    await settle();
+    expect(results()).toEqual([{ outcome: "confirmed" }]);
+    expect(bridge.importBrowserCookies).not.toHaveBeenCalled();
+    deliver({ type: "profile-command-proceed", commandId: "import-1" });
+    await settle();
+    expect(bridge.importBrowserCookies).toHaveBeenCalledOnce();
+    expect(results()).toEqual([
+      { outcome: "confirmed" },
+      { outcome: "imported", imported: 3, skipped: 0 },
+    ]);
+  });
+
+  it("a cancel dismisses the prompt and accepting it afterwards reads nothing", async () => {
+    const { bridge, deliver, results, accept, promptSignal } = importSetup();
+    await settle();
+    deliver({ type: "profile-command-cancel", commandId: "import-1" });
+    expect(promptSignal().aborted).toBe(true);
+    // The user clicks accept on a prompt that was still on screen.
+    accept();
+    await settle();
+    expect(bridge.importBrowserCookies).not.toHaveBeenCalled();
+    expect(results()).toEqual([{ outcome: "rejected", reason: "cancelled" }]);
+  });
+
+  it("a cancel after the user confirmed still reads nothing", async () => {
+    const { bridge, deliver, results, accept } = importSetup();
+    await settle();
+    accept();
+    await settle();
+    deliver({ type: "profile-command-cancel", commandId: "import-1" });
+    await settle();
+    expect(bridge.importBrowserCookies).not.toHaveBeenCalled();
+    expect(results()).toEqual([
+      { outcome: "confirmed" },
+      { outcome: "rejected", reason: "cancelled" },
     ]);
   });
 
@@ -278,12 +370,14 @@ describe("executeProfileCommand", () => {
         skippedDomains: ["expired.example"],
       })),
     };
-    const confirm = vi.fn(async (_message: string) => true);
+    const confirm = vi.fn(async (_message: string, _signal: AbortSignal) => true);
     const deps: ProfileCommandDeps = {
       environmentId,
       bridge,
       profiles: async () => ({ profiles: PROFILES, defaultProfileId: "work" }),
       confirm,
+      signal: new AbortController().signal,
+      proceed: async () => true,
       ...overrides,
     };
     return { deps, bridge, confirm };
@@ -432,6 +526,16 @@ describe("executeProfileCommand", () => {
       sourceProfileDirectory: "Profile 3",
       targetProfileId: "work",
     });
+  });
+
+  it("reads nothing when the server withholds proceed after the user confirmed", async () => {
+    const { deps, bridge, confirm } = makeDeps({ proceed: async () => false });
+    expect(await executeProfileCommand(deps, importCommand())).toEqual({
+      outcome: "rejected",
+      reason: "cancelled",
+    });
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(bridge.importBrowserCookies).not.toHaveBeenCalled();
   });
 
   it("a refused prompt reads nothing", async () => {

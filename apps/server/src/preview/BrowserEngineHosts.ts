@@ -51,9 +51,17 @@ const COMMAND_ACK_TIMEOUT_MS = 10_000;
 
 /**
  * Cookie import waits on the user: the host asks for confirmation and the OS
- * may prompt for keychain access. Bounded all the same; silence is `unknown`.
+ * may prompt for keychain access. Bounded all the same; silence is `unknown`
+ * and the host is told to cancel. The profiles API extends its broker
+ * deadline past this wait, so the caller always receives the outcome.
  */
 export const IMPORT_ACK_TIMEOUT_MS = 5 * 60_000;
+
+/** The import wait in force; tests shorten it. The profiles API reads it for its deadline. */
+export const ImportAckTimeoutMs = Context.Reference<number>(
+  "t3/preview/BrowserEngineHosts/ImportAckTimeoutMs",
+  { defaultValue: () => IMPORT_ACK_TIMEOUT_MS },
+);
 
 /** The authenticated socket a host call arrived on. Derived by the WS layer, never the payload. */
 export interface BrowserEngineHostSocket {
@@ -127,6 +135,13 @@ export class BrowserEngineHosts extends Context.Service<
      */
     readonly dispatchProfile: (
       command: BrowserEngineProfileCommand,
+      options?: {
+        /**
+         * Import only: runs after the user confirmed and before the host
+         * reads any source browser. `false` cancels the import on the host.
+         */
+        readonly beforeProceed?: Effect.Effect<boolean>;
+      },
     ) => Effect.Effect<BrowserEngineProfileDispatchOutcome>;
     /** Whether any engine host is registered in this environment right now. */
     readonly hasHost: Effect.Effect<boolean>;
@@ -137,6 +152,7 @@ const make = Effect.gen(function* () {
   const preview = yield* PreviewManager.PreviewManager;
   const crypto = yield* Crypto.Crypto;
   const hosts = yield* Ref.make(new Map<string, HostConnection>());
+  const importAckTimeoutMs = yield* ImportAckTimeoutMs;
   const randomId = crypto.randomUUIDv4.pipe(Effect.orDie);
 
   const desktopRequired = new BrowserEngineHostError({
@@ -220,27 +236,57 @@ const make = Effect.gen(function* () {
       return Deferred.succeed(deferred, input.result).pipe(Effect.asVoid);
     });
 
-  /** Offers one frame and waits for its bounded answer; silence or disconnect is `unknown`. */
+  /**
+   * Offers one frame and waits for its bounded answer; silence or disconnect
+   * is `unknown`. An interactive command (import) may answer `confirmed`
+   * first: `beforeProceed` then decides whether the host continues, and a
+   * refusal, interruption or expiry sends the host a cancel, so a revoked or
+   * abandoned import never starts reading.
+   */
   const send = (
     host: HostConnection,
     frame: (commandId: string) => BrowserEngineHostStreamEvent,
     timeoutMs: number,
+    beforeProceed?: Effect.Effect<boolean>,
   ) =>
     Effect.gen(function* () {
       const commandId = yield* randomId;
-      const deferred = yield* Deferred.make<HostAnswer>();
-      host.pending.set(commandId, deferred);
+      const cancel =
+        beforeProceed === undefined
+          ? Effect.void
+          : Queue.offer(host.queue, { type: "profile-command-cancel", commandId });
+      const awaitAnswer = Effect.gen(function* () {
+        const deferred = yield* Deferred.make<HostAnswer>();
+        host.pending.set(commandId, deferred);
+        return deferred;
+      });
+      const first = yield* awaitAnswer;
       const offered = yield* Queue.offer(host.queue, frame(commandId));
       // The host disconnected between lookup and offer; nothing was sent.
       if (!offered) {
         host.pending.delete(commandId);
         return { outcome: "unknown" } as HostAnswer;
       }
-      const outcome = yield* Deferred.await(deferred).pipe(
+      const exchange = Effect.gen(function* () {
+        const answer = yield* Deferred.await(first);
+        if (answer.outcome !== "confirmed") return answer;
+        if (beforeProceed === undefined) return { outcome: "rejected", reason: "failed" } as const;
+        if (!(yield* beforeProceed)) {
+          yield* cancel;
+          return { outcome: "rejected", reason: "cancelled" } as const;
+        }
+        const next = yield* awaitAnswer;
+        yield* Queue.offer(host.queue, { type: "profile-command-proceed", commandId });
+        return yield* Deferred.await(next);
+      });
+      const outcome = yield* exchange.pipe(
         Effect.timeoutOption(timeoutMs),
+        Effect.onInterrupt(() => cancel),
         Effect.ensuring(Effect.sync(() => host.pending.delete(commandId))),
       );
-      return Option.getOrElse(outcome, (): HostAnswer => ({ outcome: "unknown" }));
+      if (Option.isSome(outcome)) return outcome.value;
+      yield* cancel;
+      return { outcome: "unknown" } as const;
     });
 
   const dispatch: BrowserEngineHosts["Service"]["dispatch"] = (input) =>
@@ -264,20 +310,27 @@ const make = Effect.gen(function* () {
         case "unknown":
           return answer;
         default:
-          // A profile answer to a page command is a confused host, not success.
+          // A profile answer or confirmation to a page command is a confused
+          // host, not success.
           return { outcome: "rejected", reason: "failed" } as const;
       }
     });
 
-  const dispatchProfile: BrowserEngineHosts["Service"]["dispatchProfile"] = (command) =>
+  const dispatchProfile: BrowserEngineHosts["Service"]["dispatchProfile"] = (command, options) =>
     Effect.gen(function* () {
       const host = (yield* Ref.get(hosts)).values().next().value;
       if (host === undefined) return { outcome: "no-host" } as const;
-      return yield* send(
+      const importing = command._tag === "importCookies";
+      const answer = yield* send(
         host,
         (commandId) => ({ type: "profile-command", commandId, command }),
-        command._tag === "importCookies" ? IMPORT_ACK_TIMEOUT_MS : COMMAND_ACK_TIMEOUT_MS,
+        importing ? importAckTimeoutMs : COMMAND_ACK_TIMEOUT_MS,
+        importing ? (options?.beforeProceed ?? Effect.succeed(true)) : undefined,
       );
+      // One confirmation per import; a second is a confused host.
+      return answer.outcome === "confirmed"
+        ? ({ outcome: "rejected", reason: "failed" } as const)
+        : answer;
     });
 
   return BrowserEngineHosts.of({

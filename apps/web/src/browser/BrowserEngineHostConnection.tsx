@@ -21,9 +21,9 @@ const hostProfiles = async () => {
 };
 
 /** The in-app confirmation dialog; no dialog host (or no local API) reads as refused. */
-const hostConfirm = async (message: string) =>
+const hostConfirm = async (message: string, signal: AbortSignal) =>
   (await readLocalApi()
-    ?.dialogs.confirm(message)
+    ?.dialogs.confirm(message, { signal })
     .catch(() => false)) ?? false;
 
 /**
