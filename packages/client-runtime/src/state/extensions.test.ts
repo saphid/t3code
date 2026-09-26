@@ -1,6 +1,8 @@
 import { describe, it, expect } from "@effect/vitest";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import { PrimaryConnectionTarget, type PreparedConnection } from "../connection/model.ts";
 import { remoteHttpClientLayer } from "../rpc/http.ts";
 import { environmentExtensionsHttp } from "./extensions.ts";
@@ -110,4 +112,64 @@ describe("binary installed package assets", () => {
         }),
     );
   }
+});
+
+describe("extension API invocation deadlines", () => {
+  const invocation = (method: string) => ({
+    installationId: "example.browser",
+    expectedContentHash: "a".repeat(64),
+    request: {
+      id: "t3.browser/profiles",
+      versionRange: "^1.0.0",
+      method,
+      input: {},
+      context: {
+        resource: { namespace: "t3.thread", id: "thread", environmentId: target.environmentId },
+        client: "web",
+      },
+    },
+  });
+  /** Answers only when the test says so: the user still deciding on the host. */
+  const delayedServer = () => {
+    let fetched!: () => void;
+    const started = new Promise<void>((resolve) => (fetched = resolve));
+    let answer!: (response: Response) => void;
+    const answered = new Promise<Response>((resolve) => (answer = resolve));
+    const layer = remoteHttpClientLayer((url) => {
+      expect(String(url)).toBe("https://fixture.example/api/extensions/api/invoke");
+      fetched();
+      return answered;
+    });
+    return { started, answer, layer };
+  };
+
+  it.effect("cookie import outlives a confirmation held past the default deadline", () =>
+    Effect.gen(function* () {
+      const server = delayedServer();
+      const fiber = yield* environmentExtensionsHttp
+        .invokeApi(prepared, invocation("importCookies"))
+        .pipe(Effect.provide(server.layer), Effect.forkChild);
+      yield* Effect.promise(() => server.started);
+      // Just inside the server broker's import deadline (5 min wait + 30s).
+      yield* TestClock.adjust("329 seconds");
+      server.answer(Response.json({ result: { imported: 3 } }));
+      const result = yield* Fiber.join(fiber);
+      expect(result.result).toEqual({ imported: 3 });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("every other API method keeps the 30-second deadline", () =>
+    Effect.gen(function* () {
+      const server = delayedServer();
+      const fiber = yield* environmentExtensionsHttp
+        .invokeApi(prepared, invocation("listImportSources"))
+        .pipe(Effect.provide(server.layer), Effect.result, Effect.forkChild);
+      yield* Effect.promise(() => server.started);
+      yield* TestClock.adjust("31 seconds");
+      const result = yield* Fiber.join(fiber);
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure")
+        expect(result.failure._tag).toBe("RemoteEnvironmentAuthTimeoutError");
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
 });

@@ -30,6 +30,18 @@ import {
   type EnvironmentHttpAuthHeaders,
 } from "./environmentHttpAuth.ts";
 
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+/**
+ * API methods that wait on the user. Each HTTP deadline exceeds the server
+ * broker's deadline for that method, so the broker's answer (or its deadline
+ * error) always reaches the caller. Cookie import: 5-minute host wait plus
+ * 30 seconds of post-checks on the server.
+ */
+const API_INVOKE_TIMEOUT_MS: Readonly<Record<string, number>> = {
+  "t3.browser/profiles#importCookies": 6 * 60_000,
+};
+
 function request<A, E, R>(
   prepared: PreparedConnection,
   operation: string,
@@ -37,6 +49,7 @@ function request<A, E, R>(
     client: Effect.Success<ReturnType<typeof makeEnvironmentHttpApiGroupClient<"extensions">>>,
     headers: EnvironmentHttpAuthHeaders,
   ) => Effect.Effect<A, E, R>,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
 ) {
   return Effect.gen(function* () {
     const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
@@ -47,7 +60,7 @@ function request<A, E, R>(
       remoteAuthorization,
       method: "POST",
       url: (base) => environmentEndpointUrl(base, "/api/extensions/" + operation),
-      timeoutMs: 30_000,
+      timeoutMs,
       group: "extensions",
       request: ({ client, headers }) => execute(client, headers),
     });
@@ -57,7 +70,12 @@ function request<A, E, R>(
 /** Uses the same cookie, bearer and refreshed request-bound relay authorization as other environment HTTP requests. */
 export const environmentExtensionsHttp = {
   invokeApi: (prepared: PreparedConnection, payload: ExtensionApiInvokeInput) =>
-    request(prepared, "api/invoke", (client, headers) => client.invokeApi({ payload, headers })),
+    request(
+      prepared,
+      "api/invoke",
+      (client, headers) => client.invokeApi({ payload, headers }),
+      API_INVOKE_TIMEOUT_MS[`${payload.request.id}#${payload.request.method}`],
+    ),
   discoverApis: (prepared: PreparedConnection, payload: ExtensionApiDiscoverInput) =>
     request(prepared, "api/discover", (client, headers) =>
       client.discoverApis({ payload, headers }),
