@@ -1,24 +1,30 @@
 /**
- * Favicon rendering for the Browser panel's surfaces. The image tier is the
- * public-provider fallback resolved per origin (`faviconStore.ts` — capture
- * is engine-blocked, no contract carries a page favicon); a load failure is
- * recorded in the shared per-origin cache so every surface — the session
- * tab strip, the recents list — falls back to the glyph together and the
- * dead origin stops being requested until the failure ages out. No timer
- * drives the retry: a surface that mounts or navigates expires its origin's
- * stale failure, and that render requests the provider image once more.
+ * Favicon rendering for the Browser panel's surfaces, over the shared
+ * per-origin cache (`faviconStore.ts`): the captured tier (session
+ * `faviconRef`s resolved through `sessions.getFavicon`) ahead of the
+ * public-provider tier. A load failure drops that tier for the origin on
+ * every surface — the session tab strip, the recents list, the host tab —
+ * together, so a dead image stops being requested.
+ * No timer drives the provider retry: a surface that mounts or navigates
+ * expires its origin's stale failure, and that render requests the provider
+ * image once more.
  */
+import type { BrowserSession, browserSessionsApi } from "@t3tools/extension-sdk/catalogue";
 import { useEffect, useSyncExternalStore } from "react";
 
 import {
   type FaviconCache,
   type FaviconResolution,
+  dropCapturedFavicon,
   emptyFaviconCache,
   expireStaleFaviconFailure,
   faviconFallbackGlyph,
+  pendingFaviconRefs,
+  recordCapturedFavicon,
   recordProviderFaviconFailure,
   resolveFavicon,
 } from "./faviconStore.js";
+import type { BoundApi } from "./uiContracts.js";
 
 const muted = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
 
@@ -26,7 +32,11 @@ const listeners = new Set<() => void>();
 let cache: FaviconCache = emptyFaviconCache();
 let version = 0;
 
-function publish(next: FaviconCache): void {
+/** Refs already read (or refused) this client lifetime; never re-requested. */
+const attemptedRefs = new Set<string>();
+const MAX_ATTEMPTED_REFS = 256;
+
+function commit(next: FaviconCache): void {
   if (next === cache) return;
   cache = next;
   version += 1;
@@ -34,8 +44,42 @@ function publish(next: FaviconCache): void {
 }
 
 /** `<img onError>` entry point — shared by every surface's favicon. */
-export function faviconImageFailed(rawUrl: string): void {
-  publish(recordProviderFaviconFailure(cache, rawUrl, Date.now()));
+export function faviconImageFailed(rawUrl: string, tier: "captured" | "provider"): void {
+  commit(
+    tier === "captured"
+      ? dropCapturedFavicon(cache, rawUrl)
+      : recordProviderFaviconFailure(cache, rawUrl, Date.now()),
+  );
+}
+
+/**
+ * Resolves the sessions' new favicon refs, once each. Driven by session
+ * events, never a timer. A miss (`BrowserFaviconNotFound`: evicted, restarted
+ * server) or any other failure leaves the origin on the provider tier.
+ */
+export function resolveSessionFavicons(
+  api: BoundApi<typeof browserSessionsApi>,
+  sessions: readonly BrowserSession[],
+  signal: AbortSignal,
+): void {
+  for (const { ref, url } of pendingFaviconRefs(cache, sessions, attemptedRefs)) {
+    if (attemptedRefs.size >= MAX_ATTEMPTED_REFS) attemptedRefs.clear();
+    attemptedRefs.add(ref);
+    api.invoke("getFavicon", { ref }, signal).then(
+      (favicon) =>
+        commit(recordCapturedFavicon(cache, url, { ref, src: favicon.dataUrl }, Date.now())),
+      () => {
+        // A cancelled read may be retried by the next view.
+        if (signal.aborted) attemptedRefs.delete(ref);
+      },
+    );
+  }
+}
+
+/** The current cache, re-read on every change. */
+export function useFaviconCache(): FaviconCache {
+  useSyncExternalStore(subscribe, () => version);
+  return cache;
 }
 
 function subscribe(listener: () => void): () => void {
@@ -48,7 +92,7 @@ function subscribe(listener: () => void): () => void {
 function useFaviconResolution(url: string | null): FaviconResolution {
   useSyncExternalStore(subscribe, () => version);
   useEffect(() => {
-    publish(expireStaleFaviconFailure(cache, url, Date.now()));
+    commit(expireStaleFaviconFailure(cache, url, Date.now()));
   }, [url]);
   return resolveFavicon(cache, url);
 }
@@ -93,7 +137,7 @@ export function BrowserFavicon(props: { url: string | null; size?: number }) {
       width={size}
       height={size}
       style={{ ...box, objectFit: "contain" }}
-      onError={() => faviconImageFailed(props.url ?? "")}
+      onError={() => faviconImageFailed(props.url ?? "", resolution.tier)}
     />
   );
 }

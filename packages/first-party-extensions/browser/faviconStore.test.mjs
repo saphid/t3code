@@ -3,9 +3,13 @@ import * as NodeTest from "node:test";
 
 import {
   FAVICON_CACHE_MAX_ENTRIES,
-  FAVICON_FAILURE_TTL_MS,
+  dropCapturedFavicon,
   emptyFaviconCache,
   expireStaleFaviconFailure,
+  FAVICON_FAILURE_TTL_MS,
+  panelTabIndicators,
+  pendingFaviconRefs,
+  recordCapturedFavicon,
   faviconFallbackGlyph,
   faviconOriginKey,
   recordProviderFaviconFailure,
@@ -87,6 +91,7 @@ NodeTest.describe("expireStaleFaviconFailure", () => {
     NodeAssert.deepEqual(resolveFavicon(expired, "https://example.com/"), {
       kind: "image",
       src: "https://www.google.com/s2/favicons?domain=example.com&sz=32",
+      tier: "provider",
     });
     // Another origin's failure waits for its own surface to mount or navigate.
     NodeAssert.deepEqual(resolveFavicon(expired, "https://example.org/"), { kind: "glyph" });
@@ -107,7 +112,64 @@ NodeTest.describe("resolveFavicon", () => {
     NodeAssert.deepEqual(resolution, {
       kind: "image",
       src: "https://www.google.com/s2/favicons?domain=example.com&sz=32",
+      tier: "provider",
     });
+  });
+
+  NodeTest.it("prefers the captured favicon over the provider, loopback included", () => {
+    const icon = "data:image/png;base64,AAAA";
+    let cache = recordCapturedFavicon(
+      emptyFaviconCache(),
+      "http://127.0.0.1:5173/app",
+      { ref: "r1", src: icon },
+      1_000,
+    );
+    NodeAssert.deepEqual(resolveFavicon(cache, "http://localhost:5173/other"), {
+      kind: "image",
+      src: icon,
+      tier: "captured",
+    });
+    // A failed provider image does not hide a capture for the same origin.
+    cache = recordProviderFaviconFailure(cache, "https://example.com/", 1_000);
+    cache = recordCapturedFavicon(cache, "https://example.com/", { ref: "r2", src: icon }, 2_000);
+    NodeAssert.equal(resolveFavicon(cache, "https://example.com/").tier, "captured");
+  });
+
+  NodeTest.it("falls back to the provider tier once a capture is dropped", () => {
+    const icon = "data:image/png;base64,AAAA";
+    const captured = recordCapturedFavicon(
+      emptyFaviconCache(),
+      "https://example.com/",
+      { ref: "r1", src: icon },
+      1_000,
+    );
+    NodeAssert.equal(
+      recordCapturedFavicon(captured, "https://example.com/x", { ref: "r1", src: icon }, 2_000),
+      captured,
+    );
+    const dropped = dropCapturedFavicon(captured, "https://example.com/");
+    NodeAssert.equal(resolveFavicon(dropped, "https://example.com/").tier, "provider");
+    NodeAssert.equal(dropCapturedFavicon(dropped, "https://example.com/"), dropped);
+  });
+
+  NodeTest.it("refuses non-image captures and caps captured origins", () => {
+    const refused = recordCapturedFavicon(
+      emptyFaviconCache(),
+      "https://example.com/",
+      { ref: "r1", src: "https://evil.example/icon.png" },
+      1,
+    );
+    NodeAssert.deepEqual(refused.captured, {});
+    let cache = emptyFaviconCache();
+    for (let port = 1; port <= FAVICON_CACHE_MAX_ENTRIES + 1; port += 1)
+      cache = recordCapturedFavicon(
+        cache,
+        `http://localhost:${port}/`,
+        { ref: `r${port}`, src: "data:image/png;base64,AAAA" },
+        port,
+      );
+    NodeAssert.equal(Object.keys(cache.captured).length, FAVICON_CACHE_MAX_ENTRIES);
+    NodeAssert.equal(cache.captured["http://localhost:1"], undefined);
   });
 
   NodeTest.it("renders the glyph for private and loopback origins", () => {
@@ -138,5 +200,85 @@ NodeTest.describe("faviconFallbackGlyph", () => {
   NodeTest.it("falls back to a neutral dot without a usable host letter", () => {
     NodeAssert.equal(faviconFallbackGlyph(null), "•");
     NodeAssert.equal(faviconFallbackGlyph("::::"), "•");
+  });
+});
+
+const session = (overrides = {}) => ({
+  tabId: "tab-1",
+  requestedUrl: "http://localhost:5173/",
+  navigation: { kind: "loaded", url: "http://localhost:5173/", title: "Dev" },
+  canGoBack: false,
+  canGoForward: false,
+  viewport: { _tag: "fill" },
+  engine: { state: "ready", generation: "1" },
+  zoomFactor: 1,
+  appearance: "system",
+  audioMuted: false,
+  audible: false,
+  ...overrides,
+});
+
+NodeTest.describe("pendingFaviconRefs", () => {
+  NodeTest.it("asks once per unresolved ref and skips recorded or attempted ones", () => {
+    const sessions = [
+      session({ faviconRef: "r1" }),
+      session({ tabId: "tab-2", faviconRef: "r1" }),
+      session({
+        tabId: "tab-3",
+        faviconRef: "r2",
+        navigation: { kind: "loaded", url: "https://example.com/", title: "" },
+      }),
+      session({ tabId: "tab-4" }),
+    ];
+    NodeAssert.deepEqual(pendingFaviconRefs(emptyFaviconCache(), sessions, new Set()), [
+      { ref: "r1", url: "http://localhost:5173/" },
+      { ref: "r2", url: "https://example.com/" },
+    ]);
+    const recorded = recordCapturedFavicon(
+      emptyFaviconCache(),
+      "http://localhost:5173/",
+      { ref: "r1", src: "data:image/png;base64,AAAA" },
+      1,
+    );
+    NodeAssert.deepEqual(pendingFaviconRefs(recorded, sessions, new Set(["r2"])), []);
+  });
+});
+
+NodeTest.describe("panelTabIndicators", () => {
+  NodeTest.it("shows the presented page, its captured icon, and audio across sessions", () => {
+    const icon = "data:image/png;base64,AAAA";
+    const cache = recordCapturedFavicon(
+      emptyFaviconCache(),
+      "http://localhost:5173/",
+      { ref: "r1", src: icon },
+      1,
+    );
+    const presented = session();
+    NodeAssert.deepEqual(
+      panelTabIndicators(cache, presented, [
+        presented,
+        session({ tabId: "tab-2", audible: true, audioMuted: true }),
+      ]),
+      { pageUrl: "http://localhost:5173/", faviconDataUrl: icon, audio: "muted" },
+    );
+    NodeAssert.deepEqual(
+      panelTabIndicators(emptyFaviconCache(), presented, [
+        session({ audible: true, audioMuted: true }),
+        session({ tabId: "tab-2", audible: true }),
+      ]),
+      { pageUrl: "http://localhost:5173/", audio: "audible" },
+    );
+  });
+
+  NodeTest.it("is null with no presented page and no audio", () => {
+    NodeAssert.equal(panelTabIndicators(emptyFaviconCache(), null, [session()]), null);
+    NodeAssert.equal(
+      panelTabIndicators(
+        emptyFaviconCache(),
+        session({ requestedUrl: null, navigation: { kind: "idle", url: null, title: "" } }),
+        [],
+      ),
+      null,
+    );
   });
 });

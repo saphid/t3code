@@ -5688,9 +5688,25 @@ export const PRS_WRITE_API = prsWriteApi.definition;
  * (`BrowserSessionNotOwned`). The open/closed state rides the session's
  * `devToolsOpen`, reported by the same engine host status path as
  * `audioMuted`; null means no host has reported it.
+ *
+ * Favicons (1.2.0): a session carries at most a `faviconRef` — never bytes.
+ * The ref names a bounded server-side asset the owner host captured for the
+ * page's origin; `getFavicon` resolves it under the read grant, scoped to
+ * the caller's project. Refs are best-effort: an evicted or unknown ref
+ * fails `BrowserFaviconNotFound`, and callers render their fallback tier.
+ *
+ * Picture-in-picture (1.2.0): `setPictureInPicture` asks the owning desktop
+ * engine host to show (or close) the guest in its native PiP window — page
+ * pixels leave the panel, so it needs its own `t3.browser/picture-in-picture`
+ * grant and does NOT need `t3.browser/operate` (neither grant implies the
+ * other). The observed state rides the ordinary session projection as
+ * `pictureInPicture` (null until the owner host reports). A session whose
+ * guest is recovering or crashed fails it by name
+ * (`BrowserSessionEngineNotLive`), as does one with no host (desktop-required).
  * --------------------------------------------------------------------- */
 export const BROWSER_OPERATE = "t3.browser/operate";
 export const BROWSER_DEVTOOLS = "t3.browser/devtools";
+export const BROWSER_PICTURE_IN_PICTURE = "t3.browser/picture-in-picture";
 
 /** Frozen 1.0.0 command vocabulary. */
 const BROWSER_SESSION_COMMANDS_V1 = [
@@ -5703,16 +5719,24 @@ const BROWSER_SESSION_COMMANDS_V1 = [
   "setAppearance",
   "setAudioMuted",
 ] as const;
-export const BROWSER_SESSION_COMMANDS = [
+/** Frozen 1.1.0 command vocabulary. */
+const BROWSER_SESSION_COMMANDS_V1_1 = [
   ...BROWSER_SESSION_COMMANDS_V1,
   "openDevTools",
   "closeDevTools",
+] as const;
+export const BROWSER_SESSION_COMMANDS = [
+  ...BROWSER_SESSION_COMMANDS_V1_1,
+  "setPictureInPicture",
 ] as const;
 export type BrowserSessionCommand = (typeof BROWSER_SESSION_COMMANDS)[number];
 
 export const BROWSER_SESSION_URL_MAX_LENGTH = 2048;
 export const BROWSER_SESSION_TITLE_MAX_LENGTH = 512;
 export const BROWSER_SESSION_LIMIT = 64;
+export const BROWSER_SESSION_FAVICON_REF_MAX_LENGTH = 64;
+/** Matches the engine host's own favicon bound. */
+export const BROWSER_SESSION_FAVICON_MAX_LENGTH = 8192;
 
 export type BrowserSessionViewport =
   | { readonly _tag: "fill" }
@@ -5765,6 +5789,17 @@ export type BrowserSession = {
   readonly audioMuted: boolean | null;
   readonly audible: boolean | null;
   readonly devToolsOpen: boolean | null;
+  /** Shown in the host's native picture-in-picture window; null until reported. */
+  readonly pictureInPicture: boolean | null;
+  /** Captured favicon for the current page's origin; resolve with `getFavicon`. */
+  readonly faviconRef?: string;
+};
+
+export type BrowserSessionFaviconInput = { readonly ref: string };
+export type BrowserSessionFavicon = {
+  readonly ref: string;
+  /** A bounded `data:image/*;base64` URL. */
+  readonly dataUrl: string;
 };
 
 export type BrowserSessionsSnapshot = {
@@ -5829,6 +5864,9 @@ export type BrowserSessionAppearanceInput = BrowserSessionCommandInput & {
 export type BrowserSessionAudioMutedInput = BrowserSessionCommandInput & {
   readonly muted: boolean;
 };
+export type BrowserSessionPictureInPictureInput = BrowserSessionCommandInput & {
+  readonly open: boolean;
+};
 
 export type BrowserSessionStreamCloseReason =
   | "epoch-changed"
@@ -5888,6 +5926,11 @@ const browserSessionUrl = {
   type: "string",
   minLength: 1,
   maxLength: BROWSER_SESSION_URL_MAX_LENGTH,
+} as const;
+const browserSessionFaviconRef = {
+  type: "string",
+  minLength: 1,
+  maxLength: BROWSER_SESSION_FAVICON_REF_MAX_LENGTH,
 } as const;
 const browserSessionViewport = {
   oneOf: [
@@ -5993,10 +6036,19 @@ const browserSessionObjectV1 = {
     audible: { type: ["boolean", "null"] },
   },
 } as const;
-const browserSessionObject = {
+const browserSessionObjectV1_1 = {
   ...browserSessionObjectV1,
   required: [...browserSessionObjectV1.required, "devToolsOpen"],
   properties: { ...browserSessionObjectV1.properties, devToolsOpen: { type: ["boolean", "null"] } },
+} as const;
+const browserSessionObject = {
+  ...browserSessionObjectV1_1,
+  required: [...browserSessionObjectV1_1.required, "pictureInPicture"],
+  properties: {
+    ...browserSessionObjectV1_1.properties,
+    pictureInPicture: { type: ["boolean", "null"] },
+    faviconRef: browserSessionFaviconRef,
+  },
 } as const;
 const browserSessionReceiptOf = (session: JsonObject) =>
   ({
@@ -6022,11 +6074,11 @@ const browserSessionCommandMethod = (
   name: BrowserSessionCommand,
   extraProperties: Record<string, JsonObject> = {},
   extraRequired: readonly string[] = [],
-  extraGrants: readonly string[] = [],
+  requiredGrants: readonly string[] = [BROWSER_SESSIONS, BROWSER_OPERATE],
 ) => ({
   name,
   effect: "write" as const,
-  requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE, ...extraGrants],
+  requiredGrants: [...requiredGrants],
   inputSchema: {
     type: "object",
     additionalProperties: false,
@@ -6046,14 +6098,16 @@ const browserSessionEmptyInput = {
 
 /**
  * One definition per published version: 1.1.0 adds `openDevTools`,
- * `closeDevTools` and the session's `devToolsOpen`; 1.0.0 stays
- * byte-identical to what shipped.
+ * `closeDevTools` and the session's `devToolsOpen`; 1.2.0 adds `getFavicon`,
+ * `setPictureInPicture`, `pictureInPicture` and `faviconRef` on top of 1.1.0.
+ * Earlier versions stay byte-identical to what shipped.
  */
 const browserSessionsDefinition = (
   version: string,
   commands: readonly BrowserSessionCommand[],
   session: JsonObject,
   extraMethods: (receipt: JsonObject) => readonly ApiMethod[] = () => [],
+  extraReads: readonly ApiMethod[] = [],
 ): ApiDefinition => {
   const receipt = browserSessionReceiptOf(session);
   return {
@@ -6114,6 +6168,7 @@ const browserSessionsDefinition = (
           },
         },
       },
+      ...extraReads,
       {
         name: "open",
         effect: "write",
@@ -6279,12 +6334,51 @@ const browserSessionsDefinition = (
   };
 };
 
+/** DevTools open/close, each on its explicit sessions + operate + devtools grants. */
+const browserSessionDevToolsMethods = (receipt: JsonObject): readonly ApiMethod[] => [
+  browserSessionCommandMethod(
+    receipt,
+    "openDevTools",
+    {},
+    [],
+    [BROWSER_SESSIONS, BROWSER_OPERATE, BROWSER_DEVTOOLS],
+  ),
+  browserSessionCommandMethod(
+    receipt,
+    "closeDevTools",
+    {},
+    [],
+    [BROWSER_SESSIONS, BROWSER_OPERATE, BROWSER_DEVTOOLS],
+  ),
+];
+const browserSessionGetFaviconMethod: ApiMethod = {
+  name: "getFavicon",
+  effect: "read",
+  requiredGrants: [BROWSER_SESSIONS],
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["ref"],
+    properties: { ref: browserSessionFaviconRef },
+  },
+  outputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["ref", "dataUrl"],
+    properties: {
+      ref: browserSessionFaviconRef,
+      dataUrl: { type: "string", minLength: 1, maxLength: BROWSER_SESSION_FAVICON_MAX_LENGTH },
+    },
+  },
+};
+
 export const browserSessionsApi: TypedApi<{
   getCapabilities: {
     input: Record<string, never>;
     output: BrowserSessionCapabilities;
   };
   list: { input: Record<string, never>; output: BrowserSessionsSnapshot };
+  getFavicon: { input: BrowserSessionFaviconInput; output: BrowserSessionFavicon };
   open: { input: BrowserSessionOpenInput; output: BrowserSessionReceipt };
   navigate: { input: BrowserSessionNavigateInput; output: BrowserSessionReceipt };
   close: { input: BrowserSessionCloseInput; output: BrowserSessionCloseResult };
@@ -6298,16 +6392,46 @@ export const browserSessionsApi: TypedApi<{
   setAudioMuted: { input: BrowserSessionAudioMutedInput; output: BrowserSessionReceipt };
   openDevTools: { input: BrowserSessionCommandInput; output: BrowserSessionReceipt };
   closeDevTools: { input: BrowserSessionCommandInput; output: BrowserSessionReceipt };
+  setPictureInPicture: {
+    input: BrowserSessionPictureInPictureInput;
+    output: BrowserSessionReceipt;
+  };
 }> &
   TypedStreamApi<{
     events: { input: Record<string, never>; event: BrowserSessionStreamValue };
   }> = defineStreamApi<{
   events: { input: Record<string, never>; event: BrowserSessionStreamValue };
 }>(
-  browserSessionsDefinition("1.1.0", BROWSER_SESSION_COMMANDS, browserSessionObject, (receipt) => [
-    browserSessionCommandMethod(receipt, "openDevTools", {}, [], [BROWSER_DEVTOOLS]),
-    browserSessionCommandMethod(receipt, "closeDevTools", {}, [], [BROWSER_DEVTOOLS]),
-  ]),
+  browserSessionsDefinition(
+    "1.2.0",
+    BROWSER_SESSION_COMMANDS,
+    browserSessionObject,
+    (receipt) => [
+      ...browserSessionDevToolsMethods(receipt),
+      browserSessionCommandMethod(
+        receipt,
+        "setPictureInPicture",
+        { open: { type: "boolean" } },
+        ["open"],
+        [BROWSER_SESSIONS, BROWSER_PICTURE_IN_PICTURE],
+      ),
+    ],
+    [browserSessionGetFaviconMethod],
+  ),
+);
+/**
+ * Frozen published 1.1.0 definition — DevTools only; no favicon or
+ * picture-in-picture.
+ */
+export const browserSessionsApiV1_1 = defineStreamApi<{
+  events: { input: Record<string, never>; event: BrowserSessionStreamValue };
+}>(
+  browserSessionsDefinition(
+    "1.1.0",
+    BROWSER_SESSION_COMMANDS_V1_1,
+    browserSessionObjectV1_1,
+    browserSessionDevToolsMethods,
+  ),
 );
 /**
  * Frozen published 1.0.0 definition — no DevTools methods, no
@@ -6317,6 +6441,7 @@ export const browserSessionsApiV1 = defineStreamApi<{
   events: { input: Record<string, never>; event: BrowserSessionStreamValue };
 }>(browserSessionsDefinition("1.0.0", BROWSER_SESSION_COMMANDS_V1, browserSessionObjectV1));
 export const BROWSER_SESSIONS_API = browserSessionsApi.definition;
+export const BROWSER_SESSIONS_API_V1_1 = browserSessionsApiV1_1.definition;
 export const BROWSER_SESSIONS_API_V1 = browserSessionsApiV1.definition;
 
 /* ------------------------------------------------------------------------
@@ -8485,6 +8610,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   browserLocalServersApi.definition,
   browserHistoryApi.definition,
   browserSessionsApi.definition,
+  browserSessionsApiV1_1.definition,
   browserSessionsApiV1.definition,
   browserFramesApi.definition,
   workspaceFilesApi.definition,

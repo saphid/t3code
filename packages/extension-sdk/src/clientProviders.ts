@@ -302,7 +302,18 @@ export const commandDescriptorSchema = {
     id: { type: "string", minLength: 1, maxLength: 80 },
     title: { type: "string", minLength: 1, maxLength: 200 },
     description: { type: "string", maxLength: 1000 },
-    defaultKey: { type: "string", minLength: 1, maxLength: 64 },
+    defaultKey: {
+      oneOf: [
+        { type: "string", minLength: 1, maxLength: 64 },
+        {
+          type: "array",
+          minItems: 1,
+          maxItems: 4,
+          uniqueItems: true,
+          items: { type: "string", minLength: 1, maxLength: 64 },
+        },
+      ],
+    },
     when: { type: "string", minLength: 1, maxLength: 256 },
     scope: { enum: ["surface", "thread", "global"] },
     activation: {

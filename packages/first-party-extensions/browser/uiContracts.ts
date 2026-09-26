@@ -188,7 +188,8 @@ export const BROWSER_VIEW_COMMANDS: readonly GlobalCommandDescriptor[] = [
   {
     id: "zoomIn",
     title: "Zoom In",
-    defaultKey: "mod+=",
+    // Both spellings, like the native `preview.zoomIn` rules.
+    defaultKey: ["mod+=", "mod++"],
     when: `extension.${BROWSER_SURFACE_ID}.focus`,
     scope: "surface",
   },

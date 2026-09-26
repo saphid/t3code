@@ -1,20 +1,24 @@
 /**
  * Per-origin favicon cache for the Browser panel — the package half of the
- * native favicon row. Native capture is engine-blocked for a package: the
- * desktop host captures PNG favicons (its preview `FaviconCapture` module)
- * and delivers them over desktop-internal IPC to the private
- * `browserFaviconStore`; `t3.browser/sessions` session objects and events
- * carry no favicon field and no op returns one, so a captured tier cannot
- * exist here and none is faked. What the contract does leave reachable is
- * the public-provider fallback the native tab strip already renders
- * (`faviconUrlForOrigin`: the public favicon service, public hosts only).
- * This module owns that tier's per-origin outcome: an origin whose provider
- * image failed to load renders the fallback glyph on every surface and
- * stops being requested until the failure ages out, so a transient network
- * blip does not suppress the image for the whole session. Nothing schedules
- * the age-out: a surface expires its origin's stale failure when it mounts
- * or navigates.
+ * native favicon row. Two tiers, captured first like the native store:
+ *
+ * - captured: the desktop engine host captures the page's favicon, the
+ *   server keeps it as a bounded asset, and a session carries only its
+ *   `faviconRef`; `sessions.getFavicon` resolves the ref to bytes, recorded
+ *   here per origin so every surface (tab strip, recents) shows it.
+ * - provider: the public-provider image the native tab strip renders
+ *   (`faviconUrlForOrigin`: public hosts only). An origin whose provider
+ *   image failed to load renders the fallback glyph on every surface and stops being
+ *   requested.
+ *
+ *   requested until the failure ages out, so a transient network blip does
+ *   not suppress the image for the whole session.
+ * A missing, stale, or failed capture simply leaves the provider tier.
+ * Nothing schedules the age-out: a surface expires its origin's stale
+ * failure when it mounts or navigates.
  */
+import type { BrowserSession } from "@t3tools/extension-sdk/catalogue";
+import type { ViewTabIndicators } from "@t3tools/extension-sdk/host";
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import { isLocalLoopbackHost, normalizeHostname } from "@t3tools/shared/hostClassification";
 
@@ -26,10 +30,31 @@ export const FAVICON_PROVIDER_SIZE = 32;
 export const FAVICON_FAILURE_TTL_MS = 5 * 60_000;
 
 export type FaviconOriginEntry = { readonly providerFailedAt: number };
-export type FaviconCache = { readonly byOrigin: Readonly<Record<string, FaviconOriginEntry>> };
+export type CapturedFavicon = {
+  readonly ref: string;
+  /** A `data:image/*` URL resolved from the ref. */
+  readonly src: string;
+  readonly capturedAt: number;
+};
+export type FaviconCache = {
+  readonly byOrigin: Readonly<Record<string, FaviconOriginEntry>>;
+  readonly captured: Readonly<Record<string, CapturedFavicon>>;
+};
 
 export function emptyFaviconCache(): FaviconCache {
-  return { byOrigin: {} };
+  return { byOrigin: {}, captured: {} };
+}
+
+/** Keeps the `FAVICON_CACHE_MAX_ENTRIES` newest entries by `stamp`. */
+function capEntries<T>(entries: Record<string, T>, stamp: (entry: T) => number): Record<string, T> {
+  const keys = Object.keys(entries);
+  if (keys.length <= FAVICON_CACHE_MAX_ENTRIES) return entries;
+  const keep = new Set(
+    keys
+      .toSorted((left, right) => stamp(entries[right]!) - stamp(entries[left]!))
+      .slice(0, FAVICON_CACHE_MAX_ENTRIES),
+  );
+  return Object.fromEntries(keys.filter((key) => keep.has(key)).map((key) => [key, entries[key]!]));
 }
 
 function formatFaviconHost(host: string): string {
@@ -72,19 +97,46 @@ export function recordProviderFaviconFailure(
   if (!key) return cache;
   const existing = cache.byOrigin[key];
   if (existing && existing.providerFailedAt >= at) return cache;
-  const byOrigin = { ...cache.byOrigin, [key]: { providerFailedAt: at } };
-  const keys = Object.keys(byOrigin);
-  if (keys.length <= FAVICON_CACHE_MAX_ENTRIES) return { byOrigin };
-  const evict = new Set(
-    keys
-      .toSorted(
-        (left, right) => byOrigin[right]!.providerFailedAt - byOrigin[left]!.providerFailedAt,
-      )
-      .slice(FAVICON_CACHE_MAX_ENTRIES),
-  );
   return {
-    byOrigin: Object.fromEntries(keys.filter((k) => !evict.has(k)).map((k) => [k, byOrigin[k]!])),
+    ...cache,
+    byOrigin: capEntries(
+      { ...cache.byOrigin, [key]: { providerFailedAt: at } },
+      (entry) => entry.providerFailedAt,
+    ),
   };
+}
+
+const CAPTURED_SRC = /^data:image\/[a-z.+-]+;base64,/i;
+
+/**
+ * Record the captured favicon resolved for this page's origin. Re-recording
+ * the same ref is a no-op returning the same cache reference; past the cap
+ * the oldest captures drop off (their origins fall back to the provider).
+ */
+export function recordCapturedFavicon(
+  cache: FaviconCache,
+  rawUrl: string,
+  favicon: { readonly ref: string; readonly src: string },
+  at: number,
+): FaviconCache {
+  const key = faviconOriginKey(rawUrl);
+  if (!key || !CAPTURED_SRC.test(favicon.src)) return cache;
+  if (cache.captured[key]?.ref === favicon.ref) return cache;
+  return {
+    ...cache,
+    captured: capEntries(
+      { ...cache.captured, [key]: { ref: favicon.ref, src: favicon.src, capturedAt: at } },
+      (entry) => entry.capturedAt,
+    ),
+  };
+}
+
+/** Drop a captured favicon that failed to render; the origin falls back to the provider. */
+export function dropCapturedFavicon(cache: FaviconCache, rawUrl: string): FaviconCache {
+  const key = faviconOriginKey(rawUrl);
+  if (!key || !cache.captured[key]) return cache;
+  const { [key]: _dropped, ...captured } = cache.captured;
+  return { ...cache, captured };
 }
 
 /**
@@ -101,11 +153,11 @@ export function expireStaleFaviconFailure(
   const entry = key ? cache.byOrigin[key] : undefined;
   if (!key || !entry || now - entry.providerFailedAt < FAVICON_FAILURE_TTL_MS) return cache;
   const { [key]: _expired, ...byOrigin } = cache.byOrigin;
-  return { byOrigin };
+  return { ...cache, byOrigin };
 }
 
 export type FaviconResolution =
-  | { readonly kind: "image"; readonly src: string }
+  | { readonly kind: "image"; readonly src: string; readonly tier: "captured" | "provider" }
   | { readonly kind: "glyph" };
 
 const GLYPH: FaviconResolution = { kind: "glyph" };
@@ -126,15 +178,71 @@ export function faviconFallbackGlyph(rawUrl: string | null): string {
 }
 
 /**
- * What a surface renders for a page URL: the provider image when the origin
- * is public and has not failed, the glyph for everything else — non-URLs,
- * non-http(s), private/loopback hosts the provider must not be told about,
- * and origins whose provider image already failed.
+ * What a surface renders for a page URL: the captured image when the origin
+ * has one (loopback included — the capture came from the page itself), else
+ * the provider image when the origin is public and has not failed, else the
+ * glyph — non-URLs, non-http(s), private/loopback hosts the provider must
+ * not be told about, and origins whose provider image already failed.
  */
 export function resolveFavicon(cache: FaviconCache, rawUrl: string | null): FaviconResolution {
   if (!rawUrl) return GLYPH;
   const key = faviconOriginKey(rawUrl);
-  if (!key || cache.byOrigin[key]) return GLYPH;
+  if (!key) return GLYPH;
+  const captured = cache.captured[key];
+  if (captured) return { kind: "image", src: captured.src, tier: "captured" };
+  if (cache.byOrigin[key]) return GLYPH;
   const src = faviconUrlForOrigin(rawUrl, FAVICON_PROVIDER_SIZE);
-  return src ? { kind: "image", src } : GLYPH;
+  return src ? { kind: "image", src, tier: "provider" } : GLYPH;
+}
+
+/**
+ * Refs the sessions carry that still need a `getFavicon` read: not yet
+ * attempted and not already the recorded capture for the page's origin.
+ * One entry per ref.
+ */
+export function pendingFaviconRefs(
+  cache: FaviconCache,
+  sessions: readonly BrowserSession[],
+  attempted: ReadonlySet<string>,
+): readonly { readonly ref: string; readonly url: string }[] {
+  const pending = new Map<string, string>();
+  for (const session of sessions) {
+    const ref = session.faviconRef;
+    const url = session.navigation.url;
+    if (!ref || !url || attempted.has(ref) || pending.has(ref)) continue;
+    const key = faviconOriginKey(url);
+    if (!key || cache.captured[key]?.ref === ref) continue;
+    pending.set(ref, url);
+  }
+  return [...pending].map(([ref, url]) => ({ ref, url }));
+}
+
+/**
+ * The host-rendered chrome for the panel's own tab: the presented page and
+ * its captured icon (the host adds the provider tier itself), and audio
+ * across every session — "audible" while any unmuted page plays, "muted"
+ * when only muted pages do. Null when there is nothing to show.
+ */
+export function panelTabIndicators(
+  cache: FaviconCache,
+  presented: BrowserSession | null,
+  sessions: readonly BrowserSession[],
+): ViewTabIndicators | null {
+  const rawUrl = presented ? (presented.navigation.url ?? presented.requestedUrl) : null;
+  const pageUrl = rawUrl && rawUrl.length <= 2048 && faviconOriginKey(rawUrl) ? rawUrl : null;
+  const resolution = resolveFavicon(cache, pageUrl);
+  const audible = sessions.filter((session) => session.audible === true);
+  const audio = audible.some((session) => session.audioMuted !== true)
+    ? "audible"
+    : audible.length > 0
+      ? "muted"
+      : null;
+  if (pageUrl === null && audio === null) return null;
+  return {
+    ...(pageUrl === null ? {} : { pageUrl }),
+    ...(resolution.kind === "image" && resolution.tier === "captured"
+      ? { faviconDataUrl: resolution.src }
+      : {}),
+    ...(audio === null ? {} : { audio }),
+  };
 }

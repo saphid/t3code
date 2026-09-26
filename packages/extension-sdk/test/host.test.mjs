@@ -502,3 +502,52 @@ NodeTest.test(
     host.dispose();
   },
 );
+NodeTest.test(
+  "tab indicators are host state that survives hiding and clears on restart",
+  async () => {
+    const f = fixture();
+    const id = await f.host.open(record());
+    const [session] = f.sessions;
+    const snapshots = [];
+    f.host.subscribe((view) => view && snapshots.push(view));
+    const favicon = "data:image/png;base64,AAAA";
+    NodeAssert.equal(
+      session.setTabIndicators({
+        pageUrl: "http://localhost:5173/",
+        faviconDataUrl: favicon,
+        audio: "audible",
+      }),
+      true,
+    );
+    await Promise.resolve();
+    NodeAssert.deepEqual(f.host.snapshot(id).tab, {
+      pageUrl: "http://localhost:5173/",
+      faviconDataUrl: favicon,
+      audio: "audible",
+    });
+    NodeAssert.ok(snapshots.some((view) => view.tab?.audio === "audible"));
+    // A background tab still reports its audio.
+    f.host.hide(id);
+    NodeAssert.equal(session.setTabIndicators({ audio: "muted" }), true);
+    await Promise.resolve();
+    NodeAssert.deepEqual(f.host.snapshot(id).tab, { audio: "muted" });
+    for (const invalid of [
+      { pageUrl: "javascript:alert(1)" },
+      { faviconDataUrl: "https://example.com/favicon.ico" },
+      { faviconDataUrl: "data:image/svg+xml;base64,AAAA" },
+      { faviconDataUrl: `data:image/png;base64,${"A".repeat(8192)}` },
+      { audio: "loud" },
+      { badge: 3 },
+    ])
+      NodeAssert.throws(() => session.setTabIndicators(invalid));
+    NodeAssert.equal(session.setTabIndicators(null), true);
+    await Promise.resolve();
+    NodeAssert.equal(f.host.snapshot(id).tab, undefined);
+    // A restarted view starts without the previous session's indicators.
+    session.setTabIndicators({ audio: "audible" });
+    await f.host.show(id);
+    await f.host.updateContext(id, context("one", "2"));
+    NodeAssert.equal(f.host.snapshot(id).tab, undefined);
+    NodeAssert.equal(session.setTabIndicators({ audio: "audible" }), false);
+  },
+);

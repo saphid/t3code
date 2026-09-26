@@ -10,6 +10,7 @@ const methods = [
   "back",
   "openDevTools",
   "closeDevTools",
+  "setPictureInPicture",
 ];
 
 export default {

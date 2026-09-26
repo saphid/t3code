@@ -18,6 +18,7 @@ const engineStatus = (url: string) =>
     audioMuted: false,
     audible: false,
     devToolsOpen: false,
+    pictureInPicture: false,
     favicon: null,
   }) as const;
 

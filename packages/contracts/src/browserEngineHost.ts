@@ -35,7 +35,11 @@ export type BrowserEngineHostConnectionId = typeof BrowserEngineHostConnectionId
 export const BrowserEngineCommandId = TrimmedNonEmptyString.check(Schema.isMaxLength(64));
 export type BrowserEngineCommandId = typeof BrowserEngineCommandId.Type;
 
-/** Ordinary page commands. Navigation, resize and privileged verbs are not here. */
+/**
+ * Page commands. Navigation, resize and privileged verbs are not here.
+ * `setPictureInPicture` pops the guest out into the host's native
+ * picture-in-picture window; the server gates it on its own grant.
+ */
 export const BrowserEngineCommand = Schema.Union([
   Schema.TaggedStruct("back", {}),
   Schema.TaggedStruct("forward", {}),
@@ -47,6 +51,7 @@ export const BrowserEngineCommand = Schema.Union([
   Schema.TaggedStruct("setAudioMuted", { muted: Schema.Boolean }),
   /** Opens (detached) or closes the guest's DevTools. Gated by its own extension grant. */
   Schema.TaggedStruct("setDevToolsOpen", { open: Schema.Boolean }),
+  Schema.TaggedStruct("setPictureInPicture", { open: Schema.Boolean }),
 ]);
 export type BrowserEngineCommand = typeof BrowserEngineCommand.Type;
 
@@ -60,8 +65,8 @@ export type BrowserEngineSessionTarget = typeof BrowserEngineSessionTarget.Type;
 
 /**
  * Observed page state of a claimed guest. Title rides `navStatus`. The
- * favicon is held server-side only; the public sessions projection does not
- * carry favicon bytes (P08-FAVICON-REF).
+ * favicon stays server-side: the public sessions projection stores it as a
+ * bounded asset and carries only its ref (P08-FAVICON-REF).
  */
 export const BrowserEnginePageStatus = Schema.Struct({
   navStatus: PreviewNavStatus,
@@ -72,6 +77,8 @@ export const BrowserEnginePageStatus = Schema.Struct({
   audioMuted: Schema.Boolean,
   audible: Schema.Boolean,
   devToolsOpen: Schema.Boolean,
+  /** The guest is shown in the host's native picture-in-picture window. */
+  pictureInPicture: Schema.Boolean,
   favicon: Schema.NullOr(
     Schema.Struct({
       dataUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(BROWSER_ENGINE_FAVICON_MAX_LENGTH)),
