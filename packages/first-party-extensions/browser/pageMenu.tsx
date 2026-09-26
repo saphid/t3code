@@ -84,7 +84,7 @@ export function ZoomIndicator(props: { zoomFactor: number | null }) {
 
 /**
  * "⋯" menu: Hard reload, Appearance, the zoom row (−, any ladder factor in
- * one call, +, reset) and Mute. `blockReason` disables every item and says
+ * one call, +, reset), Mute and DevTools. `blockReason` disables every item and says
  * why; `run` sends one verb.
  */
 export function PageMenu(props: {
@@ -116,6 +116,8 @@ export function PageMenu(props: {
   const disabled = blockReason !== null;
   const zoom = session?.zoomFactor ?? null;
   const audioMuted = session?.audioMuted ?? null;
+  // Null until the engine reports it: the item stays disabled rather than guessing.
+  const devToolsOpen = session?.devToolsOpen ?? null;
 
   return (
     <div ref={root} style={{ position: "relative" }}>
@@ -240,6 +242,19 @@ export function PageMenu(props: {
             style={{ ...control, textAlign: "left" }}
           >
             {audioMuted ? "Unmute page" : "Mute page"}
+          </button>
+          <button
+            type="button"
+            role="menuitemcheckbox"
+            aria-checked={devToolsOpen === true}
+            disabled={disabled || devToolsOpen === null}
+            onClick={() => {
+              run({ method: "setDevToolsOpen", open: devToolsOpen !== true });
+              setOpen(false);
+            }}
+            style={{ ...control, textAlign: "left" }}
+          >
+            {devToolsOpen ? "Close DevTools" : "Open DevTools"}
           </button>
         </div>
       )}

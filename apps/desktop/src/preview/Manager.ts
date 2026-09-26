@@ -126,6 +126,8 @@ export interface PreviewTabState {
   audioMuted: boolean;
   /** Observed from Chromium. Stays true while a muted tab keeps playing. */
   audible: boolean;
+  /** Observed from Chromium's devtools-opened/devtools-closed on the current guest. */
+  devToolsOpen: boolean;
   controller: "human" | "agent" | "none";
   favicon?: DesktopPreviewFavicon;
   updatedAt: string;
@@ -1153,7 +1155,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }),
       ] as const;
     });
-    // emitIfCurrent, not emit: an event-driven writer such as syncTabAudible
+    // emitIfCurrent, not emit: an event-driven writer such as syncTabObserved
     // can commit between the modify above and here, and republishing this
     // snapshot would roll the UI back to a value that writer will not send
     // again because it suppresses unchanged audibility.
@@ -1211,16 +1213,18 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   /**
-   * Publishes an observed audibility value for the guest that reported it.
-   * Shared by the `audio-state-changed` handler and the post-attach reconcile
-   * so both drop values from a guest the tab no longer owns, and both skip
-   * unchanged values: Chromium re-emits per media element, and republishing
-   * would cost an IPC push per element rather than per real transition.
+   * Publishes an observed guest flag (audibility or DevTools) for the guest
+   * that reported it. Shared by the Chromium event handlers and the
+   * post-attach reconcile so both drop values from a guest the tab no longer
+   * owns, and both skip unchanged values: Chromium re-emits audibility per
+   * media element, and republishing would cost an IPC push per element
+   * rather than per real transition.
    */
-  const syncTabAudible = Effect.fn("PreviewManager.syncTabAudible")(function* (
+  const syncTabObserved = Effect.fn("PreviewManager.syncTabObserved")(function* (
     tabId: string,
     wc: Electron.WebContents,
-    audible: boolean,
+    key: "audible" | "devToolsOpen",
+    value: boolean,
   ) {
     if (wc.isDestroyed()) return;
     const updatedAt = yield* currentIso;
@@ -1230,11 +1234,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         !current ||
         current.webContentsId !== wc.id ||
         webContents.fromId(wc.id) !== wc ||
-        current.audible === audible
+        current[key] === value
       ) {
         return [Option.none<PreviewTabState>(), tabs] as const;
       }
-      const state: PreviewTabState = { ...current, audible, updatedAt };
+      const state: PreviewTabState = { ...current, [key]: value, updatedAt };
       return [
         Option.some(state),
         replaceMap(tabs, (copy) => {
@@ -1970,7 +1974,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     };
     const audioStateChanged = (
       event: Electron.Event<Electron.WebContentsAudioStateChangedEventParams>,
-    ) => runFork(syncTabAudible(tabId, wc, event.audible));
+    ) => runFork(syncTabObserved(tabId, wc, "audible", event.audible));
+    const devToolsOpened = () => runFork(syncTabObserved(tabId, wc, "devToolsOpen", true));
+    const devToolsClosed = () => runFork(syncTabObserved(tabId, wc, "devToolsOpen", false));
     const publishFavicon = Effect.fn("PreviewManager.publishFavicon")(function* (input: {
       readonly captureDocumentId: number;
       readonly dataUrl: string;
@@ -2179,6 +2185,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.off("dom-ready", restoreRecordingCursor);
         wc.off("did-fail-load", failed as never);
         wc.off("audio-state-changed", audioStateChanged);
+        wc.off("devtools-opened", devToolsOpened);
+        wc.off("devtools-closed", devToolsClosed);
         wc.off("did-create-window", windowCreated);
         wc.off("before-input-event", beforeInput);
         wc.ipc.off(HUMAN_INPUT_CHANNEL, humanInput);
@@ -2201,6 +2209,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.on("dom-ready", restoreRecordingCursor);
         wc.on("did-fail-load", failed as never);
         wc.on("audio-state-changed", audioStateChanged);
+        wc.on("devtools-opened", devToolsOpened);
+        wc.on("devtools-closed", devToolsClosed);
         wc.ipc.on(HUMAN_INPUT_CHANNEL, humanInput);
         wc.ipc.on(RECORDING_INPUT_CHANNEL, recordingInput);
         wc.ipc.on(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
@@ -2285,6 +2295,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           colorScheme: defaults?.colorScheme ?? "system",
           audioMuted: false,
           audible: false,
+          devToolsOpen: false,
           controller: "none",
           updatedAt,
         };
@@ -2357,6 +2368,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       colorScheme: "system",
       audioMuted: false,
       audible: false,
+      devToolsOpen: false,
       controller: "none",
       updatedAt,
     };
@@ -2461,7 +2473,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       { operation: "registerWebview.readAudible", tabId, webContentsId },
       () => wc.isCurrentlyAudible(),
     ).pipe(Effect.orElseSucceed(() => false));
+    const readDevToolsOpen = attempt(
+      { operation: "registerWebview.readDevToolsOpen", tabId, webContentsId },
+      () => wc.isDevToolsOpened(),
+    ).pipe(Effect.orElseSucceed(() => false));
     const attachedAudible = yield* readAudible;
+    const attachedDevToolsOpen = yield* readDevToolsOpen;
     const registeredAt = yield* currentIso;
     const registration = yield* SynchronizedRef.modifyEffect(tabsRef, (tabs) =>
       Effect.gen(function* () {
@@ -2485,6 +2502,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           canGoBack: wc.navigationHistory.canGoBack(),
           canGoForward: wc.navigationHistory.canGoForward(),
           audible: attachedAudible,
+          devToolsOpen: attachedDevToolsOpen,
           updatedAt: registeredAt,
         };
         return [
@@ -2516,12 +2534,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     runFork(restoreControlSession(tabId, wc));
     // emitIfCurrent, not emit: audio-state-changed can land between the commit
     // above and here, and republishing this snapshot would roll the UI back to
-    // a superseded audibility that syncTabAudible will not re-send.
+    // a superseded audibility that syncTabObserved will not re-send.
     yield* emitIfCurrent(tabId, registered);
     // Transitions that fired before the tab owned this guest were dropped by
-    // syncTabAudible's ownership check, so re-read and reconcile through the
-    // same path the event uses.
-    yield* syncTabAudible(tabId, wc, yield* readAudible);
+    // syncTabObserved's ownership check, so re-read and reconcile through the
+    // same path the events use.
+    yield* syncTabObserved(tabId, wc, "audible", yield* readAudible);
+    yield* syncTabObserved(tabId, wc, "devToolsOpen", yield* readDevToolsOpen);
     yield* attempt({ operation: "registerWebview.sendTheme", tabId, webContentsId }, () =>
       wc.send(ANNOTATION_THEME_CHANNEL, annotationTheme),
     );
@@ -2577,6 +2596,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         // left to restore it. Chromium reports the change when it happens.
         audioMuted: current?.audioMuted ?? false,
         audible: current?.audible ?? false,
+        devToolsOpen: current?.devToolsOpen ?? false,
         controller: current?.controller ?? "none",
         remoteLive: current?.remoteLive ?? false,
         ...(current?.favicon ? { favicon: current.favicon } : {}),
@@ -2686,6 +2706,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       wc.openDevTools({ mode: "detach" });
     });
   });
+
+  /** Closing fires `devtools-closed`, which restores the control session openDevTools detached. */
+  const closeDevTools = (tabId: string) =>
+    withWebContents("closeDevTools", tabId, (wc) => {
+      if (wc.isDevToolsOpened()) wc.closeDevTools();
+    });
 
   const setAnnotationTheme = Effect.fn("PreviewManager.setAnnotationTheme")(function* (
     theme: DesktopPreviewAnnotationTheme,
@@ -5752,6 +5778,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     navigate,
     openPictureInPicture,
     openDevTools,
+    closeDevTools,
     pickElement,
     reapplyZoom,
     refresh,
@@ -6126,6 +6153,7 @@ export class PreviewManager extends Context.Service<
       audioMuted: boolean,
     ) => Effect.Effect<void, PreviewManagerError>;
     readonly openDevTools: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly closeDevTools: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly clearCookies: (
       partitions?: ReadonlyArray<string>,
     ) => Effect.Effect<void, PreviewManagerError>;
@@ -6297,6 +6325,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     setColorScheme: operations.setColorScheme,
     setAudioMuted: operations.setAudioMuted,
     openDevTools: operations.openDevTools,
+    closeDevTools: operations.closeDevTools,
     clearCookies: Effect.fn("PreviewManager.clearCookies")(function* (partitions) {
       yield* browserSession
         .clearCookies(partitions)

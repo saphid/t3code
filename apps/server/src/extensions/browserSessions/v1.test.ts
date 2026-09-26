@@ -1,5 +1,6 @@
 import {
   BrowserEnginePageStatus,
+  type BrowserEngineHostCommandResultInput,
   type BrowserEngineHostStreamEvent,
   type PreviewNavStatus,
   AuthOrchestrationOperateScope,
@@ -10,6 +11,7 @@ import {
   extensionWorkspaceRevision,
 } from "@t3tools/contracts";
 import {
+  BROWSER_DEVTOOLS,
   BROWSER_OPERATE,
   BROWSER_SESSIONS,
   browserSessionsApi,
@@ -181,6 +183,7 @@ const pageStatus = (navStatus: PreviewNavStatus) =>
     appearance: "dark" as const,
     audioMuted: false,
     audible: true,
+    devToolsOpen: false,
     favicon: { dataUrl: "data:image/png;base64,AAAA", pageUrl: "http://localhost:5173/" },
   });
 
@@ -364,9 +367,20 @@ describe("browser sessions adapter", () => {
       ]);
       for (const method of definition.methods ?? []) {
         expect(method.requiredGrants).toEqual(
-          writes.has(method.name) ? [BROWSER_SESSIONS, BROWSER_OPERATE] : [BROWSER_SESSIONS],
+          method.name === "setDevToolsOpen"
+            ? // DevTools needs its own grant; sessions + operate confer nothing about it.
+              [BROWSER_SESSIONS, BROWSER_OPERATE, BROWSER_DEVTOOLS]
+            : writes.has(method.name)
+              ? [BROWSER_SESSIONS, BROWSER_OPERATE]
+              : [BROWSER_SESSIONS],
         );
       }
+      // No other method or stream accepts the DevTools grant as authority.
+      expect(
+        (definition.methods ?? [])
+          .filter((method) => method.requiredGrants.includes(BROWSER_DEVTOOLS))
+          .map((method) => method.name),
+      ).toEqual(["setDevToolsOpen"]);
       expect(definition.streams?.[0]?.requiredGrants).toEqual([BROWSER_SESSIONS]);
     }),
   );
@@ -728,6 +742,7 @@ describe("browser sessions adapter", () => {
         "zoom",
         "setAppearance",
         "setAudioMuted",
+        "setDevToolsOpen",
       ]) {
         const extra =
           method === "zoom"
@@ -736,7 +751,9 @@ describe("browser sessions adapter", () => {
               ? { appearance: "dark" }
               : method === "setAudioMuted"
                 ? { muted: true }
-                : {};
+                : method === "setDevToolsOpen"
+                  ? { open: true }
+                  : {};
         const error = yield* invokeError(provider, method, {
           tabId: opened.session.tabId,
           serverEpoch: opened.serverEpoch,
@@ -780,6 +797,7 @@ describe("browser sessions adapter", () => {
         "zoom",
         "setAppearance",
         "setAudioMuted",
+        "setDevToolsOpen",
       ]);
       // Presentation stays a named deferral (P08-PRESENTATION-SLOT).
       expect(capabilities.presentation).toEqual({ supported: false, reason: "desktop-required" });
@@ -844,9 +862,115 @@ describe("browser sessions adapter", () => {
         appearance: "dark",
         audioMuted: false,
         audible: true,
+        devToolsOpen: false,
         canGoBack: true,
       });
       expect(Object.keys(listed.sessions[0] ?? {})).not.toContain("favicon");
+    }),
+  );
+
+  it.effect("setDevToolsOpen dispatches to the owning host and names every refusal", () =>
+    Effect.gen(function* () {
+      const { provider, engineHosts } = yield* harness;
+      const opened = (yield* invoke(provider, "open", { url: "localhost:5173" })) as {
+        readonly serverEpoch: string;
+        readonly session: { readonly tabId: string; readonly devToolsOpen: boolean | null };
+      };
+      const guard = {
+        tabId: opened.session.tabId,
+        serverEpoch: opened.serverEpoch,
+        expectedEngineGeneration: null,
+      };
+      // Unreported is null, never a guessed "closed".
+      expect(opened.session.devToolsOpen).toBeNull();
+
+      // No desktop host registered anywhere: desktop-required.
+      const noHost = yield* invokeError(provider, "setDevToolsOpen", { ...guard, open: true });
+      expect(noHost.detail).toContain("BrowserSessionCommandUnsupported");
+      expect(noHost.detail).toContain("(desktop-required)");
+
+      // A host is registered but only claims another session: no-attached-engine.
+      const other = (yield* invoke(provider, "open", { url: "localhost:3000" })) as {
+        readonly session: { readonly tabId: string };
+      };
+      const { events, fence } = yield* attachDesktopHost(engineHosts, {
+        tabId: other.session.tabId,
+        serverEpoch: opened.serverEpoch,
+      });
+      const detached = yield* invokeError(provider, "setDevToolsOpen", { ...guard, open: true });
+      expect(detached.detail).toContain("BrowserSessionEngineDetached");
+      expect(detached.detail).toContain("(no-attached-engine)");
+
+      const answer = (result: BrowserEngineHostCommandResultInput["result"]) =>
+        Effect.gen(function* () {
+          const event = yield* Queue.take(events);
+          if (event.type !== "command") throw new Error("expected a command event");
+          yield* engineHosts.commandResult(DESKTOP_SOCKET, {
+            hostConnectionId: fence.hostConnectionId,
+            commandId: event.commandId,
+            result,
+          });
+          return event;
+        });
+      const attached = {
+        tabId: other.session.tabId,
+        serverEpoch: opened.serverEpoch,
+        expectedEngineGeneration: "41",
+      };
+
+      const applying = yield* Effect.forkChild(answer({ outcome: "applied" }));
+      const openedDevTools = (yield* invoke(provider, "setDevToolsOpen", {
+        ...attached,
+        open: true,
+      })) as { readonly outcome: string };
+      expect(openedDevTools.outcome).toBe("accepted");
+      expect(yield* Fiber.join(applying)).toMatchObject({
+        target: fence.target,
+        engineGeneration: "41",
+        command: { _tag: "setDevToolsOpen", open: true },
+      });
+
+      // A host that cannot toggle DevTools answers not-applicable: engine-unsupported.
+      const refusing = yield* Effect.forkChild(
+        answer({ outcome: "rejected", reason: "not-applicable" }),
+      );
+      const unsupported = yield* invokeError(provider, "setDevToolsOpen", {
+        ...attached,
+        open: false,
+      });
+      yield* Fiber.join(refusing);
+      expect(unsupported.detail).toContain("BrowserSessionCommandUnsupported");
+      expect(unsupported.detail).toContain("(engine-unsupported)");
+
+      // Any other rejection stays an honest receipt, like every page verb.
+      const failing = yield* Effect.forkChild(answer({ outcome: "rejected", reason: "failed" }));
+      const failed = (yield* invoke(provider, "setDevToolsOpen", {
+        ...attached,
+        open: false,
+      })) as { readonly outcome: string };
+      yield* Fiber.join(failing);
+      expect(failed.outcome).toBe("rejected");
+
+      const badInput = yield* invokeError(provider, "setDevToolsOpen", {
+        ...attached,
+        open: "yes",
+      });
+      expect(badInput.detail).toContain("BrowserSessionInputError");
+
+      // Open/closed state rides the same owner report as mute and appearance.
+      yield* engineHosts.report(DESKTOP_SOCKET, {
+        ...fence,
+        status: {
+          ...pageStatus({ _tag: "Success", url: "http://localhost:3000/", title: "Dev" }),
+          devToolsOpen: true,
+        },
+      });
+      const listed = (yield* invoke(provider, "list", {})) as {
+        readonly sessions: readonly { readonly tabId: string; readonly devToolsOpen: unknown }[];
+      };
+      expect(
+        Object.fromEntries(listed.sessions.map((session) => [session.tabId, session.devToolsOpen])),
+      ).toEqual({ [opened.session.tabId]: null, [other.session.tabId]: true });
     }),
   );
 
@@ -1308,6 +1432,26 @@ describe("browser sessions adapter", () => {
             sessions: { tabId: string }[];
           };
           expect(listed.sessions.map((s) => s.tabId)).toEqual([opened.session.tabId]);
+
+          // DevTools needs its own grant: sessions + operate are refused by name
+          // through the real broker, and adding the grant reaches the adapter.
+          const devTools = () =>
+            invokeMirror("setDevToolsOpen", {
+              tabId: opened.session.tabId,
+              serverEpoch: opened.serverEpoch,
+              expectedEngineGeneration: null,
+              open: true,
+            });
+          yield* Effect.promise(() =>
+            expect(devTools()).rejects.toThrow(/API capability denied: t3\.browser\/devtools/),
+          );
+          yield* Effect.promise(() =>
+            runtime.updateGrants(installed.id, {
+              ...grants,
+              capabilities: [...grants.capabilities, BROWSER_DEVTOOLS],
+            }),
+          );
+          yield* Effect.promise(() => expect(devTools()).rejects.toThrow(/desktop-required/));
 
           // The events stream relays through the packed subscribe path:
           // complete snapshot first, then the live removal.

@@ -1950,6 +1950,77 @@ describe("PreviewManager", () => {
     ),
   );
 
+  /** An audio guest whose DevTools open and close like Chromium's, firing their events. */
+  const makeDevToolsWebContents = (id: number, initiallyOpen = false) => {
+    const guest = makeAudioWebContents(id);
+    const wc = guest.wc as unknown as {
+      on: ReturnType<typeof vi.fn>;
+      [key: string]: unknown;
+    };
+    let open = initiallyOpen;
+    const emit = (event: "devtools-opened" | "devtools-closed") => {
+      for (const [name, listener] of wc.on.mock.calls as [string, () => void][]) {
+        if (name === event) listener();
+      }
+    };
+    const openDevTools = vi.fn(() => {
+      open = true;
+      emit("devtools-opened");
+    });
+    const closeDevTools = vi.fn(() => {
+      open = false;
+      emit("devtools-closed");
+    });
+    Object.assign(wc, {
+      isDevToolsOpened: () => open,
+      openDevTools,
+      closeDevTools,
+      once: vi.fn(),
+    });
+    return { wc: guest.wc, openDevTools, closeDevTools };
+  };
+
+  effectIt.effect("tracks DevTools open and closed on the current guest", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const guest = makeDevToolsWebContents(42);
+        fromId.mockReturnValue(guest.wc);
+        const states: PreviewManager.PreviewTabState[] = [];
+
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            states.push(state);
+          }),
+        );
+        yield* manager.createTab("tab_devtools");
+        yield* manager.registerWebview("tab_devtools", 42);
+        yield* Effect.yieldNow;
+        expect(states.at(-1)?.devToolsOpen).toBe(false);
+
+        yield* manager.openDevTools("tab_devtools");
+        yield* Effect.yieldNow;
+        expect(guest.openDevTools).toHaveBeenCalledWith({ mode: "detach" });
+        expect(states.at(-1)?.devToolsOpen).toBe(true);
+
+        yield* manager.closeDevTools("tab_devtools");
+        yield* Effect.yieldNow;
+        expect(guest.closeDevTools).toHaveBeenCalledTimes(1);
+        expect(states.at(-1)?.devToolsOpen).toBe(false);
+
+        // Closing closed DevTools is a no-op, not a second native call.
+        yield* manager.closeDevTools("tab_devtools");
+        expect(guest.closeDevTools).toHaveBeenCalledTimes(1);
+
+        // A guest attached with DevTools already open reports them open.
+        const replacement = makeDevToolsWebContents(43, true);
+        fromId.mockReturnValue(replacement.wc);
+        yield* manager.registerWebview("tab_devtools", 43);
+        yield* Effect.yieldNow;
+        expect(states.at(-1)?.devToolsOpen).toBe(true);
+      }),
+    ),
+  );
+
   effectIt.effect("ignores audio state from a replaced guest", () =>
     withManager((manager) =>
       Effect.gen(function* () {

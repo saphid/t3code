@@ -110,6 +110,7 @@ export function toEnginePageStatus(state: DesktopPreviewTabState): BrowserEngine
     appearance: state.colorScheme,
     audioMuted: state.audioMuted,
     audible: state.audible,
+    devToolsOpen: state.devToolsOpen,
     favicon,
   };
 }
@@ -125,6 +126,8 @@ type EngineCommandBridge = Pick<
   | "setZoomFactor"
   | "setColorScheme"
   | "setAudioMuted"
+  | "openDevTools"
+  | "closeDevTools"
 >;
 
 const rejected = (reason: Extract<CommandResult, { outcome: "rejected" }>["reason"]) =>
@@ -165,6 +168,14 @@ export async function executeEngineCommand(
       case "setAudioMuted":
         await bridge.setAudioMuted(runtimeTabId, command.muted);
         break;
+      case "setDevToolsOpen": {
+        // A desktop shell older than this renderer may lack the IPC; the
+        // server names that refusal engine-unsupported.
+        const toggle = command.open ? bridge.openDevTools : bridge.closeDevTools;
+        if (typeof toggle !== "function") return rejected("not-applicable");
+        await toggle(runtimeTabId);
+        break;
+      }
     }
   } catch {
     return rejected("failed");

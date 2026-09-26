@@ -1,6 +1,6 @@
 /**
  * Page controls over the `t3.browser/sessions` engine verbs — back, forward,
- * reload, hard reload, zoom, appearance and mute. Every verb is dispatched to
+ * reload, hard reload, zoom, appearance, mute and DevTools. Every verb is dispatched to
  * the desktop engine host that owns the session; this module decides whether
  * a verb may be sent, names why not, and turns receipts and errors into the
  * panel's inline messages. Pure and client-injected so the rules are testable
@@ -11,6 +11,9 @@
  * `crashed` (with `recovery-exhausted` once the host gave up), and a guest
  * being replaced is `recovering`. Controls are disabled in each of those
  * states with the reason on screen — never a spinner that implies progress.
+ *
+ * DevTools additionally needs the installation's `t3.browser/devtools` grant;
+ * without it the broker refuses by name and the refusal is shown as-is.
  */
 import {
   BROWSER_SESSION_ZOOM_LEVELS,
@@ -27,7 +30,8 @@ export type PageVerb =
   | { readonly method: "back" | "forward" | "reload" | "hardReload" }
   | { readonly method: "zoom"; readonly zoomFactor: number }
   | { readonly method: "setAppearance"; readonly appearance: PageAppearance }
-  | { readonly method: "setAudioMuted"; readonly muted: boolean };
+  | { readonly method: "setAudioMuted"; readonly muted: boolean }
+  | { readonly method: "setDevToolsOpen"; readonly open: boolean };
 
 /** The fence every engine verb carries. */
 export interface PageTarget {
@@ -126,12 +130,20 @@ const VERB_LABELS: Record<PageVerb["method"], string> = {
   zoom: "Zoom",
   setAppearance: "Appearance",
   setAudioMuted: "Mute",
+  setDevToolsOpen: "DevTools",
 };
 
 /** Inline message for a thrown verb, keyed on the server's stable error names. */
 export function pageCommandErrorMessage(method: PageVerb["method"], error: unknown): string {
   const label = VERB_LABELS[method];
   const text = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  const denied = /capability denied: (\S+)/.exec(text);
+  if (denied)
+    return `${label} needs the ${denied[1]} grant, which this installation does not hold (grant-denied).`;
+  if (text.includes("(engine-unsupported)"))
+    return `${label} is not supported by the browser engine rendering this page (engine-unsupported).`;
+  if (text.includes("BrowserSessionEngineDetached"))
+    return `${label} was not sent: no desktop engine has attached this page yet (no-attached-engine).`;
   if (text.includes("BrowserSessionCommandUnsupported"))
     return `${label} needs the T3 Code desktop app, where the page renders (desktop-required).`;
   if (text.includes("BrowserStaleEngineGeneration"))
@@ -205,6 +217,9 @@ export async function runPageCommand(
         break;
       case "setAudioMuted":
         receipt = await api.invoke("setAudioMuted", { ...guard, muted: verb.muted }, signal);
+        break;
+      case "setDevToolsOpen":
+        receipt = await api.invoke("setDevToolsOpen", { ...guard, open: verb.open }, signal);
         break;
       default:
         receipt = await api.invoke(verb.method, guard, signal);

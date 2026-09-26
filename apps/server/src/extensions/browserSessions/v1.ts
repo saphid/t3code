@@ -5,9 +5,10 @@
  * the public contract and never exposes webview handles, partitions, preload
  * URLs, evaluation endpoints, or presentation slots. Metadata writes (open,
  * navigate, resize, close) record acceptance, never engine execution. Page
- * commands (back … setAudioMuted) route to the authenticated desktop engine
+ * commands (back … setDevToolsOpen) route to the authenticated desktop engine
  * host that owns the session (see `preview/BrowserEngineHosts.ts`); with no
- * owner they fail by name. Navigation honesty compares the dispatch-side
+ * owner they fail by name. `setDevToolsOpen`'s own `t3.browser/devtools`
+ * grant is enforced by the broker from the method's `requiredGrants`. Navigation honesty compares the dispatch-side
  * request revision against the last owner-host report carried by
  * `PreviewSessionDetail` (P08-NAV-ACK, see `Manager.ts`).
  */
@@ -181,6 +182,7 @@ const decodeAppearanceInput = closedDecoder({
   appearance: Schema.Literals(["system", "light", "dark"]),
 });
 const decodeMutedInput = closedDecoder({ ...CommandGuardFields, muted: Schema.Boolean });
+const decodeDevToolsInput = closedDecoder({ ...CommandGuardFields, open: Schema.Boolean });
 const decodeResizeInput = closedDecoder({
   ...CommandGuardFields,
   viewport: PreviewViewportSetting,
@@ -261,6 +263,7 @@ const projectSession = (detail: PreviewManager.PreviewSessionDetail): BrowserSes
     appearance: status?.appearance ?? null,
     audioMuted: status?.audioMuted ?? null,
     audible: status?.audible ?? null,
+    devToolsOpen: status?.devToolsOpen ?? null,
   };
 };
 
@@ -560,41 +563,79 @@ export function createBrowserSessionsApiProvider(
       const metadataWrite = (write: Effect.Effect<unknown, ExtensionOperationError>) => () =>
         Effect.as(write, "accepted" as const);
 
+      type Guarded = {
+        readonly listed: PreviewManager.PreviewListDetailsResult;
+        readonly detail: PreviewManager.PreviewSessionDetail;
+      };
+
+      const desktopRequired = () =>
+        named(
+          operation,
+          "BrowserSessionCommandUnsupported",
+          `'${method}' requires an authenticated desktop engine host; none renders this session (desktop-required).`,
+        );
+
+      /** Sends one command to the owning host; the ack wait is bounded by the host registry. */
+      const dispatchEngine = (
+        engineCommand: BrowserEngineCommand,
+        { listed, detail }: Guarded,
+        engine: PreviewManager.PreviewSessionEngine,
+      ) =>
+        dependencies.engineHosts.dispatch({
+          hostConnectionId: engine.hostConnectionId,
+          target: {
+            threadId,
+            tabId: detail.snapshot.tabId,
+            serverEpoch: listed.serverEpoch,
+          },
+          engineGeneration: engine.generation,
+          command: engineCommand,
+        });
+
       /**
        * Page verbs go to the host that owns the guest. The receipt reflects the
        * host's answer: applied → accepted, rejected → rejected, disconnect or
        * silence → unknown (the caller reconciles before retrying).
        */
-      const engineWrite =
-        (engineCommand: BrowserEngineCommand) =>
-        ({
-          listed,
-          detail,
-        }: {
-          readonly listed: PreviewManager.PreviewListDetailsResult;
-          readonly detail: PreviewManager.PreviewSessionDetail;
-        }) =>
-          Effect.gen(function* () {
-            const engine = detail.engine;
-            if (engine === null) {
-              return yield* named(
-                operation,
-                "BrowserSessionCommandUnsupported",
-                `'${method}' requires an authenticated desktop engine host; none renders this session (desktop-required).`,
-              );
-            }
-            const dispatched = yield* dependencies.engineHosts.dispatch({
-              hostConnectionId: engine.hostConnectionId,
-              target: {
-                threadId,
-                tabId: detail.snapshot.tabId,
-                serverEpoch: listed.serverEpoch,
-              },
-              engineGeneration: engine.generation,
-              command: engineCommand,
-            });
-            return dispatched.outcome === "applied" ? "accepted" : dispatched.outcome;
-          });
+      const engineWrite = (engineCommand: BrowserEngineCommand) => (guarded: Guarded) =>
+        Effect.gen(function* () {
+          const engine = guarded.detail.engine;
+          if (engine === null) return yield* desktopRequired();
+          const dispatched = yield* dispatchEngine(engineCommand, guarded, engine);
+          return dispatched.outcome === "applied" ? "accepted" : dispatched.outcome;
+        });
+
+      /**
+       * DevTools names each refusal: no desktop host at all (desktop-required),
+       * a host that has not attached this session (no-attached-engine), and a
+       * host that cannot open DevTools (engine-unsupported). Other outcomes
+       * map like every page verb.
+       */
+      const devToolsWrite = (open: boolean) => (guarded: Guarded) =>
+        Effect.gen(function* () {
+          const engine = guarded.detail.engine;
+          if (engine === null) {
+            if (!(yield* dependencies.engineHosts.hasHost)) return yield* desktopRequired();
+            return yield* named(
+              operation,
+              "BrowserSessionEngineDetached",
+              "no desktop engine has attached this session yet (no-attached-engine).",
+            );
+          }
+          const dispatched = yield* dispatchEngine(
+            { _tag: "setDevToolsOpen", open },
+            guarded,
+            engine,
+          );
+          if (dispatched.outcome === "rejected" && dispatched.reason === "not-applicable") {
+            return yield* named(
+              operation,
+              "BrowserSessionCommandUnsupported",
+              "the attached browser engine cannot open DevTools (engine-unsupported).",
+            );
+          }
+          return dispatched.outcome === "applied" ? "accepted" : dispatched.outcome;
+        });
 
       const decodeGuard = <A, E>(
         decoder: (value: unknown) => Effect.Effect<A, E>,
@@ -657,6 +698,13 @@ export function createBrowserSessionsApiProvider(
             "setAudioMuted input fails the declared schema.",
           );
           return yield* command(safe, engineWrite({ _tag: "setAudioMuted", muted: safe.muted }));
+        }
+        case "setDevToolsOpen": {
+          const safe = yield* decodeGuard(
+            decodeDevToolsInput,
+            "setDevToolsOpen input fails the declared schema.",
+          );
+          return yield* command(safe, devToolsWrite(safe.open));
         }
         case "resize": {
           const safe = yield* decodeGuard(

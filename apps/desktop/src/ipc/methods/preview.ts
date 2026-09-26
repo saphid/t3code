@@ -192,6 +192,11 @@ export const openDevTools = tabMethod(
   "desktop.ipc.preview.openDevTools",
   (manager, tabId) => manager.openDevTools(tabId),
 );
+export const closeDevTools = tabMethod(
+  IpcChannels.PREVIEW_CLOSE_DEVTOOLS_CHANNEL,
+  "desktop.ipc.preview.closeDevTools",
+  (manager, tabId) => manager.closeDevTools(tabId),
+);
 export const cancelPickElement = tabMethod(
   IpcChannels.PREVIEW_CANCEL_PICK_ELEMENT_CHANNEL,
   "desktop.ipc.preview.cancelPickElement",
@@ -537,6 +542,7 @@ export const methods = [
   setColorScheme,
   setAudioMuted,
   openDevTools,
+  closeDevTools,
   clearCookies,
   clearCache,
   getPreviewConfig,

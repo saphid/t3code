@@ -641,6 +641,8 @@ export interface DesktopPreviewTabState {
    * sound" from "muted and silent".
    */
   audible: boolean;
+  /** Whether the guest's DevTools window is open. Observed from Chromium. */
+  devToolsOpen: boolean;
   controller: "human" | "agent" | "none";
   favicon?: DesktopPreviewFavicon;
   updatedAt: string;
@@ -1314,8 +1316,10 @@ export interface DesktopPreviewBridge {
    * allowed; it simply takes effect once the page plays something.
    */
   setAudioMuted: (tabId: string, audioMuted: boolean) => Promise<void>;
-  /** Open the guest webview's DevTools (detached). */
+  /** Open the guest webview's DevTools (detached), or focus them when already open. */
   openDevTools: (tabId: string) => Promise<void>;
+  /** Close the guest webview's DevTools; a no-op when they are closed. */
+  closeDevTools: (tabId: string) => Promise<void>;
   /** Drop cookies + storage data for the preview partition (all tabs). */
   clearCookies: (environmentId: EnvironmentId, profileId?: string) => Promise<void>;
   /** Drop the HTTP cache for the preview partition (all tabs). */

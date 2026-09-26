@@ -36,6 +36,14 @@ The panel renders through public contracts only:
   exhausted, Reload reopens the page in a fresh session. Rejected,
   unanswered (`unknown`) and refused commands name their outcome inline.
   Every value shown is engine-reported; nothing applies optimistically.
+- DevTools (`t3.browser/sessions@1.1.0` `setDevToolsOpen`, which also needs
+  the installation's own `t3.browser/devtools` grant — the sessions and
+  operate grants say nothing about DevTools). The page menu's Open/Close
+  DevTools item follows the session's engine-reported `devToolsOpen` and
+  stays disabled until the engine reports it. Refusals are named inline:
+  missing grant (`grant-denied`), no desktop host (`desktop-required`), no
+  engine attached to this page yet (`no-attached-engine`), or an engine
+  that cannot toggle DevTools (`engine-unsupported`).
 - `t3.browser/capture` (host capability on `ClientHost.browserCapture`;
   `t3.browser/sessions` + `t3.browser/capture` grants) backs the header's
   two capture buttons: screenshot the page, or pick an element with the
