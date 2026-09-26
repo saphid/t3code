@@ -60,18 +60,18 @@ const meta = (
   ...(assertAuthority ? { assertAuthority } : {}),
 });
 
-const task = (taskId: string, extra: Record<string, unknown> = {}) =>
+const task = (taskId: string, extra: Record<string, unknown> = {}, createdAt = at) =>
   decodeActivity({
     id: `activity-${taskId}`,
     kind: "task.started",
     tone: "info",
     summary: "Started",
-    createdAt: at,
+    createdAt,
     turnId: null,
     payload: { taskId, agentKind: "agent", description: `Task ${taskId}`, ...extra },
   });
 
-async function fixture() {
+async function fixture(options: { open?: typeof NodeFSP.open } = {}) {
   const tmp = await NodeFSP.realpath(
     await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "agent-logs-")),
   );
@@ -147,6 +147,7 @@ async function fixture() {
         ),
     },
     roots: () => [projects, tasks, NodePath.join(tmp, "missing-root")],
+    ...(options.open ? { open: options.open } : {}),
   });
   const call = async (
     method: string,
@@ -239,19 +240,20 @@ it("reads a symlinked transcript tail at a line boundary with a truncation marke
   });
 });
 
+const limits = { maxBytes: 8192, maxLines: 1000 };
 it("never splits a UTF-8 sequence or keeps an unbounded partial line", () => {
   const encoded = new TextEncoder().encode("é first\nsecond\n");
   // Window starts inside the two-byte "é".
-  expect(shapeLogTail(encoded.subarray(1), 1, undefined)).toEqual({
+  expect(shapeLogTail(encoded.subarray(1), 1, limits)).toEqual({
     contents: "second\n",
     truncated: true,
   });
   // A single oversized line keeps its (cut) tail rather than returning nothing.
-  expect(shapeLogTail(new TextEncoder().encode("abcdef\n"), 10, undefined)).toEqual({
+  expect(shapeLogTail(new TextEncoder().encode("abcdef\n"), 10, limits)).toEqual({
     contents: "abcdef\n",
     truncated: true,
   });
-  expect(shapeLogTail(new TextEncoder().encode("a\nb\nc"), 0, 2)).toEqual({
+  expect(shapeLogTail(new TextEncoder().encode("a\nb\nc"), 0, { ...limits, maxLines: 2 })).toEqual({
     contents: "b\nc",
     truncated: true,
   });
@@ -276,6 +278,7 @@ it("gates on the orchestration:read principal and a thread scope, by name", asyn
 it("isolates runs to the view's thread and the workspace's slug directory", async () => {
   const f = await fixture();
   const mine = await f.write(NodePath.join(f.projects, SLUG, "s", "mine.jsonl"), "mine\n");
+  await NodeFSP.mkdir(NodePath.join(f.projects, SLUG, "s", "sub"));
   const theirs = await f.write(
     NodePath.join(f.projects, claudeWorkspaceSlug("/workspace/other"), "s", "theirs.jsonl"),
     "SECRET-OTHER-PROJECT\n",
@@ -288,7 +291,7 @@ it("isolates runs to the view's thread and the workspace's slug directory", asyn
     task("outside", { outputFile: outside }),
     task("escape", { outputFile: escape }),
     task("gone", { outputFile: NodePath.join(f.projects, SLUG, "s", "deleted.jsonl") }),
-    task("dir", { outputFile: NodePath.join(f.projects, SLUG, "s") }),
+    task("dir", { outputFile: NodePath.join(f.projects, SLUG, "s", "sub") }),
     task("plain"),
   ]);
   f.rosters.set("thread-b", [task("b-only", { outputFile: mine })]);
@@ -368,10 +371,7 @@ const CONSUMER_MANIFEST = JSON.stringify({
   dependencies: [],
 });
 
-it("the broker requires the distinct read-logs grant and audits no payloads", async () => {
-  const f = await fixture();
-  const file = await f.write(NodePath.join(f.projects, SLUG, "s", "a.jsonl"), "AUDIT-SECRET\n");
-  f.rosters.set("thread", [task("a", { outputFile: file })]);
+async function installConsumer(f: Awaited<ReturnType<typeof fixture>>, capabilities: string[]) {
   const source = NodePath.join(f.tmp, "package");
   await f.write(NodePath.join(source, "t3-extension.json"), CONSUMER_MANIFEST);
   await f.write(NodePath.join(source, "server.mjs"), "export default {tools:[],apis:[]};");
@@ -387,11 +387,7 @@ it("the broker requires the distinct read-logs grant and audits no payloads", as
       installation.grants.projectIds.includes(scoped.resource.projectId ?? ""),
   });
   cleanups.push(() => runtime.dispose());
-  // Roster read and operate grants never imply log contents.
-  const installed = await runtime.install(source, {
-    capabilities: [ORCHESTRATION_READ, "t3.orchestration/operate"],
-    projectIds: ["project"],
-  });
+  const installed = await runtime.install(source, { capabilities, projectIds: ["project"] });
   const root = {
     principal: meta().principal!,
     allowWrite: false,
@@ -405,6 +401,18 @@ it("the broker requires the distinct read-logs grant and audits no payloads", as
       new AbortController().signal,
       root,
     );
+  return { runtime, installed, audits, invoke };
+}
+
+it("the broker requires the distinct read-logs grant and audits no payloads", async () => {
+  const f = await fixture();
+  const file = await f.write(NodePath.join(f.projects, SLUG, "s", "a.jsonl"), "AUDIT-SECRET\n");
+  f.rosters.set("thread", [task("a", { outputFile: file })]);
+  // Roster read and operate grants never imply log contents.
+  const { runtime, installed, audits, invoke } = await installConsumer(f, [
+    ORCHESTRATION_READ,
+    "t3.orchestration/operate",
+  ]);
   await expect(invoke("readTail", { runId: "a", source: "output" })).rejects.toThrow(
     `API capability denied: ${ORCHESTRATION_READ_LOGS}`,
   );
@@ -425,4 +433,178 @@ it("the broker requires the distinct read-logs grant and audits no payloads", as
   expect(recorded).not.toContain("AUDIT-SECRET");
   expect(recorded).not.toContain(f.tmp);
   expect(recorded).not.toContain('"runId"');
+});
+
+it("redacts secrets through the broker, including ones straddling the tail cut", async () => {
+  const f = await fixture();
+  const { invoke } = await installConsumer(f, [ORCHESTRATION_READ_LOGS]);
+  const secrets = {
+    env: "sk-proj-ENVSECRETVALUE0123456789abcdef",
+    json: "JSONSECRET-0123456789-abcdefghij",
+    header: "HDRSECRET0123456789abcdefghijkl",
+    pem: "PEMBODYSECRET0123456789abcdefghijklmnopqrstuvwx",
+  };
+  const cases: { runId: string; secret: string; line: (secret: string) => string }[] = [
+    { runId: "env", secret: secrets.env, line: (s) => `export OPENAI_API_KEY=${s}` },
+    {
+      runId: "json",
+      secret: secrets.json,
+      line: (s) => `{"type":"tool_result","content":"{\\"apiKey\\": \\"${s}\\"}"}`,
+    },
+    {
+      runId: "header",
+      secret: secrets.header,
+      line: (s) => `curl -H "Authorization: Bearer ${s}"`,
+    },
+    {
+      runId: "pem",
+      secret: secrets.pem,
+      line: (s) => `-----BEGIN RSA PRIVATE KEY-----\n${s}\n${s}\n-----END RSA PRIVATE KEY-----`,
+    },
+  ];
+  f.rosters.set(
+    "thread",
+    cases.map(({ runId }) =>
+      task(runId, { outputFile: NodePath.join(f.projects, SLUG, "s", `${runId}.jsonl`) }),
+    ),
+  );
+  for (const { runId, secret, line } of cases) {
+    // The secret's line ends the file, so a cut inside it is delivered as a
+    // partial first line rather than dropped.
+    const text = `${line(secret)}\n`;
+    await f.write(NodePath.join(f.projects, SLUG, "s", `${runId}.jsonl`), `${lines(400)}${text}`);
+    const cutInside = text.length - text.indexOf(secret) - Math.floor(secret.length / 2);
+    const tail = (await invoke("readTail", {
+      runId,
+      source: "output",
+      maxBytes: cutInside,
+    })) as AgentLogTail;
+    expect(tail.truncated).toBe(true);
+    expect(tail.contents).not.toBe("");
+    for (let index = 0; index + 6 <= secret.length; index++)
+      expect(tail.contents).not.toContain(secret.slice(index, index + 6));
+    // The full tail keeps line structure, with the value replaced by the marker.
+    const whole = (await invoke("readTail", { runId, source: "output" })) as AgentLogTail;
+    const after = whole.contents.slice(whole.contents.lastIndexOf("line 399 "));
+    expect(after).toContain("[REDACTED]");
+    expect(after).not.toContain(secret.slice(0, 6));
+    expect(after.split("\n").length).toBe(`line 399\n${text}`.split("\n").length);
+  }
+});
+
+it("binds a run's handle to its own output, rejecting repoints to other runs", async () => {
+  const f = await fixture();
+  const transcript = (session: string, run: string) =>
+    f.write(
+      NodePath.join(f.projects, SLUG, session, "subagents", `agent-${run}.jsonl`),
+      `${run}\n`,
+    );
+  const handle = (session: string, run: string) =>
+    NodePath.join(f.tasks, SLUG, session, "tasks", `${run}.output`);
+  await transcript("sess-a", "a");
+  const otherRun = await transcript("sess-a", "b");
+  const otherSession = await transcript("sess-b", "b2");
+  // Same slug, same session, another run's transcript.
+  await f.link(handle("sess-a", "a"), otherRun);
+  // Same slug, another session's transcript.
+  await f.link(handle("sess-a", "c"), otherSession);
+  // A handle outside any session directory.
+  const loose = await f.write(NodePath.join(f.projects, SLUG, "loose.jsonl"), "loose\n");
+  const own = await f.link(handle("sess-a", "b"), otherRun);
+  f.rosters.set("thread", [
+    task("a", { outputFile: handle("sess-a", "a") }),
+    task("c", { outputFile: handle("sess-a", "c") }),
+    task("loose", { outputFile: loose }),
+    task("b", { outputFile: own }),
+  ]);
+  const read = (runId: string) => f.call("readTail", { runId, source: "output" });
+  for (const runId of ["a", "c", "loose"])
+    await expect(read(runId)).rejects.toThrow("AgentLogsOutOfScope");
+  expect(((await read("b")) as AgentLogTail).contents).toBe("b\n");
+});
+
+it("fails closed when an ancestor is swapped around the open, without leaking paths", async () => {
+  for (const when of ["before-open", "after-open", "unlink-after-open"] as const) {
+    let swap = async () => {};
+    const f = await fixture({
+      open: (async (path: string, flags: number) => {
+        if (when === "before-open") await swap();
+        const file = await NodeFSP.open(path, flags);
+        if (when !== "before-open") await swap();
+        return file;
+      }) as typeof NodeFSP.open,
+    });
+    const session = NodePath.join(f.projects, SLUG, "s");
+    const file = await f.write(NodePath.join(session, "a.jsonl"), "INSIDE\n");
+    const outside = NodePath.join(f.tmp, "outside");
+    await f.write(NodePath.join(outside, "a.jsonl"), "SECRET-OUTSIDE\n");
+    swap =
+      when === "unlink-after-open"
+        ? () => NodeFSP.unlink(file)
+        : async () => {
+            await NodeFSP.rename(session, `${session}-moved`);
+            await NodeFSP.symlink(outside, session);
+          };
+    f.rosters.set("thread", [task("a", { outputFile: file })]);
+    const failure = (await f
+      .call("readTail", { runId: "a", source: "output" })
+      .catch((error: unknown) => error)) as Error;
+    expect(failure.message, when).toContain("AgentLogsSourceChanged");
+    expect(JSON.stringify(failure), when).not.toContain("SECRET-OUTSIDE");
+    expect(failure.message, when).not.toContain(f.tmp);
+    expect(JSON.stringify(failure), when).not.toContain(f.tmp);
+  }
+});
+
+it("reports runs the roster's retention cap evicted", async () => {
+  const f = await fixture();
+  const file = await f.write(NodePath.join(f.projects, SLUG, "s", "a.jsonl"), "a\n");
+  const newer = (index: number) =>
+    `2026-09-26T00:00:${String(index % 60).padStart(2, "0")}.${String(index).padStart(3, "0")}Z`;
+  const qualifying = Array.from({ length: 100 }, (_, index) =>
+    task(`run-${index}`, { outputFile: file }, newer(index + 1)),
+  );
+  // The oldest row is the one evicted; whether it counts depends on its handle.
+  f.rosters.set("thread", [task("oldest", { outputFile: file }, newer(0)), ...qualifying]);
+  const capped = (await f.call("listRuns")) as AgentLogRuns;
+  expect(capped.runs).toHaveLength(100);
+  expect(capped.runs.map((run) => run.runId)).not.toContain("oldest");
+  expect(capped.truncated).toBe(true);
+  await expect(f.call("readTail", { runId: "oldest", source: "output" })).rejects.toThrow(
+    "AgentLogsRunUnknown",
+  );
+
+  f.rosters.set("thread", [task("oldest", {}, newer(0)), ...qualifying]);
+  expect(await f.call("listRuns")).toMatchObject({ truncated: false });
+  expect(((await f.call("listRuns")) as AgentLogRuns).runs).toHaveLength(100);
+});
+
+it("applies the default line ceiling and a decoded byte budget", async () => {
+  const f = await fixture();
+  const newlines = await f.write(
+    NodePath.join(f.projects, SLUG, "s", "n.jsonl"),
+    "\n".repeat(1001),
+  );
+  // 8,191 ASCII bytes and a dangling UTF-8 lead byte decode to 8,194 bytes.
+  const dangling = await f.write(
+    NodePath.join(f.projects, SLUG, "s", "d.jsonl"),
+    Buffer.concat([Buffer.alloc(8191, "a"), Buffer.from([0xe2])]),
+  );
+  f.rosters.set("thread", [
+    task("n", { outputFile: newlines }),
+    task("d", { outputFile: dangling }),
+  ]);
+  const n = (await f.call("readTail", { runId: "n", source: "output" })) as AgentLogTail;
+  expect(n.contents).toBe("\n".repeat(1000));
+  expect(n.truncated).toBe(true);
+  const d = (await f.call("readTail", { runId: "d", source: "output" })) as AgentLogTail;
+  expect(Buffer.byteLength(d.contents)).toBeLessThanOrEqual(8192);
+  expect(d.truncated).toBe(true);
+  expect(d.byteLength).toBe(8192);
+  const small = (await f.call("readTail", {
+    runId: "d",
+    source: "output",
+    maxBytes: 100,
+  })) as AgentLogTail;
+  expect(Buffer.byteLength(small.contents)).toBeLessThanOrEqual(100);
 });
