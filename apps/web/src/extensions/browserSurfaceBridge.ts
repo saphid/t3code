@@ -137,7 +137,10 @@ export function createBrowserSurfaceBridge(
     readSessions: readThreadPreviewState,
     subscribeSessions: (threadRef, listener) =>
       appAtomRegistry.subscribe(previewStateAtom(scopedThreadKey(threadRef)), listener),
-    acquireNative: (runtimeTabId) => acquireBrowserSurface(runtimeTabId),
+    // The extension view paints its own device toolbar and commits resizes
+    // through t3.browser/sessions, so the host's controls stand down.
+    acquireNative: (runtimeTabId) =>
+      acquireBrowserSurface(runtimeTabId, false, /* hostViewportControls */ false),
     ownerOf: (runtimeTabId) =>
       useBrowserSurfaceStore.getState().byTabId[runtimeTabId]?.owner ?? null,
     subscribeStore: (listener) => useBrowserSurfaceStore.subscribe(listener),

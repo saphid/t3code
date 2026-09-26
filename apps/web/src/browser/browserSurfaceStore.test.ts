@@ -112,6 +112,7 @@ describe("browserSurfaceStore", () => {
             fittedSourceContent: null,
             fitSourceContent: false,
             cornerRadius: 0,
+            hostViewportControls: true,
             updatedAt: 1,
             owner: null,
           },
@@ -123,6 +124,7 @@ describe("browserSurfaceStore", () => {
             fittedSourceContent: null,
             fitSourceContent: false,
             cornerRadius: 0,
+            hostViewportControls: true,
             updatedAt: 2,
             owner: null,
           },
@@ -173,6 +175,20 @@ describe("browserSurfaceStore", () => {
       visible: true,
       zIndex: 48,
     });
+  });
+
+  it("hands viewport controls to whichever presenter holds the surface", () => {
+    const tabId = "viewport-controls-browser-surface";
+    const extensionLease = acquireBrowserSurface(tabId, false, false);
+    expect(useBrowserSurfaceStore.getState().byTabId[tabId]?.hostViewportControls).toBe(false);
+
+    const nativeLease = acquireBrowserSurface(tabId);
+    expect(useBrowserSurfaceStore.getState().byTabId[tabId]?.hostViewportControls).toBe(true);
+    expect(extensionLease.present({ x: 0, y: 0, width: 1, height: 1 }, true)).toBe(false);
+
+    nativeLease.release();
+    acquireBrowserSurface(tabId, false, false);
+    expect(useBrowserSurfaceStore.getState().byTabId[tabId]?.hostViewportControls).toBe(false);
   });
 
   it("clears fitted presentation state when its lease is released", () => {
