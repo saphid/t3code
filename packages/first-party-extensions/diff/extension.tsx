@@ -1695,6 +1695,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
   return (
     <section
       aria-label="Diff"
+      data-t3-diff-panel
       style={{
         height: "100%",
         display: "flex",
@@ -1706,6 +1707,12 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
         fontSize: 13,
       }}
     >
+      {/* Native focus treatment (cert diff-1): the host draws a 2px accent
+          ring with a 1px canvas gap on focus-visible, not the browser
+          default 1px auto outline. */}
+      <style>
+        {`[data-t3-diff-panel] :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px ${ui.background},0 0 0 3px ${ui.focusRing}}`}
+      </style>
       <header
         style={{
           display: "flex",

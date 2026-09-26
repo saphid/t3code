@@ -909,14 +909,14 @@ function TerminalPane(props: {
     >
       <output
         aria-label="Output status"
-        style={{ padding: "6px 10px", color: muted, fontSize: 11, flexShrink: 0 }}
+        style={{ padding: "6px 10px", color: muted, fontSize: 12, flexShrink: 0 }}
       >
         {terminalId}: {state.statusText}
       </output>
       {state.degraded && (
         <output
           aria-label="Attach degraded"
-          style={{ padding: "4px 10px", color: muted, fontSize: 11, flexShrink: 0 }}
+          style={{ padding: "4px 10px", color: muted, fontSize: 12, flexShrink: 0 }}
         >
           Attached with truncated history — modes and screen state before the retained tail are
           unknown, so interactive parity is not claimed until the next full snapshot.
@@ -925,7 +925,7 @@ function TerminalPane(props: {
       {streamBlocked && (
         <output
           aria-label="Stream budget"
-          style={{ padding: "4px 10px", color: muted, fontSize: 11, flexShrink: 0 }}
+          style={{ padding: "4px 10px", color: muted, fontSize: 12, flexShrink: 0 }}
         >
           Waiting for a free output stream — close a pane here or in another terminal panel, and
           this pane attaches as soon as one frees.
@@ -1071,14 +1071,20 @@ function useFitResize(
 /* View                                                                */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Native control idiom (cert term-8): the native terminal chrome leaves its
+ * controls at the host's control size instead of shrinking them — text-sm
+ * ghost buttons, transparent at rest, no border, with the focus-ring style
+ * block on the panel root supplying keyboard affordance.
+ */
 const control = {
   padding: "4px 8px",
-  border: "1px solid var(--t3-terminal-border, var(--border, #dfe3e8))",
+  border: "1px solid transparent",
   borderRadius: 5,
   background: "transparent",
   color: "inherit",
   font: "inherit",
-  fontSize: 12,
+  fontSize: 14,
   cursor: "pointer",
 } as const;
 
@@ -1233,16 +1239,17 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
         color: "var(--t3-terminal-text, var(--foreground, #20252d))",
         background: "var(--t3-terminal-canvas, var(--background, #fff))",
         fontFamily: "var(--font-sans, system-ui, sans-serif)",
-        fontSize: 13,
         // Contract-derived custom properties inherit to every descendant —
         // the chrome's var() chains, the fallback <pre>, and the mount div
         // terminalThemeFromApp resolves into the Ghostty theme.
         ...themeVars,
         ...appearanceVars,
       }}
+      data-t3-terminal-panel
     >
       <style>
-        {"[data-t3-terminal-output]::selection{background:var(--t3-terminal-selection,Highlight)}"}
+        {`[data-t3-terminal-output]::selection{background:var(--t3-terminal-selection,Highlight)}
+[data-t3-terminal-panel] :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-terminal-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}`}
       </style>
       <header
         style={{
@@ -1252,6 +1259,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
           borderBottom: border,
           flexShrink: 0,
           alignItems: "center",
+          flexWrap: "wrap",
         }}
       >
         <button
@@ -1280,7 +1288,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
           Split vertically
           {hasReachedSplitLimit ? ` (max ${MAX_TERMINALS_PER_GROUP} per group)` : ""}
         </button>
-        <span style={{ color: muted, fontSize: 11 }}>
+        <span style={{ color: muted, fontSize: 12 }}>
           {snapshot.stream === "closed"
             ? "Session list disconnected"
             : snapshot.stream === "connecting"
@@ -1429,7 +1437,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
                       </>
                     ) : (
                       <>
-                        <span style={{ color: muted, fontSize: 11 }}>
+                        <span style={{ color: muted, fontSize: 12 }}>
                           {tab.confirmAction === "close"
                             ? "Close this terminal?"
                             : tab.confirmAction === "restart"
@@ -1469,7 +1477,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
       {snapshot.panelError && (
         <output
           aria-label="Panel status"
-          style={{ padding: "4px 10px", color: muted, fontSize: 11 }}
+          style={{ padding: "4px 10px", color: muted, fontSize: 12 }}
         >
           {snapshot.panelError}
         </output>
@@ -1482,7 +1490,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
             gap: 8,
             alignItems: "center",
             padding: "6px 10px",
-            fontSize: 11,
+            fontSize: 12,
             color: muted,
             borderTop: border,
             flexShrink: 0,
@@ -1501,7 +1509,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
       {assets.kind === "loading" && activeId !== null && (
         <output
           aria-label="Renderer status"
-          style={{ padding: "6px 10px", color: muted, fontSize: 11 }}
+          style={{ padding: "6px 10px", color: muted, fontSize: 12 }}
         >
           Loading terminal renderer…
         </output>
@@ -1509,7 +1517,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
       {assets.kind === "unavailable" && (
         <output
           aria-label="Renderer status"
-          style={{ padding: "6px 10px", color: muted, fontSize: 11 }}
+          style={{ padding: "6px 10px", color: muted, fontSize: 12 }}
         >
           VT renderer unavailable ({assets.message}) — showing a plain-text view.
         </output>
@@ -1593,7 +1601,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
         >
           <output
             aria-label="Output status"
-            style={{ padding: "6px 10px", color: muted, fontSize: 11, flexShrink: 0 }}
+            style={{ padding: "6px 10px", color: muted, fontSize: 12, flexShrink: 0 }}
           >
             {activeId}: {activeTab.exitBanner ?? output?.statusText ?? "Connecting…"}
             {activeTab.error ? ` — ${activeTab.error}` : ""}
@@ -1655,7 +1663,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
       )}
       <output
         aria-label="Slice notice"
-        style={{ padding: "6px 10px", color: muted, fontSize: 11, flexShrink: 0 }}
+        style={{ padding: "6px 10px", color: muted, fontSize: 12, flexShrink: 0 }}
       >
         Ghostty VT rendering over the public control contract; theme, terminal appearance, and panel
         keybindings follow the host's t3.ui/* providers. Link activation is reported inline — there

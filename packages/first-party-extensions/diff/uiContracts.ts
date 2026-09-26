@@ -52,8 +52,9 @@ export function themeVar(
  * contract tokens change. Roles mirror the host's own mapping
  * (`--border` → `border`, `--muted-foreground` → `mutedForeground`,
  * `--background` → `canvas`, `--accent` → `accentSurface`,
- * `--destructive` → `error`, `--muted` → `muted`, `--foreground` → `text`).
- * `--success` and the font stacks have no theme role — they stay as they were.
+ * `--destructive` → `error`, `--muted` → `muted`, `--foreground` → `text`,
+ * `--ring` → `focus`). `--success` and the font stacks have no theme role —
+ * they stay as they were.
  */
 export function panelTheme(tokens: ThemeTokens | null) {
   const muted = themeVar(tokens, "--muted-foreground", "mutedForeground", "#667085");
@@ -62,6 +63,7 @@ export function panelTheme(tokens: ThemeTokens | null) {
   const accentOutline = themeVar(tokens, "--accent", "accentSurface", "#b7cff0");
   const destructive = themeVar(tokens, "--destructive", "error", "#cf222e");
   const background = themeVar(tokens, "--background", "canvas", "#fff");
+  const focusRing = themeVar(tokens, "--ring", "focus", "#1b4ed8");
   const foreground = themeVar(tokens, "--foreground", "text", "#20252d");
   const mutedSurface = themeVar(tokens, "--muted", "muted", "#f4f5f7");
   const control = {
@@ -105,6 +107,7 @@ export function panelTheme(tokens: ThemeTokens | null) {
     accentOutline,
     destructive,
     background,
+    focusRing,
     foreground,
     mutedSurface,
   };

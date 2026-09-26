@@ -809,7 +809,7 @@ function RenderedMarkdown(props: {
       <footer
         style={{
           color: "var(--t3-files-muted-foreground, var(--muted-foreground, #667085))",
-          fontSize: 11,
+          fontSize: 12,
           marginTop: 12,
         }}
       >
@@ -1121,12 +1121,12 @@ function CrumbMenu(props: {
           </button>
         ))}
         {children.length === 0 && (
-          <div role="none" style={{ padding: "4px 8px", color: muted, fontSize: 11 }}>
+          <div role="none" style={{ padding: "4px 8px", color: muted, fontSize: 12 }}>
             Empty
           </div>
         )}
         {truncated && (
-          <div role="none" style={{ padding: "4px 8px", color: muted, fontSize: 11 }}>
+          <div role="none" style={{ padding: "4px 8px", color: muted, fontSize: 12 }}>
             Index truncated — some entries are not shown
           </div>
         )}
@@ -1134,6 +1134,24 @@ function CrumbMenu(props: {
     </>
   );
 }
+
+/*
+ * Native toolbar control idiom (cert files-3): the native Files toolbar uses
+ * text-sm ghost controls — no border at rest, transparent background — with
+ * the host's focus ring (style block on the panel root) supplying keyboard
+ * affordance. The 1px transparent border keeps the control's box metrics
+ * identical to the native ghost button.
+ */
+const toolbarControl = {
+  font: "inherit",
+  fontSize: 14,
+  padding: "4px 8px",
+  border: "1px solid transparent",
+  borderRadius: 5,
+  background: "transparent",
+  color: "inherit",
+  cursor: "pointer",
+} as const;
 
 function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const { host, session } = props;
@@ -1642,6 +1660,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   return (
     <section
       aria-label="Files"
+      data-t3-files-panel
       style={{
         height: "100%",
         display: "flex",
@@ -1650,10 +1669,14 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
         color: "var(--t3-files-text, var(--foreground, #20252d))",
         background: "var(--t3-files-canvas, var(--background, #fff))",
         fontFamily: "var(--font-sans, system-ui, sans-serif)",
-        fontSize: 13,
         ...(themeVars ?? {}),
       }}
     >
+      {/* Native focus treatment: the host's 2px accent ring with a 1px canvas
+          gap on focus-visible (same rule as the other first-party panels). */}
+      <style>
+        {`[data-t3-files-panel] :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-files-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}`}
+      </style>
       <header
         style={{
           display: "flex",
@@ -1661,15 +1684,17 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           padding: 8,
           borderBottom: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
           flexShrink: 0,
+          alignItems: "center",
         }}
       >
-        <button type="button" onClick={refresh}>
+        <button type="button" onClick={refresh} style={toolbarControl}>
           Refresh files
         </button>
         <select
           aria-label="Search mode"
           value={searchMode}
           onChange={(event) => setSearchMode(event.target.value as "names" | "contents")}
+          style={toolbarControl}
         >
           <option value="names">File names</option>
           <option value="contents">File contents</option>
@@ -1687,7 +1712,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               event.currentTarget.blur();
             }
           }}
-          style={{ flex: 1, minWidth: 0 }}
+          style={{ ...toolbarControl, cursor: "auto", flex: 1, minWidth: 0 }}
         />
         <select
           aria-label={
@@ -1696,6 +1721,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           value={kindFilter}
           disabled={searchMode === "contents"}
           onChange={(event) => setKindFilter(event.target.value as SearchKindFilter)}
+          style={toolbarControl}
         >
           <option value="all">All</option>
           <option value="file">Files</option>
@@ -1748,7 +1774,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                       style={{
                         display: "block",
                         color: muted,
-                        fontSize: 11,
+                        fontSize: 12,
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
@@ -1879,7 +1905,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               </li>
             ))}
       </ul>
-      <output aria-label="Tree status" style={{ padding: "6px 10px", color: muted, fontSize: 11 }}>
+      <output aria-label="Tree status" style={{ padding: "6px 10px", color: muted, fontSize: 12 }}>
         {(searching
           ? (activeSearch?.outcome.error ??
             (searchMode === "contents"
@@ -1907,7 +1933,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       {selected && (
         <output
           aria-label="File status"
-          style={{ padding: "6px 10px", color: muted, fontSize: 11 }}
+          style={{ padding: "6px 10px", color: muted, fontSize: 12 }}
         >
           {selected +
             ": " +
@@ -1976,7 +2002,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
             </button>
           )}
           {fileOpen !== null && fileOpen.path === selected && fileOpen.state.status !== "idle" && (
-            <span style={{ color: muted, fontSize: 11 }}>{describeFileOpen(fileOpen.state)}</span>
+            <span style={{ color: muted, fontSize: 12 }}>{describeFileOpen(fileOpen.state)}</span>
           )}
         </div>
       )}
@@ -2007,7 +2033,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                     flexShrink: 0,
                   }}
                 >
-                  <span style={{ fontSize: 11, color: muted }}>
+                  <span style={{ fontSize: 12, color: muted }}>
                     Comment on{" "}
                     {formatCommentRangeLabel(
                       commentDraft.range.startLine,
@@ -2018,7 +2044,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                       : ""}
                   </span>
                   {commentDraftStale && (
-                    <span role="status" style={{ fontSize: 11, color: muted }}>
+                    <span role="status" style={{ fontSize: 12, color: muted }}>
                       The file changed since this draft opened — select the lines again to comment
                       on them.
                     </span>
@@ -2042,7 +2068,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                     }}
                   />
                   {commentSubmit.error !== null && (
-                    <span role="alert" style={{ fontSize: 11, color: "#b42318" }}>
+                    <span role="alert" style={{ fontSize: 12, color: "#b42318" }}>
                       {commentSubmit.error}
                     </span>
                   )}
@@ -2072,7 +2098,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                     padding: "4px 10px",
                     borderBottom: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
                     flexShrink: 0,
-                    fontSize: 11,
+                    fontSize: 12,
                   }}
                 >
                   {commentBlockReason === null ? (
@@ -2127,7 +2153,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                 padding: "6px 10px",
                 borderTop: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
                 flexShrink: 0,
-                fontSize: 11,
+                fontSize: 12,
                 display: "flex",
                 flexDirection: "column",
                 gap: 4,
@@ -2177,7 +2203,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                 alignItems: "center",
                 padding: "6px 10px",
                 borderTop: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
-                fontSize: 11,
+                fontSize: 12,
                 color: "var(--t3-files-text, var(--foreground, #20252d))",
               }}
             >
@@ -2199,7 +2225,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                 alignItems: "center",
                 padding: "6px 10px",
                 borderTop: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
-                fontSize: 11,
+                fontSize: 12,
                 color: "var(--t3-files-text, var(--foreground, #20252d))",
               }}
             >
@@ -2298,7 +2324,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               style={{ imageRendering: "pixelated", width: 64, height: 64 }}
             />
           ) : null}
-          <figcaption style={{ color: muted, fontSize: 11 }}>
+          <figcaption style={{ color: muted, fontSize: 12 }}>
             {packageAsset?.status ?? "Loading package asset"}
           </figcaption>
         </figure>
