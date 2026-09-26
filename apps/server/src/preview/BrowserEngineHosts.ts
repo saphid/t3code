@@ -241,7 +241,10 @@ const make = Effect.gen(function* () {
    * is `unknown`. An interactive command (import) may answer `confirmed`
    * first: `beforeProceed` then decides whether the host continues, and a
    * refusal, interruption or expiry sends the host a cancel, so a revoked or
-   * abandoned import never starts reading.
+   * abandoned import never starts reading. Proceed is the point of no return:
+   * a revocation after it cannot stop the import, so the source read and the
+   * target-profile cookie writes may both complete; the caller's post-check
+   * only withholds the result.
    */
   const send = (
     host: HostConnection,
