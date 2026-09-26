@@ -5379,7 +5379,8 @@ var __t3Client = (() => {
   });
   var PRS_WRITE_API = prsWriteApi.definition;
   var BROWSER_OPERATE = "t3.browser/operate";
-  var BROWSER_SESSION_COMMANDS = [
+  var BROWSER_DEVTOOLS = "t3.browser/devtools";
+  var BROWSER_SESSION_COMMANDS_V1 = [
     "back",
     "forward",
     "reload",
@@ -5388,6 +5389,11 @@ var __t3Client = (() => {
     "zoom",
     "setAppearance",
     "setAudioMuted"
+  ];
+  var BROWSER_SESSION_COMMANDS = [
+    ...BROWSER_SESSION_COMMANDS_V1,
+    "openDevTools",
+    "closeDevTools"
   ];
   var BROWSER_SESSION_URL_MAX_LENGTH = 2048;
   var BROWSER_SESSION_TITLE_MAX_LENGTH = 512;
@@ -5439,7 +5445,7 @@ var __t3Client = (() => {
       }
     ]
   };
-  var browserSessionObject = {
+  var browserSessionObjectV1 = {
     type: "object",
     additionalProperties: false,
     required: [
@@ -5512,7 +5518,12 @@ var __t3Client = (() => {
       audible: { type: ["boolean", "null"] }
     }
   };
-  var browserSessionReceipt = {
+  var browserSessionObject = {
+    ...browserSessionObjectV1,
+    required: [...browserSessionObjectV1.required, "devToolsOpen"],
+    properties: { ...browserSessionObjectV1.properties, devToolsOpen: { type: ["boolean", "null"] } }
+  };
+  var browserSessionReceiptOf = (session) => ({
     type: "object",
     additionalProperties: false,
     required: ["commandId", "outcome", "serverEpoch", "revision", "session"],
@@ -5521,26 +5532,26 @@ var __t3Client = (() => {
       outcome: { enum: ["accepted", "rejected", "unknown"] },
       serverEpoch: browserSessionEpoch,
       revision: browserSessionRevision,
-      session: browserSessionObject
+      session
     }
-  };
+  });
   var browserSessionCommandGuard = {
     tabId: browserSessionTabId,
     serverEpoch: browserSessionEpoch,
     expectedEngineGeneration: { type: ["string", "null"], minLength: 1, maxLength: 128 }
   };
   var browserSessionGuardRequired = ["tabId", "serverEpoch", "expectedEngineGeneration"];
-  var browserSessionCommandMethod = (name, extraProperties = {}, extraRequired = []) => ({
+  var browserSessionCommandMethod = (receipt2, name, extraProperties = {}, extraRequired = [], extraGrants = []) => ({
     name,
     effect: "write",
-    requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
+    requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE, ...extraGrants],
     inputSchema: {
       type: "object",
       additionalProperties: false,
       required: [...browserSessionGuardRequired, ...extraRequired],
       properties: { ...browserSessionCommandGuard, ...extraProperties }
     },
-    outputSchema: browserSessionReceipt
+    outputSchema: receipt2
   });
   var BROWSER_SESSION_ZOOM_LEVELS = [
     0.25,
@@ -5566,213 +5577,227 @@ var __t3Client = (() => {
     additionalProperties: false,
     properties: {}
   };
-  var browserSessionsApi = defineStreamApi({
-    id: BROWSER_SESSIONS,
-    version: "1.0.0",
-    methods: [
-      {
-        name: "getCapabilities",
-        effect: "read",
-        requiredGrants: [BROWSER_SESSIONS],
-        inputSchema: browserSessionEmptyInput,
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["metadata", "presentation", "commands"],
-          properties: {
-            metadata: {
-              type: "object",
-              additionalProperties: false,
-              required: ["supported"],
-              properties: { supported: { const: true } }
-            },
-            presentation: {
-              type: "object",
-              additionalProperties: false,
-              required: ["supported"],
-              properties: {
-                supported: { type: "boolean" },
-                reason: { enum: ["desktop-required"] }
+  var browserSessionsDefinition = (version, commands, session, extraMethods = () => []) => {
+    const receipt2 = browserSessionReceiptOf(session);
+    return {
+      id: BROWSER_SESSIONS,
+      version,
+      methods: [
+        {
+          name: "getCapabilities",
+          effect: "read",
+          requiredGrants: [BROWSER_SESSIONS],
+          inputSchema: browserSessionEmptyInput,
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["metadata", "presentation", "commands"],
+            properties: {
+              metadata: {
+                type: "object",
+                additionalProperties: false,
+                required: ["supported"],
+                properties: { supported: { const: true } }
+              },
+              presentation: {
+                type: "object",
+                additionalProperties: false,
+                required: ["supported"],
+                properties: {
+                  supported: { type: "boolean" },
+                  reason: { enum: ["desktop-required"] }
+                }
+              },
+              commands: {
+                type: "array",
+                maxItems: commands.length,
+                uniqueItems: true,
+                items: { enum: [...commands] }
               }
-            },
-            commands: {
-              type: "array",
-              maxItems: BROWSER_SESSION_COMMANDS.length,
-              uniqueItems: true,
-              items: { enum: [...BROWSER_SESSION_COMMANDS] }
             }
           }
-        }
-      },
-      {
-        name: "list",
-        effect: "read",
-        requiredGrants: [BROWSER_SESSIONS],
-        inputSchema: browserSessionEmptyInput,
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["serverEpoch", "revision", "sessions"],
-          properties: {
-            serverEpoch: browserSessionEpoch,
-            revision: browserSessionRevision,
-            sessions: {
-              type: "array",
-              maxItems: BROWSER_SESSION_LIMIT,
-              items: browserSessionObject
+        },
+        {
+          name: "list",
+          effect: "read",
+          requiredGrants: [BROWSER_SESSIONS],
+          inputSchema: browserSessionEmptyInput,
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["serverEpoch", "revision", "sessions"],
+            properties: {
+              serverEpoch: browserSessionEpoch,
+              revision: browserSessionRevision,
+              sessions: {
+                type: "array",
+                maxItems: BROWSER_SESSION_LIMIT,
+                items: session
+              }
             }
           }
-        }
-      },
-      {
-        name: "open",
-        effect: "write",
-        requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            url: browserSessionUrl,
-            viewport: browserSessionViewport,
-            profileId: { type: "string", minLength: 1, maxLength: 64 }
+        },
+        {
+          name: "open",
+          effect: "write",
+          requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              url: browserSessionUrl,
+              viewport: browserSessionViewport,
+              profileId: { type: "string", minLength: 1, maxLength: 64 }
+            }
+          },
+          outputSchema: receipt2
+        },
+        {
+          name: "navigate",
+          effect: "write",
+          requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["tabId", "serverEpoch", "url", "expectedEngineGeneration"],
+            properties: { ...browserSessionCommandGuard, url: browserSessionUrl }
+          },
+          outputSchema: receipt2
+        },
+        {
+          name: "close",
+          effect: "write",
+          requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["tabId", "serverEpoch"],
+            properties: { tabId: browserSessionTabId, serverEpoch: browserSessionEpoch }
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["outcome", "serverEpoch", "revision"],
+            properties: {
+              outcome: { enum: ["closed", "already-closed"] },
+              serverEpoch: browserSessionEpoch,
+              revision: browserSessionRevision
+            }
           }
         },
-        outputSchema: browserSessionReceipt
-      },
-      {
-        name: "navigate",
-        effect: "write",
-        requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["tabId", "serverEpoch", "url", "expectedEngineGeneration"],
-          properties: { ...browserSessionCommandGuard, url: browserSessionUrl }
-        },
-        outputSchema: browserSessionReceipt
-      },
-      {
-        name: "close",
-        effect: "write",
-        requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["tabId", "serverEpoch"],
-          properties: { tabId: browserSessionTabId, serverEpoch: browserSessionEpoch }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["outcome", "serverEpoch", "revision"],
-          properties: {
-            outcome: { enum: ["closed", "already-closed"] },
-            serverEpoch: browserSessionEpoch,
-            revision: browserSessionRevision
-          }
-        }
-      },
-      browserSessionCommandMethod("back"),
-      browserSessionCommandMethod("forward"),
-      browserSessionCommandMethod("reload"),
-      browserSessionCommandMethod("hardReload"),
-      browserSessionCommandMethod("resize", { viewport: browserSessionViewport }, ["viewport"]),
-      browserSessionCommandMethod("zoom", { zoomFactor: { enum: [...BROWSER_SESSION_ZOOM_LEVELS] } }, ["zoomFactor"]),
-      browserSessionCommandMethod("setAppearance", { appearance: { enum: ["system", "light", "dark"] } }, ["appearance"]),
-      browserSessionCommandMethod("setAudioMuted", { muted: { type: "boolean" } }, ["muted"])
-    ],
-    streams: [
-      {
-        name: "events",
-        requiredGrants: [BROWSER_SESSIONS],
-        inputSchema: browserSessionEmptyInput,
-        eventSchema: {
-          oneOf: [
-            {
-              type: "object",
-              additionalProperties: false,
-              required: ["kind", "snapshotId", "serverEpoch", "revision", "sessionCount"],
-              properties: {
-                kind: { const: "snapshot-start" },
-                snapshotId: { type: "string", minLength: 1, maxLength: 64 },
-                serverEpoch: browserSessionEpoch,
-                revision: browserSessionRevision,
-                sessionCount: { type: "integer", minimum: 0, maximum: BROWSER_SESSION_LIMIT }
-              }
-            },
-            {
-              type: "object",
-              additionalProperties: false,
-              required: ["kind", "snapshotId", "chunkIndex", "sessions"],
-              properties: {
-                kind: { const: "snapshot-chunk" },
-                snapshotId: { type: "string", minLength: 1, maxLength: 64 },
-                chunkIndex: { type: "integer", minimum: 0 },
-                sessions: {
-                  type: "array",
-                  maxItems: BROWSER_SESSION_LIMIT,
-                  items: browserSessionObject
+        browserSessionCommandMethod(receipt2, "back"),
+        browserSessionCommandMethod(receipt2, "forward"),
+        browserSessionCommandMethod(receipt2, "reload"),
+        browserSessionCommandMethod(receipt2, "hardReload"),
+        browserSessionCommandMethod(receipt2, "resize", { viewport: browserSessionViewport }, [
+          "viewport"
+        ]),
+        browserSessionCommandMethod(receipt2, "zoom", { zoomFactor: { enum: [...BROWSER_SESSION_ZOOM_LEVELS] } }, ["zoomFactor"]),
+        browserSessionCommandMethod(receipt2, "setAppearance", { appearance: { enum: ["system", "light", "dark"] } }, ["appearance"]),
+        browserSessionCommandMethod(receipt2, "setAudioMuted", { muted: { type: "boolean" } }, [
+          "muted"
+        ]),
+        ...extraMethods(receipt2)
+      ],
+      streams: [
+        {
+          name: "events",
+          requiredGrants: [BROWSER_SESSIONS],
+          inputSchema: browserSessionEmptyInput,
+          eventSchema: {
+            oneOf: [
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind", "snapshotId", "serverEpoch", "revision", "sessionCount"],
+                properties: {
+                  kind: { const: "snapshot-start" },
+                  snapshotId: { type: "string", minLength: 1, maxLength: 64 },
+                  serverEpoch: browserSessionEpoch,
+                  revision: browserSessionRevision,
+                  sessionCount: { type: "integer", minimum: 0, maximum: BROWSER_SESSION_LIMIT }
+                }
+              },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind", "snapshotId", "chunkIndex", "sessions"],
+                properties: {
+                  kind: { const: "snapshot-chunk" },
+                  snapshotId: { type: "string", minLength: 1, maxLength: 64 },
+                  chunkIndex: { type: "integer", minimum: 0 },
+                  sessions: {
+                    type: "array",
+                    maxItems: BROWSER_SESSION_LIMIT,
+                    items: session
+                  }
+                }
+              },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind", "snapshotId", "serverEpoch", "revision", "sessionCount"],
+                properties: {
+                  kind: { const: "snapshot-complete" },
+                  snapshotId: { type: "string", minLength: 1, maxLength: 64 },
+                  serverEpoch: browserSessionEpoch,
+                  revision: browserSessionRevision,
+                  sessionCount: { type: "integer", minimum: 0, maximum: BROWSER_SESSION_LIMIT }
+                }
+              },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind", "revision", "session"],
+                properties: {
+                  kind: { const: "session-upsert" },
+                  revision: browserSessionRevision,
+                  session
+                }
+              },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind", "revision", "tabId", "reason"],
+                properties: {
+                  kind: { const: "session-removed" },
+                  revision: browserSessionRevision,
+                  tabId: browserSessionTabId,
+                  reason: { enum: ["user-closed", "thread-deleted"] }
+                }
+              },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind", "reason"],
+                properties: {
+                  kind: { const: "closed" },
+                  reason: {
+                    enum: [
+                      "epoch-changed",
+                      "host-disconnected",
+                      "scope-invalidated",
+                      "grant-revoked",
+                      "installation-changed",
+                      "overflow",
+                      "source-unavailable"
+                    ]
+                  }
                 }
               }
-            },
-            {
-              type: "object",
-              additionalProperties: false,
-              required: ["kind", "snapshotId", "serverEpoch", "revision", "sessionCount"],
-              properties: {
-                kind: { const: "snapshot-complete" },
-                snapshotId: { type: "string", minLength: 1, maxLength: 64 },
-                serverEpoch: browserSessionEpoch,
-                revision: browserSessionRevision,
-                sessionCount: { type: "integer", minimum: 0, maximum: BROWSER_SESSION_LIMIT }
-              }
-            },
-            {
-              type: "object",
-              additionalProperties: false,
-              required: ["kind", "revision", "session"],
-              properties: {
-                kind: { const: "session-upsert" },
-                revision: browserSessionRevision,
-                session: browserSessionObject
-              }
-            },
-            {
-              type: "object",
-              additionalProperties: false,
-              required: ["kind", "revision", "tabId", "reason"],
-              properties: {
-                kind: { const: "session-removed" },
-                revision: browserSessionRevision,
-                tabId: browserSessionTabId,
-                reason: { enum: ["user-closed", "thread-deleted"] }
-              }
-            },
-            {
-              type: "object",
-              additionalProperties: false,
-              required: ["kind", "reason"],
-              properties: {
-                kind: { const: "closed" },
-                reason: {
-                  enum: [
-                    "epoch-changed",
-                    "host-disconnected",
-                    "scope-invalidated",
-                    "grant-revoked",
-                    "installation-changed",
-                    "overflow",
-                    "source-unavailable"
-                  ]
-                }
-              }
-            }
-          ]
+            ]
+          }
         }
-      }
-    ]
-  });
+      ]
+    };
+  };
+  var browserSessionsApi = defineStreamApi(browserSessionsDefinition("1.1.0", BROWSER_SESSION_COMMANDS, browserSessionObject, (receipt2) => [
+    browserSessionCommandMethod(receipt2, "openDevTools", {}, [], [BROWSER_DEVTOOLS]),
+    browserSessionCommandMethod(receipt2, "closeDevTools", {}, [], [BROWSER_DEVTOOLS])
+  ]));
+  var browserSessionsApiV1 = defineStreamApi(browserSessionsDefinition("1.0.0", BROWSER_SESSION_COMMANDS_V1, browserSessionObjectV1));
   var BROWSER_SESSIONS_API = browserSessionsApi.definition;
+  var BROWSER_SESSIONS_API_V1 = browserSessionsApiV1.definition;
   var BROWSER_FRAMES = "t3.browser/frames";
   var BROWSER_FRAMES_VERSION = "1.0.0";
   var browserFrameSessionIdentity = {
@@ -6897,6 +6922,7 @@ var __t3Client = (() => {
     orchestrationControlApi.definition,
     browserLocalServersApi.definition,
     browserSessionsApi.definition,
+    browserSessionsApiV1.definition,
     browserFramesApi.definition,
     workspaceFilesApi.definition,
     workspaceTreeApi.definition,

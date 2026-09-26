@@ -4,6 +4,7 @@ import {
   defineApi,
   defineStreamApi,
   type ApiDefinition,
+  type ApiMethod,
   type TypedApi,
   type TypedStreamApi,
 } from "./capabilities.js";
@@ -5569,10 +5570,21 @@ export const PRS_WRITE_API = prsWriteApi.definition;
  * state once the authenticated report path writes. Engine state is
  * projected from authenticated host state only; this slice has none, so it
  * is always `unavailable`/`desktop-required`, never fabricated.
+ *
+ * DevTools (1.1.0): `openDevTools` opens the guest's DevTools (detached) and
+ * `closeDevTools` closes them; each returns its own receipt and additionally
+ * requires `t3.browser/devtools` — holding the sessions and operate grants
+ * confers nothing about DevTools. Both act only on sessions the calling
+ * installation opened; a native or foreign-owned session is refused by name
+ * (`BrowserSessionNotOwned`). The open/closed state rides the session's
+ * `devToolsOpen`, reported by the same engine host status path as
+ * `audioMuted`; null means no host has reported it.
  * --------------------------------------------------------------------- */
 export const BROWSER_OPERATE = "t3.browser/operate";
+export const BROWSER_DEVTOOLS = "t3.browser/devtools";
 
-export const BROWSER_SESSION_COMMANDS = [
+/** Frozen 1.0.0 command vocabulary. */
+const BROWSER_SESSION_COMMANDS_V1 = [
   "back",
   "forward",
   "reload",
@@ -5581,6 +5593,11 @@ export const BROWSER_SESSION_COMMANDS = [
   "zoom",
   "setAppearance",
   "setAudioMuted",
+] as const;
+export const BROWSER_SESSION_COMMANDS = [
+  ...BROWSER_SESSION_COMMANDS_V1,
+  "openDevTools",
+  "closeDevTools",
 ] as const;
 export type BrowserSessionCommand = (typeof BROWSER_SESSION_COMMANDS)[number];
 
@@ -5638,6 +5655,7 @@ export type BrowserSession = {
   readonly appearance: "system" | "light" | "dark" | null;
   readonly audioMuted: boolean | null;
   readonly audible: boolean | null;
+  readonly devToolsOpen: boolean | null;
 };
 
 export type BrowserSessionsSnapshot = {
@@ -5793,7 +5811,7 @@ const browserSessionViewport = {
     },
   ],
 } as const;
-const browserSessionObject = {
+const browserSessionObjectV1 = {
   type: "object",
   additionalProperties: false,
   required: [
@@ -5866,18 +5884,24 @@ const browserSessionObject = {
     audible: { type: ["boolean", "null"] },
   },
 } as const;
-const browserSessionReceipt = {
-  type: "object",
-  additionalProperties: false,
-  required: ["commandId", "outcome", "serverEpoch", "revision", "session"],
-  properties: {
-    commandId: { type: "string", minLength: 1, maxLength: 64 },
-    outcome: { enum: ["accepted", "rejected", "unknown"] },
-    serverEpoch: browserSessionEpoch,
-    revision: browserSessionRevision,
-    session: browserSessionObject,
-  },
+const browserSessionObject = {
+  ...browserSessionObjectV1,
+  required: [...browserSessionObjectV1.required, "devToolsOpen"],
+  properties: { ...browserSessionObjectV1.properties, devToolsOpen: { type: ["boolean", "null"] } },
 } as const;
+const browserSessionReceiptOf = (session: JsonObject) =>
+  ({
+    type: "object",
+    additionalProperties: false,
+    required: ["commandId", "outcome", "serverEpoch", "revision", "session"],
+    properties: {
+      commandId: { type: "string", minLength: 1, maxLength: 64 },
+      outcome: { enum: ["accepted", "rejected", "unknown"] },
+      serverEpoch: browserSessionEpoch,
+      revision: browserSessionRevision,
+      session,
+    },
+  }) as const;
 const browserSessionCommandGuard = {
   tabId: browserSessionTabId,
   serverEpoch: browserSessionEpoch,
@@ -5885,20 +5909,22 @@ const browserSessionCommandGuard = {
 } as const;
 const browserSessionGuardRequired = ["tabId", "serverEpoch", "expectedEngineGeneration"];
 const browserSessionCommandMethod = (
+  receipt: JsonObject,
   name: BrowserSessionCommand,
   extraProperties: Record<string, JsonObject> = {},
   extraRequired: readonly string[] = [],
+  extraGrants: readonly string[] = [],
 ) => ({
   name,
   effect: "write" as const,
-  requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
+  requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE, ...extraGrants],
   inputSchema: {
     type: "object",
     additionalProperties: false,
     required: [...browserSessionGuardRequired, ...extraRequired],
     properties: { ...browserSessionCommandGuard, ...extraProperties },
   },
-  outputSchema: browserSessionReceipt,
+  outputSchema: receipt,
 });
 export const BROWSER_SESSION_ZOOM_LEVELS = [
   0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0,
@@ -5908,6 +5934,241 @@ const browserSessionEmptyInput = {
   additionalProperties: false,
   properties: {},
 } as const;
+
+/**
+ * One definition per published version: 1.1.0 adds `openDevTools`,
+ * `closeDevTools` and the session's `devToolsOpen`; 1.0.0 stays
+ * byte-identical to what shipped.
+ */
+const browserSessionsDefinition = (
+  version: string,
+  commands: readonly BrowserSessionCommand[],
+  session: JsonObject,
+  extraMethods: (receipt: JsonObject) => readonly ApiMethod[] = () => [],
+): ApiDefinition => {
+  const receipt = browserSessionReceiptOf(session);
+  return {
+    id: BROWSER_SESSIONS,
+    version,
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [BROWSER_SESSIONS],
+        inputSchema: browserSessionEmptyInput,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["metadata", "presentation", "commands"],
+          properties: {
+            metadata: {
+              type: "object",
+              additionalProperties: false,
+              required: ["supported"],
+              properties: { supported: { const: true } },
+            },
+            presentation: {
+              type: "object",
+              additionalProperties: false,
+              required: ["supported"],
+              properties: {
+                supported: { type: "boolean" },
+                reason: { enum: ["desktop-required"] },
+              },
+            },
+            commands: {
+              type: "array",
+              maxItems: commands.length,
+              uniqueItems: true,
+              items: { enum: [...commands] },
+            },
+          },
+        },
+      },
+      {
+        name: "list",
+        effect: "read",
+        requiredGrants: [BROWSER_SESSIONS],
+        inputSchema: browserSessionEmptyInput,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["serverEpoch", "revision", "sessions"],
+          properties: {
+            serverEpoch: browserSessionEpoch,
+            revision: browserSessionRevision,
+            sessions: {
+              type: "array",
+              maxItems: BROWSER_SESSION_LIMIT,
+              items: session,
+            },
+          },
+        },
+      },
+      {
+        name: "open",
+        effect: "write",
+        requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            url: browserSessionUrl,
+            viewport: browserSessionViewport,
+            profileId: { type: "string", minLength: 1, maxLength: 64 },
+          },
+        },
+        outputSchema: receipt,
+      },
+      {
+        name: "navigate",
+        effect: "write",
+        requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["tabId", "serverEpoch", "url", "expectedEngineGeneration"],
+          properties: { ...browserSessionCommandGuard, url: browserSessionUrl },
+        },
+        outputSchema: receipt,
+      },
+      {
+        name: "close",
+        effect: "write",
+        requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["tabId", "serverEpoch"],
+          properties: { tabId: browserSessionTabId, serverEpoch: browserSessionEpoch },
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["outcome", "serverEpoch", "revision"],
+          properties: {
+            outcome: { enum: ["closed", "already-closed"] },
+            serverEpoch: browserSessionEpoch,
+            revision: browserSessionRevision,
+          },
+        },
+      },
+      browserSessionCommandMethod(receipt, "back"),
+      browserSessionCommandMethod(receipt, "forward"),
+      browserSessionCommandMethod(receipt, "reload"),
+      browserSessionCommandMethod(receipt, "hardReload"),
+      browserSessionCommandMethod(receipt, "resize", { viewport: browserSessionViewport }, [
+        "viewport",
+      ]),
+      browserSessionCommandMethod(
+        receipt,
+        "zoom",
+        { zoomFactor: { enum: [...BROWSER_SESSION_ZOOM_LEVELS] } },
+        ["zoomFactor"],
+      ),
+      browserSessionCommandMethod(
+        receipt,
+        "setAppearance",
+        { appearance: { enum: ["system", "light", "dark"] } },
+        ["appearance"],
+      ),
+      browserSessionCommandMethod(receipt, "setAudioMuted", { muted: { type: "boolean" } }, [
+        "muted",
+      ]),
+      ...extraMethods(receipt),
+    ],
+    streams: [
+      {
+        name: "events",
+        requiredGrants: [BROWSER_SESSIONS],
+        inputSchema: browserSessionEmptyInput,
+        eventSchema: {
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "snapshotId", "serverEpoch", "revision", "sessionCount"],
+              properties: {
+                kind: { const: "snapshot-start" },
+                snapshotId: { type: "string", minLength: 1, maxLength: 64 },
+                serverEpoch: browserSessionEpoch,
+                revision: browserSessionRevision,
+                sessionCount: { type: "integer", minimum: 0, maximum: BROWSER_SESSION_LIMIT },
+              },
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "snapshotId", "chunkIndex", "sessions"],
+              properties: {
+                kind: { const: "snapshot-chunk" },
+                snapshotId: { type: "string", minLength: 1, maxLength: 64 },
+                chunkIndex: { type: "integer", minimum: 0 },
+                sessions: {
+                  type: "array",
+                  maxItems: BROWSER_SESSION_LIMIT,
+                  items: session,
+                },
+              },
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "snapshotId", "serverEpoch", "revision", "sessionCount"],
+              properties: {
+                kind: { const: "snapshot-complete" },
+                snapshotId: { type: "string", minLength: 1, maxLength: 64 },
+                serverEpoch: browserSessionEpoch,
+                revision: browserSessionRevision,
+                sessionCount: { type: "integer", minimum: 0, maximum: BROWSER_SESSION_LIMIT },
+              },
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "revision", "session"],
+              properties: {
+                kind: { const: "session-upsert" },
+                revision: browserSessionRevision,
+                session,
+              },
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "revision", "tabId", "reason"],
+              properties: {
+                kind: { const: "session-removed" },
+                revision: browserSessionRevision,
+                tabId: browserSessionTabId,
+                reason: { enum: ["user-closed", "thread-deleted"] },
+              },
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "reason"],
+              properties: {
+                kind: { const: "closed" },
+                reason: {
+                  enum: [
+                    "epoch-changed",
+                    "host-disconnected",
+                    "scope-invalidated",
+                    "grant-revoked",
+                    "installation-changed",
+                    "overflow",
+                    "source-unavailable",
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      },
+    ],
+  };
+};
 
 export const browserSessionsApi: TypedApi<{
   getCapabilities: {
@@ -5926,226 +6187,28 @@ export const browserSessionsApi: TypedApi<{
   zoom: { input: BrowserSessionZoomInput; output: BrowserSessionReceipt };
   setAppearance: { input: BrowserSessionAppearanceInput; output: BrowserSessionReceipt };
   setAudioMuted: { input: BrowserSessionAudioMutedInput; output: BrowserSessionReceipt };
+  openDevTools: { input: BrowserSessionCommandInput; output: BrowserSessionReceipt };
+  closeDevTools: { input: BrowserSessionCommandInput; output: BrowserSessionReceipt };
 }> &
   TypedStreamApi<{
     events: { input: Record<string, never>; event: BrowserSessionStreamValue };
   }> = defineStreamApi<{
   events: { input: Record<string, never>; event: BrowserSessionStreamValue };
-}>({
-  id: BROWSER_SESSIONS,
-  version: "1.0.0",
-  methods: [
-    {
-      name: "getCapabilities",
-      effect: "read",
-      requiredGrants: [BROWSER_SESSIONS],
-      inputSchema: browserSessionEmptyInput,
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["metadata", "presentation", "commands"],
-        properties: {
-          metadata: {
-            type: "object",
-            additionalProperties: false,
-            required: ["supported"],
-            properties: { supported: { const: true } },
-          },
-          presentation: {
-            type: "object",
-            additionalProperties: false,
-            required: ["supported"],
-            properties: {
-              supported: { type: "boolean" },
-              reason: { enum: ["desktop-required"] },
-            },
-          },
-          commands: {
-            type: "array",
-            maxItems: BROWSER_SESSION_COMMANDS.length,
-            uniqueItems: true,
-            items: { enum: [...BROWSER_SESSION_COMMANDS] },
-          },
-        },
-      },
-    },
-    {
-      name: "list",
-      effect: "read",
-      requiredGrants: [BROWSER_SESSIONS],
-      inputSchema: browserSessionEmptyInput,
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["serverEpoch", "revision", "sessions"],
-        properties: {
-          serverEpoch: browserSessionEpoch,
-          revision: browserSessionRevision,
-          sessions: {
-            type: "array",
-            maxItems: BROWSER_SESSION_LIMIT,
-            items: browserSessionObject,
-          },
-        },
-      },
-    },
-    {
-      name: "open",
-      effect: "write",
-      requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          url: browserSessionUrl,
-          viewport: browserSessionViewport,
-          profileId: { type: "string", minLength: 1, maxLength: 64 },
-        },
-      },
-      outputSchema: browserSessionReceipt,
-    },
-    {
-      name: "navigate",
-      effect: "write",
-      requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["tabId", "serverEpoch", "url", "expectedEngineGeneration"],
-        properties: { ...browserSessionCommandGuard, url: browserSessionUrl },
-      },
-      outputSchema: browserSessionReceipt,
-    },
-    {
-      name: "close",
-      effect: "write",
-      requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["tabId", "serverEpoch"],
-        properties: { tabId: browserSessionTabId, serverEpoch: browserSessionEpoch },
-      },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["outcome", "serverEpoch", "revision"],
-        properties: {
-          outcome: { enum: ["closed", "already-closed"] },
-          serverEpoch: browserSessionEpoch,
-          revision: browserSessionRevision,
-        },
-      },
-    },
-    browserSessionCommandMethod("back"),
-    browserSessionCommandMethod("forward"),
-    browserSessionCommandMethod("reload"),
-    browserSessionCommandMethod("hardReload"),
-    browserSessionCommandMethod("resize", { viewport: browserSessionViewport }, ["viewport"]),
-    browserSessionCommandMethod(
-      "zoom",
-      { zoomFactor: { enum: [...BROWSER_SESSION_ZOOM_LEVELS] } },
-      ["zoomFactor"],
-    ),
-    browserSessionCommandMethod(
-      "setAppearance",
-      { appearance: { enum: ["system", "light", "dark"] } },
-      ["appearance"],
-    ),
-    browserSessionCommandMethod("setAudioMuted", { muted: { type: "boolean" } }, ["muted"]),
-  ],
-  streams: [
-    {
-      name: "events",
-      requiredGrants: [BROWSER_SESSIONS],
-      inputSchema: browserSessionEmptyInput,
-      eventSchema: {
-        oneOf: [
-          {
-            type: "object",
-            additionalProperties: false,
-            required: ["kind", "snapshotId", "serverEpoch", "revision", "sessionCount"],
-            properties: {
-              kind: { const: "snapshot-start" },
-              snapshotId: { type: "string", minLength: 1, maxLength: 64 },
-              serverEpoch: browserSessionEpoch,
-              revision: browserSessionRevision,
-              sessionCount: { type: "integer", minimum: 0, maximum: BROWSER_SESSION_LIMIT },
-            },
-          },
-          {
-            type: "object",
-            additionalProperties: false,
-            required: ["kind", "snapshotId", "chunkIndex", "sessions"],
-            properties: {
-              kind: { const: "snapshot-chunk" },
-              snapshotId: { type: "string", minLength: 1, maxLength: 64 },
-              chunkIndex: { type: "integer", minimum: 0 },
-              sessions: {
-                type: "array",
-                maxItems: BROWSER_SESSION_LIMIT,
-                items: browserSessionObject,
-              },
-            },
-          },
-          {
-            type: "object",
-            additionalProperties: false,
-            required: ["kind", "snapshotId", "serverEpoch", "revision", "sessionCount"],
-            properties: {
-              kind: { const: "snapshot-complete" },
-              snapshotId: { type: "string", minLength: 1, maxLength: 64 },
-              serverEpoch: browserSessionEpoch,
-              revision: browserSessionRevision,
-              sessionCount: { type: "integer", minimum: 0, maximum: BROWSER_SESSION_LIMIT },
-            },
-          },
-          {
-            type: "object",
-            additionalProperties: false,
-            required: ["kind", "revision", "session"],
-            properties: {
-              kind: { const: "session-upsert" },
-              revision: browserSessionRevision,
-              session: browserSessionObject,
-            },
-          },
-          {
-            type: "object",
-            additionalProperties: false,
-            required: ["kind", "revision", "tabId", "reason"],
-            properties: {
-              kind: { const: "session-removed" },
-              revision: browserSessionRevision,
-              tabId: browserSessionTabId,
-              reason: { enum: ["user-closed", "thread-deleted"] },
-            },
-          },
-          {
-            type: "object",
-            additionalProperties: false,
-            required: ["kind", "reason"],
-            properties: {
-              kind: { const: "closed" },
-              reason: {
-                enum: [
-                  "epoch-changed",
-                  "host-disconnected",
-                  "scope-invalidated",
-                  "grant-revoked",
-                  "installation-changed",
-                  "overflow",
-                  "source-unavailable",
-                ],
-              },
-            },
-          },
-        ],
-      },
-    },
-  ],
-});
+}>(
+  browserSessionsDefinition("1.1.0", BROWSER_SESSION_COMMANDS, browserSessionObject, (receipt) => [
+    browserSessionCommandMethod(receipt, "openDevTools", {}, [], [BROWSER_DEVTOOLS]),
+    browserSessionCommandMethod(receipt, "closeDevTools", {}, [], [BROWSER_DEVTOOLS]),
+  ]),
+);
+/**
+ * Frozen published 1.0.0 definition — no DevTools methods, no
+ * `devToolsOpen`; kept so shared definitions stay immutable per version.
+ */
+export const browserSessionsApiV1 = defineStreamApi<{
+  events: { input: Record<string, never>; event: BrowserSessionStreamValue };
+}>(browserSessionsDefinition("1.0.0", BROWSER_SESSION_COMMANDS_V1, browserSessionObjectV1));
 export const BROWSER_SESSIONS_API = browserSessionsApi.definition;
+export const BROWSER_SESSIONS_API_V1 = browserSessionsApiV1.definition;
 
 /* ------------------------------------------------------------------------
  * t3.browser/frames — remote pixel transport for a browser session
@@ -8312,6 +8375,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   orchestrationControlApi.definition,
   browserLocalServersApi.definition,
   browserSessionsApi.definition,
+  browserSessionsApiV1.definition,
   browserFramesApi.definition,
   workspaceFilesApi.definition,
   workspaceTreeApi.definition,

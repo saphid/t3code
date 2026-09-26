@@ -276,3 +276,82 @@ NodeTest.describe("runPageCommand", () => {
     );
   });
 });
+
+NodeTest.describe("DevTools", () => {
+  const guard = { tabId: "tab-1", serverEpoch: "epoch-1", expectedEngineGeneration: "wc-7" };
+
+  NodeTest.it(
+    "sends openDevTools and closeDevTools as distinct fenced verbs and never while blocked",
+    async () => {
+      const api = fakeApi(receipt("accepted"));
+      await runPageCommand(api, target, ready, { method: "openDevTools" }, signal);
+      await runPageCommand(api, target, ready, { method: "closeDevTools" }, signal);
+      NodeAssert.deepEqual(api.calls, [
+        { method: "openDevTools", input: guard },
+        { method: "closeDevTools", input: guard },
+      ]);
+      const blocked = await runPageCommand(
+        api,
+        target,
+        unavailable,
+        { method: "openDevTools" },
+        signal,
+      );
+      NodeAssert.equal(blocked.kind, "blocked");
+      NodeAssert.match(blocked.message, /\(desktop-required\)/);
+      NodeAssert.equal(api.calls.length, 2);
+    },
+  );
+
+  NodeTest.it(
+    "names the missing grant, a foreign session, a detached session and an unsupported engine",
+    async () => {
+      const failWith = (message, method = "openDevTools") =>
+        runPageCommand(
+          fakeApi(() => Promise.reject(new Error(message))),
+          target,
+          ready,
+          { method },
+          signal,
+        );
+      NodeAssert.deepEqual(await failWith("API capability denied: t3.browser/devtools"), {
+        kind: "failed",
+        message:
+          "Open DevTools needs the t3.browser/devtools grant, which this installation does not hold (grant-denied).",
+      });
+      NodeAssert.match(
+        (
+          await failWith(
+            "browser.sessions.closeDevTools: BrowserSessionNotOwned: the session was opened natively, not by this installation (not-owned).",
+            "closeDevTools",
+          )
+        ).message,
+        /^Close DevTools is only available on pages this panel opened \(not-owned\)\.$/,
+      );
+      NodeAssert.match(
+        (
+          await failWith(
+            "browser.sessions.openDevTools: BrowserSessionEngineDetached: no desktop engine has attached this session yet (no-attached-engine).",
+          )
+        ).message,
+        /^Open DevTools was not sent: .*\(no-attached-engine\)\.$/,
+      );
+      NodeAssert.match(
+        (
+          await failWith(
+            "browser.sessions.openDevTools: BrowserSessionCommandUnsupported: the attached browser engine cannot open DevTools (engine-unsupported).",
+          )
+        ).message,
+        /^Open DevTools is not supported .*\(engine-unsupported\)\.$/,
+      );
+      NodeAssert.match(
+        (
+          await failWith(
+            "browser.sessions.openDevTools: BrowserSessionCommandUnsupported: 'openDevTools' requires an authenticated desktop engine host; none renders this session (desktop-required).",
+          )
+        ).message,
+        /^Open DevTools needs the T3 Code desktop app.*\(desktop-required\)\.$/,
+      );
+    },
+  );
+});

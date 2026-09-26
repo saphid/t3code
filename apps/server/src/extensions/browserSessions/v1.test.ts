@@ -1,5 +1,6 @@
 import {
   BrowserEnginePageStatus,
+  type BrowserEngineHostCommandResultInput,
   type BrowserEngineHostStreamEvent,
   type PreviewNavStatus,
   AuthOrchestrationOperateScope,
@@ -10,9 +11,11 @@ import {
   extensionWorkspaceRevision,
 } from "@t3tools/contracts";
 import {
+  BROWSER_DEVTOOLS,
   BROWSER_OPERATE,
   BROWSER_SESSIONS,
   browserSessionsApi,
+  browserSessionsApiV1,
   type BrowserSessionStreamValue,
 } from "@t3tools/extension-sdk/catalogue";
 import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
@@ -181,6 +184,7 @@ const pageStatus = (navStatus: PreviewNavStatus) =>
     appearance: "dark" as const,
     audioMuted: false,
     audible: true,
+    devToolsOpen: false,
     favicon: { dataUrl: "data:image/png;base64,AAAA", pageUrl: "http://localhost:5173/" },
   });
 
@@ -233,6 +237,33 @@ const invokeError = (...args: Parameters<typeof invoke>) =>
       return rejection.cause;
     }),
   );
+
+const DEVTOOLS_METHODS = ["openDevTools", "closeDevTools"];
+
+/** Packs the SDK's browser-sessions example and a scoped runtime root for it. */
+const buildPackedExample = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const runner = yield* ProcessRunner.ProcessRunner;
+  const exampleDir = path.resolve(
+    import.meta.dirname,
+    "../../../../../packages/extension-sdk/examples/browser-sessions",
+  );
+  const built = yield* runner.run({
+    command: "node",
+    args: [
+      path.resolve(
+        import.meta.dirname,
+        "../../../../../packages/extension-sdk/bin/t3-extension.mjs",
+      ),
+      "build",
+      exampleDir,
+    ],
+  });
+  expect(built.code, built.stderr).toBe(0);
+  const temp = yield* fs.makeTempDirectoryScoped({ prefix: "p08b-installed-" });
+  return { exampleDir, rootDir: yield* fs.realPath(temp) };
+});
 
 const eventValue = (event: ApiStreamEvent): BrowserSessionStreamValue =>
   event.value as BrowserSessionStreamValue;
@@ -364,9 +395,20 @@ describe("browser sessions adapter", () => {
       ]);
       for (const method of definition.methods ?? []) {
         expect(method.requiredGrants).toEqual(
-          writes.has(method.name) ? [BROWSER_SESSIONS, BROWSER_OPERATE] : [BROWSER_SESSIONS],
+          DEVTOOLS_METHODS.includes(method.name)
+            ? // DevTools needs its own grant; sessions + operate confer nothing about it.
+              [BROWSER_SESSIONS, BROWSER_OPERATE, BROWSER_DEVTOOLS]
+            : writes.has(method.name)
+              ? [BROWSER_SESSIONS, BROWSER_OPERATE]
+              : [BROWSER_SESSIONS],
         );
       }
+      // No other method or stream accepts the DevTools grant as authority.
+      expect(
+        (definition.methods ?? [])
+          .filter((method) => method.requiredGrants.includes(BROWSER_DEVTOOLS))
+          .map((method) => method.name),
+      ).toEqual(DEVTOOLS_METHODS);
       expect(definition.streams?.[0]?.requiredGrants).toEqual([BROWSER_SESSIONS]);
     }),
   );
@@ -728,6 +770,7 @@ describe("browser sessions adapter", () => {
         "zoom",
         "setAppearance",
         "setAudioMuted",
+        ...DEVTOOLS_METHODS,
       ]) {
         const extra =
           method === "zoom"
@@ -780,6 +823,8 @@ describe("browser sessions adapter", () => {
         "zoom",
         "setAppearance",
         "setAudioMuted",
+        "openDevTools",
+        "closeDevTools",
       ]);
       // Presentation stays a named deferral (P08-PRESENTATION-SLOT).
       expect(capabilities.presentation).toEqual({ supported: false, reason: "desktop-required" });
@@ -844,9 +889,200 @@ describe("browser sessions adapter", () => {
         appearance: "dark",
         audioMuted: false,
         audible: true,
+        devToolsOpen: false,
         canGoBack: true,
       });
       expect(Object.keys(listed.sessions[0] ?? {})).not.toContain("favicon");
+    }),
+  );
+
+  it.effect(
+    "openDevTools and closeDevTools dispatch to the owning host and name every refusal",
+    () =>
+      Effect.gen(function* () {
+        const { provider, engineHosts } = yield* harness;
+        const opened = (yield* invoke(provider, "open", { url: "localhost:5173" })) as {
+          readonly serverEpoch: string;
+          readonly session: { readonly tabId: string; readonly devToolsOpen: boolean | null };
+        };
+        const guard = {
+          tabId: opened.session.tabId,
+          serverEpoch: opened.serverEpoch,
+          expectedEngineGeneration: null,
+        };
+        // Unreported is null, never a guessed "closed".
+        expect(opened.session.devToolsOpen).toBeNull();
+
+        // No desktop host registered anywhere: desktop-required.
+        const noHost = yield* invokeError(provider, "openDevTools", guard);
+        expect(noHost.detail).toContain("BrowserSessionCommandUnsupported");
+        expect(noHost.detail).toContain("(desktop-required)");
+
+        // A host is registered but only claims another session: no-attached-engine.
+        const other = (yield* invoke(provider, "open", { url: "localhost:3000" })) as {
+          readonly session: { readonly tabId: string };
+        };
+        const { events, fence } = yield* attachDesktopHost(engineHosts, {
+          tabId: other.session.tabId,
+          serverEpoch: opened.serverEpoch,
+        });
+        const detached = yield* invokeError(provider, "closeDevTools", guard);
+        expect(detached.detail).toContain("BrowserSessionEngineDetached");
+        expect(detached.detail).toContain("(no-attached-engine)");
+
+        const answer = (result: BrowserEngineHostCommandResultInput["result"]) =>
+          Effect.gen(function* () {
+            const event = yield* Queue.take(events);
+            if (event.type !== "command") throw new Error("expected a command event");
+            yield* engineHosts.commandResult(DESKTOP_SOCKET, {
+              hostConnectionId: fence.hostConnectionId,
+              commandId: event.commandId,
+              result,
+            });
+            return event;
+          });
+        const attached = {
+          tabId: other.session.tabId,
+          serverEpoch: opened.serverEpoch,
+          expectedEngineGeneration: "41",
+        };
+
+        // Each direction is its own operation with its own receipt.
+        const opening = yield* Effect.forkChild(answer({ outcome: "applied" }));
+        const openReceipt = (yield* invoke(provider, "openDevTools", attached)) as {
+          readonly commandId: string;
+          readonly outcome: string;
+        };
+        expect(openReceipt.outcome).toBe("accepted");
+        expect(yield* Fiber.join(opening)).toMatchObject({
+          target: fence.target,
+          engineGeneration: "41",
+          command: { _tag: "setDevToolsOpen", open: true },
+        });
+        const closing = yield* Effect.forkChild(answer({ outcome: "applied" }));
+        const closeReceipt = (yield* invoke(provider, "closeDevTools", attached)) as {
+          readonly commandId: string;
+          readonly outcome: string;
+        };
+        expect(closeReceipt.outcome).toBe("accepted");
+        expect(closeReceipt.commandId).not.toBe(openReceipt.commandId);
+        expect(yield* Fiber.join(closing)).toMatchObject({
+          command: { _tag: "setDevToolsOpen", open: false },
+        });
+
+        // A host that cannot toggle DevTools answers not-applicable: engine-unsupported.
+        const refusing = yield* Effect.forkChild(
+          answer({ outcome: "rejected", reason: "not-applicable" }),
+        );
+        const unsupported = yield* invokeError(provider, "openDevTools", attached);
+        yield* Fiber.join(refusing);
+        expect(unsupported.detail).toContain("BrowserSessionCommandUnsupported");
+        expect(unsupported.detail).toContain("(engine-unsupported)");
+
+        // Any other rejection stays an honest receipt, like every page verb.
+        const failing = yield* Effect.forkChild(answer({ outcome: "rejected", reason: "failed" }));
+        const failed = (yield* invoke(provider, "closeDevTools", attached)) as {
+          readonly outcome: string;
+        };
+        yield* Fiber.join(failing);
+        expect(failed.outcome).toBe("rejected");
+
+        // The operations take the bare guard; the old boolean shape is refused.
+        const badInput = yield* invokeError(provider, "openDevTools", { ...attached, open: true });
+        expect(badInput.detail).toContain("BrowserSessionInputError");
+        const retired = yield* invokeError(provider, "setDevToolsOpen", {
+          ...attached,
+          open: true,
+        });
+        expect(retired.detail).toContain("method is unavailable");
+
+        // Open/closed state rides the same owner report as mute and appearance.
+        yield* engineHosts.report(DESKTOP_SOCKET, {
+          ...fence,
+          status: {
+            ...pageStatus({ _tag: "Success", url: "http://localhost:3000/", title: "Dev" }),
+            devToolsOpen: true,
+          },
+        });
+        const listed = (yield* invoke(provider, "list", {})) as {
+          readonly sessions: readonly { readonly tabId: string; readonly devToolsOpen: unknown }[];
+        };
+        expect(
+          Object.fromEntries(
+            listed.sessions.map((session) => [session.tabId, session.devToolsOpen]),
+          ),
+        ).toEqual({ [opened.session.tabId]: null, [other.session.tabId]: true });
+      }),
+  );
+
+  it.effect("DevTools refuses a natively opened session before any host is asked", () =>
+    Effect.gen(function* () {
+      const { preview, provider, engineHosts } = yield* harness;
+      // The client preview panel and MCP open through the manager directly.
+      const native = yield* preview.open({
+        threadId: ThreadId.make(THREAD_ID),
+        url: "http://localhost:5173",
+      });
+      const listed = (yield* invoke(provider, "list", {})) as { readonly serverEpoch: string };
+      const { events } = yield* attachDesktopHost(engineHosts, {
+        tabId: native.tabId,
+        serverEpoch: listed.serverEpoch,
+      });
+      for (const method of DEVTOOLS_METHODS) {
+        const refused = yield* invokeError(provider, method, {
+          tabId: native.tabId,
+          serverEpoch: listed.serverEpoch,
+          expectedEngineGeneration: "41",
+        });
+        expect(refused.detail).toContain("BrowserSessionNotOwned");
+        expect(refused.detail).toContain("opened natively");
+        expect(refused.detail).toContain("(not-owned)");
+      }
+      // Nothing reached the attached desktop host.
+      expect(yield* Queue.size(events)).toBe(0);
+    }),
+  );
+
+  it.effect("DevTools refuses a session another installation opened before any host is asked", () =>
+    Effect.gen(function* () {
+      const { provider, engineHosts } = yield* harness;
+      const foreign = (yield* invoke(provider, "open", { url: "localhost:5173" }, context(), {
+        ...meta(provider),
+        callerId: "other-installation",
+      })) as { readonly serverEpoch: string; readonly session: { readonly tabId: string } };
+      const { events, fence } = yield* attachDesktopHost(engineHosts, {
+        tabId: foreign.session.tabId,
+        serverEpoch: foreign.serverEpoch,
+      });
+      const guard = {
+        tabId: foreign.session.tabId,
+        serverEpoch: foreign.serverEpoch,
+        expectedEngineGeneration: "41",
+      };
+      for (const method of DEVTOOLS_METHODS) {
+        const refused = yield* invokeError(provider, method, guard);
+        expect(refused.detail).toContain("BrowserSessionNotOwned");
+        expect(refused.detail).toContain("another installation");
+        // The foreign owner's identity never crosses to the caller.
+        expect(refused.detail).not.toContain("other-installation");
+      }
+      expect(yield* Queue.size(events)).toBe(0);
+      // Other verbs keep their 1.0.0 behaviour; ownership gates DevTools only.
+      const reloading = yield* Effect.forkChild(
+        Effect.gen(function* () {
+          const event = yield* Queue.take(events);
+          if (event.type !== "command") throw new Error("expected a command event");
+          yield* engineHosts.commandResult(DESKTOP_SOCKET, {
+            hostConnectionId: fence.hostConnectionId,
+            commandId: event.commandId,
+            result: { outcome: "applied" },
+          });
+          return event;
+        }),
+      );
+      const reloaded = (yield* invoke(provider, "reload", guard)) as { readonly outcome: string };
+      expect(yield* Fiber.join(reloading)).toMatchObject({ command: { _tag: "reload" } });
+      expect(reloaded.outcome).toBe("accepted");
     }),
   );
 
@@ -1213,27 +1449,8 @@ describe("browser sessions adapter", () => {
     () =>
       Effect.gen(function* () {
         const { provider } = yield* harness;
-        const fs = yield* FileSystem.FileSystem;
+        const { exampleDir, rootDir } = yield* buildPackedExample;
         const path = yield* Path.Path;
-        const runner = yield* ProcessRunner.ProcessRunner;
-        const exampleDir = path.resolve(
-          import.meta.dirname,
-          "../../../../../packages/extension-sdk/examples/browser-sessions",
-        );
-        const built = yield* runner.run({
-          command: "node",
-          args: [
-            path.resolve(
-              import.meta.dirname,
-              "../../../../../packages/extension-sdk/bin/t3-extension.mjs",
-            ),
-            "build",
-            exampleDir,
-          ],
-        });
-        expect(built.code, built.stderr).toBe(0);
-        const temp = yield* fs.makeTempDirectoryScoped({ prefix: "p08b-installed-" });
-        const rootDir = yield* fs.realPath(temp);
         const runtime = yield* Effect.promise(() =>
           createExtensionRuntime({
             rootDir,
@@ -1309,6 +1526,27 @@ describe("browser sessions adapter", () => {
           };
           expect(listed.sessions.map((s) => s.tabId)).toEqual([opened.session.tabId]);
 
+          // DevTools needs its own grant: sessions + operate are refused by name
+          // through the real broker, and adding the grant reaches the adapter.
+          // The session is the mirror's own (opened above through the broker),
+          // so ownership passes and the refusal is the missing desktop host.
+          const devTools = () =>
+            invokeMirror("openDevTools", {
+              tabId: opened.session.tabId,
+              serverEpoch: opened.serverEpoch,
+              expectedEngineGeneration: null,
+            });
+          yield* Effect.promise(() =>
+            expect(devTools()).rejects.toThrow(/API capability denied: t3\.browser\/devtools/),
+          );
+          yield* Effect.promise(() =>
+            runtime.updateGrants(installed.id, {
+              ...grants,
+              capabilities: [...grants.capabilities, BROWSER_DEVTOOLS],
+            }),
+          );
+          yield* Effect.promise(() => expect(devTools()).rejects.toThrow(/desktop-required/));
+
           // The events stream relays through the packed subscribe path:
           // complete snapshot first, then the live removal.
           const eventsIterable = runtime.subscribeApi(
@@ -1359,6 +1597,62 @@ describe("browser sessions adapter", () => {
               /t3\.browser\/(sessions|operate)/,
             ),
           );
+        } finally {
+          yield* Effect.promise(() => runtime.dispose());
+        }
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+      ),
+  );
+  it.effect(
+    "a 1.1.0 consumer is incompatible-api on a 1.0.0 host before any DevTools call reaches it",
+    () =>
+      Effect.gen(function* () {
+        const { provider } = yield* harness;
+        const { exampleDir, rootDir } = yield* buildPackedExample;
+        const path = yield* Path.Path;
+        let reached = 0;
+        // A host that still serves the frozen 1.0.0 definition.
+        const legacyHost: HostApiProvider = {
+          ...provider,
+          definition: browserSessionsApiV1.definition,
+          invoke: (...args) => {
+            reached += 1;
+            return provider.invoke(...args);
+          },
+        };
+        const runtime = yield* Effect.promise(() =>
+          createExtensionRuntime({
+            rootDir,
+            environmentId: ENV_ID,
+            services: [],
+            apiProviders: [legacyHost],
+            authorize: () => true,
+          }),
+        );
+        try {
+          const installed = yield* Effect.promise(() =>
+            runtime.install(path.resolve(exampleDir, ".t3-extension"), {
+              capabilities: [BROWSER_SESSIONS, BROWSER_OPERATE, BROWSER_DEVTOOLS],
+              projectIds: [PROJECT_ID],
+            }),
+          );
+          const call = runtime.invokeApi(
+            installed.id,
+            installed.contentHash,
+            {
+              id: "example.browser-sessions/mirror",
+              versionRange: "^1.0.0",
+              method: "openDevTools",
+              input: { tabId: "tab", serverEpoch: "epoch", expectedEngineGeneration: null },
+              context: context(),
+            },
+            new AbortController().signal,
+            { principal: meta(provider).principal!, allowWrite: true, revalidate: () => {} },
+          );
+          yield* Effect.promise(() => expect(call).rejects.toThrow(/incompatible-api/));
+          expect(reached).toBe(0);
         } finally {
           yield* Effect.promise(() => runtime.dispose());
         }

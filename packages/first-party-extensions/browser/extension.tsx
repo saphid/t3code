@@ -647,7 +647,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   }, []);
 
   /**
-   * Engine verbs (back … setAudioMuted) go to the host that owns the guest.
+   * Engine verbs (back … closeDevTools) go to the host that owns the guest.
    * The stream stays the source of truth: an accepted receipt only refreshes
    * the held session early, and every refusal lands on the status line by
    * name. `tab` targets another session in the strip (its mute toggle)

@@ -45,6 +45,8 @@ export const BrowserEngineCommand = Schema.Union([
   Schema.TaggedStruct("zoom", { zoomFactor: PreviewZoomFactor }),
   Schema.TaggedStruct("setAppearance", { appearance: PreviewAppearancePreference }),
   Schema.TaggedStruct("setAudioMuted", { muted: Schema.Boolean }),
+  /** Opens (detached) or closes the guest's DevTools. Gated by its own extension grant. */
+  Schema.TaggedStruct("setDevToolsOpen", { open: Schema.Boolean }),
 ]);
 export type BrowserEngineCommand = typeof BrowserEngineCommand.Type;
 
@@ -69,6 +71,7 @@ export const BrowserEnginePageStatus = Schema.Struct({
   appearance: PreviewAppearancePreference,
   audioMuted: Schema.Boolean,
   audible: Schema.Boolean,
+  devToolsOpen: Schema.Boolean,
   favicon: Schema.NullOr(
     Schema.Struct({
       dataUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(BROWSER_ENGINE_FAVICON_MAX_LENGTH)),

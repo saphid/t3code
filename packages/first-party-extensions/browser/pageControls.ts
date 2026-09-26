@@ -1,6 +1,6 @@
 /**
  * Page controls over the `t3.browser/sessions` engine verbs — back, forward,
- * reload, hard reload, zoom, appearance and mute. Every verb is dispatched to
+ * reload, hard reload, zoom, appearance, mute and DevTools. Every verb is dispatched to
  * the desktop engine host that owns the session; this module decides whether
  * a verb may be sent, names why not, and turns receipts and errors into the
  * panel's inline messages. Pure and client-injected so the rules are testable
@@ -11,6 +11,10 @@
  * `crashed` (with `recovery-exhausted` once the host gave up), and a guest
  * being replaced is `recovering`. Controls are disabled in each of those
  * states with the reason on screen — never a spinner that implies progress.
+ *
+ * DevTools (open and close are separate verbs) additionally needs the
+ * installation's `t3.browser/devtools` grant and only acts on sessions this
+ * installation opened; each refusal is shown by name.
  */
 import {
   BROWSER_SESSION_ZOOM_LEVELS,
@@ -24,7 +28,15 @@ import type { BoundApi } from "./uiContracts.js";
 export type PageAppearance = "system" | "light" | "dark";
 
 export type PageVerb =
-  | { readonly method: "back" | "forward" | "reload" | "hardReload" }
+  | {
+      readonly method:
+        | "back"
+        | "forward"
+        | "reload"
+        | "hardReload"
+        | "openDevTools"
+        | "closeDevTools";
+    }
   | { readonly method: "zoom"; readonly zoomFactor: number }
   | { readonly method: "setAppearance"; readonly appearance: PageAppearance }
   | { readonly method: "setAudioMuted"; readonly muted: boolean };
@@ -126,12 +138,23 @@ const VERB_LABELS: Record<PageVerb["method"], string> = {
   zoom: "Zoom",
   setAppearance: "Appearance",
   setAudioMuted: "Mute",
+  openDevTools: "Open DevTools",
+  closeDevTools: "Close DevTools",
 };
 
 /** Inline message for a thrown verb, keyed on the server's stable error names. */
 export function pageCommandErrorMessage(method: PageVerb["method"], error: unknown): string {
   const label = VERB_LABELS[method];
   const text = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  const denied = /capability denied: (\S+)/.exec(text);
+  if (denied)
+    return `${label} needs the ${denied[1]} grant, which this installation does not hold (grant-denied).`;
+  if (text.includes("BrowserSessionNotOwned"))
+    return `${label} is only available on pages this panel opened (not-owned).`;
+  if (text.includes("(engine-unsupported)"))
+    return `${label} is not supported by the browser engine rendering this page (engine-unsupported).`;
+  if (text.includes("BrowserSessionEngineDetached"))
+    return `${label} was not sent: no desktop engine has attached this page yet (no-attached-engine).`;
   if (text.includes("BrowserSessionCommandUnsupported"))
     return `${label} needs the T3 Code desktop app, where the page renders (desktop-required).`;
   if (text.includes("BrowserStaleEngineGeneration"))

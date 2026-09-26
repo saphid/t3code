@@ -16,6 +16,7 @@ import {
   executeEngineCommand,
   forgetHostedTab,
   HANDLED_COMMANDS_LIMIT,
+  nextEnginePageReport,
   recordHostedTabState,
   toEnginePageStatus,
   useBrowserEngineHostStore,
@@ -36,6 +37,7 @@ const tabState = (overrides: Partial<DesktopPreviewTabState> = {}): DesktopPrevi
   colorScheme: "system",
   audioMuted: false,
   audible: false,
+  devToolsOpen: false,
   controller: "human",
   updatedAt: "2026-09-26T00:00:00.000Z",
   ...overrides,
@@ -49,6 +51,8 @@ const makeBridge = () => ({
   setZoomFactor: vi.fn(async () => {}),
   setColorScheme: vi.fn(async () => {}),
   setAudioMuted: vi.fn(async () => {}),
+  openDevTools: vi.fn(async () => {}),
+  closeDevTools: vi.fn(async () => {}),
 });
 
 const run = (
@@ -124,6 +128,65 @@ describe("executeEngineCommand", () => {
       outcome: "rejected",
       reason: "failed",
     });
+  });
+});
+
+describe("setDevToolsOpen", () => {
+  it("opens and closes DevTools on the fenced guest only", async () => {
+    const bridge = makeBridge();
+    expect(await run(bridge, { _tag: "setDevToolsOpen", open: true })).toEqual({
+      outcome: "rejected",
+      reason: "session-not-found",
+    });
+    recordHostedTabState(RUNTIME_TAB, tabState());
+    expect(await run(bridge, { _tag: "setDevToolsOpen", open: true }, "40")).toEqual({
+      outcome: "rejected",
+      reason: "stale-generation",
+    });
+    expect(bridge.openDevTools).not.toHaveBeenCalled();
+    expect(await run(bridge, { _tag: "setDevToolsOpen", open: true })).toEqual({
+      outcome: "applied",
+    });
+    expect(await run(bridge, { _tag: "setDevToolsOpen", open: false })).toEqual({
+      outcome: "applied",
+    });
+    expect(bridge.openDevTools.mock.calls).toEqual([[RUNTIME_TAB]]);
+    expect(bridge.closeDevTools.mock.calls).toEqual([[RUNTIME_TAB]]);
+    bridge.closeDevTools.mockRejectedValueOnce(new Error("guest detached"));
+    expect(await run(bridge, { _tag: "setDevToolsOpen", open: false })).toEqual({
+      outcome: "rejected",
+      reason: "failed",
+    });
+  });
+
+  it("answers not-applicable when the desktop shell has no DevTools IPC", async () => {
+    const { closeDevTools: _closeDevTools, ...olderShell } = makeBridge();
+    recordHostedTabState(RUNTIME_TAB, tabState());
+    expect(
+      await executeEngineCommand(olderShell as ReturnType<typeof makeBridge>, RUNTIME_TAB, "41", {
+        _tag: "setDevToolsOpen",
+        open: false,
+      }),
+    ).toEqual({ outcome: "rejected", reason: "not-applicable" });
+  });
+
+  it("reports each DevTools flip once and stays quiet on repeats", () => {
+    const decode = Schema.decodeUnknownSync(BrowserEnginePageStatus);
+    const first = nextEnginePageReport(null, tabState());
+    expect(first).not.toBeNull();
+    // A repeated desktop event with nothing projected changed sends nothing.
+    expect(nextEnginePageReport(first!.statusKey, tabState())).toBeNull();
+    expect(
+      nextEnginePageReport(first!.statusKey, tabState({ updatedAt: "2026-09-27T00:00:00.000Z" })),
+    ).toBeNull();
+    // DevTools opening alone is a new report the server contract accepts.
+    const opened = nextEnginePageReport(first!.statusKey, tabState({ devToolsOpen: true }));
+    expect(opened).not.toBeNull();
+    expect(decode(opened!.status)).toMatchObject({ devToolsOpen: true });
+    expect(nextEnginePageReport(opened!.statusKey, tabState({ devToolsOpen: true }))).toBeNull();
+    // Closing reports again rather than being swallowed as a repeat.
+    const closed = nextEnginePageReport(opened!.statusKey, tabState());
+    expect(closed?.status.devToolsOpen).toBe(false);
   });
 });
 
