@@ -5637,6 +5637,193 @@ var browserSessionsApi = defineStreamApi({
   ]
 });
 var BROWSER_SESSIONS_API = browserSessionsApi.definition;
+var BROWSER_PROFILES = "t3.browser/profiles";
+var BROWSER_CLEAR_COOKIES = "t3.browser/clear-cookies";
+var BROWSER_CLEAR_CACHE = "t3.browser/clear-cache";
+var BROWSER_IMPORT_COOKIES = "t3.browser/import-cookies";
+var BROWSER_IMPORT_UNAVAILABLE_REASONS = [
+  "notInstalled",
+  "needsKeychainApproval",
+  "keychainItemMissing",
+  "needsFullDiskAccess",
+  "browserRunning",
+  "unsupportedPlatform"
+];
+var browserProfileId = { type: "string", minLength: 1, maxLength: 64 };
+var browserProfileTargetInput = {
+  type: "object",
+  additionalProperties: false,
+  required: ["profileId"],
+  properties: { profileId: browserProfileId }
+};
+var browserProfileClearResult = {
+  type: "object",
+  additionalProperties: false,
+  required: ["outcome", "profileId"],
+  properties: { outcome: { enum: ["cleared", "unknown"] }, profileId: browserProfileId }
+};
+var browserImportLabel = { type: "string", minLength: 1, maxLength: 128 };
+var browserImportHandle = { type: "string", minLength: 1, maxLength: 16 };
+var browserProfilesApi = defineApi({
+  id: BROWSER_PROFILES,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "list",
+      effect: "read",
+      requiredGrants: [BROWSER_PROFILES],
+      inputSchema: browserSessionEmptyInput,
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["profiles", "defaultProfileId"],
+        properties: {
+          profiles: {
+            type: "array",
+            maxItems: 26,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["id", "name"],
+              properties: {
+                id: browserProfileId,
+                name: { type: "string", minLength: 1, maxLength: 48 }
+              }
+            }
+          },
+          defaultProfileId: browserProfileId
+        }
+      }
+    },
+    {
+      name: "open",
+      effect: "write",
+      requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE, BROWSER_PROFILES],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["profileId"],
+        properties: {
+          profileId: browserProfileId,
+          url: browserSessionUrl,
+          viewport: browserSessionViewport
+        }
+      },
+      outputSchema: browserSessionReceipt
+    },
+    {
+      name: "clearCookies",
+      effect: "write",
+      requiredGrants: [BROWSER_CLEAR_COOKIES],
+      inputSchema: browserProfileTargetInput,
+      outputSchema: browserProfileClearResult
+    },
+    {
+      name: "clearCache",
+      effect: "write",
+      requiredGrants: [BROWSER_CLEAR_CACHE],
+      inputSchema: browserProfileTargetInput,
+      outputSchema: browserProfileClearResult
+    },
+    {
+      name: "listImportSources",
+      effect: "read",
+      requiredGrants: [BROWSER_IMPORT_COOKIES],
+      inputSchema: browserSessionEmptyInput,
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["sources"],
+        properties: {
+          sources: {
+            type: "array",
+            maxItems: 16,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["id", "name", "profiles"],
+              properties: {
+                id: browserImportLabel,
+                name: browserImportLabel,
+                unavailable: { enum: [...BROWSER_IMPORT_UNAVAILABLE_REASONS] },
+                profiles: {
+                  type: "array",
+                  maxItems: 32,
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["handle", "name"],
+                    properties: {
+                      handle: browserImportHandle,
+                      name: browserImportLabel,
+                      cookieCount: { type: "integer", minimum: 0 }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      name: "importCookies",
+      effect: "write",
+      requiredGrants: [BROWSER_IMPORT_COOKIES],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["profileId", "sourceId", "sourceProfile"],
+        properties: {
+          profileId: browserProfileId,
+          sourceId: browserImportLabel,
+          sourceProfile: browserImportHandle
+        }
+      },
+      outputSchema: {
+        oneOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["outcome", "profileId", "imported", "skipped"],
+            properties: {
+              outcome: { const: "imported" },
+              profileId: browserProfileId,
+              imported: { type: "integer", minimum: 0 },
+              skipped: { type: "integer", minimum: 0 }
+            }
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["outcome", "profileId"],
+            properties: { outcome: { enum: ["declined", "unknown"] }, profileId: browserProfileId }
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["outcome", "profileId", "reason"],
+            properties: {
+              outcome: { const: "failed" },
+              profileId: browserProfileId,
+              reason: {
+                enum: [
+                  ...BROWSER_IMPORT_UNAVAILABLE_REASONS,
+                  "keychainUnavailable",
+                  "unknownSource",
+                  "unknownSourceProfile",
+                  "sessionUnavailable",
+                  "readFailed"
+                ]
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+});
+var BROWSER_PROFILES_API = browserProfilesApi.definition;
 var BROWSER_FRAMES = "t3.browser/frames";
 var BROWSER_FRAMES_VERSION = "1.0.0";
 var browserFrameSessionIdentity = {
@@ -6761,6 +6948,7 @@ var GENERIC_API_CATALOGUE = [
   orchestrationControlApi.definition,
   browserLocalServersApi.definition,
   browserSessionsApi.definition,
+  browserProfilesApi.definition,
   browserFramesApi.definition,
   workspaceFilesApi.definition,
   workspaceTreeApi.definition,

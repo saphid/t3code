@@ -5805,6 +5805,193 @@ var __t3Client = (() => {
     ]
   });
   var BROWSER_SESSIONS_API = browserSessionsApi.definition;
+  var BROWSER_PROFILES = "t3.browser/profiles";
+  var BROWSER_CLEAR_COOKIES = "t3.browser/clear-cookies";
+  var BROWSER_CLEAR_CACHE = "t3.browser/clear-cache";
+  var BROWSER_IMPORT_COOKIES = "t3.browser/import-cookies";
+  var BROWSER_IMPORT_UNAVAILABLE_REASONS = [
+    "notInstalled",
+    "needsKeychainApproval",
+    "keychainItemMissing",
+    "needsFullDiskAccess",
+    "browserRunning",
+    "unsupportedPlatform"
+  ];
+  var browserProfileId = { type: "string", minLength: 1, maxLength: 64 };
+  var browserProfileTargetInput = {
+    type: "object",
+    additionalProperties: false,
+    required: ["profileId"],
+    properties: { profileId: browserProfileId }
+  };
+  var browserProfileClearResult = {
+    type: "object",
+    additionalProperties: false,
+    required: ["outcome", "profileId"],
+    properties: { outcome: { enum: ["cleared", "unknown"] }, profileId: browserProfileId }
+  };
+  var browserImportLabel = { type: "string", minLength: 1, maxLength: 128 };
+  var browserImportHandle = { type: "string", minLength: 1, maxLength: 16 };
+  var browserProfilesApi = defineApi({
+    id: BROWSER_PROFILES,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "list",
+        effect: "read",
+        requiredGrants: [BROWSER_PROFILES],
+        inputSchema: browserSessionEmptyInput,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["profiles", "defaultProfileId"],
+          properties: {
+            profiles: {
+              type: "array",
+              maxItems: 26,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["id", "name"],
+                properties: {
+                  id: browserProfileId,
+                  name: { type: "string", minLength: 1, maxLength: 48 }
+                }
+              }
+            },
+            defaultProfileId: browserProfileId
+          }
+        }
+      },
+      {
+        name: "open",
+        effect: "write",
+        requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE, BROWSER_PROFILES],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["profileId"],
+          properties: {
+            profileId: browserProfileId,
+            url: browserSessionUrl,
+            viewport: browserSessionViewport
+          }
+        },
+        outputSchema: browserSessionReceipt
+      },
+      {
+        name: "clearCookies",
+        effect: "write",
+        requiredGrants: [BROWSER_CLEAR_COOKIES],
+        inputSchema: browserProfileTargetInput,
+        outputSchema: browserProfileClearResult
+      },
+      {
+        name: "clearCache",
+        effect: "write",
+        requiredGrants: [BROWSER_CLEAR_CACHE],
+        inputSchema: browserProfileTargetInput,
+        outputSchema: browserProfileClearResult
+      },
+      {
+        name: "listImportSources",
+        effect: "read",
+        requiredGrants: [BROWSER_IMPORT_COOKIES],
+        inputSchema: browserSessionEmptyInput,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["sources"],
+          properties: {
+            sources: {
+              type: "array",
+              maxItems: 16,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["id", "name", "profiles"],
+                properties: {
+                  id: browserImportLabel,
+                  name: browserImportLabel,
+                  unavailable: { enum: [...BROWSER_IMPORT_UNAVAILABLE_REASONS] },
+                  profiles: {
+                    type: "array",
+                    maxItems: 32,
+                    items: {
+                      type: "object",
+                      additionalProperties: false,
+                      required: ["handle", "name"],
+                      properties: {
+                        handle: browserImportHandle,
+                        name: browserImportLabel,
+                        cookieCount: { type: "integer", minimum: 0 }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        name: "importCookies",
+        effect: "write",
+        requiredGrants: [BROWSER_IMPORT_COOKIES],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["profileId", "sourceId", "sourceProfile"],
+          properties: {
+            profileId: browserProfileId,
+            sourceId: browserImportLabel,
+            sourceProfile: browserImportHandle
+          }
+        },
+        outputSchema: {
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["outcome", "profileId", "imported", "skipped"],
+              properties: {
+                outcome: { const: "imported" },
+                profileId: browserProfileId,
+                imported: { type: "integer", minimum: 0 },
+                skipped: { type: "integer", minimum: 0 }
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["outcome", "profileId"],
+              properties: { outcome: { enum: ["declined", "unknown"] }, profileId: browserProfileId }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["outcome", "profileId", "reason"],
+              properties: {
+                outcome: { const: "failed" },
+                profileId: browserProfileId,
+                reason: {
+                  enum: [
+                    ...BROWSER_IMPORT_UNAVAILABLE_REASONS,
+                    "keychainUnavailable",
+                    "unknownSource",
+                    "unknownSourceProfile",
+                    "sessionUnavailable",
+                    "readFailed"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    ]
+  });
+  var BROWSER_PROFILES_API = browserProfilesApi.definition;
   var BROWSER_FRAMES = "t3.browser/frames";
   var BROWSER_FRAMES_VERSION = "1.0.0";
   var browserFrameSessionIdentity = {
@@ -6940,6 +7127,7 @@ var __t3Client = (() => {
     orchestrationControlApi.definition,
     browserLocalServersApi.definition,
     browserSessionsApi.definition,
+    browserProfilesApi.definition,
     browserFramesApi.definition,
     workspaceFilesApi.definition,
     workspaceTreeApi.definition,
@@ -7282,10 +7470,10 @@ var __t3Client = (() => {
     return covering.some((node) => !element.contains(node) && !(typeof node.closest === "function" && node.closest("[data-preview-viewport]") !== null));
   }
   function useBrowserSurfaceSlot(host, session, options) {
-    const { useCallback: useCallback2, useLayoutEffect, useRef: useRef3, useState: useState6 } = host.React;
-    const [element, setElement] = useState6(null);
-    const [result2, setResult] = useState6(null);
-    const [, setLeaseVersion] = useState6(0);
+    const { useCallback: useCallback2, useLayoutEffect, useRef: useRef3, useState: useState7 } = host.React;
+    const [element, setElement] = useState7(null);
+    const [result2, setResult] = useState7(null);
+    const [, setLeaseVersion] = useState7(0);
     const targetKey = options.session ? `${options.session.serverEpoch}${options.session.tabId}` : "";
     const presentationRef = useRef3({
       visible: options.visible,
@@ -7426,10 +7614,10 @@ var __t3Client = (() => {
     };
   }
   function useRemoteBrowserFrames(host, session, options) {
-    const { useCallback: useCallback2, useEffect: useEffect5, useRef: useRef3, useState: useState6 } = host.React;
-    const [element, setElement] = useState6(null);
-    const [status, setStatus] = useState6({ kind: "idle" });
-    const [view, setView] = useState6({
+    const { useCallback: useCallback2, useEffect: useEffect6, useRef: useRef3, useState: useState7 } = host.React;
+    const [element, setElement] = useState7(null);
+    const [status, setStatus] = useState7({ kind: "idle" });
+    const [view, setView] = useState7({
       status: "connecting",
       inputConnected: false,
       droppedFrames: 0,
@@ -7439,7 +7627,7 @@ var __t3Client = (() => {
     sessionRef.current = options.session;
     const targetKey = options.session ? `${options.session.serverEpoch} ${options.session.tabId}` : "";
     const ref = useCallback2((node) => setElement(node), []);
-    useEffect5(() => {
+    useEffect6(() => {
       setStatus({ kind: "idle" });
       setView({ status: "connecting", inputConnected: false, droppedFrames: 0, rejectedInput: 0 });
       if (!element || !options.enabled || !options.session)
@@ -7614,7 +7802,7 @@ var __t3Client = (() => {
   }
 
   // extension.tsx
-  var import_react6 = __toESM(require_react(), 1);
+  var import_react7 = __toESM(require_react(), 1);
 
   // capture.ts
   var import_react = __toESM(require_react(), 1);
@@ -14129,7 +14317,7 @@ ${ind(d)}}`;
     );
   }
   function PageMenu(props) {
-    const { session, blockReason, run: run2, zoomStep } = props;
+    const { session, blockReason, run: run2, zoomStep, children } = props;
     const [open, setOpen] = (0, import_react4.useState)(false);
     const root = (0, import_react4.useRef)(null);
     (0, import_react4.useEffect)(() => {
@@ -14278,15 +14466,293 @@ ${ind(d)}}`;
                 style: { ...control, textAlign: "left" },
                 children: audioMuted ? "Unmute page" : "Mute page"
               }
-            )
+            ),
+            children
           ]
         }
       )
     ] });
   }
 
-  // viewportToolbar.tsx
+  // profileMenu.tsx
   var import_react5 = __toESM(require_react(), 1);
+
+  // profiles.ts
+  var DEFAULT_PROFILE_ID = "default";
+  var ACTION_LABEL = {
+    list: "Listing browser profiles",
+    open: "Opening the page in another profile",
+    clearCookies: "Clearing cookies",
+    clearCache: "Clearing the cache",
+    listImportSources: "Listing browsers to import from",
+    importCookies: "Importing cookies"
+  };
+  function sessionProfileId(session) {
+    return session?.profileId ?? DEFAULT_PROFILE_ID;
+  }
+  function profileLabel(list, profileId) {
+    if (list === null) return profileId === DEFAULT_PROFILE_ID ? "Default" : profileId;
+    return list.profiles.find((profile) => profile.id === profileId)?.name ?? "Removed profile";
+  }
+  function profileFailureMessage(action, error) {
+    const text = error instanceof Error ? error.message : String(error);
+    const label = ACTION_LABEL[action];
+    const denied = /capability denied: (\S+)/.exec(text);
+    if (denied) {
+      return `${label} needs the ${denied[1]} grant \u2014 this installation is missing it.`;
+    }
+    if (text.includes("(desktop-required)")) {
+      return `${label} needs the T3 Code desktop app \u2014 no desktop browser engine is connected (desktop-required).`;
+    }
+    if (text.includes("(engine-unsupported)")) {
+      return `${label} is not supported by this desktop's browser engine (engine-unsupported).`;
+    }
+    if (text.includes("BrowserProfileNotFound")) {
+      return `${label} failed \u2014 that browser profile no longer exists (profile-not-found).`;
+    }
+    if (text.includes("BrowserProfilesUnavailable")) {
+      return `${label} failed \u2014 the desktop did not answer in time (unknown).`;
+    }
+    return `${label} failed${text ? ` \u2014 ${text.slice(0, 300)}` : ""}.`;
+  }
+  function clearResultMessage(result2, kind, profileName) {
+    const what = kind === "clearCookies" ? "cookies" : "the cache";
+    if (result2.outcome === "unknown") {
+      return `The desktop did not confirm clearing ${what} for "${profileName}" (unknown) \u2014 it may or may not have happened.`;
+    }
+    return kind === "clearCookies" ? `Cookies cleared for "${profileName}" \u2014 every page in that profile is signed out.` : `Cache cleared for "${profileName}".`;
+  }
+  var IMPORT_FAILURE_COPY = {
+    notInstalled: "that browser is not installed on the desktop",
+    needsKeychainApproval: "the desktop needs Keychain access to read its cookies",
+    keychainItemMissing: "no encryption key in the desktop's Keychain \u2014 sign in to that browser once",
+    needsFullDiskAccess: "give T3 Code Full Disk Access on the desktop, then retry",
+    browserRunning: "quit that browser on the desktop first",
+    unsupportedPlatform: "importing from that browser isn't possible on the desktop's platform",
+    keychainUnavailable: "the desktop's system keyring could not be accessed",
+    unknownSource: "that browser is no longer available to import from",
+    unknownSourceProfile: "that browser profile no longer exists",
+    sessionUnavailable: "the target profile could not be opened",
+    readFailed: "the browser's cookie database could not be read"
+  };
+  function importResultMessage(result2, profileName) {
+    switch (result2.outcome) {
+      case "imported":
+        return `Imported ${result2.imported} cookie${result2.imported === 1 ? "" : "s"} into "${profileName}"${result2.skipped > 0 ? ` (${result2.skipped} skipped)` : ""}.`;
+      case "declined":
+        return "Cookie import was declined on the desktop.";
+      case "unknown":
+        return "The desktop did not answer the import (unknown) \u2014 check the T3 Code desktop app.";
+      case "failed":
+        return `Cookie import failed (${result2.reason}) \u2014 ${IMPORT_FAILURE_COPY[result2.reason]}.`;
+    }
+  }
+  function importableSources(sources) {
+    return sources.filter(
+      (source) => source.unavailable !== "notInstalled" && source.unavailable !== "unsupportedPlatform"
+    );
+  }
+  function reopenRequest(previous, url) {
+    const profileId = sessionProfileId(previous);
+    return profileId === DEFAULT_PROFILE_ID ? { api: "sessions", input: { url } } : { api: "profiles", input: { profileId, url } };
+  }
+
+  // profileMenu.tsx
+  var import_jsx_runtime4 = __toESM(require_jsx_runtime(), 1);
+  var bindProfilesApi = (host, context2) => bindApi(browserProfilesApi, host, context2);
+  var muted4 = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
+  var border2 = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
+  var control2 = {
+    font: "inherit",
+    fontSize: 12,
+    padding: "2px 8px",
+    border: border2,
+    borderRadius: 5,
+    background: "transparent",
+    color: "inherit"
+  };
+  var PENDING = {
+    clearCookies: "Clearing cookies\u2026",
+    clearCache: "Clearing the cache\u2026",
+    importCookies: "Importing \u2014 confirm the import in the T3 Code desktop app."
+  };
+  var firstProfile = (sources, sourceId) => sources.find((source) => source.id === sourceId)?.profiles[0]?.handle ?? "";
+  function ProfileSection(props) {
+    const { session, api, signal, onOpenInProfile, report } = props;
+    const profileId = sessionProfileId(session);
+    const [list, setList] = (0, import_react5.useState)(null);
+    const [listNote, setListNote] = (0, import_react5.useState)(null);
+    const [busy, setBusy] = (0, import_react5.useState)(null);
+    const [importer, setImporter] = (0, import_react5.useState)({ kind: "closed" });
+    (0, import_react5.useEffect)(() => {
+      let live = true;
+      void api.invoke("list", {}, signal).then(
+        (value) => {
+          if (live) setList(value);
+        },
+        (error) => {
+          if (live) setListNote(profileFailureMessage("list", error));
+        }
+      );
+      return () => {
+        live = false;
+      };
+    }, [api, signal]);
+    const name = profileLabel(list, profileId);
+    const clear = (kind) => {
+      setBusy(kind);
+      void api.invoke(kind, { profileId }, signal).then(
+        (result2) => report(clearResultMessage(result2, kind, name)),
+        (error) => report(profileFailureMessage(kind, error))
+      ).finally(() => setBusy(null));
+    };
+    const openImporter = () => {
+      setImporter({ kind: "loading" });
+      void api.invoke("listImportSources", {}, signal).then(
+        ({ sources }) => {
+          const usable = importableSources(sources);
+          const sourceId = usable[0]?.id ?? "";
+          setImporter({
+            kind: "ready",
+            sources: usable,
+            sourceId,
+            handle: firstProfile(usable, sourceId)
+          });
+        },
+        (error) => setImporter({ kind: "failed", message: profileFailureMessage("listImportSources", error) })
+      );
+    };
+    const runImport = (sourceId, handle) => {
+      setBusy("importCookies");
+      void api.invoke("importCookies", { profileId, sourceId, sourceProfile: handle }, signal).then(
+        (result2) => {
+          report(importResultMessage(result2, name));
+          if (result2.outcome === "imported") setImporter({ kind: "closed" });
+        },
+        (error) => report(profileFailureMessage("importCookies", error))
+      ).finally(() => setBusy(null));
+    };
+    const others = list?.profiles.filter((profile) => profile.id !== profileId) ?? [];
+    const selectedSource = importer.kind === "ready" ? importer.sources.find((source) => source.id === importer.sourceId) : void 0;
+    return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
+      "div",
+      {
+        role: "group",
+        "aria-label": "Profile",
+        style: { display: "grid", gap: 6, borderTop: border2, paddingTop: 8 },
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
+            "span",
+            {
+              style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: muted4 },
+              children: [
+                "Profile: ",
+                name
+              ]
+            }
+          ),
+          listNote && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: listNote }),
+          others.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("label", { style: { display: "flex", justifyContent: "space-between", gap: 8 }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { children: "Open page in" }),
+            /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
+              "select",
+              {
+                "aria-label": "Open page in profile",
+                value: "",
+                onChange: (event) => {
+                  if (event.target.value) onOpenInProfile(event.target.value);
+                },
+                style: { ...control2, maxWidth: 140 },
+                children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("option", { value: "", children: "Choose\u2026" }),
+                  others.map((profile) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("option", { value: profile.id, children: profile.name }, profile.id))
+                ]
+              }
+            )
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+            "button",
+            {
+              type: "button",
+              role: "menuitem",
+              disabled: busy !== null,
+              onClick: () => clear("clearCookies"),
+              style: { ...control2, textAlign: "left" },
+              children: "Clear cookies"
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+            "button",
+            {
+              type: "button",
+              role: "menuitem",
+              disabled: busy !== null,
+              onClick: () => clear("clearCache"),
+              style: { ...control2, textAlign: "left" },
+              children: "Clear cache"
+            }
+          ),
+          importer.kind === "closed" ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+            "button",
+            {
+              type: "button",
+              role: "menuitem",
+              disabled: busy !== null,
+              onClick: openImporter,
+              style: { ...control2, textAlign: "left" },
+              children: "Import cookies\u2026"
+            }
+          ) : importer.kind === "loading" ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: "Listing browsers on the desktop\u2026" }) : importer.kind === "failed" ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: importer.message }) : importer.sources.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: "No browser on the desktop can be imported from." }) : /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: { display: "grid", gap: 4 }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+              "select",
+              {
+                "aria-label": "Import from browser",
+                value: importer.sourceId,
+                onChange: (event) => setImporter({
+                  ...importer,
+                  sourceId: event.target.value,
+                  handle: firstProfile(importer.sources, event.target.value)
+                }),
+                style: control2,
+                children: importer.sources.map((source) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("option", { value: source.id, children: source.name }, source.id))
+              }
+            ),
+            selectedSource?.unavailable ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: importResultMessage(
+              { outcome: "failed", profileId, reason: selectedSource.unavailable },
+              name
+            ) }) : /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+              "select",
+              {
+                "aria-label": "Import from browser profile",
+                value: importer.handle,
+                onChange: (event) => setImporter({ ...importer, handle: event.target.value }),
+                style: control2,
+                children: selectedSource?.profiles.map((profile) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("option", { value: profile.handle, children: profile.cookieCount === void 0 ? profile.name : `${profile.name} (${profile.cookieCount} cookies)` }, profile.handle))
+              }
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
+              "button",
+              {
+                type: "button",
+                role: "menuitem",
+                disabled: busy !== null || !importer.handle || selectedSource?.unavailable !== void 0,
+                onClick: () => runImport(importer.sourceId, importer.handle),
+                style: { ...control2, textAlign: "left" },
+                children: [
+                  "Import into ",
+                  name
+                ]
+              }
+            )
+          ] }),
+          busy !== null && PENDING[busy] && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: PENDING[busy] })
+        ]
+      }
+    );
+  }
+
+  // viewportToolbar.tsx
+  var import_react6 = __toESM(require_react(), 1);
 
   // viewport.ts
   var PREVIEW_VIEWPORT_MIN_DIMENSION = 240;
@@ -14450,15 +14916,15 @@ ${ind(d)}}`;
   }
 
   // viewportToolbar.tsx
-  var import_jsx_runtime4 = __toESM(require_jsx_runtime(), 1);
-  var muted4 = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
-  var border2 = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
+  var import_jsx_runtime5 = __toESM(require_jsx_runtime(), 1);
+  var muted5 = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
+  var border3 = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
   var chromeButton = {
     font: "inherit",
     fontSize: 12,
     lineHeight: 1,
     padding: "3px 6px",
-    border: border2,
+    border: border3,
     borderRadius: 5,
     background: "transparent",
     color: "inherit"
@@ -14468,16 +14934,16 @@ ${ind(d)}}`;
     fontSize: 12,
     width: 52,
     padding: "2px 4px",
-    border: border2,
+    border: border3,
     borderRadius: 5,
     background: "transparent",
     color: "inherit"
   };
   function useElementSize(ref) {
-    const [size, setSize] = (0, import_react5.useState)(
+    const [size, setSize] = (0, import_react6.useState)(
       null
     );
-    (0, import_react5.useEffect)(() => {
+    (0, import_react6.useEffect)(() => {
       const element = ref.current;
       if (!element) return;
       const observer = new ResizeObserver((entries) => {
@@ -14494,7 +14960,7 @@ ${ind(d)}}`;
   }
   function BrowserViewportToolbar(props) {
     const { setting, pending, onCommit } = props;
-    const [edit, setEdit] = (0, import_react5.useState)(null);
+    const [edit, setEdit] = (0, import_react6.useState)(null);
     const committedKey = viewportSettingKey(setting);
     const customSize = edit !== null && edit.key === committedKey ? { width: edit.width, height: edit.height } : null;
     const presentedSize = customSize ?? {
@@ -14521,7 +14987,7 @@ ${ind(d)}}`;
       const preset = presetViewport(value);
       if (preset) onCommit(preset);
     };
-    return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
       "div",
       {
         role: "toolbar",
@@ -14539,7 +15005,7 @@ ${ind(d)}}`;
           padding: "0 6px",
           boxSizing: "border-box",
           background: "var(--t3-browser-canvas, var(--background, #fff))",
-          borderBottom: border2,
+          borderBottom: border3,
           overflowX: "auto",
           whiteSpace: "nowrap"
         },
@@ -14549,7 +15015,7 @@ ${ind(d)}}`;
           applyCustomSize();
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
             "select",
             {
               "aria-label": "Browser device preset",
@@ -14558,12 +15024,12 @@ ${ind(d)}}`;
               onChange: (event) => selectViewport(event.target.value),
               style: { ...chromeButton, padding: "2px 4px" },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("option", { value: "responsive", children: "Responsive" }),
-                PREVIEW_VIEWPORT_PRESETS.map((preset) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("option", { value: preset.id, children: `${preset.label} \u2014 ${preset.detail}` }, preset.id))
+                /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("option", { value: "responsive", children: "Responsive" }),
+                PREVIEW_VIEWPORT_PRESETS.map((preset) => /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("option", { value: preset.id, children: `${preset.label} \u2014 ${preset.detail}` }, preset.id))
               ]
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
             "form",
             {
               style: { display: "flex", alignItems: "center", gap: 4, margin: 0 },
@@ -14573,7 +15039,7 @@ ${ind(d)}}`;
                 applyCustomSize();
               },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
                   "input",
                   {
                     type: "number",
@@ -14599,8 +15065,8 @@ ${ind(d)}}`;
                     style: numberInput
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { "aria-hidden": true, style: { color: muted4, fontSize: 11 }, children: "\xD7" }),
-                /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { "aria-hidden": true, style: { color: muted5, fontSize: 11 }, children: "\xD7" }),
+                /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
                   "input",
                   {
                     type: "number",
@@ -14629,7 +15095,7 @@ ${ind(d)}}`;
               ]
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
             "button",
             {
               type: "button",
@@ -14645,7 +15111,7 @@ ${ind(d)}}`;
               children: "\u27F3"
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
             "button",
             {
               type: "button",
@@ -14664,8 +15130,8 @@ ${ind(d)}}`;
     const { slot, setting, fallbackSlot } = props;
     const layout = deviceViewportLayout(slot ?? fallbackSlot, setting);
     const percent = Math.round(layout.scale * 100);
-    return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(import_jsx_runtime4.Fragment, { children: [
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(import_jsx_runtime5.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
         "div",
         {
           "aria-hidden": true,
@@ -14675,7 +15141,7 @@ ${ind(d)}}`;
             top: layout.y,
             width: layout.width,
             height: layout.height,
-            border: border2,
+            border: border3,
             borderRadius: 6,
             boxShadow: "0 1px 4px rgba(15, 23, 42, 0.18)",
             pointerEvents: "none",
@@ -14684,7 +15150,7 @@ ${ind(d)}}`;
           }
         }
       ),
-      layout.scale < 1 ? /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
+      layout.scale < 1 ? /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
         "div",
         {
           "aria-label": `Viewport scaled to ${percent}%`,
@@ -14695,9 +15161,9 @@ ${ind(d)}}`;
             transform: "translateX(-100%)",
             padding: "1px 6px",
             fontSize: 11,
-            color: muted4,
+            color: muted5,
             background: "var(--t3-browser-canvas, var(--background, #fff))",
-            border: border2,
+            border: border3,
             borderRadius: 999,
             pointerEvents: "none",
             zIndex: 40
@@ -14854,22 +15320,22 @@ ${ind(d)}}`;
   }
 
   // extension.tsx
-  var import_jsx_runtime5 = __toESM(require_jsx_runtime(), 1);
+  var import_jsx_runtime6 = __toESM(require_jsx_runtime(), 1);
   var manifestId = "t3.browser";
-  var muted5 = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
-  var border3 = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
+  var muted6 = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
+  var border4 = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
   var buttonStyle = {
     font: "inherit",
     fontSize: 12,
     padding: "2px 8px",
-    border: border3,
+    border: border4,
     borderRadius: 5,
     background: "transparent",
     color: "inherit"
   };
   function useThemeVars(host, session, visible) {
-    const [vars, setVars] = (0, import_react6.useState)(null);
-    (0, import_react6.useEffect)(() => {
+    const [vars, setVars] = (0, import_react7.useState)(null);
+    (0, import_react7.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       watchThemeVars(
@@ -14914,48 +15380,50 @@ ${ind(d)}}`;
   function BrowserView(props) {
     const { host, session } = props;
     const restored = restoreState(session.restoreState) ? session.restoreState : null;
-    const [state2, setState] = (0, import_react6.useState)(
+    const [state2, setState] = (0, import_react7.useState)(
       () => restored?.url ? submitAddress(initialNavigationState, restored.url) : initialNavigationState
     );
-    const [fileSource, setFileSource] = (0, import_react6.useState)(
+    const [fileSource, setFileSource] = (0, import_react7.useState)(
       restored?.url ? null : restored?.relativePath ?? null
     );
-    const fileSourceRef = (0, import_react6.useRef)(fileSource);
-    const fileRun = (0, import_react6.useRef)(null);
-    const [address, setAddress] = (0, import_react6.useState)(restored?.url ?? restored?.relativePath ?? "");
-    const [history, setHistory] = (0, import_react6.useState)(
+    const fileSourceRef = (0, import_react7.useRef)(fileSource);
+    const fileRun = (0, import_react7.useRef)(null);
+    const [address, setAddress] = (0, import_react7.useState)(restored?.url ?? restored?.relativePath ?? "");
+    const [history, setHistory] = (0, import_react7.useState)(
       () => sanitizeHistoryEntries(restored?.history)
     );
-    const [held, setHeld] = (0, import_react6.useState)(
+    const [held, setHeld] = (0, import_react7.useState)(
       () => restored?.tabId && restored?.serverEpoch ? {
         tabId: restored.tabId,
         serverEpoch: restored.serverEpoch,
         engineGeneration: null
       } : null
     );
-    const [live, setLive] = (0, import_react6.useState)(null);
-    const [tabs, setTabs] = (0, import_react6.useState)([]);
-    const tabsEpoch = (0, import_react6.useRef)(null);
-    const [fault, setFault] = (0, import_react6.useState)(null);
-    const [visible, setVisible] = (0, import_react6.useState)(session.visible);
-    const heldRef = (0, import_react6.useRef)(held);
-    const historyRef = (0, import_react6.useRef)(history);
-    const lastRevision = (0, import_react6.useRef)(-1);
-    const addressRef = (0, import_react6.useRef)(null);
-    const contentRef = (0, import_react6.useRef)(null);
+    const [live, setLive] = (0, import_react7.useState)(null);
+    const [tabs, setTabs] = (0, import_react7.useState)([]);
+    const tabsEpoch = (0, import_react7.useRef)(null);
+    const [fault, setFault] = (0, import_react7.useState)(null);
+    const [profileNote, setProfileNote] = (0, import_react7.useState)(null);
+    const [visible, setVisible] = (0, import_react7.useState)(session.visible);
+    const heldRef = (0, import_react7.useRef)(held);
+    const historyRef = (0, import_react7.useRef)(history);
+    const lastRevision = (0, import_react7.useRef)(-1);
+    const addressRef = (0, import_react7.useRef)(null);
+    const contentRef = (0, import_react7.useRef)(null);
     const contentSize = useElementSize(contentRef);
-    const [viewportPending, setViewportPending] = (0, import_react6.useState)(false);
-    const viewportCommitter = (0, import_react6.useRef)(null);
+    const [viewportPending, setViewportPending] = (0, import_react7.useState)(false);
+    const viewportCommitter = (0, import_react7.useRef)(null);
     const themeVars = useThemeVars(host, session, visible);
+    const profilesApi = (0, import_react7.useMemo)(() => bindProfilesApi(host, session.context), [host, session]);
     const localServers = useLocalServers(host, session, visible && held === null);
-    (0, import_react6.useEffect)(() => {
+    (0, import_react7.useEffect)(() => {
       heldRef.current = held;
     }, [held]);
-    (0, import_react6.useEffect)(() => {
+    (0, import_react7.useEffect)(() => {
       historyRef.current = history;
     }, [history]);
-    (0, import_react6.useEffect)(() => session.onVisibility(setVisible), [session]);
-    (0, import_react6.useEffect)(() => {
+    (0, import_react7.useEffect)(() => session.onVisibility(setVisible), [session]);
+    (0, import_react7.useEffect)(() => {
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       void (async () => {
@@ -15051,7 +15519,7 @@ ${ind(d)}}`;
       session: held,
       enabled: visible && remoteEligible && surfaceLease?.state.kind !== "ended"
     });
-    (0, import_react6.useEffect)(() => {
+    (0, import_react7.useEffect)(() => {
       const api = bindApi(browserSessionsApi, host, session.context);
       viewportCommitter.current = createViewportCommitter((viewport, signal) => {
         const current = heldRef.current;
@@ -15152,6 +15620,7 @@ ${ind(d)}}`;
           setHeld(next);
           setLive(receipt2.session);
           setFault(null);
+          setProfileNote(null);
           const requested = receipt2.session.requestedUrl;
           const base = {
             ...restoreTarget(fileSourceRef.current, requested),
@@ -15182,6 +15651,7 @@ ${ind(d)}}`;
       const api = bindApi(browserSessionsApi, host, session.context);
       const current = heldRef.current;
       const usable = current && surfaceLease?.state.kind !== "ended" && !isRecoveryExhausted(live) ? current : null;
+      const reopen = usable ? null : reopenRequest(current ? live : null, url);
       dispatch(
         (signal) => usable ? api.invoke(
           "navigate",
@@ -15192,10 +15662,21 @@ ${ind(d)}}`;
             expectedEngineGeneration: usable.engineGeneration
           },
           signal
-        ) : api.invoke("open", { url }, signal)
+        ) : reopen?.api === "profiles" ? profilesApi.invoke("open", reopen.input, signal).catch((error) => {
+          throw new Error(profileFailureMessage("open", error));
+        }) : api.invoke("open", { url }, signal)
       );
     };
-    const adopt = (0, import_react6.useCallback)(
+    const openInProfile = (profileId) => {
+      const url = live?.navigation.url ?? live?.requestedUrl ?? void 0;
+      setProfileNote(null);
+      dispatch(
+        (signal) => profilesApi.invoke("open", { profileId, ...url === void 0 ? {} : { url } }, signal).catch((error) => {
+          throw new Error(profileFailureMessage("open", error));
+        })
+      );
+    };
+    const adopt = (0, import_react7.useCallback)(
       (tab) => {
         const serverEpoch = tabsEpoch.current;
         if (!serverEpoch) return;
@@ -15253,12 +15734,12 @@ ${ind(d)}}`;
         }
       );
     };
-    (0, import_react6.useEffect)(() => {
+    (0, import_react7.useEffect)(() => {
       if (fileSourceRef.current && !heldRef.current) openFile(fileSourceRef.current);
       return () => fileRun.current?.abort();
     }, []);
-    const pendingZoom = (0, import_react6.useRef)(null);
-    (0, import_react6.useEffect)(() => {
+    const pendingZoom = (0, import_react7.useRef)(null);
+    (0, import_react7.useEffect)(() => {
       if (live?.zoomFactor === pendingZoom.current) pendingZoom.current = null;
     }, [live?.zoomFactor]);
     const runPage = (verb, tab) => {
@@ -15308,9 +15789,9 @@ ${ind(d)}}`;
       else commit(reload(state2));
       runPage({ method });
     };
-    const runViewCommand = (0, import_react6.useRef)(() => {
+    const runViewCommand = (0, import_react7.useRef)(() => {
     });
-    (0, import_react6.useEffect)(() => {
+    (0, import_react7.useEffect)(() => {
       runViewCommand.current = (commandId) => {
         if (commandId === "reload") {
           if (held || fileSourceRef.current) command("reload");
@@ -15324,7 +15805,7 @@ ${ind(d)}}`;
         }
       };
     });
-    (0, import_react6.useEffect)(() => {
+    (0, import_react7.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -15355,7 +15836,7 @@ ${ind(d)}}`;
     const capture = useBrowserCapture(host, session, held);
     const captureStatus = capture.state.kind === "capturing" ? capture.state.target === "element" ? "Pick an element in the page \u2014 Esc cancels." : "Capturing the page\u2026" : capture.state.kind === "done" ? capture.state.message : null;
     const surfaceNotice = leaseState?.kind === "ended" ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.` : remoteEligible ? remoteNotice : surfaceDenial ? `Native presentation is unavailable \u2014 ${surfaceDenial.reason}${surfaceDenial.grant ? ` (missing grant: ${surfaceDenial.grant})` : ""}: ${surfaceDenial.detail}` : null;
-    return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
       "section",
       {
         "aria-label": "Browser",
@@ -15372,20 +15853,20 @@ ${ind(d)}}`;
           ...themeVars
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("style", { children: `[data-t3-browser-panel] :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-browser-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}` }),
-          /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("style", { children: `[data-t3-browser-panel] :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-browser-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}` }),
+          /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
             "header",
             {
               style: {
                 display: "flex",
                 gap: 6,
                 padding: 8,
-                borderBottom: border3,
+                borderBottom: border4,
                 flexShrink: 0,
                 alignItems: "center"
               },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   "button",
                   {
                     type: "button",
@@ -15396,7 +15877,7 @@ ${ind(d)}}`;
                     children: "\u2190"
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   "button",
                   {
                     type: "button",
@@ -15407,7 +15888,7 @@ ${ind(d)}}`;
                     children: "\u2192"
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   "button",
                   {
                     type: "button",
@@ -15418,7 +15899,7 @@ ${ind(d)}}`;
                     children: "\u27F3"
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   "button",
                   {
                     type: "button",
@@ -15438,7 +15919,7 @@ ${ind(d)}}`;
                     children: "\u26F6"
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   "button",
                   {
                     type: "button",
@@ -15449,7 +15930,7 @@ ${ind(d)}}`;
                     children: "\u25A3"
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   "button",
                   {
                     type: "button",
@@ -15461,7 +15942,7 @@ ${ind(d)}}`;
                     children: "\u2316"
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   "input",
                   {
                     type: "text",
@@ -15486,7 +15967,7 @@ ${ind(d)}}`;
                     }
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   "button",
                   {
                     type: "button",
@@ -15506,19 +15987,32 @@ ${ind(d)}}`;
                     children: "\u2197"
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   PageMenu,
                   {
                     session: held ? live : null,
                     blockReason: pageBlock,
                     run: (verb) => runPage(verb),
-                    zoomStep
+                    zoomStep,
+                    children: held && live && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                      ProfileSection,
+                      {
+                        session: live,
+                        api: profilesApi,
+                        signal: session.signal,
+                        onOpenInProfile: openInProfile,
+                        report: (message) => {
+                          setFault(null);
+                          setProfileNote(message);
+                        }
+                      }
+                    )
                   }
                 )
               ]
             }
           ),
-          tabs.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+          tabs.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
             "div",
             {
               role: "tablist",
@@ -15534,13 +16028,13 @@ ${ind(d)}}`;
                 const tabUrl = tab.navigation.url ?? tab.requestedUrl ?? null;
                 const active = held?.tabId === tab.tabId;
                 const label = tabLabel(tab.navigation.title, tabUrl);
-                return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
+                return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
                   "span",
                   {
                     role: "presentation",
                     style: { display: "inline-flex", alignItems: "center", gap: 2 },
                     children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
+                      /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
                         "button",
                         {
                           type: "button",
@@ -15559,12 +16053,12 @@ ${ind(d)}}`;
                             ...active ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" } : {}
                           },
                           children: [
-                            /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(BrowserFavicon, { url: tabUrl }),
-                            /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { style: { overflow: "hidden", textOverflow: "ellipsis" }, children: label })
+                            /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(BrowserFavicon, { url: tabUrl }),
+                            /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { style: { overflow: "hidden", textOverflow: "ellipsis" }, children: label })
                           ]
                         }
                       ),
-                      tab.audible === true && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                      tab.audible === true && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                         "button",
                         {
                           type: "button",
@@ -15583,17 +16077,17 @@ ${ind(d)}}`;
               })
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
             "div",
             {
               role: "status",
               "aria-label": "Browser status",
-              style: { padding: "6px 10px", color: muted5, fontSize: 11, flexShrink: 0 },
-              children: fault ?? captureStatus ?? (held && live ? `${live.navigation.title || live.navigation.url || "session"} \u2014 ${engineStatusLabel(live)}` : describeStatus(state2))
+              style: { padding: "6px 10px", color: muted6, fontSize: 11, flexShrink: 0 },
+              children: fault ?? captureStatus ?? profileNote ?? (held && live ? `${live.navigation.title || live.navigation.url || "session"} \u2014 ${engineStatusLabel(live)}` : describeStatus(state2))
             }
           ),
-          held ? /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { ref: contentRef, style: { position: "relative", flex: 1, minHeight: 0 }, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+          held ? /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { ref: contentRef, style: { position: "relative", flex: 1, minHeight: 0 }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
               "div",
               {
                 ref: surfaceSlotRef,
@@ -15601,7 +16095,7 @@ ${ind(d)}}`;
                 style: { position: "absolute", inset: 0 }
               }
             ),
-            remoteEligible && remote.status.kind !== "unsupported" && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+            remoteEligible && remote.status.kind !== "unsupported" && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
               "div",
               {
                 ref: remote.ref,
@@ -15609,9 +16103,9 @@ ${ind(d)}}`;
                 style: { position: "absolute", inset: 0 }
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(ZoomIndicator, { zoomFactor: live?.zoomFactor ?? null }, held.tabId),
-            deviceMode && viewportSetting && /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(import_jsx_runtime5.Fragment, { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(ZoomIndicator, { zoomFactor: live?.zoomFactor ?? null }, held.tabId),
+            deviceMode && viewportSetting && /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(import_jsx_runtime6.Fragment, { children: [
+              /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                 BrowserViewportToolbar,
                 {
                   setting: viewportSetting,
@@ -15619,7 +16113,7 @@ ${ind(d)}}`;
                   onCommit: commitViewport
                 }
               ),
-              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+              /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                 ViewportDeviceFrame,
                 {
                   slot: contentSize,
@@ -15628,7 +16122,7 @@ ${ind(d)}}`;
                 }
               )
             ] }),
-            surfaceNotice && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+            surfaceNotice && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
               "p",
               {
                 role: "note",
@@ -15638,13 +16132,13 @@ ${ind(d)}}`;
                   margin: 0,
                   padding: 12,
                   fontSize: 12,
-                  color: muted5,
+                  color: muted6,
                   background: "var(--t3-browser-canvas, var(--background, #fff))"
                 },
                 children: surfaceNotice
               }
             )
-          ] }) : /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
+          ] }) : /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
             "div",
             {
               style: {
@@ -15658,9 +16152,9 @@ ${ind(d)}}`;
                 justifyItems: "start"
               },
               children: [
-                landing.noPreview && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(NoPreview, { ...landing.noPreview }),
-                showRecents && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(RecentlyUsedHeading, {}),
-                showRecents && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                landing.noPreview && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(NoPreview, { ...landing.noPreview }),
+                showRecents && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(RecentlyUsedHeading, {}),
+                showRecents && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   "ul",
                   {
                     "aria-label": "Recently used",
@@ -15669,9 +16163,9 @@ ${ind(d)}}`;
                       const parsed = new URL(entry.url);
                       const path3 = parsed.pathname === "/" ? "" : parsed.pathname;
                       const label = `${parsed.host}${path3}${parsed.search}${parsed.hash}`;
-                      return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("li", { style: { display: "flex", gap: 6, alignItems: "center" }, children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(BrowserFavicon, { url: entry.url, size: 14 }),
-                        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                      return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("li", { style: { display: "flex", gap: 6, alignItems: "center" }, children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(BrowserFavicon, { url: entry.url, size: 14 }),
+                        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                           "button",
                           {
                             type: "button",
@@ -15682,18 +16176,18 @@ ${ind(d)}}`;
                               padding: "2px 0",
                               textAlign: "left",
                               textDecoration: "underline",
-                              color: muted5
+                              color: muted6
                             },
                             children: entry.title ? `${entry.title} \u2014 ${label}` : label
                           }
                         ),
-                        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                           "button",
                           {
                             type: "button",
                             "aria-label": `Remove ${label} from history`,
                             onClick: () => removeRecent(entry.url),
-                            style: { ...buttonStyle, border: "none", padding: "0 2px", color: muted5 },
+                            style: { ...buttonStyle, border: "none", padding: "0 2px", color: muted6 },
                             children: "\xD7"
                           }
                         )
@@ -15701,7 +16195,7 @@ ${ind(d)}}`;
                     })
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   LocalServersSection,
                   {
                     servers: landing.serverList,
@@ -15712,12 +16206,12 @@ ${ind(d)}}`;
                     }
                   }
                 ),
-                recentTargets(state2).length > 0 && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                recentTargets(state2).length > 0 && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   "ul",
                   {
                     "aria-label": "Requested targets",
                     style: { listStyle: "none", margin: 0, padding: 0, fontSize: 12 },
-                    children: recentTargets(state2).map((target) => /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("li", { children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                    children: recentTargets(state2).map((target) => /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("li", { children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                       "button",
                       {
                         type: "button",
@@ -15729,7 +16223,7 @@ ${ind(d)}}`;
                           padding: "2px 0",
                           textAlign: "left",
                           textDecoration: "underline",
-                          color: target.index === state2.index ? "var(--t3-browser-text, var(--foreground, #20252d))" : muted5
+                          color: target.index === state2.index ? "var(--t3-browser-text, var(--foreground, #20252d))" : muted6
                         },
                         children: target.url
                       }
@@ -15750,6 +16244,7 @@ ${ind(d)}}`;
     serverEntry: "server.ts",
     requires: [
       requireApi(browserSessionsApi),
+      requireApi(browserProfilesApi),
       requireApi(browserLocalServersApi),
       requireApi(browserFramesApi),
       requireApi(resourcesLeaseApi),
@@ -15775,7 +16270,7 @@ ${ind(d)}}`;
         stateVersion: 1,
         validateRestore: restoreState,
         createView(host, session) {
-          return { renderer: () => /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(BrowserView, { host, session }) };
+          return { renderer: () => /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(BrowserView, { host, session }) };
         }
       }
     ]
