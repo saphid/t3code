@@ -166,11 +166,17 @@ NodeTest.describe("command descriptors", () => {
       NodeAssert.equal(command.scope, "surface");
       NodeAssert.equal(command.when, `extension.${BROWSER_SURFACE_ID}.focus`);
       NodeAssert.notEqual(parseKeybindingWhenExpression(command.when), null);
-      NodeAssert.notEqual(parseKeybindingShortcut(command.defaultKey), null);
+      for (const key of [command.defaultKey].flat())
+        NodeAssert.notEqual(parseKeybindingShortcut(key), null);
     }
     NodeAssert.deepEqual(
       BROWSER_VIEW_COMMANDS.map((command) => command.id),
       ["reload", "focusAddress", "zoomIn", "zoomOut", "resetZoom"],
+    );
+    // Zoom in binds both spellings, like the native `preview.zoomIn` rules.
+    NodeAssert.deepEqual(
+      BROWSER_VIEW_COMMANDS.find((command) => command.id === "zoomIn").defaultKey,
+      ["mod+=", "mod++"],
     );
   });
 

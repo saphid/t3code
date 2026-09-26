@@ -12,7 +12,12 @@
  * additionally limits them to sessions the calling installation opened.
  * Navigation honesty compares the dispatch-side
  * request revision against the last owner-host report carried by
- * `PreviewSessionDetail` (P08-NAV-ACK, see `Manager.ts`).
+ * `PreviewSessionDetail` (P08-NAV-ACK, see `Manager.ts`). Favicons ride as a
+ * ref into the bounded per-project asset store (`faviconAssets.ts`), resolved
+ * through `getFavicon` — never as bytes on the stream (P08-FAVICON-REF).
+ * `setPictureInPicture` is an engine verb under its own grant (the broker
+ * enforces the method's `requiredGrants`); it additionally refuses a guest
+ * that is recovering or crashed by name, since there is no live page to pop out.
  */
 import {
   type BrowserEngineCommand,
@@ -27,6 +32,7 @@ import {
 } from "@t3tools/contracts";
 import {
   BROWSER_SESSION_COMMANDS,
+  BROWSER_SESSION_FAVICON_REF_MAX_LENGTH,
   BROWSER_SESSION_LIMIT,
   BROWSER_SESSION_ZOOM_LEVELS,
   browserSessionsApi,
@@ -34,6 +40,7 @@ import {
   type BrowserSessionCapabilities,
   type BrowserSessionCloseResult,
   type BrowserSessionEngine,
+  type BrowserSessionFavicon,
   type BrowserSessionFailureCode,
   type BrowserSessionNavigation,
   type BrowserSessionReceipt,
@@ -61,6 +68,7 @@ import { ProjectionThreadRepository } from "../../persistence/Services/Projectio
 import * as BrowserEngineHosts from "../../preview/BrowserEngineHosts.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import { makeExtensionScopeResolver } from "../scope.ts";
+import { type BrowserFaviconAssets, makeBrowserFaviconAssets } from "./faviconAssets.ts";
 
 const OPERATION = "browser.sessions";
 const MAX_SNAPSHOT_BYTES = 512 * 1024;
@@ -184,11 +192,15 @@ const decodeAppearanceInput = closedDecoder({
   appearance: Schema.Literals(["system", "light", "dark"]),
 });
 const decodeMutedInput = closedDecoder({ ...CommandGuardFields, muted: Schema.Boolean });
+const decodePictureInPictureInput = closedDecoder({ ...CommandGuardFields, open: Schema.Boolean });
 const decodeResizeInput = closedDecoder({
   ...CommandGuardFields,
   viewport: PreviewViewportSetting,
 });
 const EmptyInput = Schema.Record(Schema.String, Schema.Never);
+const decodeFaviconInput = closedDecoder({
+  ref: TrimmedNonEmptyString.check(Schema.isMaxLength(BROWSER_SESSION_FAVICON_REF_MAX_LENGTH)),
+});
 const decodeReadInput = Schema.decodeUnknownEffect(EmptyInput, {
   onExcessProperty: "error",
 });
@@ -246,15 +258,38 @@ const projectNavigation = (
   }
 };
 
-const projectSession = (detail: PreviewManager.PreviewSessionDetail): BrowserSession => {
-  // Page state is read only from the owner host's fenced report; without one
-  // the overlay fields are null, never fabricated defaults. Favicon bytes are
-  // deliberately not projected (P08-FAVICON-REF).
+const origin = (url: string | null) => {
+  if (url === null) return null;
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Page state is read only from the owner host's fenced report; without one
+ * the overlay fields are null, never fabricated defaults. A reported favicon
+ * is stored through `captureFavicon` and projected as its ref, and only
+ * while it belongs to the current page's origin (the native same-origin
+ * rule) — bytes never enter the projection.
+ */
+const projectSession = (
+  detail: PreviewManager.PreviewSessionDetail,
+  captureFavicon: (dataUrl: string) => string | null,
+): BrowserSession => {
   const status = detail.engine?.status ?? null;
+  const navigation = projectNavigation(detail);
+  const favicon = status?.favicon ?? null;
+  const faviconOrigin = favicon === null ? null : origin(favicon.pageUrl);
+  const faviconRef =
+    favicon !== null && faviconOrigin !== null && faviconOrigin === origin(navigation.url)
+      ? captureFavicon(favicon.dataUrl)
+      : null;
   return {
     tabId: detail.snapshot.tabId,
     requestedUrl: detail.navigation.requestedUrl,
-    navigation: projectNavigation(detail),
+    navigation,
     canGoBack: status?.canGoBack ?? false,
     canGoForward: status?.canGoForward ?? false,
     viewport: (detail.snapshot.viewport ?? { _tag: "fill" }) as BrowserSessionViewport,
@@ -265,6 +300,8 @@ const projectSession = (detail: PreviewManager.PreviewSessionDetail): BrowserSes
     audioMuted: status?.audioMuted ?? null,
     audible: status?.audible ?? null,
     devToolsOpen: status?.devToolsOpen ?? null,
+    pictureInPicture: status?.pictureInPicture ?? null,
+    ...(faviconRef === null ? {} : { faviconRef }),
   };
 };
 
@@ -293,9 +330,17 @@ export function createBrowserSessionsApiProvider(
       BrowserEngineHosts.BrowserEngineHosts["Service"],
       "dispatch" | "hasHost"
     >;
+    readonly favicons?: BrowserFaviconAssets;
   },
 ): HostApiProvider {
   const resolve = makeExtensionScopeResolver(dependencies);
+  const favicons = dependencies.favicons ?? makeBrowserFaviconAssets();
+  /** The projector for one resolved project; favicon assets never cross projects. */
+  const projectorFor = (projectId: string | undefined) => {
+    const capture = (dataUrl: string) =>
+      projectId === undefined ? null : favicons.capture(projectId, dataUrl);
+    return (detail: PreviewManager.PreviewSessionDetail) => projectSession(detail, capture);
+  };
 
   const authorized = (principal: HostApiPrincipal | undefined, write: boolean) =>
     principal !== undefined &&
@@ -378,6 +423,7 @@ export function createBrowserSessionsApiProvider(
         return yield* failure(operation, "Browser sessions require a thread-scoped context.");
       }
       const threadId = ThreadId.make(threadIdRaw);
+      const project = projectorFor(scope.context.resource.projectId);
       const listDetails = () =>
         dependencies.preview
           .listDetails({ threadId })
@@ -423,7 +469,7 @@ export function createBrowserSessionsApiProvider(
             `thread holds ${listed.sessions.length} sessions; the limit is ${BROWSER_SESSION_LIMIT}.`,
           );
         }
-        const sessions = listed.sessions.map(projectSession);
+        const sessions = listed.sessions.map(project);
         if (
           sessionBytes({ serverEpoch: listed.serverEpoch, revision: listed.revision, sessions }) >
           MAX_SNAPSHOT_BYTES
@@ -440,6 +486,29 @@ export function createBrowserSessionsApiProvider(
           revision: listed.revision,
           sessions,
         } satisfies BrowserSessionsSnapshot;
+      }
+
+      if (method === "getFavicon") {
+        const safe = yield* decodeFaviconInput(input).pipe(
+          Effect.mapError(() =>
+            named(
+              operation,
+              "BrowserSessionInputError",
+              "getFavicon input fails the declared schema.",
+            ),
+          ),
+        );
+        const projectId = scope.context.resource.projectId;
+        const dataUrl = projectId === undefined ? null : favicons.read(projectId, safe.ref);
+        yield* postChecks(operation, scope.context, metadata, signal);
+        if (dataUrl === null) {
+          return yield* named(
+            operation,
+            "BrowserFaviconNotFound",
+            "the favicon ref is unknown or was evicted; render the fallback tier.",
+          );
+        }
+        return { ref: safe.ref, dataUrl } satisfies BrowserSessionFavicon;
       }
 
       if (method === "open") {
@@ -479,7 +548,7 @@ export function createBrowserSessionsApiProvider(
           outcome: "accepted",
           serverEpoch: after.serverEpoch,
           revision: after.revision,
-          session: projectSession(detail),
+          session: project(detail),
         } satisfies BrowserSessionReceipt;
       }
 
@@ -561,7 +630,7 @@ export function createBrowserSessionsApiProvider(
           outcome,
           serverEpoch: after.serverEpoch,
           revision: after.revision,
-          session: projectSession(detail),
+          session: project(detail),
         } satisfies BrowserSessionReceipt;
       });
 
@@ -724,6 +793,27 @@ export function createBrowserSessionsApiProvider(
           );
           return yield* command(safe, devToolsWrite(method === "openDevTools"));
         }
+        case "setPictureInPicture": {
+          const safe = yield* decodeGuard(
+            decodePictureInPictureInput,
+            "setPictureInPicture input fails the declared schema.",
+          );
+          return yield* command(safe, (guarded) =>
+            Effect.gen(function* () {
+              const engine = projectEngine(guarded.detail.engine);
+              if (engine.state === "recovering" || engine.state === "crashed") {
+                const reason =
+                  engine.state === "recovering" ? "recovering" : (engine.reason ?? "crash");
+                return yield* named(
+                  operation,
+                  "BrowserSessionEngineNotLive",
+                  `picture-in-picture needs a live page; the engine is ${engine.state} (${reason}).`,
+                );
+              }
+              return yield* engineWrite({ _tag: "setPictureInPicture", open: safe.open })(guarded);
+            }),
+          );
+        }
         case "resize": {
           const safe = yield* decodeGuard(
             decodeResizeInput,
@@ -824,6 +914,7 @@ export function createBrowserSessionsApiProvider(
     const tombstones = new Set<string>();
     let scopeDead = false;
     let boundary: { readonly serverEpoch: string; readonly revision: number } | null = null;
+    let project = projectorFor(undefined);
 
     const onInternalEvent = (item: PreviewManager.PreviewInternalEvent) => {
       if (finished || runSignal.aborted) return;
@@ -875,7 +966,7 @@ export function createBrowserSessionsApiProvider(
         return;
       }
       if (item.detail === null || tombstones.has(event.tabId)) return;
-      const session = projectSession(item.detail);
+      const session = project(item.detail);
       const value: ApiStreamEvent = {
         type: "data",
         value: {
@@ -907,6 +998,7 @@ export function createBrowserSessionsApiProvider(
               setup ??= (async () => {
                 const scope = await Effect.runPromise(resolve(context), { signal: runSignal });
                 scopeContext = scope.context;
+                project = projectorFor(scope.context.resource.projectId);
                 await assertAuthority();
                 failIfAborted();
                 // Subscribe BEFORE reading the snapshot so no event lands
@@ -933,7 +1025,7 @@ export function createBrowserSessionsApiProvider(
                     `thread holds ${listed.sessions.length} sessions; the limit is ${BROWSER_SESSION_LIMIT}.`,
                   );
                 }
-                const sessions = listed.sessions.map(projectSession);
+                const sessions = listed.sessions.map(project);
                 if (
                   sessionBytes({
                     serverEpoch: listed.serverEpoch,

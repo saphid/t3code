@@ -13,6 +13,7 @@ import {
 import {
   BROWSER_DEVTOOLS,
   BROWSER_OPERATE,
+  BROWSER_PICTURE_IN_PICTURE,
   BROWSER_SESSIONS,
   browserSessionsApi,
   browserSessionsApiV1,
@@ -185,6 +186,7 @@ const pageStatus = (navStatus: PreviewNavStatus) =>
     audioMuted: false,
     audible: true,
     devToolsOpen: false,
+    pictureInPicture: false,
     favicon: { dataUrl: "data:image/png;base64,AAAA", pageUrl: "http://localhost:5173/" },
   });
 
@@ -398,9 +400,12 @@ describe("browser sessions adapter", () => {
           DEVTOOLS_METHODS.includes(method.name)
             ? // DevTools needs its own grant; sessions + operate confer nothing about it.
               [BROWSER_SESSIONS, BROWSER_OPERATE, BROWSER_DEVTOOLS]
-            : writes.has(method.name)
-              ? [BROWSER_SESSIONS, BROWSER_OPERATE]
-              : [BROWSER_SESSIONS],
+            : method.name === "setPictureInPicture"
+              ? // Its own grant: operate does not confer it, and it does not need operate.
+                [BROWSER_SESSIONS, BROWSER_PICTURE_IN_PICTURE]
+              : writes.has(method.name)
+                ? [BROWSER_SESSIONS, BROWSER_OPERATE]
+                : [BROWSER_SESSIONS],
         );
       }
       // No other method or stream accepts the DevTools grant as authority.
@@ -771,6 +776,7 @@ describe("browser sessions adapter", () => {
         "setAppearance",
         "setAudioMuted",
         ...DEVTOOLS_METHODS,
+        "setPictureInPicture",
       ]) {
         const extra =
           method === "zoom"
@@ -779,7 +785,9 @@ describe("browser sessions adapter", () => {
               ? { appearance: "dark" }
               : method === "setAudioMuted"
                 ? { muted: true }
-                : {};
+                : method === "setPictureInPicture"
+                  ? { open: true }
+                  : {};
         const error = yield* invokeError(provider, method, {
           tabId: opened.session.tabId,
           serverEpoch: opened.serverEpoch,
@@ -825,6 +833,7 @@ describe("browser sessions adapter", () => {
         "setAudioMuted",
         "openDevTools",
         "closeDevTools",
+        "setPictureInPicture",
       ]);
       // Presentation stays a named deferral (P08-PRESENTATION-SLOT).
       expect(capabilities.presentation).toEqual({ supported: false, reason: "desktop-required" });
@@ -875,7 +884,7 @@ describe("browser sessions adapter", () => {
       });
       expect(stale.detail).toContain("BrowserStaleEngineGeneration");
 
-      // Page state comes only from the owner's report; favicon bytes stay server-side.
+      // Page state comes only from the owner's report; the favicon rides as a ref.
       yield* engineHosts.report(DESKTOP_SOCKET, {
         ...fence,
         status: pageStatus({ _tag: "Success", url: "http://localhost:5173/", title: "Dev" }),
@@ -893,6 +902,173 @@ describe("browser sessions adapter", () => {
         canGoBack: true,
       });
       expect(Object.keys(listed.sessions[0] ?? {})).not.toContain("favicon");
+      expect(Object.values(listed.sessions[0] ?? {})).not.toContain("data:image/png;base64,AAAA");
+    }),
+  );
+
+  it.effect("picture-in-picture routes to the owner host and its state rides session upserts", () =>
+    Effect.gen(function* () {
+      const { provider, engineHosts } = yield* harness;
+      const opened = (yield* invoke(provider, "open", { url: "localhost:5173" })) as {
+        readonly serverEpoch: string;
+        readonly session: { readonly tabId: string; readonly pictureInPicture: unknown };
+      };
+      // Unreported state is null, never a fabricated false.
+      expect(opened.session.pictureInPicture).toBeNull();
+      const { events, fence } = yield* attachDesktopHost(engineHosts, {
+        tabId: opened.session.tabId,
+        serverEpoch: opened.serverEpoch,
+      });
+      const guard = {
+        tabId: opened.session.tabId,
+        serverEpoch: opened.serverEpoch,
+        expectedEngineGeneration: "41",
+      };
+      const loaded = pageStatus({ _tag: "Success", url: "http://localhost:5173/", title: "Dev" });
+      yield* engineHosts.report(DESKTOP_SOCKET, { ...fence, status: loaded });
+
+      const iterable = provider.subscribe!(
+        "events",
+        {},
+        context(),
+        signal,
+        meta(provider, { scopes: [AuthOrchestrationReadScope] }),
+      );
+      const iterator = iterable[Symbol.asyncIterator]();
+      try {
+        let frame = eventValue((yield* Effect.promise(() => iterator.next())).value!);
+        while (frame.kind !== "snapshot-complete") {
+          if (frame.kind === "snapshot-chunk") {
+            expect(frame.sessions[0]?.pictureInPicture).toBe(false);
+          }
+          frame = eventValue((yield* Effect.promise(() => iterator.next())).value!);
+        }
+
+        const hostAnswer = yield* Effect.forkChild(
+          Effect.gen(function* () {
+            const event = yield* Queue.take(events);
+            if (event.type !== "command") throw new Error("expected a command event");
+            yield* engineHosts.commandResult(DESKTOP_SOCKET, {
+              hostConnectionId: fence.hostConnectionId,
+              commandId: event.commandId,
+              result: { outcome: "applied" },
+            });
+            return event;
+          }),
+        );
+        const receipt = (yield* invoke(provider, "setPictureInPicture", {
+          ...guard,
+          open: true,
+        })) as { readonly outcome: string; readonly session: { pictureInPicture: unknown } };
+        const event = yield* Fiber.join(hostAnswer);
+        expect(event).toMatchObject({
+          target: fence.target,
+          engineGeneration: "41",
+          command: { _tag: "setPictureInPicture", open: true },
+        });
+        // Accepted means dispatched; the window state is whatever the host reports.
+        expect(receipt.outcome).toBe("accepted");
+        expect(receipt.session.pictureInPicture).toBe(false);
+
+        yield* engineHosts.report(DESKTOP_SOCKET, {
+          ...fence,
+          status: { ...loaded, pictureInPicture: true },
+        });
+        let upsert = eventValue((yield* Effect.promise(() => iterator.next())).value!);
+        while (upsert.kind === "session-upsert" && upsert.session.pictureInPicture !== true) {
+          upsert = eventValue((yield* Effect.promise(() => iterator.next())).value!);
+        }
+        expect(upsert.kind).toBe("session-upsert");
+      } finally {
+        yield* Effect.promise(() => iterator.return!());
+      }
+
+      // Its own input schema still applies before dispatch.
+      const bad = yield* invokeError(provider, "setPictureInPicture", { ...guard, open: "yes" });
+      expect(bad.detail).toContain("BrowserSessionInputError");
+    }),
+  );
+
+  it.effect(
+    "picture-in-picture on a recovering or crashed guest fails by name without dispatch",
+    () =>
+      Effect.gen(function* () {
+        const { provider, engineHosts } = yield* harness;
+        const opened = (yield* invoke(provider, "open", { url: "localhost:5173" })) as {
+          readonly serverEpoch: string;
+          readonly session: { readonly tabId: string };
+        };
+        const { events, fence } = yield* attachDesktopHost(engineHosts, {
+          tabId: opened.session.tabId,
+          serverEpoch: opened.serverEpoch,
+        });
+        const request = {
+          tabId: opened.session.tabId,
+          serverEpoch: opened.serverEpoch,
+          expectedEngineGeneration: "41",
+          open: true,
+        };
+        for (const [lifecycle, reason] of [
+          ["recovering", "(recovering)"],
+          ["crashed", "(crash)"],
+          ["exhausted", "(recovery-exhausted)"],
+        ] as const) {
+          yield* engineHosts.report(DESKTOP_SOCKET, { ...fence, lifecycle });
+          const error = yield* invokeError(provider, "setPictureInPicture", request);
+          expect(error.detail).toContain("BrowserSessionEngineNotLive");
+          expect(error.detail).toContain(reason);
+        }
+        // Nothing reached the host.
+        expect(yield* Queue.size(events)).toBe(0);
+      }),
+  );
+
+  it.effect("projects a captured favicon as a project-scoped ref resolved by getFavicon", () =>
+    Effect.gen(function* () {
+      const { provider, engineHosts } = yield* harness;
+      const opened = (yield* invoke(provider, "open", { url: "localhost:5173" })) as {
+        readonly serverEpoch: string;
+        readonly session: { readonly tabId: string };
+      };
+      const { fence } = yield* attachDesktopHost(engineHosts, {
+        tabId: opened.session.tabId,
+        serverEpoch: opened.serverEpoch,
+      });
+      const report = (url: string) =>
+        engineHosts.report(DESKTOP_SOCKET, {
+          ...fence,
+          status: pageStatus({ _tag: "Success", url, title: "Dev" }),
+        });
+      const firstRef = Effect.map(
+        invoke(provider, "list", {}),
+        (listed) =>
+          (listed as { readonly sessions: readonly { faviconRef?: string }[] }).sessions[0]
+            ?.faviconRef,
+      );
+
+      yield* report("http://localhost:5173/app");
+      const ref = yield* firstRef;
+      expect(ref).toEqual(expect.any(String));
+      expect(yield* invoke(provider, "getFavicon", { ref })).toEqual({
+        ref,
+        dataUrl: "data:image/png;base64,AAAA",
+      });
+
+      // Another project cannot resolve this project's ref.
+      const foreign = yield* invokeError(
+        provider,
+        "getFavicon",
+        { ref },
+        context("foreign", ENV_ID, "other-project"),
+      );
+      expect(foreign.detail).toContain("BrowserFaviconNotFound");
+      // An unknown ref is a named miss — the caller renders its fallback tier.
+      const missing = yield* invokeError(provider, "getFavicon", { ref: "stale" });
+      expect(missing.detail).toContain("BrowserFaviconNotFound");
+
+      // A favicon from another origin than the current page is not projected.
+      yield* report("https://example.com/");
+      expect(yield* firstRef).toBeUndefined();
     }),
   );
 
@@ -1546,6 +1722,41 @@ describe("browser sessions adapter", () => {
             }),
           );
           yield* Effect.promise(() => expect(devTools()).rejects.toThrow(/desktop-required/));
+          // Picture-in-picture is isolated both ways: operate does not confer it...
+          const pip = {
+            tabId: opened.session.tabId,
+            serverEpoch: opened.serverEpoch,
+            expectedEngineGeneration: null,
+            open: true,
+          };
+          yield* Effect.promise(() =>
+            expect(invokeMirror("setPictureInPicture", pip)).rejects.toThrow(
+              /API capability denied: t3\.browser\/picture-in-picture/,
+            ),
+          );
+          // ...and its own grant confers no page verbs. Granted, it reaches the
+          // adapter and names the missing desktop engine host.
+          yield* Effect.promise(() =>
+            runtime.updateGrants(installed.id, {
+              ...grants,
+              capabilities: [BROWSER_SESSIONS, BROWSER_PICTURE_IN_PICTURE],
+            }),
+          );
+          yield* Effect.promise(() =>
+            expect(invokeMirror("setPictureInPicture", pip)).rejects.toThrow(
+              /BrowserSessionCommandUnsupported[^]*desktop-required/,
+            ),
+          );
+          yield* Effect.promise(() =>
+            expect(
+              invokeMirror("back", {
+                tabId: pip.tabId,
+                serverEpoch: pip.serverEpoch,
+                expectedEngineGeneration: null,
+              }),
+            ).rejects.toThrow(/API capability denied: t3\.browser\/operate/),
+          );
+          yield* Effect.promise(() => runtime.updateGrants(installed.id, grants));
 
           // The events stream relays through the packed subscribe path:
           // complete snapshot first, then the live removal.

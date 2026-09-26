@@ -1028,7 +1028,18 @@ var commandDescriptorSchema = {
     id: { type: "string", minLength: 1, maxLength: 80 },
     title: { type: "string", minLength: 1, maxLength: 200 },
     description: { type: "string", maxLength: 1e3 },
-    defaultKey: { type: "string", minLength: 1, maxLength: 64 },
+    defaultKey: {
+      oneOf: [
+        { type: "string", minLength: 1, maxLength: 64 },
+        {
+          type: "array",
+          minItems: 1,
+          maxItems: 4,
+          uniqueItems: true,
+          items: { type: "string", minLength: 1, maxLength: 64 }
+        }
+      ]
+    },
     when: { type: "string", minLength: 1, maxLength: 256 },
     scope: { enum: ["surface", "thread", "global"] },
     activation: {
@@ -5244,6 +5255,7 @@ var prsWriteApi = defineApi({
 var PRS_WRITE_API = prsWriteApi.definition;
 var BROWSER_OPERATE = "t3.browser/operate";
 var BROWSER_DEVTOOLS = "t3.browser/devtools";
+var BROWSER_PICTURE_IN_PICTURE = "t3.browser/picture-in-picture";
 var BROWSER_SESSION_COMMANDS_V1 = [
   "back",
   "forward",
@@ -5254,14 +5266,20 @@ var BROWSER_SESSION_COMMANDS_V1 = [
   "setAppearance",
   "setAudioMuted"
 ];
-var BROWSER_SESSION_COMMANDS = [
+var BROWSER_SESSION_COMMANDS_V1_1 = [
   ...BROWSER_SESSION_COMMANDS_V1,
   "openDevTools",
   "closeDevTools"
 ];
+var BROWSER_SESSION_COMMANDS = [
+  ...BROWSER_SESSION_COMMANDS_V1_1,
+  "setPictureInPicture"
+];
 var BROWSER_SESSION_URL_MAX_LENGTH = 2048;
 var BROWSER_SESSION_TITLE_MAX_LENGTH = 512;
 var BROWSER_SESSION_LIMIT = 64;
+var BROWSER_SESSION_FAVICON_REF_MAX_LENGTH = 64;
+var BROWSER_SESSION_FAVICON_MAX_LENGTH = 8192;
 var browserSessionTabId = {
   type: "string",
   minLength: 1,
@@ -5277,6 +5295,11 @@ var browserSessionUrl = {
   type: "string",
   minLength: 1,
   maxLength: BROWSER_SESSION_URL_MAX_LENGTH
+};
+var browserSessionFaviconRef = {
+  type: "string",
+  minLength: 1,
+  maxLength: BROWSER_SESSION_FAVICON_REF_MAX_LENGTH
 };
 var browserSessionViewport = {
   oneOf: [
@@ -5382,10 +5405,19 @@ var browserSessionObjectV1 = {
     audible: { type: ["boolean", "null"] }
   }
 };
-var browserSessionObject = {
+var browserSessionObjectV1_1 = {
   ...browserSessionObjectV1,
   required: [...browserSessionObjectV1.required, "devToolsOpen"],
   properties: { ...browserSessionObjectV1.properties, devToolsOpen: { type: ["boolean", "null"] } }
+};
+var browserSessionObject = {
+  ...browserSessionObjectV1_1,
+  required: [...browserSessionObjectV1_1.required, "pictureInPicture"],
+  properties: {
+    ...browserSessionObjectV1_1.properties,
+    pictureInPicture: { type: ["boolean", "null"] },
+    faviconRef: browserSessionFaviconRef
+  }
 };
 var browserSessionReceiptOf = (session) => ({
   type: "object",
@@ -5405,10 +5437,10 @@ var browserSessionCommandGuard = {
   expectedEngineGeneration: { type: ["string", "null"], minLength: 1, maxLength: 128 }
 };
 var browserSessionGuardRequired = ["tabId", "serverEpoch", "expectedEngineGeneration"];
-var browserSessionCommandMethod = (receipt2, name, extraProperties = {}, extraRequired = [], extraGrants = []) => ({
+var browserSessionCommandMethod = (receipt2, name, extraProperties = {}, extraRequired = [], requiredGrants = [BROWSER_SESSIONS, BROWSER_OPERATE]) => ({
   name,
   effect: "write",
-  requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE, ...extraGrants],
+  requiredGrants: [...requiredGrants],
   inputSchema: {
     type: "object",
     additionalProperties: false,
@@ -5441,7 +5473,7 @@ var browserSessionEmptyInput = {
   additionalProperties: false,
   properties: {}
 };
-var browserSessionsDefinition = (version, commands, session, extraMethods = () => []) => {
+var browserSessionsDefinition = (version, commands, session, extraMethods = () => [], extraReads = []) => {
   const receipt2 = browserSessionReceiptOf(session);
   return {
     id: BROWSER_SESSIONS,
@@ -5501,6 +5533,7 @@ var browserSessionsDefinition = (version, commands, session, extraMethods = () =
           }
         }
       },
+      ...extraReads,
       {
         name: "open",
         effect: "write",
@@ -5655,12 +5688,38 @@ var browserSessionsDefinition = (version, commands, session, extraMethods = () =
     ]
   };
 };
-var browserSessionsApi = defineStreamApi(browserSessionsDefinition("1.1.0", BROWSER_SESSION_COMMANDS, browserSessionObject, (receipt2) => [
-  browserSessionCommandMethod(receipt2, "openDevTools", {}, [], [BROWSER_DEVTOOLS]),
-  browserSessionCommandMethod(receipt2, "closeDevTools", {}, [], [BROWSER_DEVTOOLS])
-]));
+var browserSessionDevToolsMethods = (receipt2) => [
+  browserSessionCommandMethod(receipt2, "openDevTools", {}, [], [BROWSER_SESSIONS, BROWSER_OPERATE, BROWSER_DEVTOOLS]),
+  browserSessionCommandMethod(receipt2, "closeDevTools", {}, [], [BROWSER_SESSIONS, BROWSER_OPERATE, BROWSER_DEVTOOLS])
+];
+var browserSessionGetFaviconMethod = {
+  name: "getFavicon",
+  effect: "read",
+  requiredGrants: [BROWSER_SESSIONS],
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["ref"],
+    properties: { ref: browserSessionFaviconRef }
+  },
+  outputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["ref", "dataUrl"],
+    properties: {
+      ref: browserSessionFaviconRef,
+      dataUrl: { type: "string", minLength: 1, maxLength: BROWSER_SESSION_FAVICON_MAX_LENGTH }
+    }
+  }
+};
+var browserSessionsApi = defineStreamApi(browserSessionsDefinition("1.2.0", BROWSER_SESSION_COMMANDS, browserSessionObject, (receipt2) => [
+  ...browserSessionDevToolsMethods(receipt2),
+  browserSessionCommandMethod(receipt2, "setPictureInPicture", { open: { type: "boolean" } }, ["open"], [BROWSER_SESSIONS, BROWSER_PICTURE_IN_PICTURE])
+], [browserSessionGetFaviconMethod]));
+var browserSessionsApiV1_1 = defineStreamApi(browserSessionsDefinition("1.1.0", BROWSER_SESSION_COMMANDS_V1_1, browserSessionObjectV1_1, browserSessionDevToolsMethods));
 var browserSessionsApiV1 = defineStreamApi(browserSessionsDefinition("1.0.0", BROWSER_SESSION_COMMANDS_V1, browserSessionObjectV1));
 var BROWSER_SESSIONS_API = browserSessionsApi.definition;
+var BROWSER_SESSIONS_API_V1_1 = browserSessionsApiV1_1.definition;
 var BROWSER_SESSIONS_API_V1 = browserSessionsApiV1.definition;
 var BROWSER_FRAMES = "t3.browser/frames";
 var BROWSER_FRAMES_VERSION = "1.0.0";
@@ -6786,6 +6845,7 @@ var GENERIC_API_CATALOGUE = [
   orchestrationControlApi.definition,
   browserLocalServersApi.definition,
   browserSessionsApi.definition,
+  browserSessionsApiV1_1.definition,
   browserSessionsApiV1.definition,
   browserFramesApi.definition,
   workspaceFilesApi.definition,

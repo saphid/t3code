@@ -54,7 +54,7 @@ export interface ExtensionCommandDescriptor {
   readonly id: string;
   readonly title: string;
   readonly description?: string;
-  readonly defaultKey?: string;
+  readonly defaultKey?: string | readonly string[];
   readonly when?: string;
   readonly scope: "surface" | "thread" | "global";
   readonly activation?: {
@@ -65,7 +65,31 @@ export interface ExtensionCommandDescriptor {
 
 interface CompiledCommand extends ExtensionCommandDescriptor {
   readonly whenAst: KeybindingWhenNode | null;
-  readonly defaultShortcut: KeybindingShortcut | null;
+  readonly defaultShortcuts: readonly {
+    readonly key: string;
+    readonly shortcut: KeybindingShortcut;
+  }[];
+}
+
+const MAX_DEFAULT_KEYS = 4;
+
+/**
+ * The declared default keys as a list — a single string is a one-item list.
+ * Null when the declaration is malformed (not a string or a 1–4 item list of
+ * distinct non-empty strings).
+ */
+function defaultKeysOf(defaultKey: unknown): readonly string[] | null {
+  if (defaultKey === undefined) return [];
+  const keys = typeof defaultKey === "string" ? [defaultKey] : defaultKey;
+  if (
+    !Array.isArray(keys) ||
+    keys.length === 0 ||
+    keys.length > MAX_DEFAULT_KEYS ||
+    new Set(keys).size !== keys.length ||
+    keys.some((key) => typeof key !== "string" || key.length === 0 || key.length > 64)
+  )
+    return null;
+  return keys as readonly string[];
 }
 
 interface CommandRegistration {
@@ -277,7 +301,10 @@ function compileCommand(command: ExtensionCommandDescriptor): CompiledCommand {
   return {
     ...command,
     whenAst: command.when ? parseKeybindingWhenExpression(command.when) : null,
-    defaultShortcut: command.defaultKey ? parseKeybindingShortcut(command.defaultKey) : null,
+    defaultShortcuts: (defaultKeysOf(command.defaultKey) ?? []).flatMap((key) => {
+      const shortcut = parseKeybindingShortcut(key);
+      return shortcut ? [{ key, shortcut }] : [];
+    }),
   };
 }
 
@@ -328,7 +355,8 @@ export function registerCommands(input: {
       reject("invalid when expression");
       continue;
     }
-    if (command.defaultKey && parseKeybindingShortcut(command.defaultKey) === null) {
+    const defaultKeys = defaultKeysOf(command.defaultKey);
+    if (defaultKeys === null || defaultKeys.some((key) => parseKeybindingShortcut(key) === null)) {
       reject("invalid default key");
       continue;
     }
@@ -957,9 +985,12 @@ export function extensionCommandForKeydown(
   for (const registration of registrations.values()) {
     if (!registrationIsLive(registration)) continue;
     for (const command of registration.commands) {
-      if (!command.defaultShortcut) continue;
+      if (command.defaultShortcuts.length === 0) continue;
       if (!matchesWhenClause(command.whenAst ?? undefined, when)) continue;
-      if (!matchesShortcut(event, command.defaultShortcut, platform)) continue;
+      if (
+        !command.defaultShortcuts.some(({ shortcut }) => matchesShortcut(event, shortcut, platform))
+      )
+        continue;
       return extensionCommandName(registration.installationId, command.id);
     }
   }
@@ -1081,30 +1112,32 @@ export function listExtensionCommandConflicts(environmentId: string): readonly {
     if (registration.environmentId !== environmentId) continue;
     if (!registrationIsLive(registration)) continue;
     for (const command of registration.commands) {
-      if (!command.defaultKey || !command.defaultShortcut) continue;
       // A declaration whose `when` is inactive cannot claim the chord — it is
       // neither a winner nor a loser, matching `extensionCommandForKeydown`.
       if (!matchesWhenClause(command.whenAst ?? undefined, when)) continue;
-      const conflictKey = shortcutConflictKey(command.defaultShortcut);
       const full = extensionCommandName(registration.installationId, command.id);
-      const winner = winnerFor(conflictKey);
-      if (winner !== null && winner.command !== full) {
-        const isDefaultRule = defaultRuleClaims.has(`${winner.command}${conflictKey}`);
-        conflicts.push({
-          command: winner.command,
-          key: command.defaultKey,
-          winner: isDefaultRule ? "native" : "user",
-          loser: full,
-        });
-        continue;
-      }
-      const prior = seen.get(conflictKey);
-      if (prior !== undefined) {
-        // Dispatch resolves first-registered — the earlier plugin wins the
-        // chord, so the later declaration is the displaced one.
-        conflicts.push({ command: prior, key: command.defaultKey, winner: "plugin", loser: full });
-      } else {
-        seen.set(conflictKey, full);
+      // Each declared key arbitrates on its own chord.
+      for (const { key, shortcut } of command.defaultShortcuts) {
+        const conflictKey = shortcutConflictKey(shortcut);
+        const winner = winnerFor(conflictKey);
+        if (winner !== null && winner.command !== full) {
+          const isDefaultRule = defaultRuleClaims.has(`${winner.command}${conflictKey}`);
+          conflicts.push({
+            command: winner.command,
+            key,
+            winner: isDefaultRule ? "native" : "user",
+            loser: full,
+          });
+          continue;
+        }
+        const prior = seen.get(conflictKey);
+        if (prior !== undefined) {
+          // Dispatch resolves first-registered — the earlier plugin wins the
+          // chord, so the later declaration is the displaced one.
+          conflicts.push({ command: prior, key, winner: "plugin", loser: full });
+        } else {
+          seen.set(conflictKey, full);
+        }
       }
     }
   }

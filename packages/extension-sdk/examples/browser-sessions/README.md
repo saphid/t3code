@@ -2,7 +2,8 @@
 
 Build with `node ../../bin/t3-extension.mjs build .`, then check `.t3-extension`.
 Install into a disposable runtime with the `t3.browser/sessions` grant (and
-`t3.browser/operate` for command verbs) plus a project grant. Invoke
+`t3.browser/operate` for command verbs, `t3.browser/picture-in-picture` for
+`setPictureInPicture`) plus a project grant. Invoke
 `example.browser-sessions/mirror` through the public SDK API facade; this
 package relays the host's typed `t3.browser/sessions` contract.
 

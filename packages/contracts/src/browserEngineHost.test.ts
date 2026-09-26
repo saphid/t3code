@@ -24,6 +24,7 @@ const status = {
   audioMuted: false,
   audible: true,
   devToolsOpen: false,
+  pictureInPicture: false,
   favicon: null,
 };
 
@@ -39,6 +40,7 @@ describe("BrowserEngineCommand", () => {
       { _tag: "setAudioMuted", muted: true },
       { _tag: "setDevToolsOpen", open: true },
       { _tag: "setDevToolsOpen", open: false },
+      { _tag: "setPictureInPicture", open: true },
     ]) {
       expect(decodeCommand(command)).toEqual(command);
     }
@@ -49,6 +51,7 @@ describe("BrowserEngineCommand", () => {
     expect(() => decodeCommand({ _tag: "navigate", url: "https://example.com" })).toThrow();
     expect(() => decodeCommand({ _tag: "openDevTools" })).toThrow();
     expect(() => decodeCommand({ _tag: "setDevToolsOpen" })).toThrow();
+    expect(() => decodeCommand({ _tag: "setPictureInPicture" })).toThrow();
   });
 });
 
