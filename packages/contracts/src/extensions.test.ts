@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
-import { ExtensionApiSubscribeInput, ExtensionApiStreamFrame } from "./extensions.ts";
+import {
+  ExtensionApiSubscribeInput,
+  ExtensionApiStreamFrame,
+  ExtensionGrants,
+} from "./extensions.ts";
 const input = {
   installationId: "test.consumer",
   expectedContentHash: "a".repeat(64),
@@ -41,5 +45,15 @@ describe("extension API stream wire contracts", () => {
     expect(() =>
       frame({ streamId: "host-stream", sequence: 1, type: "write", value: null }),
     ).toThrow();
+  });
+});
+describe("extension installation grants", () => {
+  const decode = Schema.decodeUnknownSync(ExtensionGrants);
+  const capabilities = (count: number) =>
+    Array.from({ length: count }, (_, index) => `t3.cap${index}/use`);
+  it("accepts exactly 32 capabilities and rejects 33", () => {
+    const atCap = { capabilities: capabilities(32), projectIds: [] };
+    expect(decode(atCap)).toEqual(atCap);
+    expect(() => decode({ capabilities: capabilities(33), projectIds: [] })).toThrow();
   });
 });

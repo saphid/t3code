@@ -771,3 +771,23 @@ NodeTest.test(
     );
   },
 );
+
+NodeTest.test(
+  "installation grants accept exactly 32 distinct capabilities and reject 33",
+  { timeout: 10000 },
+  async (t) => {
+    const f = await fixture(t);
+    const capabilities = (count) =>
+      Array.from({ length: count }, (_, index) => `t3.cap${index}/use`);
+    const atCap = { capabilities: capabilities(32), projectIds: ["project-a"] };
+    const overCap = { capabilities: capabilities(33), projectIds: ["project-a"] };
+    await NodeAssert.rejects(f.runtime.install(f.source, overCap), /Invalid installation grants/);
+    const installed = await f.runtime.install(f.source, atCap);
+    NodeAssert.deepEqual(installed.grants, atCap);
+    await NodeAssert.rejects(
+      f.runtime.updateGrants(installed.id, overCap),
+      /Invalid installation grants/,
+    );
+    NodeAssert.deepEqual(f.runtime.list()[0].grants, atCap);
+  },
+);

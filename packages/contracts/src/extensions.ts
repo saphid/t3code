@@ -6,7 +6,8 @@ import { EnvironmentId, ProjectId, ThreadId } from "./baseSchemas.ts";
 const Identity = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(160));
 export const ExtensionContentHash = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
 export const ExtensionGrants = Schema.Struct({
-  capabilities: Schema.Array(Identity).check(Schema.isMaxLength(16)),
+  // raised 16 -> 32: first-party browser pack reached the cap with legitimately distinct grants; operator decision, no grant consolidation
+  capabilities: Schema.Array(Identity).check(Schema.isMaxLength(32)),
   projectIds: Schema.Array(ProjectId).check(Schema.isMaxLength(64)),
 });
 /** Portable package metadata is validated against the public SDK at the host boundary. */
