@@ -40,6 +40,8 @@ NodeTest.describe("resolveCodeView", () => {
       { version: "1", Diff, File },
       { version: 1, Diff },
       { version: 1, Diff: "div", File },
+      { version: 1, Diff: [], File },
+      { version: 1, Diff: {}, File },
     ])
       NodeAssert.equal(resolveCodeView({ codeView }), null, JSON.stringify(codeView));
   });

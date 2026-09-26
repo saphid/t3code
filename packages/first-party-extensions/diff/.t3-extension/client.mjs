@@ -6985,7 +6985,7 @@ var __t3Client = (() => {
     if (!member || typeof member !== "object")
       return null;
     const { version, Diff, File } = member;
-    const isComponent = (value) => typeof value === "function" || typeof value === "object" && value !== null;
+    const isComponent = (value) => typeof value === "function" || typeof value === "object" && value !== null && "$$typeof" in value;
     return typeof version === "number" && version >= 1 && isComponent(Diff) && isComponent(File) ? member : null;
   }
   function validateEntry(value) {

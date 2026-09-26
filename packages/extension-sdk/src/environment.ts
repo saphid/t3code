@@ -224,8 +224,11 @@ export function resolveCodeView(host: Pick<ClientHost, "codeView">): ClientCodeV
   const member: unknown = host.codeView;
   if (!member || typeof member !== "object") return null;
   const { version, Diff, File } = member as Record<string, unknown>;
+  // React elements render from functions or memo/forwardRef exotics; arrays and
+  // plain objects are host bugs and must fall back, not render.
   const isComponent = (value: unknown) =>
-    typeof value === "function" || (typeof value === "object" && value !== null);
+    typeof value === "function" ||
+    (typeof value === "object" && value !== null && "$$typeof" in value);
   return typeof version === "number" && version >= 1 && isComponent(Diff) && isComponent(File)
     ? (member as ClientCodeView)
     : null;
