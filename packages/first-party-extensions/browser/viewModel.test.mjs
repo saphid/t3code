@@ -15,6 +15,7 @@ import {
   recentTargets,
   reload,
   submitAddress,
+  tabLabel,
 } from "./viewModel.ts";
 
 NodeTest.describe("normalizeAddress", () => {
@@ -183,6 +184,18 @@ NodeTest.describe("describeStatus", () => {
 
   NodeTest.it("the no-session notice names the contract that opens one", () => {
     NodeAssert.match(NO_SESSION_NOTICE, /t3\.browser\/sessions/);
+  });
+});
+
+NodeTest.describe("tabLabel", () => {
+  NodeTest.it("prefers a non-empty page title", () => {
+    NodeAssert.equal(tabLabel("  Deploy docs  ", "https://example.com/"), "Deploy docs");
+  });
+
+  NodeTest.it("falls back to the url host, then the neutral label", () => {
+    NodeAssert.equal(tabLabel("", "https://example.com:8443/app"), "example.com:8443");
+    NodeAssert.equal(tabLabel("   ", "not a url"), "Browser");
+    NodeAssert.equal(tabLabel("", null), "Browser");
   });
 });
 

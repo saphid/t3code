@@ -127,6 +127,23 @@ export function recentTargets(
 }
 
 /**
+ * A session tab row's label — the native right-panel tab title rule: a
+ * non-empty page title, else the URL's host, else "Browser".
+ */
+export function tabLabel(title: string, url: string | null): string {
+  const trimmed = title.trim();
+  if (trimmed.length > 0) return trimmed;
+  if (url) {
+    try {
+      return new URL(url).host || "Browser";
+    } catch {
+      // An unparseable url still gets the neutral label.
+    }
+  }
+  return "Browser";
+}
+
+/**
  * Body copy when no browser session is held — the contract exists now, so the
  * notice names how a session starts rather than a missing engine.
  */

@@ -27,6 +27,23 @@ The panel renders through public contracts only:
   the empty state's "Local servers" section while it is visible. Loopback
   URLs open as-is — unlike the native panel they are not re-mapped to a
   remote environment's host, and the section says so.
+- Favicons — the package half of the native favicon row; capture is
+  engine-blocked. The native panel's PNG favicons are captured by the
+  desktop host (`FaviconCapture.ts`) and delivered over desktop-internal
+  IPC to a private store; `t3.browser/sessions` session objects and events
+  carry no favicon field and no op returns one, so this package cannot
+  capture and does not pretend to. What ships is the fallback tier the
+  native tab strip already renders (`faviconStore.ts`, pure and tested):
+  public origins resolve their icon through `@t3tools/shared/favicon`'s
+  public provider; private/loopback origins, non-URLs, and failed loads
+  render a per-origin letter glyph; and a failed origin is cached (per
+  origin, capped at 40 like the native store) so the tab strip and the
+  recents list agree and the dead origin stops being requested. The
+  session tab strip the favicon renders in is the thread's sessions from
+  the events snapshot — clicking a tab presents that session in this
+  panel (the hold is plugin state, no engine op), and the snapshot's
+  loopback folding mirrors the native favicon key, minus the
+  environment-hostname fold no contract exposes.
 - `t3.browser/sessions` `resize` (row 11) — the header's device-toolbar
   toggle and the toolbar it reveals (Responsive/preset picker, freeform
   width × height inputs, rotate, close) drive every viewport change through
