@@ -811,7 +811,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             fontSize: 12,
             // The native address bar carries its ring on a rounded wrapper;
             // without a radius the focus ring would draw a hard rectangle.
-            borderRadius: 5,
+            borderRadius: "var(--control-radius, 8px)",
             padding: "0 4px",
           }}
         />

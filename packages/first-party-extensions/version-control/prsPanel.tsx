@@ -753,7 +753,7 @@ function PrListRow(props: {
             gap: 6,
             minWidth: 0,
             marginTop: 2,
-            fontSize: 12,
+            fontSize: 11,
             color: muted,
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -2233,13 +2233,13 @@ export function PullRequestsPanel(props: {
                                 style={{
                                   fontFamily: "var(--font-mono, ui-monospace, monospace)",
                                   color: muted,
-                                  fontSize: 12,
+                                  fontSize: 11,
                                 }}
                               >
                                 {commit.oid.slice(0, 8)}
                               </span>{" "}
                               {commit.messageHeadline}
-                              <span style={{ color: muted, fontSize: 12 }}>
+                              <span style={{ color: muted, fontSize: 11 }}>
                                 {" "}
                                 · {formatRelativeTime(commit.committedDate)}
                               </span>

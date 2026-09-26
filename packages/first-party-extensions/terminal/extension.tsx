@@ -1221,7 +1221,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
                   borderRadius: 5,
                   cursor: "pointer",
                   font: "inherit",
-                  fontSize: 12,
+                  fontSize: 11,
                   color: snapshot.activeGroupId === group.id ? "inherit" : muted,
                   background:
                     snapshot.activeGroupId === group.id

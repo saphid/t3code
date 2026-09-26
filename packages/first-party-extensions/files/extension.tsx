@@ -1687,7 +1687,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               event.currentTarget.blur();
             }
           }}
-          style={{ ...toolbarControl, flex: 1, minWidth: 0 }}
+          style={{ ...toolbarControl, cursor: "auto", flex: 1, minWidth: 0 }}
         />
         <select
           aria-label={
