@@ -23,9 +23,10 @@ import {
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { mintWorkspaceFileUrl } from "./fileOpen.js";
+import { BrowserFavicon } from "./favicon.js";
 import {
   type BrowserHistoryEntry,
   fitHistoryToSaveBudget,
@@ -66,6 +67,7 @@ import {
   recentTargets,
   reload,
   submitAddress,
+  tabLabel,
   type NavigationState,
 } from "./viewModel.js";
 
@@ -214,6 +216,11 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       : null,
   );
   const [live, setLive] = useState<BrowserSession | null>(null);
+  // Every session the thread holds — the tab strip renders the snapshot the
+  // events stream already delivers; `tabsEpoch` is the serverEpoch that
+  // snapshot arrived under (adoptions fence on it like every other command).
+  const [tabs, setTabs] = useState<readonly BrowserSession[]>([]);
+  const tabsEpoch = useRef<string | null>(null);
   const [fault, setFault] = useState<string | null>(null);
   const [visible, setVisible] = useState(session.visible);
   const heldRef = useRef(held);
@@ -257,6 +264,8 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
               pending?.push(...value.sessions);
               break;
             case "snapshot-complete": {
+              tabsEpoch.current = value.serverEpoch;
+              setTabs(pending ?? []);
               if (current) {
                 const found = pending?.find((item) => item.tabId === current.tabId);
                 if (value.serverEpoch !== current.serverEpoch || !found) {
@@ -277,6 +286,14 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
               break;
             }
             case "session-upsert":
+              setTabs((currentTabs) => {
+                const index = currentTabs.findIndex((item) => item.tabId === value.session.tabId);
+                return index === -1
+                  ? [...currentTabs, value.session]
+                  : currentTabs.map((item, itemIndex) =>
+                      itemIndex === index ? value.session : item,
+                    );
+              });
               if (current && value.session.tabId === current.tabId) {
                 setLive(value.session);
                 lastRevision.current = Math.max(lastRevision.current, value.revision);
@@ -288,6 +305,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
               }
               break;
             case "session-removed":
+              setTabs((currentTabs) => currentTabs.filter((item) => item.tabId !== value.tabId));
               if (current && value.tabId === current.tabId) {
                 heldRef.current = null;
                 setHeld(null);
@@ -301,6 +319,8 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                 setHeld(null);
                 setLive(null);
               }
+              tabsEpoch.current = null;
+              setTabs([]);
               setFault(`Sessions stream closed (${value.reason})`);
               break;
           }
@@ -526,6 +546,40 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   };
 
   /**
+   * Present another session from the thread's snapshot in this panel. No
+   * engine op: the held identity is plugin state, the slot re-leases onto
+   * it, and the events stream validates the adoption exactly like a
+   * restored session. Adopting is not a navigation — the address follows
+   * the session, history records nothing — and a file-backed lease page
+   * keeps its path so Reload can re-mint; any other tab drops the binding.
+   */
+  const adopt = useCallback(
+    (tab: BrowserSession) => {
+      const serverEpoch = tabsEpoch.current;
+      if (!serverEpoch) return;
+      fileRun.current?.abort();
+      const next = { tabId: tab.tabId, serverEpoch, engineGeneration: tab.engine.generation };
+      heldRef.current = next;
+      setHeld(next);
+      setLive(tab);
+      setFault(null);
+      const url = tab.navigation.url ?? tab.requestedUrl ?? null;
+      if (url) {
+        setAddress(url);
+        setState((current) => submitAddress(current, url));
+      }
+      if (!(url && isLeaseUrl(url))) presentFile(null);
+      const base: { url?: string; relativePath?: string; tabId: string; serverEpoch: string } = {
+        ...restoreTarget(fileSourceRef.current, url),
+        tabId: next.tabId,
+        serverEpoch: next.serverEpoch,
+      };
+      session.save({ ...base, history: fitHistoryToSaveBudget(base, historyRef.current) });
+    },
+    [presentFile, session],
+  );
+
+  /**
    * Files row 15b: mint a `workspace-file` lease, resolve it on this
    * document's origin, then open/navigate exactly like a typed address —
    * minus the history visit. Also the file view's Reload: a fresh mint
@@ -746,6 +800,51 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           style={{ flex: 1, minWidth: 0, font: "inherit", fontSize: 12 }}
         />
       </header>
+      {tabs.length > 0 && (
+        <div
+          role="tablist"
+          aria-label="Open browser sessions"
+          style={{
+            display: "flex",
+            gap: 4,
+            padding: "0 8px 6px",
+            overflowX: "auto",
+            flexShrink: 0,
+          }}
+        >
+          {tabs.map((tab) => {
+            const tabUrl = tab.navigation.url ?? tab.requestedUrl ?? null;
+            const active = held?.tabId === tab.tabId;
+            return (
+              <button
+                key={tab.tabId}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => {
+                  if (!active) adopt(tab);
+                }}
+                style={{
+                  ...buttonStyle,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
+                  maxWidth: 180,
+                  whiteSpace: "nowrap",
+                  ...(active
+                    ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" }
+                    : {}),
+                }}
+              >
+                <BrowserFavicon url={tabUrl} />
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {tabLabel(tab.navigation.title, tabUrl)}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
       <div
         role="status"
         aria-label="Browser status"
@@ -836,7 +935,8 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                 const path = parsed.pathname === "/" ? "" : parsed.pathname;
                 const label = `${parsed.host}${path}${parsed.search}${parsed.hash}`;
                 return (
-                  <li key={entry.url} style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
+                  <li key={entry.url} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <BrowserFavicon url={entry.url} size={14} />
                     <button
                       type="button"
                       onClick={() => submit(entry.url)}
