@@ -1012,6 +1012,8 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
       readyResolve = resolve;
       readyReject = reject;
     });
+    // A failed stream-open send reaches finally, whose abort rejects `ready` before it is awaited.
+    void ready.catch(() => {});
     const controller = new AbortController();
     const pending: StreamPending = {
       controller,
@@ -1345,15 +1347,20 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
           continue;
         const awaited = related.has(provider.id);
         const ready = (async () => {
+          let worker: Worker | undefined;
           try {
             await verify(provider);
             current(provider);
-            await start(provider).ready;
+            worker = start(provider);
+            await worker.ready;
           } catch (error) {
             if (disposed || installations.get(provider.id) !== provider) {
               if (awaited) throw new Error("Discovery installation changed", { cause: error });
               return;
             }
+            // Once a worker exists, stop() owns its health: a crash or deadline already marked
+            // it failed, and an invalidation such as a selection change reset it on purpose.
+            if (worker) return;
             health.set(provider.id, "failed");
             broker.invalidate(affectedPlugins([provider.id]));
             publishCatalogueChange();

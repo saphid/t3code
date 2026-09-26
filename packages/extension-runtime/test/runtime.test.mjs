@@ -302,17 +302,28 @@ NodeTest.test(
   async (t) => {
     const authorization = deferred();
     let calls = 0;
-    const f = await fixture(t, {
+    const f = await fixture(t);
+    await f.runtime.install(f.source, grants);
+    // Only the invocation runs under the short deadline; installing also stages a candidate
+    // process, whose handshake would otherwise race the same 100ms on a loaded machine.
+    const reopened = await createExtensionRuntime({
+      ...f.settings,
       timeoutMs: 100,
       authorize: () => {
         calls++;
         return authorization.promise;
       },
     });
-    await f.runtime.install(f.source, grants);
-    await NodeAssert.rejects(f.invoke("pid"), /deadline/);
-    authorization.resolve(true);
-    NodeAssert.equal(calls, 1);
+    try {
+      await NodeAssert.rejects(
+        reopened.invoke("test.reader/pid", { relativePath: "README.md" }, context, signal()),
+        /deadline/,
+      );
+      authorization.resolve(true);
+      NodeAssert.equal(calls, 1);
+    } finally {
+      await reopened.dispose();
+    }
   },
 );
 

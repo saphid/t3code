@@ -1,4 +1,6 @@
 import * as NodeAssert from "node:assert/strict";
+import * as NodeEvents from "node:events";
+import * as NodeNet from "node:net";
 import * as NodeTest from "node:test";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -424,5 +426,80 @@ NodeTest.test(
       f.o.contentHash,
     );
     NodeAssert.equal(unrelatedAfter, unrelatedBefore);
+  },
+);
+
+NodeTest.test(
+  "a stream opened on a worker whose IPC channel detached rejects without an unhandled rejection",
+  { timeout: 10000 },
+  async (t) => {
+    const unhandled = [];
+    const onUnhandled = (reason) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    t.after(() => process.off("unhandledRejection", onUnhandled));
+    const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-worker-detach-"));
+    const socket = NodePath.join(dir, "detached.sock");
+    const server = NodeNet.createServer();
+    t.after(() => server.close());
+    await new Promise((resolve) => server.listen(socket, resolve));
+    const detached = NodeEvents.once(server, "connection");
+    // The provider disconnects IPC but stays alive, so the parent keeps a worker whose
+    // stream-open send throws synchronously.
+    const provider = await packageDir(
+      dir,
+      "provider",
+      {
+        format: 3,
+        manifest: manifest("test.provider"),
+        serverEntry: "server.mjs",
+        tools: [
+          {
+            id: "test.provider/detach",
+            title: "detach",
+            description: "fixture",
+            readOnly: true,
+            inputSchema: { type: "object" },
+            capabilities: [],
+          },
+        ],
+        provides: [{ ...api, methods: [], streams: [{ ...api.streams[0], requiredGrants: [] }] }],
+        requires: [],
+        dependencies: [],
+      },
+      'import net from "node:net";\n' +
+        `export default {apis:[{id:"${apiId}",methods:[],streams:[{name:"events",subscribe:async function*(){yield "first";}}]}],` +
+        'tools:[{id:"test.provider/detach",invoke:()=>{setTimeout(()=>{process.exit=()=>{};' +
+        'process.once("disconnect",()=>{setInterval(()=>{},1000);net.connect(' +
+        JSON.stringify(socket) +
+        ');});process.disconnect();});return "detaching";}}]};',
+    );
+    const runtime = await createExtensionRuntime({
+      rootDir: NodePath.join(dir, "state"),
+      environmentId: "env",
+      timeoutMs: 1500,
+      services: [],
+      authorize: () => true,
+    });
+    t.after(async () => {
+      await runtime.dispose();
+      await NodeFSP.rm(dir, { recursive: true, force: true });
+    });
+    const p = await runtime.install(provider, { capabilities: [], projectIds: ["project"] });
+    NodeAssert.equal(
+      await runtime.invoke("test.provider/detach", {}, context, new AbortController().signal),
+      "detaching",
+    );
+    await detached;
+    const stream = runtime.subscribeApi(
+      p.id,
+      p.contentHash,
+      { id: apiId, versionRange: "^1.0.0", name: "events", input: {}, context },
+      new AbortController().signal,
+    );
+    const iterator = stream[Symbol.asyncIterator]();
+    // Which close reason wins depends on timing; what matters is that nothing goes unobserved.
+    await NodeAssert.rejects(iterator.next());
+    await new Promise((resolve) => setImmediate(resolve));
+    NodeAssert.deepEqual(unhandled.map(String), []);
   },
 );
