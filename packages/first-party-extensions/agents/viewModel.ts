@@ -19,6 +19,7 @@
  */
 import { projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import type {
+  AgentLogTail,
   AgentsEvent,
   AgentsState,
   ApprovalOption,
@@ -402,8 +403,9 @@ export const DEFERRED_SECTIONS: readonly DeferredSection[] = [
     blocker: "no native binding exists to extract — net-new design, not fakeable",
   },
   {
-    title: "Agent logs and session deep links",
-    blocker: "no native web/desktop binding exists — net-new design",
+    title: "Agent session deep links and workflow transcripts",
+    blocker:
+      "no native web/desktop binding exists — net-new design (per-agent output tails are served by t3.orchestration/logs)",
   },
   {
     title: "Agent session scan/import (welcome wizard)",
@@ -431,6 +433,24 @@ export const HOST_CHROME_NOTE =
  */
 export const SETTLED_STATE_NOTE =
   "Thread settled state is not projected by t3.orchestration/status, so Settle and Unsettle are both offered when the provider supports them; the receipt reports the outcome.";
+
+// ---------------------------------------------------------------------------
+// t3.orchestration/logs consumption
+// ---------------------------------------------------------------------------
+
+/** The panel's tail window: the contract's full byte budget, capped in lines for scanning. */
+export const AGENT_LOG_TAIL_REQUEST = { source: "output", maxLines: 200 } as const;
+
+/**
+ * Renders the contract's truncation marker. The omitted count is the source
+ * size minus the delivered bytes; a tail that starts at byte 0 has none.
+ */
+export function agentLogTailMarker(tail: AgentLogTail): string | null {
+  if (!tail.truncated) return null;
+  const shown = new TextEncoder().encode(tail.contents).length;
+  const omitted = Math.max(0, tail.byteLength - shown);
+  return `… earlier output omitted (${omitted.toLocaleString("en-US")} of ${tail.byteLength.toLocaleString("en-US")} bytes)`;
+}
 
 // ---------------------------------------------------------------------------
 // t3.ui/theme consumption

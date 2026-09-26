@@ -4,6 +4,7 @@ import * as NodeTest from "node:test";
 import {
   DEFAULT_APPROVAL_OPTIONS,
   DEFERRED_SECTIONS,
+  agentLogTailMarker,
   EMPTY_AGENTS_FEED,
   HOST_CHROME_NOTE,
   SCRIPTS_SCOPE_NOTE,
@@ -440,8 +441,9 @@ NodeTest.describe("deferred sections", () => {
     NodeAssert.match(scan.blocker, /narrow public scan contract/);
     NodeAssert.doesNotMatch(scan.blocker, /no native .* binding exists/);
     const netNew = DEFERRED_SECTIONS.find((section) => /deep links/.test(section.title));
-    NodeAssert.ok(netNew, "logs/deep links keep their own section");
+    NodeAssert.ok(netNew, "deep links keep their own section");
     NodeAssert.match(netNew.blocker, /net-new design/);
+    NodeAssert.match(netNew.blocker, /t3\.orchestration\/logs/);
   });
 
   NodeTest.it("name the scripts-list and host-chrome boundaries", () => {
@@ -1076,5 +1078,28 @@ NodeTest.describe("trackThemeVars", () => {
     first.reject(new Error("stale denial"));
     await flush();
     NodeAssert.deepEqual(emits, [TEXT_VAR]);
+  });
+});
+
+NodeTest.describe("agent log tails", () => {
+  const tail = (contents, byteLength, truncated) => ({
+    runId: "agent",
+    source: "output",
+    contents,
+    byteLength,
+    truncated,
+  });
+
+  NodeTest.it("names omitted bytes from the source size only when the tail is cut", () => {
+    NodeAssert.equal(agentLogTailMarker(tail("done\n", 5, false)), null);
+    NodeAssert.equal(
+      agentLogTailMarker(tail("é\n", 20_003, true)),
+      "… earlier output omitted (20,000 of 20,003 bytes)",
+    );
+    // A maxLines cut on a small source still reports the (exact) omission.
+    NodeAssert.equal(
+      agentLogTailMarker(tail("c", 5, true)),
+      "… earlier output omitted (4 of 5 bytes)",
+    );
   });
 });

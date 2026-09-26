@@ -29,6 +29,14 @@ terminal.
   fresh `commandId` and the stream's `expectedEpoch`; accepted/rejected
   receipts render next to the control. Operations the provider does not
   advertise render as named "unsupported" rows — never fake buttons.
+- `t3.orchestration/logs@^1.0.0` — under its own `t3.orchestration/read-logs`
+  grant (roster read never implies it): agent rows whose roster entry carries
+  an output handle get an Output toggle that reads the run's bounded tail
+  with `readTail` (≤ 8 KiB, last 200 lines; a cut tail leads with an
+  "earlier output omitted (N of M bytes)" marker). While open it re-reads
+  only when the roster stream reports the run changed — no polling. Missing
+  grants, out-of-scope handles and vanished files render the named failure.
+  Only Claude runs carry output handles today.
 - `t3.workspace/files@^1.0.0` `readText` — reads the checked-in `t3.json`
   under the `t3.workspace/read-text` grant and lists its `scripts[]` entries.
   Settings-owned project scripts (machine defaults, per-project overrides)
@@ -66,8 +74,8 @@ activity line keeps the native precedence (live rows lead with progress,
 settled rows with the outcome).
 
 Still deferred — named in the panel, not faked: workflow launch (no native
-binding exists), agent logs and session deep links (net-new design, plus
-navigation contracts), agent session scan/import (needs a narrow public scan
+binding exists), agent session deep links and workflow transcript
+directories (net-new design, plus navigation contracts), agent session scan/import (needs a narrow public scan
 contract), and the mobile Agents surface.
 Thread settled state is not projected by the status contract, so Settle and
 Unsettle are both offered when the provider supports them and the receipt

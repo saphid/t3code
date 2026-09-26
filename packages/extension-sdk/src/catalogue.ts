@@ -1,4 +1,8 @@
-import { defineOrchestrationStatusApi, orchestrationControlApi } from "./orchestration.js";
+import {
+  defineOrchestrationStatusApi,
+  orchestrationControlApi,
+  orchestrationLogsApi,
+} from "./orchestration.js";
 export * from "./orchestration.js";
 import {
   defineApi,
@@ -8310,6 +8314,7 @@ export const ORCHESTRATION_STATUS_API = orchestrationStatusApi.definition;
 export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   orchestrationStatusApi.definition,
   orchestrationControlApi.definition,
+  orchestrationLogsApi.definition,
   browserLocalServersApi.definition,
   browserSessionsApi.definition,
   browserFramesApi.definition,
