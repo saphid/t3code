@@ -1028,6 +1028,81 @@ export function restoredSelection(restoreState: unknown): string | null {
   return typeof path === "string" && path !== "" ? path : null;
 }
 
+/** Upper bound on persisted expanded directories — view state, not an index. */
+export const MAX_PERSISTED_EXPANDED = 512;
+
+/**
+ * Byte budget for persisted expansion: half the host's 64 KiB payload cap,
+ * leaving room for the rest of the record. 512 deep monorepo paths exceed it.
+ */
+export const MAX_PERSISTED_EXPANDED_BYTES = 32 * 1024;
+
+/**
+ * The Files view's saved state (row 12): the selected file plus tree
+ * expansion and the rendered-markdown preference. `expanded` and
+ * `renderMarkdown` are optional so the `{ relativePath }` records written by
+ * `t3.file/presentation.open` and older saves stay valid at stateVersion 1.
+ */
+export type FilesViewState = {
+  readonly relativePath: string;
+  readonly expanded?: readonly string[];
+  readonly renderMarkdown?: boolean;
+};
+
+/** validateRestore for the Files view: null or a well-formed FilesViewState. */
+export function isFilesViewState(value: unknown): value is FilesViewState | null {
+  if (value === null) return true;
+  if (typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  for (const key of Object.keys(record))
+    if (key !== "relativePath" && key !== "expanded" && key !== "renderMarkdown") return false;
+  if (typeof record.relativePath !== "string") return false;
+  if (
+    record.expanded !== undefined &&
+    !(
+      Array.isArray(record.expanded) &&
+      record.expanded.length <= MAX_PERSISTED_EXPANDED &&
+      record.expanded.every((path) => typeof path === "string")
+    )
+  )
+    return false;
+  return record.renderMarkdown === undefined || typeof record.renderMarkdown === "boolean";
+}
+
+/** Expanded directories a restored view reopens; empty for anything malformed. */
+export function restoredExpanded(restoreState: unknown): Set<string> {
+  if (!isFilesViewState(restoreState) || restoreState === null) return new Set();
+  return new Set(restoreState.expanded ?? []);
+}
+
+/** Whether a restored view resumes in the rendered-markdown preview. */
+export function restoredRenderMarkdown(restoreState: unknown): boolean {
+  return isFilesViewState(restoreState) && restoreState?.renderMarkdown === true;
+}
+
+/**
+ * The record `session.save` persists. Expansion is sorted so equal view
+ * states serialize identically, and bounded by count and bytes so a
+ * sprawling tree can neither grow the record without limit nor push it past
+ * the host's payload cap (an oversized `session.save` throws).
+ */
+export function filesViewState(
+  selected: string | null,
+  expanded: ReadonlySet<string>,
+  renderMarkdown: boolean,
+): FilesViewState {
+  const kept: string[] = [];
+  let bytes = 0;
+  for (const path of [...expanded].sort()) {
+    if (kept.length >= MAX_PERSISTED_EXPANDED) break;
+    // JSON quotes plus the separating comma.
+    bytes += textEncoder.encode(path).length + 3;
+    if (bytes > MAX_PERSISTED_EXPANDED_BYTES) break;
+    kept.push(path);
+  }
+  return { relativePath: selected ?? "", expanded: kept, renderMarkdown };
+}
+
 /**
  * Safety check before `t3.file/presentation.open`: the path must be
  * workspace-relative — reject absolute, empty, `..` and backslash segments.

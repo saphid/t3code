@@ -1,6 +1,7 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeCrypto from "node:crypto";
 import * as NodeTest from "node:test";
+import { copyJson } from "@t3tools/extension-sdk/contracts";
 import server from "./server.ts";
 import {
   applyResourceReadEvent,
@@ -37,6 +38,12 @@ import {
   mediaPreviewNotice,
   parentPath,
   presentationPath,
+  filesViewState,
+  isFilesViewState,
+  MAX_PERSISTED_EXPANDED,
+  MAX_PERSISTED_EXPANDED_BYTES,
+  restoredExpanded,
+  restoredRenderMarkdown,
   restoredSelection,
   previewKind,
   selectMediaLease,
@@ -533,6 +540,82 @@ NodeTest.describe("open in presentation", () => {
     NodeAssert.equal(restoredSelection(file.restoreState), "src/a.ts");
     for (const bad of [null, [], {}, { relativePath: 1 }])
       NodeAssert.equal(restoredSelection(bad), null);
+  });
+
+  NodeTest.it("view state round-trips selection, expansion and preview mode", () => {
+    const saved = filesViewState("docs/guide.md", new Set(["src/lib", "docs", "src"]), true);
+    NodeAssert.deepEqual(saved, {
+      relativePath: "docs/guide.md",
+      expanded: ["docs", "src", "src/lib"],
+      renderMarkdown: true,
+    });
+    // What the host persists is JSON; restore reads the same record back.
+    const restored = JSON.parse(JSON.stringify(saved));
+    NodeAssert.equal(isFilesViewState(restored), true);
+    NodeAssert.equal(restoredSelection(restored), "docs/guide.md");
+    NodeAssert.deepEqual([...restoredExpanded(restored)], ["docs", "src", "src/lib"]);
+    NodeAssert.equal(restoredRenderMarkdown(restored), true);
+    // Expansion drives the rendered tree after restore.
+    const paths = visibleRows(fixture, restoredExpanded(restored), "").map((row) => row.entry.path);
+    NodeAssert.ok(paths.includes("src/lib/deep.ts"));
+    NodeAssert.ok(paths.includes("docs/guide.md"));
+    // No selection persists as the presentation "no file" record.
+    const empty = filesViewState(null, new Set(["docs"]), false);
+    NodeAssert.equal(empty.relativePath, "");
+    NodeAssert.equal(restoredSelection(empty), null);
+    NodeAssert.deepEqual([...restoredExpanded(empty)], ["docs"]);
+  });
+
+  NodeTest.it("legacy { relativePath } saves restore with defaults", () => {
+    const legacy = { relativePath: "src/app.ts" };
+    NodeAssert.equal(isFilesViewState(legacy), true);
+    NodeAssert.equal(isFilesViewState(null), true);
+    NodeAssert.deepEqual([...restoredExpanded(legacy)], []);
+    NodeAssert.equal(restoredRenderMarkdown(legacy), false);
+    NodeAssert.deepEqual([...restoredExpanded(null)], []);
+    NodeAssert.equal(restoredRenderMarkdown(null), false);
+  });
+
+  NodeTest.it("malformed view state is rejected and restores nothing", () => {
+    for (const bad of [
+      [],
+      {},
+      "src/app.ts",
+      { relativePath: 1 },
+      { relativePath: "a", extra: true },
+      { relativePath: "a", expanded: "docs" },
+      { relativePath: "a", expanded: ["docs", 2] },
+      { relativePath: "a", renderMarkdown: "yes" },
+      { relativePath: "a", expanded: Array.from({ length: MAX_PERSISTED_EXPANDED + 1 }, String) },
+    ]) {
+      NodeAssert.equal(isFilesViewState(bad), false, JSON.stringify(bad).slice(0, 60));
+      NodeAssert.deepEqual([...restoredExpanded(bad)], []);
+      NodeAssert.equal(restoredRenderMarkdown(bad), false);
+    }
+  });
+
+  NodeTest.it("persisted expansion is bounded and always restorable", () => {
+    const many = new Set(Array.from({ length: MAX_PERSISTED_EXPANDED + 10 }, (_, i) => `d${i}`));
+    const saved = filesViewState("a.ts", many, false);
+    NodeAssert.equal(saved.expanded.length, MAX_PERSISTED_EXPANDED);
+    NodeAssert.equal(isFilesViewState(saved), true);
+  });
+
+  NodeTest.it("deep expanded paths stay under the host's saved-state payload cap", () => {
+    // 512 paths of ~200 bytes is ~100 KiB — past the host's 64 KiB cap, where
+    // `session.save` throws instead of persisting.
+    const deep = new Set(
+      Array.from({ length: MAX_PERSISTED_EXPANDED }, (_, i) => `${"nested/".repeat(28)}d${i}`),
+    );
+    const saved = filesViewState("a.ts", deep, true);
+    NodeAssert.ok(saved.expanded.length > 0 && saved.expanded.length < MAX_PERSISTED_EXPANDED);
+    NodeAssert.ok(
+      Buffer.byteLength(JSON.stringify(saved.expanded)) <= MAX_PERSISTED_EXPANDED_BYTES,
+    );
+    const restored = copyJson(saved);
+    NodeAssert.equal(isFilesViewState(restored), true);
+    NodeAssert.equal(restoredExpanded(restored).size, saved.expanded.length);
+    NodeAssert.equal(restoredRenderMarkdown(restored), true);
   });
 
   NodeTest.it("describePresentation reports the resolved descriptor", () => {

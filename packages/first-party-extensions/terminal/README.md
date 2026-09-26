@@ -58,7 +58,9 @@ empty groups dropping away. Clicking a pane focuses it; clicking a session
 or group header in the sidebar activates that terminal (and its group).
 Group membership, direction, and the active group persist in the view's
 restore state; pre-split records restore as one singleton group per
-session. Panes outside the visible group stay mounted but hold no output
+session. Tab order persists too: unlike the native reconcile, a session list
+whose membership changed (sessions opened or closed elsewhere) keeps the
+surviving tabs in their saved order and appends new sessions. Panes outside the visible group stay mounted but hold no output
 stream — the host caps each installation at 8 concurrent plugin streams,
 and the sessions/theme feeds already take 3, so attaching every tracked
 session at once would starve the sessions stream itself. Hidden panes
