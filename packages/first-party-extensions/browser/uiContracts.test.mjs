@@ -2,7 +2,12 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
-import { uiNotificationsApi, uiPanelsApi, uiThemeApi } from "@t3tools/extension-sdk/catalogue";
+import {
+  uiExternalApi,
+  uiNotificationsApi,
+  uiPanelsApi,
+  uiThemeApi,
+} from "@t3tools/extension-sdk/catalogue";
 import {
   parseKeybindingShortcut,
   parseKeybindingWhenExpression,
@@ -12,8 +17,10 @@ import {
   BROWSER_GLOBAL_COMMANDS,
   BROWSER_SURFACE_ID,
   BROWSER_VIEW_COMMANDS,
+  externalOpenTarget,
   focusAddressInput,
   notifyToggleFailure,
+  openExternally,
   themeVarOverrides,
   togglePanelSurface,
   watchThemeVars,
@@ -445,5 +452,57 @@ NodeTest.describe("focusAddressInput", () => {
 
   NodeTest.it("is a no-op without a mounted input", () => {
     focusAddressInput(null);
+  });
+});
+
+NodeTest.describe("t3.ui/external adoption", () => {
+  NodeTest.it("offers only web targets that are not workspace-file presentations", () => {
+    NodeAssert.equal(externalOpenTarget("https://Example.com", null), "https://example.com/");
+    NodeAssert.equal(externalOpenTarget(null, null), null);
+    NodeAssert.equal(externalOpenTarget("about:blank", null), null);
+    NodeAssert.equal(externalOpenTarget("javascript:alert(1)", null), null);
+    NodeAssert.equal(
+      externalOpenTarget("http://localhost:3773/api/assets/token/index.html", null),
+      null,
+    );
+    NodeAssert.equal(externalOpenTarget("https://example.com/", "docs/index.html"), null);
+  });
+
+  NodeTest.it("opens through the contract and names refusals and denials", async () => {
+    const calls = [];
+    const signal = new AbortController().signal;
+    const opened = bindApi(
+      uiExternalApi,
+      fakeClient(
+        {
+          open: ({ input }) => ({ status: "opened", url: input.url, opener: "desktop-shell" }),
+        },
+        calls,
+      ),
+      context,
+    );
+    NodeAssert.equal(await openExternally(opened, "https://example.com/", signal), null);
+    NodeAssert.equal(calls[0].id, "t3.ui/external");
+    NodeAssert.deepEqual(calls[0].input, { url: "https://example.com/" });
+
+    const refused = bindApi(
+      uiExternalApi,
+      fakeClient({ open: { status: "refused", reason: "opener-refused" } }, []),
+      context,
+    );
+    NodeAssert.equal(
+      await openExternally(refused, "https://example.com/", signal),
+      "Could not open in system browser (opener-refused)",
+    );
+
+    const denied = bindApi(
+      uiExternalApi,
+      fakeClient({ open: new Error("API capability denied: t3.ui/external.open") }, []),
+      context,
+    );
+    NodeAssert.equal(
+      await openExternally(denied, "https://example.com/", signal),
+      "Could not open in system browser — API capability denied: t3.ui/external.open",
+    );
   });
 });

@@ -82,6 +82,11 @@ The panel renders through public contracts only:
   `preview.toggle` "desktop-only" parity). Transient panel status —
   navigation failures, ended sessions — stays inline like the native
   unreachable view; nothing else toasts.
+- `t3.ui/external` (`t3.ui/external.open` grant) — the address row's
+  "Open in system browser" hands the current page to the user's own client
+  (the OS opener on desktop, a new tab on web). Only absolute `http:`/`https:`
+  URLs go out; workspace-file presentations stay in the panel, and a refusal
+  or denied grant shows on the fault line.
 
 Chrome row + navigation state stay panel-local (`viewModel.ts`, pure and
 tested); the persisted URL history lives in `historyStore.ts`; addresses

@@ -1064,6 +1064,8 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
           return presentationResult;
         if (request.id === "t3.ui/theme" && request.method === "getTokens")
           return { tokens: {}, cssVars: {} };
+        if (request.id === "t3.ui/external" && request.method === "open")
+          return { status: "refused", reason: "opener-refused" };
         return { commandSetToken: "token", results: [] };
       },
       subscribeApi: (request, signal) => ({
@@ -1096,7 +1098,7 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
   }
 
   NodeTest.test(
-    "path links open through t3.file/presentation; URLs and outside paths refuse by name",
+    "path links open through t3.file/presentation, URLs through t3.ui/external; refusals are named",
     async () => {
       const { host, invokes } = linkHost({
         surfaceId: "t3.files/view",
@@ -1141,8 +1143,8 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
           ),
         );
 
-        // URL link: no external-open contract exists, so the refusal is
-        // written honestly and nothing reaches the presentation op.
+        // URL link: handed to t3.ui/external, never the presentation op; the
+        // client's refusal is written on the surface by name.
         const invokesBefore = presentationInvokes(invokes).length;
         surface.writes.length = 0;
         await act(async () => {
@@ -1150,9 +1152,13 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
           await drain();
         });
         NodeAssert.equal(presentationInvokes(invokes).length, invokesBefore);
+        NodeAssert.deepEqual(
+          invokes.filter((entry) => entry.id === "t3.ui/external"),
+          [{ id: "t3.ui/external", method: "open", input: { url: "https://t3.codes/docs" } }],
+        );
         NodeAssert.ok(
           surface.writes.some((data) =>
-            data.includes("[terminal] Opening URLs is unavailable in this extension host."),
+            data.includes("[terminal] https://t3.codes/docs was not opened (opener-refused)."),
           ),
         );
 

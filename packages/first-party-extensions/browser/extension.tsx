@@ -11,6 +11,7 @@ import {
   browserSessionsApi,
   filePresentationApi,
   resourcesLeaseApi,
+  uiExternalApi,
   uiKeybindingsApi,
   uiNotificationsApi,
   uiPanelsApi,
@@ -50,8 +51,10 @@ import {
 import {
   BROWSER_GLOBAL_COMMANDS,
   BROWSER_VIEW_COMMANDS,
+  externalOpenTarget,
   focusAddressInput,
   notifyToggleFailure,
+  openExternally,
   togglePanelSurface,
   watchThemeVars,
 } from "./uiContracts.js";
@@ -685,6 +688,12 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   }, [host, session, visible]);
 
   const showRecents = state.status.kind !== "target" && recentHistoryEntries(history).length > 0;
+  // Native "Open in system browser": the page the held session shows, else
+  // the committed target.
+  const externalTarget = externalOpenTarget(
+    live ? (live.navigation.url ?? live.requestedUrl) : currentUrl(state),
+    fileSource,
+  );
   const landing = landingModel({
     recentCount: showRecents ? recentHistoryEntries(history).length : 0,
     localServers,
@@ -815,6 +824,24 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             padding: "0 4px",
           }}
         />
+        <button
+          type="button"
+          aria-label="Open in system browser"
+          disabled={externalTarget === null}
+          onClick={() => {
+            if (externalTarget === null) return;
+            void openExternally(
+              bindApi(uiExternalApi, host, session.context),
+              externalTarget,
+              session.signal,
+            ).then((fault) => {
+              if (fault !== null && !session.signal.aborted) setFault(fault);
+            });
+          }}
+          style={buttonStyle}
+        >
+          ↗
+        </button>
       </header>
       {tabs.length > 0 && (
         <div
@@ -1037,6 +1064,7 @@ const authored = defineExtension({
     requireApi(uiKeybindingsApi),
     requireApi(uiPanelsApi),
     requireApi(uiNotificationsApi),
+    requireApi(uiExternalApi),
   ],
   surfaces: [
     {
