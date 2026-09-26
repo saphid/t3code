@@ -64,12 +64,16 @@ export async function loadHostKeymap() {
       },
     ],
   });
-  const bundlePath = NodePath.join(
-    NodeOS.tmpdir(),
-    `t3-terminal-host-keymap-${process.pid}-${Date.now()}.mjs`,
+  const bundleDir = await NodeFSP.mkdtemp(
+    NodePath.join(NodeOS.tmpdir(), "t3-terminal-host-keymap-"),
   );
-  await NodeFSP.writeFile(bundlePath, built.outputFiles[0].text);
-  return import(NodeURL.pathToFileURL(bundlePath).href);
+  const bundlePath = NodePath.join(bundleDir, "bundle.mjs");
+  try {
+    await NodeFSP.writeFile(bundlePath, built.outputFiles[0].text);
+    return await import(NodeURL.pathToFileURL(bundlePath).href);
+  } finally {
+    await NodeFSP.rm(bundleDir, { recursive: true, force: true });
+  }
 }
 
 /** A user rule compiled exactly as the host compiles `keybindings.json`. */

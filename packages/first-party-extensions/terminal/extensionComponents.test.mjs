@@ -117,12 +117,16 @@ NodeTest.before(async () => {
       },
     ],
   });
-  const bundlePath = NodePath.join(
-    NodeOS.tmpdir(),
-    `t3-terminal-components-${process.pid}-${Date.now()}.mjs`,
+  const bundleDir = await NodeFSP.mkdtemp(
+    NodePath.join(NodeOS.tmpdir(), "t3-terminal-components-"),
   );
-  await NodeFSP.writeFile(bundlePath, built.outputFiles[0].text);
-  bundle = await import(NodeURL.pathToFileURL(bundlePath).href);
+  const bundlePath = NodePath.join(bundleDir, "bundle.mjs");
+  try {
+    await NodeFSP.writeFile(bundlePath, built.outputFiles[0].text);
+    bundle = await import(NodeURL.pathToFileURL(bundlePath).href);
+  } finally {
+    await NodeFSP.rm(bundleDir, { recursive: true, force: true });
+  }
 });
 
 const nodeMock = (element) => ({ id: element.props["aria-label"] });

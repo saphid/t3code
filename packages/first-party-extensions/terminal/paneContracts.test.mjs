@@ -8,6 +8,7 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeTest from "node:test";
 import * as NodeURL from "node:url";
@@ -24,11 +25,14 @@ const { terminalAppearanceVars } = await import("./viewModel.ts");
 const recorded = { options: [], themes: [], fonts: [], input: [], focuses: [] };
 globalThis.__vtPaneContracts = recorded;
 
-// The bundle must resolve workspace packages (`@t3tools/*`, react) — it has
-// to live under the repo for node to walk up to the workspace node_modules.
-// It goes inside the package's node_modules because sibling test files copy
-// the package directory concurrently and skip node_modules.
-const bundleDir = NodeFS.mkdtempSync(NodePath.join(packageDir, "node_modules", ".pane-contracts-"));
+// The bundle keeps workspace packages (`@t3tools/*`, react) external, so its
+// private temp dir links the package's node_modules for resolution. It never
+// lives in the package dir, which sibling test files copy concurrently.
+const bundleDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-terminal-pane-contracts-"));
+NodeFS.symlinkSync(
+  NodePath.join(packageDir, "node_modules"),
+  NodePath.join(bundleDir, "node_modules"),
+);
 const bundled = NodePath.join(bundleDir, "pane.mjs");
 await build({
   stdin: {
@@ -80,7 +84,12 @@ await build({
   ],
 });
 
-const { TerminalPane, handleBeforeKey } = await import(NodeURL.pathToFileURL(bundled).href);
+let TerminalPane, handleBeforeKey;
+try {
+  ({ TerminalPane, handleBeforeKey } = await import(NodeURL.pathToFileURL(bundled).href));
+} finally {
+  NodeFS.rmSync(bundleDir, { recursive: true, force: true });
+}
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 globalThis.MutationObserver = class {
@@ -196,7 +205,6 @@ NodeTest.test("published font vars reach the surface: create, update, reset", as
     renderer.unmount();
     controller.abort();
   });
-  NodeFS.rmSync(bundleDir, { recursive: true, force: true });
 });
 
 // A publication that lands while `GhosttyTerminalSurface.create` is still

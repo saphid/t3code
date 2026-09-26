@@ -43,17 +43,17 @@ NodeTest.before(async () => {
       },
     ],
   });
-  const bundlePath = NodePath.join(
-    NodeOS.tmpdir(),
-    `t3-terminal-selection-menu-${process.pid}-${Date.now()}.mjs`,
+  const bundleDir = await NodeFSP.mkdtemp(
+    NodePath.join(NodeOS.tmpdir(), "t3-terminal-selection-menu-"),
   );
-  await NodeFSP.writeFile(bundlePath, built.outputFiles[0].text);
+  const bundlePath = NodePath.join(bundleDir, "bundle.mjs");
   try {
+    await NodeFSP.writeFile(bundlePath, built.outputFiles[0].text);
     ({ TerminalSelectionMenuController: Controller } = await import(
       NodeURL.pathToFileURL(bundlePath).href
     ));
   } finally {
-    await NodeFSP.rm(bundlePath, { force: true });
+    await NodeFSP.rm(bundleDir, { recursive: true, force: true });
   }
 });
 

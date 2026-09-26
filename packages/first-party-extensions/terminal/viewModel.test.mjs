@@ -1,6 +1,7 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeTest from "node:test";
 import * as NodeURL from "node:url";
@@ -1454,7 +1455,10 @@ NodeTest.describe("t3.ui/theme — watch lifecycle (no stale overrides)", () => 
 // this run's build output, never a possibly stale committed bundle.
 async function buildScratchManifest() {
   const packageDir = NodeURL.fileURLToPath(new URL("./", import.meta.url));
-  const scratch = await NodeFSP.mkdtemp(NodePath.join(packageDir, ".t3-extension-build-test-"));
+  // The scratch dir is private to this file and outside the package dir, so
+  // concurrently running test files never see it; node_modules is linked in
+  // so the build still resolves workspace packages.
+  const scratch = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-terminal-manifest-"));
   try {
     for (const entry of await NodeFSP.readdir(packageDir)) {
       if (entry.startsWith(".t3-extension") || entry === "node_modules" || entry === "fixtures")
@@ -1463,6 +1467,10 @@ async function buildScratchManifest() {
         recursive: true,
       });
     }
+    await NodeFSP.symlink(
+      NodePath.join(packageDir, "node_modules"),
+      NodePath.join(scratch, "node_modules"),
+    );
     const cli = NodeURL.fileURLToPath(
       new URL("../../extension-sdk/bin/t3-extension.mjs", import.meta.url),
     );
