@@ -4,7 +4,7 @@
  * is engine-blocked, no contract carries a page favicon); a load failure is
  * recorded in the shared per-origin cache so every surface — the session
  * tab strip, the recents list — falls back to the glyph together and the
- * dead origin stops being requested.
+ * dead origin stops being requested until the failure ages out.
  */
 import { useSyncExternalStore } from "react";
 
@@ -12,6 +12,8 @@ import {
   type FaviconCache,
   type FaviconResolution,
   emptyFaviconCache,
+  expireProviderFaviconFailure,
+  FAVICON_FAILURE_TTL_MS,
   faviconFallbackGlyph,
   recordProviderFaviconFailure,
   resolveFavicon,
@@ -23,13 +25,27 @@ const listeners = new Set<() => void>();
 let cache: FaviconCache = emptyFaviconCache();
 let version = 0;
 
-/** `<img onError>` entry point — shared by every surface's favicon. */
-export function faviconImageFailed(rawUrl: string): void {
-  const next = recordProviderFaviconFailure(cache, rawUrl, Date.now());
+function publish(next: FaviconCache): void {
   if (next === cache) return;
   cache = next;
   version += 1;
   for (const listener of listeners) listener();
+}
+
+/**
+ * `<img onError>` entry point — shared by every surface's favicon. The
+ * failure ages out after `FAVICON_FAILURE_TTL_MS`, and the next render
+ * requests the provider image once more.
+ */
+export function faviconImageFailed(rawUrl: string): void {
+  const at = Date.now();
+  const next = recordProviderFaviconFailure(cache, rawUrl, at);
+  if (next === cache) return;
+  publish(next);
+  setTimeout(
+    () => publish(expireProviderFaviconFailure(cache, rawUrl, at)),
+    FAVICON_FAILURE_TTL_MS,
+  );
 }
 
 function subscribe(listener: () => void): () => void {

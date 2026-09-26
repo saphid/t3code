@@ -8,6 +8,7 @@ import {
   planPublish,
   postFollowUpReceipt,
   publishOffer,
+  syncBlockReasons,
   publishProviderOption,
   stackedChooserReason,
   stackedFollowUp,
@@ -411,6 +412,21 @@ NodeTest.describe("vcs view model — discard", () => {
     NodeAssert.equal(
       untracked?.prompt,
       'Delete "new/" from disk? Untracked files cannot be recovered.',
+    );
+  });
+
+  NodeTest.it("names the confirmed action while it runs — Delete never reads Discarding", () => {
+    NodeAssert.equal(
+      planDiscard(lanes, { lane: "changes", paths: ["a.txt"] })?.progress,
+      "Discarding a.txt",
+    );
+    NodeAssert.equal(
+      planDiscard(lanes, { lane: "changes", paths: ["a.txt", "b.txt"] })?.progress,
+      "Discarding 2 paths",
+    );
+    NodeAssert.equal(
+      planDiscard(lanes, { lane: "untracked", paths: ["new/"] })?.progress,
+      "Deleting new/",
     );
   });
 
@@ -822,6 +838,26 @@ NodeTest.describe("vcs view model — push gating", () => {
 });
 
 NodeTest.describe("vcs view model — publish repository", () => {
+  NodeTest.it("says detached HEAD once when pull, push and publish all block on it", () => {
+    const detached = local({ refName: null, hasPrimaryRemote: false });
+    NodeAssert.equal(
+      syncBlockReasons([
+        pullState(detached, remote()).disabled,
+        pushState(detached, remote()).disabled,
+        publishOffer(detached).disabled,
+      ]),
+      "Detached HEAD — checkout a ref first",
+    );
+    NodeAssert.equal(
+      syncBlockReasons([null, "Detached HEAD — checkout a ref before pushing", null]),
+      "Detached HEAD — checkout a ref before pushing",
+    );
+    NodeAssert.equal(
+      syncBlockReasons(["Upstream status pending", null, "Detached HEAD — x", "Detached HEAD — y"]),
+      "Upstream status pending · Detached HEAD — checkout a ref first",
+    );
+  });
+
   NodeTest.it("offers publish on a repository with no primary remote", () => {
     NodeAssert.deepEqual(publishOffer(local({ hasPrimaryRemote: false })), {
       offered: true,

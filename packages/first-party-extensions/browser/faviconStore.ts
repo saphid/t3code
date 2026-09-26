@@ -10,7 +10,8 @@
  * (`faviconUrlForOrigin`: the public favicon service, public hosts only).
  * This module owns that tier's per-origin outcome: an origin whose provider
  * image failed to load renders the fallback glyph on every surface and
- * stops being requested.
+ * stops being requested until the failure ages out, so a transient network
+ * blip does not suppress the image for the whole session.
  */
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import { isLocalLoopbackHost, normalizeHostname } from "@t3tools/shared/hostClassification";
@@ -19,6 +20,8 @@ import { isLocalLoopbackHost, normalizeHostname } from "@t3tools/shared/hostClas
 export const FAVICON_CACHE_MAX_ENTRIES = 40;
 /** The size the native tab strip asks the public provider for. */
 export const FAVICON_PROVIDER_SIZE = 32;
+/** How long a recorded provider failure keeps its origin on the glyph. */
+export const FAVICON_FAILURE_TTL_MS = 5 * 60_000;
 
 export type FaviconOriginEntry = { readonly providerFailedAt: number };
 export type FaviconCache = { readonly byOrigin: Readonly<Record<string, FaviconOriginEntry>> };
@@ -80,6 +83,22 @@ export function recordProviderFaviconFailure(
   return {
     byOrigin: Object.fromEntries(keys.filter((k) => !evict.has(k)).map((k) => [k, byOrigin[k]!])),
   };
+}
+
+/**
+ * Age out the failure recorded at `at` for this origin, so its provider
+ * image is tried again. A later failure owns its own window and stays; a
+ * no-op returns the same cache reference.
+ */
+export function expireProviderFaviconFailure(
+  cache: FaviconCache,
+  rawUrl: string,
+  at: number,
+): FaviconCache {
+  const key = faviconOriginKey(rawUrl);
+  if (!key || cache.byOrigin[key]?.providerFailedAt !== at) return cache;
+  const { [key]: _expired, ...byOrigin } = cache.byOrigin;
+  return { byOrigin };
 }
 
 export type FaviconResolution =

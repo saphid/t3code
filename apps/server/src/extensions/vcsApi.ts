@@ -956,11 +956,15 @@ export function createVcsApiProviders(dependencies: VcsApiDependencies): HostApi
             });
           }
           // `git clean` exits 0 while skipping nested repositories; a path
-          // still reported changed must not be receipted as discarded.
+          // still reported changed must not be receipted as discarded. A
+          // removed path must be gone outright — one staged by someone else
+          // mid-discard is skipped by clean yet no longer reads untracked.
           const after = yield* discardableState(scope.cwd, paths);
+          const removedSet = new Set(removed);
           const remaining = paths.filter((path) => {
             const entry = after.get(path);
-            return entry !== undefined && (entry.unstaged || entry.untracked);
+            if (entry === undefined) return false;
+            return removedSet.has(path) || entry.unstaged || entry.untracked;
           });
           if (remaining.length > 0) {
             return yield* failure(

@@ -1180,10 +1180,12 @@ export function createPreferencesClientProvider(deps: ClientProviderDeps): Clien
             const next = await persistClientSettingsUpdate((current) => ({ ...current, wordWrap }));
             return { applied: true, preferences: { wordWrap: next.wordWrap } } as unknown as Json;
           } catch {
+            // Hydrated like every read: a failure caused by hydration itself
+            // must not report schema defaults as the stored value.
             return {
               applied: false,
               reason: "persist-failed",
-              preferences: preferencesSnapshot(),
+              preferences: await hydratedPreferences(),
             } as unknown as Json;
           }
         }

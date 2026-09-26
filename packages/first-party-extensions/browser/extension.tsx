@@ -31,6 +31,7 @@ import { useBrowserCapture } from "./capture.js";
 import { mintWorkspaceFileUrl } from "./fileOpen.js";
 import { BrowserFavicon } from "./favicon.js";
 import {
+  adoptedFileSource,
   type BrowserHistoryEntry,
   fitHistoryToSaveBudget,
   recentHistoryEntries,
@@ -217,6 +218,9 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     restored?.url ? null : (restored?.relativePath ?? null),
   );
   const fileSourceRef = useRef(fileSource);
+  // The lease URL this view last minted for `fileSource`; adoption keeps the
+  // path only for that page.
+  const fileLeaseUrl = useRef<string | null>(null);
   const fileRun = useRef<AbortController | null>(null);
   const [address, setAddress] = useState<string>(restored?.url ?? restored?.relativePath ?? "");
   const [history, setHistory] = useState<readonly BrowserHistoryEntry[]>(() =>
@@ -526,6 +530,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   };
 
   const presentFile = (relativePath: string | null) => {
+    if (relativePath !== fileSourceRef.current) fileLeaseUrl.current = null;
     fileSourceRef.current = relativePath;
     setFileSource(relativePath);
   };
@@ -569,8 +574,9 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
    * engine op: the held identity is plugin state, the slot re-leases onto
    * it, and the events stream validates the adoption exactly like a
    * restored session. Adopting is not a navigation — the address follows
-   * the session, history records nothing — and a file-backed lease page
-   * keeps its path so Reload can re-mint; any other tab drops the binding.
+   * the session (blank when it has no URL), history records nothing — and
+   * only the lease page this view minted keeps its path so Reload can
+   * re-mint; any other tab drops the binding.
    */
   const adopt = useCallback(
     (tab: BrowserSession) => {
@@ -583,11 +589,9 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       setLive(tab);
       setFault(null);
       const url = tab.navigation.url ?? tab.requestedUrl ?? null;
-      if (url) {
-        setAddress(url);
-        setState((current) => submitAddress(current, url));
-      }
-      if (!(url && isLeaseUrl(url))) presentFile(null);
+      setAddress(url ?? "");
+      if (url) setState((current) => submitAddress(current, url));
+      presentFile(adoptedFileSource(fileSourceRef.current, fileLeaseUrl.current, url));
       const base: { url?: string; relativePath?: string; tabId: string; serverEpoch: string } = {
         ...restoreTarget(fileSourceRef.current, url),
         tabId: next.tabId,
@@ -631,6 +635,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           setFault(result.message);
           return;
         }
+        fileLeaseUrl.current = result.url;
         setState((current) => submitAddress(current, result.url));
         go(result.url);
       },
@@ -996,7 +1001,9 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                   }}
                 >
                   <BrowserFavicon url={tabUrl} />
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
+                  <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {label}
+                  </span>
                 </button>
                 {/* Native parity: the speaker shows only while the page plays
                   audio, and reflects the engine-reported mute state. */}

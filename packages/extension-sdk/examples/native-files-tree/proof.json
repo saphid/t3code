@@ -26,7 +26,6 @@
     "scopedLintErrors": 0,
     "scopedLintWarnings": 0
   },
-  "evidenceRoot": "/home/saphid/artifacts/t3-extensions-health-rounds-20260909/native-files-tree",
   "notProven": [
     "complete Files replacement",
     "automatic workspace mutation refresh",

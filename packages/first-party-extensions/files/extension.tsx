@@ -1298,7 +1298,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     commentThreadId,
   );
   // Row 13: Add to chat routes the selected file's mention through the
-  // composer draft bridge (`t3.composer/context@1.1.0` `insertMention` — the
+  // composer draft bridge (`t3.composer/context` `insertMention` — the
   // byte-exact native append). The grant-free probe gates the toolbar
   // affordance; a denied write grant surfaces as the inline named error.
   const addChat = useAddToChat(host, session, commentThreadId);

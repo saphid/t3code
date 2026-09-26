@@ -240,6 +240,37 @@ describe("browser capture bridge", () => {
     expect(await pending).toMatchObject({ failure: { reason: "cancelled" } });
   });
 
+  it("stores nothing when the caller aborts while the page rasterizes", async () => {
+    const h = harness();
+    let release: () => void = () => {};
+    h.preview.capturePageImage.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () =>
+            resolve({
+              mimeType: "image/png",
+              data: PNG,
+              width: 1,
+              height: 1,
+              pageUrl: null,
+              pageTitle: null,
+            });
+        }),
+    );
+    const controller = new AbortController();
+    const pending = h.host().capture({
+      context,
+      session,
+      target: "page",
+      signal: controller.signal,
+    });
+    await Promise.resolve();
+    controller.abort();
+    release();
+    expect(await pending).toMatchObject({ failure: { reason: "cancelled" } });
+    expect(h.uploads).toHaveLength(0);
+  });
+
   it("refuses a second capture of the same session while one runs", async () => {
     const h = harness();
     let release: () => void = () => {};

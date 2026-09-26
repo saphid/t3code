@@ -2,6 +2,7 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 
 import {
+  adoptedFileSource,
   BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT,
   BROWSER_HISTORY_MAX_TITLE_LENGTH,
   fitHistoryToSaveBudget,
@@ -253,6 +254,23 @@ NodeTest.describe("restoreTarget", () => {
     // back a path this session did not navigate to.
     NodeAssert.deepEqual(restoreTarget(null, LEASE_URL), {});
     NodeAssert.deepEqual(restoreTarget(null, null), {});
+  });
+});
+
+NodeTest.describe("adoptedFileSource", () => {
+  const MINTED = "http://localhost:3773/api/assets/token123/site/index.html";
+  const OTHER = "http://localhost:3773/api/assets/token999/docs/other.html";
+
+  NodeTest.it("keeps the path only for the lease page this view minted", () => {
+    NodeAssert.equal(adoptedFileSource("site/index.html", MINTED, MINTED), "site/index.html");
+  });
+
+  NodeTest.it("drops the path for a lease minted elsewhere or any other tab", () => {
+    NodeAssert.equal(adoptedFileSource("site/index.html", MINTED, OTHER), null);
+    NodeAssert.equal(adoptedFileSource("site/index.html", null, OTHER), null);
+    NodeAssert.equal(adoptedFileSource("site/index.html", MINTED, "https://a.test/"), null);
+    NodeAssert.equal(adoptedFileSource("site/index.html", MINTED, null), null);
+    NodeAssert.equal(adoptedFileSource(null, MINTED, MINTED), null);
   });
 });
 

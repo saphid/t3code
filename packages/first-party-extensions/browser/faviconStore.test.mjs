@@ -4,6 +4,7 @@ import * as NodeTest from "node:test";
 import {
   FAVICON_CACHE_MAX_ENTRIES,
   emptyFaviconCache,
+  expireProviderFaviconFailure,
   faviconFallbackGlyph,
   faviconOriginKey,
   recordProviderFaviconFailure,
@@ -72,6 +73,25 @@ NodeTest.describe("recordProviderFaviconFailure", () => {
   NodeTest.it("ignores urls without an origin key", () => {
     const cache = emptyFaviconCache();
     NodeAssert.equal(recordProviderFaviconFailure(cache, "file:///tmp/x", 1_000), cache);
+  });
+});
+
+NodeTest.describe("expireProviderFaviconFailure", () => {
+  NodeTest.it("ages out exactly the failure it was scheduled for", () => {
+    const failed = recordProviderFaviconFailure(emptyFaviconCache(), "https://example.com/", 1_000);
+    const expired = expireProviderFaviconFailure(failed, "https://example.com/other", 1_000);
+    NodeAssert.deepEqual(resolveFavicon(expired, "https://example.com/"), {
+      kind: "image",
+      src: "https://www.google.com/s2/favicons?domain=example.com&sz=32",
+    });
+  });
+
+  NodeTest.it("keeps a later failure's own window and ignores unknown origins", () => {
+    const failed = recordProviderFaviconFailure(emptyFaviconCache(), "https://example.com/", 1_000);
+    const again = recordProviderFaviconFailure(failed, "https://example.com/", 2_000);
+    NodeAssert.equal(expireProviderFaviconFailure(again, "https://example.com/", 1_000), again);
+    NodeAssert.equal(expireProviderFaviconFailure(again, "https://other.test/", 2_000), again);
+    NodeAssert.equal(expireProviderFaviconFailure(again, "not a url", 2_000), again);
   });
 });
 

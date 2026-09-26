@@ -427,8 +427,9 @@ NodeTest.describe("terminal panel — split-group restore", () => {
     panel.dispose();
   });
 
-  // Restore applies the same group-size gate as live splits — a crafted
-  // record with six terminals in one group is normalized into cap-sized
+  // Restore holds the same per-group cap as live splits, but where a live
+  // split past the cap is refused, a crafted record with six terminals in
+  // one group is normalized into cap-sized
   // groups (no drops, first chunk keeps the id) rather than rendering six
   // panes in a split that can only ever show four, and the invariant
   // survives reconcile snapshots, which re-run the same normalization.
