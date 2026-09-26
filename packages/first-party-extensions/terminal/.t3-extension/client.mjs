@@ -1431,9 +1431,10 @@ var __t3Client = (() => {
   var composerThreadIdInput = {
     threadId: { type: "string", minLength: 1, maxLength: 128 }
   };
+  var BROWSER_CAPTURE_ARTIFACT_REF_PATTERN = "^pending-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
   var CLIENT_COMPOSER_API = validateApiDefinition({
     id: "t3.client/composer",
-    version: "1.1.0",
+    version: "1.2.0",
     methods: [
       {
         name: "insertContext",
@@ -1536,6 +1537,29 @@ var __t3Client = (() => {
             inserted: { type: "boolean" },
             target: { type: "string", minLength: 1, maxLength: 256 },
             reason: { type: "string", maxLength: 64 }
+          }
+        }
+      },
+      {
+        name: "insertImage",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          ...composerThreadIdInput,
+          artifactRef: {
+            type: "string",
+            maxLength: 128,
+            pattern: BROWSER_CAPTURE_ARTIFACT_REF_PATTERN
+          },
+          name: { type: "string", minLength: 1, maxLength: 128 }
+        }, ["threadId", "artifactRef"]),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["inserted", "target"],
+          properties: {
+            inserted: { type: "boolean" },
+            target: { type: "string", minLength: 1, maxLength: 256 }
           }
         }
       },
@@ -5750,6 +5774,7 @@ var __t3Client = (() => {
     ]
   });
   var BROWSER_FRAMES_API = browserFramesApi.definition;
+  var BROWSER_CAPTURE_ARTIFACT_REF_PATTERN2 = "^pending-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
   var COMPOSER_CONTEXT = "t3.composer/context";
   var COMPOSER_WRITE = "t3.composer/write";
   var MESSAGES_ENRICHMENT = "t3.messages/enrichment";
@@ -5840,7 +5865,7 @@ var __t3Client = (() => {
   };
   var composerContextApi = defineApi({
     id: COMPOSER_CONTEXT,
-    version: "1.1.0",
+    version: "1.2.0",
     methods: [
       {
         name: "getCapabilities",
@@ -5853,7 +5878,8 @@ var __t3Client = (() => {
           "insertContext",
           "getDraftState",
           "insertMention",
-          "insertTerminalContext"
+          "insertTerminalContext",
+          "insertImage"
         ])
       },
       {
@@ -5980,6 +6006,34 @@ var __t3Client = (() => {
           properties: {
             inserted: { type: "boolean" },
             reason: { enum: ["duplicate"] },
+            target: { type: "string", minLength: 1, maxLength: 256 }
+          }
+        }
+      },
+      {
+        name: "insertImage",
+        effect: "write",
+        requiredGrants: [COMPOSER_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["artifactRef"],
+          properties: {
+            threadId: composerThreadIdInput2,
+            artifactRef: {
+              type: "string",
+              maxLength: 128,
+              pattern: BROWSER_CAPTURE_ARTIFACT_REF_PATTERN2
+            },
+            name: { type: "string", minLength: 1, maxLength: 128 }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["inserted", "target"],
+          properties: {
+            inserted: { type: "boolean" },
             target: { type: "string", minLength: 1, maxLength: 256 }
           }
         }
