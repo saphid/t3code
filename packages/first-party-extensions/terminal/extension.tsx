@@ -606,35 +606,50 @@ function TerminalPane(props: {
       setStreamBlocked(false);
       const controller = new AbortController();
       run = { controller, lease };
-      void pumpTerminalOutput({
-        subscribe: (subscribeSignal) => {
-          const source = bindStreamApi(terminalOutputEventsApi, host, session.context).subscribe(
-            "subscribe",
-            { terminalId },
-            subscribeSignal,
-          );
-          return (async function* () {
-            for await (const frame of source) {
-              const value = frame.value as TerminalOutputEventsValue;
-              // identity-changed means a new process epoch and exit/error means
-              // the process is gone — pending input is stale for both. Overflow
-              // keeps the same incarnation; a reset is only a screen clear.
-              if (value.kind === "closed" && value.reason !== "overflow") {
-                panel.resetInput(terminalId);
-              }
-              yield { streamId: frame.streamId, sequence: frame.sequence, value };
-            }
-          })();
-        },
-        attachment,
-        signal: AbortSignal.any([controller.signal, session.signal]),
-      }).finally(() => {
-        // The pump ended — the stream finished, or evict/cleanup aborted it
-        // and already released the lease (release is idempotent).
-        if (run?.controller === controller) {
-          run = null;
-          lease.release();
+      // The pump start waits out the admission gate: when this acquire
+      // evicted a pane, the victim's host-level teardown is still resolving
+      // and an immediate subscribe would contend with it for one broker
+      // slot. Evicted mid-gate (or unmounted), `run` no longer matches and
+      // the pump never starts — the guard then reports this lease's settle
+      // itself, so the eviction's replacement is not left waiting.
+      void lease.admitted.then(() => {
+        if (stopped || run?.controller !== controller) {
+          lease.streamSettled();
+          return;
         }
+        void pumpTerminalOutput({
+          subscribe: (subscribeSignal) => {
+            const source = bindStreamApi(terminalOutputEventsApi, host, session.context).subscribe(
+              "subscribe",
+              { terminalId },
+              subscribeSignal,
+            );
+            return (async function* () {
+              for await (const frame of source) {
+                const value = frame.value as TerminalOutputEventsValue;
+                // identity-changed means a new process epoch and exit/error means
+                // the process is gone — pending input is stale for both. Overflow
+                // keeps the same incarnation; a reset is only a screen clear.
+                if (value.kind === "closed" && value.reason !== "overflow") {
+                  panel.resetInput(terminalId);
+                }
+                yield { streamId: frame.streamId, sequence: frame.sequence, value };
+              }
+            })();
+          },
+          attachment,
+          signal: AbortSignal.any([controller.signal, session.signal]),
+        }).finally(() => {
+          // The pump ended — the stream finished, or evict/cleanup aborted it
+          // and already released the lease (release is idempotent).
+          if (run?.controller === controller) {
+            run = null;
+            lease.release();
+          }
+          // The stream this lease admitted has fully drained — exactly the
+          // report any admission evicted for this slot is gated on.
+          lease.streamSettled();
+        });
       });
     };
     acquireStreamRef.current = (mandatory: boolean) => {

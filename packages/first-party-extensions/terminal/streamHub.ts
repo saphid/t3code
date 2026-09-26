@@ -23,7 +23,13 @@
  *   newly-registered fixed feed preempts the same way, so pane effects that
  *   ran first on a cold restore cannot starve the shared feeds. When the
  *   pool is exhausted by mandatory slots, acquisition fails and the caller
- *   surfaces an honest waiting state instead of a rejected subscription.
+ *   surfaces an honest waiting state instead of a rejected subscription. A
+ *   slot granted by eviction settles its admission only once the evicted
+ *   pane reports its stream settled (`streamSettled`, called from the
+ *   pane's pump exit) — the victim's host-level teardown resolves on the
+ *   microtask queue, so an earlier subscribe would race it for the broker
+ *   slot. Fixed feeds that preempt pane slots wait on the same reports
+ *   before starting their driver.
  *
  * Pure coordination — no SDK imports. The view layer supplies the drivers
  * that actually open subscriptions, so the hub is unit-testable in node.
@@ -108,6 +114,22 @@ export interface TerminalPaneLease {
    */
   setPriority(mandatory: boolean): void;
   release(): void;
+  /**
+   * Resolves once this slot's admission is settled: immediately, or after
+   * the eviction that made room finished tearing the victim's subscription
+   * down (the victim's caller reports through `streamSettled`). Open the
+   * stream this slot pays for only once it resolves; starting inside the
+   * acquire would race the victim's host-level unsubscribe for one broker
+   * slot under a full pool.
+   */
+  readonly admitted: Promise<void>;
+  /**
+   * The stream this lease admitted has fully ended — its subscription and
+   * host-level teardown drained. Exactly the signal `admitted` gates on:
+   * call it once when the pane's pump exits (or when a gated start never
+   * ran); for a lease that was never evicted it is a no-op.
+   */
+  streamSettled(): void;
 }
 
 interface FixedFeed {
@@ -127,12 +149,21 @@ interface PaneLeaseState {
   /** When the lease last demoted to optional — eviction order. */
   demotedAt: number;
   onEvicted: () => void;
+  /**
+   * Evicted with the victim's teardown still draining — the promise the
+   * replacement's admission (or a preempting feed's driver start) waits on,
+   * resolved when the victim's caller reports `streamSettled`. A state in
+   * the pool is never draining: eviction removes it first.
+   */
+  draining: Promise<void> | null;
 }
 
 export class TerminalStreamHub {
   readonly #feeds = new Map<string, FixedFeed>();
   readonly #panes = new Map<string, PaneLeaseState>();
   readonly #paneWaiters = new Set<() => void>();
+  /** Evicted victims whose teardown is draining — resolves their replacements' admission. */
+  readonly #drainResolvers = new Map<PaneLeaseState, () => void>();
   readonly #now: () => number;
 
   constructor(options: { readonly now?: () => number } = {}) {
@@ -174,15 +205,15 @@ export class TerminalStreamHub {
       // least-recently-demoted optional panes until the new feed fits;
       // mandatory slots keep their ground (a fully mandatory pool is the
       // disclosed multi-client limit, unchanged).
-      let evictedAny = false;
+      const drains: Promise<void>[] = [];
       while (this.#panes.size + this.#feeds.size >= BROKER_STREAM_CAP) {
         const victim = this.#evictablePane();
         if (victim === null) break;
         // Same discipline as pane eviction: the slot is removed before
         // onEvicted runs so the synchronous teardown's release no-ops.
         this.#panes.delete(victim.key);
+        drains.push(this.#beginDrain(victim.state));
         victim.state.onEvicted();
-        evictedAny = true;
       }
       feed = {
         controller: new AbortController(),
@@ -199,12 +230,12 @@ export class TerminalStreamHub {
       };
       this.#feeds.set(key, feed);
       const entry = feed;
-      if (evictedAny) {
-        // An evicted pane's host-level unsubscribe resolves on the
-        // microtask queue; starting the replacement subscription in the
-        // same synchronous block would race it to the broker. Let the
-        // victim's teardown drain first.
-        queueMicrotask(() => this.#startDriver(key, entry));
+      if (drains.length > 0) {
+        // Same gate as pane admission: the evicted panes' host-level
+        // unsubscribes are still resolving, and starting this feed's
+        // subscription now would race them for the broker slots it just
+        // reclaimed.
+        void Promise.all(drains).then(() => this.#startDriver(key, entry));
       } else {
         this.#startDriver(key, entry);
       }
@@ -255,9 +286,12 @@ export class TerminalStreamHub {
       existing.demotedAt = options.mandatory ? Number.POSITIVE_INFINITY : this.#now();
       existing.onEvicted = options.onEvicted;
       if (wasMandatory && !options.mandatory) this.#wakeWaiters();
-      return this.#lease(key, existing);
+      // A re-acquire of a held key reprioritizes in place — nothing was
+      // evicted, so the admission is already settled.
+      return this.#lease(key, existing, Promise.resolve());
     }
     let evicted: (() => void) | null = null;
+    let victimState: PaneLeaseState | null = null;
     if (this.#panes.size >= this.paneStreamBudget()) {
       // A hidden pane has no claim on another hidden pane's continuity
       // slot — only a newly-visible pane preempts. Failing the optional
@@ -272,16 +306,29 @@ export class TerminalStreamHub {
       // acquire from inside the callback must see a full pool rather than
       // steal the slot back out from under this one.
       this.#panes.delete(victim.key);
+      victimState = victim.state;
       evicted = victim.state.onEvicted;
     }
     const state: PaneLeaseState = {
       mandatory: options.mandatory,
       demotedAt: options.mandatory ? Number.POSITIVE_INFINITY : this.#now(),
       onEvicted: options.onEvicted,
+      draining: null,
     };
     this.#panes.set(key, state);
+    // The victim's subscription is tearing down now; its host-level
+    // unsubscribe resolves only when the victim's pump exits, which its
+    // caller reports through `streamSettled`. Hold this admission on that
+    // report — an immediate subscribe would contend with the victim for
+    // one broker slot under a full pool. Register the drain BEFORE the
+    // eviction callback runs: a `streamSettled` reported synchronously
+    // from inside `onEvicted` must find the resolver (the fixed-feed path
+    // registers first the same way), or the admission would wait on a
+    // report that already no-opped. An acquire that evicted nothing
+    // settles at once.
+    const admitted = victimState === null ? Promise.resolve() : this.#beginDrain(victimState);
     evicted?.();
-    return this.#lease(key, state);
+    return this.#lease(key, state, admitted);
   }
 
   /**
@@ -333,9 +380,10 @@ export class TerminalStreamHub {
     queueMicrotask(() => this.#startDriver(key, feed));
   }
 
-  #lease(key: string, state: PaneLeaseState): TerminalPaneLease {
+  #lease(key: string, state: PaneLeaseState, admitted: Promise<void>): TerminalPaneLease {
     const hub = this;
     return {
+      admitted,
       setPriority(mandatory: boolean) {
         if (hub.#panes.get(key) !== state) return;
         const wasMandatory = state.mandatory;
@@ -351,7 +399,30 @@ export class TerminalStreamHub {
         hub.#panes.delete(key);
         hub.#wakeWaiters();
       },
+      streamSettled() {
+        const settle = hub.#drainResolvers.get(state);
+        if (settle === undefined) return;
+        hub.#drainResolvers.delete(state);
+        state.draining = null;
+        settle();
+      },
     };
+  }
+
+  /**
+   * Marks an evicted victim's teardown as draining and returns the promise
+   * its replacement's admission (or a preempting feed's driver start)
+   * waits on. The victim's caller resolves it with `streamSettled()` once
+   * its pump has fully exited; a state that was never evicted has none.
+   */
+  #beginDrain(state: PaneLeaseState): Promise<void> {
+    if (state.draining !== null) return state.draining;
+    let settle!: () => void;
+    state.draining = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    this.#drainResolvers.set(state, settle);
+    return state.draining;
   }
 
   #evictablePane(): { key: string; state: PaneLeaseState } | null {

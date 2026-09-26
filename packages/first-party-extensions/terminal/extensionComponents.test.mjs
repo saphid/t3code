@@ -526,6 +526,94 @@ NodeTest.describe("two full views sidebar switch", () => {
   });
 });
 
+NodeTest.describe("stream admission order (terminal-stream-admission-order)", () => {
+  NodeTest.test(
+    "a pane taking an evicted slot opens its stream after the victim's teardown",
+    async () => {
+      // R5: the new pane's pump started inside the acquire that evicted the
+      // victim, while the victim's host-level unsubscribe resolves on the
+      // microtask queue — under a full broker the two raced for one slot.
+      // The recording host pins the order: the replacement's subscription
+      // open must land after the evicted pane's teardown resolved.
+      const events = [];
+      const host = {
+        subscribeApi: (request, signal) => ({
+          async *[Symbol.asyncIterator]() {
+            const id = request.input?.terminalId ?? request.id;
+            events.push(`open:${id}`);
+            try {
+              await new Promise((resolve) =>
+                signal.aborted
+                  ? resolve()
+                  : signal.addEventListener("abort", resolve, { once: true }),
+              );
+              // The broker's host-level teardown resolves on the microtask
+              // queue after the abort.
+              await new Promise((resolve) => queueMicrotask(resolve));
+              events.push(`teardown:${id}`);
+            } finally {
+              events.push(`end:${id}`);
+            }
+          },
+        }),
+      };
+      const session = {
+        signal: new AbortController().signal,
+        context: { resource: { threadId: "admission", environmentId: "e" } },
+      };
+      const panel = { resetInput() {}, resize() {}, sendInput() {} };
+      const assets = { kind: "ready", runtime: {}, symbolsFontUrl: "fixture" };
+      const ids = ["a1", "a2", "a3", "a4", "a5", "a6", "a7", "h"];
+      const paneProps = (terminalId, shown) => ({
+        host,
+        session,
+        panel,
+        terminalId,
+        streamKeyPrefix: "admission",
+        active: false,
+        shown,
+        visible: true,
+        assets,
+        themeVars: null,
+        appearanceVars: null,
+      });
+      const render = (mountIds, shownIds) =>
+        React.createElement(
+          React.Fragment,
+          null,
+          ...mountIds.map((terminalId) =>
+            React.createElement(bundle.TerminalPane, {
+              ...paneProps(terminalId, shownIds.includes(terminalId)),
+              key: terminalId,
+            }),
+          ),
+        );
+      // Seven mandatory panes plus one optional (the hidden pane) fill the
+      // pool; a ninth visible pane can only get a slot by evicting it.
+      let renderer;
+      await act(async () => {
+        renderer = create(render(ids, ids.slice(0, 7)), { createNodeMock: nodeMock });
+      });
+      try {
+        await act(async () => {
+          renderer.update(render([...ids, "b"], [...ids.slice(0, 7), "b"]));
+        });
+        NodeAssert.ok(events.includes("open:b"), `replacement never opened: ${events.join(",")}`);
+        NodeAssert.ok(
+          events.includes("teardown:h"),
+          `victim teardown never resolved: ${events.join(",")}`,
+        );
+        NodeAssert.ok(
+          events.indexOf("teardown:h") < events.indexOf("open:b"),
+          `the replacement opened before the victim's teardown resolved: ${events.join(",")}`,
+        );
+      } finally {
+        await act(async () => renderer.unmount());
+      }
+    },
+  );
+});
+
 /**
  * A full TerminalView over one restored, live pane, with the capture →
  * VT-target traversal a real key press takes. The ChatView host-capture step
