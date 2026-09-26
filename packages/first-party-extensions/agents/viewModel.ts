@@ -21,6 +21,7 @@ import { projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { AGENT_SESSIONS_IMPORT, AGENT_SESSIONS_SCAN } from "@t3tools/extension-sdk/catalogue";
 import type {
   AgentSessionImportReceipt,
+  AgentSessionsScanResult,
   AgentsEvent,
   AgentsState,
   ApprovalOption,
@@ -921,6 +922,32 @@ export function describeSessionImport(receipt: AgentSessionImportReceipt): strin
   return receipt.status === "imported"
     ? `imported · seq ${receipt.sequence} · ${receipt.messageCount} messages`
     : `rejected — ${SESSION_IMPORT_REJECTIONS[receipt.error]}`;
+}
+
+/**
+ * Status text for a finished scan. `truncated` covers the 50-entry cap and a
+ * discovery cut short by the host's budget or deadline, so the copy promises
+ * only an incomplete list, never "the newest" — an empty truncated scan may
+ * have found nothing yet.
+ */
+export function describeSessionScan(
+  result: Pick<AgentSessionsScanResult, "sessions" | "truncated" | "skipped">,
+): { readonly empty: string | null; readonly note: string | null } {
+  const notes = [
+    result.truncated && result.sessions.length > 0
+      ? "The scan ended early, so this list may be incomplete. Rescan to try again."
+      : null,
+    result.skipped > 0 ? `${result.skipped} transcripts could not be read.` : null,
+  ].filter((note) => note !== null);
+  return {
+    empty:
+      result.sessions.length > 0
+        ? null
+        : result.truncated
+          ? "The scan ended before finding any sessions for this project. Rescan to try again."
+          : "No sessions found for this project.",
+    note: notes.length > 0 ? notes.join(" ") : null,
+  };
 }
 
 /**

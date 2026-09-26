@@ -49,6 +49,7 @@ import {
   describeReceipt,
   describeScriptRun,
   describeSessionImport,
+  describeSessionScan,
   describeSessionsError,
   elapsedBetween,
   operationSupport,
@@ -1145,6 +1146,7 @@ function SessionImportSection(props: { readonly host: ClientHost; readonly sessi
         setOutcomes((current) => ({ ...current, [key]: describeSessionsError(error) })),
       );
   };
+  const scanStatus = scan.kind === "ready" ? describeSessionScan(scan.result) : null;
 
   return (
     <section
@@ -1168,10 +1170,8 @@ function SessionImportSection(props: { readonly host: ClientHost; readonly sessi
       {scan.kind === "error" && (
         <p style={{ margin: "0 0 4px", color: toneColor.danger, fontSize: 12 }}>{scan.message}</p>
       )}
-      {scan.kind === "ready" && scan.result.sessions.length === 0 && (
-        <p style={{ margin: "0 0 4px", color: muted, fontSize: 12 }}>
-          No sessions found for this project.
-        </p>
+      {scanStatus?.empty && (
+        <p style={{ margin: "0 0 4px", color: muted, fontSize: 12 }}>{scanStatus.empty}</p>
       )}
       {scan.kind === "ready" && scan.result.sessions.length > 0 && (
         <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
@@ -1238,11 +1238,8 @@ function SessionImportSection(props: { readonly host: ClientHost; readonly sessi
           })}
         </ul>
       )}
-      {scan.kind === "ready" && (scan.result.truncated || scan.result.skipped > 0) && (
-        <p style={{ margin: "4px 0 0", color: muted, fontSize: 11 }}>
-          {scan.result.truncated ? "Showing the newest sessions only. " : ""}
-          {scan.result.skipped > 0 ? `${scan.result.skipped} transcripts could not be read.` : ""}
-        </p>
+      {scanStatus?.note && (
+        <p style={{ margin: "4px 0 0", color: muted, fontSize: 11 }}>{scanStatus.note}</p>
       )}
     </section>
   );

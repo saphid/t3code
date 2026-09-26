@@ -25,6 +25,7 @@ import {
   describeReceipt,
   describeScriptRun,
   describeSessionImport,
+  describeSessionScan,
   describeSessionsError,
   elapsedBetween,
   formatAgentModelLabel,
@@ -1125,5 +1126,36 @@ NodeTest.describe("session import", () => {
       /unavailable — AgentSessionsAuthorityDenied/,
     );
     NodeAssert.match(describeSessionsError(new Error("AgentSessionScanTimedOut")), /time limit/);
+  });
+
+  NodeTest.it("describes a truncated scan as incomplete, never as the newest sessions", () => {
+    const entry = {
+      providerInstanceId: "codex",
+      providerSessionId: "s1",
+      source: "codex",
+      lastActiveAt: "2026-09-01T00:00:00.000Z",
+      status: "importable",
+      threadId: null,
+    };
+    NodeAssert.deepEqual(describeSessionScan({ sessions: [], truncated: false, skipped: 0 }), {
+      empty: "No sessions found for this project.",
+      note: null,
+    });
+    // The deadline or discovery budget can cut a scan before any result arrives.
+    const cutEmpty = describeSessionScan({ sessions: [], truncated: true, skipped: 0 });
+    NodeAssert.doesNotMatch(cutEmpty.empty, /^No sessions found/);
+    NodeAssert.match(cutEmpty.empty, /ended before finding any sessions.*Rescan/);
+    NodeAssert.equal(cutEmpty.note, null);
+    const cutListed = describeSessionScan({ sessions: [entry], truncated: true, skipped: 2 });
+    NodeAssert.equal(cutListed.empty, null);
+    NodeAssert.match(cutListed.note, /may be incomplete\. Rescan/);
+    NodeAssert.match(cutListed.note, /2 transcripts could not be read\./);
+    for (const status of [cutEmpty, cutListed]) {
+      NodeAssert.doesNotMatch(`${status.empty} ${status.note}`, /newest/);
+    }
+    NodeAssert.deepEqual(describeSessionScan({ sessions: [entry], truncated: false, skipped: 0 }), {
+      empty: null,
+      note: null,
+    });
   });
 });
