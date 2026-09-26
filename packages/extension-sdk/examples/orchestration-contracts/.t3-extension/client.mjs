@@ -2731,83 +2731,118 @@ var __t3Client = (() => {
       conflicted: { type: "boolean" }
     }
   };
+  var vcsChangesListMethod = {
+    name: "list",
+    effect: "read",
+    requiredGrants: [VCS_READ],
+    inputSchema: vcsEmptyInputSchema,
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["isRepo", "entries", "truncated"],
+      properties: {
+        isRepo: { type: "boolean" },
+        entries: { type: "array", maxItems: 5e3, items: vcsChangeEntrySchema },
+        truncated: { type: "boolean" }
+      }
+    }
+  };
+  var vcsChangesPathsMethod = (name) => ({
+    name,
+    effect: "write",
+    requiredGrants: [VCS_MUTATE],
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["paths"],
+      properties: { paths: vcsPathsInput }
+    },
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["paths"],
+      properties: { paths: vcsPathsInput }
+    }
+  });
+  var vcsChangesStageMethod = vcsChangesPathsMethod("stage");
+  var vcsChangesUnstageMethod = vcsChangesPathsMethod("unstage");
+  var vcsChangesCommitMethod = {
+    name: "commit",
+    effect: "write",
+    requiredGrants: [VCS_MUTATE],
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["message"],
+      properties: {
+        message: { type: "string", minLength: 1, maxLength: 1e4 },
+        paths: vcsPathsInput
+      }
+    },
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["commitSha", "refName"],
+      properties: {
+        commitSha: { type: "string", minLength: 1, maxLength: 64 },
+        refName: vcsRefNameOrNull
+      }
+    }
+  };
+  var vcsChangesDiscardMethod = {
+    name: "discard",
+    effect: "write",
+    requiredGrants: [VCS_MUTATE],
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["paths"],
+      properties: { paths: vcsPathsInput }
+    },
+    outputSchema: {
+      oneOf: [
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["status", "restored", "removed"],
+          properties: {
+            status: { const: "discarded" },
+            restored: { type: "array", maxItems: 100, items: vcsPath },
+            removed: { type: "array", maxItems: 100, items: vcsPath }
+          }
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["status", "reason", "paths"],
+          properties: {
+            status: { const: "refused" },
+            reason: { enum: ["conflicted", "no-working-tree-change"] },
+            paths: vcsPathsInput
+          }
+        }
+      ]
+    }
+  };
   var vcsChangesApi = defineApi({
+    id: VCS_CHANGES,
+    version: "1.1.0",
+    methods: [
+      vcsChangesListMethod,
+      vcsChangesStageMethod,
+      vcsChangesUnstageMethod,
+      vcsChangesCommitMethod,
+      vcsChangesDiscardMethod
+    ]
+  });
+  var vcsChangesApiV1 = defineApi({
     id: VCS_CHANGES,
     version: "1.0.0",
     methods: [
-      {
-        name: "list",
-        effect: "read",
-        requiredGrants: [VCS_READ],
-        inputSchema: vcsEmptyInputSchema,
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["isRepo", "entries", "truncated"],
-          properties: {
-            isRepo: { type: "boolean" },
-            entries: { type: "array", maxItems: 5e3, items: vcsChangeEntrySchema },
-            truncated: { type: "boolean" }
-          }
-        }
-      },
-      {
-        name: "stage",
-        effect: "write",
-        requiredGrants: [VCS_MUTATE],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["paths"],
-          properties: { paths: vcsPathsInput }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["paths"],
-          properties: { paths: vcsPathsInput }
-        }
-      },
-      {
-        name: "unstage",
-        effect: "write",
-        requiredGrants: [VCS_MUTATE],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["paths"],
-          properties: { paths: vcsPathsInput }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["paths"],
-          properties: { paths: vcsPathsInput }
-        }
-      },
-      {
-        name: "commit",
-        effect: "write",
-        requiredGrants: [VCS_MUTATE],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["message"],
-          properties: {
-            message: { type: "string", minLength: 1, maxLength: 1e4 },
-            paths: vcsPathsInput
-          }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["commitSha", "refName"],
-          properties: {
-            commitSha: { type: "string", minLength: 1, maxLength: 64 },
-            refName: vcsRefNameOrNull
-          }
-        }
-      }
+      vcsChangesListMethod,
+      vcsChangesStageMethod,
+      vcsChangesUnstageMethod,
+      vcsChangesCommitMethod
     ]
   });
   var vcsDiffPreviewSourceSchema = {
@@ -3046,7 +3081,7 @@ var __t3Client = (() => {
       "repository.removeWorktree": { type: "boolean" }
     }
   };
-  var vcsOperationsSupportSchema = {
+  var vcsOperationsSupportSchemaV1_1 = {
     type: "object",
     additionalProperties: false,
     required: [
@@ -3060,6 +3095,15 @@ var __t3Client = (() => {
       "repository.push": { type: "boolean" },
       "repository.fetch": { type: "boolean" },
       "repository.listRemotes": { type: "boolean" }
+    }
+  };
+  var vcsOperationsSupportSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [...vcsOperationsSupportSchemaV1_1.required, "changes.discard"],
+    properties: {
+      ...vcsOperationsSupportSchemaV1_1.properties,
+      "changes.discard": { type: "boolean" }
     }
   };
   var vcsDriverCapabilitiesSchema = {
@@ -3094,7 +3138,7 @@ var __t3Client = (() => {
       operations: vcsOperationsSupportSchemaV1
     }
   };
-  var vcsCapabilitiesResultSchema = {
+  var vcsCapabilitiesResultSchemaV1_1 = {
     type: "object",
     additionalProperties: false,
     required: ["detected", "kind", "detail", "driver", "operations"],
@@ -3103,6 +3147,13 @@ var __t3Client = (() => {
       kind: { type: ["string", "null"], enum: ["git", "jj", "unknown", null] },
       detail: { type: ["string", "null"], maxLength: 512 },
       driver: vcsDriverCapabilitiesSchema,
+      operations: vcsOperationsSupportSchemaV1_1
+    }
+  };
+  var vcsCapabilitiesResultSchema = {
+    ...vcsCapabilitiesResultSchemaV1_1,
+    properties: {
+      ...vcsCapabilitiesResultSchemaV1_1.properties,
       operations: vcsOperationsSupportSchema
     }
   };
@@ -3112,6 +3163,13 @@ var __t3Client = (() => {
     requiredGrants: [VCS_READ],
     inputSchema: vcsEmptyInputSchema,
     outputSchema: vcsCapabilitiesResultSchemaV1
+  };
+  var vcsRepositoryGetCapabilitiesMethodV1_1 = {
+    name: "getCapabilities",
+    effect: "read",
+    requiredGrants: [VCS_READ],
+    inputSchema: vcsEmptyInputSchema,
+    outputSchema: vcsCapabilitiesResultSchemaV1_1
   };
   var vcsRepositoryGetCapabilitiesMethod = {
     name: "getCapabilities",
@@ -3274,9 +3332,23 @@ var __t3Client = (() => {
   };
   var vcsRepositoryApi = defineApi({
     id: VCS_REPOSITORY,
-    version: "1.1.0",
+    version: "1.2.0",
     methods: [
       vcsRepositoryGetCapabilitiesMethod,
+      vcsRepositoryPullMethod,
+      vcsRepositoryInitMethod,
+      vcsRepositoryCreateWorktreeMethod,
+      vcsRepositoryRemoveWorktreeMethod,
+      vcsRepositoryPushMethod,
+      vcsRepositoryFetchMethod,
+      vcsRepositoryListRemotesMethod
+    ]
+  });
+  var vcsRepositoryApiV1_1 = defineApi({
+    id: VCS_REPOSITORY,
+    version: "1.1.0",
+    methods: [
+      vcsRepositoryGetCapabilitiesMethodV1_1,
       vcsRepositoryPullMethod,
       vcsRepositoryInitMethod,
       vcsRepositoryCreateWorktreeMethod,
@@ -3300,9 +3372,11 @@ var __t3Client = (() => {
   var VCS_STATUS_API = vcsStatusApi.definition;
   var VCS_REFS_API = vcsRefsApi.definition;
   var VCS_CHANGES_API = vcsChangesApi.definition;
+  var VCS_CHANGES_API_V1 = vcsChangesApiV1.definition;
   var VCS_DIFF_API = vcsDiffApi.definition;
   var VCS_DIFF_API_V1 = vcsDiffApiV1.definition;
   var VCS_REPOSITORY_API = vcsRepositoryApi.definition;
+  var VCS_REPOSITORY_API_V1_1 = vcsRepositoryApiV1_1.definition;
   var VCS_REPOSITORY_API_V1 = vcsRepositoryApiV1.definition;
   var RESOURCES_LEASE = "t3.resources/lease";
   var BROWSER_SESSIONS = "t3.browser/sessions";
@@ -6724,8 +6798,10 @@ var __t3Client = (() => {
     vcsStatusApi.definition,
     vcsRefsApi.definition,
     vcsChangesApi.definition,
+    vcsChangesApiV1.definition,
     vcsDiffApi.definition,
     vcsRepositoryApi.definition,
+    vcsRepositoryApiV1_1.definition,
     vcsRepositoryApiV1.definition,
     vcsDiffApiV1.definition,
     vcsActionsApi.definition,

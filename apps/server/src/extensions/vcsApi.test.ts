@@ -531,6 +531,180 @@ it.layer(NodeServices.layer)("t3.vcs adapters", (it) => {
     }),
   );
 
+  it.effect("discards working-tree edits to the index and deletes untracked paths", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "t3-vcs-ws-" });
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-vcs-repo-",
+        directory: workspace,
+      });
+      yield* withVcsServices(
+        workspace,
+        ({ git, registry, provisioning, review, worktreesDir, refreshed }) =>
+          Effect.gen(function* () {
+            yield* initRepo(git, root);
+            yield* fs.writeFileString(path.join(root, "edited.txt"), "base\n");
+            yield* fs.writeFileString(path.join(root, "both.txt"), "base\n");
+            yield* fs.writeFileString(path.join(root, "gone.txt"), "base\n");
+            yield* git.execute({ operation: "t", cwd: root, args: ["add", "-A"] });
+            yield* git.execute({ operation: "t", cwd: root, args: ["commit", "-m", "base"] });
+            const providers = createVcsApiProviders(
+              makeDeps(root, { git, registry, provisioning, review, worktreesDir, refreshed }),
+            );
+            const changes = providerOf(providers, "t3.vcs/changes");
+            const repository = providerOf(providers, "t3.vcs/repository");
+            const context = makeContext(root);
+            const capabilities = (yield* invoke(repository, "getCapabilities", {}, context)) as {
+              operations: Record<string, boolean>;
+            };
+            expect(capabilities.operations["changes.discard"]).toBe(true);
+
+            yield* fs.writeFileString(path.join(root, "edited.txt"), "edit\n");
+            // Staged half survives a discard; only the later worktree edit goes.
+            yield* fs.writeFileString(path.join(root, "both.txt"), "staged\n");
+            yield* git.execute({ operation: "t", cwd: root, args: ["add", "both.txt"] });
+            yield* fs.writeFileString(path.join(root, "both.txt"), "staged then edited\n");
+            yield* fs.remove(path.join(root, "gone.txt"));
+            yield* fs.writeFileString(path.join(root, "scratch.txt"), "new\n");
+            yield* fs.makeDirectory(path.join(root, "scratch-dir"));
+            yield* fs.writeFileString(path.join(root, "scratch-dir", "x.txt"), "x\n");
+
+            const receipt = yield* invoke(
+              changes,
+              "discard",
+              {
+                paths: ["edited.txt", "both.txt", "gone.txt", "scratch.txt", "scratch-dir/"],
+              },
+              context,
+            );
+            expect(receipt).toEqual({
+              status: "discarded",
+              restored: ["edited.txt", "both.txt", "gone.txt"],
+              removed: ["scratch.txt", "scratch-dir/"],
+            });
+            expect(yield* Deferred.await(refreshed)).toBe(root);
+            expect(yield* fs.readFileString(path.join(root, "edited.txt"))).toBe("base\n");
+            expect(yield* fs.readFileString(path.join(root, "both.txt"))).toBe("staged\n");
+            expect(yield* fs.readFileString(path.join(root, "gone.txt"))).toBe("base\n");
+            expect(yield* fs.exists(path.join(root, "scratch.txt"))).toBe(false);
+            expect(yield* fs.exists(path.join(root, "scratch-dir"))).toBe(false);
+            expect(yield* gitOutput(git, root, ["status", "--porcelain=v1"])).toBe("M  both.txt");
+          }),
+      );
+    }),
+  );
+
+  it.effect("refuses discard of conflicted or unchanged paths without touching any path", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "t3-vcs-ws-" });
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-vcs-repo-",
+        directory: workspace,
+      });
+      yield* withVcsServices(workspace, ({ git, registry, provisioning, review, worktreesDir }) =>
+        Effect.gen(function* () {
+          yield* initRepo(git, root);
+          const run = (...args: string[]) =>
+            git.execute({ operation: "t", cwd: root, args, allowNonZeroExit: true });
+          yield* fs.writeFileString(path.join(root, "clash.txt"), "base\n");
+          yield* fs.writeFileString(path.join(root, "clean.txt"), "clean\n");
+          yield* run("add", "-A");
+          yield* run("commit", "-m", "base");
+          yield* run("checkout", "-b", "side");
+          yield* fs.writeFileString(path.join(root, "clash.txt"), "side\n");
+          yield* run("commit", "-am", "side");
+          yield* run("checkout", "main");
+          yield* fs.writeFileString(path.join(root, "clash.txt"), "main\n");
+          yield* run("commit", "-am", "main");
+          yield* run("merge", "side");
+          yield* fs.writeFileString(path.join(root, "edited.txt"), "untracked\n");
+          yield* fs.writeFileString(path.join(root, "staged.txt"), "staged\n");
+          yield* run("add", "staged.txt");
+          const providers = createVcsApiProviders(
+            makeDeps(root, { git, registry, provisioning, review, worktreesDir }),
+          );
+          const changes = providerOf(providers, "t3.vcs/changes");
+          const context = makeContext(root);
+
+          // A conflicted path refuses the whole request, even alongside a
+          // discardable one.
+          expect(
+            yield* invoke(changes, "discard", { paths: ["edited.txt", "clash.txt"] }, context),
+          ).toEqual({ status: "refused", reason: "conflicted", paths: ["clash.txt"] });
+
+          // Clean, staged-only, unknown, and repo-escaping paths are not
+          // reported as working-tree changes, so they never reach restore/clean.
+          expect(
+            yield* invoke(
+              changes,
+              "discard",
+              {
+                paths: ["edited.txt", "clean.txt", "staged.txt", "missing.txt", "../escape.txt"],
+              },
+              context,
+            ),
+          ).toEqual({
+            status: "refused",
+            reason: "no-working-tree-change",
+            paths: ["clean.txt", "staged.txt", "missing.txt", "../escape.txt"],
+          });
+
+          expect(yield* fs.readFileString(path.join(root, "edited.txt"))).toBe("untracked\n");
+          expect(yield* fs.readFileString(path.join(root, "staged.txt"))).toBe("staged\n");
+          expect(yield* fs.readFileString(path.join(root, "clash.txt"))).toContain("<<<<<<<");
+
+          const excess = yield* invokeError(
+            changes,
+            "discard",
+            { paths: ["edited.txt"], force: true },
+            context,
+          );
+          expect(excess.detail).toBe("Invalid VCS request input.");
+          const empty = yield* invokeError(changes, "discard", { paths: [] }, context);
+          expect(empty.detail).toBe("Invalid VCS request input.");
+        }),
+      );
+    }),
+  );
+
+  it.effect("fails by name when git leaves a discarded path in place", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "t3-vcs-ws-" });
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-vcs-repo-",
+        directory: workspace,
+      });
+      yield* withVcsServices(workspace, ({ git, registry, provisioning, review, worktreesDir }) =>
+        Effect.gen(function* () {
+          yield* initRepo(git, root);
+          // `git clean -f -d` exits 0 but skips a nested repository.
+          const nested = path.join(root, "nested");
+          yield* fs.makeDirectory(nested);
+          yield* git.execute({ operation: "t", cwd: nested, args: ["init"] });
+          yield* fs.writeFileString(path.join(nested, "z.txt"), "z\n");
+          const providers = createVcsApiProviders(
+            makeDeps(root, { git, registry, provisioning, review, worktreesDir }),
+          );
+          const changes = providerOf(providers, "t3.vcs/changes");
+          const error = yield* invokeError(
+            changes,
+            "discard",
+            { paths: ["nested/"] },
+            makeContext(root),
+          );
+          expect(error.detail).toBe("Discard left 1 path changed: nested/");
+          expect(yield* fs.exists(path.join(nested, "z.txt"))).toBe(true);
+        }),
+      );
+    }),
+  );
+
   it.effect("lists, creates, and switches refs against a real repository", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -927,6 +1101,7 @@ it.layer(NodeServices.layer)("t3.vcs adapters", (it) => {
           expect(capabilities.operations["repository.push"]).toBe(false);
           expect(capabilities.operations["repository.fetch"]).toBe(false);
           expect(capabilities.operations["repository.listRemotes"]).toBe(true);
+          expect(capabilities.operations["changes.discard"]).toBe(false);
 
           // The capability claim is backed by the driver method — invoke it
           // through the adapter and check the projection (including URL
@@ -1009,6 +1184,13 @@ it.layer(NodeServices.layer)("t3.vcs adapters", (it) => {
 
           const stagedError = yield* invokeError(changes, "stage", { paths: ["a.txt"] }, context);
           expect(stagedError.detail).toContain("VcsUnsupportedOperationError");
+          const discardError = yield* invokeError(
+            changes,
+            "discard",
+            { paths: ["a.txt"] },
+            context,
+          );
+          expect(discardError.detail).toContain("VcsUnsupportedOperationError");
           const listedError = yield* invokeError(changes, "list", {}, context);
           expect(listedError.detail).toContain("VcsUnsupportedOperationError");
           const pushError = yield* invokeError(repository, "push", {}, context);
@@ -1112,6 +1294,15 @@ it.layer(NodeServices.layer)("t3.vcs adapters", (it) => {
             AuthOrchestrationReadScope,
           ]);
           expect(committed.detail).toContain("authority");
+          const discardDenied = yield* invokeError(
+            changes,
+            "discard",
+            { paths: ["a.txt"] },
+            context,
+            [AuthOrchestrationReadScope],
+          );
+          expect(discardDenied.detail).toContain("authority");
+          expect(yield* fs.readFileString(path.join(root, "a.txt"))).toBe("a\n");
           const readDenied = yield* invokeError(status, "get", {}, context, []);
           expect(readDenied.detail).toContain("authority");
           const result = yield* invoke(changes, "list", {}, context, [AuthOrchestrationReadScope]);

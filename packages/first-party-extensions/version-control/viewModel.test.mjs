@@ -25,6 +25,8 @@ import {
   describeStackedProgress,
   describeStackedResult,
   describeStatus,
+  discardAction,
+  discardReceipt,
   entryMutation,
   laneCount,
   laneMutation,
@@ -32,6 +34,7 @@ import {
   lanesFromChanges,
   numstatFor,
   planCommit,
+  planDiscard,
   planRefCreate,
   planWorktreeCreate,
   pullState,
@@ -61,6 +64,7 @@ import {
   themeVarOverrides,
   workingTreeLabel,
   worktreeRows,
+  VCS_PATHS_MAX,
 } from "./viewModel.ts";
 
 const change = (path, flags) => ({
@@ -374,6 +378,76 @@ NodeTest.describe("vcs view model — mutation controls", () => {
     NodeAssert.equal(entryMutation("staged")?.label, "Unstage");
     NodeAssert.equal(entryMutation("conflicted"), null);
     NodeAssert.equal(entryMutation("staged")?.op, "unstage");
+  });
+});
+
+NodeTest.describe("vcs view model — discard", () => {
+  const lanes = lanesFromChanges([
+    change("a.txt", { unstaged: true }),
+    change("b.txt", { staged: true, unstaged: true }),
+    change("s.txt", { staged: true }),
+    change("new/", { untracked: true }),
+    change("c.txt", { conflicted: true }),
+  ]);
+
+  NodeTest.it("offers discard on changes and delete on untracked; staged/conflicted none", () => {
+    NodeAssert.equal(discardAction("changes")?.row, "Discard");
+    NodeAssert.equal(discardAction("untracked")?.bulk, "Delete all");
+    NodeAssert.equal(discardAction("staged"), null);
+    NodeAssert.equal(discardAction("conflicted"), null);
+  });
+
+  NodeTest.it("arms a confirmation naming the paths and what survives", () => {
+    const single = planDiscard(lanes, { lane: "changes", paths: ["a.txt"] });
+    NodeAssert.equal(
+      single?.prompt,
+      'Discard changes to "a.txt"? Unstaged edits are lost; staged changes stay.',
+    );
+    NodeAssert.equal(single?.confirmLabel, "Discard");
+    NodeAssert.equal(single?.disabled, null);
+    const bulk = planDiscard(lanes, { lane: "changes", paths: ["a.txt", "b.txt"] });
+    NodeAssert.equal(bulk?.confirmLabel, "Discard 2 paths");
+    const untracked = planDiscard(lanes, { lane: "untracked", paths: ["new/"] });
+    NodeAssert.equal(
+      untracked?.prompt,
+      'Delete "new/" from disk? Untracked files cannot be recovered.',
+    );
+  });
+
+  NodeTest.it("disarms when a requested path leaves its lane or the lane offers none", () => {
+    NodeAssert.equal(planDiscard(lanes, null), null);
+    NodeAssert.equal(planDiscard(lanes, { lane: "changes", paths: ["s.txt"] }), null);
+    NodeAssert.equal(planDiscard(lanes, { lane: "changes", paths: ["a.txt", "gone.txt"] }), null);
+    NodeAssert.equal(planDiscard(lanes, { lane: "staged", paths: ["s.txt"] }), null);
+    NodeAssert.equal(planDiscard(lanes, { lane: "conflicted", paths: ["c.txt"] }), null);
+    const afterSettle = lanesFromChanges([change("b.txt", { staged: true, unstaged: true })]);
+    NodeAssert.equal(planDiscard(afterSettle, { lane: "changes", paths: ["a.txt"] }), null);
+  });
+
+  NodeTest.it("blocks a request over the contract path bound instead of chunking it", () => {
+    const paths = Array.from({ length: VCS_PATHS_MAX + 1 }, (_, index) => `f${index}.txt`);
+    const many = lanesFromChanges(paths.map((path) => change(path, { unstaged: true })));
+    const plan = planDiscard(many, { lane: "changes", paths });
+    NodeAssert.match(plan?.disabled ?? "", /Over 100 paths/);
+  });
+
+  NodeTest.it("receipts refusals as failures naming the paths", () => {
+    NodeAssert.deepEqual(
+      discardReceipt({ status: "refused", reason: "conflicted", paths: ["c.txt"] }),
+      { ok: false, detail: "Nothing discarded — resolve merge conflicts first: c.txt" },
+    );
+    NodeAssert.deepEqual(
+      discardReceipt({
+        status: "refused",
+        reason: "no-working-tree-change",
+        paths: ["s.txt", "x.txt"],
+      }),
+      { ok: false, detail: "Nothing discarded — no working-tree change to discard: s.txt, x.txt" },
+    );
+    NodeAssert.deepEqual(
+      discardReceipt({ status: "discarded", restored: ["a.txt"], removed: ["new/", "z"] }),
+      { ok: true, detail: "Discarded: reverted 1 file, deleted 2 untracked paths" },
+    );
   });
 });
 

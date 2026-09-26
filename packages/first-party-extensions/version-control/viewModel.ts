@@ -20,6 +20,7 @@ import type {
   VcsActionRunInput,
   VcsCapabilitiesResult,
   VcsChangeEntry,
+  VcsDiscardResult,
   VcsListRefsResult,
   VcsListRemotesResult,
   VcsRefEntry,
@@ -115,11 +116,13 @@ export function describeEntry(entry: VcsChangeEntry): string {
  * `t3.vcs/repository` — all `effect:"write"` under `t3.vcs/mutate`.
  * `stacked` and `publish` ride `t3.vcs/actions` under the same grant
  * (publish additionally chain-checks `t3.prs/write` server-side).
+ * `discard` is `t3.vcs/changes@1.1.0` and only runs from a confirmation.
  */
 export type MutationOp =
   | "stage"
   | "unstage"
   | "commit"
+  | "discard"
   | "stacked"
   | "ref-create"
   | "ref-switch"
@@ -162,6 +165,90 @@ export function entryMutation(lane: ChangeLane): LaneMutation | null {
   const bulk = laneMutation(lane);
   if (bulk === null) return null;
   return { ...bulk, label: bulk.op === "stage" ? "Stage" : "Unstage" };
+}
+
+/**
+ * The destructive action a lane offers. Changes revert to the index (staged
+ * work survives); untracked paths are deleted. Staged and conflicted lanes
+ * offer none — unstage first, and conflicts are refused by the host.
+ */
+export function discardAction(
+  lane: ChangeLane,
+): { readonly row: string; readonly bulk: string; readonly verb: string } | null {
+  switch (lane) {
+    case "changes":
+      return { row: "Discard", bulk: "Discard all", verb: "Discard" };
+    case "untracked":
+      return { row: "Delete", bulk: "Delete all", verb: "Delete" };
+    case "staged":
+    case "conflicted":
+      return null;
+  }
+}
+
+export interface DiscardRequest {
+  readonly lane: ChangeLane;
+  readonly paths: readonly string[];
+}
+
+export interface DiscardConfirm {
+  readonly prompt: string;
+  /** Label for the confirming button, e.g. "Discard" or "Delete 2 paths". */
+  readonly confirmLabel: string;
+  /** Why confirming is blocked; null when it may run. */
+  readonly disabled: string | null;
+}
+
+/**
+ * The armed confirmation for a discard request, or null once it no longer
+ * matches the lanes: any requested path that left its lane disarms it, so
+ * the prompt never names a set the call would not act on.
+ */
+export function planDiscard(
+  lanes: LaneGroups,
+  request: DiscardRequest | null,
+): DiscardConfirm | null {
+  if (request === null || request.paths.length === 0) return null;
+  const action = discardAction(request.lane);
+  if (action === null) return null;
+  const present = new Set(lanes[request.lane].map((entry) => entry.path));
+  if (!request.paths.every((path) => present.has(path))) return null;
+  const count = request.paths.length;
+  const noun = count === 1 ? `"${request.paths[0]}"` : `${count} paths`;
+  const prompt =
+    request.lane === "untracked"
+      ? `Delete ${noun} from disk? Untracked files cannot be recovered.`
+      : `Discard changes to ${noun}? Unstaged edits are lost; staged changes stay.`;
+  return {
+    prompt,
+    confirmLabel: count === 1 ? action.verb : `${action.verb} ${count} paths`,
+    disabled:
+      count > VCS_PATHS_MAX
+        ? `Over ${VCS_PATHS_MAX} paths — discard runs as one request, pick fewer`
+        : null,
+  };
+}
+
+/** Receipt line for a settled discard; a refusal is a failure naming its paths. */
+export function discardReceipt(result: VcsDiscardResult): {
+  readonly ok: boolean;
+  readonly detail: string;
+} {
+  if (result.status === "refused") {
+    const reason =
+      result.reason === "conflicted"
+        ? "resolve merge conflicts first"
+        : "no working-tree change to discard";
+    return { ok: false, detail: `Nothing discarded — ${reason}: ${result.paths.join(", ")}` };
+  }
+  const parts = [];
+  if (result.restored.length > 0)
+    parts.push(`reverted ${result.restored.length} file${result.restored.length === 1 ? "" : "s"}`);
+  if (result.removed.length > 0)
+    parts.push(
+      `deleted ${result.removed.length} untracked path${result.removed.length === 1 ? "" : "s"}`,
+    );
+  return { ok: true, detail: `Discarded: ${parts.join(", ")}` };
 }
 
 export interface CommitPlan {
