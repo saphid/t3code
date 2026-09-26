@@ -1,4 +1,5 @@
 import {
+  composerContextApi,
   filePresentationApi,
   messagesEnrichmentApi,
   resourcesLeaseApi,
@@ -35,6 +36,7 @@ import {
   type FileCommentRange,
 } from "./fileComments.js";
 import { useCommentBlockReason, useCommentDraft, useEditorSelection } from "./commentSession.js";
+import { useAddToChat } from "./composerBridge.js";
 import { parseMarkdown, type MarkdownBlock, type MarkdownInline } from "./markdown.js";
 import {
   FILE_SAVE_DEBOUNCE_MS,
@@ -1208,6 +1210,11 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   // of letting submit ship offsets captured against different bytes.
   const commentThreadId = session.context.resource.threadId;
   const commentBlockReason = useCommentBlockReason(host, session, commentThreadId);
+  // Row 13: Add to chat routes the selected file's mention through the
+  // composer draft bridge (`t3.composer/context@1.1.0` `insertMention` — the
+  // byte-exact native append). The grant-free probe gates the toolbar
+  // affordance; a denied write grant surfaces as the inline named error.
+  const addChat = useAddToChat(host, session, commentThreadId);
   const [commentBody, setCommentBody] = useState("");
   const [commentSubmit, setCommentSubmit] = useState<{
     busy: boolean;
@@ -1911,6 +1918,36 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           <button type="button" onClick={openInPresentation}>
             Open in…
           </button>
+          {addChat.blockReason === null ? (
+            <button
+              type="button"
+              disabled={addChat.state.kind === "adding"}
+              onClick={() => {
+                if (selected !== null) addChat.addToChat(selected);
+              }}
+            >
+              Add to chat
+            </button>
+          ) : (
+            <span style={{ color: muted, fontSize: 11 }}>
+              Add to chat unavailable — {addChat.blockReason}
+            </span>
+          )}
+          {addChat.state.kind !== "idle" && addChat.state.path === selected && (
+            <span
+              role={addChat.state.kind === "failed" ? "alert" : undefined}
+              style={{
+                color: addChat.state.kind === "failed" ? "#b42318" : muted,
+                fontSize: 11,
+              }}
+            >
+              {addChat.state.kind === "adding"
+                ? "Adding…"
+                : addChat.state.kind === "added"
+                  ? "Added to chat"
+                  : addChat.state.message}
+            </span>
+          )}
           {isMarkdownPath(selected) && selectedKind === "text" && (
             <button
               type="button"
@@ -2230,7 +2267,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
 
 export default defineExtension({
   id: manifestId,
-  version: "0.7.0",
+  version: "0.8.0",
   provides: [filePresentationApi.definition],
   assets: [{ path: PREVIEW_ASSET_PATH, mediaType: "application/octet-stream" }],
   serverEntry: "server.ts",
@@ -2245,6 +2282,7 @@ export default defineExtension({
     requireApi(uiKeybindingsApi),
     requireApi(uiNotificationsApi),
     requireApi(messagesEnrichmentApi),
+    requireApi(composerContextApi),
   ],
   surfaces: [
     {
