@@ -541,6 +541,248 @@ NodeTest.describe("two full views sidebar switch", () => {
   });
 });
 
+NodeTest.describe("stream admission order (terminal-stream-admission-order)", () => {
+  NodeTest.test(
+    "a pane taking an evicted slot opens its stream after the victim's teardown",
+    async () => {
+      // R5: the new pane's pump started inside the acquire that evicted the
+      // victim, while the victim's host-level unsubscribe resolves on the
+      // microtask queue — under a full broker the two raced for one slot.
+      // The recording host pins the order: the replacement's subscription
+      // open must land after the evicted pane's teardown resolved.
+      const events = [];
+      const host = {
+        subscribeApi: (request, signal) => ({
+          async *[Symbol.asyncIterator]() {
+            const id = request.input?.terminalId ?? request.id;
+            events.push(`open:${id}`);
+            try {
+              await new Promise((resolve) =>
+                signal.aborted
+                  ? resolve()
+                  : signal.addEventListener("abort", resolve, { once: true }),
+              );
+              // The broker's host-level teardown resolves on the microtask
+              // queue after the abort.
+              await new Promise((resolve) => queueMicrotask(resolve));
+              events.push(`teardown:${id}`);
+            } finally {
+              events.push(`end:${id}`);
+            }
+          },
+        }),
+      };
+      const session = {
+        signal: new AbortController().signal,
+        context: { resource: { threadId: "admission", environmentId: "e" } },
+      };
+      const panel = { resetInput() {}, resize() {}, sendInput() {} };
+      const assets = { kind: "ready", runtime: {}, symbolsFontUrl: "fixture" };
+      const ids = ["a1", "a2", "a3", "a4", "a5", "a6", "a7", "h"];
+      const paneProps = (terminalId, shown) => ({
+        host,
+        session,
+        panel,
+        terminalId,
+        streamKeyPrefix: "admission",
+        active: false,
+        shown,
+        visible: true,
+        assets,
+        themeVars: null,
+        appearanceVars: null,
+      });
+      const render = (mountIds, shownIds) =>
+        React.createElement(
+          React.Fragment,
+          null,
+          ...mountIds.map((terminalId) =>
+            React.createElement(bundle.TerminalPane, {
+              ...paneProps(terminalId, shownIds.includes(terminalId)),
+              key: terminalId,
+            }),
+          ),
+        );
+      // Seven mandatory panes plus one optional (the hidden pane) fill the
+      // pool; a ninth visible pane can only get a slot by evicting it.
+      let renderer;
+      await act(async () => {
+        renderer = create(render(ids, ids.slice(0, 7)), { createNodeMock: nodeMock });
+      });
+      try {
+        await act(async () => {
+          renderer.update(render([...ids, "b"], [...ids.slice(0, 7), "b"]));
+        });
+        NodeAssert.ok(events.includes("open:b"), `replacement never opened: ${events.join(",")}`);
+        NodeAssert.ok(
+          events.includes("teardown:h"),
+          `victim teardown never resolved: ${events.join(",")}`,
+        );
+        NodeAssert.ok(
+          events.indexOf("teardown:h") < events.indexOf("open:b"),
+          `the replacement opened before the victim's teardown resolved: ${events.join(",")}`,
+        );
+      } finally {
+        await act(async () => renderer.unmount());
+      }
+    },
+  );
+});
+
+NodeTest.describe("broker-shared budget (terminal-broker-shared-budget)", () => {
+  NodeTest.test(
+    "a pane refused by the broker waits honestly and attaches when capacity returns",
+    async () => {
+      // R6: the hub's client-side budget cannot see another client
+      // document of the same installation — the broker's refusal is the
+      // authoritative accounting. Pre-fix the refusal surfaced as the
+      // pane's transport error ("Plugin stream limit reached") and the
+      // pane never retried. Now it shows the same waiting notice as a
+      // refused hub acquire and retries with backoff until the other
+      // client releases.
+      let otherClientHolds = true;
+      const opens = [];
+      const host = {
+        subscribeApi: (request, signal) => ({
+          async *[Symbol.asyncIterator]() {
+            if (request.name === "subscribe") {
+              if (otherClientHolds) throw new Error("Plugin stream limit reached");
+              opens.push(request.input?.terminalId);
+            }
+            try {
+              await new Promise((resolve) =>
+                signal.aborted
+                  ? resolve()
+                  : signal.addEventListener("abort", resolve, { once: true }),
+              );
+            } finally {
+              if (request.name === "subscribe") {
+                const index = opens.indexOf(request.input?.terminalId);
+                if (index >= 0) opens.splice(index, 1);
+              }
+            }
+          },
+        }),
+      };
+      const session = {
+        signal: new AbortController().signal,
+        context: { resource: { threadId: "budget", environmentId: "e" } },
+      };
+      const panel = { resetInput() {}, resize() {}, sendInput() {} };
+      const assets = { kind: "ready", runtime: {}, symbolsFontUrl: "fixture" };
+      let renderer;
+      await act(async () => {
+        renderer = create(
+          React.createElement(bundle.TerminalPane, {
+            host,
+            session,
+            panel,
+            terminalId: "shared",
+            streamKeyPrefix: "budget",
+            active: false,
+            shown: true,
+            visible: true,
+            assets,
+            themeVars: null,
+            appearanceVars: null,
+          }),
+          { createNodeMock: nodeMock },
+        );
+      });
+      const waiting = () =>
+        renderer.root.findAll((node) => node.props["aria-label"] === "Stream budget").length;
+      const statusText = () =>
+        renderer.root
+          .find((node) => node.props["aria-label"] === "Output status")
+          .children.join("");
+      try {
+        // Refused once: the honest waiting notice, and the pane is NOT in
+        // error — the refusal never reached the attachment.
+        NodeAssert.equal(waiting(), 1);
+        NodeAssert.doesNotMatch(statusText(), /limit reached/);
+        NodeAssert.doesNotMatch(statusText(), /error/i);
+        // The other client releases; the backoff retry (400ms) attaches.
+        otherClientHolds = false;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 550));
+        });
+        NodeAssert.equal(waiting(), 0);
+        NodeAssert.deepEqual(opens, ["shared"]);
+      } finally {
+        await act(async () => renderer.unmount());
+      }
+    },
+  );
+
+  NodeTest.test(
+    "a refused sessions list stays connecting and goes live once capacity returns",
+    async () => {
+      // The same broker refusal on the sessions feed: the panel must not
+      // burn its closed-stream attempts on capacity, nor disable New over
+      // it — it stays "connecting" through the backoff and the retry's
+      // snapshot takes it live.
+      let listRefusals = 0;
+      const host = {
+        readAsset: () => new Promise(() => {}),
+        invokeApi: async () => ({ tokens: {}, cssVars: {} }),
+        subscribeApi: (request, signal) => ({
+          async *[Symbol.asyncIterator]() {
+            if (request.name === "list") {
+              if (listRefusals < 1) {
+                listRefusals += 1;
+                throw new Error("Plugin stream limit reached");
+              }
+              yield { value: { kind: "snapshot", terminals: [] } };
+            }
+            await new Promise((resolve) =>
+              signal.aborted
+                ? resolve()
+                : signal.addEventListener("abort", resolve, { once: true }),
+            );
+          },
+        }),
+      };
+      const session = {
+        signal: new AbortController().signal,
+        context: { resource: { threadId: "budget-view", environmentId: "e" } },
+        visible: true,
+        save() {},
+        onVisibility: () => () => {},
+        bindCommands: () => () => {},
+      };
+      let renderer;
+      await act(async () => {
+        renderer = create(React.createElement(bundle.TerminalView, { host, session }), {
+          createNodeMock: nodeMock,
+        });
+      });
+      const newButton = () =>
+        renderer.root
+          .findAllByType("button")
+          .find((node) => node.children.includes("New terminal"));
+      const headerStatus = () =>
+        renderer.root
+          .findAllByType("span")
+          .map((node) => node.children.join(""))
+          .find((text) => /Connecting|disconnected/.test(text));
+      try {
+        // Through the refusal: honest "connecting", New gated on live — but
+        // the panel is not disconnected over capacity.
+        NodeAssert.match(headerStatus(), /Connecting/);
+        NodeAssert.equal(newButton().props.disabled, true);
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 550));
+        });
+        // The retry's snapshot took the panel live.
+        NodeAssert.equal(headerStatus(), undefined);
+        NodeAssert.equal(newButton().props.disabled, false);
+      } finally {
+        await act(async () => renderer.unmount());
+      }
+    },
+  );
+});
+
 /**
  * A full TerminalView over one restored, live pane, with the capture →
  * VT-target traversal a real key press takes. The ChatView host-capture step

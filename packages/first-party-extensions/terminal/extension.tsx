@@ -42,7 +42,7 @@ import {
 } from "./surfaceKeys.ts";
 import { useTerminalSelectionMenu, type TerminalChatSink } from "./selectionMenu.tsx";
 import { readAssetWithRetry, sharedLoad, type ReadAsset } from "./assetLoader.ts";
-import { TerminalStreamHub, type TerminalPaneLease } from "./streamHub.ts";
+import { isBrokerStreamRefusal, TerminalStreamHub, type TerminalPaneLease } from "./streamHub.ts";
 import { terminalFontFromVars, terminalThemeFromApp } from "./terminalTheme.ts";
 import { TerminalVtAttachment, pumpTerminalOutput } from "./vtAttachment.ts";
 import {
@@ -262,6 +262,11 @@ function useSessionsStream(
           // A `closed` frame (queue overflow / terminal error) or a dropped
           // stream is recoverable: each fresh subscription starts from a new
           // snapshot. Bounded retries keep a noisy stream from spinning.
+          // Broker refusals are tracked separately: capacity another client
+          // of the installation is spending never reaches this hub, so the
+          // panel stays "connecting" and backs off rather than burning the
+          // closed-stream attempts or disabling New over capacity.
+          let refusals = 0;
           for (let attempt = 1; attempt <= 3 && !signal.aborted; attempt += 1) {
             sink.status("connecting", null);
             let closed = false;
@@ -280,6 +285,16 @@ function useSessionsStream(
                 }
               }
             } catch (error) {
+              if (!signal.aborted && isBrokerStreamRefusal(error)) {
+                refusals += 1;
+                if (refusals > 8) {
+                  sink.status("disconnected", "Session list stream was refused repeatedly.");
+                  return;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 400 * refusals));
+                attempt = 0; // capacity is not stream noise — keep the budget
+                continue;
+              }
               if (!signal.aborted)
                 sink.status(
                   "disconnected",
@@ -579,9 +594,19 @@ function TerminalPane(props: {
     let stopped = false;
     let run: { controller: AbortController; lease: TerminalPaneLease } | null = null;
     let retryRegistration: (() => void) | null = null;
+    // Broker refusals are capacity this hub cannot see (another client
+    // document of the installation, or the environment's 64-stream pool):
+    // retry with capped backoff instead of erroring the pane, resetting
+    // once a stream runs clean.
+    let brokerRefusals = 0;
+    let brokerRefusalTimer: ReturnType<typeof setTimeout> | null = null;
     const stopRun = () => {
       retryRegistration?.();
       retryRegistration = null;
+      if (brokerRefusalTimer !== null) {
+        clearTimeout(brokerRefusalTimer);
+        brokerRefusalTimer = null;
+      }
       const current = run;
       run = null;
       current?.lease.release();
@@ -609,35 +634,72 @@ function TerminalPane(props: {
       setStreamBlocked(false);
       const controller = new AbortController();
       run = { controller, lease };
-      void pumpTerminalOutput({
-        subscribe: (subscribeSignal) => {
-          const source = bindStreamApi(terminalOutputEventsApi, host, session.context).subscribe(
-            "subscribe",
-            { terminalId },
-            subscribeSignal,
-          );
-          return (async function* () {
-            for await (const frame of source) {
-              const value = frame.value as TerminalOutputEventsValue;
-              // identity-changed means a new process epoch and exit/error means
-              // the process is gone — pending input is stale for both. Overflow
-              // keeps the same incarnation; a reset is only a screen clear.
-              if (value.kind === "closed" && value.reason !== "overflow") {
-                panel.resetInput(terminalId);
-              }
-              yield { streamId: frame.streamId, sequence: frame.sequence, value };
-            }
-          })();
-        },
-        attachment,
-        signal: AbortSignal.any([controller.signal, session.signal]),
-      }).finally(() => {
-        // The pump ended — the stream finished, or evict/cleanup aborted it
-        // and already released the lease (release is idempotent).
-        if (run?.controller === controller) {
-          run = null;
-          lease.release();
+      // The pump start waits out the admission gate: when this acquire
+      // evicted a pane, the victim's host-level teardown is still resolving
+      // and an immediate subscribe would contend with it for one broker
+      // slot. Evicted mid-gate (or unmounted), `run` no longer matches and
+      // the pump never starts — the guard then reports this lease's settle
+      // itself, so the eviction's replacement is not left waiting.
+      void lease.admitted.then(() => {
+        if (stopped || run?.controller !== controller) {
+          lease.streamSettled();
+          return;
         }
+        let refused = false;
+        void pumpTerminalOutput({
+          subscribe: (subscribeSignal) => {
+            const source = bindStreamApi(terminalOutputEventsApi, host, session.context).subscribe(
+              "subscribe",
+              { terminalId },
+              subscribeSignal,
+            );
+            return (async function* () {
+              for await (const frame of source) {
+                const value = frame.value as TerminalOutputEventsValue;
+                // identity-changed means a new process epoch and exit/error means
+                // the process is gone — pending input is stale for both. Overflow
+                // keeps the same incarnation; a reset is only a screen clear.
+                if (value.kind === "closed" && value.reason !== "overflow") {
+                  panel.resetInput(terminalId);
+                }
+                yield { streamId: frame.streamId, sequence: frame.sequence, value };
+              }
+            })();
+          },
+          attachment,
+          signal: AbortSignal.any([controller.signal, session.signal]),
+          refusal: isBrokerStreamRefusal,
+          onRefused: () => {
+            refused = true;
+            brokerRefusals += 1;
+            // The same honest waiting notice as a refused hub acquire: the
+            // budget is spent elsewhere (possibly another client), so say
+            // so and attach as soon as a slot frees. The `.finally` below
+            // releases this lease first; the timer's re-acquire sees a free
+            // effect and goes through the hub honestly.
+            setStreamBlocked(true);
+            brokerRefusalTimer = setTimeout(
+              () => {
+                brokerRefusalTimer = null;
+                if (!stopped) acquire(shownRef.current);
+              },
+              Math.min(400 * brokerRefusals, 3200),
+            );
+          },
+        }).finally(() => {
+          // The pump ended — the stream finished, or evict/cleanup aborted it
+          // and already released the lease (release is idempotent).
+          if (run?.controller === controller) {
+            run = null;
+            lease.release();
+          }
+          // The stream this lease admitted has fully drained — exactly the
+          // report any admission evicted for this slot is gated on.
+          lease.streamSettled();
+          // A clean end (stream finished or aborted, never refused) earns a
+          // fresh backoff budget; refusals keep escalating to the cap.
+          if (!refused) brokerRefusals = 0;
+        });
       });
     };
     acquireStreamRef.current = (mandatory: boolean) => {

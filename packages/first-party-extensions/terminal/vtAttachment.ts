@@ -113,8 +113,10 @@ export class TerminalVtAttachment {
    * replaying them suppressed would silently drop queries the process is
    * still waiting on. Replayed once with replies enabled, then cleared.
    * Snapshot/history bytes are treated as already-rendered history and
-   * stay suppressed (native parity) — only live output the attachment saw
-   * go undelivered earns a reply.
+   * stay suppressed (native parity), with one exception: the first
+   * snapshot proven to cover the whole window since process start is
+   * claimed as the window's first gap — its queries' owning process is
+   * still waiting on answers (R7).
    */
   #unanswered: { start: number; data: string }[] = [];
   /**
@@ -567,10 +569,29 @@ export class TerminalVtAttachment {
       // reply. Claim the range positionally (same window only; a missed
       // clear makes the old end meaningless) so replay answers it, live
       // now or at the next attach.
+      // First snapshot ever, proven complete since process start (nothing
+      // truncated, no clears, window origin at unit 0 — the same evidence
+      // #replayFaithful requires): the contents ARE the whole stream, and
+      // nothing has parsed them with the PTY reply writer attached (native
+      // answers only live writes). Seed the gap boundary at the window
+      // origin so the claim path below treats the entire snapshot as the
+      // first subscription gap — a program that probed (DA/DSR) before
+      // this client attached gets its answer now on a live sink or at the
+      // next attach, instead of waiting for a reshow cycle to re-deliver
+      // the bytes. A truncated, cleared, or evicted first snapshot keeps
+      // the old suppressed replay: its provenance is not provable.
+      const firstWindow =
+        priorWindow === null &&
+        priorUnitStart === null &&
+        !value.truncated &&
+        value.clearGeneration === 0 &&
+        value.contentsUnitStart === 0;
       const sameWindow =
-        priorWindow !== null && priorWindow.epoch === value.streamEpoch && !missedClear;
-      const priorEnd =
-        priorUnitStart === null
+        firstWindow ||
+        (priorWindow !== null && priorWindow.epoch === value.streamEpoch && !missedClear);
+      const priorEnd = firstWindow
+        ? 0
+        : priorUnitStart === null
           ? null
           : priorUnitStart + priorBaseLength + priorHole + priorBufferedLength;
       const boundaryEnd = value.contentsUnitStart + value.contents.length;
@@ -828,6 +849,14 @@ export async function pumpTerminalOutput(options: {
   readonly subscribe: (signal: AbortSignal) => AsyncIterable<TerminalOutputFrame>;
   readonly attachment: TerminalVtAttachment;
   readonly signal: AbortSignal;
+  /**
+   * Classifies a subscribe error as broker capacity (isBrokerStreamRefusal
+   * shape). A refusal is reported through `onRefused` and ends this pump
+   * without touching the attachment — the caller waits and retries.
+   */
+  readonly refusal?: (error: unknown) => boolean;
+  /** The broker refused the stream: capacity, not failure. */
+  readonly onRefused?: () => void;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly now?: () => number;
 }): Promise<void> {
@@ -854,6 +883,10 @@ export async function pumpTerminalOutput(options: {
         }
       }
     } catch (error) {
+      if (options.refusal?.(error) === true) {
+        options.onRefused?.();
+        return;
+      }
       if (!signal.aborted) {
         attachment.applyTransportError(
           error instanceof Error ? error.message : "Terminal output unavailable",

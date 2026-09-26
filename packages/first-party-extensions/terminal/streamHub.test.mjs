@@ -8,7 +8,12 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 
-import { BROKER_STREAM_CAP, FEED_REPLAY_MAX_FRAMES, TerminalStreamHub } from "./streamHub.ts";
+import {
+  BROKER_STREAM_CAP,
+  FEED_REPLAY_MAX_FRAMES,
+  TerminalStreamHub,
+  isBrokerStreamRefusal,
+} from "./streamHub.ts";
 import { TerminalPanel } from "./viewModel.ts";
 
 // Deterministic eviction order: each demotion stamps a later clock tick.
@@ -35,6 +40,24 @@ NodeTest.test("broker cap is 8 and the pane budget shrinks with live fixed feeds
   NodeAssert.equal(hub.paneStreamBudget(), 7);
   detachFeed();
   NodeAssert.equal(hub.paneStreamBudget(), 8);
+});
+
+NodeTest.test("isBrokerStreamRefusal matches only the broker's capacity refusals", () => {
+  // R6: the broker's own accounting is authoritative — another client of
+  // the installation or another plugin in the environment spends the same
+  // caps. Exactly these messages mean capacity (wait and retry), never a
+  // transport failure.
+  for (const message of [
+    "Plugin stream limit reached",
+    "Environment stream limit reached",
+    "Worker stream limit reached",
+  ]) {
+    NodeAssert.equal(isBrokerStreamRefusal(new Error(message)), true, message);
+  }
+  NodeAssert.equal(isBrokerStreamRefusal(new Error("WebSocket dropped")), false);
+  NodeAssert.equal(isBrokerStreamRefusal(new Error("Plugin stream limit reached: extra")), false);
+  NodeAssert.equal(isBrokerStreamRefusal("Plugin stream limit reached"), false);
+  NodeAssert.equal(isBrokerStreamRefusal(null), false);
 });
 
 NodeTest.test("fixed feed runs one driver for many listeners and fans out", () => {
@@ -466,6 +489,132 @@ NodeTest.test("mandatory slots are never evicted; setPriority demotes to evictab
   advance();
   NodeAssert.ok(hub.acquirePaneStream("late", { mandatory: true, onEvicted() {} }) !== null);
   NodeAssert.deepEqual(evicted, ["pinned"]);
+});
+
+NodeTest.test("an eviction-granted slot admits only after the victim reports settled", async () => {
+  // R5 stream admission order: the subscription for a pane that evicted a
+  // victim must not open while the victim's host-level teardown is still
+  // resolving — under a full broker the two would contend for one slot. The
+  // victim's teardown resolves on the microtask queue but is only PROVEN
+  // drained when its caller reports `streamSettled`; the admission gate
+  // holds for that report, not for any fixed microtask count.
+  const { hub } = clockHub();
+  const order = [];
+  const victim = hub.acquirePaneStream("victim", {
+    mandatory: false,
+    onEvicted: () => order.push("evicted"),
+  });
+  for (let index = 0; index < BROKER_STREAM_CAP - 1; index += 1) {
+    hub.acquirePaneStream(`f${index}`, { mandatory: true, onEvicted() {} });
+  }
+  const replacement = hub.acquirePaneStream("replacement", {
+    mandatory: true,
+    onEvicted() {},
+  });
+  NodeAssert.ok(replacement !== null);
+  NodeAssert.deepEqual(order, ["evicted"]);
+  void replacement.admitted.then(() => order.push("admitted"));
+  // Microtasks alone never open the gate — only the victim's settle does.
+  await new Promise((resolve) => queueMicrotask(resolve));
+  await new Promise((resolve) => queueMicrotask(resolve));
+  NodeAssert.deepEqual(order, ["evicted"]);
+  victim.streamSettled();
+  await replacement.admitted;
+  NodeAssert.deepEqual(order, ["evicted", "admitted"]);
+  // The report is one-shot: a later settle by the same (dead) lease is a
+  // no-op, so no future admission can be released by a stale report.
+  victim.streamSettled();
+  NodeAssert.deepEqual(order, ["evicted", "admitted"]);
+});
+
+NodeTest.test("a settle reported synchronously inside onEvicted still admits", async () => {
+  // The eviction callback may run synchronous teardown that reports the
+  // victim's stream settled in the same tick. The drain must be registered
+  // before the callback runs, or that report no-ops and the replacement's
+  // admission never resolves — a mandatory pane stuck on "connecting"
+  // forever, holding a slot nothing can evict.
+  const { hub } = clockHub();
+  let victimLease = null;
+  victimLease = hub.acquirePaneStream("victim", {
+    mandatory: false,
+    onEvicted: () => victimLease.streamSettled(),
+  });
+  for (let index = 0; index < BROKER_STREAM_CAP - 1; index += 1) {
+    hub.acquirePaneStream(`f${index}`, { mandatory: true, onEvicted() {} });
+  }
+  const replacement = hub.acquirePaneStream("replacement", {
+    mandatory: true,
+    onEvicted() {},
+  });
+  NodeAssert.ok(replacement !== null);
+  let admitted = false;
+  void replacement.admitted.then(() => {
+    admitted = true;
+  });
+  await new Promise((resolve) => queueMicrotask(resolve));
+  await new Promise((resolve) => queueMicrotask(resolve));
+  NodeAssert.equal(admitted, true);
+});
+
+NodeTest.test("a chained eviction settles gate-to-gate without a hang", async () => {
+  // B holds a slot gated on C's drain, then demotes and is evicted by A.
+  // When C settles, B's caller (its gated-start guard) reports B settled —
+  // exactly the report A's admission waits on. The chain must terminate
+  // through the per-victim gates instead of deadlocking.
+  const { hub, advance } = clockHub();
+  const c = hub.acquirePaneStream("c", { mandatory: false, onEvicted() {} });
+  advance();
+  for (let index = 0; index < BROKER_STREAM_CAP - 1; index += 1) {
+    hub.acquirePaneStream(`f${index}`, { mandatory: true, onEvicted() {} });
+  }
+  const b = hub.acquirePaneStream("b", { mandatory: true, onEvicted() {} });
+  NodeAssert.ok(b !== null); // evicted c; b gated on c's drain
+  b.setPriority(false); // b demotes — evictable while still gated
+  advance();
+  const a = hub.acquirePaneStream("a", { mandatory: true, onEvicted() {} });
+  NodeAssert.ok(a !== null); // evicted b; a gated on b's drain
+  const order = [];
+  void a.admitted.then(() => order.push("a"));
+  void b.admitted.then(() => {
+    // b's gated start never ran (it was evicted while gated): its guard
+    // reports settled — the report a's admission waits on.
+    order.push("b-gate-open");
+    b.streamSettled();
+  });
+  c.streamSettled();
+  await new Promise((resolve) => queueMicrotask(resolve));
+  await new Promise((resolve) => queueMicrotask(resolve));
+  NodeAssert.deepEqual(order, ["b-gate-open", "a"]);
+});
+
+NodeTest.test("admission settles immediately when no eviction happened", async () => {
+  const { hub } = clockHub();
+  const plain = hub.acquirePaneStream("plain", { mandatory: true, onEvicted() {} });
+  const order = [];
+  void plain.admitted.then(() => order.push("admitted"));
+  await Promise.resolve();
+  NodeAssert.deepEqual(order, ["admitted"]);
+});
+
+NodeTest.test("a fixed feed that preempted a pane starts after the victim settles", async () => {
+  // The same admission race as pane eviction, from the feed side: a fixed
+  // feed reclaiming an optional pane slot must not start its subscription
+  // while the evicted pane's host-level teardown is still resolving.
+  const { hub, advance } = clockHub();
+  const started = [];
+  const victims = [];
+  for (let index = 0; index < BROKER_STREAM_CAP; index += 1) {
+    victims.push(hub.acquirePaneStream(`h${index}`, { mandatory: false, onEvicted() {} }));
+    advance();
+  }
+  hub.acquireFixedFeed("sessions:e:t", { onFrame() {}, onStatus() {} }, () => {
+    started.push("driver");
+  });
+  await new Promise((resolve) => queueMicrotask(resolve));
+  NodeAssert.deepEqual(started, []); // the evicted pane's drain is owed
+  victims[0].streamSettled();
+  await new Promise((resolve) => queueMicrotask(resolve));
+  NodeAssert.deepEqual(started, ["driver"]);
 });
 
 NodeTest.test("optional slot promotes on re-prioritization", () => {
