@@ -124,30 +124,41 @@ export function createProjectHistory(
 export type ProjectHistory = ReturnType<typeof createProjectHistory>;
 
 /**
- * Settles an engine command receipt for `dispatch`. The events stream may
- * already have applied a newer revision, so the receipt's snapshot is adopted
- * (or its refusal shown) only when it is not older than `lastRevision`. The
- * accepted command's own side effect — recording the visit — belongs to the
- * command, not the snapshot, so it runs exactly once whenever the command was
- * accepted.
+ * The view's `dispatch`: runs one engine command and settles its receipt. The
+ * events stream may already have applied a newer revision, so the receipt's
+ * snapshot is adopted (or its refusal shown) only when it is not older than
+ * `lastRevision`. The accepted command's own side effect — recording the
+ * visit — belongs to the command, not the snapshot, so it runs exactly once
+ * whenever the command was accepted. Nothing settles after `signal` aborts.
  */
-export function settleCommandReceipt(
-  receipt: { readonly revision: number; readonly outcome: string },
-  lastRevision: { current: number },
-  handlers: {
-    readonly adopt: () => void;
-    readonly refuse: (outcome: string) => void;
-    readonly onAccepted?: (() => void) | undefined;
-  },
-): void {
-  const stale = receipt.revision < lastRevision.current;
-  if (!stale) lastRevision.current = receipt.revision;
-  if (receipt.outcome !== "accepted") {
-    if (!stale) handlers.refuse(receipt.outcome);
-    return;
-  }
-  if (!stale) handlers.adopt();
-  handlers.onAccepted?.();
+export function createCommandDispatch<
+  Receipt extends { readonly revision: number; readonly outcome: string },
+>(options: {
+  readonly signal: AbortSignal;
+  readonly lastRevision: { current: number };
+  readonly adopt: (receipt: Receipt) => void;
+  readonly refuse: (outcome: string) => void;
+  readonly fail: (error: unknown) => void;
+}) {
+  const { signal, lastRevision } = options;
+  return (run: (signal: AbortSignal) => Promise<Receipt>, onAccepted?: () => void): void => {
+    void run(signal).then(
+      (receipt) => {
+        if (signal.aborted) return;
+        const stale = receipt.revision < lastRevision.current;
+        if (!stale) lastRevision.current = receipt.revision;
+        if (receipt.outcome !== "accepted") {
+          if (!stale) options.refuse(receipt.outcome);
+          return;
+        }
+        if (!stale) options.adopt(receipt);
+        onAccepted?.();
+      },
+      (error) => {
+        if (!signal.aborted) options.fail(error);
+      },
+    );
+  };
 }
 
 /**

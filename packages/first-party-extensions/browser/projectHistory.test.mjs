@@ -2,10 +2,10 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 
 import {
+  createCommandDispatch,
   createProjectHistory,
   displayedHistory,
   projectHistoryErrorState,
-  settleCommandReceipt,
   titleUpdate,
 } from "./projectHistory.ts";
 import { isLeaseUrl } from "./viewModel.ts";
@@ -194,51 +194,88 @@ NodeTest.describe("displayedHistory", () => {
   });
 });
 
-NodeTest.describe("settleCommandReceipt", () => {
-  /** `dispatch`'s receipt handling, recording through a real `createProjectHistory`. */
+NodeTest.describe("createCommandDispatch", () => {
+  /**
+   * The view's `dispatch`, recording through a real `createProjectHistory`
+   * the way `submit` wires `go(url, () => projectHistory.record(url))`.
+   * `send` returns the pending receipt; awaiting it resumes after dispatch's
+   * own settle handler, which was registered first.
+   */
   function dispatchHarness(lastRevision) {
     const api = scriptedApi();
-    const history = createProjectHistory(api, new AbortController().signal, () => {});
+    const session = new AbortController();
+    const history = createProjectHistory(api, session.signal, () => {});
     const effects = [];
-    const settle = (receipt, url) =>
-      settleCommandReceipt(receipt, lastRevision, {
-        adopt: () => effects.push(["adopt", receipt.revision]),
-        refuse: (outcome) => effects.push(["refuse", outcome]),
-        onAccepted: url ? () => history.record(url) : undefined,
-      });
+    const dispatch = createCommandDispatch({
+      signal: session.signal,
+      lastRevision,
+      adopt: (receipt) => effects.push(["adopt", receipt.revision]),
+      refuse: (outcome) => effects.push(["refuse", outcome]),
+      fail: (error) => effects.push(["fail", error.message]),
+    });
+    const send = (url) => {
+      const receipt = deferred();
+      dispatch(() => receipt.promise, url ? () => history.record(url) : undefined);
+      return receipt;
+    };
     const records = () => api.calls.filter((call) => call.method === "record");
-    return { settle, effects, records };
+    return { send, effects, records, session };
   }
 
-  NodeTest.it("records an accepted visit once when the stream already applied a newer page", () => {
-    const lastRevision = { current: 4 };
-    const { settle, effects, records } = dispatchHarness(lastRevision);
-    // The events stream's upsert at revision 6 lands before the navigate receipt at 5.
-    lastRevision.current = Math.max(lastRevision.current, 6);
-    settle({ revision: 5, outcome: "accepted" }, "https://typed.test/");
-    NodeAssert.deepEqual(effects, []);
-    NodeAssert.equal(lastRevision.current, 6);
-    NodeAssert.deepEqual(
-      records().map((call) => call.input),
-      [{ url: "https://typed.test/" }],
-    );
-  });
+  NodeTest.it(
+    "records an accepted visit once when the stream already applied a newer page",
+    async () => {
+      const lastRevision = { current: 4 };
+      const { send, effects, records } = dispatchHarness(lastRevision);
+      const navigate = send("https://typed.test/");
+      // The events stream's upsert at revision 6 lands before the navigate receipt at 5.
+      lastRevision.current = Math.max(lastRevision.current, 6);
+      navigate.resolve({ revision: 5, outcome: "accepted" });
+      await navigate.promise;
+      NodeAssert.deepEqual(effects, []);
+      NodeAssert.equal(lastRevision.current, 6);
+      NodeAssert.deepEqual(
+        records().map((call) => call.input),
+        [{ url: "https://typed.test/" }],
+      );
+    },
+  );
 
-  NodeTest.it("adopts a current receipt and records once", () => {
+  NodeTest.it("adopts a current receipt and records once", async () => {
     const lastRevision = { current: 4 };
-    const { settle, effects, records } = dispatchHarness(lastRevision);
-    settle({ revision: 5, outcome: "accepted" }, "https://typed.test/");
+    const { send, effects, records } = dispatchHarness(lastRevision);
+    const navigate = send("https://typed.test/");
+    navigate.resolve({ revision: 5, outcome: "accepted" });
+    await navigate.promise;
     NodeAssert.deepEqual(effects, [["adopt", 5]]);
     NodeAssert.equal(lastRevision.current, 5);
     NodeAssert.equal(records().length, 1);
   });
 
-  NodeTest.it("never records a refused command, and a stale refusal stays silent", () => {
+  NodeTest.it("never records a refused command, and a stale refusal stays silent", async () => {
     const lastRevision = { current: 4 };
-    const { settle, effects, records } = dispatchHarness(lastRevision);
-    settle({ revision: 5, outcome: "rejected" }, "https://typed.test/");
-    settle({ revision: 3, outcome: "rejected" }, "https://typed.test/");
+    const { send, effects, records } = dispatchHarness(lastRevision);
+    const current = send("https://typed.test/");
+    const stale = send("https://typed.test/");
+    current.resolve({ revision: 5, outcome: "rejected" });
+    stale.resolve({ revision: 3, outcome: "rejected" });
+    await Promise.all([current.promise, stale.promise]);
     NodeAssert.deepEqual(effects, [["refuse", "rejected"]]);
+    NodeAssert.equal(records().length, 0);
+  });
+
+  NodeTest.it("settles nothing once the view session ends, and reports live failures", async () => {
+    const lastRevision = { current: 4 };
+    const { send, effects, records, session } = dispatchHarness(lastRevision);
+    const failed = send("https://typed.test/");
+    failed.reject(new Error("offline"));
+    await failed.promise.catch(() => {});
+    const late = send("https://typed.test/");
+    session.abort();
+    late.resolve({ revision: 5, outcome: "accepted" });
+    await late.promise;
+    NodeAssert.deepEqual(effects, [["fail", "offline"]]);
+    NodeAssert.equal(lastRevision.current, 4);
     NodeAssert.equal(records().length, 0);
   });
 });
