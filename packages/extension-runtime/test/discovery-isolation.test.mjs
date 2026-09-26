@@ -293,6 +293,61 @@ NodeTest.test(
 );
 
 NodeTest.test(
+  "selecting a provider whose worker is still starting does not mark it failed",
+  { timeout: 10000 },
+  async (t) => {
+    const f = await fixture(t);
+    const release = JSON.stringify(NodePath.join(f.directory, "release-second"));
+    const make = (id, code) => {
+      const pkg = metadata(id, { provides: [sharedApi] });
+      return f.install(pkg, code?.(pkg) ?? implementation(pkg, sharedResult(id)));
+    };
+    const first = await make("test.first");
+    // The first real start holds until the release file exists; the restart after selection
+    // finds it and becomes ready.
+    const second = await make("test.second", (pkg) =>
+      gated(
+        pkg,
+        f.directory,
+        "second",
+        "await fs.stat(" + release + ").catch(() => new Promise(() => {}));",
+        sharedResult("test.second"),
+      ),
+    );
+    const consumerPkg = metadata("test.consumer", {
+      provides: [],
+      requires: [{ id: sharedApi.id, versionRange: "^1" }],
+    });
+    const consumer = await f.install(consumerPkg);
+    await f.runtime.selectApi({
+      id: sharedApi.id,
+      providerId: first.id,
+      fallbackProviderIds: [second.id],
+    });
+
+    const { entered } = await entrySocket(t, f.directory, "second");
+    const entries = await f.discover(consumer);
+    NodeAssert.equal(
+      entries.find((entry) => entry.id === sharedApi.id && entry.selected).providerId,
+      first.id,
+    );
+    await entered;
+    await NodeFSP.writeFile(JSON.parse(release), "released");
+    await f.runtime.selectApi({
+      id: sharedApi.id,
+      providerId: second.id,
+      fallbackProviderIds: [first.id],
+    });
+    const after = await f.discover(consumer);
+    NodeAssert.equal(
+      after.find((entry) => entry.id === sharedApi.id && entry.selected).providerId,
+      second.id,
+    );
+    NodeAssert.equal((await invokeShared(f, consumer)).surfaceId, "test.second/files");
+  },
+);
+
+NodeTest.test(
   "selection changes apply while an unrelated provider is still starting",
   { timeout: 10000 },
   async (t) => {
