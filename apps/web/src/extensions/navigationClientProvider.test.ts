@@ -251,5 +251,26 @@ describe("navigation provider", () => {
         reason: "opener-refused",
       });
     });
+
+    it("reports a popup the browser blocked as refused through the real web opener", async () => {
+      vi.stubGlobal("window", { open: vi.fn(() => null) });
+      try {
+        const real = createNavigationClientProvider(
+          {
+            environmentId: EnvironmentId.make(ENV),
+            client: "web",
+            emit: vi.fn(),
+            installations: () => [installation([SESSION_GRANT])],
+          },
+          vi.fn(async () => {}),
+        );
+        await expect(real.invoke(openSession("https://claude.ai/code/s"))).resolves.toEqual({
+          status: "refused",
+          reason: "opener-refused",
+        });
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
   });
 });

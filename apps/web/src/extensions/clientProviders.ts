@@ -1203,7 +1203,8 @@ export interface ExternalOpener {
 
 /**
  * Desktop hands the URL to Electron's shell (which re-checks its own
- * allowlist); web opens a `noopener` window. Undefined outside a window.
+ * allowlist); web opens a severed browser window. Both reject when nothing
+ * opened (a declined URL, a blocked popup). Undefined outside a window.
  */
 function localExternalOpener(): ExternalOpener | undefined {
   const api = readLocalApi();

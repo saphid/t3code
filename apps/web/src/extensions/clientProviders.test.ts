@@ -1434,8 +1434,24 @@ describe("external provider", () => {
     ).resolves.toEqual({ status: "refused", reason: "opener-refused" });
   });
 
-  it("falls back to a noopener window on web", async () => {
-    const open = vi.fn();
+  it("opens a severed browser window on web and reports a blocked popup as refused", async () => {
+    const clicked: { href: string; rel: string }[] = [];
+    const popup = {
+      opener: {} as unknown,
+      document: {
+        createElement: () => {
+          const link = {
+            href: "",
+            rel: "",
+            click: () => clicked.push({ href: link.href, rel: link.rel }),
+          };
+          return link;
+        },
+        body: { append: () => {} },
+      },
+    };
+    let popupsAllowed = true;
+    const open = vi.fn(() => (popupsAllowed ? popup : null));
     vi.stubGlobal("window", { open });
     const provider = createExternalClientProvider(makeDeps(EXTERNAL));
     await expect(
@@ -1445,7 +1461,15 @@ describe("external provider", () => {
       url: "http://localhost:3000/",
       opener: "browser-window",
     });
-    expect(open).toHaveBeenCalledWith("http://localhost:3000/", "_blank", "noopener,noreferrer");
+    expect(open).toHaveBeenCalledWith("about:blank", "_blank");
+    expect(popup.opener).toBeNull();
+    expect(clicked).toEqual([{ href: "http://localhost:3000/", rel: "noreferrer" }]);
+
+    popupsAllowed = false;
+    await expect(
+      provider.invoke(invokeCall("open", { url: "http://localhost:3000" })),
+    ).resolves.toEqual({ status: "refused", reason: "opener-refused" });
+    expect(clicked).toHaveLength(1);
   });
 });
 
