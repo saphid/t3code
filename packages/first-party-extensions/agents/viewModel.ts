@@ -18,8 +18,14 @@
  * grouping/count rules identical rather than approximated.
  */
 import { projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { WORKFLOW_NAME_PATTERN } from "@t3tools/extension-sdk/catalogue";
+import {
+  AGENT_SESSIONS_IMPORT,
+  AGENT_SESSIONS_SCAN,
+  WORKFLOW_NAME_PATTERN,
+} from "@t3tools/extension-sdk/catalogue";
 import type {
+  AgentSessionImportReceipt,
+  AgentSessionsScanResult,
   AgentsEvent,
   AgentsState,
   ApprovalOption,
@@ -403,11 +409,6 @@ export const DEFERRED_SECTIONS: readonly DeferredSection[] = [
   {
     title: "Agent logs and output files",
     blocker: "no native web/desktop binding exists — net-new design",
-  },
-  {
-    title: "Agent session scan/import (welcome wizard)",
-    blocker:
-      "native provisioning scan exists (agentSessions scan/import RPC) but is not in the shipped contract surface — needs a narrow public scan contract",
   },
   {
     title: "Mobile Agents surface",
@@ -995,6 +996,66 @@ export function describeReceipt(receipt: OrchestrationReceipt): string {
   return receipt.status === "accepted"
     ? `accepted · seq ${receipt.sequence}`
     : `rejected — ${receipt.error ?? "no detail"}`;
+}
+
+// --- Session import ---------------------------------------------------------
+
+const SESSION_IMPORT_REJECTIONS: Record<
+  Extract<AgentSessionImportReceipt, { status: "rejected" }>["error"],
+  string
+> = {
+  AgentSessionAlreadyImported: "already imported into this project",
+  AgentSessionOutOfScope: "not found in this project any more — scan again",
+  AgentSessionProjectConflict: "already imported into another project",
+  AgentSessionImportRejected: "the host could not import this session",
+};
+
+/** Outcome line for a `t3.agents/sessions` import receipt. */
+export function describeSessionImport(receipt: AgentSessionImportReceipt): string {
+  return receipt.status === "imported"
+    ? `imported · seq ${receipt.sequence} · ${receipt.messageCount} messages`
+    : `rejected — ${SESSION_IMPORT_REJECTIONS[receipt.error]}`;
+}
+
+/**
+ * Status text for a finished scan. `truncated` covers the 50-entry cap and a
+ * discovery cut short by the host's budget or deadline, so the copy promises
+ * only an incomplete list, never "the newest" — an empty truncated scan may
+ * have found nothing yet.
+ */
+export function describeSessionScan(
+  result: Pick<AgentSessionsScanResult, "sessions" | "truncated" | "skipped">,
+): { readonly empty: string | null; readonly note: string | null } {
+  const notes = [
+    result.truncated && result.sessions.length > 0
+      ? "The scan ended early, so this list may be incomplete. Rescan to try again."
+      : null,
+    result.skipped > 0 ? `${result.skipped} transcripts could not be read.` : null,
+  ].filter((note) => note !== null);
+  return {
+    empty:
+      result.sessions.length > 0
+        ? null
+        : result.truncated
+          ? "The scan ended before finding any sessions for this project. Rescan to try again."
+          : "No sessions found for this project.",
+    note: notes.length > 0 ? notes.join(" ") : null,
+  };
+}
+
+/**
+ * A failed scan or import → named text. The broker names a missing grant as
+ * `API capability denied: <grant>`; anything else keeps its (bounded) detail.
+ */
+export function describeSessionsError(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error);
+  for (const grant of [AGENT_SESSIONS_IMPORT, AGENT_SESSIONS_SCAN]) {
+    if (text.includes(`capability denied: ${grant}`))
+      return `This installation is missing the ${grant} grant.`;
+  }
+  if (text.includes("AgentSessionScanTimedOut"))
+    return "The session scan hit its time limit before finding this session. Scan again to retry.";
+  return `Session import is unavailable${text ? ` — ${text.slice(0, 300)}` : ""}.`;
 }
 
 // --- Pending approvals ------------------------------------------------------

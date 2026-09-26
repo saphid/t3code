@@ -72,6 +72,7 @@ import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as EnvironmentExtensions from "./extensions/EnvironmentExtensions.ts";
+import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as ExtensionCatalogueChanges from "./extensions/catalogueChanges.ts";
 import { extensionsHttpApiLayer } from "./extensions/http.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "./persistence/Layers/OrchestrationCommandReceipts.ts";
@@ -616,6 +617,7 @@ export const makeRoutesLayer = Layer.mergeAll(
         OrchestrationCommandReceiptRepositoryLive,
         ProjectionThreadActivityRepositoryLive,
         ProjectionTurnRepositoryLive,
+        AgentSessionScanner.layer,
       ]),
     ),
   ),

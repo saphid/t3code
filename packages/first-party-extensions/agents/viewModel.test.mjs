@@ -30,6 +30,9 @@ import {
   describeNavigationReceipt,
   describeReceipt,
   describeScriptRun,
+  describeSessionImport,
+  describeSessionScan,
+  describeSessionsError,
   elapsedBetween,
   formatAgentModelLabel,
   formatAgentTokenCount,
@@ -441,12 +444,11 @@ NodeTest.describe("deferred sections", () => {
     }
   });
 
-  NodeTest.it("separates the scan/import section from the net-new sections", () => {
-    const scan = DEFERRED_SECTIONS.find((section) => /scan\/import/.test(section.title));
-    NodeAssert.ok(scan, "scan/import gets its own section");
-    NodeAssert.match(scan.blocker, /provisioning scan exists/);
-    NodeAssert.match(scan.blocker, /narrow public scan contract/);
-    NodeAssert.doesNotMatch(scan.blocker, /no native .* binding exists/);
+  NodeTest.it("no longer defers session scan/import", () => {
+    NodeAssert.equal(
+      DEFERRED_SECTIONS.some((section) => /scan\/import/.test(section.title)),
+      false,
+    );
     const netNew = DEFERRED_SECTIONS.find((section) => /logs/.test(section.title));
     NodeAssert.ok(netNew, "logs keep their own section");
     NodeAssert.match(netNew.blocker, /net-new design/);
@@ -1204,5 +1206,84 @@ NodeTest.describe("workflow launch", () => {
       }),
       "launch c2 · rejected — OrchestrationWorkflowEngineUnavailable",
     );
+  });
+});
+
+NodeTest.describe("session import", () => {
+  NodeTest.it("names the sequence of an imported session and every rejection", () => {
+    NodeAssert.equal(
+      describeSessionImport({
+        status: "imported",
+        threadId: "import:codex:s1",
+        sequence: 42,
+        messageCount: 2,
+        error: null,
+      }),
+      "imported · seq 42 · 2 messages",
+    );
+    for (const [error, text] of [
+      ["AgentSessionAlreadyImported", /already imported into this project/],
+      ["AgentSessionOutOfScope", /scan again/],
+      ["AgentSessionProjectConflict", /another project/],
+      ["AgentSessionImportRejected", /could not import/],
+    ]) {
+      NodeAssert.match(
+        describeSessionImport({
+          status: "rejected",
+          threadId: null,
+          sequence: null,
+          messageCount: 0,
+          error,
+        }),
+        text,
+      );
+    }
+  });
+
+  NodeTest.it("names the missing grant instead of a generic failure", () => {
+    NodeAssert.equal(
+      describeSessionsError(new Error("API capability denied: t3.agents/import-sessions")),
+      "This installation is missing the t3.agents/import-sessions grant.",
+    );
+    NodeAssert.equal(
+      describeSessionsError(new Error("API capability denied: t3.agents/scan-sessions")),
+      "This installation is missing the t3.agents/scan-sessions grant.",
+    );
+    NodeAssert.match(
+      describeSessionsError(new Error("AgentSessionsAuthorityDenied: orchestration:operate")),
+      /unavailable — AgentSessionsAuthorityDenied/,
+    );
+    NodeAssert.match(describeSessionsError(new Error("AgentSessionScanTimedOut")), /time limit/);
+  });
+
+  NodeTest.it("describes a truncated scan as incomplete, never as the newest sessions", () => {
+    const entry = {
+      providerInstanceId: "codex",
+      providerSessionId: "s1",
+      source: "codex",
+      lastActiveAt: "2026-09-01T00:00:00.000Z",
+      status: "importable",
+      threadId: null,
+    };
+    NodeAssert.deepEqual(describeSessionScan({ sessions: [], truncated: false, skipped: 0 }), {
+      empty: "No sessions found for this project.",
+      note: null,
+    });
+    // The deadline or discovery budget can cut a scan before any result arrives.
+    const cutEmpty = describeSessionScan({ sessions: [], truncated: true, skipped: 0 });
+    NodeAssert.doesNotMatch(cutEmpty.empty, /^No sessions found/);
+    NodeAssert.match(cutEmpty.empty, /ended before finding any sessions.*Rescan/);
+    NodeAssert.equal(cutEmpty.note, null);
+    const cutListed = describeSessionScan({ sessions: [entry], truncated: true, skipped: 2 });
+    NodeAssert.equal(cutListed.empty, null);
+    NodeAssert.match(cutListed.note, /may be incomplete\. Rescan/);
+    NodeAssert.match(cutListed.note, /2 transcripts could not be read\./);
+    for (const status of [cutEmpty, cutListed]) {
+      NodeAssert.doesNotMatch(`${status.empty} ${status.note}`, /newest/);
+    }
+    NodeAssert.deepEqual(describeSessionScan({ sessions: [entry], truncated: false, skipped: 0 }), {
+      empty: null,
+      note: null,
+    });
   });
 });

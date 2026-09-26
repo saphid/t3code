@@ -93,12 +93,21 @@ collapse to Working / Idle · resumable / Completed / Failed / Stopped; the
 activity line keeps the native precedence (live rows lead with progress,
 settled rows with the outcome).
 
+Import sessions lists the Claude and Codex sessions that ran in this
+project (`t3.agents/sessions`, `t3.agents/scan-sessions` grant) and imports
+one at a time as a new thread after a Confirm step
+(`t3.agents/import-sessions` grant). The host re-discovers the session inside
+the project on every import; a duplicate, another project's session, or a
+missing grant is named in the row's receipt line. A scan returns at most 50
+discovered sessions and stops after 10 seconds; a scan cut short either way
+is marked incomplete in the panel, and Rescan retries it.
+
 Still deferred — named in the panel, not faked: agent logs and output files
-(net-new design), agent session scan/import (needs a narrow public scan
-contract), and the mobile Agents surface. The header live-agent badge and spawn CTA rows stay host chat UI;
-with this pack installed (enabled and granted the thread's project) they open
-this view instead of the built-in Agents panel. The right panel toggle under
-the badge still restores whichever panel was last shown.
+(net-new design) and the mobile Agents surface. The header live-agent badge
+and spawn CTA rows stay host chat UI; with this pack installed (enabled and
+granted the thread's project) they open this view instead of the built-in
+Agents panel. The right panel toggle under the badge still restores whichever
+panel was last shown.
 Thread settled state is not projected by the status contract, so Settle and
 Unsettle are both offered when the provider supports them and the receipt
 reports the outcome.

@@ -14,6 +14,7 @@ import { MAX_PAYLOAD_BYTES, type ViewContext } from "./contracts.js";
 import type { WorkspaceReadTextInput, WorkspaceReadTextResult } from "./workspace.js";
 import { textEditsApi, textEditsApiV1 } from "./textEdits.js";
 import { workspaceResourcesApi, WORKSPACE_RESOURCES } from "./workspaceResources.js";
+import { agentSessionsApi } from "./agentSessions.js";
 import {
   themeProviderStateSchema,
   terminalAppearanceSchema,
@@ -30,6 +31,7 @@ import {
 } from "./clientProviders.js";
 
 export * from "./workspaceResources.js";
+export * from "./agentSessions.js";
 
 export {
   EDITABLE_TEXT_MAX_BYTES,
@@ -8751,6 +8753,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   uiPreferencesApi.definition,
   uiExternalApi.definition,
   uiNavigationApi.definition,
+  agentSessionsApi.definition,
 ];
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";

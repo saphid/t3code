@@ -1,3 +1,4 @@
+import { makeAgentSessionsApiProvider } from "./agentSessionsApi.ts";
 import { makeBrowserLocalServersApiProvider } from "./browserLocalServersApi.ts";
 import { makeBrowserSessionsApiProvider } from "./browserSessions/v1.ts";
 import { makeBrowserFramesApiProvider } from "./browserFrames/v1.ts";
@@ -129,6 +130,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   const orchestrationApis = yield* makeOrchestrationApiProviders();
   const prsApi = yield* makePrsApiProvider();
   const providersStatusApi = yield* makeProvidersStatusApiProvider();
+  const agentSessionsApi = yield* makeAgentSessionsApiProvider();
   const catalogueChanges = yield* ExtensionCatalogueChanges;
   const resolve = makeExtensionScopeResolver({ environmentId, projects, threads });
   const authorize = async (entry: Installation, capability: string, context: ViewContext) => {
@@ -248,6 +250,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
             ...orchestrationApis,
             prsApi,
             providersStatusApi,
+            agentSessionsApi,
             prsWriteApi,
             resourcesLeaseApi,
             ...composerApis,

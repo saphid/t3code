@@ -2,7 +2,11 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, it, expect, vi } from "vite-plus/test";
 import { AuthAccessWriteScope } from "@t3tools/contracts";
 import type { InstalledPackage } from "./installedController";
-import { filePresentationApi } from "@t3tools/extension-sdk/catalogue";
+import {
+  AGENT_SESSIONS_IMPORT,
+  AGENT_SESSIONS_SCAN,
+  filePresentationApi,
+} from "@t3tools/extension-sdk/catalogue";
 import { InstalledExtensionsSettings } from "./InstalledExtensionsSettings";
 const fixture = vi.hoisted(() => ({
   manage: true,
@@ -109,6 +113,53 @@ describe("installed package settings", () => {
       expect(root.root.findAllByType("input")[0]!.props.value).toBe("");
       expect(JSON.stringify(root.toJSON())).toContain("Workspace B");
       expect(JSON.stringify(root.toJSON())).not.toContain("Workspace A");
+    } finally {
+      await act(async () => root?.unmount());
+    }
+  });
+  it("offers the agent session scan and import grants as separate choices", async () => {
+    fixture.manage = true;
+    fixture.install.mockClear();
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(<InstalledExtensionsSettings />);
+      });
+      const grantInput = (grant: string) =>
+        root.root
+          .findAllByType("label")
+          .find(
+            (label) =>
+              label.children.filter((child) => typeof child === "string").join("") ===
+              `Allow ${grant} in selected projects`,
+          )
+          ?.findByType("input");
+      expect(grantInput(AGENT_SESSIONS_SCAN)).toBeDefined();
+      expect(grantInput(AGENT_SESSIONS_IMPORT)).toBeDefined();
+      await act(async () => {
+        const inputs = root.root.findAllByType("input");
+        inputs[0]!.props.onChange({ target: { value: "/environment/package" } });
+        inputs[1]!.props.onChange({ target: { checked: true } });
+        inputs.at(-1)!.props.onChange({ target: { checked: true } });
+      });
+      await act(async () =>
+        grantInput(AGENT_SESSIONS_SCAN)!.props.onChange({ target: { checked: true } }),
+      );
+      await act(async () =>
+        grantInput(AGENT_SESSIONS_IMPORT)!.props.onChange({ target: { checked: true } }),
+      );
+      await act(async () =>
+        root.root
+          .findAllByType("button")
+          .find((node) => node.children.join("") === "Install package")!
+          .props.onClick(),
+      );
+      expect(fixture.install).toHaveBeenCalledWith("env-a", {
+        sourceDir: "/environment/package",
+        projectIds: ["project-a"],
+        capabilities: [AGENT_SESSIONS_SCAN, AGENT_SESSIONS_IMPORT],
+        trusted: true,
+      });
     } finally {
       await act(async () => root?.unmount());
     }
