@@ -71,6 +71,22 @@ export async function uploadBrowserCapture(
 }
 
 /**
+ * Deletes a capture's pending upload once a draft holds its own copy of the
+ * bytes. Best effort: a failed delete leaves the upload to the store's sweep.
+ */
+export function releaseBrowserCaptureArtifact(
+  environmentId: EnvironmentId,
+  artifactRef: string,
+): void {
+  deletePendingAttachmentUpload({
+    registry: appAtomRegistry,
+    remove: attachmentEnvironment.remove,
+    environmentId,
+    attachmentId: artifactRef,
+  });
+}
+
+/**
  * Reads a capture back out of the store as a PNG File, for the client that
  * hosts the draft. Refuses anything that is not a PNG within the image limit,
  * so a stray pending upload cannot pose as a capture.

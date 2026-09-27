@@ -717,12 +717,20 @@ describe("composer provider", () => {
       async (_environmentId: string, _ref: string, name: string) =>
         new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], name, { type: "image/png" }),
     );
-    const provider = createComposerClientProvider(makeDeps(["t3.composer/write"]), fetchArtifact);
+    const releaseArtifact = vi.fn();
+    const provider = createComposerClientProvider(
+      makeDeps(["t3.composer/write"]),
+      fetchArtifact,
+      releaseArtifact,
+    );
     const result = await provider.invoke(
       invokeCall("insertImage", { threadId: "thread-a", artifactRef, name: "page.png" }),
     );
     expect(result).toEqual({ inserted: true, target: `${ENV}:thread-a` });
     expect(fetchArtifact).toHaveBeenCalledWith(ENV, artifactRef, "page.png");
+    // The draft uploads its own copy, so the capture's pending upload is released
+    // instead of lingering as an orphan until the store's sweep.
+    expect(releaseArtifact).toHaveBeenCalledExactlyOnceWith(ENV, artifactRef);
     const draft = useComposerDraftStore
       .getState()
       .getComposerDraft(scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a")));
@@ -735,12 +743,17 @@ describe("composer provider", () => {
     const fetchArtifact = vi.fn(async () => {
       throw new Error("The artifact is not a PNG capture.");
     });
+    const releaseArtifact = vi.fn();
     expectDenied(() =>
-      createComposerClientProvider(makeDeps([]), fetchArtifact).invoke(
+      createComposerClientProvider(makeDeps([]), fetchArtifact, releaseArtifact).invoke(
         invokeCall("insertImage", { threadId: "thread-a", artifactRef }),
       ),
     );
-    const provider = createComposerClientProvider(makeDeps(["t3.composer/write"]), fetchArtifact);
+    const provider = createComposerClientProvider(
+      makeDeps(["t3.composer/write"]),
+      fetchArtifact,
+      releaseArtifact,
+    );
     expectDenied(() =>
       provider.invoke(invokeCall("insertImage", { threadId: "thread-b", artifactRef })),
     );
@@ -759,6 +772,8 @@ describe("composer provider", () => {
     await expect(
       provider.invoke(invokeCall("insertImage", { threadId: "thread-a", artifactRef })),
     ).rejects.toMatchObject({ code: "provider-rejected", message: /not a PNG capture/ });
+    // A refused ref is not the draft's to delete.
+    expect(releaseArtifact).not.toHaveBeenCalled();
   });
 
   it("attaches a file annotation and returns its id", () => {

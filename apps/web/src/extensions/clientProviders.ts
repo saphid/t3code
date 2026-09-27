@@ -45,7 +45,10 @@ import {
 import { openInstalledSurface } from "./installedSurfaceOpen";
 import { readProject, readThreadShell } from "../state/entities";
 import { useComposerDraftStore, type ComposerImageAttachment } from "../composerDraftStore";
-import { fetchBrowserCaptureArtifact } from "../browser/browserCaptureArtifacts";
+import {
+  fetchBrowserCaptureArtifact,
+  releaseBrowserCaptureArtifact,
+} from "../browser/browserCaptureArtifacts";
 import { buildFileReviewComment } from "../reviewCommentContext";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import {
@@ -773,9 +776,13 @@ export type FetchCaptureArtifact = (
   name: string,
 ) => Promise<File>;
 
+/** Deletes a capture artifact's pending upload; the test seam for insertImage. */
+export type ReleaseCaptureArtifact = (environmentId: EnvironmentId, artifactRef: string) => void;
+
 export function createComposerClientProvider(
   deps: ClientProviderDeps,
   fetchCaptureArtifact: FetchCaptureArtifact = fetchBrowserCaptureArtifact,
+  releaseCaptureArtifact: ReleaseCaptureArtifact = releaseBrowserCaptureArtifact,
 ): ClientLocalProvider {
   return {
     invoke(call) {
@@ -883,7 +890,9 @@ export function createComposerClientProvider(
           return fetchCaptureArtifact(ref.environmentId, artifactRef, name).then(
             (file) => {
               // The draft owns its own upload of these bytes, like a pasted
-              // image; the capture's pending upload ages out of the store.
+              // image, so the capture's pending upload is released now rather
+              // than left as an orphan until the store's sweep.
+              releaseCaptureArtifact(ref.environmentId, artifactRef);
               const image: ComposerImageAttachment = {
                 type: "image",
                 id: randomUUID(),
