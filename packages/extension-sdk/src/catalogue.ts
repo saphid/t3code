@@ -8419,6 +8419,8 @@ export interface UiKeybindingsHost {
   /**
    * The label the host shows for `command`'s effective shortcut while a
    * terminal surface owns focus (e.g. `⌘W`), or null when no rule binds it.
+   * It reads the same context as `resolveTerminalFocusKey`, so it names
+   * only a chord that call would claim right now.
    * Optional: hosts that predate it omit it, so feature-detect.
    */
   terminalFocusShortcutLabel?(command: string): string | null;

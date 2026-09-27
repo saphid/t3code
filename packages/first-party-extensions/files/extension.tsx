@@ -25,6 +25,7 @@ import {
   dragMentionPayload,
   fileBreadcrumbChildren,
   fileBreadcrumbParent,
+  fileBreadcrumbTooltip,
   fileBreadcrumbs,
   isAbsolutePath,
   lineStartOffset,
@@ -966,16 +967,7 @@ function FileBreadcrumbBar(props: {
           return (
             <span key={crumb.path || crumb.label} style={{ flexShrink: 0 }}>
               {menuable ? (
-                <Tooltip
-                  host={host}
-                  side="top"
-                  // Native names the project here; the extension API gives a
-                  // project-scope view no project title, so the root says so.
-                  label={
-                    crumb.path ||
-                    `${WORKSPACE_ROOT_LABEL} root — extensions can't read the project title`
-                  }
-                >
+                <Tooltip host={host} side="top" label={fileBreadcrumbTooltip(crumb)}>
                   <button
                     type="button"
                     aria-label={`Browse ${crumb.label}`}

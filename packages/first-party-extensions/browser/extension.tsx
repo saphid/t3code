@@ -30,6 +30,7 @@ import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { AnnotateButton } from "./annotateButton.js";
 import { useBrowserCapture } from "./capture.js";
 import { mintWorkspaceFileUrl } from "./fileOpen.js";
 import { BrowserFavicon, resolveSessionFavicons, useFaviconCache } from "./favicon.js";
@@ -219,8 +220,6 @@ function restoreState(value: unknown): value is PersistedViewState | null {
  * epoch + engine-generation guards, and the events stream is the only
  * source of engine/navigation truth.
  */
-const PICK_UNAVAILABLE_REASON = "Page didn't load — pick unavailable until the page renders";
-
 function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const { host, session } = props;
   const restored = restoreState(session.restoreState) ? session.restoreState : null;
@@ -874,14 +873,6 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           ? `This client cannot composite a native browser surface and has no remote frame transport (${remote.status.detail}). The session is still open — view it from the desktop app.`
           : null;
   const capture = useBrowserCapture(host, session, held);
-  // Native pick/refresh wording (PreviewChromeRow): state-dependent labels,
-  // and the one disabled-reason tooltip native gives, for a failed page.
-  const picking = capture.state.kind === "capturing" && capture.state.target === "element";
-  const pickDisabled = capture.blockReason !== null || capture.state.kind === "capturing";
-  const pageFailed = held !== null && live?.navigation.kind === "failed";
-  const pickLabel = picking
-    ? "Cancel annotation (Esc)"
-    : "Annotate elements, regions, and drawings";
   const pageLoading =
     held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
   const captureStatus =
@@ -1014,23 +1005,14 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             ▣
           </button>
         </Tooltip>
-        <Tooltip
+        <AnnotateButton
           host={host}
-          label={pickDisabled && pageFailed ? PICK_UNAVAILABLE_REASON : pickLabel}
-          showWhenDisabled={pageFailed}
-        >
-          <button
-            type="button"
-            aria-label={picking ? "Cancel annotation" : "Annotate preview"}
-            aria-description={capture.blockReason ?? undefined}
-            aria-pressed={picking}
-            disabled={pickDisabled}
-            onClick={() => capture.capture("element")}
-            style={buttonStyle}
-          >
-            ⌖
-          </button>
-        </Tooltip>
+          blockReason={capture.blockReason}
+          capturing={capture.state.kind === "capturing" ? capture.state.target : null}
+          pageFailed={held !== null && live?.navigation.kind === "failed"}
+          onPick={() => capture.capture("element")}
+          style={buttonStyle}
+        />
         <input
           type="text"
           aria-label="Address"

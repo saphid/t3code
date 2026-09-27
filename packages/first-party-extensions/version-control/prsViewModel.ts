@@ -857,7 +857,7 @@ export function prsWriteActionLabel(action: PrsWriteActionKind): string {
     case "merge":
       return "Merge";
     case "ready":
-      return "Mark ready for review";
+      return "Ready for review";
     case "draft":
       return "Convert to draft";
     case "close":
@@ -883,20 +883,121 @@ const PRS_MERGE_METHOD_LABELS: Readonly<Record<string, string>> = {
   rebase: "Rebase and merge",
 };
 
+/** How one header action reads: native's words where native draws it. */
+export interface PrsActionPresentation {
+  /** Visible text, and so the accessible name. */
+  readonly label: string;
+  /** Native's tooltip, or null where native's action has none. */
+  readonly tooltip: string | null;
+  /** Native keeps the tooltip hoverable while a pending write disables the action. */
+  readonly hoverWhileDisabled: boolean;
+}
+
 /**
- * Native's tooltip for the matching header action, or null where native's
- * action has no tooltip: Ready for review, and merge named by its method.
+ * Native header wording for `action` given its selected merge method and
+ * the action whose write is in flight, if any. Only the running action
+ * shows its pending words; the rest keep theirs while disabled. Actions
+ * native keeps in a plain menu get no tooltip.
  */
-export function prsActionTooltip(action: PrsWriteActionKind, method: string): string | null {
-  if (action === "ready") return "Ready for review";
-  if (action === "merge") return PRS_MERGE_METHOD_LABELS[method] ?? "Merge";
-  return null;
+export function prsActionPresentation(
+  action: PrsWriteActionKind,
+  method: string,
+  pendingAction: string | null,
+): PrsActionPresentation {
+  const running = pendingAction === action;
+  const native = (label: string): PrsActionPresentation => ({
+    label,
+    tooltip: label,
+    hoverWhileDisabled: true,
+  });
+  switch (action) {
+    case "ready":
+      return native("Ready for review");
+    case "merge":
+      return native(running ? "Merging..." : (PRS_MERGE_METHOD_LABELS[method] ?? "Merge"));
+    case "enable-auto-merge": {
+      const methodLabel = PRS_MERGE_METHOD_LABELS[method];
+      return native(
+        running
+          ? "Enabling..."
+          : methodLabel === undefined
+            ? "Auto-merge"
+            : `Auto-merge (${methodLabel.toLowerCase()})`,
+      );
+    }
+    case "approve-workflows":
+      return native(running ? "Approving..." : "Approve workflows to run");
+    default: {
+      const label = prsWriteActionLabel(action);
+      return { label: running ? `${label}…` : label, tooltip: null, hoverWhileDisabled: false };
+    }
+  }
+}
+
+/** Native's badge help once auto-merge is armed, naming the method when known. */
+export function prsArmedAutoMergeTooltip(method: string | null | undefined): string {
+  const methodLabel = method == null ? undefined : PRS_MERGE_METHOD_LABELS[method];
+  const armed =
+    methodLabel === undefined ? "Auto-merge" : `Auto-merge (${methodLabel.toLowerCase()})`;
+  return `${armed}: the host will merge this on its own once its requirements are met`;
+}
+
+/** Native's aggregate checks help. */
+export function prsChecksTooltip(
+  state: "passing" | "failing" | "pending" | null | undefined,
+): string | null {
+  switch (state) {
+    case "passing":
+      return "All checks have passed";
+    case "failing":
+      return "Some checks were not successful";
+    case "pending":
+      return "Some checks haven't completed yet";
+    default:
+      return null;
+  }
+}
+
+/** Native's review-decision help. */
+export function prsReviewTooltip(
+  decision: "approved" | "changes-requested" | "review-required" | null | undefined,
+): string | null {
+  switch (decision) {
+    case "approved":
+      return "Approved";
+    case "changes-requested":
+      return "Changes requested";
+    case "review-required":
+      return "Awaiting review";
+    default:
+      return null;
+  }
+}
+
+/** Native's conflict help, or null when the change request merges cleanly or is unknown. */
+export function prsConflictTooltip(detail: {
+  readonly mergeability?: "mergeable" | "conflicting" | "unknown";
+  readonly baseBranch: string;
+}): string | null {
+  if (detail.mergeability !== "conflicting") return null;
+  return detail.baseBranch ? `Conflicts with ${detail.baseBranch}` : "Has conflicts";
+}
+
+/** Native's author help: the display name with the login, or the login alone. */
+export function prsActorTooltip(actor: PrsActor | null | undefined): string | null {
+  if (!actor) return null;
+  return actor.name && actor.name !== actor.login ? `${actor.name} (@${actor.login})` : actor.login;
+}
+
+/** Native's check help: the full description, else the name. */
+export function prsCheckTooltip(check: Pick<PrsCheck, "name" | "description">): string {
+  return check.description ?? check.name;
 }
 
 export interface PrsWriteActionOffer {
   readonly action: PrsWriteActionKind;
   readonly label: string;
-  /** `merge` picks among the host's declared methods when it has more than one. */
+  /** `merge` and `enable-auto-merge` pick among the host's declared methods when it has more than one. */
   readonly methods?: readonly PrsWriteMergeMethod[];
   /** `update-branch` picks among the host's declared methods when it has more than one. */
   readonly updateMethods?: readonly PrsWriteUpdateMethod[];
@@ -957,7 +1058,7 @@ export function prsWriteActionOffers(
       const disarm = offer("disable-auto-merge");
       if (disarm !== null) offers.push(disarm);
     } else if (detail.autoMergeEnabled === false) {
-      const arm = offer("enable-auto-merge");
+      const arm = offer("enable-auto-merge", { methods: write.mergeMethods });
       if (arm !== null) offers.push(arm);
     }
     const close = offer("close");

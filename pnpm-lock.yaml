@@ -786,7 +786,7 @@ importers:
         specifier: ^1.8.1
         version: 1.8.1
       jsdom:
-        specifier: ^30.1.1
+        specifier: ^30.0.1
         version: 30.1.1(@noble/hashes@1.8.0)
       react-test-renderer:
         specifier: 19.2.6

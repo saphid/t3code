@@ -252,9 +252,11 @@ export interface TooltipProps {
   readonly align?: "start" | "center" | "end";
   /**
    * A trigger with `disabled` set shows no tooltip, like native disabled
-   * controls. Set this only when `label` explains why the control is
-   * disabled: the host then wraps the trigger in a hoverable inline-flex span
-   * (enabled or not, so its ancestry does not change with its state).
+   * controls. Set this where the matching native control stays hoverable
+   * while disabled — to explain why, or to keep naming an action (or its
+   * pending state) while a write holds it. The host then wraps the trigger
+   * in a hoverable inline-flex span (enabled or not, so its ancestry does
+   * not change with its state).
    */
   readonly showWhenDisabled?: boolean;
 }

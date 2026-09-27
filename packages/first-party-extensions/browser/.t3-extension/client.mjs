@@ -8331,6 +8331,18 @@ var __t3Client = (() => {
     if (held === null) return "Open a page to capture it.";
     return null;
   }
+  var PICK_UNAVAILABLE_REASON = "Page didn't load \u2014 pick unavailable until the page renders";
+  function annotationControl(input) {
+    const picking = input.capturing === "element";
+    const disabled = input.blockReason !== null || input.capturing !== null || input.pageFailed;
+    return {
+      disabled,
+      picking,
+      ariaLabel: picking ? "Cancel annotation" : "Annotate preview",
+      tooltip: disabled && input.pageFailed ? PICK_UNAVAILABLE_REASON : picking ? "Cancel annotation (Esc)" : "Annotate elements, regions, and drawings",
+      hoverWhileDisabled: input.pageFailed
+    };
+  }
   async function captureToChat(host, context2, held, target, signal) {
     const threadId = context2.resource.threadId;
     if (!host.browserCapture || threadId === void 0)
@@ -8382,6 +8394,26 @@ var __t3Client = (() => {
       });
     };
     return { blockReason, state: state2, capture };
+  }
+
+  // annotateButton.tsx
+  var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
+  function AnnotateButton(props) {
+    const { host, blockReason, onPick, style } = props;
+    const annotate2 = annotationControl(props);
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, label: annotate2.tooltip, showWhenDisabled: annotate2.hoverWhileDisabled, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "button",
+      {
+        type: "button",
+        "aria-label": annotate2.ariaLabel,
+        "aria-description": blockReason ?? void 0,
+        "aria-pressed": annotate2.picking,
+        disabled: annotate2.disabled,
+        onClick: onPick,
+        style,
+        children: "\u2316"
+      }
+    ) });
   }
 
   // node_modules/effect/dist/Pipeable.js
@@ -14397,7 +14429,7 @@ ${ind(d)}}`;
   }
 
   // favicon.tsx
-  var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
+  var import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
   var muted = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
   var listeners = /* @__PURE__ */ new Set();
   var cache = emptyFaviconCache();
@@ -14454,7 +14486,7 @@ ${ind(d)}}`;
       borderRadius: 3
     };
     if (resolution.kind === "glyph")
-      return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
         "span",
         {
           "aria-hidden": "true",
@@ -14470,7 +14502,7 @@ ${ind(d)}}`;
           children: faviconFallbackGlyph(props.url)
         }
       );
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
       "img",
       {
         src: resolution.src,
@@ -14677,7 +14709,7 @@ ${ind(d)}}`;
   }
 
   // landing.tsx
-  var import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
+  var import_jsx_runtime3 = __toESM(require_jsx_runtime(), 1);
   var muted2 = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
   var headingStyle = { margin: 0, fontSize: 12, fontWeight: 500, color: muted2 };
   function useLocalServers(host, session, active) {
@@ -14703,20 +14735,20 @@ ${ind(d)}}`;
   var IDLE = { kind: "idle" };
   var LOADING = { kind: "loading" };
   function RecentlyUsedHeading() {
-    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h2", { style: headingStyle, children: "Recently used" });
+    return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("h2", { style: headingStyle, children: "Recently used" });
   }
   function NoPreview(props) {
-    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { "aria-label": props.title, style: { display: "grid", gap: 4, maxWidth: "36rem" }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h2", { style: { ...headingStyle, color: "inherit", fontSize: 13 }, children: props.title }),
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: 0, fontSize: 12, color: muted2 }, children: props.description })
+    return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { "aria-label": props.title, style: { display: "grid", gap: 4, maxWidth: "36rem" }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("h2", { style: { ...headingStyle, color: "inherit", fontSize: 13 }, children: props.title }),
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: { margin: 0, fontSize: 12, color: muted2 }, children: props.description })
     ] });
   }
   function LocalServersSection(props) {
     if (props.servers.length === 0 && props.notice === null) return null;
-    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { "aria-label": "Local servers", style: { display: "grid", gap: 6, maxWidth: "36rem" }, children: [
-      props.servers.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h2", { style: headingStyle, children: "Local servers" }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0, fontSize: 12 }, children: props.servers.map((server) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("li", { children: /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { "aria-label": "Local servers", style: { display: "grid", gap: 6, maxWidth: "36rem" }, children: [
+      props.servers.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("h2", { style: headingStyle, children: "Local servers" }),
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0, fontSize: 12 }, children: props.servers.map((server) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("li", { children: /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
           "button",
           {
             type: "button",
@@ -14732,15 +14764,15 @@ ${ind(d)}}`;
               display: "grid"
             },
             children: [
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: server.title }),
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2 }, children: server.description })
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { children: server.title }),
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted2 }, children: server.description })
             ]
           }
         ) }, `${server.host}:${server.port}`)) }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: 0, fontSize: 11, color: muted2 }, children: LOCAL_SERVERS_HINT }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: { margin: 0, fontSize: 11, color: muted2 }, children: LOCAL_SERVERS_LOOPBACK_LIMITATION })
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: { margin: 0, fontSize: 11, color: muted2 }, children: LOCAL_SERVERS_HINT }),
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { role: "note", style: { margin: 0, fontSize: 11, color: muted2 }, children: LOCAL_SERVERS_LOOPBACK_LIMITATION })
       ] }),
-      props.notice !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: { margin: 0, fontSize: 11, color: muted2 }, children: props.notice })
+      props.notice !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { role: "note", style: { margin: 0, fontSize: 11, color: muted2 }, children: props.notice })
     ] });
   }
 
@@ -14954,7 +14986,7 @@ ${ind(d)}}`;
 
   // pageMenu.tsx
   var import_react4 = __toESM(require_react(), 1);
-  var import_jsx_runtime3 = __toESM(require_jsx_runtime(), 1);
+  var import_jsx_runtime4 = __toESM(require_jsx_runtime(), 1);
   var muted3 = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
   var border = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
   var control = {
@@ -14989,7 +15021,7 @@ ${ind(d)}}`;
       return () => clearTimeout(timer);
     }, [zoomFactor]);
     if (shown === null) return null;
-    return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
       "div",
       {
         role: "status",
@@ -15035,8 +15067,8 @@ ${ind(d)}}`;
     const audioMuted = session?.audioMuted ?? null;
     const devToolsOpen = session?.devToolsOpen ?? null;
     const pictureInPicture = session?.pictureInPicture ?? null;
-    return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { ref: root, style: { position: "relative" }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Tooltip, { host, label: "More", children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { ref: root, style: { position: "relative" }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Tooltip, { host, label: "More", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
         "button",
         {
           type: "button",
@@ -15049,7 +15081,7 @@ ${ind(d)}}`;
           children: "\u22EF"
         }
       ) }),
-      open && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+      open && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
         "div",
         {
           role: "menu",
@@ -15070,8 +15102,8 @@ ${ind(d)}}`;
             fontSize: 12
           },
           children: [
-            blockReason && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { role: "note", style: { margin: 0, color: muted3 }, children: blockReason }),
-            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+            blockReason && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { role: "note", style: { margin: 0, color: muted3 }, children: blockReason }),
+            /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
               "button",
               {
                 type: "button",
@@ -15085,9 +15117,9 @@ ${ind(d)}}`;
                 children: "Hard reload"
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("label", { style: { display: "flex", justifyContent: "space-between", gap: 8 }, children: [
-              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { children: "Appearance" }),
-              /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+            /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("label", { style: { display: "flex", justifyContent: "space-between", gap: 8 }, children: [
+              /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { children: "Appearance" }),
+              /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                 "select",
                 {
                   "aria-label": "Appearance",
@@ -15096,15 +15128,15 @@ ${ind(d)}}`;
                   onChange: (event) => run2({ method: "setAppearance", appearance: event.target.value }),
                   style: control,
                   children: [
-                    session?.appearance == null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("option", { value: "", children: "\u2014" }),
-                    APPEARANCE_OPTIONS.map((option2) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("option", { value: option2.value, children: option2.label }, option2.value))
+                    session?.appearance == null && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("option", { value: "", children: "\u2014" }),
+                    APPEARANCE_OPTIONS.map((option2) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("option", { value: option2.value, children: option2.label }, option2.value))
                   ]
                 }
               )
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 4 }, children: [
-              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { flex: 1 }, children: "Zoom" }),
-              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 4 }, children: [
+              /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { style: { flex: 1 }, children: "Zoom" }),
+              /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                 "button",
                 {
                   type: "button",
@@ -15115,7 +15147,7 @@ ${ind(d)}}`;
                   children: "\u2212"
                 }
               ),
-              /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+              /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                 "select",
                 {
                   "aria-label": "Zoom level",
@@ -15124,12 +15156,12 @@ ${ind(d)}}`;
                   onChange: (event) => run2({ method: "zoom", zoomFactor: Number(event.target.value) }),
                   style: { ...control, fontVariantNumeric: "tabular-nums" },
                   children: [
-                    zoom === null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("option", { value: "", children: "\u2014" }),
-                    ZOOM_LADDER.map((level) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("option", { value: String(level), children: zoomPercent(level) }, level))
+                    zoom === null && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("option", { value: "", children: "\u2014" }),
+                    ZOOM_LADDER.map((level) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("option", { value: String(level), children: zoomPercent(level) }, level))
                   ]
                 }
               ),
-              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+              /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                 "button",
                 {
                   type: "button",
@@ -15140,7 +15172,7 @@ ${ind(d)}}`;
                   children: "+"
                 }
               ),
-              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+              /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                 "button",
                 {
                   type: "button",
@@ -15152,7 +15184,7 @@ ${ind(d)}}`;
                 }
               )
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
               "button",
               {
                 type: "button",
@@ -15164,7 +15196,7 @@ ${ind(d)}}`;
                 children: audioMuted ? "Unmute page" : "Mute page"
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
               "button",
               {
                 type: "button",
@@ -15179,7 +15211,7 @@ ${ind(d)}}`;
                 children: devToolsOpen ? "Close DevTools" : "Open DevTools"
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
               "button",
               {
                 type: "button",
@@ -15285,7 +15317,7 @@ ${ind(d)}}`;
   }
 
   // profileMenu.tsx
-  var import_jsx_runtime4 = __toESM(require_jsx_runtime(), 1);
+  var import_jsx_runtime5 = __toESM(require_jsx_runtime(), 1);
   var bindProfilesApi = (host, context2) => bindApi(browserProfilesApi, host, context2);
   var muted4 = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
   var border2 = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
@@ -15361,14 +15393,14 @@ ${ind(d)}}`;
     };
     const others = list?.profiles.filter((profile) => profile.id !== profileId) ?? [];
     const selectedSource = importer.kind === "ready" ? importer.sources.find((source) => source.id === importer.sourceId) : void 0;
-    return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
       "div",
       {
         role: "group",
         "aria-label": "Profile",
         style: { display: "grid", gap: 6, borderTop: border2, paddingTop: 8 },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
             "span",
             {
               style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: muted4 },
@@ -15378,10 +15410,10 @@ ${ind(d)}}`;
               ]
             }
           ),
-          listNote && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: listNote }),
-          others.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("label", { style: { display: "flex", justifyContent: "space-between", gap: 8 }, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { children: "Open page in" }),
-            /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
+          listNote && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: listNote }),
+          others.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("label", { style: { display: "flex", justifyContent: "space-between", gap: 8 }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { children: "Open page in" }),
+            /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
               "select",
               {
                 "aria-label": "Open page in profile",
@@ -15391,13 +15423,13 @@ ${ind(d)}}`;
                 },
                 style: { ...control2, maxWidth: 140 },
                 children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("option", { value: "", children: "Choose\u2026" }),
-                  others.map((profile) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("option", { value: profile.id, children: profile.name }, profile.id))
+                  /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("option", { value: "", children: "Choose\u2026" }),
+                  others.map((profile) => /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("option", { value: profile.id, children: profile.name }, profile.id))
                 ]
               }
             )
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
             "button",
             {
               type: "button",
@@ -15408,7 +15440,7 @@ ${ind(d)}}`;
               children: "Clear cookies"
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
             "button",
             {
               type: "button",
@@ -15419,7 +15451,7 @@ ${ind(d)}}`;
               children: "Clear cache"
             }
           ),
-          importer.kind === "closed" ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+          importer.kind === "closed" ? /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
             "button",
             {
               type: "button",
@@ -15429,8 +15461,8 @@ ${ind(d)}}`;
               style: { ...control2, textAlign: "left" },
               children: "Import cookies\u2026"
             }
-          ) : importer.kind === "loading" ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: "Listing browsers on the desktop\u2026" }) : importer.kind === "failed" ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: importer.message }) : importer.sources.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: "No browser on the desktop can be imported from." }) : /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: { display: "grid", gap: 4 }, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+          ) : importer.kind === "loading" ? /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: "Listing browsers on the desktop\u2026" }) : importer.kind === "failed" ? /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: importer.message }) : importer.sources.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: "No browser on the desktop can be imported from." }) : /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: { display: "grid", gap: 4 }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
               "select",
               {
                 "aria-label": "Import from browser",
@@ -15441,23 +15473,23 @@ ${ind(d)}}`;
                   handle: firstProfile(importer.sources, event.target.value)
                 }),
                 style: control2,
-                children: importer.sources.map((source) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("option", { value: source.id, children: source.name }, source.id))
+                children: importer.sources.map((source) => /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("option", { value: source.id, children: source.name }, source.id))
               }
             ),
-            selectedSource?.unavailable ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: importResultMessage(
+            selectedSource?.unavailable ? /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: importResultMessage(
               { outcome: "failed", profileId, reason: selectedSource.unavailable },
               name
-            ) }) : /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+            ) }) : /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
               "select",
               {
                 "aria-label": "Import from browser profile",
                 value: importer.handle,
                 onChange: (event) => setImporter({ ...importer, handle: event.target.value }),
                 style: control2,
-                children: selectedSource?.profiles.map((profile) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("option", { value: profile.handle, children: profile.cookieCount === void 0 ? profile.name : `${profile.name} (${profile.cookieCount} cookies)` }, profile.handle))
+                children: selectedSource?.profiles.map((profile) => /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("option", { value: profile.handle, children: profile.cookieCount === void 0 ? profile.name : `${profile.name} (${profile.cookieCount} cookies)` }, profile.handle))
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
+            /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
               "button",
               {
                 type: "button",
@@ -15472,7 +15504,7 @@ ${ind(d)}}`;
               }
             )
           ] }),
-          busy !== null && PENDING[busy] && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: PENDING[busy] })
+          busy !== null && PENDING[busy] && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: PENDING[busy] })
         ]
       }
     );
@@ -15643,7 +15675,7 @@ ${ind(d)}}`;
   }
 
   // viewportToolbar.tsx
-  var import_jsx_runtime5 = __toESM(require_jsx_runtime(), 1);
+  var import_jsx_runtime6 = __toESM(require_jsx_runtime(), 1);
   var muted5 = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
   var border3 = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
   var chromeButton = {
@@ -15714,7 +15746,7 @@ ${ind(d)}}`;
       const preset = presetViewport(value);
       if (preset) onCommit(preset);
     };
-    return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
       "div",
       {
         role: "toolbar",
@@ -15742,7 +15774,7 @@ ${ind(d)}}`;
           applyCustomSize();
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
             "select",
             {
               "aria-label": "Browser device preset",
@@ -15751,12 +15783,12 @@ ${ind(d)}}`;
               onChange: (event) => selectViewport(event.target.value),
               style: { ...chromeButton, padding: "2px 4px" },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("option", { value: "responsive", children: "Responsive" }),
-                PREVIEW_VIEWPORT_PRESETS.map((preset) => /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("option", { value: preset.id, children: `${preset.label} \u2014 ${preset.detail}` }, preset.id))
+                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("option", { value: "responsive", children: "Responsive" }),
+                PREVIEW_VIEWPORT_PRESETS.map((preset) => /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("option", { value: preset.id, children: `${preset.label} \u2014 ${preset.detail}` }, preset.id))
               ]
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
             "form",
             {
               style: { display: "flex", alignItems: "center", gap: 4, margin: 0 },
@@ -15766,7 +15798,7 @@ ${ind(d)}}`;
                 applyCustomSize();
               },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   "input",
                   {
                     type: "number",
@@ -15792,8 +15824,8 @@ ${ind(d)}}`;
                     style: numberInput
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { "aria-hidden": true, style: { color: muted5, fontSize: 11 }, children: "\xD7" }),
-                /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { "aria-hidden": true, style: { color: muted5, fontSize: 11 }, children: "\xD7" }),
+                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   "input",
                   {
                     type: "number",
@@ -15822,7 +15854,7 @@ ${ind(d)}}`;
               ]
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
             "button",
             {
               type: "button",
@@ -15838,7 +15870,7 @@ ${ind(d)}}`;
               children: "\u27F3"
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
             "button",
             {
               type: "button",
@@ -15857,8 +15889,8 @@ ${ind(d)}}`;
     const { slot, setting, fallbackSlot } = props;
     const layout = deviceViewportLayout(slot ?? fallbackSlot, setting);
     const percent = Math.round(layout.scale * 100);
-    return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(import_jsx_runtime5.Fragment, { children: [
-      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(import_jsx_runtime6.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
         "div",
         {
           "aria-hidden": true,
@@ -15877,7 +15909,7 @@ ${ind(d)}}`;
           }
         }
       ),
-      layout.scale < 1 ? /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
+      layout.scale < 1 ? /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
         "div",
         {
           "aria-label": `Viewport scaled to ${percent}%`,
@@ -16048,7 +16080,7 @@ ${ind(d)}}`;
   }
 
   // extension.tsx
-  var import_jsx_runtime6 = __toESM(require_jsx_runtime(), 1);
+  var import_jsx_runtime7 = __toESM(require_jsx_runtime(), 1);
   var manifestId = "t3.browser";
   var muted6 = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
   var border4 = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
@@ -16105,7 +16137,6 @@ ${ind(d)}}`;
       return false;
     });
   }
-  var PICK_UNAVAILABLE_REASON = "Page didn't load \u2014 pick unavailable until the page renders";
   function BrowserView(props) {
     const { host, session } = props;
     const restored = restoreState(session.restoreState) ? session.restoreState : null;
@@ -16603,14 +16634,10 @@ ${titledTitle}`;
     const leaseState = surfaceLease?.state;
     const remoteNotice = remote.status.kind === "connecting" ? "Connecting remote browser frames\u2026" : remote.status.kind === "error" ? `Remote browser frames failed \u2014 ${remote.status.detail}` : remote.status.kind === "unsupported" ? `This client cannot composite a native browser surface and has no remote frame transport (${remote.status.detail}). The session is still open \u2014 view it from the desktop app.` : null;
     const capture = useBrowserCapture(host, session, held);
-    const picking = capture.state.kind === "capturing" && capture.state.target === "element";
-    const pickDisabled = capture.blockReason !== null || capture.state.kind === "capturing";
-    const pageFailed = held !== null && live?.navigation.kind === "failed";
-    const pickLabel = picking ? "Cancel annotation (Esc)" : "Annotate elements, regions, and drawings";
     const pageLoading = held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
     const captureStatus = capture.state.kind === "capturing" ? capture.state.target === "element" ? "Pick an element in the page \u2014 Esc cancels." : "Capturing the page\u2026" : capture.state.kind === "done" ? capture.state.message : null;
     const surfaceNotice = leaseState?.kind === "ended" ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.` : remoteEligible ? remoteNotice : surfaceDenial ? `Native presentation is unavailable \u2014 ${surfaceDenial.reason}${surfaceDenial.grant ? ` (missing grant: ${surfaceDenial.grant})` : ""}: ${surfaceDenial.detail}` : null;
-    return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(
       "section",
       {
         "aria-label": "Browser",
@@ -16627,8 +16654,8 @@ ${titledTitle}`;
           ...themeVars
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("style", { children: `[data-t3-browser-panel] :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-browser-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}` }),
-          /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("style", { children: `[data-t3-browser-panel] :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-browser-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}` }),
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(
             "header",
             {
               style: {
@@ -16640,7 +16667,7 @@ ${titledTitle}`;
                 alignItems: "center"
               },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Tooltip, { host, label: "Back", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(Tooltip, { host, label: "Back", children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
                   "button",
                   {
                     type: "button",
@@ -16651,7 +16678,7 @@ ${titledTitle}`;
                     children: "\u2190"
                   }
                 ) }),
-                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Tooltip, { host, label: "Forward", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(Tooltip, { host, label: "Forward", children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
                   "button",
                   {
                     type: "button",
@@ -16662,7 +16689,7 @@ ${titledTitle}`;
                     children: "\u2192"
                   }
                 ) }),
-                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Tooltip, { host, label: pageLoading ? "Loading\u2026" : "Refresh", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(Tooltip, { host, label: pageLoading ? "Loading\u2026" : "Refresh", children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
                   "button",
                   {
                     type: "button",
@@ -16673,7 +16700,7 @@ ${titledTitle}`;
                     children: "\u27F3"
                   }
                 ) }),
-                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
                   "button",
                   {
                     type: "button",
@@ -16693,7 +16720,7 @@ ${titledTitle}`;
                     children: "\u26F6"
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Tooltip, { host, label: "Screenshot", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(Tooltip, { host, label: "Screenshot", children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
                   "button",
                   {
                     type: "button",
@@ -16705,28 +16732,18 @@ ${titledTitle}`;
                     children: "\u25A3"
                   }
                 ) }),
-                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
-                  Tooltip,
+                /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+                  AnnotateButton,
                   {
                     host,
-                    label: pickDisabled && pageFailed ? PICK_UNAVAILABLE_REASON : pickLabel,
-                    showWhenDisabled: pageFailed,
-                    children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
-                      "button",
-                      {
-                        type: "button",
-                        "aria-label": picking ? "Cancel annotation" : "Annotate preview",
-                        "aria-description": capture.blockReason ?? void 0,
-                        "aria-pressed": picking,
-                        disabled: pickDisabled,
-                        onClick: () => capture.capture("element"),
-                        style: buttonStyle,
-                        children: "\u2316"
-                      }
-                    )
+                    blockReason: capture.blockReason,
+                    capturing: capture.state.kind === "capturing" ? capture.state.target : null,
+                    pageFailed: held !== null && live?.navigation.kind === "failed",
+                    onPick: () => capture.capture("element"),
+                    style: buttonStyle
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
                   "input",
                   {
                     type: "text",
@@ -16751,7 +16768,7 @@ ${titledTitle}`;
                     }
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Tooltip, { host, label: "Open in system browser", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(Tooltip, { host, label: "Open in system browser", children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
                   "button",
                   {
                     type: "button",
@@ -16771,7 +16788,7 @@ ${titledTitle}`;
                     children: "\u2197"
                   }
                 ) }),
-                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
                   PageMenu,
                   {
                     host,
@@ -16779,7 +16796,7 @@ ${titledTitle}`;
                     blockReason: pageBlock,
                     run: (verb) => runPage(verb),
                     zoomStep,
-                    children: held && live && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                    children: held && live && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
                       ProfileSection,
                       {
                         session: live,
@@ -16797,7 +16814,7 @@ ${titledTitle}`;
               ]
             }
           ),
-          tabs.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+          tabs.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
             "div",
             {
               role: "tablist",
@@ -16813,13 +16830,13 @@ ${titledTitle}`;
                 const tabUrl = tab.navigation.url ?? tab.requestedUrl ?? null;
                 const active = held?.tabId === tab.tabId;
                 const label = tabLabel(tab.navigation.title, tabUrl);
-                return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
+                return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(
                   "span",
                   {
                     role: "presentation",
                     style: { display: "inline-flex", alignItems: "center", gap: 2 },
                     children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
+                      /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(
                         "button",
                         {
                           type: "button",
@@ -16838,12 +16855,12 @@ ${titledTitle}`;
                             ...active ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" } : {}
                           },
                           children: [
-                            /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(BrowserFavicon, { url: tabUrl }),
-                            /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { style: { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }, children: label })
+                            /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(BrowserFavicon, { url: tabUrl }),
+                            /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { style: { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }, children: label })
                           ]
                         }
                       ),
-                      tab.audible === true && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                      tab.audible === true && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
                         "button",
                         {
                           type: "button",
@@ -16862,7 +16879,7 @@ ${titledTitle}`;
               })
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
             "div",
             {
               role: "status",
@@ -16871,8 +16888,8 @@ ${titledTitle}`;
               children: fault ?? captureStatus ?? profileNote ?? (held && live ? `${live.navigation.title || live.navigation.url || "session"} \u2014 ${engineStatusLabel(live)}` : describeStatus(state2))
             }
           ),
-          held ? /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { ref: contentRef, style: { position: "relative", flex: 1, minHeight: 0 }, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+          held ? /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { ref: contentRef, style: { position: "relative", flex: 1, minHeight: 0 }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
               "div",
               {
                 ref: surfaceSlotRef,
@@ -16880,7 +16897,7 @@ ${titledTitle}`;
                 style: { position: "absolute", inset: 0 }
               }
             ),
-            remoteEligible && remote.status.kind !== "unsupported" && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+            remoteEligible && remote.status.kind !== "unsupported" && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
               "div",
               {
                 ref: remote.ref,
@@ -16888,9 +16905,9 @@ ${titledTitle}`;
                 style: { position: "absolute", inset: 0 }
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(ZoomIndicator, { zoomFactor: live?.zoomFactor ?? null }, held.tabId),
-            deviceMode && viewportSetting && /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(import_jsx_runtime6.Fragment, { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(ZoomIndicator, { zoomFactor: live?.zoomFactor ?? null }, held.tabId),
+            deviceMode && viewportSetting && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(import_jsx_runtime7.Fragment, { children: [
+              /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
                 BrowserViewportToolbar,
                 {
                   setting: viewportSetting,
@@ -16898,7 +16915,7 @@ ${titledTitle}`;
                   onCommit: commitViewport
                 }
               ),
-              /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+              /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
                 ViewportDeviceFrame,
                 {
                   slot: contentSize,
@@ -16907,7 +16924,7 @@ ${titledTitle}`;
                 }
               )
             ] }),
-            surfaceNotice && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+            surfaceNotice && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
               "p",
               {
                 role: "note",
@@ -16923,7 +16940,7 @@ ${titledTitle}`;
                 children: surfaceNotice
               }
             )
-          ] }) : /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
+          ] }) : /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(
             "div",
             {
               style: {
@@ -16937,9 +16954,9 @@ ${titledTitle}`;
                 justifyItems: "start"
               },
               children: [
-                landing.noPreview && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(NoPreview, { ...landing.noPreview }),
-                showRecents && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(RecentlyUsedHeading, {}),
-                showRecents && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                landing.noPreview && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(NoPreview, { ...landing.noPreview }),
+                showRecents && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(RecentlyUsedHeading, {}),
+                showRecents && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
                   "ul",
                   {
                     "aria-label": "Recently used",
@@ -16948,9 +16965,9 @@ ${titledTitle}`;
                       const parsed = new URL(entry.url);
                       const path3 = parsed.pathname === "/" ? "" : parsed.pathname;
                       const label = `${parsed.host}${path3}${parsed.search}${parsed.hash}`;
-                      return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("li", { style: { display: "flex", gap: 6, alignItems: "center" }, children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(BrowserFavicon, { url: entry.url, size: 14 }),
-                        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                      return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("li", { style: { display: "flex", gap: 6, alignItems: "center" }, children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(BrowserFavicon, { url: entry.url, size: 14 }),
+                        /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
                           "button",
                           {
                             type: "button",
@@ -16966,7 +16983,7 @@ ${titledTitle}`;
                             children: entry.title ? `${entry.title} \u2014 ${label}` : label
                           }
                         ),
-                        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                        /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
                           "button",
                           {
                             type: "button",
@@ -16980,9 +16997,9 @@ ${titledTitle}`;
                     })
                   }
                 ),
-                projectHistoryState.kind === "unavailable" && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("p", { role: "note", style: { margin: 0, fontSize: 11, color: muted6 }, children: projectHistoryState.message }),
-                projectHistoryState.kind === "ready" && projectHistoryState.truncated && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("p", { role: "note", style: { margin: 0, fontSize: 11, color: muted6 }, children: "Project history truncated \u2014 showing the most recent entries that fit." }),
-                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                projectHistoryState.kind === "unavailable" && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("p", { role: "note", style: { margin: 0, fontSize: 11, color: muted6 }, children: projectHistoryState.message }),
+                projectHistoryState.kind === "ready" && projectHistoryState.truncated && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("p", { role: "note", style: { margin: 0, fontSize: 11, color: muted6 }, children: "Project history truncated \u2014 showing the most recent entries that fit." }),
+                /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
                   LocalServersSection,
                   {
                     servers: landing.serverList,
@@ -16993,12 +17010,12 @@ ${titledTitle}`;
                     }
                   }
                 ),
-                recentTargets(state2).length > 0 && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                recentTargets(state2).length > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
                   "ul",
                   {
                     "aria-label": "Requested targets",
                     style: { listStyle: "none", margin: 0, padding: 0, fontSize: 12 },
-                    children: recentTargets(state2).map((target) => /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("li", { children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                    children: recentTargets(state2).map((target) => /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("li", { children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
                       "button",
                       {
                         type: "button",
@@ -17058,7 +17075,7 @@ ${titledTitle}`;
         stateVersion: 1,
         validateRestore: restoreState,
         createView(host, session) {
-          return { renderer: () => /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(BrowserView, { host, session }) };
+          return { renderer: () => /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(BrowserView, { host, session }) };
         }
       }
     ]

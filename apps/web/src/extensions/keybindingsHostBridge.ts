@@ -45,6 +45,14 @@ export function createKeybindingsHostBridge(
     shortcutContext: readShortcutContext,
     ...overrides,
   };
+  // The dispatcher's live context with terminal focus forced: an extension
+  // terminal owns focus, but `terminalOpen` still tracks the native drawer.
+  // Labels and dispatch both read it, so a label never names a chord the
+  // dispatcher would refuse.
+  const terminalFocusOptions = () => ({
+    context: { ...deps.shortcutContext(), terminalFocus: true },
+    ...(deps.platform === undefined ? {} : { platform: deps.platform }),
+  });
   return (binding) => {
     if (!binding.grants.capabilities.includes(UI_KEYBINDINGS)) return undefined;
     return {
@@ -55,10 +63,7 @@ export function createKeybindingsHostBridge(
         // Plugins call this from a keydown handler; a malformed chord or
         // keymap answers "nothing claims it" rather than throwing into them.
         try {
-          return resolveShortcutCommand(chord, deps.keybindings(), {
-            context: { ...deps.shortcutContext(), terminalFocus: true },
-            ...(deps.platform === undefined ? {} : { platform: deps.platform }),
-          });
+          return resolveShortcutCommand(chord, deps.keybindings(), terminalFocusOptions());
         } catch {
           return null;
         }
@@ -70,10 +75,7 @@ export function createKeybindingsHostBridge(
           // Only a command some rule names can have a label.
           const known = keybindings.find((rule) => rule.command === command)?.command;
           if (known === undefined) return null;
-          return shortcutLabelForCommand(keybindings, known, {
-            context: { ...deps.shortcutContext(), terminalFocus: true, terminalOpen: true },
-            ...(deps.platform === undefined ? {} : { platform: deps.platform }),
-          });
+          return shortcutLabelForCommand(keybindings, known, terminalFocusOptions());
         } catch {
           return null;
         }

@@ -36,6 +36,41 @@ export function captureUnavailableReason(
   return null;
 }
 
+const PICK_UNAVAILABLE_REASON = "Page didn't load — pick unavailable until the page renders";
+
+/**
+ * The annotate button, worded as native's PreviewChromeRow. A failed page
+ * disables it like native (an overlay covers the page, so nothing could be
+ * picked) and its tooltip then gives the reason — the one disabled control
+ * that stays hoverable.
+ */
+export function annotationControl(input: {
+  readonly blockReason: string | null;
+  readonly capturing: BrowserCaptureTarget | null;
+  readonly pageFailed: boolean;
+}): {
+  readonly disabled: boolean;
+  readonly picking: boolean;
+  readonly ariaLabel: string;
+  readonly tooltip: string;
+  readonly hoverWhileDisabled: boolean;
+} {
+  const picking = input.capturing === "element";
+  const disabled = input.blockReason !== null || input.capturing !== null || input.pageFailed;
+  return {
+    disabled,
+    picking,
+    ariaLabel: picking ? "Cancel annotation" : "Annotate preview",
+    tooltip:
+      disabled && input.pageFailed
+        ? PICK_UNAVAILABLE_REASON
+        : picking
+          ? "Cancel annotation (Esc)"
+          : "Annotate elements, regions, and drawings",
+    hoverWhileDisabled: input.pageFailed,
+  };
+}
+
 export type CaptureToChatOutcome =
   | {
       readonly kind: "added";

@@ -1,7 +1,12 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 
-import { captureOutcomeMessage, captureToChat, captureUnavailableReason } from "./capture.ts";
+import {
+  annotationControl,
+  captureOutcomeMessage,
+  captureToChat,
+  captureUnavailableReason,
+} from "./capture.ts";
 
 const ARTIFACT_REF = "pending-0f1e2d3c-4b5a-4968-8776-655443322110";
 const held = { tabId: "tab-1", serverEpoch: "epoch-1" };
@@ -135,4 +140,40 @@ NodeTest.describe("captureToChat", () => {
       "Element capture is already in chat.",
     );
   });
+});
+
+NodeTest.test("annotationControl: a failed page disables pick with native's reason", () => {
+  const reason = "Page didn't load — pick unavailable until the page renders";
+  // Supported desktop host, held tab, idle capture: only the page failed.
+  NodeAssert.deepEqual(
+    annotationControl({ blockReason: null, capturing: null, pageFailed: true }),
+    {
+      disabled: true,
+      picking: false,
+      ariaLabel: "Annotate preview",
+      tooltip: reason,
+      hoverWhileDisabled: true,
+    },
+  );
+  NodeAssert.deepEqual(
+    annotationControl({ blockReason: null, capturing: null, pageFailed: false }),
+    {
+      disabled: false,
+      picking: false,
+      ariaLabel: "Annotate preview",
+      tooltip: "Annotate elements, regions, and drawings",
+      hoverWhileDisabled: false,
+    },
+  );
+  // Other disabled states stay silent, as native's ordinary disabled buttons.
+  const blocked = annotationControl({
+    blockReason: "Open a page to capture it.",
+    capturing: null,
+    pageFailed: false,
+  });
+  NodeAssert.equal(blocked.disabled, true);
+  NodeAssert.equal(blocked.hoverWhileDisabled, false);
+  const picking = annotationControl({ blockReason: null, capturing: "element", pageFailed: false });
+  NodeAssert.equal(picking.ariaLabel, "Cancel annotation");
+  NodeAssert.equal(picking.tooltip, "Cancel annotation (Esc)");
 });
