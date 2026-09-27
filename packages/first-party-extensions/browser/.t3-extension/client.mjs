@@ -15799,6 +15799,7 @@ ${ind(d)}}`;
       }
       onCommit({ _tag: "freeform", width: customWidth, height: customHeight });
     };
+    const keepFocus = (event) => event.preventDefault();
     const selectViewport = (value) => {
       if (value === "responsive") {
         if (setting._tag === "freeform") return;
@@ -15856,6 +15857,11 @@ ${ind(d)}}`;
               style: { display: "flex", alignItems: "center", gap: 4, margin: 0 },
               "aria-label": "Viewport dimensions",
               onSubmit: (event) => {
+                event.preventDefault();
+                applyCustomSize();
+              },
+              onKeyDown: (event) => {
+                if (event.key !== "Enter") return;
                 event.preventDefault();
                 applyCustomSize();
               },
@@ -15922,6 +15928,7 @@ ${ind(d)}}`;
               type: "button",
               "aria-label": "Rotate viewport",
               disabled: pending,
+              onMouseDown: keepFocus,
               onClick: () => onCommit(
                 rotateViewport(
                   setting,
@@ -15938,7 +15945,11 @@ ${ind(d)}}`;
               type: "button",
               "aria-label": "Close device toolbar",
               disabled: pending,
-              onClick: () => onCommit({ _tag: "fill" }),
+              onMouseDown: keepFocus,
+              onClick: () => {
+                setEdit(null);
+                onCommit({ _tag: "fill" });
+              },
               style: { ...chromeButton, marginLeft: "auto" },
               children: "\xD7"
             }
