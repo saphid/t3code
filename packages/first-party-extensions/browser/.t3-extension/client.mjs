@@ -8446,7 +8446,17 @@ var __t3Client = (() => {
     if (message !== null && isCurrent() && !session.signal.aborted)
       onState({ kind: "done", message });
   }
-  function useBrowserCapture(host, session, held, page = "shown", onStart) {
+  function captureStatusText(state2) {
+    switch (state2.kind) {
+      case "idle":
+        return null;
+      case "capturing":
+        return state2.target === "element" ? "Pick an element in the page \u2014 Esc cancels." : "Capturing the page\u2026";
+      case "done":
+        return state2.message;
+    }
+  }
+  function useBrowserCapture(host, session, held, page = "shown", onStatus) {
     const [state2, setState] = (0, import_react.useState)({ kind: "idle" });
     const latestRun = (0, import_react.useRef)(0);
     const cancelRun = (0, import_react.useRef)(null);
@@ -8468,7 +8478,7 @@ var __t3Client = (() => {
         target,
         () => run2 === latestRun.current,
         (next) => {
-          if (next.kind === "capturing") onStart?.();
+          onStatus?.(captureStatusText(next));
           setState(next);
         },
         NOTIFY_ACK_TIMEOUT_MS,
@@ -16236,8 +16246,7 @@ ${ind(d)}}`;
     const [live, setLive] = (0, import_react7.useState)(null);
     const [tabs, setTabs] = (0, import_react7.useState)([]);
     const tabsEpoch = (0, import_react7.useRef)(null);
-    const [fault, setFault] = (0, import_react7.useState)(null);
-    const [profileNote, setProfileNote] = (0, import_react7.useState)(null);
+    const [notice, setNotice] = (0, import_react7.useState)(null);
     const [visible, setVisible] = (0, import_react7.useState)(session.visible);
     const heldRef = (0, import_react7.useRef)(held);
     const historyRef = (0, import_react7.useRef)(history);
@@ -16299,7 +16308,7 @@ ${ind(d)}}`;
                     heldRef.current = null;
                     setHeld(null);
                     setLive(null);
-                    setFault(
+                    setNotice(
                       value.serverEpoch !== current.serverEpoch ? "Session ended (epoch-changed)" : "Session ended (session-closed)"
                     );
                   } else {
@@ -16331,7 +16340,7 @@ ${ind(d)}}`;
                   heldRef.current = null;
                   setHeld(null);
                   setLive(null);
-                  setFault(`Session ended (session-closed: ${value.reason})`);
+                  setNotice(`Session ended (session-closed: ${value.reason})`);
                 }
                 break;
               case "closed":
@@ -16342,13 +16351,13 @@ ${ind(d)}}`;
                 }
                 tabsEpoch.current = null;
                 setTabs([]);
-                setFault(`Sessions stream closed (${value.reason})`);
+                setNotice(`Sessions stream closed (${value.reason})`);
                 break;
             }
           }
         } catch (error) {
           if (!signal.aborted)
-            setFault(error instanceof Error ? error.message : "Sessions stream unavailable");
+            setNotice(error instanceof Error ? error.message : "Sessions stream unavailable");
         }
       })();
       return () => controller.abort();
@@ -16416,7 +16425,7 @@ ${ind(d)}}`;
           if (session.signal.aborted || receipt2.revision < lastRevision.current) return;
           lastRevision.current = receipt2.revision;
           if (receipt2.outcome !== "accepted") {
-            setFault(`Browser command ${receipt2.outcome}`);
+            setNotice(`Browser command ${receipt2.outcome}`);
             return;
           }
           const heldNext = {
@@ -16427,13 +16436,13 @@ ${ind(d)}}`;
           heldRef.current = heldNext;
           setHeld(heldNext);
           setLive(receipt2.session);
-          setFault(null);
+          setNotice(null);
         },
         (error) => {
           setViewportPending(false);
           if (session.signal.aborted) return;
           const message = viewportFailureMessage(error);
-          setFault(message);
+          setNotice(message);
           void notifyViewportResizeFailure(
             bindApi(uiNotificationsApi, host, session.context),
             session.context.resource.threadId ?? "",
@@ -16471,8 +16480,8 @@ ${ind(d)}}`;
     const dispatch = createCommandDispatch({
       signal: session.signal,
       lastRevision,
-      refuse: (outcome) => setFault(`Browser command ${outcome}`),
-      fail: (error) => setFault(error instanceof Error ? error.message : "Browser command failed"),
+      refuse: (outcome) => setNotice(`Browser command ${outcome}`),
+      fail: (error) => setNotice(error instanceof Error ? error.message : "Browser command failed"),
       adopt: (receipt2) => {
         const next = {
           tabId: receipt2.session.tabId,
@@ -16482,8 +16491,7 @@ ${ind(d)}}`;
         heldRef.current = next;
         setHeld(next);
         setLive(receipt2.session);
-        setFault(null);
-        setProfileNote(null);
+        setNotice(null);
         const requested = receipt2.session.requestedUrl;
         const base = {
           ...restoreTarget(fileSourceRef.current, requested),
@@ -16530,7 +16538,7 @@ ${ind(d)}}`;
     };
     const openInProfile = (profileId) => {
       const url = live?.navigation.url ?? live?.requestedUrl ?? void 0;
-      setProfileNote(null);
+      setNotice(null);
       dispatch(
         (signal) => profilesApi.invoke("open", { profileId, ...url === void 0 ? {} : { url } }, signal).catch((error) => {
           throw new Error(profileFailureMessage("open", error));
@@ -16546,7 +16554,7 @@ ${ind(d)}}`;
         heldRef.current = next;
         setHeld(next);
         setLive(tab);
-        setFault(null);
+        setNotice(null);
         const url = tab.navigation.url ?? tab.requestedUrl ?? null;
         setAddress(url ?? "");
         if (url) setState((current) => submitAddress(current, url));
@@ -16567,7 +16575,7 @@ ${ind(d)}}`;
       const signal = AbortSignal.any([controller.signal, session.signal]);
       presentFile(relativePath);
       setAddress(relativePath);
-      setFault(`Opening ${relativePath}\u2026`);
+      setNotice(`Opening ${relativePath}\u2026`);
       const lease = bindApi(resourcesLeaseApi, host, session.context);
       void mintWorkspaceFileUrl({
         lease: {
@@ -16583,7 +16591,7 @@ ${ind(d)}}`;
         (result2) => {
           if (signal.aborted) return;
           if (!result2.ok) {
-            setFault(result2.message);
+            setNotice(result2.message);
             return;
           }
           fileLeaseUrl.current = result2.url;
@@ -16612,10 +16620,10 @@ ${ind(d)}}`;
         if (session.signal.aborted) return;
         if (outcome.kind !== "accepted") {
           if (verb.method === "zoom" && !tab) pendingZoom.current = null;
-          setFault(outcome.message);
+          setNotice(outcome.message);
           return;
         }
-        setFault(null);
+        setNotice(null);
         const { receipt: receipt2 } = outcome;
         const current = heldRef.current;
         if (!current || receipt2.session.tabId !== current.tabId) return;
@@ -16641,7 +16649,7 @@ ${ind(d)}}`;
         return;
       }
       if (pageBlock !== null) {
-        setFault(pageBlock);
+        setNotice(pageBlock);
         return;
       }
       if (method === "back") commit2(goBack(state2));
@@ -16708,8 +16716,7 @@ ${titledTitle}`;
     const leaseState = surfaceLease?.state;
     const remoteNotice = remote.status.kind === "connecting" ? "Connecting remote browser frames\u2026" : remote.status.kind === "error" ? `Remote browser frames failed \u2014 ${remote.status.detail}` : remote.status.kind === "unsupported" ? `This client cannot composite a native browser surface and has no remote frame transport (${remote.status.detail}). The session is still open \u2014 view it from the desktop app.` : null;
     const capturePage = capturePageView(surfaceLease, surfaceShown, live?.navigation.kind);
-    const capture = useBrowserCapture(host, session, held, capturePage, () => setFault(null));
-    const captureStatus = capture.state.kind === "capturing" ? capture.state.target === "element" ? "Pick an element in the page \u2014 Esc cancels." : "Capturing the page\u2026" : capture.state.kind === "done" ? capture.state.message : null;
+    const capture = useBrowserCapture(host, session, held, capturePage, setNotice);
     const surfaceNotice = leaseState?.kind === "ended" ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.` : remoteEligible ? remoteNotice : surfaceDenial ? `Native presentation is unavailable \u2014 ${surfaceDenial.reason}${surfaceDenial.grant ? ` (missing grant: ${surfaceDenial.grant})` : ""}: ${surfaceDenial.detail}` : null;
     return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
       "section",
@@ -16856,8 +16863,8 @@ ${titledTitle}`;
                         bindApi(uiExternalApi, host, session.context),
                         externalTarget,
                         session.signal
-                      ).then((fault2) => {
-                        if (fault2 !== null && !session.signal.aborted) setFault(fault2);
+                      ).then((fault) => {
+                        if (fault !== null && !session.signal.aborted) setNotice(fault);
                       });
                     },
                     style: buttonStyle,
@@ -16878,10 +16885,7 @@ ${titledTitle}`;
                         api: profilesApi,
                         signal: session.signal,
                         onOpenInProfile: openInProfile,
-                        report: (message) => {
-                          setFault(null);
-                          setProfileNote(message);
-                        }
+                        report: setNotice
                       }
                     )
                   }
@@ -16960,7 +16964,7 @@ ${titledTitle}`;
               role: "status",
               "aria-label": "Browser status",
               style: { padding: "6px 10px", color: muted6, fontSize: 11, flexShrink: 0 },
-              children: fault ?? captureStatus ?? profileNote ?? (held && live ? `${live.navigation.title || live.navigation.url || "session"} \u2014 ${engineStatusLabel(live)}` : describeStatus(state2))
+              children: notice ?? (held && live ? `${live.navigation.title || live.navigation.url || "session"} \u2014 ${engineStatusLabel(live)}` : describeStatus(state2))
             }
           ),
           held ? /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { ref: contentRef, style: { position: "relative", flex: 1, minHeight: 0 }, children: [

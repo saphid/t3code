@@ -304,17 +304,32 @@ export async function runBrowserCapture(
     onState({ kind: "done", message });
 }
 
+/** Status line text for a capture state; null says the run has nothing to show. */
+function captureStatusText(state: BrowserCaptureState): string | null {
+  switch (state.kind) {
+    case "idle":
+      return null;
+    case "capturing":
+      return state.target === "element"
+        ? "Pick an element in the page — Esc cancels."
+        : "Capturing the page…";
+    case "done":
+      return state.message;
+  }
+}
+
 /**
  * The header buttons' state and action. Pressing pick again while its picker
  * is open cancels it, like native's "Cancel annotation"; any other click
- * while one runs is ignored. `onStart` fires as each run begins.
+ * while one runs is ignored. `onStatus` receives every state change's status
+ * line, null included, so the panel's line always shows the latest event.
  */
 export function useBrowserCapture(
   host: ClientHost,
   session: ViewSession,
   held: CaptureSessionRef | null,
   page: CapturePageView = "shown",
-  onStart?: () => void,
+  onStatus?: (line: string | null) => void,
 ): {
   readonly blockReason: string | null;
   readonly state: BrowserCaptureState;
@@ -343,7 +358,7 @@ export function useBrowserCapture(
       target,
       () => run === latestRun.current,
       (next) => {
-        if (next.kind === "capturing") onStart?.();
+        onStatus?.(captureStatusText(next));
         setState(next);
       },
       NOTIFY_ACK_TIMEOUT_MS,
