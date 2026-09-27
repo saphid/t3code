@@ -7687,6 +7687,14 @@ var __t3Client = (() => {
     "application/octet-stream",
     "font/woff2"
   ];
+  function resolveTooltip(host) {
+    const member = host.tooltip;
+    if (!member || typeof member !== "object")
+      return null;
+    const { version: version2, Tooltip: Tooltip2 } = member;
+    const isComponent = typeof Tooltip2 === "function" || typeof Tooltip2 === "object" && Tooltip2 !== null && "$$typeof" in Tooltip2;
+    return typeof version2 === "number" && version2 >= 1 && isComponent ? member : null;
+  }
   function validateEntry(value) {
     if (typeof value !== "string" || value.length > 240 || !/\.(mjs|js)$/.test(value) || value.split("/").some((part) => !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(part) || part === "." || part === ".."))
       throw new Error("Entry must be a package-relative bundled ESM .mjs or .js file");
@@ -7914,6 +7922,11 @@ var __t3Client = (() => {
   }
   function requireApi(api, versionRange = "^" + api.definition.version) {
     return { id: api.definition.id, versionRange };
+  }
+  function Tooltip(props) {
+    const { host, ...rest } = props;
+    const tooltip = resolveTooltip(host);
+    return tooltip === null ? rest.children : host.React.createElement(tooltip.Tooltip, rest);
   }
   var OVERFLOW_CLIP_PATTERN = /(auto|scroll|hidden|clip)/;
   var OCCLUSION_POLL_MS = 400;
@@ -14986,7 +14999,7 @@ ${ind(d)}}`;
     );
   }
   function PageMenu(props) {
-    const { session, blockReason, run: run2, zoomStep, children } = props;
+    const { host, session, blockReason, run: run2, zoomStep, children } = props;
     const [open, setOpen] = (0, import_react4.useState)(false);
     const root = (0, import_react4.useRef)(null);
     (0, import_react4.useEffect)(() => {
@@ -15010,7 +15023,7 @@ ${ind(d)}}`;
     const devToolsOpen = session?.devToolsOpen ?? null;
     const pictureInPicture = session?.pictureInPicture ?? null;
     return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { ref: root, style: { position: "relative" }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Tooltip, { host, label: "Page menu", children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
         "button",
         {
           type: "button",
@@ -15022,7 +15035,7 @@ ${ind(d)}}`;
           style: control,
           children: "\u22EF"
         }
-      ),
+      ) }),
       open && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
         "div",
         {
@@ -16608,7 +16621,7 @@ ${titledTitle}`;
                 alignItems: "center"
               },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Tooltip, { host, label: "Back", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   "button",
                   {
                     type: "button",
@@ -16618,8 +16631,8 @@ ${titledTitle}`;
                     style: buttonStyle,
                     children: "\u2190"
                   }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                ) }),
+                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Tooltip, { host, label: "Forward", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   "button",
                   {
                     type: "button",
@@ -16629,8 +16642,8 @@ ${titledTitle}`;
                     style: buttonStyle,
                     children: "\u2192"
                   }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                ) }),
+                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Tooltip, { host, label: "Reload", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   "button",
                   {
                     type: "button",
@@ -16640,50 +16653,59 @@ ${titledTitle}`;
                     style: buttonStyle,
                     children: "\u27F3"
                   }
-                ),
+                ) }),
                 /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
-                  "button",
+                  Tooltip,
                   {
-                    type: "button",
-                    "aria-label": deviceMode ? "Turn off device toolbar" : "Turn on device toolbar",
-                    "aria-pressed": deviceMode,
-                    disabled: !held || viewportPending,
-                    onClick: () => {
-                      if (!viewportSetting) return;
-                      commitViewport(
-                        viewportSetting._tag !== "fill" ? { _tag: "fill" } : responsiveViewportForToggle(contentSize)
-                      );
-                    },
-                    style: {
-                      ...buttonStyle,
-                      ...deviceMode ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" } : {}
-                    },
-                    children: "\u26F6"
+                    host,
+                    label: deviceMode ? "Turn off device toolbar" : "Turn on device toolbar",
+                    children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                      "button",
+                      {
+                        type: "button",
+                        "aria-label": deviceMode ? "Turn off device toolbar" : "Turn on device toolbar",
+                        "aria-pressed": deviceMode,
+                        disabled: !held || viewportPending,
+                        onClick: () => {
+                          if (!viewportSetting) return;
+                          commitViewport(
+                            viewportSetting._tag !== "fill" ? { _tag: "fill" } : responsiveViewportForToggle(contentSize)
+                          );
+                        },
+                        style: {
+                          ...buttonStyle,
+                          ...deviceMode ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" } : {}
+                        },
+                        children: "\u26F6"
+                      }
+                    )
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Tooltip, { host, label: capture.blockReason ?? "Screenshot page to chat", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   "button",
                   {
                     type: "button",
                     "aria-label": "Screenshot page to chat",
+                    "aria-description": capture.blockReason ?? void 0,
                     disabled: capture.blockReason !== null || capture.state.kind === "capturing",
                     onClick: () => capture.capture("page"),
                     style: buttonStyle,
                     children: "\u25A3"
                   }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                ) }),
+                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Tooltip, { host, label: capture.blockReason ?? "Pick element to chat", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   "button",
                   {
                     type: "button",
                     "aria-label": "Pick element to chat",
+                    "aria-description": capture.blockReason ?? void 0,
                     "aria-pressed": capture.state.kind === "capturing" && capture.state.target === "element",
                     disabled: capture.blockReason !== null || capture.state.kind === "capturing",
                     onClick: () => capture.capture("element"),
                     style: buttonStyle,
                     children: "\u2316"
                   }
-                ),
+                ) }),
                 /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   "input",
                   {
@@ -16709,7 +16731,7 @@ ${titledTitle}`;
                     }
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Tooltip, { host, label: "Open in system browser", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   "button",
                   {
                     type: "button",
@@ -16728,10 +16750,11 @@ ${titledTitle}`;
                     style: buttonStyle,
                     children: "\u2197"
                   }
-                ),
+                ) }),
                 /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   PageMenu,
                   {
+                    host,
                     session: held ? live : null,
                     blockReason: pageBlock,
                     run: (verb) => runPage(verb),

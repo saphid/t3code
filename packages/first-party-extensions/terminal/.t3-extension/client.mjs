@@ -7659,6 +7659,14 @@ var __t3Client = (() => {
     "application/octet-stream",
     "font/woff2"
   ];
+  function resolveTooltip(host) {
+    const member = host.tooltip;
+    if (!member || typeof member !== "object")
+      return null;
+    const { version, Tooltip: Tooltip2 } = member;
+    const isComponent = typeof Tooltip2 === "function" || typeof Tooltip2 === "object" && Tooltip2 !== null && "$$typeof" in Tooltip2;
+    return typeof version === "number" && version >= 1 && isComponent ? member : null;
+  }
   function validateEntry(value) {
     if (typeof value !== "string" || value.length > 240 || !/\.(mjs|js)$/.test(value) || value.split("/").some((part) => !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(part) || part === "." || part === ".."))
       throw new Error("Entry must be a package-relative bundled ESM .mjs or .js file");
@@ -7886,6 +7894,11 @@ var __t3Client = (() => {
   }
   function requireApi(api, versionRange = "^" + api.definition.version) {
     return { id: api.definition.id, versionRange };
+  }
+  function Tooltip(props) {
+    const { host, ...rest } = props;
+    const tooltip = resolveTooltip(host);
+    return tooltip === null ? rest.children : host.React.createElement(tooltip.Tooltip, rest);
   }
 
   // node_modules/@t3tools/shared/src/projectScripts.ts
@@ -15071,7 +15084,7 @@ var __t3Client = (() => {
                                   children: "Restart"
                                 }
                               ),
-                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: `Close ${tab.label}`, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                                 "button",
                                 {
                                   type: "button",
@@ -15080,7 +15093,7 @@ var __t3Client = (() => {
                                   style: control,
                                   children: "\xD7"
                                 }
-                              )
+                              ) })
                             ] }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
                               /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted, fontSize: 12 }, children: tab.confirmAction === "close" ? "Close this terminal?" : tab.confirmAction === "restart" ? "Restart this terminal?" : "Clear history?" }),
                               /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
