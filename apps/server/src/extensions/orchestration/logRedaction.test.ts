@@ -1,5 +1,10 @@
 import { expect, it } from "@effect/vitest";
-import { LOG_REDACTED as R, measureLogRedaction, redactLogSecrets } from "./logRedaction.ts";
+import {
+  keyStateAfter,
+  LOG_REDACTED as R,
+  measureLogRedaction,
+  redactLogSecrets,
+} from "./logRedaction.ts";
 
 it("scrubs env assignments, credential fields, headers, and token shapes", () => {
   const cases: [string, string][] = [
@@ -457,6 +462,69 @@ it("validates what follows a secret value through its enclosing containers", () 
       const redacted = unnest(redactLogSecrets(nest(input!, depth), { lineStart: true }), depth);
       expect(JSON.parse(redacted), `${input} ${depth}`).toEqual(JSON.parse(output!));
     }
+});
+
+it("validates a secret value against the containers opened before it", () => {
+  // The text shows the enclosing object, or no container at all: nothing may
+  // close as an array. The rest of the line stays in the value.
+  for (const fragment of [
+    '{"wrapper":{"password":"first"},"UNIQUESECRET"]',
+    '{"password":"first"},"UNIQUESECRET"]',
+    '[{"wrapper":{"password":"first"},"UNIQUESECRET"]}',
+  ])
+    for (const depth of [0, 1, 2, 3]) {
+      const redacted = redactLogSecrets(nest(`${fragment}\nkept`, depth), { lineStart: true });
+      expect(redacted, `${fragment} ${depth}`).not.toContain("UNIQUESECRET");
+      expect(unnest(redacted, depth), `${fragment} ${depth}`).toMatch(/"\[REDACTED\]\nkept$/);
+    }
+  // A known enclosing array still closes, at any depth.
+  for (const input of [
+    '[{"wrapper":{"password":"first"}},"kept"]',
+    '[{"password":"first"},"kept"]',
+  ])
+    for (const depth of [0, 1, 2, 3]) {
+      const redacted = unnest(redactLogSecrets(nest(input, depth), { lineStart: true }), depth);
+      expect(redacted, `${input} ${depth}`).toBe(input.replace('"first"', `"${R}"`));
+    }
+  // So do containers opened before a cut: a text that may begin inside them.
+  for (const input of ['{"password":"first"},"kept"]', 'x"}\n{"password":"first"},"kept"]'])
+    expect(redactLogSecrets(input), input).toBe(input.replace('"first"', `"${R}"`));
+});
+
+it("opens a key of unknown type at a possible marker left encoded when decoding runs out", () => {
+  // Each `\u005c` decodes to the backslash of the next escape: the BEGIN needs
+  // one decoding pass per level, past the last pass beyond 13.
+  const record = (passes: number) =>
+    JSON.stringify({
+      content: `-----\\${"u005c".repeat(passes - 2)}u0042EGIN PRIVATE KEY-----`,
+    });
+  for (const passes of [12, 13, 14, 20]) {
+    const text = `${record(passes)}\n[progress]\nUNIQUESECRET\n`;
+    expect(redactLogSecrets(text, { lineStart: true }), `${passes}`).not.toContain("UNIQUESECRET");
+    expect(keyStateAfter(`${record(passes)}\n`, "outside"), `${passes}`).toEqual({
+      inside: passes > 13 ? "?" : "",
+    });
+    // Only a decoded BEGIN is closed by its END.
+    const closed = `${text}-----END PRIVATE KEY-----\nafter\n`;
+    expect(
+      redactLogSecrets(closed, { lineStart: true }).endsWith(`${R}\nafter\n`),
+      `${passes}`,
+    ).toBe(passes <= 13);
+  }
+  // Conventional wrappers past the last pass, whichever marker character is escaped.
+  const begin = "-----BEGIN RSA PRIVATE KEY-----";
+  for (const depth of [12, 13, 14, 20])
+    for (let at = 0; at < begin.length; at++) {
+      const marker = `${begin.slice(0, at)}\\u${begin.charCodeAt(at).toString(16).padStart(4, "0")}${begin.slice(at + 1)}`;
+      const text = `${nest(marker, depth)}\n[progress]\nUNIQUESECRET\n`;
+      expect(redactLogSecrets(text, { lineStart: true }), `${depth} ${at}`).not.toContain(
+        "UNIQUESECRET",
+      );
+    }
+  // Escapes left without a possible marker keep the strings they are in redacted.
+  const deep = nest('{"password":"UNIQUESECRET"}', 16);
+  expect(keyStateAfter(deep, "outside")).toBe("outside");
+  expect(redactLogSecrets(`${deep}\nafter`, { lineStart: true })).toMatch(/^[^U]*\nafter$/);
 });
 
 it("opens a key at a BEGIN spelled with escapes, and closes it only at its own END", () => {

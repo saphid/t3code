@@ -677,6 +677,35 @@ it("keeps a window inside a key opened by an escaped or mismatched marker", asyn
   }
 });
 
+it("fails closed through the provider on encoded markers and invalid continuations", async () => {
+  const f = await fixture();
+  const nest = (text: string, depth: number) => {
+    for (let level = 0; level < depth; level++) text = JSON.stringify({ content: text });
+    return text;
+  };
+  const cases: Record<string, string> = {};
+  for (const depth of [0, 1, 2, 3]) {
+    cases[`wrapper-${depth}`] = nest('{"wrapper":{"password":"first"},"UNIQUESECRET"]', depth);
+    cases[`root-${depth}`] = nest('{"password":"first"},"UNIQUESECRET"]', depth);
+  }
+  // A BEGIN that needs `passes` decoding passes, read in the window or only
+  // in the scan before it.
+  for (const passes of [12, 13, 14, 20]) {
+    const record = JSON.stringify({
+      content: `-----\\${"u005c".repeat(passes - 2)}u0042EGIN PRIVATE KEY-----`,
+    });
+    cases[`window-${passes}`] = `${record}\n[progress]\nUNIQUESECRET\n`;
+    cases[`scan-${passes}`] =
+      `${"ordinary log.\n".repeat(2000)}${record}\n[progress]\n${SECRET_ROW.repeat(800)}`;
+  }
+  for (const [name, contents] of Object.entries(cases)) {
+    const file = await f.write(NodePath.join(f.projects, SLUG, "s", `${name}.jsonl`), contents);
+    f.rosters.set("thread", [task(name, { outputFile: file })]);
+    const tail = (await f.call("readTail", { runId: name, source: "output" })) as AgentLogTail;
+    expect(tail.contents, name).not.toContain("UNIQUESECRET");
+  }
+});
+
 it("withholds a leading line whose secret name fell before the read", async () => {
   const f = await fixture();
   const file = await f.write(
