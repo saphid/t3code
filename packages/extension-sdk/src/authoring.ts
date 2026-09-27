@@ -471,7 +471,10 @@ export function useBrowserSurfaceSlot(
       let poll: ReturnType<typeof setInterval> | null = null;
       const unsubscribe = held.onDidChangeState((next) => {
         setLeaseVersion((value) => value + 1);
-        if (next.kind === "ended" && poll !== null) {
+        if (next.kind !== "ended") return;
+        // An ended lease no longer owns the surface, so nothing is shown.
+        setShown(false);
+        if (poll !== null) {
           clearInterval(poll);
           poll = null;
         }

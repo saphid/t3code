@@ -109,12 +109,16 @@ export async function captureToChat(
   try {
     captured = await host.browserCapture.capture({ context, session: held, target, signal });
   } catch (error) {
+    if (signal.aborted) return { kind: "cancelled" };
     return {
       kind: "failed",
       stage: "request",
       message: `Capture failed: ${error instanceof Error ? error.message : "the host threw"}`,
     };
   }
+  // Cancel wins over whatever the host settled with: an upload that fails or
+  // succeeds after Cancel annotation is still a silent cancel.
+  if (signal.aborted) return { kind: "cancelled" };
   if (!captured.ok) {
     if (captured.failure.reason === "cancelled") return { kind: "cancelled" };
     const grant = captured.failure.grant ? ` (missing grant: ${captured.failure.grant})` : "";
@@ -124,9 +128,6 @@ export async function captureToChat(
       message: `Capture failed — ${captured.failure.reason}${grant}: ${captured.failure.detail}`,
     };
   }
-  // Cancel pressed while the image was stored: the bridge succeeded, but the
-  // user no longer wants it in the draft.
-  if (signal.aborted) return { kind: "cancelled" };
   try {
     const result = await bindApi(composerContextApi, host, context).invoke(
       "insertImage",

@@ -148,6 +148,29 @@ describe("browser capture run through the bridge", () => {
     expect(r.invoked).toEqual([]);
   });
 
+  it("stays silent when the upload rejects after Cancel annotation", async () => {
+    let failUpload: (error: Error) => void = () => {};
+    let uploadStarted: () => void = () => {};
+    const uploading = new Promise<void>((resolve) => {
+      uploadStarted = resolve;
+    });
+    const r = rig({
+      upload: () =>
+        new Promise((_resolve, reject) => {
+          failUpload = reject;
+          uploadStarted();
+        }),
+    });
+    const running = r.run("element");
+    await uploading;
+    r.cancel.abort();
+    failUpload(new Error("Capture upload rejected (503)."));
+    await running;
+    // The bridge settles as upload-failed, but no "Could not capture" toast.
+    expect(r.states.at(-1)).toEqual({ kind: "done", message: null });
+    expect(r.invoked).toEqual([]);
+  });
+
   it("announces the run before the bridge is asked, so the panel can clear stale faults", async () => {
     const r = rig();
     let seenByEngine: BrowserCaptureState[] = [];

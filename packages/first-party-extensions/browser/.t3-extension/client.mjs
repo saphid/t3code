@@ -8009,7 +8009,10 @@ var __t3Client = (() => {
         let poll = null;
         const unsubscribe = held.onDidChangeState((next) => {
           setLeaseVersion((value) => value + 1);
-          if (next.kind === "ended" && poll !== null) {
+          if (next.kind !== "ended")
+            return;
+          setShown(false);
+          if (poll !== null) {
             clearInterval(poll);
             poll = null;
           }
@@ -8335,12 +8338,14 @@ var __t3Client = (() => {
     try {
       captured = await host.browserCapture.capture({ context: context2, session: held, target, signal });
     } catch (error) {
+      if (signal.aborted) return { kind: "cancelled" };
       return {
         kind: "failed",
         stage: "request",
         message: `Capture failed: ${error instanceof Error ? error.message : "the host threw"}`
       };
     }
+    if (signal.aborted) return { kind: "cancelled" };
     if (!captured.ok) {
       if (captured.failure.reason === "cancelled") return { kind: "cancelled" };
       const grant = captured.failure.grant ? ` (missing grant: ${captured.failure.grant})` : "";
@@ -8350,7 +8355,6 @@ var __t3Client = (() => {
         message: `Capture failed \u2014 ${captured.failure.reason}${grant}: ${captured.failure.detail}`
       };
     }
-    if (signal.aborted) return { kind: "cancelled" };
     try {
       const result2 = await bindApi(composerContextApi, host, context2).invoke(
         "insertImage",

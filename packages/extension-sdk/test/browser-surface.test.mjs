@@ -620,3 +620,31 @@ NodeTest.test(
     }
   },
 );
+
+NodeTest.test("useBrowserSurfaceSlot clears shown when the host ends the held lease", async () => {
+  const dom = domStubs();
+  let renderer;
+  try {
+    const session = makeSession();
+    const h = fakeLeaseHost();
+    let current;
+    function View() {
+      const value = useBrowserSurfaceSlot(h.host, session, { session: sessionRef, visible: true });
+      React.useEffect(() => {
+        current = value;
+      }, [value]);
+      return React.createElement("div", { ref: value.ref });
+    }
+    renderer = render(View, fakeElement(rect, { document: dom.document }));
+    NodeAssert.equal(current.shown, true);
+    await TestRenderer.act(async () => {
+      h.lease.state = { kind: "ended", reason: "superseded" };
+      for (const listener of h.calls.listeners) listener(h.lease.state);
+    });
+    NodeAssert.equal(current.lease.state.kind, "ended");
+    NodeAssert.equal(current.shown, false);
+  } finally {
+    if (renderer) await TestRenderer.act(async () => renderer.unmount());
+    dom.restore();
+  }
+});
