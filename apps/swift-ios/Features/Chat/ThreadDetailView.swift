@@ -132,14 +132,21 @@ public struct ThreadDetailView: View {
             // A cached thread can already show its composer while the server
             // is catching up. Local drafts must not wait for that request.
             NativeEventLog.shared.record("composer", "open view=\(viewInstance) thread=\(thread.id) draftRestored=\(didRestoreDraft)")
-            await model.checkRewindRecovery(for: currentThread)
-            guard !didRestoreDraft else { return }
-            await restoreDraft(from: composerDraft, key: draftKey)
-            if !didRestoreDraft {
-                NativeEventLog.shared.record(
-                    "composer", "draft restore incomplete thread=\(thread.id) cancelled=\(Task.isCancelled)"
-                )
+            // The compact split view can report this view as disappeared right
+            // after it appears while it stays on screen, which cancels this task
+            // and never re-runs it. The composer stays busy until the draft is
+            // restored, so finish the restore outside the view's task lifetime.
+            // Each thread has its own view identity, so a late restore cannot
+            // reach another thread's composer.
+            let restore = Task { @MainActor in
+                await model.checkRewindRecovery(for: currentThread)
+                guard !didRestoreDraft else { return }
+                await restoreDraft(from: composerDraft, key: draftKey)
+                if !didRestoreDraft {
+                    NativeEventLog.shared.record("composer", "draft restore incomplete thread=\(thread.id)")
+                }
             }
+            await restore.value
         }
         .task(id: pullRequestObservationID) {
             await observeThreadPullRequest()
