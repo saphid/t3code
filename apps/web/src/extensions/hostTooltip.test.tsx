@@ -1,88 +1,194 @@
-import type { TooltipProps } from "@t3tools/extension-sdk/environment";
-import { isValidElement, type ReactElement, type ReactNode } from "react";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+// @vitest-environment jsdom
 
-// Records what reaches the native tooltip; base-ui's delay, positioning and
-// focus handling are the native tooltip's and are exercised there.
-const native = vi.hoisted(() => ({
-  triggers: [] as ReactElement[],
-  popups: [] as { side?: string; align?: string; children?: ReactNode }[],
-}));
+import { Tooltip as SdkTooltip } from "@t3tools/extension-sdk/authoring";
+import type { ClientHost, TooltipProps } from "@t3tools/extension-sdk/environment";
+import * as React from "react";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-vi.mock("~/components/ui/tooltip", () => ({
-  Tooltip: ({ children }: { children?: ReactNode }) => children,
-  TooltipTrigger: ({ render }: { render: ReactElement }) => {
-    native.triggers.push(render);
-    return render;
-  },
-  TooltipPopup: (props: { side?: string; align?: string; children?: ReactNode }) => {
-    native.popups.push(props);
-    return null;
-  },
-}));
+import { TooltipProvider } from "~/components/ui/tooltip";
 
-const { hostTooltip } = await import("./hostTooltip");
+import { hostTooltip } from "./hostTooltip";
+
 const { Tooltip } = hostTooltip;
 
-let renderer: ReactTestRenderer | undefined;
-function render(props: Omit<TooltipProps, "children">, disabled: boolean) {
-  act(() => {
-    renderer?.unmount();
-    renderer = create(
-      <Tooltip {...props}>
-        <button type="button" disabled={disabled} aria-label="Capture">
-          C
-        </button>
-      </Tooltip>,
-    );
-  });
-  return renderer!;
-}
+let root: Root;
+let container: HTMLDivElement;
 
-afterEach(() => {
-  act(() => renderer?.unmount());
-  renderer = undefined;
-  native.triggers = [];
-  native.popups = [];
+beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
 });
 
+afterEach(async () => {
+  await act(async () => root.unmount());
+  container.remove();
+  vi.unstubAllGlobals();
+});
+
+type Props = Omit<TooltipProps, "children"> & { readonly disabled?: boolean };
+
+function Control({ disabled = false, ...props }: Props) {
+  return (
+    <div style={{ display: "flex" }} data-testid="row">
+      <Tooltip {...props}>
+        <button type="button" aria-label="Back" disabled={disabled}>
+          ←
+        </button>
+      </Tooltip>
+    </div>
+  );
+}
+
+async function render(node: React.ReactNode) {
+  await act(async () => root.render(<TooltipProvider delay={0}>{node}</TooltipProvider>));
+}
+
+function button() {
+  const element = container.querySelector("button");
+  if (!element) throw new Error("Control was not rendered");
+  return element;
+}
+
+/** The open popup's text, or null. The popup portals to the document body. */
+function popupText(): string | null {
+  return document.querySelector('[data-slot="tooltip-popup"]')?.textContent ?? null;
+}
+
+/** Flushes React work queued by the popup's open and close. */
+async function settle() {
+  await act(async () => {});
+}
+
+async function hover(target: Element) {
+  await act(async () => {
+    target.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+    target.dispatchEvent(new MouseEvent("mouseenter"));
+    target.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+  });
+  await settle();
+}
+
+async function unhover(target: Element) {
+  await act(async () => {
+    target.dispatchEvent(new PointerEvent("pointerleave", { pointerType: "mouse" }));
+    target.dispatchEvent(new MouseEvent("mouseleave"));
+  });
+  await settle();
+}
+
 describe("host tooltip", () => {
-  it("makes an enabled control its own trigger so hover and keyboard focus open it", () => {
-    render({ label: "Screenshot page to chat" }, false);
-    const [trigger] = native.triggers;
-    expect(trigger?.type).toBe("button");
-    expect(native.popups).toEqual([
-      expect.objectContaining({ children: "Screenshot page to chat" }),
-    ]);
+  it("opens on hover over an enabled control and closes when the pointer leaves", async () => {
+    await render(<Control label="Back" />);
+    expect(popupText()).toBeNull();
+    await hover(button());
+    expect(popupText()).toBe("Back");
+    await unhover(button());
+    expect(popupText()).toBeNull();
   });
 
-  it("hovers a disabled control through a wrapper that takes its pointer events", () => {
-    render({ label: "Open a page first" }, true);
-    const [trigger] = native.triggers;
-    expect(trigger?.type).toBe("span");
-    const props = trigger!.props as { className: string; children: ReactNode };
-    expect(props.className).toContain("*:pointer-events-none");
-    expect(isValidElement(props.children) && props.children.type).toBe("button");
-    expect(native.popups[0]?.children).toBe("Open a page first");
-    expect(renderer!.root.findByType("button").props.disabled).toBe(true);
+  it("opens on keyboard focus and dismisses on Escape", async () => {
+    await render(<Control label="Open in system browser" />);
+    await act(async () => button().focus());
+    await settle();
+    expect(popupText()).toBe("Open in system browser");
+    await act(async () => {
+      button().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    await settle();
+    expect(popupText()).toBeNull();
   });
 
-  it("passes placement to the native popup and keeps its defaults when omitted", () => {
-    render({ label: "Back", side: "bottom", align: "start" }, false);
-    render({ label: "Back" }, false);
-    expect(native.popups.map(({ side, align }) => ({ side, align }))).toEqual([
-      { side: "bottom", align: "start" },
-      { side: undefined, align: undefined },
-    ]);
+  it("follows state-dependent wording while open", async () => {
+    await render(<Control label="Refresh" />);
+    await hover(button());
+    expect(popupText()).toBe("Refresh");
+    await render(<Control label="Loading…" />);
+    await settle();
+    expect(popupText()).toBe("Loading…");
   });
 
-  it("renders the control alone when there is nothing to say", () => {
+  it("stays silent on a disabled control and leaves it a direct child of its row", async () => {
+    await render(<Control label="Back" disabled />);
+    expect(button().parentElement?.dataset.testid).toBe("row");
+    await hover(button());
+    await act(async () => button().focus());
+    await settle();
+    expect(popupText()).toBeNull();
+  });
+
+  it("explains a disabled control only when the label opts in", async () => {
+    const reason = "Page didn't load — pick unavailable until the page renders";
+    await render(<Control label={reason} disabled showWhenDisabled />);
+    const wrapper = button().parentElement!;
+    expect(wrapper.tagName).toBe("SPAN");
+    await hover(wrapper);
+    expect(popupText()).toBe(reason);
+    await unhover(wrapper);
+    expect(popupText()).toBeNull();
+  });
+
+  it("keeps an opted-in control's wrapper across enable and disable", async () => {
+    await render(<Control label="Annotate elements, regions, and drawings" showWhenDisabled />);
+    const wrapper = button().parentElement!;
+    expect(button().disabled).toBe(false);
+    await render(
+      <Control label="Annotate elements, regions, and drawings" showWhenDisabled disabled />,
+    );
+    expect(button().disabled).toBe(true);
+    expect(button().parentElement).toBe(wrapper);
+    // Inline, with no flex-shrink override: the row lays the wrapper out as
+    // it laid out the bare control.
+    expect(wrapper.className.split(" ")).not.toContain("shrink-0");
+    expect(wrapper.className.split(" ")).toContain("inline-flex");
+  });
+
+  it("renders the control alone when there is nothing to say", async () => {
     for (const label of ["", null, undefined]) {
-      const tree = render({ label }, true).toJSON();
-      expect(tree).toMatchObject({ type: "button", props: { disabled: true } });
+      await render(<Control label={label} />);
+      expect(button().parentElement?.dataset.testid).toBe("row");
+      await hover(button());
+      expect(popupText()).toBeNull();
     }
-    expect(native.triggers).toHaveLength(0);
-    expect(native.popups).toHaveLength(0);
+  });
+});
+
+describe("authoring Tooltip over the host primitive", () => {
+  function Pack({ host }: { host: Pick<ClientHost, "React" | "tooltip"> }) {
+    return (
+      <div data-testid="row">
+        <SdkTooltip host={host} label="More">
+          <button type="button" aria-label="Preview menu">
+            ⋯
+          </button>
+        </SdkTooltip>
+      </div>
+    );
+  }
+
+  it("shows the host tooltip where the host offers one", async () => {
+    await render(<Pack host={{ React, tooltip: hostTooltip }} />);
+    await hover(button());
+    expect(popupText()).toBe("More");
+  });
+
+  it("keeps the trigger usable on hosts without a valid tooltip", async () => {
+    const malformed = [
+      undefined,
+      { version: 0, Tooltip },
+      { version: 1.5, Tooltip },
+      { version: 1, Tooltip: { $$typeof: Symbol.for("react.memo") } },
+      { version: 1, Tooltip: <span /> },
+    ] as unknown as ClientHost["tooltip"][];
+    for (const tooltip of malformed) {
+      await render(<Pack host={{ React, ...(tooltip ? { tooltip } : {}) }} />);
+      expect(button().parentElement?.dataset.testid).toBe("row");
+      expect(button().getAttribute("aria-label")).toBe("Preview menu");
+      await hover(button());
+      expect(popupText()).toBeNull();
+    }
   });
 });

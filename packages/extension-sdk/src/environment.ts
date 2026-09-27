@@ -243,15 +243,20 @@ export interface TooltipProps {
   readonly label: string | null | undefined;
   /**
    * The trigger: one DOM element, or a component that forwards its ref and
-   * props to one. A trigger with `disabled` set is wrapped in a hoverable
-   * span, since disabled controls receive no pointer events. The tooltip is
-   * visual; keep the trigger's own `aria-label`.
+   * props to one. The tooltip is visual; keep the trigger's own `aria-label`.
    */
   readonly children: React.ReactElement;
   /** Defaults to `"top"`. */
   readonly side?: "top" | "bottom" | "left" | "right";
   /** Defaults to `"center"`. */
   readonly align?: "start" | "center" | "end";
+  /**
+   * A trigger with `disabled` set shows no tooltip, like native disabled
+   * controls. Set this only when `label` explains why the control is
+   * disabled: the host then wraps the trigger in a hoverable inline-flex span
+   * (enabled or not, so its ancestry does not change with its state).
+   */
+  readonly showWhenDisabled?: boolean;
 }
 
 /**
@@ -264,19 +269,33 @@ export interface ClientTooltip {
   readonly Tooltip: React.ComponentType<TooltipProps>;
 }
 
+const REACT_MEMO_TYPE = Symbol.for("react.memo");
+const REACT_FORWARD_REF_TYPE = Symbol.for("react.forward_ref");
+
 /**
- * The host's tooltip when it offers version 1 or a compatible later one, else
- * null. Packs usually render the `Tooltip` from `authoring`, which falls back
- * to the trigger alone.
+ * Whether `value` can be rendered as a component: a function (or class), or
+ * a genuine `React.memo` / `React.forwardRef` wrapper around one. Elements,
+ * lazy objects and arbitrary tagged objects are not.
+ */
+function isComponentType(value: unknown, depth = 0): boolean {
+  if (typeof value === "function") return true;
+  if (typeof value !== "object" || value === null || depth > 4) return false;
+  const wrapper = value as { $$typeof?: unknown; type?: unknown; render?: unknown };
+  if (wrapper.$$typeof === REACT_MEMO_TYPE) return isComponentType(wrapper.type, depth + 1);
+  if (wrapper.$$typeof === REACT_FORWARD_REF_TYPE) return typeof wrapper.render === "function";
+  return false;
+}
+
+/**
+ * The host's tooltip when it offers version 1 or a compatible later (integer)
+ * one with a renderable component, else null. Packs usually render the
+ * `Tooltip` from `authoring`, which falls back to the trigger alone.
  */
 export function resolveTooltip(host: Pick<ClientHost, "tooltip">): ClientTooltip | null {
   const member: unknown = host.tooltip;
   if (!member || typeof member !== "object") return null;
   const { version, Tooltip } = member as Record<string, unknown>;
-  const isComponent =
-    typeof Tooltip === "function" ||
-    (typeof Tooltip === "object" && Tooltip !== null && "$$typeof" in Tooltip);
-  return typeof version === "number" && version >= 1 && isComponent
+  return Number.isInteger(version) && (version as number) >= 1 && isComponentType(Tooltip)
     ? (member as ClientTooltip)
     : null;
 }

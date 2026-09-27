@@ -35,6 +35,7 @@ import {
   prsThreadMoreLabel,
   prsThreadStateLabel,
   prsUnavailableLabel,
+  prsActionTooltip,
   prsWriteActionLabel,
   prsWriteActionOffers,
   prsWriteGate,
@@ -723,4 +724,12 @@ NodeTest.test("prsReviewVerdict keeps a stored pick across remounts", () => {
   const approveOnly = prsWriteVerdictOptions(["approve"]);
   NodeAssert.equal(prsReviewVerdict("request-changes", approveOnly), "approve");
   NodeAssert.equal(prsReviewVerdict("", []), "comment");
+});
+
+NodeTest.test("prsActionTooltip: native header wording for the actions native labels", () => {
+  NodeAssert.equal(prsActionTooltip("ready", ""), "Ready for review");
+  NodeAssert.equal(prsActionTooltip("merge", "squash"), "Squash and merge");
+  NodeAssert.equal(prsActionTooltip("merge", "rebase"), "Rebase and merge");
+  NodeAssert.equal(prsActionTooltip("merge", ""), "Merge");
+  NodeAssert.equal(prsActionTooltip("close", ""), null);
 });

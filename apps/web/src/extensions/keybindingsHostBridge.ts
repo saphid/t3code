@@ -15,7 +15,11 @@ import {
   type UiKeybindingsHost,
 } from "@t3tools/extension-sdk/catalogue";
 
-import { resolveShortcutCommand, type ShortcutMatchContext } from "~/keybindings";
+import {
+  resolveShortcutCommand,
+  shortcutLabelForCommand,
+  type ShortcutMatchContext,
+} from "~/keybindings";
 import { readShortcutContext } from "~/lib/shortcutContext";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { primaryServerKeybindingsAtom } from "~/state/server";
@@ -53,6 +57,21 @@ export function createKeybindingsHostBridge(
         try {
           return resolveShortcutCommand(chord, deps.keybindings(), {
             context: { ...deps.shortcutContext(), terminalFocus: true },
+            ...(deps.platform === undefined ? {} : { platform: deps.platform }),
+          });
+        } catch {
+          return null;
+        }
+      },
+      terminalFocusShortcutLabel(command) {
+        if (binding.lifetime.aborted) return null;
+        try {
+          const keybindings = deps.keybindings();
+          // Only a command some rule names can have a label.
+          const known = keybindings.find((rule) => rule.command === command)?.command;
+          if (known === undefined) return null;
+          return shortcutLabelForCommand(keybindings, known, {
+            context: { ...deps.shortcutContext(), terminalFocus: true, terminalOpen: true },
             ...(deps.platform === undefined ? {} : { platform: deps.platform }),
           });
         } catch {

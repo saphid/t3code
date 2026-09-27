@@ -61,6 +61,7 @@ import {
   plainTerminalText,
   registerPanelCommands,
   terminalChordAction,
+  terminalCloseLabel,
   terminalPathLinkTarget,
   watchTerminalAppearanceVars,
   watchThemeVars,
@@ -1177,6 +1178,9 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
   const snapshot: TerminalPanelSnapshot = panel.snapshot;
   const activeId = snapshot.activeTerminalId;
   const activeTab = snapshot.tabs.find((tab) => tab.terminalId === activeId) ?? null;
+  // Feature-detected: older hosts have no label resolver, and native then names no shortcut.
+  const closeShortcutLabel =
+    host.keybindings?.terminalFocusShortcutLabel?.("terminal.close") ?? null;
   // The active group's members render side-by-side; every other session
   // keeps its pane mounted offscreen — offscreen panes hold optional stream
   // slots (streamHub) so the VT parser keeps consuming output and answering
@@ -1367,6 +1371,11 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
               {group.terminalIds.map((terminalId) => {
                 const tab = tabById.get(terminalId);
                 if (!tab) return null;
+                const closeLabel = terminalCloseLabel(
+                  tab.label,
+                  tab.terminalId === activeId,
+                  closeShortcutLabel,
+                );
                 return (
                   <li
                     key={tab.terminalId}
@@ -1433,10 +1442,10 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
                         >
                           Restart
                         </button>
-                        <Tooltip host={host} label={`Close ${tab.label}`}>
+                        <Tooltip host={host} label={closeLabel}>
                           <button
                             type="button"
-                            aria-label={`Close ${tab.terminalId}`}
+                            aria-label={closeLabel}
                             onClick={() => panel.requestAction(tab.terminalId, "close")}
                             style={control}
                           >

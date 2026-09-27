@@ -2,17 +2,22 @@ import type { ClientTooltip, TooltipProps } from "@t3tools/extension-sdk/environ
 
 import { Tooltip as TooltipRoot, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
-function Tooltip({ label, children, side, align }: TooltipProps) {
+function Tooltip({ label, children, side, align, showWhenDisabled = false }: TooltipProps) {
   if (!label) return children;
-  // A disabled control gets no pointer events, so the hover target is a span
-  // around it, the way native disabled-reason tooltips are built.
   const disabled = (children.props as { disabled?: unknown }).disabled === true;
+  // Native disabled controls take no pointer events and show no tooltip.
+  if (disabled && !showWhenDisabled) return children;
   return (
     <TooltipRoot>
       <TooltipTrigger
         render={
-          disabled ? (
-            <span className="inline-flex shrink-0 *:pointer-events-none">{children}</span>
+          showWhenDisabled ? (
+            // A disabled-reason tooltip needs a hover target that still gets
+            // pointer events. It wraps in both states so the control's
+            // ancestry does not change as it enables and disables.
+            <span className={disabled ? "inline-flex *:pointer-events-none" : "inline-flex"}>
+              {children}
+            </span>
           ) : (
             children
           )

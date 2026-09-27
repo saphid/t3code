@@ -7659,6 +7659,27 @@ var __t3Client = (() => {
     "application/octet-stream",
     "font/woff2"
   ];
+  var REACT_MEMO_TYPE = /* @__PURE__ */ Symbol.for("react.memo");
+  var REACT_FORWARD_REF_TYPE = /* @__PURE__ */ Symbol.for("react.forward_ref");
+  function isComponentType(value, depth = 0) {
+    if (typeof value === "function")
+      return true;
+    if (typeof value !== "object" || value === null || depth > 4)
+      return false;
+    const wrapper = value;
+    if (wrapper.$$typeof === REACT_MEMO_TYPE)
+      return isComponentType(wrapper.type, depth + 1);
+    if (wrapper.$$typeof === REACT_FORWARD_REF_TYPE)
+      return typeof wrapper.render === "function";
+    return false;
+  }
+  function resolveTooltip(host) {
+    const member = host.tooltip;
+    if (!member || typeof member !== "object")
+      return null;
+    const { version, Tooltip: Tooltip2 } = member;
+    return Number.isInteger(version) && version >= 1 && isComponentType(Tooltip2) ? member : null;
+  }
   function validateEntry(value) {
     if (typeof value !== "string" || value.length > 240 || !/\.(mjs|js)$/.test(value) || value.split("/").some((part) => !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(part) || part === "." || part === ".."))
       throw new Error("Entry must be a package-relative bundled ESM .mjs or .js file");
@@ -7886,6 +7907,11 @@ var __t3Client = (() => {
   }
   function requireApi(api, versionRange = "^" + api.definition.version) {
     return { id: api.definition.id, versionRange };
+  }
+  function Tooltip(props) {
+    const { host, ...rest } = props;
+    const tooltip = resolveTooltip(host);
+    return tooltip === null ? rest.children : host.React.createElement(tooltip.Tooltip, rest);
   }
 
   // extension.tsx
@@ -9713,6 +9739,16 @@ ${ref.number}`;
         return "Approve workflows";
     }
   }
+  var PRS_MERGE_METHOD_LABELS = {
+    merge: "Merge",
+    squash: "Squash and merge",
+    rebase: "Rebase and merge"
+  };
+  function prsActionTooltip(action, method) {
+    if (action === "ready") return "Ready for review";
+    if (action === "merge") return PRS_MERGE_METHOD_LABELS[method] ?? "Merge";
+    return null;
+  }
   function prsWriteActionOffers(detail, write) {
     const declared = new Set(write.actions);
     const offer = (action, extra) => declared.has(action) ? {
@@ -10655,10 +10691,10 @@ ${writeKey}`;
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 12 }, children: error });
   }
   function PrsActionButton(props) {
-    const { offer, pending, method, onMethodChange, onRun } = props;
+    const { host, offer, pending, method, onMethodChange, onRun } = props;
     const choices = offer.methods ?? offer.updateMethods ?? [];
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { display: "inline-flex", alignItems: "center", gap: 4 }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsActionTooltip(offer.action, method), children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
         "button",
         {
           type: "button",
@@ -10670,7 +10706,7 @@ ${writeKey}`;
           },
           children: pending ? `${offer.label}\u2026` : offer.label
         }
-      ),
+      ) }),
       choices.length > 1 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
         "select",
         {
@@ -11021,7 +11057,7 @@ ${thread.id}`;
                       style: { ...inputStyle, maxWidth: 160 }
                     }
                   )
-                ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", onClick: () => onSelect(null), style: control, children: "\u2190 Pull requests" }),
+                ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: "Back to pull requests", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", onClick: () => onSelect(null), style: control, children: "\u2190 Pull requests" }) }),
                 ready && ops?.["prs.invalidate"] === true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", onClick: runInvalidate, style: control, children: "Refresh" })
               ]
             }
@@ -11113,12 +11149,12 @@ ${thread.id}`;
                         },
                         children: [
                           stateBadge(detail),
-                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { style: { fontSize: 14, overflowWrap: "anywhere" }, children: detail.title }),
-                          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted, fontSize: 12 }, children: [
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: detail.title, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { style: { fontSize: 14, overflowWrap: "anywhere" }, children: detail.title }) }),
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: detail.repository, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted, fontSize: 12 }, children: [
                             detail.repository,
                             "#",
                             detail.number
-                          ] })
+                          ] }) })
                         ]
                       }
                     ),
@@ -11187,6 +11223,7 @@ ${thread.id}`;
                       writeOps?.["prs.runAction"] === true && prsWriteActionOffers(detail, write).map((offer) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                         PrsActionButton,
                         {
+                          host,
                           offer,
                           pending: writeState?.pending === true,
                           method: draft(`method:${offer.action}`) || (offer.methods ?? offer.updateMethods ?? [])[0] || "",

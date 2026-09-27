@@ -7687,13 +7687,26 @@ var __t3Client = (() => {
     "application/octet-stream",
     "font/woff2"
   ];
+  var REACT_MEMO_TYPE = /* @__PURE__ */ Symbol.for("react.memo");
+  var REACT_FORWARD_REF_TYPE = /* @__PURE__ */ Symbol.for("react.forward_ref");
+  function isComponentType(value, depth = 0) {
+    if (typeof value === "function")
+      return true;
+    if (typeof value !== "object" || value === null || depth > 4)
+      return false;
+    const wrapper = value;
+    if (wrapper.$$typeof === REACT_MEMO_TYPE)
+      return isComponentType(wrapper.type, depth + 1);
+    if (wrapper.$$typeof === REACT_FORWARD_REF_TYPE)
+      return typeof wrapper.render === "function";
+    return false;
+  }
   function resolveTooltip(host) {
     const member = host.tooltip;
     if (!member || typeof member !== "object")
       return null;
     const { version: version2, Tooltip: Tooltip2 } = member;
-    const isComponent = typeof Tooltip2 === "function" || typeof Tooltip2 === "object" && Tooltip2 !== null && "$$typeof" in Tooltip2;
-    return typeof version2 === "number" && version2 >= 1 && isComponent ? member : null;
+    return Number.isInteger(version2) && version2 >= 1 && isComponentType(Tooltip2) ? member : null;
   }
   function validateEntry(value) {
     if (typeof value !== "string" || value.length > 240 || !/\.(mjs|js)$/.test(value) || value.split("/").some((part) => !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(part) || part === "." || part === ".."))
@@ -15023,11 +15036,11 @@ ${ind(d)}}`;
     const devToolsOpen = session?.devToolsOpen ?? null;
     const pictureInPicture = session?.pictureInPicture ?? null;
     return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { ref: root, style: { position: "relative" }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Tooltip, { host, label: "Page menu", children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Tooltip, { host, label: "More", children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
         "button",
         {
           type: "button",
-          "aria-label": "Page menu",
+          "aria-label": "Preview menu",
           "aria-haspopup": "menu",
           "aria-expanded": open,
           disabled: session === null,
@@ -16092,6 +16105,7 @@ ${ind(d)}}`;
       return false;
     });
   }
+  var PICK_UNAVAILABLE_REASON = "Page didn't load \u2014 pick unavailable until the page renders";
   function BrowserView(props) {
     const { host, session } = props;
     const restored = restoreState(session.restoreState) ? session.restoreState : null;
@@ -16589,6 +16603,11 @@ ${titledTitle}`;
     const leaseState = surfaceLease?.state;
     const remoteNotice = remote.status.kind === "connecting" ? "Connecting remote browser frames\u2026" : remote.status.kind === "error" ? `Remote browser frames failed \u2014 ${remote.status.detail}` : remote.status.kind === "unsupported" ? `This client cannot composite a native browser surface and has no remote frame transport (${remote.status.detail}). The session is still open \u2014 view it from the desktop app.` : null;
     const capture = useBrowserCapture(host, session, held);
+    const picking = capture.state.kind === "capturing" && capture.state.target === "element";
+    const pickDisabled = capture.blockReason !== null || capture.state.kind === "capturing";
+    const pageFailed = held !== null && live?.navigation.kind === "failed";
+    const pickLabel = picking ? "Cancel annotation (Esc)" : "Annotate elements, regions, and drawings";
+    const pageLoading = held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
     const captureStatus = capture.state.kind === "capturing" ? capture.state.target === "element" ? "Pick an element in the page \u2014 Esc cancels." : "Capturing the page\u2026" : capture.state.kind === "done" ? capture.state.message : null;
     const surfaceNotice = leaseState?.kind === "ended" ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.` : remoteEligible ? remoteNotice : surfaceDenial ? `Native presentation is unavailable \u2014 ${surfaceDenial.reason}${surfaceDenial.grant ? ` (missing grant: ${surfaceDenial.grant})` : ""}: ${surfaceDenial.detail}` : null;
     return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
@@ -16643,11 +16662,11 @@ ${titledTitle}`;
                     children: "\u2192"
                   }
                 ) }),
-                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Tooltip, { host, label: "Reload", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Tooltip, { host, label: pageLoading ? "Loading\u2026" : "Refresh", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   "button",
                   {
                     type: "button",
-                    "aria-label": "Reload",
+                    "aria-label": pageLoading ? "Stop" : "Refresh",
                     disabled: fileSource === null && (held ? pageBlock !== null && !isRecoveryExhausted(live) : state2.status.kind !== "target"),
                     onClick: () => held || fileSource ? command("reload") : commit2(reload(state2)),
                     style: buttonStyle,
@@ -16655,37 +16674,30 @@ ${titledTitle}`;
                   }
                 ) }),
                 /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
-                  Tooltip,
-                  {
-                    host,
-                    label: deviceMode ? "Turn off device toolbar" : "Turn on device toolbar",
-                    children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
-                      "button",
-                      {
-                        type: "button",
-                        "aria-label": deviceMode ? "Turn off device toolbar" : "Turn on device toolbar",
-                        "aria-pressed": deviceMode,
-                        disabled: !held || viewportPending,
-                        onClick: () => {
-                          if (!viewportSetting) return;
-                          commitViewport(
-                            viewportSetting._tag !== "fill" ? { _tag: "fill" } : responsiveViewportForToggle(contentSize)
-                          );
-                        },
-                        style: {
-                          ...buttonStyle,
-                          ...deviceMode ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" } : {}
-                        },
-                        children: "\u26F6"
-                      }
-                    )
-                  }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Tooltip, { host, label: capture.blockReason ?? "Screenshot page to chat", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   "button",
                   {
                     type: "button",
-                    "aria-label": "Screenshot page to chat",
+                    "aria-label": deviceMode ? "Hide device toolbar" : "Show device toolbar",
+                    "aria-pressed": deviceMode,
+                    disabled: !held || viewportPending,
+                    onClick: () => {
+                      if (!viewportSetting) return;
+                      commitViewport(
+                        viewportSetting._tag !== "fill" ? { _tag: "fill" } : responsiveViewportForToggle(contentSize)
+                      );
+                    },
+                    style: {
+                      ...buttonStyle,
+                      ...deviceMode ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" } : {}
+                    },
+                    children: "\u26F6"
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Tooltip, { host, label: "Screenshot", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                  "button",
+                  {
+                    type: "button",
+                    "aria-label": "Capture screenshot",
                     "aria-description": capture.blockReason ?? void 0,
                     disabled: capture.blockReason !== null || capture.state.kind === "capturing",
                     onClick: () => capture.capture("page"),
@@ -16693,19 +16705,27 @@ ${titledTitle}`;
                     children: "\u25A3"
                   }
                 ) }),
-                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Tooltip, { host, label: capture.blockReason ?? "Pick element to chat", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
-                  "button",
+                /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                  Tooltip,
                   {
-                    type: "button",
-                    "aria-label": "Pick element to chat",
-                    "aria-description": capture.blockReason ?? void 0,
-                    "aria-pressed": capture.state.kind === "capturing" && capture.state.target === "element",
-                    disabled: capture.blockReason !== null || capture.state.kind === "capturing",
-                    onClick: () => capture.capture("element"),
-                    style: buttonStyle,
-                    children: "\u2316"
+                    host,
+                    label: pickDisabled && pageFailed ? PICK_UNAVAILABLE_REASON : pickLabel,
+                    showWhenDisabled: pageFailed,
+                    children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                      "button",
+                      {
+                        type: "button",
+                        "aria-label": picking ? "Cancel annotation" : "Annotate preview",
+                        "aria-description": capture.blockReason ?? void 0,
+                        "aria-pressed": picking,
+                        disabled: pickDisabled,
+                        onClick: () => capture.capture("element"),
+                        style: buttonStyle,
+                        children: "\u2316"
+                      }
+                    )
                   }
-                ) }),
+                ),
                 /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                   "input",
                   {

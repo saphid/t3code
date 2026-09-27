@@ -251,8 +251,8 @@ export function requireApi(
 
 /**
  * The host's native tooltip around one trigger (`ClientHost.tooltip`); hosts
- * without one render the trigger alone. Disabled triggers are handled by the
- * host — see `TooltipProps`.
+ * without one render the trigger alone. A disabled trigger stays silent unless
+ * `showWhenDisabled` is set — see `TooltipProps`.
  */
 export function Tooltip(
   props: TooltipProps & { readonly host: Pick<ClientHost, "React" | "tooltip"> },

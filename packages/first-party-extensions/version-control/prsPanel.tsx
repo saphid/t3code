@@ -32,6 +32,7 @@ import {
   type PrsWriteUpdateMethod,
   type PrsWriteVerdict,
 } from "@t3tools/extension-sdk/catalogue";
+import { Tooltip } from "@t3tools/extension-sdk/authoring";
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
@@ -71,6 +72,7 @@ import {
   prsThreadMoreLabel,
   prsThreadStateLabel,
   prsUnavailableLabel,
+  prsActionTooltip,
   prsWriteActionOffers,
   prsWriteGate,
   prsWriteUnavailableNote,
@@ -1213,27 +1215,30 @@ function PrsWriteErrorLine({ error }: { error: string | null }) {
 }
 
 function PrsActionButton(props: {
+  host: ClientHost;
   offer: PrsWriteActionOffer;
   pending: boolean;
   method: string;
   onMethodChange: (value: string) => void;
   onRun: (offer: PrsWriteActionOffer, method?: string) => void;
 }) {
-  const { offer, pending, method, onMethodChange, onRun } = props;
+  const { host, offer, pending, method, onMethodChange, onRun } = props;
   const choices: readonly string[] = offer.methods ?? offer.updateMethods ?? [];
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-      <button
-        type="button"
-        disabled={pending}
-        onClick={() => onRun(offer, method === "" ? undefined : method)}
-        style={{
-          ...control,
-          color: offer.destructive ? "var(--destructive, #b42318)" : "inherit",
-        }}
-      >
-        {pending ? `${offer.label}…` : offer.label}
-      </button>
+      <Tooltip host={host} side="top" label={prsActionTooltip(offer.action, method)}>
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => onRun(offer, method === "" ? undefined : method)}
+          style={{
+            ...control,
+            color: offer.destructive ? "var(--destructive, #b42318)" : "inherit",
+          }}
+        >
+          {pending ? `${offer.label}…` : offer.label}
+        </button>
+      </Tooltip>
       {choices.length > 1 && (
         <select
           aria-label={`${offer.label} method`}
@@ -1735,9 +1740,11 @@ export function PullRequestsPanel(props: {
             />
           </>
         ) : (
-          <button type="button" onClick={() => onSelect(null)} style={control}>
-            ← Pull requests
-          </button>
+          <Tooltip host={host} side="top" label="Back to pull requests">
+            <button type="button" onClick={() => onSelect(null)} style={control}>
+              ← Pull requests
+            </button>
+          </Tooltip>
         )}
         {ready && ops?.["prs.invalidate"] === true && (
           <button type="button" onClick={runInvalidate} style={control}>
@@ -1888,12 +1895,16 @@ export function PullRequestsPanel(props: {
                         }}
                       >
                         {stateBadge(detail)}
-                        <strong style={{ fontSize: 14, overflowWrap: "anywhere" }}>
-                          {detail.title}
-                        </strong>
-                        <span style={{ color: muted, fontSize: 12 }}>
-                          {detail.repository}#{detail.number}
-                        </span>
+                        <Tooltip host={host} side="top" label={detail.title}>
+                          <strong style={{ fontSize: 14, overflowWrap: "anywhere" }}>
+                            {detail.title}
+                          </strong>
+                        </Tooltip>
+                        <Tooltip host={host} side="top" label={detail.repository}>
+                          <span style={{ color: muted, fontSize: 12 }}>
+                            {detail.repository}#{detail.number}
+                          </span>
+                        </Tooltip>
                       </div>
                       <div style={{ color: muted, fontSize: 12, marginTop: 2 }}>{detail.url}</div>
                     </div>
@@ -1984,6 +1995,7 @@ export function PullRequestsPanel(props: {
                       prsWriteActionOffers(detail, write).map((offer) => (
                         <PrsActionButton
                           key={offer.action}
+                          host={host}
                           offer={offer}
                           pending={writeState?.pending === true}
                           method={

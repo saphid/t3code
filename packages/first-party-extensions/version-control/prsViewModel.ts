@@ -877,6 +877,22 @@ export function prsWriteActionLabel(action: PrsWriteActionKind): string {
   }
 }
 
+const PRS_MERGE_METHOD_LABELS: Readonly<Record<string, string>> = {
+  merge: "Merge",
+  squash: "Squash and merge",
+  rebase: "Rebase and merge",
+};
+
+/**
+ * Native's tooltip for the matching header action, or null where native's
+ * action has no tooltip: Ready for review, and merge named by its method.
+ */
+export function prsActionTooltip(action: PrsWriteActionKind, method: string): string | null {
+  if (action === "ready") return "Ready for review";
+  if (action === "merge") return PRS_MERGE_METHOD_LABELS[method] ?? "Merge";
+  return null;
+}
+
 export interface PrsWriteActionOffer {
   readonly action: PrsWriteActionKind;
   readonly label: string;

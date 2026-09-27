@@ -219,6 +219,8 @@ function restoreState(value: unknown): value is PersistedViewState | null {
  * epoch + engine-generation guards, and the events stream is the only
  * source of engine/navigation truth.
  */
+const PICK_UNAVAILABLE_REASON = "Page didn't load — pick unavailable until the page renders";
+
 function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const { host, session } = props;
   const restored = restoreState(session.restoreState) ? session.restoreState : null;
@@ -872,6 +874,16 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           ? `This client cannot composite a native browser surface and has no remote frame transport (${remote.status.detail}). The session is still open — view it from the desktop app.`
           : null;
   const capture = useBrowserCapture(host, session, held);
+  // Native pick/refresh wording (PreviewChromeRow): state-dependent labels,
+  // and the one disabled-reason tooltip native gives, for a failed page.
+  const picking = capture.state.kind === "capturing" && capture.state.target === "element";
+  const pickDisabled = capture.blockReason !== null || capture.state.kind === "capturing";
+  const pageFailed = held !== null && live?.navigation.kind === "failed";
+  const pickLabel = picking
+    ? "Cancel annotation (Esc)"
+    : "Annotate elements, regions, and drawings";
+  const pageLoading =
+    held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
   const captureStatus =
     capture.state.kind === "capturing"
       ? capture.state.target === "element"
@@ -947,10 +959,10 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             →
           </button>
         </Tooltip>
-        <Tooltip host={host} label="Reload">
+        <Tooltip host={host} label={pageLoading ? "Loading…" : "Refresh"}>
           <button
             type="button"
-            aria-label="Reload"
+            aria-label={pageLoading ? "Stop" : "Refresh"}
             disabled={
               fileSource === null &&
               (held
@@ -963,39 +975,37 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             ⟳
           </button>
         </Tooltip>
-        <Tooltip
-          host={host}
-          label={deviceMode ? "Turn off device toolbar" : "Turn on device toolbar"}
+        {/* Native has no tooltip here; the action is More → Show/Hide device toolbar. */}
+        <button
+          type="button"
+          aria-label={deviceMode ? "Hide device toolbar" : "Show device toolbar"}
+          aria-pressed={deviceMode}
+          disabled={!held || viewportPending}
+          onClick={() => {
+            if (!viewportSetting) return;
+            // Native toggle semantics: non-fill → fill; fill → a responsive
+            // freeform sized from the panel this slot fills.
+            commitViewport(
+              viewportSetting._tag !== "fill"
+                ? { _tag: "fill" }
+                : responsiveViewportForToggle(contentSize),
+            );
+          }}
+          style={{
+            ...buttonStyle,
+            ...(deviceMode
+              ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" }
+              : {}),
+          }}
         >
+          ⛶
+        </button>
+        {/* Native says "Screenshot · Shift-click to record"; this pack has no
+            recording, so it keeps only the part that is true here. */}
+        <Tooltip host={host} label="Screenshot">
           <button
             type="button"
-            aria-label={deviceMode ? "Turn off device toolbar" : "Turn on device toolbar"}
-            aria-pressed={deviceMode}
-            disabled={!held || viewportPending}
-            onClick={() => {
-              if (!viewportSetting) return;
-              // Native toggle semantics: non-fill → fill; fill → a responsive
-              // freeform sized from the panel this slot fills.
-              commitViewport(
-                viewportSetting._tag !== "fill"
-                  ? { _tag: "fill" }
-                  : responsiveViewportForToggle(contentSize),
-              );
-            }}
-            style={{
-              ...buttonStyle,
-              ...(deviceMode
-                ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" }
-                : {}),
-            }}
-          >
-            ⛶
-          </button>
-        </Tooltip>
-        <Tooltip host={host} label={capture.blockReason ?? "Screenshot page to chat"}>
-          <button
-            type="button"
-            aria-label="Screenshot page to chat"
+            aria-label="Capture screenshot"
             aria-description={capture.blockReason ?? undefined}
             disabled={capture.blockReason !== null || capture.state.kind === "capturing"}
             onClick={() => capture.capture("page")}
@@ -1004,13 +1014,17 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             ▣
           </button>
         </Tooltip>
-        <Tooltip host={host} label={capture.blockReason ?? "Pick element to chat"}>
+        <Tooltip
+          host={host}
+          label={pickDisabled && pageFailed ? PICK_UNAVAILABLE_REASON : pickLabel}
+          showWhenDisabled={pageFailed}
+        >
           <button
             type="button"
-            aria-label="Pick element to chat"
+            aria-label={picking ? "Cancel annotation" : "Annotate preview"}
             aria-description={capture.blockReason ?? undefined}
-            aria-pressed={capture.state.kind === "capturing" && capture.state.target === "element"}
-            disabled={capture.blockReason !== null || capture.state.kind === "capturing"}
+            aria-pressed={picking}
+            disabled={pickDisabled}
             onClick={() => capture.capture("element")}
             style={buttonStyle}
           >

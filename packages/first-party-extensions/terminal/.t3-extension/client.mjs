@@ -7659,13 +7659,26 @@ var __t3Client = (() => {
     "application/octet-stream",
     "font/woff2"
   ];
+  var REACT_MEMO_TYPE = /* @__PURE__ */ Symbol.for("react.memo");
+  var REACT_FORWARD_REF_TYPE = /* @__PURE__ */ Symbol.for("react.forward_ref");
+  function isComponentType(value, depth = 0) {
+    if (typeof value === "function")
+      return true;
+    if (typeof value !== "object" || value === null || depth > 4)
+      return false;
+    const wrapper = value;
+    if (wrapper.$$typeof === REACT_MEMO_TYPE)
+      return isComponentType(wrapper.type, depth + 1);
+    if (wrapper.$$typeof === REACT_FORWARD_REF_TYPE)
+      return typeof wrapper.render === "function";
+    return false;
+  }
   function resolveTooltip(host) {
     const member = host.tooltip;
     if (!member || typeof member !== "object")
       return null;
     const { version, Tooltip: Tooltip2 } = member;
-    const isComponent = typeof Tooltip2 === "function" || typeof Tooltip2 === "object" && Tooltip2 !== null && "$$typeof" in Tooltip2;
-    return typeof version === "number" && version >= 1 && isComponent ? member : null;
+    return Number.isInteger(version) && version >= 1 && isComponentType(Tooltip2) ? member : null;
   }
   function validateEntry(value) {
     if (typeof value !== "string" || value.length > 240 || !/\.(mjs|js)$/.test(value) || value.split("/").some((part) => !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(part) || part === "." || part === ".."))
@@ -13302,6 +13315,9 @@ var __t3Client = (() => {
     ["mod+n", "new"],
     ["mod+w", "close"]
   ]);
+  function terminalCloseLabel(terminalLabel, active, closeShortcutLabel) {
+    return `Close ${terminalLabel}${active && closeShortcutLabel ? ` (${closeShortcutLabel})` : ""}`;
+  }
   var NATIVE_TERMINAL_CHORD_COMMANDS = /* @__PURE__ */ new Map([
     ["terminal.split", "split"],
     ["terminal.splitVertical", "splitVertical"],
@@ -14847,6 +14863,7 @@ var __t3Client = (() => {
     const snapshot = panel.snapshot;
     const activeId = snapshot.activeTerminalId;
     const activeTab = snapshot.tabs.find((tab) => tab.terminalId === activeId) ?? null;
+    const closeShortcutLabel = host.keybindings?.terminalFocusShortcutLabel?.("terminal.close") ?? null;
     const activeGroup = snapshot.groups.find((group) => group.id === snapshot.activeGroupId) ?? null;
     const visibleTerminalIds = activeGroup?.terminalIds ?? (activeId !== null ? [activeId] : []);
     const visibleSet = new Set(visibleTerminalIds);
@@ -15018,6 +15035,11 @@ var __t3Client = (() => {
                     children: group.terminalIds.map((terminalId) => {
                       const tab = tabById.get(terminalId);
                       if (!tab) return null;
+                      const closeLabel = terminalCloseLabel(
+                        tab.label,
+                        tab.terminalId === activeId,
+                        closeShortcutLabel
+                      );
                       return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                         "li",
                         {
@@ -15084,11 +15106,11 @@ var __t3Client = (() => {
                                   children: "Restart"
                                 }
                               ),
-                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: `Close ${tab.label}`, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: closeLabel, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                                 "button",
                                 {
                                   type: "button",
-                                  "aria-label": `Close ${tab.terminalId}`,
+                                  "aria-label": closeLabel,
                                   onClick: () => panel.requestAction(tab.terminalId, "close"),
                                   style: control,
                                   children: "\xD7"

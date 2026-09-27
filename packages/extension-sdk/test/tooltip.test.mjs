@@ -7,7 +7,54 @@ import { resolveTooltip } from "../dist/environment.js";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-const HostTooltip = () => null;
+// A host tooltip that tags its trigger, so a render shows whether it ran.
+const HostTooltip = (props) =>
+  React.createElement("span", { "data-tip": props.label }, props.children);
+
+/** Renders `Tooltip` around a disabled button; returns the tree or the thrown error. */
+function render(host) {
+  let renderer;
+  try {
+    act(() => {
+      renderer = create(
+        React.createElement(
+          Tooltip,
+          { host, label: "Back" },
+          React.createElement("button", { id: "go", disabled: true }, "Go"),
+        ),
+      );
+    });
+  } catch (error) {
+    return { error };
+  }
+  const tree = renderer.toJSON();
+  act(() => renderer.unmount());
+  return { tree };
+}
+
+const malformed = [
+  ["null", null],
+  ["a string", "tooltip"],
+  ["version 0", { version: 0, Tooltip: HostTooltip }],
+  ["a string version", { version: "1", Tooltip: HostTooltip }],
+  ["a fractional version", { version: 1.5, Tooltip: HostTooltip }],
+  ["an infinite version", { version: Infinity, Tooltip: HostTooltip }],
+  ["no component", { version: 1 }],
+  ["an intrinsic tag", { version: 1, Tooltip: "span" }],
+  ["an untagged object", { version: 1, Tooltip: {} }],
+  ["an arbitrary marker", { version: 1, Tooltip: { $$typeof: "not-a-react-type" } }],
+  ["an element", { version: 1, Tooltip: React.createElement("span") }],
+  ["a memo without a type", { version: 1, Tooltip: { $$typeof: Symbol.for("react.memo") } }],
+  [
+    "a memo around an element",
+    { version: 1, Tooltip: { $$typeof: Symbol.for("react.memo"), type: React.createElement("i") } },
+  ],
+  [
+    "a forwardRef without render",
+    { version: 1, Tooltip: { $$typeof: Symbol.for("react.forward_ref") } },
+  ],
+  ["a lazy component", { version: 1, Tooltip: React.lazy(() => new Promise(() => {})) }],
+];
 
 NodeTest.describe("resolveTooltip", () => {
   NodeTest.it("is null on hosts without the member", () => {
@@ -15,73 +62,49 @@ NodeTest.describe("resolveTooltip", () => {
     NodeAssert.equal(resolveTooltip({ tooltip: undefined }), null);
   });
 
-  NodeTest.it("returns a version 1 member unchanged", () => {
-    const tooltip = { version: 1, Tooltip: HostTooltip };
-    NodeAssert.equal(resolveTooltip({ tooltip }), tooltip);
-  });
+  NodeTest.it(
+    "accepts integer versions from 1 with function, memo and forwardRef components",
+    () => {
+      const forwarded = React.forwardRef((props, ref) =>
+        React.createElement("span", { ref, "data-tip": props.label }, props.children),
+      );
+      for (const tooltip of [
+        { version: 1, Tooltip: HostTooltip },
+        { version: 2, Tooltip: HostTooltip, rich: true },
+        { version: 1, Tooltip: React.memo(HostTooltip) },
+        { version: 1, Tooltip: forwarded },
+        { version: 1, Tooltip: React.memo(forwarded) },
+      ])
+        NodeAssert.equal(resolveTooltip({ tooltip }), tooltip);
+    },
+  );
 
-  NodeTest.it("accepts later versions and memo/forwardRef component objects", () => {
-    const later = { version: 2, Tooltip: HostTooltip, rich: true };
-    NodeAssert.equal(resolveTooltip({ tooltip: later }), later);
-    const memo = { version: 1, Tooltip: { $$typeof: Symbol.for("react.memo") } };
-    NodeAssert.equal(resolveTooltip({ tooltip: memo }), memo);
-  });
-
-  NodeTest.it("rejects malformed members instead of rendering them", () => {
-    for (const tooltip of [
-      null,
-      "tooltip",
-      { version: 0, Tooltip: HostTooltip },
-      { version: "1", Tooltip: HostTooltip },
-      { version: 1 },
-      { version: 1, Tooltip: "span" },
-      { version: 1, Tooltip: {} },
-    ])
-      NodeAssert.equal(resolveTooltip({ tooltip }), null, JSON.stringify(tooltip));
+  NodeTest.it("rejects malformed members", () => {
+    for (const [name, tooltip] of malformed)
+      NodeAssert.equal(resolveTooltip({ tooltip }), null, name);
   });
 });
 
 NodeTest.describe("Tooltip", () => {
-  const render = (host, label) => {
-    let renderer;
-    act(() => {
-      renderer = create(
-        React.createElement(
-          Tooltip,
-          { host, label, side: "bottom" },
-          React.createElement("button", { id: "go", disabled: true }, "Go"),
-        ),
-      );
-    });
-    const tree = renderer.toJSON();
-    act(() => renderer.unmount());
-    return tree;
-  };
-
-  NodeTest.it("hands the trigger and placement to the host's tooltip", () => {
-    const seen = [];
-    const tooltip = {
-      version: 1,
-      Tooltip: (props) => {
-        seen.push(props);
-        return React.createElement("span", { "data-tip": props.label }, props.children);
-      },
-    };
-    const tree = render({ React, tooltip }, "Open a page first");
-    NodeAssert.equal(tree.type, "span");
-    NodeAssert.equal(tree.props["data-tip"], "Open a page first");
-    NodeAssert.equal(tree.children[0].type, "button");
-    NodeAssert.equal(seen.length, 1);
-    NodeAssert.equal(seen[0].side, "bottom");
-    NodeAssert.equal("host" in seen[0], false);
+  NodeTest.it("renders through real memo and forwardRef host components", () => {
+    const forwarded = React.forwardRef((props, ref) =>
+      React.createElement("span", { ref, "data-tip": props.label }, props.children),
+    );
+    for (const Component of [React.memo(HostTooltip), forwarded, React.memo(forwarded)]) {
+      const { tree, error } = render({ React, tooltip: { version: 1, Tooltip: Component } });
+      NodeAssert.equal(error, undefined);
+      NodeAssert.equal(tree.props["data-tip"], "Back");
+      NodeAssert.equal(tree.children[0].props.id, "go");
+    }
   });
 
-  NodeTest.it("renders the trigger alone on hosts without a tooltip", () => {
-    for (const host of [{ React }, { React, tooltip: { version: 0, Tooltip: HostTooltip } }]) {
-      const tree = render(host, "Reload");
-      NodeAssert.equal(tree.type, "button");
-      NodeAssert.equal(tree.props.id, "go");
-      NodeAssert.deepEqual(tree.children, ["Go"]);
+  NodeTest.it("falls back to the usable trigger for every malformed member", () => {
+    for (const [name, tooltip] of [["absent", undefined], ...malformed]) {
+      const { tree, error } = render({ React, tooltip });
+      NodeAssert.equal(error, undefined, `${name} threw: ${error?.message}`);
+      NodeAssert.equal(tree.type, "button", name);
+      NodeAssert.equal(tree.props.id, "go", name);
+      NodeAssert.deepEqual(tree.children, ["Go"], name);
     }
   });
 });

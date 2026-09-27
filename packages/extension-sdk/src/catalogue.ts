@@ -8416,6 +8416,12 @@ export interface UiKeybindingsHost {
    * dispatches those itself on a null answer.
    */
   resolveTerminalFocusKey(chord: UiKeybindingChord): string | null;
+  /**
+   * The label the host shows for `command`'s effective shortcut while a
+   * terminal surface owns focus (e.g. `⌘W`), or null when no rule binds it.
+   * Optional: hosts that predate it omit it, so feature-detect.
+   */
+  terminalFocusShortcutLabel?(command: string): string | null;
 }
 
 const uiNotificationActionSchema = {

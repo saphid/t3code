@@ -128,10 +128,10 @@ export function PageMenu(props: {
 
   return (
     <div ref={root} style={{ position: "relative" }}>
-      <Tooltip host={host} label="Page menu">
+      <Tooltip host={host} label="More">
         <button
           type="button"
-          aria-label="Page menu"
+          aria-label="Preview menu"
           aria-haspopup="menu"
           aria-expanded={open}
           disabled={session === null}
