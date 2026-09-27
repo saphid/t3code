@@ -7037,7 +7037,8 @@ export const BROWSER_SURFACE_REQUIRED_GRANTS = [BROWSER_SESSIONS, BROWSER_SURFAC
  * presented `zIndex`, the way the native preview portals its menus above the
  * webview, and carries `BROWSER_SURFACE_OVERLAY_ATTRIBUTE` so the slot's
  * occlusion probe keeps the page presented beneath it. `useBrowserSurfaceSlot`
- * reports the layer as `overlayZIndex`.
+ * reports the layer as `overlayZIndex`. Popovers belong in the host's
+ * `ClientHost.floatingLayer`, which applies both and escapes clipping.
  */
 export const BROWSER_SURFACE_Z_INDEX = 30;
 export const BROWSER_SURFACE_OVERLAY_ATTRIBUTE = "data-browser-surface-overlay";

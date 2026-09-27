@@ -234,13 +234,65 @@ export function resolveCodeView(host: Pick<ClientHost, "codeView">): ClientCodeV
   const member: unknown = host.codeView;
   if (!member || typeof member !== "object") return null;
   const { version, Diff, File } = member as Record<string, unknown>;
-  // React elements render from functions or memo/forwardRef exotics; arrays and
-  // plain objects are host bugs and must fall back, not render.
-  const isComponent = (value: unknown) =>
-    typeof value === "function" ||
-    (typeof value === "object" && value !== null && "$$typeof" in value);
   return typeof version === "number" && version >= 1 && isComponent(Diff) && isComponent(File)
     ? (member as ClientCodeView)
+    : null;
+}
+
+// React elements render from functions or memo/forwardRef exotics; arrays and
+// plain objects are host bugs and must fall back, not render.
+function isComponent(value: unknown): boolean {
+  return (
+    typeof value === "function" ||
+    (typeof value === "object" && value !== null && "$$typeof" in value)
+  );
+}
+
+/**
+ * One popover in the host's floating layer. Everything but the placement
+ * props lands on the popover element itself; the host adds its position,
+ * stacking, and height cap on top of `style`.
+ */
+export interface FloatingPopoverProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** Placed against this element; null renders nothing. */
+  readonly anchor: HTMLElement | null;
+  /**
+   * `bottom` and `top` open off that edge of the anchor and flip when the
+   * other side has more room; `inset` sits inside the anchor's top corner.
+   * Default `bottom`.
+   */
+  readonly side?: "bottom" | "top" | "inset";
+  /** Which anchor edge the popover lines up with. Default `end`. */
+  readonly align?: "start" | "end";
+  /** CSS px from the anchor edge (or, inset, from its corner). Default 6. */
+  readonly offset?: number;
+  /** The popover is not a DOM descendant of the view: use this for outside-press checks. */
+  readonly elementRef?: (element: HTMLDivElement | null) => void;
+}
+
+/**
+ * `ClientHost.floatingLayer` version 1: menus and pills that must escape the
+ * view's clipping ancestors and paint over a composited browser surface. The
+ * host portals the popover to its top layer (the native menus' layer, above
+ * every presented surface), marks it with `BROWSER_SURFACE_OVERLAY_ATTRIBUTE`,
+ * keeps it inside the viewport, and caps its height at the space available
+ * on its side so taller content scrolls. Portaled content inherits nothing
+ * from the view's DOM, so pass theme custom properties in `style`.
+ */
+export interface ClientFloatingLayer {
+  readonly version: 1;
+  readonly Popover: React.ComponentType<FloatingPopoverProps>;
+}
+
+/** The host's floating layer at version 1 or later, else null (render in place). */
+export function resolveFloatingLayer(
+  host: Pick<ClientHost, "floatingLayer">,
+): ClientFloatingLayer | null {
+  const member: unknown = host.floatingLayer;
+  if (!member || typeof member !== "object") return null;
+  const { version, Popover } = member as Record<string, unknown>;
+  return typeof version === "number" && version >= 1 && isComponent(Popover)
+    ? (member as ClientFloatingLayer)
     : null;
 }
 
@@ -298,6 +350,11 @@ export interface ClientHost {
    * and keep plugin-owned rows as the fallback.
    */
   readonly codeView?: ClientCodeView;
+  /**
+   * Host floating layer for popovers. Absent on hosts without one — read it
+   * through `resolveFloatingLayer` and render in place as the fallback.
+   */
+  readonly floatingLayer?: ClientFloatingLayer;
 }
 export type ClientFactory = (host: ClientHost) => Extension<SurfaceRenderer>;
 

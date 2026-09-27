@@ -11,6 +11,7 @@ import {
   validateEnvironmentPackage,
   type ClientFactory,
   type ClientCodeView,
+  type ClientFloatingLayer,
   type ClientHost,
   type EnvironmentPackage,
   type GlobalCommandsHandle,
@@ -199,6 +200,8 @@ export function createInstalledExtensionController(options: {
   readonly keybindings?: (binding: KeybindingsHostBinding) => UiKeybindingsHost | undefined;
   /** Host-rendered code view handed to every installed client; absent on hosts without one. */
   readonly codeView?: ClientCodeView;
+  /** Host floating layer handed to every installed client; absent on hosts without one. */
+  readonly floatingLayer?: ClientFloatingLayer;
 }) {
   const active = new Map<string, { signature: string; stop: () => void }>();
   // One epoch per live registration — a re-registered installation gets a new
@@ -529,6 +532,7 @@ export function createInstalledExtensionController(options: {
               ...(browserCapture ? { browserCapture } : {}),
               ...(keybindings ? { keybindings } : {}),
               ...(options.codeView ? { codeView: options.codeView } : {}),
+              ...(options.floatingLayer ? { floatingLayer: options.floatingLayer } : {}),
             };
             const extension = (factory as ClientFactory)(clientHost);
             if (canonical(extension.manifest) !== canonical(item.package.manifest))

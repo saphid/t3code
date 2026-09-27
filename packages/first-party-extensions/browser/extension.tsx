@@ -64,6 +64,7 @@ import {
 } from "./pageControls.js";
 import { floatingLayers } from "./floating.js";
 import { PageMenu, ZoomIndicator } from "./pageMenu.js";
+import { panelPopover, type PanelFloating } from "./popover.js";
 import { bindProfilesApi, ProfileSection } from "./profileMenu.js";
 import { profileFailureMessage, reopenRequest } from "./profiles.js";
 import { BrowserViewportToolbar, ViewportDeviceFrame, useElementSize } from "./viewportToolbar.js";
@@ -264,6 +265,12 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const addressRef = useRef<HTMLInputElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const contentSize = useElementSize(contentRef);
+  // The zoom pill's anchor; the host layer places against an element, not a ref.
+  const [contentElement, setContentElement] = useState<HTMLDivElement | null>(null);
+  const attachContent = useCallback((element: HTMLDivElement | null) => {
+    contentRef.current = element;
+    setContentElement(element);
+  }, []);
   const [viewportPending, setViewportPending] = useState(false);
   const viewportCommitter = useRef<ViewportCommitter | null>(null);
   const themeVars = useThemeVars(host, session, visible);
@@ -424,6 +431,20 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     cornerRadius: 8,
   });
   const layers = floatingLayers(overlayZIndex);
+  const Popover = useMemo(() => panelPopover(host, layers.transient), [host, layers.transient]);
+  const floating = useMemo<PanelFloating>(
+    () => ({
+      Popover,
+      style: {
+        color: "var(--t3-browser-text, var(--foreground, #20252d))",
+        background: "var(--t3-browser-canvas, var(--background, #fff))",
+        fontFamily: "var(--font-sans, system-ui, sans-serif)",
+        fontSize: 13,
+        ...themeVars,
+      },
+    }),
+    [Popover, themeVars],
+  );
 
   /**
    * Remote-pixel fallback: hosts that cannot composite a native surface
@@ -917,7 +938,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           with a 1px canvas gap on focus-visible, matching the native address
           wrapper instead of the browser default 1px auto outline. */}
       <style>
-        {`[data-t3-browser-panel] :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-browser-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}`}
+        {`:is([data-t3-browser-panel],[data-t3-browser-popover]) :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-browser-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}`}
       </style>
       <header
         style={{
@@ -1056,7 +1077,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           blockReason={pageBlock}
           run={(verb) => runPage(verb)}
           zoomStep={zoomStep}
-          zIndex={layers.transient}
+          floating={floating}
         >
           {held && live && (
             <ProfileSection
@@ -1152,7 +1173,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             : describeStatus(state))}
       </div>
       {held ? (
-        <div ref={contentRef} style={{ position: "relative", flex: 1, minHeight: 0 }}>
+        <div ref={attachContent} style={{ position: "relative", flex: 1, minHeight: 0 }}>
           <div
             ref={surfaceSlotRef}
             aria-label="Browser surface"
@@ -1168,7 +1189,8 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           <ZoomIndicator
             key={held.tabId}
             zoomFactor={live?.zoomFactor ?? null}
-            zIndex={layers.transient}
+            anchor={contentElement}
+            floating={floating}
           />
           {deviceMode && viewportSetting && (
             <>
