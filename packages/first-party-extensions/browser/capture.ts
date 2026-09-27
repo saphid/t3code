@@ -13,6 +13,7 @@ import {
   type BrowserCaptureFailureReason,
   type BrowserCaptureResult,
   type BrowserCaptureTarget,
+  type BrowserSurfaceLeaseState,
 } from "@t3tools/extension-sdk/catalogue";
 import { bindApi } from "@t3tools/extension-sdk/capabilities";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
@@ -29,6 +30,21 @@ export interface CaptureSessionRef {
 
 /** Whether this panel shows the held page, as native gates its capture buttons. */
 export type CapturePageView = "shown" | "hidden" | "failed";
+
+/**
+ * Whether the page is on screen here. Only a lease the host composites and
+ * whose slot last presented visible counts — an active lease stays active
+ * while its slot is clipped away or occluded.
+ */
+export function capturePageView(
+  lease: { readonly state: BrowserSurfaceLeaseState } | null,
+  presentedVisible: boolean,
+  navigation: string | undefined,
+): CapturePageView {
+  if (lease?.state.kind !== "active" || !lease.state.presentation.supported || !presentedVisible)
+    return "hidden";
+  return navigation === "failed" ? "failed" : "shown";
+}
 
 /** Why capture cannot run, or null when it can. */
 export function captureUnavailableReason(
@@ -70,7 +86,11 @@ const IMAGE_LOST_REASONS: ReadonlySet<BrowserCaptureFailureReason> = new Set([
   "upload-failed",
 ]);
 
-/** One capture-then-insert run. Every failure comes back as a named message. */
+/**
+ * One capture-then-insert run. Every failure comes back as a named message;
+ * an abort of `signal` at any stage, even after the image is stored, is a
+ * silent cancel.
+ */
 export async function captureToChat(
   host: Pick<ClientHost, "browserCapture" | "invokeApi">,
   context: ViewContext,
@@ -104,6 +124,9 @@ export async function captureToChat(
       message: `Capture failed — ${captured.failure.reason}${grant}: ${captured.failure.detail}`,
     };
   }
+  // Cancel pressed while the image was stored: the bridge succeeded, but the
+  // user no longer wants it in the draft.
+  if (signal.aborted) return { kind: "cancelled" };
   try {
     const result = await bindApi(composerContextApi, host, context).invoke(
       "insertImage",
@@ -112,6 +135,7 @@ export async function captureToChat(
     );
     return { kind: "added", artifact: captured.artifact, inserted: result.inserted };
   } catch (error) {
+    if (signal.aborted) return { kind: "cancelled" };
     return {
       kind: "failed",
       stage: "insert",
@@ -243,7 +267,9 @@ export type BrowserCaptureState =
   | { readonly kind: "done"; readonly message: string | null };
 
 /**
- * One button press end to end. Capture state releases as soon as the run
+ * One button press end to end. The run announces itself (`onState`
+ * capturing) before the host is asked, so the panel can drop stale faults.
+ * Capture state releases as soon as the run
  * ends (`onState` done); the toast goes out after, and its fallback line
  * lands only while `isCurrent()` says no newer run has started. Aborting
  * `cancel` dismisses an open picker, which settles as a silent cancel.
@@ -260,6 +286,7 @@ export async function runBrowserCapture(
 ): Promise<void> {
   const context = session.context;
   const signal = cancel ? AbortSignal.any([session.signal, cancel]) : session.signal;
+  onState({ kind: "capturing", target });
   const outcome = await captureToChat(host, context, held, target, signal);
   if (session.signal.aborted) return;
   const report = reportCaptureOutcome(
@@ -279,13 +306,14 @@ export async function runBrowserCapture(
 /**
  * The header buttons' state and action. Pressing pick again while its picker
  * is open cancels it, like native's "Cancel annotation"; any other click
- * while one runs is ignored.
+ * while one runs is ignored. `onStart` fires as each run begins.
  */
 export function useBrowserCapture(
   host: ClientHost,
   session: ViewSession,
   held: CaptureSessionRef | null,
   page: CapturePageView = "shown",
+  onStart?: () => void,
 ): {
   readonly blockReason: string | null;
   readonly state: BrowserCaptureState;
@@ -307,14 +335,16 @@ export function useBrowserCapture(
     const run = ++latestRun.current;
     const cancel = new AbortController();
     cancelRun.current = cancel;
-    setState({ kind: "capturing", target });
     void runBrowserCapture(
       host,
       session,
       held,
       target,
       () => run === latestRun.current,
-      setState,
+      (next) => {
+        if (next.kind === "capturing") onStart?.();
+        setState(next);
+      },
       NOTIFY_ACK_TIMEOUT_MS,
       cancel.signal,
     );

@@ -29,7 +29,7 @@ import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { useBrowserCapture } from "./capture.js";
+import { capturePageView, useBrowserCapture } from "./capture.js";
 import { mintWorkspaceFileUrl } from "./fileOpen.js";
 import { BrowserFavicon, resolveSessionFavicons, useFaviconCache } from "./favicon.js";
 import { panelTabIndicators } from "./faviconStore.js";
@@ -415,6 +415,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     ref: surfaceSlotRef,
     lease: surfaceLease,
     denial: surfaceDenial,
+    shown: surfaceShown,
   } = useBrowserSurfaceSlot(host, session, {
     session: held,
     visible: visible && held !== null,
@@ -870,14 +871,10 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         : remote.status.kind === "unsupported"
           ? `This client cannot composite a native browser surface and has no remote frame transport (${remote.status.detail}). The session is still open — view it from the desktop app.`
           : null;
-  // Native disables capture until the page is composited here and while it failed to load.
-  const capturePage =
-    surfaceLease?.state.kind !== "active" || !surfaceLease.state.presentation.supported
-      ? "hidden"
-      : live?.navigation.kind === "failed"
-        ? "failed"
-        : "shown";
-  const capture = useBrowserCapture(host, session, held, capturePage);
+  // Native disables capture until the page is on screen here and while it failed to load.
+  const capturePage = capturePageView(surfaceLease, surfaceShown, live?.navigation.kind);
+  // A new run supersedes any earlier action fault, so its status line shows.
+  const capture = useBrowserCapture(host, session, held, capturePage, () => setFault(null));
   const captureStatus =
     capture.state.kind === "capturing"
       ? capture.state.target === "element"

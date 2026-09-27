@@ -349,11 +349,15 @@ NodeTest.test(
         { document: dom.document, computedStyle: { overflowX: "hidden", overflowY: "hidden" } },
       );
       const slotElement = fakeElement(rect, { parent: container, document: dom.document });
+      let slot;
       function View() {
         const value = useBrowserSurfaceSlot(host, session, {
           session: sessionRef,
           visible: true,
         });
+        React.useEffect(() => {
+          slot = value;
+        }, [value]);
         return React.createElement("div", { ref: value.ref });
       }
       const renderer = render(View, slotElement);
@@ -368,6 +372,7 @@ NodeTest.test(
             zIndex: 30,
           },
         ]);
+        NodeAssert.equal(slot.shown, true);
         // A foreign overlay covering the slot hides the surface entirely.
         const modal = { closest: () => null };
         dom.document.elementsFromPoint = () => [modal, slotElement];
@@ -375,6 +380,9 @@ NodeTest.test(
           for (const listener of dom.listeners.get("scroll") ?? []) listener();
         });
         NodeAssert.equal(calls.presents.at(-1).visible, false);
+        // The lease stays active, but the slot reports the surface off screen.
+        NodeAssert.equal(slot.lease.state.kind, "active");
+        NodeAssert.equal(slot.shown, false);
         NodeAssert.deepEqual(calls.presents.at(-1).rect, {
           x: 4,
           y: 100,
@@ -390,6 +398,7 @@ NodeTest.test(
           for (const listener of dom.listeners.get("scroll") ?? []) listener();
         });
         NodeAssert.equal(calls.presents.at(-1).visible, true);
+        NodeAssert.equal(slot.shown, true);
       } finally {
         await TestRenderer.act(async () => renderer.unmount());
       }

@@ -312,6 +312,11 @@ export interface BrowserSurfaceSlot {
   readonly lease: BrowserSurfaceLease | null;
   /** Named acquire failure — grant, scope, epoch or host. Render it as-is. */
   readonly denial: BrowserSurfaceDenial | null;
+  /**
+   * Whether the slot last presented the surface visible: false while
+   * suppressed, clipped away, occluded, uncomposited, or without a lease.
+   */
+  readonly shown: boolean;
 }
 
 const OVERFLOW_CLIP_PATTERN = /(auto|scroll|hidden|clip)/;
@@ -418,6 +423,7 @@ export function useBrowserSurfaceSlot(
   const { useCallback, useLayoutEffect, useRef, useState } = host.React;
   const [element, setElement] = useState<HTMLElement | null>(null);
   const [result, setResult] = useState<BrowserSurfaceAcquireResult | null>(null);
+  const [shown, setShown] = useState(false);
   // Lease transitions are host-originated; the bump re-reads lease.state.
   const [, setLeaseVersion] = useState(0);
   const targetKey = options.session ? `${options.session.serverEpoch}${options.session.tabId}` : "";
@@ -441,6 +447,7 @@ export function useBrowserSurfaceSlot(
 
   useLayoutEffect(() => {
     setResult(null);
+    setShown(false);
     if (!element || !options.session) return;
     const surface = host.browserSurface;
     const major = Number.parseInt(surface?.version.split(".")[0] ?? "", 10);
@@ -494,6 +501,7 @@ export function useBrowserSurfaceSlot(
           if (!hidden) {
             hidden = true;
             held.present(lastRect, false, prefs.cornerRadius, prefs.zIndex);
+            setShown(false);
           }
           return;
         }
@@ -518,7 +526,10 @@ export function useBrowserSurfaceSlot(
             };
           })();
         lastRect = rect;
-        held.present(rect, clip !== null && !occluded, prefs.cornerRadius, prefs.zIndex);
+        const visible = clip !== null && !occluded;
+        setShown(
+          held.present(rect, visible, prefs.cornerRadius, prefs.zIndex) === "accepted" && visible,
+        );
       };
       updateRef.current = update;
       update();
@@ -534,6 +545,7 @@ export function useBrowserSurfaceSlot(
         if (updateRef.current === update) updateRef.current = null;
         unsubscribe();
         held.release();
+        setShown(false);
       };
     };
 
@@ -571,6 +583,7 @@ export function useBrowserSurfaceSlot(
     ref,
     lease: result?.ok ? result.lease : null,
     denial: result && !result.ok ? result.denial : null,
+    shown: result?.ok === true && shown,
   };
 }
 

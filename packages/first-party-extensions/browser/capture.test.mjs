@@ -7,6 +7,7 @@ import { uiNotificationsApi } from "@t3tools/extension-sdk/catalogue";
 import {
   captureOutcomeMessage,
   captureOutcomeToast,
+  capturePageView,
   captureToChat,
   captureUnavailableReason,
   reportCaptureOutcome,
@@ -73,6 +74,25 @@ NodeTest.describe("captureUnavailableReason", () => {
     NodeAssert.match(captureUnavailableReason(host, held, "thread-a", "hidden"), /not shown here/);
     NodeAssert.match(captureUnavailableReason(host, held, "thread-a", "failed"), /didn't load/);
     NodeAssert.equal(captureUnavailableReason(host, held, "thread-a"), null);
+  });
+});
+
+NodeTest.describe("capturePageView", () => {
+  const active = { state: { kind: "active", presentation: { supported: true } } };
+  NodeTest.it("counts the page shown only while its slot presents it visible", () => {
+    NodeAssert.equal(capturePageView(active, true, "loaded"), "shown");
+    // An active lease stays active while present(..., false) hides it.
+    NodeAssert.equal(capturePageView(active, false, "loaded"), "hidden");
+    NodeAssert.equal(capturePageView(null, true, "loaded"), "hidden");
+    NodeAssert.equal(
+      capturePageView(
+        { state: { kind: "active", presentation: { supported: false, reason: "x" } } },
+        true,
+        "loaded",
+      ),
+      "hidden",
+    );
+    NodeAssert.equal(capturePageView(active, true, "failed"), "failed");
   });
 });
 
@@ -150,6 +170,19 @@ NodeTest.describe("captureToChat", () => {
     );
     NodeAssert.equal(threw.kind, "failed");
     NodeAssert.equal(threw.stage, "request");
+  });
+
+  NodeTest.it("stays quiet when cancelled after the image was stored", async () => {
+    const cancel = new AbortController();
+    const host = fakeHost({
+      capture: () => {
+        cancel.abort();
+        return { ok: true, artifact };
+      },
+    });
+    const outcome = await captureToChat(host, context, held, "element", cancel.signal);
+    NodeAssert.deepEqual(outcome, { kind: "cancelled" });
+    NodeAssert.equal(host.calls.invoke.length, 0);
   });
 
   NodeTest.it("says the capture exists when the composer refuses it", async () => {
@@ -342,11 +375,14 @@ NodeTest.describe("runBrowserCapture", () => {
     await Promise.race([run, new Promise((resolve) => setImmediate(resolve))]);
     // notify is still pending, yet the buttons are already free.
     NodeAssert.equal(calls.length, 1);
-    NodeAssert.deepEqual(states, [{ kind: "done", message: null }]);
+    NodeAssert.deepEqual(states, [
+      { kind: "capturing", target: "page" },
+      { kind: "done", message: null },
+    ]);
     pending.reject(new Error("provider-unavailable"));
     await run;
-    NodeAssert.equal(states.length, 2);
-    NodeAssert.match(states[1].message, /engine lost it/);
+    NodeAssert.equal(states.length, 3);
+    NodeAssert.match(states[2].message, /engine lost it/);
   });
 
   for (const [reason, detail, grant] of [
@@ -371,11 +407,11 @@ NodeTest.describe("runBrowserCapture", () => {
         () => true,
         (s) => states.push(s),
       );
-      NodeAssert.equal(states.length, 1);
-      NodeAssert.equal(states[0].kind, "done");
-      NodeAssert.match(states[0].message, new RegExp(`^Capture failed — ${reason}`));
-      NodeAssert.ok(states[0].message.endsWith(detail));
-      if (grant) NodeAssert.match(states[0].message, /missing grant: t3\.browser\/capture/);
+      NodeAssert.equal(states.length, 2);
+      NodeAssert.equal(states[1].kind, "done");
+      NodeAssert.match(states[1].message, new RegExp(`^Capture failed — ${reason}`));
+      NodeAssert.ok(states[1].message.endsWith(detail));
+      if (grant) NodeAssert.match(states[1].message, /missing grant: t3\.browser\/capture/);
       // No toast (native raises none for a pick) and no insert: no host API was invoked.
       NodeAssert.equal(notify.calls.length, 0);
     });
@@ -406,7 +442,10 @@ NodeTest.describe("runBrowserCapture", () => {
     await opened.promise;
     cancel.abort();
     await run;
-    NodeAssert.deepEqual(states, [{ kind: "done", message: null }]);
+    NodeAssert.deepEqual(states, [
+      { kind: "capturing", target: "element" },
+      { kind: "done", message: null },
+    ]);
     NodeAssert.equal(host.calls.invoke.length, 0);
   });
 
@@ -427,6 +466,9 @@ NodeTest.describe("runBrowserCapture", () => {
     current = false;
     pending.reject(new Error("provider-unavailable"));
     await run;
-    NodeAssert.deepEqual(states, [{ kind: "done", message: null }]);
+    NodeAssert.deepEqual(states, [
+      { kind: "capturing", target: "page" },
+      { kind: "done", message: null },
+    ]);
   });
 });

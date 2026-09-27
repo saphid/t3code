@@ -7964,6 +7964,7 @@ var __t3Client = (() => {
     const { useCallback: useCallback2, useLayoutEffect, useRef: useRef4, useState: useState7 } = host.React;
     const [element, setElement] = useState7(null);
     const [result2, setResult] = useState7(null);
+    const [shown, setShown] = useState7(false);
     const [, setLeaseVersion] = useState7(0);
     const targetKey = options.session ? `${options.session.serverEpoch}${options.session.tabId}` : "";
     const presentationRef = useRef4({
@@ -7983,6 +7984,7 @@ var __t3Client = (() => {
     }, [options.visible, options.cornerRadius, options.zIndex]);
     useLayoutEffect(() => {
       setResult(null);
+      setShown(false);
       if (!element || !options.session)
         return;
       const surface = host.browserSurface;
@@ -8033,6 +8035,7 @@ var __t3Client = (() => {
             if (!hidden) {
               hidden = true;
               held.present(lastRect, false, prefs.cornerRadius, prefs.zIndex);
+              setShown(false);
             }
             return;
           }
@@ -8051,7 +8054,8 @@ var __t3Client = (() => {
             };
           })();
           lastRect = rect;
-          held.present(rect, clip !== null && !occluded, prefs.cornerRadius, prefs.zIndex);
+          const visible = clip !== null && !occluded;
+          setShown(held.present(rect, visible, prefs.cornerRadius, prefs.zIndex) === "accepted" && visible);
         };
         updateRef.current = update;
         update();
@@ -8069,6 +8073,7 @@ var __t3Client = (() => {
             updateRef.current = null;
           unsubscribe();
           held.release();
+          setShown(false);
         };
       };
       const tryAcquire = () => {
@@ -8101,7 +8106,8 @@ var __t3Client = (() => {
     return {
       ref,
       lease: result2?.ok ? result2.lease : null,
-      denial: result2 && !result2.ok ? result2.denial : null
+      denial: result2 && !result2.ok ? result2.denial : null,
+      shown: result2?.ok === true && shown
     };
   }
   function useRemoteBrowserFrames(host, session, options) {
@@ -8297,6 +8303,11 @@ var __t3Client = (() => {
 
   // capture.ts
   var import_react = __toESM(require_react(), 1);
+  function capturePageView(lease, presentedVisible, navigation) {
+    if (lease?.state.kind !== "active" || !lease.state.presentation.supported || !presentedVisible)
+      return "hidden";
+    return navigation === "failed" ? "failed" : "shown";
+  }
   function captureUnavailableReason(host, held, threadId, page = "shown") {
     if (threadId === void 0) return "This panel has no thread, so there is no chat to add to.";
     if (!host.browserCapture) return "This host cannot capture browser sessions.";
@@ -8339,6 +8350,7 @@ var __t3Client = (() => {
         message: `Capture failed \u2014 ${captured.failure.reason}${grant}: ${captured.failure.detail}`
       };
     }
+    if (signal.aborted) return { kind: "cancelled" };
     try {
       const result2 = await bindApi(composerContextApi, host, context2).invoke(
         "insertImage",
@@ -8347,6 +8359,7 @@ var __t3Client = (() => {
       );
       return { kind: "added", artifact: captured.artifact, inserted: result2.inserted };
     } catch (error) {
+      if (signal.aborted) return { kind: "cancelled" };
       return {
         kind: "failed",
         stage: "insert",
@@ -8412,6 +8425,7 @@ var __t3Client = (() => {
   async function runBrowserCapture(host, session, held, target, isCurrent, onState, ackTimeoutMs = NOTIFY_ACK_TIMEOUT_MS, cancel) {
     const context2 = session.context;
     const signal = cancel ? AbortSignal.any([session.signal, cancel]) : session.signal;
+    onState({ kind: "capturing", target });
     const outcome = await captureToChat(host, context2, held, target, signal);
     if (session.signal.aborted) return;
     const report = reportCaptureOutcome(
@@ -8427,7 +8441,7 @@ var __t3Client = (() => {
     if (message !== null && isCurrent() && !session.signal.aborted)
       onState({ kind: "done", message });
   }
-  function useBrowserCapture(host, session, held, page = "shown") {
+  function useBrowserCapture(host, session, held, page = "shown", onStart) {
     const [state2, setState] = (0, import_react.useState)({ kind: "idle" });
     const latestRun = (0, import_react.useRef)(0);
     const cancelRun = (0, import_react.useRef)(null);
@@ -8442,14 +8456,16 @@ var __t3Client = (() => {
       const run2 = ++latestRun.current;
       const cancel = new AbortController();
       cancelRun.current = cancel;
-      setState({ kind: "capturing", target });
       void runBrowserCapture(
         host,
         session,
         held,
         target,
         () => run2 === latestRun.current,
-        setState,
+        (next) => {
+          if (next.kind === "capturing") onStart?.();
+          setState(next);
+        },
         NOTIFY_ACK_TIMEOUT_MS,
         cancel.signal
       );
@@ -16342,7 +16358,8 @@ ${ind(d)}}`;
     const {
       ref: surfaceSlotRef,
       lease: surfaceLease,
-      denial: surfaceDenial
+      denial: surfaceDenial,
+      shown: surfaceShown
     } = useBrowserSurfaceSlot(host, session, {
       session: held,
       visible: visible && held !== null,
@@ -16674,8 +16691,8 @@ ${titledTitle}`;
     });
     const leaseState = surfaceLease?.state;
     const remoteNotice = remote.status.kind === "connecting" ? "Connecting remote browser frames\u2026" : remote.status.kind === "error" ? `Remote browser frames failed \u2014 ${remote.status.detail}` : remote.status.kind === "unsupported" ? `This client cannot composite a native browser surface and has no remote frame transport (${remote.status.detail}). The session is still open \u2014 view it from the desktop app.` : null;
-    const capturePage = surfaceLease?.state.kind !== "active" || !surfaceLease.state.presentation.supported ? "hidden" : live?.navigation.kind === "failed" ? "failed" : "shown";
-    const capture = useBrowserCapture(host, session, held, capturePage);
+    const capturePage = capturePageView(surfaceLease, surfaceShown, live?.navigation.kind);
+    const capture = useBrowserCapture(host, session, held, capturePage, () => setFault(null));
     const captureStatus = capture.state.kind === "capturing" ? capture.state.target === "element" ? "Pick an element in the page \u2014 Esc cancels." : "Capturing the page\u2026" : capture.state.kind === "done" ? capture.state.message : null;
     const surfaceNotice = leaseState?.kind === "ended" ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.` : remoteEligible ? remoteNotice : surfaceDenial ? `Native presentation is unavailable \u2014 ${surfaceDenial.reason}${surfaceDenial.grant ? ` (missing grant: ${surfaceDenial.grant})` : ""}: ${surfaceDenial.detail}` : null;
     return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
