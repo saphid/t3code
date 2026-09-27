@@ -32,6 +32,8 @@ public struct ThreadDetailView: View {
     @State private var feedbackAlertMessage: String?
     @State private var feedbackIdentifier: String?
     @State private var didRestoreDraft = false
+    /// Distinguishes a rebuilt thread view from the same one in the activity log.
+    @State private var viewInstance = String(UUID().uuidString.prefix(8))
     @State private var draftRestoreBaseline: FeatureComposerDraft?
     @State private var missingFileRecoverySnapshot: FeatureComposerDraft?
     @State private var draftSaveTask: Task<Void, Never>?
@@ -111,10 +113,25 @@ public struct ThreadDetailView: View {
                 isLoading = false
             }
         }
+        .onAppear {
+            NativeEventLog.shared.record(
+                "composer", "appear view=\(viewInstance) thread=\(thread.id) state=\(composerBusyReason)"
+            )
+        }
+        .onDisappear {
+            NativeEventLog.shared.record(
+                "composer", "disappear view=\(viewInstance) thread=\(thread.id) state=\(composerBusyReason)"
+            )
+        }
+        .onChange(of: composerBusyReason) { previous, current in
+            NativeEventLog.shared.record(
+                "composer", "busy view=\(viewInstance) thread=\(thread.id) \(previous) -> \(current)"
+            )
+        }
         .task(id: thread.id) {
             // A cached thread can already show its composer while the server
             // is catching up. Local drafts must not wait for that request.
-            NativeEventLog.shared.record("composer", "open thread=\(thread.id) draftRestored=\(didRestoreDraft)")
+            NativeEventLog.shared.record("composer", "open view=\(viewInstance) thread=\(thread.id) draftRestored=\(didRestoreDraft)")
             await model.checkRewindRecovery(for: currentThread)
             guard !didRestoreDraft else { return }
             await restoreDraft(from: composerDraft, key: draftKey)
@@ -307,6 +324,17 @@ public struct ThreadDetailView: View {
 
     private var isRewinding: Bool {
         isPreparingRewind || model.rewindingThreadIDs.contains(thread.id)
+    }
+
+    /// Why the composer shows its busy indicator, for the activity log.
+    private var composerBusyReason: String {
+        var reasons: [String] = []
+        if isSending { reasons.append("sending") }
+        if isPreparingRewind { reasons.append("preparingRewind") }
+        if model.rewindingThreadIDs.contains(thread.id) { reasons.append("rewinding") }
+        if !didRestoreDraft { reasons.append("draftNotRestored") }
+        if let phase = model.stopPhase(threadID: thread.id) { reasons.append("stop=\(phase)") }
+        return reasons.isEmpty ? "ready" : reasons.joined(separator: ",")
     }
 
     private func canRewind(_ messageID: String) -> Bool {
