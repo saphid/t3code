@@ -251,9 +251,11 @@ export function createBrowserCaptureBridge(
             try {
               picked = await preview.pickElement(runtimeTabId);
             } catch (error) {
+              // Native treats a picker that throws as a dismissal: no image
+              // was ever taken, so capture-failed stays reserved for a lost crop.
               return fail(
-                "capture-failed",
-                error instanceof Error ? error.message : "The element picker failed.",
+                "cancelled",
+                error instanceof Error ? error.message : "The element picker closed.",
               );
             } finally {
               detach();

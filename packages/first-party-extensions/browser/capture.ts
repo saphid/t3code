@@ -27,17 +27,23 @@ export interface CaptureSessionRef {
   readonly serverEpoch: string;
 }
 
+/** Whether this panel shows the held page, as native gates its capture buttons. */
+export type CapturePageView = "shown" | "hidden" | "failed";
+
 /** Why capture cannot run, or null when it can. */
 export function captureUnavailableReason(
   host: Pick<ClientHost, "browserCapture">,
   held: CaptureSessionRef | null,
   threadId: string | undefined,
+  page: CapturePageView = "shown",
 ): string | null {
   if (threadId === undefined) return "This panel has no thread, so there is no chat to add to.";
   if (!host.browserCapture) return "This host cannot capture browser sessions.";
   if (!host.browserCapture.support.supported)
     return "Capturing needs the T3 Code desktop app, where the page renders.";
   if (held === null) return "Open a page to capture it.";
+  if (page === "hidden") return "The page is not shown here yet — capture once it renders.";
+  if (page === "failed") return "Page didn't load — capture unavailable until the page renders.";
   return null;
 }
 
@@ -117,10 +123,11 @@ export async function captureToChat(
 }
 
 /**
- * Native treats a picker that throws as a silent cancel and speaks up only
- * when a pick loses its image; a page capture reports every failure.
+ * Native toasts a pick only when it loses its image. A pick the host refused
+ * (grant-denied, busy, not-presented) has no native toast, so it stays on the
+ * status line; a dismissed or throwing picker arrives as `cancelled`.
  */
-function isSilentFailure(target: BrowserCaptureTarget, stage: CaptureFailureStage): boolean {
+function isInlineOnlyFailure(target: BrowserCaptureTarget, stage: CaptureFailureStage): boolean {
   return target === "element" && stage === "request";
 }
 
@@ -133,7 +140,7 @@ export function captureOutcomeMessage(
     case "cancelled":
       return null;
     case "failed":
-      return isSilentFailure(target, outcome.stage) ? null : outcome.message;
+      return outcome.message;
     case "added": {
       const what = outcome.artifact.target === "page" ? "Page screenshot" : "Element capture";
       return outcome.inserted ? `${what} added to chat.` : `${what} is already in chat.`;
@@ -167,7 +174,7 @@ export function captureOutcomeToast(
     case "cancelled":
       return null;
     case "failed":
-      if (isSilentFailure(target, outcome.stage)) return null;
+      if (isInlineOnlyFailure(target, outcome.stage)) return null;
       return {
         severity: "error",
         title:
@@ -238,7 +245,8 @@ export type BrowserCaptureState =
 /**
  * One button press end to end. Capture state releases as soon as the run
  * ends (`onState` done); the toast goes out after, and its fallback line
- * lands only while `isCurrent()` says no newer run has started.
+ * lands only while `isCurrent()` says no newer run has started. Aborting
+ * `cancel` dismisses an open picker, which settles as a silent cancel.
  */
 export async function runBrowserCapture(
   host: Pick<ClientHost, "browserCapture" | "invokeApi">,
@@ -248,9 +256,11 @@ export async function runBrowserCapture(
   isCurrent: () => boolean,
   onState: (state: BrowserCaptureState) => void,
   ackTimeoutMs = NOTIFY_ACK_TIMEOUT_MS,
+  cancel?: AbortSignal,
 ): Promise<void> {
   const context = session.context;
-  const outcome = await captureToChat(host, context, held, target, session.signal);
+  const signal = cancel ? AbortSignal.any([session.signal, cancel]) : session.signal;
+  const outcome = await captureToChat(host, context, held, target, signal);
   if (session.signal.aborted) return;
   const report = reportCaptureOutcome(
     bindApi(uiNotificationsApi, host, context),
@@ -266,25 +276,48 @@ export async function runBrowserCapture(
     onState({ kind: "done", message });
 }
 
-/** The header buttons' state and action. A click while one runs is ignored. */
+/**
+ * The header buttons' state and action. Pressing pick again while its picker
+ * is open cancels it, like native's "Cancel annotation"; any other click
+ * while one runs is ignored.
+ */
 export function useBrowserCapture(
   host: ClientHost,
   session: ViewSession,
   held: CaptureSessionRef | null,
+  page: CapturePageView = "shown",
 ): {
   readonly blockReason: string | null;
   readonly state: BrowserCaptureState;
+  readonly picking: boolean;
   readonly capture: (target: BrowserCaptureTarget) => void;
 } {
   const [state, setState] = useState<BrowserCaptureState>({ kind: "idle" });
   const latestRun = useRef(0);
+  const cancelRun = useRef<AbortController | null>(null);
   // threadId is read per render: a project-scoped surface can switch threads.
-  const blockReason = captureUnavailableReason(host, held, session.context.resource.threadId);
+  const blockReason = captureUnavailableReason(host, held, session.context.resource.threadId, page);
+  const picking = state.kind === "capturing" && state.target === "element";
   const capture = (target: BrowserCaptureTarget) => {
+    if (picking && target === "element") {
+      cancelRun.current?.abort();
+      return;
+    }
     if (blockReason !== null || held === null || state.kind === "capturing") return;
     const run = ++latestRun.current;
+    const cancel = new AbortController();
+    cancelRun.current = cancel;
     setState({ kind: "capturing", target });
-    void runBrowserCapture(host, session, held, target, () => run === latestRun.current, setState);
+    void runBrowserCapture(
+      host,
+      session,
+      held,
+      target,
+      () => run === latestRun.current,
+      setState,
+      NOTIFY_ACK_TIMEOUT_MS,
+      cancel.signal,
+    );
   };
-  return { blockReason, state, capture };
+  return { blockReason, state, picking, capture };
 }

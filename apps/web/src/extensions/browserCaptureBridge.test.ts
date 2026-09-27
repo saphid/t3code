@@ -217,6 +217,31 @@ describe("browser capture bridge", () => {
     expect(cropless.uploads).toHaveLength(0);
   });
 
+  it("treats a picker that throws as a dismissal, keeping capture-failed for a lost crop", async () => {
+    const h = harness();
+    h.preview.pickElement.mockRejectedValueOnce(new Error("guest navigated"));
+    expect(await h.host().capture({ context, session, target: "element" })).toMatchObject({
+      ok: false,
+      failure: { reason: "cancelled", detail: "guest navigated" },
+    });
+    const undecodable = harness();
+    undecodable.preview.pickElement.mockResolvedValueOnce(
+      pick({
+        screenshot: {
+          dataUrl: "data:image/png;base64,@@@",
+          width: 10,
+          height: 10,
+          cropRect: { x: 0, y: 0, width: 10, height: 10 },
+        },
+      }),
+    );
+    expect(await undecodable.host().capture({ context, session, target: "element" })).toMatchObject(
+      { failure: { reason: "capture-failed" } },
+    );
+    expect(h.uploads).toHaveLength(0);
+    expect(undecodable.uploads).toHaveLength(0);
+  });
+
   it("cancels the open picker when the caller aborts", async () => {
     const h = harness();
     let resolvePick: (value: PreviewAnnotationSubmissionResult | null) => void = () => {};

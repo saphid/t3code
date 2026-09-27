@@ -8297,12 +8297,14 @@ var __t3Client = (() => {
 
   // capture.ts
   var import_react = __toESM(require_react(), 1);
-  function captureUnavailableReason(host, held, threadId) {
+  function captureUnavailableReason(host, held, threadId, page = "shown") {
     if (threadId === void 0) return "This panel has no thread, so there is no chat to add to.";
     if (!host.browserCapture) return "This host cannot capture browser sessions.";
     if (!host.browserCapture.support.supported)
       return "Capturing needs the T3 Code desktop app, where the page renders.";
     if (held === null) return "Open a page to capture it.";
+    if (page === "hidden") return "The page is not shown here yet \u2014 capture once it renders.";
+    if (page === "failed") return "Page didn't load \u2014 capture unavailable until the page renders.";
     return null;
   }
   var IMAGE_LOST_REASONS = /* @__PURE__ */ new Set([
@@ -8352,7 +8354,7 @@ var __t3Client = (() => {
       };
     }
   }
-  function isSilentFailure(target, stage) {
+  function isInlineOnlyFailure(target, stage) {
     return target === "element" && stage === "request";
   }
   function captureOutcomeMessage(target, outcome) {
@@ -8360,7 +8362,7 @@ var __t3Client = (() => {
       case "cancelled":
         return null;
       case "failed":
-        return isSilentFailure(target, outcome.stage) ? null : outcome.message;
+        return outcome.message;
       case "added": {
         const what = outcome.artifact.target === "page" ? "Page screenshot" : "Element capture";
         return outcome.inserted ? `${what} added to chat.` : `${what} is already in chat.`;
@@ -8373,7 +8375,7 @@ var __t3Client = (() => {
       case "cancelled":
         return null;
       case "failed":
-        if (isSilentFailure(target, outcome.stage)) return null;
+        if (isInlineOnlyFailure(target, outcome.stage)) return null;
         return {
           severity: "error",
           title: target === "page" ? "Unable to capture screenshot" : "Could not capture the picked element",
@@ -8407,9 +8409,10 @@ var __t3Client = (() => {
     );
     return { inline: null, fallback };
   }
-  async function runBrowserCapture(host, session, held, target, isCurrent, onState, ackTimeoutMs = NOTIFY_ACK_TIMEOUT_MS) {
+  async function runBrowserCapture(host, session, held, target, isCurrent, onState, ackTimeoutMs = NOTIFY_ACK_TIMEOUT_MS, cancel) {
     const context2 = session.context;
-    const outcome = await captureToChat(host, context2, held, target, session.signal);
+    const signal = cancel ? AbortSignal.any([session.signal, cancel]) : session.signal;
+    const outcome = await captureToChat(host, context2, held, target, signal);
     if (session.signal.aborted) return;
     const report = reportCaptureOutcome(
       bindApi(uiNotificationsApi, host, context2),
@@ -8424,17 +8427,34 @@ var __t3Client = (() => {
     if (message !== null && isCurrent() && !session.signal.aborted)
       onState({ kind: "done", message });
   }
-  function useBrowserCapture(host, session, held) {
+  function useBrowserCapture(host, session, held, page = "shown") {
     const [state2, setState] = (0, import_react.useState)({ kind: "idle" });
     const latestRun = (0, import_react.useRef)(0);
-    const blockReason = captureUnavailableReason(host, held, session.context.resource.threadId);
+    const cancelRun = (0, import_react.useRef)(null);
+    const blockReason = captureUnavailableReason(host, held, session.context.resource.threadId, page);
+    const picking = state2.kind === "capturing" && state2.target === "element";
     const capture = (target) => {
+      if (picking && target === "element") {
+        cancelRun.current?.abort();
+        return;
+      }
       if (blockReason !== null || held === null || state2.kind === "capturing") return;
       const run2 = ++latestRun.current;
+      const cancel = new AbortController();
+      cancelRun.current = cancel;
       setState({ kind: "capturing", target });
-      void runBrowserCapture(host, session, held, target, () => run2 === latestRun.current, setState);
+      void runBrowserCapture(
+        host,
+        session,
+        held,
+        target,
+        () => run2 === latestRun.current,
+        setState,
+        NOTIFY_ACK_TIMEOUT_MS,
+        cancel.signal
+      );
     };
-    return { blockReason, state: state2, capture };
+    return { blockReason, state: state2, picking, capture };
   }
 
   // node_modules/effect/dist/Pipeable.js
@@ -16654,7 +16674,8 @@ ${titledTitle}`;
     });
     const leaseState = surfaceLease?.state;
     const remoteNotice = remote.status.kind === "connecting" ? "Connecting remote browser frames\u2026" : remote.status.kind === "error" ? `Remote browser frames failed \u2014 ${remote.status.detail}` : remote.status.kind === "unsupported" ? `This client cannot composite a native browser surface and has no remote frame transport (${remote.status.detail}). The session is still open \u2014 view it from the desktop app.` : null;
-    const capture = useBrowserCapture(host, session, held);
+    const capturePage = surfaceLease?.state.kind !== "active" || !surfaceLease.state.presentation.supported ? "hidden" : live?.navigation.kind === "failed" ? "failed" : "shown";
+    const capture = useBrowserCapture(host, session, held, capturePage);
     const captureStatus = capture.state.kind === "capturing" ? capture.state.target === "element" ? "Pick an element in the page \u2014 Esc cancels." : "Capturing the page\u2026" : capture.state.kind === "done" ? capture.state.message : null;
     const surfaceNotice = leaseState?.kind === "ended" ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.` : remoteEligible ? remoteNotice : surfaceDenial ? `Native presentation is unavailable \u2014 ${surfaceDenial.reason}${surfaceDenial.grant ? ` (missing grant: ${surfaceDenial.grant})` : ""}: ${surfaceDenial.detail}` : null;
     return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
@@ -16745,6 +16766,7 @@ ${titledTitle}`;
                   {
                     type: "button",
                     "aria-label": "Screenshot page to chat",
+                    "aria-description": capture.blockReason ?? void 0,
                     disabled: capture.blockReason !== null || capture.state.kind === "capturing",
                     onClick: () => capture.capture("page"),
                     style: buttonStyle,
@@ -16755,9 +16777,10 @@ ${titledTitle}`;
                   "button",
                   {
                     type: "button",
-                    "aria-label": "Pick element to chat",
-                    "aria-pressed": capture.state.kind === "capturing" && capture.state.target === "element",
-                    disabled: capture.blockReason !== null || capture.state.kind === "capturing",
+                    "aria-label": capture.picking ? "Cancel annotation" : "Pick element to chat",
+                    "aria-description": capture.picking ? void 0 : capture.blockReason ?? void 0,
+                    "aria-pressed": capture.picking,
+                    disabled: !capture.picking && (capture.blockReason !== null || capture.state.kind === "capturing"),
                     onClick: () => capture.capture("element"),
                     style: buttonStyle,
                     children: "\u2316"

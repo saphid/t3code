@@ -70,6 +70,8 @@ NodeTest.describe("captureUnavailableReason", () => {
       /desktop app/,
     );
     NodeAssert.match(captureUnavailableReason(host, null, "thread-a"), /Open a page/);
+    NodeAssert.match(captureUnavailableReason(host, held, "thread-a", "hidden"), /not shown here/);
+    NodeAssert.match(captureUnavailableReason(host, held, "thread-a", "failed"), /didn't load/);
     NodeAssert.equal(captureUnavailableReason(host, held, "thread-a"), null);
   });
 });
@@ -223,9 +225,9 @@ NodeTest.describe("captureOutcomeToast", () => {
     NodeAssert.equal(captureOutcomeToast("element", elementAdded), null);
   });
 
-  NodeTest.it("treats a failed picker as a silent cancel, like native", () => {
+  NodeTest.it("keeps a refused pick on the status line, where native has no toast", () => {
     NodeAssert.equal(captureOutcomeToast("element", failed), null);
-    NodeAssert.equal(captureOutcomeMessage("element", failed), null);
+    NodeAssert.equal(captureOutcomeMessage("element", failed), failed.message);
   });
 
   NodeTest.it("stays silent on a cancel", () => {
@@ -345,6 +347,67 @@ NodeTest.describe("runBrowserCapture", () => {
     await run;
     NodeAssert.equal(states.length, 2);
     NodeAssert.match(states[1].message, /engine lost it/);
+  });
+
+  for (const [reason, detail, grant] of [
+    ["grant-denied", "t3.browser/capture requires the grant.", "t3.browser/capture"],
+    ["busy", "Another capture of this session is still running.", undefined],
+    ["not-presented", "The session is not shown on this client.", undefined],
+  ])
+    NodeTest.it(`explains a pick the host refused (${reason}) on the status line`, async () => {
+      const refused = fakeHost({
+        capture: () => ({
+          ok: false,
+          failure: { reason, detail, ...(grant ? { grant } : {}) },
+        }),
+      });
+      const notify = notifier({ notificationId: "n-1" });
+      const states = [];
+      await runBrowserCapture(
+        { ...refused, invokeApi: notify.client.invokeApi },
+        session,
+        held,
+        "element",
+        () => true,
+        (s) => states.push(s),
+      );
+      NodeAssert.equal(states.length, 1);
+      NodeAssert.equal(states[0].kind, "done");
+      NodeAssert.match(states[0].message, new RegExp(`^Capture failed — ${reason}`));
+      NodeAssert.ok(states[0].message.endsWith(detail));
+      if (grant) NodeAssert.match(states[0].message, /missing grant: t3\.browser\/capture/);
+      // No toast (native raises none for a pick) and no insert: no host API was invoked.
+      NodeAssert.equal(notify.calls.length, 0);
+    });
+
+  NodeTest.it("cancel dismisses an open picker silently", async () => {
+    const opened = deferred();
+    const host = fakeHost({
+      capture: (request) =>
+        new Promise((resolve) => {
+          opened.resolve();
+          request.signal.addEventListener("abort", () =>
+            resolve({ ok: false, failure: { reason: "cancelled", detail: "dismissed" } }),
+          );
+        }),
+    });
+    const cancel = new AbortController();
+    const states = [];
+    const run = runBrowserCapture(
+      host,
+      session,
+      held,
+      "element",
+      () => true,
+      (s) => states.push(s),
+      undefined,
+      cancel.signal,
+    );
+    await opened.promise;
+    cancel.abort();
+    await run;
+    NodeAssert.deepEqual(states, [{ kind: "done", message: null }]);
+    NodeAssert.equal(host.calls.invoke.length, 0);
   });
 
   NodeTest.it("drops a fallback once a newer run has started", async () => {
