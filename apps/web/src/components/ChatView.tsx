@@ -7946,7 +7946,6 @@ export default function ChatView(props: ChatViewProps) {
         setDockedDraftHeroThreadKey((currentThreadKey) =>
           currentThreadKey === activeThreadKey ? null : currentThreadKey,
         );
-        abortQueuedReplay();
         return;
       }
     }

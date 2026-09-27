@@ -15,6 +15,8 @@ const io = vi.hoisted(() => ({
   toast: vi.fn(),
   thread: null as unknown,
   shell: { runtimeMode: "full-access", interactionMode: "default" } as Record<string, unknown>,
+  providers: [] as unknown[],
+  minute: "2026-09-25T00:00",
 }));
 const config = {
   environment: { capabilities: { attachmentUploads: true, inlineMessageContext: true } },
@@ -41,10 +43,11 @@ vi.mock("../state/environments", () => ({
 vi.mock("../state/entities", () => ({
   useThread: () => io.thread,
   useThreadStatus: () => "live",
-  useServerConfigs: () => new Map([["env-a", config]]),
+  useServerConfigs: () => new Map([["env-a", { ...config, providers: io.providers }]]),
   readThreadShell: () => io.shell,
   readThread: () => io.thread,
 }));
+vi.mock("../hooks/useNowMinute", () => ({ useNowMinute: () => io.minute }));
 vi.mock("./ui/toast", () => ({ toastManager: { add: (...args: unknown[]) => io.toast(...args) } }));
 vi.mock("../lib/attachmentUploadQueue", () => ({
   startAttachmentUpload: vi.fn(),
@@ -89,6 +92,8 @@ beforeEach(() => {
   io.run.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
   io.upload.mockReset().mockResolvedValue(undefined);
   io.toast.mockReset();
+  io.providers = [];
+  io.minute = "2026-09-25T00:00";
   io.shell = {
     modelSelection,
     branch: null,
@@ -176,6 +181,55 @@ describe("QueuedMessageSender", () => {
 
     expect(commandsRun()).toEqual(["start", "start"]);
     expect(io.run.mock.calls[1]?.[2]).toMatchObject({ input: { message: { text: "second" } } });
+  });
+
+  const spentCodex = (usedPercent: number) => ({
+    instanceId: "codex",
+    models: [],
+    usageLimits: {
+      checkedAt: "2026-09-25T00:00:00.000Z",
+      sendGating: true,
+      windows: [
+        {
+          id: "session",
+          kind: "session",
+          label: "Session",
+          usedPercent,
+          resetsAt: "2026-09-25T01:00:00.000Z",
+        },
+      ],
+    },
+  });
+
+  it("holds a message while its provider is out of tokens, then sends when the window resets", async () => {
+    io.providers = [spentCodex(100)];
+    enqueue();
+    io.thread = thread("ready");
+    await render();
+    expect(commandsRun()).toEqual([]);
+    expect(queue()?.map((entry) => [entry.prompt, entry.sending])).toEqual([
+      ["follow up", undefined],
+    ]);
+
+    // The minute clock reaching the reset boundary frees the window.
+    io.minute = "2026-09-25T01:00";
+    await render();
+
+    expect(commandsRun()).toEqual(["start"]);
+    expect(queue()).toBeUndefined();
+  });
+
+  it("sends a held message once a fresh usage snapshot shows the window freed", async () => {
+    io.providers = [spentCodex(100)];
+    enqueue();
+    io.thread = thread("ready");
+    await render();
+    expect(commandsRun()).toEqual([]);
+
+    io.providers = [spentCodex(40)];
+    await render();
+
+    expect(commandsRun()).toEqual(["start"]);
   });
 });
 

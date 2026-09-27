@@ -1,9 +1,11 @@
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
+import { usageLimitSendBlock } from "@t3tools/shared/usageLimits";
 import { useEffect, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import { useComposerDraftStore } from "../composerDraftStore";
+import { useNowMinute } from "../hooks/useNowMinute";
 import {
   isQueuedMessageDue,
   latestCompletedToolActivityId,
@@ -39,11 +41,27 @@ function ThreadQueueSender({ threadKey }: { threadKey: string }) {
   const environmentId = threadRef?.environmentId ?? null;
   const environment = useEnvironment(environmentId);
   const serverConfigs = useServerConfigs();
-  const serverConfigLoaded = environmentId !== null && serverConfigs.has(environmentId);
+  const serverConfig = environmentId === null ? undefined : serverConfigs.get(environmentId);
+  const serverConfigLoaded = serverConfig !== undefined;
   const rewinding = useComposerDraftStore((store) => store.rewindingThreadKeys.has(threadKey));
   const queue = useQueuedMessages(threadKey);
   const next = queue[0];
   const sending = queue.some((message) => message.sending);
+
+  // A spent provider window holds the head message here instead of failing
+  // the send: a failed send parks it behind Send now, but a window frees on
+  // its own. The minute clock re-renders at the reset boundary, and a probe
+  // that publishes fresh usage replaces serverConfig, so both re-run the
+  // check.
+  const nowMinute = useNowMinute();
+  const selection = next?.sendSettings.modelSelection;
+  const outOfTokens =
+    selection !== undefined &&
+    usageLimitSendBlock(
+      serverConfig?.providers.find((provider) => provider.instanceId === selection.instanceId),
+      selection.model,
+      Date.parse(`${nowMinute}:00Z`),
+    ) !== null;
   const activities = thread?.activities;
   const latestToolActivityId = useMemo(
     () => latestCompletedToolActivityId(activities ?? []),
@@ -82,6 +100,7 @@ function ThreadQueueSender({ threadKey }: { threadKey: string }) {
     threadStatus !== "live" ||
     (environment !== null && environment.connection.phase !== "connected") ||
     !serverConfigLoaded ||
+    outOfTokens ||
     rewinding ||
     sending ||
     waitingForServer ||
