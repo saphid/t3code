@@ -17,10 +17,19 @@
 export const LOG_REDACTED = "[REDACTED]";
 const R = LOG_REDACTED;
 
+/**
+ * Where a text begins in its source. By default it may begin inside a JSON
+ * string, and outside any private key. `lineStart` says it begins a line;
+ * `key` whether that is inside a key (its BEGIN line came earlier), or may be.
+ */
+export interface LogTextStart {
+  readonly lineStart?: boolean;
+  readonly key?: KeyStart;
+}
+type KeyStart = "outside" | "inside" | "unknown";
+
 /** Strings nested deeper than this are redacted whole instead of decoded. */
 const MAX_DEPTH = 12;
-/** Shortest bare base64 line read as key material with no marker in sight. */
-const KEY_LINE_WIDTH = 40;
 
 /**
  * A region to replace: rendered from its `kind` (`value` becomes the marker,
@@ -44,7 +53,7 @@ let visits = 0;
  * `GH_TOKEN_SCOPE` match, `input_tokens`, `tokenizer`, and `author` do not.
  */
 const SECRET_NAME =
-  /(?:api_?key|secret|token|passw(?:or)?d|credentials?|private_?key|access_?key|auth(?:orization)?|cookie|session_?id)(?![a-z])/;
+  /(?:api_?key|secret|token|passw(?:or)?d|passphrase|credentials?|private_?key|access_?key|auth(?:orization)?|cookie|session)(?![a-z])/;
 const isSecretName = (name: string) => {
   visits += name.length;
   return SECRET_NAME.test(
@@ -64,18 +73,18 @@ const isBase64 = (char: string | undefined) =>
     char === "+" ||
     char === "/" ||
     char === "=");
-const isWord = (char: string | undefined) =>
-  char === "_" || (isBase64(char) && char !== "+" && char !== "/" && char !== "=");
 
 /** Set by `stringEnd`: whether the contents it passed hold an escape. */
 let escaped = false;
 /**
  * End of a JSON string's contents starting at `from`: its closing quote, or
- * the line break or end of text that cuts it off. A quote directly followed
- * by a word character cannot close a well-formed string, so it is read as
- * contents, keeping the rest of a mis-escaped value inside it.
+ * the line break or end of text that cuts it off. A quote followed by
+ * anything but JSON punctuation cannot close a well-formed string, so it is
+ * read as contents, keeping the rest of a mis-escaped value inside it. A
+ * `strict` string (a secret value) fails closed further: only a quote
+ * followed by valid JSON structure closes it (`closesValue`).
  */
-function stringEnd(text: string, from: number): number {
+function stringEnd(text: string, from: number, strict = false): number {
   escaped = false;
   let at = from;
   while (at < text.length) {
@@ -83,7 +92,7 @@ function stringEnd(text: string, from: number): number {
     const char = text[at];
     if (char === "\n") return at;
     if (char === '"') {
-      if (!isWord(text[at + 1])) return at;
+      if (strict ? closesValue(text, at + 1) : closesString(text, at + 1)) return at;
       at++;
     } else if (char === "\\" && text[at + 1] !== "\n") {
       escaped = true;
@@ -91,6 +100,35 @@ function stringEnd(text: string, from: number): number {
     } else at++;
   }
   return text.length;
+}
+
+/** Whether the text from `at`, just after a quote, can follow a JSON string. */
+function closesString(text: string, at: number): boolean {
+  const char = text[skip(text, at, isSpace)];
+  return (
+    char === undefined ||
+    char === "\n" ||
+    char === "," ||
+    char === ":" ||
+    char === "}" ||
+    char === "]"
+  );
+}
+/**
+ * Whether the text from `at`, just after a quote ending an object member's
+ * value, continues as JSON: closing brackets, then the end of the line or a
+ * comma before the next member (or array element).
+ */
+function closesValue(text: string, at: number): boolean {
+  for (;;) {
+    at = skip(text, at, isSpace);
+    const char = text[at];
+    if (char === "}" || char === "]") at++;
+    else if (char === ",") {
+      const next = text[skip(text, at + 1, isSpace)];
+      return next === undefined || next === "\n" || next === '"' || next === "{" || next === "[";
+    } else return char === undefined || char === "\n";
+  }
 }
 
 const ESCAPES: Readonly<Record<string, string>> = { b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
@@ -165,15 +203,37 @@ function skipBack(
 const MARKER = /-----(BEGIN|END)[A-Z ]{0,40}PRIVATE KEY-----/g;
 const END_AT = /-----END[A-Z ]{0,40}PRIVATE KEY-----/y;
 const HEADER_AT = /[A-Za-z-]+:[ \t]/y;
+/** A line break spelled as an escape, at any escaping depth: `\n`, `\\n`, `\u000a`. */
+const ESCAPED_BREAK_AT = /\\+(?:[nr]|u000[aAdD])/y;
+const ESCAPED_BREAK_BEFORE = /\\(?:[nr]|u000[aAdD])$/;
+
+/**
+ * First match of a global `pattern` at or after `from`. Queries must not move
+ * backward, so repeated lookups over one text scan it once.
+ */
+function ahead(text: string, pattern: RegExp) {
+  let found: RegExpExecArray | null | undefined;
+  return (from: number) => {
+    if (found === undefined || (found !== null && found.index < from)) {
+      pattern.lastIndex = from;
+      found = pattern.exec(text);
+      visits += (found ? found.index + found[0].length : text.length) - from;
+    }
+    return found;
+  };
+}
+type Ahead = ReturnType<typeof ahead>;
 
 /**
  * End of a BEGIN block whose marker ends at `from`, or -1 when the marker
  * does not end its line (prose that mentions it). The block takes whole
  * header lines, base64 lines (runs separated by spaces or tabs), and blank
- * lines, through END. Without END it stops after the last key line before
- * one that is not key material, or runs to the end of the text.
+ * lines, through END. A line that is none of these runs the block on through
+ * the next marker when that is an END, so a malformed key line never keeps
+ * its neighbours. Otherwise the block stops after the last key line before
+ * it, or runs to the end of the text.
  */
-function blockEnd(text: string, from: number): number {
+function blockEnd(text: string, from: number, nextMarker: Ahead): number {
   let at = from;
   at = skip(text, at, isSpace);
   if (at < text.length && text[at] !== "\n") return -1;
@@ -200,18 +260,55 @@ function blockEnd(text: string, from: number): number {
     }
     END_AT.lastIndex = stop;
     if (END_AT.test(text)) return END_AT.lastIndex;
-    return end;
+    const next = nextMarker(stop);
+    return next?.[1] === "END" ? next.index + next[0].length : end;
   }
   return text.length;
+}
+
+/**
+ * Whether a marker at `at` opens its line or a value: only spaces stand
+ * between it and the start of the text, a line break (raw or escaped), or a
+ * delimiter. A marker after a word is prose that mentions it.
+ */
+function opensValue(text: string, at: number): boolean {
+  const before = skipBack(text, at, 0, isSpace);
+  if (before === 0 || "\n\"'=:([{,>".includes(text[before - 1]!)) return true;
+  return ESCAPED_BREAK_BEFORE.test(text.slice(Math.max(0, before - 6), before));
+}
+
+/**
+ * End of a key spelled with escaped line breaks whose BEGIN marker ends at
+ * `from`, or -1 for prose. Through the next END on the line; without one,
+ * a marker opening its value (`opensValue`) runs to the end of its string
+ * or line.
+ */
+function escapedBlockEnd(
+  text: string,
+  start: number,
+  from: number,
+  nextEnd: Ahead,
+  nextBreak: Ahead,
+): number {
+  ESCAPED_BREAK_AT.lastIndex = from;
+  if (!ESCAPED_BREAK_AT.test(text)) return -1;
+  const end = nextEnd(from);
+  const lineEnd = nextBreak(from)?.index ?? text.length;
+  if (end && end.index < lineEnd) return end.index + end[0].length;
+  // A break escaped more than once belongs to a string nested deeper, whose
+  // end this depth cannot see; that string is decoded and read in its turn.
+  if (text[from + 1] === "\\") return -1;
+  return opensValue(text, start) ? stringEnd(text, from, true) : -1;
 }
 
 /**
  * Start of the key material above an END marker at `marker` whose BEGIN line
  * is not in the text, or -1. The marker must start its line, after spaces or
  * directly after base64, so prose that mentions it keeps its line. Walks back
- * over base64, spaces, and line breaks, never below `floor`.
+ * over base64, spaces, and line breaks, never below `floor`; `keyAbove` says
+ * key material already redacted ends at `floor`.
  */
-function tailStart(text: string, marker: number, floor: number): number {
+function tailStart(text: string, marker: number, floor: number, keyAbove: boolean): number {
   let start = marker;
   start = skipBack(text, start, floor, isSpace);
   if (start === marker) start = skipBack(text, start, floor, isBase64);
@@ -228,26 +325,24 @@ function tailStart(text: string, marker: number, floor: number): number {
     start--;
     visits++;
   }
-  return key ? start : -1;
+  return key || (keyAbove && start === floor) ? start : -1;
 }
 
+const KEY_HEADER_AT = /[ \t]*(?:Proc-Type|DEK-Info):/y;
 /**
- * End of the key body opening a text whose start is unknown (a read that
- * began inside a key, so neither marker may be in it): lines of bare base64
- * at least `KEY_LINE_WIDTH` wide, plus one shorter final line. 0 if none.
+ * End of the leading lines that could be key material (base64, spaces, blank
+ * lines, PEM headers) in a text that begins at a line whose key state is
+ * unknown. They are withheld whatever their width; the first other line ends
+ * them.
  */
-function keyBodyEnd(text: string): number {
-  let at = 0;
+function keyLinesEnd(text: string): number {
   let end = 0;
-  while (at < text.length) {
-    const from = skip(text, at, isSpace);
-    const base64End = skip(text, from, isBase64);
-    const width = base64End - from;
-    const stop = skip(text, base64End, isSpace);
-    if ((stop < text.length && text[stop] !== "\n") || width === 0) break;
-    if (width < KEY_LINE_WIDTH) {
-      if (end > 0) end = stop;
-      break;
+  for (let at = 0; at < text.length;) {
+    let stop = skip(text, at, (char) => isBase64(char) || isSpace(char));
+    if (stop < text.length && text[stop] !== "\n") {
+      KEY_HEADER_AT.lastIndex = at;
+      if (!KEY_HEADER_AT.test(text)) break;
+      stop = skip(text, stop, (char) => char !== "\n");
     }
     end = stop;
     at = stop + 1;
@@ -255,23 +350,36 @@ function keyBodyEnd(text: string): number {
   return end;
 }
 
-/** PEM private keys: whole blocks, tails whose BEGIN is gone, bare bodies. */
-function findKeys(text: string, spans: Span[], unknownStart: boolean) {
-  let floor = unknownStart ? keyBodyEnd(text) : 0;
+/**
+ * PEM private keys: whole blocks, keys spelled with escaped line breaks, tails
+ * whose BEGIN is gone, and the lines opening a text that begins inside a key
+ * (through its END) or may (`keyLinesEnd`).
+ */
+function findKeys(text: string, spans: Span[], key: KeyStart) {
+  const nextEnd = ahead(text, new RegExp(END_AT.source, "g"));
+  const nextMarker = ahead(text, new RegExp(MARKER.source, "g"));
+  const nextBreak = ahead(text, /\n/g);
+  let floor = 0;
+  if (key === "inside") {
+    const end = nextEnd(0);
+    floor = end ? end.index + end[0].length : text.length;
+  } else if (key === "unknown") floor = keyLinesEnd(text);
+  const keyFloor = floor;
   if (floor > 0) spans.push({ start: 0, end: floor, kind: "lines" });
   visits += text.length;
   MARKER.lastIndex = floor;
   for (let match = MARKER.exec(text); match; match = MARKER.exec(text)) {
     const markerEnd = match.index + match[0].length;
     if (match[1] === "BEGIN") {
-      const end = blockEnd(text, markerEnd);
+      let end = blockEnd(text, markerEnd, nextMarker);
+      if (end === -1) end = escapedBlockEnd(text, match.index, markerEnd, nextEnd, nextBreak);
       if (end !== -1) {
         spans.push({ start: match.index, end, kind: "lines" });
         floor = MARKER.lastIndex = Math.max(end, markerEnd);
         continue;
       }
     } else {
-      const start = tailStart(text, match.index, floor);
+      const start = tailStart(text, match.index, floor, floor > 0 && floor === keyFloor);
       if (start !== -1) spans.push({ start, end: markerEnd, kind: "lines" });
     }
     floor = markerEnd;
@@ -288,7 +396,7 @@ const FIELD = /(?<!\\)"((?:[^"\\\n]|\\[^\n]){1,128})"[ \t\r\n]*:[ \t\r\n]*/g;
 /** The complete JSON value (string, number, literal, array, object) at `at`. */
 function valueSpan(text: string, at: number): Span {
   const char = text[at];
-  if (char === '"') return { start: at + 1, end: stringEnd(text, at + 1), kind: "value" };
+  if (char === '"') return { start: at + 1, end: stringEnd(text, at + 1, true), kind: "value" };
   if (char === "{" || char === "[") {
     let depth = 0;
     for (let stop = at; stop < text.length;) {
@@ -339,7 +447,7 @@ const RULES: ReadonlyArray<readonly [RegExp, (match: RegExpExecArray) => Span | 
   ],
   // Authorization-style headers, keeping the scheme.
   [
-    /(?<![A-Za-z0-9-])(?:(?:proxy-)?authorization|x-api-key|api-key|x-auth-token|(?:set-)?cookie)[ \t]*:[ \t]*(?:(?:bearer|basic|token|bot|digest)[ \t]+)?([^\n"\\]+)/gi,
+    /(?<![A-Za-z0-9-])(?:(?:proxy-)?authorization|x-api-key|api-key|x-auth-token|(?:set-)?cookie)[ \t]*:[ \t]*"?(?:(?:bearer|basic|token|bot|digest)[ \t]+)?([^\n"\\]+)/gi,
     (match) => tail(match, match[1]!),
   ],
   // Bearer credentials and well-known token shapes anywhere.
@@ -379,11 +487,12 @@ function render(text: string, depth: number, span: Span): string {
 /**
  * Redactions for `text` at `depth`, as sorted, disjoint replacements in its
  * own coordinates. `unknownStart` marks text that may begin inside a string
- * or key (the start of a read, or a string whose opening quote is gone).
+ * (an arbitrary cut, or a string whose opening quote is gone); `key` is
+ * whether it begins inside a private key.
  */
-function redactText(text: string, depth: number, unknownStart: boolean): Span[] {
+function redactText(text: string, depth: number, unknownStart: boolean, key: KeyStart): Span[] {
   const spans: Span[] = [];
-  findKeys(text, spans, unknownStart);
+  findKeys(text, spans, key);
   findFields(text, spans);
   for (const [pattern, toSpan] of RULES) {
     visits += text.length;
@@ -396,7 +505,7 @@ function redactText(text: string, depth: number, unknownStart: boolean): Span[] 
     if (end <= start) return;
     if (depth >= MAX_DEPTH) return void spans.push({ start, end, text: R });
     const { decoded, offsets } = decode(text, start, end);
-    for (const span of redactText(decoded, depth + 1, unknown))
+    for (const span of redactText(decoded, depth + 1, unknown, unknown ? "unknown" : "outside"))
       spans.push({
         start: offsets[span.start]!,
         end: offsets[span.end]!,
@@ -405,9 +514,10 @@ function redactText(text: string, depth: number, unknownStart: boolean): Span[] 
   };
   // Strings with escapes are scanned again, decoded. `open` is where a string
   // would have opened if the last quote closing one was really an opening
-  // quote: an escaped quote outside any string shows the pairing is off by
-  // one, so the string is re-read from there. Where the start is unknown, an
-  // escape before the first quote means the text began inside a string.
+  // quote: an escaped quote (`\"` or `\u0022`) outside any string shows the
+  // pairing is off by one, so the string is re-read from there. Where the
+  // start is unknown, an escape before the first quote means the text began
+  // inside a string.
   let at = 0;
   let open = 0;
   if (unknownStart) {
@@ -421,7 +531,10 @@ function redactText(text: string, depth: number, unknownStart: boolean): Span[] 
     visits++;
     const char = text[at];
     if (char === "\n") open = ++at;
-    else if (char === '"' || (char === "\\" && text[at + 1] === '"')) {
+    else if (
+      char === '"' ||
+      (char === "\\" && (text[at + 1] === '"' || text.startsWith("u0022", at + 1)))
+    ) {
       const from = char === '"' ? at + 1 : open;
       const end = stringEnd(text, from);
       if (escaped) nested(from, end, false);
@@ -445,20 +558,23 @@ function redactText(text: string, depth: number, unknownStart: boolean): Span[] 
 }
 
 /** `redactLogSecrets`, also reporting the characters the scan inspected. */
-export function measureLogRedaction(text: string): {
+export function measureLogRedaction(
+  text: string,
+  start: LogTextStart = {},
+): {
   readonly text: string;
   readonly visits: number;
 } {
   visits = 0;
   let result = "";
   let at = 0;
-  for (const span of redactText(text, 0, true)) {
+  for (const span of redactText(text, 0, !start.lineStart, start.key ?? "outside")) {
     result += text.slice(at, span.start) + span.text;
     at = span.end;
   }
   return { text: result + text.slice(at), visits };
 }
 
-export function redactLogSecrets(text: string): string {
-  return measureLogRedaction(text).text;
+export function redactLogSecrets(text: string, start: LogTextStart = {}): string {
+  return measureLogRedaction(text, start).text;
 }

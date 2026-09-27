@@ -68,6 +68,11 @@ const tailInput = Schema.decodeUnknownSync(
  * than delivered unclassified (`shapeLogTail`).
  */
 export const AGENT_LOG_REDACTION_CONTEXT_BYTES = 8192;
+/**
+ * Bytes before the read searched for the last private-key marker, so a window
+ * that starts inside a key is known to (`shapeLogTail`).
+ */
+export const AGENT_LOG_KEY_SCAN_BYTES = 4 * 1024 * 1024;
 
 /**
  * Directories the Claude harness writes agent output under: transcripts in
@@ -83,23 +88,94 @@ export function defaultAgentLogRoots(): readonly string[] {
 /** Claude's per-workspace directory name: every non-alphanumeric becomes `-`. */
 export const claudeWorkspaceSlug = (cwd: string) => cwd.replace(/[^A-Za-z0-9]/g, "-");
 
+const KEY_MARKER_TAIL = Buffer.from("PRIVATE KEY-----");
+const KEY_MARKER = /-----(BEGIN|END)[A-Z ]{0,40}PRIVATE KEY-----$/;
+const isKeyByte = (byte: number) =>
+  (byte >= 0x41 && byte <= 0x5a) ||
+  (byte >= 0x61 && byte <= 0x7a) ||
+  (byte >= 0x30 && byte <= 0x39) ||
+  byte === 0x2b ||
+  byte === 0x2f ||
+  byte === 0x3d ||
+  byte === 0x20 ||
+  byte === 0x09 ||
+  byte === 0x0d;
+
+/**
+ * Whether every line of `bytes` from `from` is key material as redaction
+ * reads it: base64 and spaces, blank, or a `Name: value` header.
+ */
+function keyLinesOnly(bytes: Uint8Array, from: number): boolean {
+  let name = true;
+  let header = false;
+  for (let at = from; at < bytes.length; at++) {
+    const byte = bytes[at]!;
+    if (byte === 0x0a) {
+      name = true;
+      header = false;
+    } else if (header) continue;
+    else if (byte === 0x3a && name && (bytes[at + 1] === 0x20 || bytes[at + 1] === 0x09))
+      header = true;
+    else {
+      const letter = (byte >= 0x41 && byte <= 0x5a) || (byte >= 0x61 && byte <= 0x7a);
+      if (!letter && byte !== 0x2d && byte !== 0x20 && byte !== 0x09) name = false;
+      if (!isKeyByte(byte) && !(byte === 0x2d && name)) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Whether the source continues inside a private key after `scan`, the bytes
+ * directly before a line; `complete` when they reach the source's start. The
+ * last marker decides: an END (raw or escaped) closes the key; a BEGIN that
+ * ends its line opens one that runs on while every later line is key
+ * material, as redaction reads a visible block; a BEGIN inside a line is
+ * prose. With no marker in an incomplete scan the state is unknown.
+ */
+export function keyStateBefore(scan: Uint8Array, complete: boolean) {
+  const bytes = Buffer.from(scan.buffer, scan.byteOffset, scan.byteLength);
+  for (let at = bytes.lastIndexOf(KEY_MARKER_TAIL); at > 0;) {
+    const end = at + KEY_MARKER_TAIL.length;
+    const marker = KEY_MARKER.exec(bytes.toString("latin1", Math.max(0, at - 50), end));
+    if (marker?.[1] === "END") return "outside";
+    if (marker) {
+      let next = end;
+      while (bytes[next] === 0x20 || bytes[next] === 0x09 || bytes[next] === 0x0d) next++;
+      if (next === bytes.length || bytes[next] === 0x0a)
+        return keyLinesOnly(bytes, next) ? "inside" : "outside";
+    }
+    at = bytes.lastIndexOf(KEY_MARKER_TAIL, at - 1);
+  }
+  return complete ? "outside" : "unknown";
+}
+
 /**
  * Shapes a byte region that ends at the end of the source; `start` is its
- * offset in the source. A region starting mid-source first drops its leading
- * partial line: that line's start (and any secret name on it) is unread, so
- * redaction cannot classify it, even when it is the only line. The rest is
- * decoded and redacted, then cut to `maxBytes` UTF-8 bytes. A cut inside a
- * line drops leading UTF-8 continuation bytes and, when it holds a later
- * line, its partial first line; `maxLines` then keeps the last N lines.
+ * offset in the source, and `lead` the bytes directly before it that were
+ * read to find the key state (`keyStateBefore`). A region starting mid-source
+ * first drops its leading partial line: that line's start (and any secret
+ * name on it) is unread, so redaction cannot classify it, even when it is
+ * the only line. The rest is decoded and redacted, from the key state at its
+ * first line: inside a key it is redacted through END, and where the state
+ * is unknown its leading lines of possible key material are withheld. It is
+ * then cut to `maxBytes` UTF-8 bytes. A cut inside a line drops leading UTF-8
+ * continuation bytes and, when it holds a later line, its partial first line;
+ * `maxLines` then keeps the last N lines.
  */
 export function shapeLogTail(
   region: Uint8Array,
   start: number,
   limits: { readonly maxBytes: number; readonly maxLines: number },
+  lead: Uint8Array = new Uint8Array(),
 ): { readonly contents: string; readonly truncated: boolean } {
   const offset = start > 0 ? region.indexOf(0x0a) + 1 || region.length : 0;
+  const key =
+    start > 0
+      ? keyStateBefore(Buffer.concat([lead, region.subarray(0, offset)]), lead.length >= start)
+      : "outside";
   let bytes = new TextEncoder().encode(
-    redactLogSecrets(new TextDecoder().decode(region.subarray(offset))),
+    redactLogSecrets(new TextDecoder().decode(region.subarray(offset)), { lineStart: true, key }),
   );
   // Earlier source bytes were withheld; the redacted bytes are cut only when
   // they overflow `maxBytes`.
@@ -246,9 +322,17 @@ export function createOrchestrationLogsApiProvider(deps: Dependencies): HostApiP
       )
         throw fail("AgentLogsSourceChanged");
       const start = Math.max(0, stat.size - maxBytes - AGENT_LOG_REDACTION_CONTEXT_BYTES);
-      const region = Buffer.alloc(stat.size - start);
-      const { bytesRead } = await file.read(region, 0, region.length, start);
-      return { region: region.subarray(0, bytesRead), start, byteLength: stat.size };
+      const leadStart = Math.max(0, start - AGENT_LOG_KEY_SCAN_BYTES);
+      const bytes = Buffer.alloc(stat.size - leadStart);
+      const { bytesRead } = await file.read(bytes, 0, bytes.length, leadStart);
+      const read = bytes.subarray(0, bytesRead);
+      const split = Math.min(start - leadStart, read.length);
+      return {
+        region: read.subarray(split),
+        lead: read.subarray(0, split),
+        start,
+        byteLength: stat.size,
+      };
     } catch (error) {
       // Raw filesystem errors carry host paths; only fixed codes leave here.
       if (isOperationError(error)) throw error;
@@ -299,10 +383,12 @@ export function createOrchestrationLogsApiProvider(deps: Dependencies): HostApiP
       const read = await readRegion(agent.outputFile, scope.cwd, maxBytes);
       // A session revoked mid-read never receives the bytes.
       await guard(context, signal, metadata);
-      const shaped = shapeLogTail(read.region, read.start, {
-        maxBytes,
-        maxLines: safe.maxLines ?? AGENT_LOG_TAIL_MAX_LINES,
-      });
+      const shaped = shapeLogTail(
+        read.region,
+        read.start,
+        { maxBytes, maxLines: safe.maxLines ?? AGENT_LOG_TAIL_MAX_LINES },
+        read.lead,
+      );
       if (Buffer.byteLength(shaped.contents) > maxBytes) throw fail("AgentLogsTailTooLarge");
       const result: AgentLogTail = {
         runId: agent.id,

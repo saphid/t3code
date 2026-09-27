@@ -269,6 +269,191 @@ it("keeps a literal backslash-n after a BEGIN mention in prose", () => {
   }
 });
 
+it("redacts keys spelled with escaped line breaks anywhere in a line", () => {
+  const encoded = String.raw`-----BEGIN PRIVATE KEY-----\nUNIQUESECRET\n-----END PRIVATE KEY-----`;
+  const variants = [
+    encoded,
+    String.raw`-----BEGIN PRIVATE KEY-----\u000aUNIQUESECRET\u000a-----END PRIVATE KEY-----`,
+    String.raw`-----BEGIN PRIVATE KEY-----\u000aUNIQUESECRET\n-----END PRIVATE KEY-----`,
+  ];
+  for (const variant of variants) {
+    expect(redactLogSecrets(`ok\n${variant}`, { lineStart: true })).toBe(`ok\n${R}`);
+    expect(redactLogSecrets(`ok\n${variant}`)).toBe(`ok\n${R}`);
+    for (const depth of [1, 2, 3, 6, 12, 13, 14]) {
+      const nested = nest(variant, depth);
+      const redacted = redactLogSecrets(nested);
+      expect(redacted, `${variant} depth ${depth}`).not.toContain("UNIQUESECRET");
+      if (depth <= 12) expect(unnest(redacted, depth)).toBe(R);
+    }
+  }
+  // Cut off before END: a marker opening its value runs to the end of its
+  // string or line.
+  expect(
+    redactLogSecrets(String.raw`x -----BEGIN PRIVATE KEY-----\nUNIQUESECRET`, { lineStart: true }),
+  ).toBe(String.raw`x -----BEGIN PRIVATE KEY-----\nUNIQUESECRET`);
+  expect(
+    redactLogSecrets(`ok\nkey: ${String.raw`-----BEGIN PRIVATE KEY-----\nUNIQUESECRET`}`),
+  ).toBe(`ok\nkey: ${R}`);
+  expect(
+    redactLogSecrets(
+      `export SSH_KEY="${String.raw`-----BEGIN PRIVATE KEY-----\nUNIQUESECRET`}"\nnext`,
+    ),
+  ).toBe(`export SSH_KEY="${R}"\nnext`);
+  const cut = JSON.stringify({
+    content: String.raw`-----BEGIN PRIVATE KEY-----\nUNIQUESECRET`,
+    n: 1,
+  });
+  expect(JSON.parse(redactLogSecrets(cut))).toEqual({ content: R, n: 1 });
+  // Prose that mentions the marker before a literal backslash-n keeps its text.
+  const prose = String.raw`The -----BEGIN PRIVATE KEY-----\nBuild passed\nLater ordinary content.`;
+  expect(redactLogSecrets(prose, { lineStart: true })).toBe(prose);
+  expect(redactLogSecrets(`ok\n${prose}`, { lineStart: true })).toBe(`ok\n${prose}`);
+});
+
+it("reads delimiters spelled \\u0022 outside any string", () => {
+  const fragment = String.raw`{"password":"UNIQUESECRET"}`;
+  expect(redactLogSecrets(`ok\n${fragment}`)).toBe(`ok\n${String.raw`{"password":"${R}"}`}`);
+  for (const depth of [0, 1, 2, 3, 6, 12, 13, 14])
+    expect(redactLogSecrets(nest(fragment, depth)), `depth ${depth}`).not.toContain("UNIQUESECRET");
+});
+
+it("fails closed on a secret value whose closing quote is not followed by JSON", () => {
+  const secret = "LEAKCHECKxyz42";
+  const endings = [
+    "",
+    " ",
+    "-",
+    "/",
+    "😀",
+    "\uD800",
+    "\t",
+    ":",
+    ",",
+    "}",
+    "[",
+    String.raw`\uZZZZ`,
+    String.raw` `,
+    String.raw`😀`,
+  ];
+  for (const ending of endings)
+    for (const depth of [0, 1, 2, 3]) {
+      const input = nest(`{"password":"first"${ending}${secret}"}`, depth);
+      const redacted = redactLogSecrets(input);
+      expect(redacted, `${JSON.stringify(ending)} depth ${depth}`).not.toContain(secret);
+      expect(unnest(redacted, depth)).toBe(`{"password":"${R}"}`);
+    }
+  // The reviewer's probes, and a value closed by valid JSON.
+  for (const input of [
+    String.raw`{"content":"{\"password\":\"first\\" UNIQUESECRET\"}"}`,
+    String.raw`{"content":"{\"password\":\"first\\"-UNIQUESECRET\"}"}`,
+    String.raw`{"password":"foo"/UNIQUESECRET"}`,
+  ])
+    expect(redactLogSecrets(input), input).not.toContain("UNIQUESECRET");
+  const valid = '{"a":[{"password":"x"}],"password":"y" ,\n"b":"keep"}';
+  expect(redactLogSecrets(valid)).toBe(
+    `{"a":[{"password":"${R}"}],"password":"${R}" ,\n"b":"keep"}`,
+  );
+});
+
+it("redacts passphrases, sessions, and quoted header values", () => {
+  for (const name of [
+    "passphrase",
+    "session",
+    "sessionToken",
+    "session_id",
+    "SESSION_ID",
+    "sessionId",
+  ])
+    expect(redactLogSecrets(JSON.stringify({ [name]: "UNIQUESECRET" })), name).toBe(
+      `{"${name}":"${R}"}`,
+    );
+  expect(redactLogSecrets('Authorization: "UNIQUESECRET"')).toBe(`Authorization: "${R}"`);
+  const plain = '{"sessions":3,"secretary":"Ada","inputTokens":1}';
+  expect(redactLogSecrets(plain)).toBe(plain);
+});
+
+it("redacts a key with a malformed body line through its END, at every depth", () => {
+  const key = `-----BEGIN PRIVATE KEY-----\n${String.raw`UNIQUESECRET\uZZZZ`}\n-----END PRIVATE KEY-----\n`;
+  for (const depth of [0, 1, 2, 3, 6, 12, 13, 14]) {
+    const redacted = redactLogSecrets(nest(key, depth));
+    expect(redacted, `depth ${depth}`).not.toContain("UNIQUESECRET");
+  }
+  expect(redactLogSecrets(`a\n${key}b`)).toBe(`a\n${R}\n${R}\n${R}\nb`);
+  // Every cut of an escaped record still redacts the body. (A raw block with
+  // no END yet ends at its first line that is not key material.)
+  for (const depth of [1, 2, 3]) {
+    const nested = nest(key, depth);
+    for (let end = 0; end <= nested.length; end++)
+      expect(redactLogSecrets(nested.slice(0, end)), `${depth} ${end}`).not.toContain(
+        "UNIQUESECRET",
+      );
+  }
+});
+
+it("redacts from the start through END a text that begins inside a key", () => {
+  const text = "AAAA BBBB\n\nCCCC\n-----END PRIVATE KEY-----\nafter\n";
+  expect(redactLogSecrets(text, { lineStart: true, key: "inside" })).toBe(
+    `${R}\n\n${R}\n${R}\nafter\n`,
+  );
+  expect(redactLogSecrets("AAAA\nnot key.\n", { lineStart: true, key: "inside" })).toBe(
+    `${R}\n${R}\n`,
+  );
+  // Unknown: leading lines of possible key material, then the first other line.
+  expect(
+    redactLogSecrets("Proc-Type: 4,ENCRYPTED\nAA AA\n\nBB\ndone.\nCCCC\n", {
+      lineStart: true,
+      key: "unknown",
+    }),
+  ).toBe(`${R}\n${R}\n\n${R}\ndone.\nCCCC\n`);
+  expect(
+    redactLogSecrets("AAAA\n-----END PRIVATE KEY-----\nz", { lineStart: true, key: "unknown" }),
+  ).toBe(`${R}\n${R}\nz`);
+});
+
+it("bounds scanning work linearly on 1 MiB adversarial inputs", { timeout: 60_000 }, () => {
+  // The review's benchmark shapes, measured by visits rather than time.
+  const fill = (pattern: string, n: number) =>
+    pattern.repeat(Math.ceil(n / pattern.length)).slice(0, n);
+  const shapes: Record<string, (n: number) => string> = {
+    bare: (n) => "A".repeat(n),
+    beginBlocks: (n) => fill("-----BEGIN PRIVATE KEY-----\nAAAA", n),
+    escapedBlocks: (n) => fill(String.raw`-----BEGIN PRIVATE KEY-----\nAAAA`, n),
+    escapedProse: (n) => fill(String.raw`x -----BEGIN PRIVATE KEY-----\n`, n),
+    endMarkers: (n) => fill("x-----END PRIVATE KEY-----", n),
+    urlCandidates: (n) => fill("a.", n),
+    spacedKey: (n) => `-----BEGIN PRIVATE KEY-----\n${fill("A ", n - 27)}.`,
+    tailSpaces: (n) => `${fill("A \t", n - 25)}-----END PRIVATE KEY-----`,
+    slashRun: (n) => `"token":"${"\\".repeat(n - 9)}`,
+    escapeSoup: (n) => fill('\\"a"b"', n),
+    brokenQuotes: (n) => `{"password":"${fill('" x', n)}`,
+    closerRuns: (n) => `{"password":"${fill('"}}}}}}}}}}}}x', n)}`,
+    unicodeQuotes: (n) => fill(String.raw`"a":`, n),
+    unclosedArrays: (n) => fill('"password":[', n),
+    unclosedObjects: (n) => fill('{"auth":{"auth":{"auth":', n),
+    depth12: (n) => nest("A".repeat(Math.max(0, n - nest("", 12).length)), 12),
+    depth14: (n) => nest("A".repeat(Math.max(0, n - nest("", 14).length)), 14),
+    denseSpans: (n) => fill('token=foo cookie=bar\n{"password":"z","apiKey":1}\n', n),
+    mixedSpans: (n) =>
+      fill(
+        'token=foo\n{"password":"x"}\n-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n',
+        n,
+      ),
+    unicode: (n) => fill('{"content":"{\\u0022password\\u0022:\\u0022SECRET\\u0022}"}\n', n),
+  };
+  const size = 1024 * 1024;
+  for (const [name, shape] of Object.entries(shapes)) {
+    const input = shape(size).slice(0, size);
+    for (const start of [
+      {},
+      { lineStart: true, key: "inside" as const },
+      { lineStart: true, key: "unknown" as const },
+    ]) {
+      const { visits } = measureLogRedaction(input, start);
+      expect(visits, `${name} ${JSON.stringify(start)}`).toBeLessThanOrEqual(160 * input.length);
+    }
+  }
+});
+
 it("bounds scanning work linearly in the input length", () => {
   // Every loop of the scanner counts its character visits; regex passes count
   // one visit per character scanned. A pattern that rescans suffixes grows
