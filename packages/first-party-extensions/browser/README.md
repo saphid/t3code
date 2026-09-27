@@ -81,6 +81,11 @@ The panel renders through public contracts only:
   `t3.composer/context` `insertImage` (`t3.composer/write`) attaches to this
   thread's draft; pixels never ride an API payload. Capturing needs the
   session shown on a desktop client; elsewhere the buttons stay disabled.
+  A page capture's "Screenshot saved" toast offers native's Copy path,
+  Reveal and Copy image through the capability's 1.1.0 artifact actions,
+  which act on the copy the desktop saved beside native screenshots; the
+  toast stays open and a copy reads "Copied!" briefly
+  (`t3.ui/notifications` 1.1.0 `keepOpen` actions and `flashAction`).
   Unlike the native pick, the picked elements' text context is not added to
   the draft yet — the composer contract has no preview-annotation insert.
 - `t3.browser/local-servers` (`t3.browser/read-local-servers` grant) fills
