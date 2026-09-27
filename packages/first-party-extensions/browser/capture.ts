@@ -8,6 +8,7 @@
  */
 import {
   composerContextApi,
+  uiNotificationsApi,
   type BrowserCaptureArtifact,
   type BrowserCaptureTarget,
 } from "@t3tools/extension-sdk/catalogue";
@@ -16,6 +17,8 @@ import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useState } from "react";
+
+import type { BoundApi } from "./uiContracts.ts";
 
 export interface CaptureSessionRef {
   readonly tabId: string;
@@ -96,6 +99,66 @@ export function captureOutcomeMessage(outcome: CaptureToChatOutcome): string | n
   }
 }
 
+export interface CaptureToast {
+  readonly severity: "success" | "error";
+  readonly title: string;
+  readonly body?: string;
+}
+
+/**
+ * The toast native `PreviewView` raises for the same outcome, or null where
+ * native stays silent. Titles are native's verbatim: a page capture toasts
+ * "Screenshot saved" / "Unable to capture screenshot"; a pick toasts only when
+ * it loses its image ("Could not capture the picked element"), and a picked
+ * element landing in chat or a cancel is silent.
+ */
+export function captureOutcomeToast(
+  target: BrowserCaptureTarget,
+  outcome: CaptureToChatOutcome,
+): CaptureToast | null {
+  switch (outcome.kind) {
+    case "cancelled":
+      return null;
+    case "failed":
+      return {
+        severity: "error",
+        title:
+          target === "page"
+            ? "Unable to capture screenshot"
+            : "Could not capture the picked element",
+        body: outcome.message,
+      };
+    case "added": {
+      if (target !== "page") return null;
+      const body = captureOutcomeMessage(outcome);
+      return { severity: "success", title: "Screenshot saved", ...(body ? { body } : {}) };
+    }
+  }
+}
+
+/**
+ * Toasts the outcome through `t3.ui/notify` and resolves the status-line text
+ * still owed: null once the toast landed, the inline message when there is no
+ * toast for it or notify is unavailable (ungranted, provider-less, rejected).
+ */
+export async function reportCaptureOutcome(
+  notifications: BoundApi<typeof uiNotificationsApi>,
+  threadId: string,
+  target: BrowserCaptureTarget,
+  outcome: CaptureToChatOutcome,
+  signal: AbortSignal,
+): Promise<string | null> {
+  const message = captureOutcomeMessage(outcome);
+  const toast = captureOutcomeToast(target, outcome);
+  if (toast === null) return message;
+  try {
+    await notifications.invoke("notify", { ...toast, threadId, anchor: "thread" }, signal);
+    return null;
+  } catch {
+    return message;
+  }
+}
+
 export type BrowserCaptureState =
   | { readonly kind: "idle" }
   | { readonly kind: "capturing"; readonly target: BrowserCaptureTarget }
@@ -117,10 +180,20 @@ export function useBrowserCapture(
   const capture = (target: BrowserCaptureTarget) => {
     if (blockReason !== null || held === null || state.kind === "capturing") return;
     setState({ kind: "capturing", target });
-    void captureToChat(host, session.context, held, target, session.signal).then((outcome) => {
-      if (!session.signal.aborted)
-        setState({ kind: "done", message: captureOutcomeMessage(outcome) });
-    });
+    const context = session.context;
+    void captureToChat(host, context, held, target, session.signal)
+      .then((outcome) =>
+        reportCaptureOutcome(
+          bindApi(uiNotificationsApi, host, context),
+          context.resource.threadId ?? "",
+          target,
+          outcome,
+          AbortSignal.any([session.signal, AbortSignal.timeout(5_000)]),
+        ),
+      )
+      .then((message) => {
+        if (!session.signal.aborted) setState({ kind: "done", message });
+      });
   };
   return { blockReason, state, capture };
 }

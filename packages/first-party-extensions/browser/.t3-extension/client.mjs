@@ -8344,15 +8344,51 @@ var __t3Client = (() => {
       }
     }
   }
+  function captureOutcomeToast(target, outcome) {
+    switch (outcome.kind) {
+      case "cancelled":
+        return null;
+      case "failed":
+        return {
+          severity: "error",
+          title: target === "page" ? "Unable to capture screenshot" : "Could not capture the picked element",
+          body: outcome.message
+        };
+      case "added": {
+        if (target !== "page") return null;
+        const body = captureOutcomeMessage(outcome);
+        return { severity: "success", title: "Screenshot saved", ...body ? { body } : {} };
+      }
+    }
+  }
+  async function reportCaptureOutcome(notifications, threadId, target, outcome, signal) {
+    const message = captureOutcomeMessage(outcome);
+    const toast = captureOutcomeToast(target, outcome);
+    if (toast === null) return message;
+    try {
+      await notifications.invoke("notify", { ...toast, threadId, anchor: "thread" }, signal);
+      return null;
+    } catch {
+      return message;
+    }
+  }
   function useBrowserCapture(host, session, held) {
     const [state2, setState] = (0, import_react.useState)({ kind: "idle" });
     const blockReason = captureUnavailableReason(host, held, session.context.resource.threadId);
     const capture = (target) => {
       if (blockReason !== null || held === null || state2.kind === "capturing") return;
       setState({ kind: "capturing", target });
-      void captureToChat(host, session.context, held, target, session.signal).then((outcome) => {
-        if (!session.signal.aborted)
-          setState({ kind: "done", message: captureOutcomeMessage(outcome) });
+      const context2 = session.context;
+      void captureToChat(host, context2, held, target, session.signal).then(
+        (outcome) => reportCaptureOutcome(
+          bindApi(uiNotificationsApi, host, context2),
+          context2.resource.threadId ?? "",
+          target,
+          outcome,
+          AbortSignal.any([session.signal, AbortSignal.timeout(5e3)])
+        )
+      ).then((message) => {
+        if (!session.signal.aborted) setState({ kind: "done", message });
       });
     };
     return { blockReason, state: state2, capture };

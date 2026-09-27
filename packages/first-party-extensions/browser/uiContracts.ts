@@ -243,10 +243,10 @@ export async function togglePanelSurface(
 }
 
 /**
- * The panel's one toast: a toggle press that cannot act. Matches the native
- * `preview.toggle` "desktop-only" notice — transient status inside the panel
- * (navigation failures, ended sessions) stays inline like the native
- * unreachable view, so nothing else routes here.
+ * A toggle press that cannot act. Matches the native `preview.toggle`
+ * "desktop-only" notice. Transient status inside the panel (navigation
+ * failures, ended sessions) stays inline like the native unreachable view;
+ * the other toasts are viewport and capture outcomes, as in native.
  */
 export async function notifyToggleFailure(
   notifications: BoundApi<typeof uiNotificationsApi>,

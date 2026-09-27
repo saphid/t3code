@@ -1,7 +1,16 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 
-import { captureOutcomeMessage, captureToChat, captureUnavailableReason } from "./capture.ts";
+import { bindApi } from "@t3tools/extension-sdk/capabilities";
+import { uiNotificationsApi } from "@t3tools/extension-sdk/catalogue";
+
+import {
+  captureOutcomeMessage,
+  captureOutcomeToast,
+  captureToChat,
+  captureUnavailableReason,
+  reportCaptureOutcome,
+} from "./capture.ts";
 
 const ARTIFACT_REF = "pending-0f1e2d3c-4b5a-4968-8776-655443322110";
 const held = { tabId: "tab-1", serverEpoch: "epoch-1" };
@@ -134,5 +143,94 @@ NodeTest.describe("captureToChat", () => {
       }),
       "Element capture is already in chat.",
     );
+  });
+});
+
+const failed = { kind: "failed", message: "Capture failed — engine-error: tab gone" };
+const pageAdded = { kind: "added", artifact, inserted: true };
+const elementAdded = {
+  kind: "added",
+  artifact: { ...artifact, target: "element" },
+  inserted: true,
+};
+
+NodeTest.describe("captureOutcomeToast", () => {
+  NodeTest.it("uses native's screenshot titles for page outcomes", () => {
+    NodeAssert.deepEqual(captureOutcomeToast("page", pageAdded), {
+      severity: "success",
+      title: "Screenshot saved",
+      body: "Page screenshot added to chat.",
+    });
+    NodeAssert.deepEqual(captureOutcomeToast("page", failed), {
+      severity: "error",
+      title: "Unable to capture screenshot",
+      body: failed.message,
+    });
+  });
+
+  NodeTest.it("toasts a pick only when it loses its image, like native", () => {
+    NodeAssert.deepEqual(captureOutcomeToast("element", failed), {
+      severity: "error",
+      title: "Could not capture the picked element",
+      body: failed.message,
+    });
+    NodeAssert.equal(captureOutcomeToast("element", elementAdded), null);
+  });
+
+  NodeTest.it("stays silent on a cancel", () => {
+    NodeAssert.equal(captureOutcomeToast("page", { kind: "cancelled" }), null);
+    NodeAssert.equal(captureOutcomeToast("element", { kind: "cancelled" }), null);
+  });
+});
+
+NodeTest.describe("reportCaptureOutcome", () => {
+  const notifier = (answer) => {
+    const calls = [];
+    const client = {
+      invokeApi: async (request) => {
+        calls.push(request);
+        if (answer instanceof Error) throw answer;
+        return answer;
+      },
+    };
+    return { calls, api: bindApi(uiNotificationsApi, client, context) };
+  };
+  const signal = new AbortController().signal;
+
+  NodeTest.it("toasts on this thread and clears the status line", async () => {
+    const { calls, api } = notifier({ notificationId: "n-1" });
+    NodeAssert.equal(await reportCaptureOutcome(api, "thread-a", "page", failed, signal), null);
+    NodeAssert.equal(calls.length, 1);
+    NodeAssert.equal(calls[0].id, "t3.ui/notifications");
+    NodeAssert.equal(calls[0].method, "notify");
+    NodeAssert.deepEqual(calls[0].input, {
+      severity: "error",
+      title: "Unable to capture screenshot",
+      body: failed.message,
+      threadId: "thread-a",
+      anchor: "thread",
+    });
+  });
+
+  NodeTest.it("falls back to the status line when notify is unavailable", async () => {
+    const { calls, api } = notifier(new Error("grant t3.ui/notify missing"));
+    NodeAssert.equal(
+      await reportCaptureOutcome(api, "thread-a", "page", pageAdded, signal),
+      "Page screenshot added to chat.",
+    );
+    NodeAssert.equal(calls.length, 1);
+  });
+
+  NodeTest.it("keeps untoasted outcomes on the status line without notifying", async () => {
+    const { calls, api } = notifier({ notificationId: "n-1" });
+    NodeAssert.equal(
+      await reportCaptureOutcome(api, "thread-a", "element", elementAdded, signal),
+      "Element capture added to chat.",
+    );
+    NodeAssert.equal(
+      await reportCaptureOutcome(api, "thread-a", "page", { kind: "cancelled" }, signal),
+      null,
+    );
+    NodeAssert.equal(calls.length, 0);
   });
 });
