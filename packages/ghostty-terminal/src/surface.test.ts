@@ -499,15 +499,81 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(harness.onData.mock.calls).toEqual([["l"], ["\x1b[108;1:3u"]]);
   });
 
-  it("retires held presses when the window loses focus", async () => {
+  it.each([
+    { code: "KeyL", key: "l", release: "\x1b[108;1:3u" },
+    { code: "ArrowUp", key: "ArrowUp", release: "\x1b[1;1:3A" },
+  ])("releases $code held across a window focus round trip", async ({ code, key, release }) => {
+    const harness = createHarness();
+    await createKittySurface(harness);
+    const { input } = harness;
+    harness.key(input, "keydown", { code, key });
+    window.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event("focus"));
+    harness.key(input, "keyup", { code, key });
+    expect(harness.onData.mock.calls).toHaveLength(2);
+    expect(harness.onData.mock.calls[1]).toEqual([release]);
+  });
+
+  it("retires a press released while the window was blurred once its code is pressed again", async () => {
     const harness = createHarness();
     await createKittySurface(harness);
     const { input } = harness;
     harness.key(input, "keydown", { code: "KeyL", key: "l" });
-    // Releases in another app never reach the page.
+    // The release happens in another app and never reaches the page.
     window.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event("focus"));
+    // A host dispatcher stops the Ctrl+L keydown before it reaches the input.
+    harness.key(window, "keydown", { code: "KeyL", key: "l", ctrlKey: true });
     harness.key(input, "keyup", { code: "KeyL", key: "l", ctrlKey: true });
     expect(harness.onData.mock.calls).toEqual([["l"]]);
+  });
+
+  it("keeps held presses per surface and removes its window listeners on dispose", async () => {
+    const harness = createHarness();
+    // Browser semantics: a listener is identified by type, callback, and capture.
+    const live: Array<[string, unknown, boolean]> = [];
+    const capture = (options?: boolean | EventListenerOptions) =>
+      typeof options === "boolean" ? options : options?.capture === true;
+    const add = window.addEventListener.bind(window);
+    const remove = window.removeEventListener.bind(window);
+    vi.spyOn(window, "addEventListener").mockImplementation((type, listener, options) => {
+      live.push([type, listener, capture(options)]);
+      add(type, listener, options);
+    });
+    vi.spyOn(window, "removeEventListener").mockImplementation((type, listener, options) => {
+      const index = live.findIndex(
+        ([t, l, c]) => t === type && l === listener && c === capture(options),
+      );
+      if (index !== -1) live.splice(index, 1);
+      remove(type, listener, options);
+    });
+
+    const first = { onData: vi.fn<(data: string) => void>() };
+    const second = { onData: vi.fn<(data: string) => void>() };
+    const firstSurface = await harness.create({ beforeKey: () => true, onData: first.onData });
+    firstSurface.write("\x1b[>3u");
+    const firstInput = harness.input;
+    const secondSurface = await harness.create({ beforeKey: () => true, onData: second.onData });
+    secondSurface.write("\x1b[>3u");
+    const secondInput = harness.input;
+    expect(live.length).toBeGreaterThan(0);
+
+    harness.key(firstInput, "keydown", { code: "KeyL", key: "l" });
+    harness.key(secondInput, "keydown", { code: "ArrowUp", key: "ArrowUp" });
+    // A host-consumed Ctrl+L retires only the surface holding KeyL.
+    harness.key(window, "keydown", { code: "KeyL", key: "l", ctrlKey: true });
+    harness.key(firstInput, "keyup", { code: "KeyL", key: "l", ctrlKey: true });
+    harness.key(secondInput, "keyup", { code: "ArrowUp", key: "ArrowUp" });
+    expect(first.onData.mock.calls).toEqual([["l"]]);
+    expect(second.onData.mock.calls.at(-1)).toEqual(["\x1b[1;1:3A"]);
+
+    firstSurface.dispose();
+    harness.key(secondInput, "keydown", { code: "KeyL", key: "l" });
+    harness.key(secondInput, "keyup", { code: "KeyL", key: "l" });
+    expect(second.onData.mock.calls.slice(-2)).toEqual([["l"], ["\x1b[108;1:3u"]]);
+    secondSurface.dispose();
+    expect(live).toEqual([]);
+    expect(first.onData.mock.calls).toEqual([["l"]]);
   });
 
   it("does not activate a link replaced before pointer release", async () => {

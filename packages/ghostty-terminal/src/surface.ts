@@ -1228,11 +1228,13 @@ export class GhosttyTerminalSurface {
     this.encodedKeyCodes.delete(event.code);
   };
 
-  // Releases while another app has focus never reach the page, so every held
-  // press is retired. A key still down when the window refocuses sends no
-  // release; that is safer than a later chord leaking one.
-  private readonly onWindowBlur = (event: FocusEvent) => {
-    if (event.target === window) this.encodedKeyCodes.clear();
+  // A release while another app has focus never reaches the page, but a later
+  // keydown of the same code proves it happened. Retire the press here, in
+  // capture phase before any host dispatcher can stop the event; onKeyDown
+  // re-adds the code when this surface encodes the new press itself. A key
+  // held across a window focus round trip keeps its press and its release.
+  private readonly onWindowKeyDown = (event: KeyboardEvent) => {
+    this.encodedKeyCodes.delete(event.code);
   };
 
   private readonly onFocus = () => {
@@ -1248,7 +1250,8 @@ export class GhosttyTerminalSurface {
     // round trip still owes the shell its release. A press that moved focus
     // (for example terminal-toggle) was never encoded, so its keyup stays
     // swallowed if focus comes back before release. Releases that land
-    // elsewhere retire the press in onWindowKeyUp instead.
+    // elsewhere retire the press in onWindowKeyUp, and unseen ones on the next
+    // keydown of the same code in onWindowKeyDown.
     // The steady unfocused hollow cursor must not inherit an off blink phase.
     this.cursorOn = true;
     this.requestRender();
@@ -1744,8 +1747,8 @@ export class GhosttyTerminalSurface {
   private installEvents(): void {
     this.input.addEventListener("keydown", this.onKeyDown);
     this.input.addEventListener("keyup", this.onKeyUp);
-    window.addEventListener("keyup", this.onWindowKeyUp, true);
-    window.addEventListener("blur", this.onWindowBlur);
+    window.addEventListener("keyup", this.onWindowKeyUp, { capture: true });
+    window.addEventListener("keydown", this.onWindowKeyDown, { capture: true });
     this.input.addEventListener("focus", this.onFocus);
     this.input.addEventListener("blur", this.onBlur);
     this.input.addEventListener("input", this.onInput);
@@ -1772,8 +1775,8 @@ export class GhosttyTerminalSurface {
   private removeEvents(): void {
     this.input.removeEventListener("keydown", this.onKeyDown);
     this.input.removeEventListener("keyup", this.onKeyUp);
-    window.removeEventListener("keyup", this.onWindowKeyUp, true);
-    window.removeEventListener("blur", this.onWindowBlur);
+    window.removeEventListener("keyup", this.onWindowKeyUp, { capture: true });
+    window.removeEventListener("keydown", this.onWindowKeyDown, { capture: true });
     this.input.removeEventListener("focus", this.onFocus);
     this.input.removeEventListener("blur", this.onBlur);
     this.input.removeEventListener("input", this.onInput);
