@@ -889,10 +889,6 @@ export function createComposerClientProvider(
               : `browser-capture-${artifactRef.slice("pending-".length, "pending-".length + 8)}.png`;
           return fetchCaptureArtifact(ref.environmentId, artifactRef, name).then(
             (file) => {
-              // The draft owns its own upload of these bytes, like a pasted
-              // image, so the capture's pending upload is released now rather
-              // than left as an orphan until the store's sweep.
-              releaseCaptureArtifact(ref.environmentId, artifactRef);
               const image: ComposerImageAttachment = {
                 type: "image",
                 id: randomUUID(),
@@ -903,7 +899,12 @@ export function createComposerClientProvider(
                 file,
               };
               const inserted = useComposerDraftStore.getState().addImage(ref, image);
-              if (!inserted) URL.revokeObjectURL(image.previewUrl);
+              // Once accepted, the draft owns its own upload of these bytes, like
+              // a pasted image, so the capture's pending upload would be an
+              // orphan. A refused insert (full composer, duplicate) keeps the
+              // ref so the caller can retry after making room.
+              if (inserted) releaseCaptureArtifact(ref.environmentId, artifactRef);
+              else URL.revokeObjectURL(image.previewUrl);
               return {
                 inserted,
                 target: `${ref.environmentId}:${ref.threadId}`,

@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ClientProviderCaller, ClientProviderEmitEvent } from "@t3tools/contracts";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
@@ -736,6 +741,40 @@ describe("composer provider", () => {
       .getComposerDraft(scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a")));
     const image = draft?.images.find((entry) => entry.name === "page.png");
     expect(image).toMatchObject({ type: "image", mimeType: "image/png", sizeBytes: 4 });
+  });
+
+  it("keeps the capture when a full composer refuses the image", async () => {
+    const ref = scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a"));
+    const png = (name: string) =>
+      new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], name, { type: "image/png" });
+    useComposerDraftStore.getState().addImages(
+      ref,
+      Array.from({ length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS }, (_, index) => ({
+        type: "image" as const,
+        id: `full-${index}`,
+        name: `full-${index}.png`,
+        mimeType: "image/png",
+        sizeBytes: 4,
+        previewUrl: `blob:full-${index}`,
+        file: png(`full-${index}.png`),
+      })),
+    );
+    const artifactRef = "pending-0f1e2d3c-4b5a-4968-8776-655443322110";
+    const releaseArtifact = vi.fn();
+    const provider = createComposerClientProvider(
+      makeDeps(["t3.composer/write"]),
+      async () => png("capture.png"),
+      releaseArtifact,
+    );
+    const result = await provider.invoke(
+      invokeCall("insertImage", { threadId: "thread-a", artifactRef, name: "capture.png" }),
+    );
+    expect(result).toEqual({ inserted: false, target: `${ENV}:thread-a` });
+    const images = useComposerDraftStore.getState().getComposerDraft(ref)?.images ?? [];
+    expect(images.some((image) => image.name === "capture.png")).toBe(false);
+    // The draft holds no copy, so the capture's upload is the only one left and
+    // stays for a retry once the composer has room.
+    expect(releaseArtifact).not.toHaveBeenCalled();
   });
 
   it("refuses insertImage without the grant, outside scope, or with a non-capture ref", async () => {
