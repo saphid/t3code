@@ -37,9 +37,10 @@ import {
   type GhosttyTerminalSurfaceOptions,
 } from "@t3tools/ghostty-terminal/surface";
 import {
-  isTerminalClearShortcut,
-  terminalDeleteShortcutData,
-  terminalNavigationShortcutData,
+  isTerminalEditingCommand,
+  TERMINAL_EDITING_INPUT,
+  terminalEditingCommandForKey,
+  terminalEditingCommands,
 } from "./surfaceKeys.ts";
 import { useTerminalSelectionMenu, type TerminalChatSink } from "./selectionMenu.tsx";
 import { readAssetWithRetry, sharedLoad, type ReadAsset } from "./assetLoader.ts";
@@ -462,6 +463,66 @@ function usePanelCommands(
   }, [host, session, panel, visible, actions]);
 }
 
+/**
+ * The VT pane holding focus, by terminal id — the pane an editing command
+ * edits. Null when focus sits on panel chrome; callers use the active pane.
+ */
+function focusedVtTerminalId(): string | null {
+  const active = document.activeElement;
+  const pane = active?.closest("[data-t3-terminal-output]")?.closest("[data-t3-terminal-pane]");
+  return pane instanceof HTMLElement ? (pane.dataset.t3TerminalPane ?? null) : null;
+}
+
+/**
+ * Registers the Ghostty-level editing intercepts (clear, word-nav, delete) as
+ * `t3.ui/keybindings` surface commands, so the host arbitrates them like any
+ * chord: user and native rules first, these native-matching defaults only on
+ * a miss, and user rules can rebind them. Registered only while VT panes are
+ * mounted — the text fallback's input keeps its own caret editing. Until the
+ * binding lands (or when it is denied) `handleBeforeKey` applies the defaults
+ * locally.
+ */
+function useEditingCommands(
+  host: ClientHost,
+  session: ViewSession,
+  panel: TerminalPanel,
+  active: boolean,
+) {
+  useEffect(() => {
+    if (!active) return;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    let release: (() => void) | null = null;
+    void registerPanelCommands({
+      client: host,
+      context: session.context,
+      signal,
+      commands: terminalEditingCommands(),
+      bindCommands: (token, handler) => session.bindCommands(token, handler),
+      onCommand: (commandId) => {
+        if (!isTerminalEditingCommand(commandId)) return;
+        // The host already consumed the chord, so chrome focus edits the
+        // active pane rather than dropping it.
+        const terminalId = focusedVtTerminalId() ?? panel.snapshot.activeTerminalId;
+        if (terminalId !== null) panel.sendInput(terminalId, TERMINAL_EDITING_INPUT[commandId]);
+      },
+    }).then(
+      (registration) => {
+        if (registration === null) return;
+        if (signal.aborted) registration.release();
+        else release = registration.release;
+      },
+      () => {
+        // Denied or unavailable registration: the local defaults still apply.
+      },
+    );
+    return () => {
+      controller.abort();
+      release?.();
+    };
+  }, [host, session, panel, active]);
+}
+
 /* ------------------------------------------------------------------ */
 /* VT pane: Ghostty surface + output stream + input queue wiring       */
 /* ------------------------------------------------------------------ */
@@ -497,30 +558,23 @@ function composerChatSink(
 }
 
 /**
- * Surface-local key intercepts the plugin owns: readline-style navigation,
- * line delete, and screen clear. The focused terminal chords are captured at
- * the view root (resolved by the host keymap — see terminalChordAction), so
- * `handleBeforeKey` only intercepts editing keys and never sees them.
+ * Local fallback for the editing commands (see useEditingCommands). The host
+ * dispatches registered editing chords before the key reaches the surface, so
+ * this only applies native defaults the host left alone — and never one a
+ * user or native rule claims. The focused terminal chords are captured at the
+ * view root (see terminalChordAction), so they never reach here either.
  */
-function handleBeforeKey(event: KeyboardEvent, panel: TerminalPanel, terminalId: string): boolean {
-  const navigationData = terminalNavigationShortcutData(event);
-  if (navigationData !== null) {
-    event.preventDefault();
-    event.stopPropagation();
-    panel.sendInput(terminalId, navigationData);
-    return false;
-  }
-  const deleteData = terminalDeleteShortcutData(event);
-  if (deleteData !== null) {
-    event.preventDefault();
-    event.stopPropagation();
-    panel.sendInput(terminalId, deleteData);
-    return false;
-  }
-  if (!isTerminalClearShortcut(event)) return true;
+function handleBeforeKey(
+  event: KeyboardEvent,
+  panel: TerminalPanel,
+  terminalId: string,
+  keybindings: ClientHost["keybindings"],
+): boolean {
+  const command = terminalEditingCommandForKey(event, keybindings);
+  if (command === null) return true;
   event.preventDefault();
   event.stopPropagation();
-  panel.sendInput(terminalId, "\u000c");
+  panel.sendInput(terminalId, TERMINAL_EDITING_INPUT[command]);
   return false;
 }
 
@@ -750,7 +804,7 @@ function TerminalPane(props: {
         onResize: (cols, rows) => panel.resize(terminalId, cols, rows),
         onSelectionChange: selectionMenu.onSelectionChange,
         onContextMenu: selectionMenu.onContextMenu,
-        beforeKey: (event) => handleBeforeKey(event, panel, terminalId),
+        beforeKey: (event) => handleBeforeKey(event, panel, terminalId, host.keybindings),
         onLinkActivate: (text) => {
           // Terminal 22: a detected URL opens through t3.ui/external on the
           // user's own client; a path link opens through t3.file/presentation
@@ -1174,6 +1228,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
   const themeVars = useThemeVars(host, session, visible);
   const appearanceVars = useTerminalAppearanceVars(host, session, visible);
   const assets = useGhosttyAssets(host, session);
+  useEditingCommands(host, session, panel, visible && assets.kind === "ready");
   const snapshot: TerminalPanelSnapshot = panel.snapshot;
   const activeId = snapshot.activeTerminalId;
   const activeTab = snapshot.tabs.find((tab) => tab.terminalId === activeId) ?? null;

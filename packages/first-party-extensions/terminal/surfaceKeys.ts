@@ -1,20 +1,78 @@
+import type { UiKeybindingChord, UiKeybindingsHost } from "@t3tools/extension-sdk/catalogue";
+import type { GlobalCommandDescriptor } from "@t3tools/extension-sdk/environment";
 import { isMacPlatform } from "@t3tools/ghostty-terminal/platform";
 
-export interface ShortcutEventLike {
+import { TERMINAL_FOCUS_WHEN } from "./viewModel.ts";
+
+export interface ShortcutEventLike extends UiKeybindingChord {
   type?: string;
-  code?: string;
-  key: string;
-  metaKey: boolean;
-  ctrlKey: boolean;
-  shiftKey: boolean;
-  altKey: boolean;
 }
 
-const TERMINAL_WORD_BACKWARD = "\u001bb";
-const TERMINAL_WORD_FORWARD = "\u001bf";
-const TERMINAL_LINE_START = "\u0001";
-const TERMINAL_LINE_END = "\u0005";
-const TERMINAL_DELETE_TO_LINE_START = "\u0015";
+/**
+ * The Ghostty-level editing intercepts, as plugin-local command ids. Native
+ * hard-codes these in the drawer's key handler; here they are
+ * `t3.ui/keybindings` commands so user rules can rebind them.
+ */
+export type TerminalEditingCommandId =
+  | "clear"
+  | "wordBackward"
+  | "wordForward"
+  | "lineStart"
+  | "lineEnd"
+  | "deleteToLineStart";
+
+/** The readline bytes each editing command writes to the PTY. */
+export const TERMINAL_EDITING_INPUT: Readonly<Record<TerminalEditingCommandId, string>> = {
+  clear: "\u000c",
+  wordBackward: "\u001bb",
+  wordForward: "\u001bf",
+  lineStart: "\u0001",
+  lineEnd: "\u0005",
+  deleteToLineStart: "\u0015",
+};
+
+export function isTerminalEditingCommand(commandId: string): commandId is TerminalEditingCommandId {
+  return Object.hasOwn(TERMINAL_EDITING_INPUT, commandId);
+}
+
+/**
+ * Surface-scoped editing command set with the native drawer's defaults for
+ * `platform`. Commands native only binds on macOS (line start/end, delete to
+ * line start) still register elsewhere, just without a default, so a user
+ * rule can bind them.
+ */
+export function terminalEditingCommands(
+  platform = typeof navigator === "undefined" ? "" : navigator.platform,
+): readonly GlobalCommandDescriptor[] {
+  const mac = isMacPlatform(platform);
+  const command = (
+    id: TerminalEditingCommandId,
+    title: string,
+    defaultKey: string | readonly string[] | null,
+  ): GlobalCommandDescriptor => ({
+    id,
+    title,
+    scope: "surface",
+    ...(defaultKey === null ? {} : { defaultKey }),
+    when: TERMINAL_FOCUS_WHEN,
+  });
+  return [
+    command("clear", "Clear terminal screen", mac ? ["ctrl+l", "meta+k"] : "ctrl+l"),
+    command(
+      "wordBackward",
+      "Move cursor back one word",
+      mac ? "alt+arrowleft" : ["ctrl+arrowleft", "alt+arrowleft"],
+    ),
+    command(
+      "wordForward",
+      "Move cursor forward one word",
+      mac ? "alt+arrowright" : ["ctrl+arrowright", "alt+arrowright"],
+    ),
+    command("lineStart", "Move cursor to line start", mac ? "meta+arrowleft" : null),
+    command("lineEnd", "Move cursor to line end", mac ? "meta+arrowright" : null),
+    command("deleteToLineStart", "Delete to line start", mac ? "meta+backspace" : null),
+  ];
+}
 
 function normalizeEventKey(key: string): string {
   const normalized = key.toLowerCase();
@@ -22,87 +80,58 @@ function normalizeEventKey(key: string): string {
   return normalized;
 }
 
-export function isTerminalClearShortcut(
+/**
+ * The editing command a keydown triggers under the native default chords —
+ * the exact matching the native drawer's intercepts apply.
+ */
+export function defaultTerminalEditingCommand(
   event: ShortcutEventLike,
   platform = typeof navigator === "undefined" ? "" : navigator.platform,
-): boolean {
-  if (event.type !== undefined && event.type !== "keydown") {
-    return false;
-  }
-
-  const key = event.key.toLowerCase();
-
-  if (key === "l" && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
-    return true;
-  }
-
-  return (
-    isMacPlatform(platform) &&
-    key === "k" &&
-    event.metaKey &&
-    !event.ctrlKey &&
-    !event.altKey &&
-    !event.shiftKey
-  );
-}
-
-export function terminalDeleteShortcutData(
-  event: ShortcutEventLike,
-  platform = typeof navigator === "undefined" ? "" : navigator.platform,
-): string | null {
-  if (event.type !== undefined && event.type !== "keydown") {
-    return null;
-  }
-
-  if (!isMacPlatform(platform)) {
-    return null;
-  }
-
+): TerminalEditingCommandId | null {
+  if (event.type !== undefined && event.type !== "keydown") return null;
+  const mac = isMacPlatform(platform);
   const key = normalizeEventKey(event.key);
-  if (key !== "backspace") {
-    return null;
-  }
+  const { metaKey: meta, ctrlKey: ctrl, altKey: alt, shiftKey: shift } = event;
 
-  return event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
-    ? TERMINAL_DELETE_TO_LINE_START
-    : null;
-}
-
-export function terminalNavigationShortcutData(
-  event: ShortcutEventLike,
-  platform = typeof navigator === "undefined" ? "" : navigator.platform,
-): string | null {
-  if (event.type !== undefined && event.type !== "keydown") {
-    return null;
-  }
-
-  if (event.shiftKey) return null;
-
-  const key = normalizeEventKey(event.key);
-  if (key !== "arrowleft" && key !== "arrowright") {
-    return null;
-  }
-
-  const moveWord = key === "arrowleft" ? TERMINAL_WORD_BACKWARD : TERMINAL_WORD_FORWARD;
-  const moveLine = key === "arrowleft" ? TERMINAL_LINE_START : TERMINAL_LINE_END;
-
-  if (isMacPlatform(platform)) {
-    if (event.altKey && !event.metaKey && !event.ctrlKey) {
-      return moveWord;
+  if (key === "arrowleft" || key === "arrowright") {
+    if (shift) return null;
+    const left = key === "arrowleft";
+    const word = left ? "wordBackward" : "wordForward";
+    if (mac) {
+      if (alt && !meta && !ctrl) return word;
+      if (meta && !alt && !ctrl) return left ? "lineStart" : "lineEnd";
+      return null;
     }
-    if (event.metaKey && !event.altKey && !event.ctrlKey) {
-      return moveLine;
-    }
+    if (ctrl && !meta && !alt) return word;
+    if (alt && !meta && !ctrl) return word;
     return null;
   }
-
-  if (event.ctrlKey && !event.metaKey && !event.altKey) {
-    return moveWord;
+  if (key === "backspace") {
+    return mac && meta && !ctrl && !alt && !shift ? "deleteToLineStart" : null;
   }
-
-  if (event.altKey && !event.metaKey && !event.ctrlKey) {
-    return moveWord;
-  }
-
+  if (key === "l" && ctrl && !meta && !alt && !shift) return "clear";
+  if (mac && key === "k" && meta && !ctrl && !alt && !shift) return "clear";
   return null;
+}
+
+/**
+ * The editing command the VT surface should apply locally for a keydown the
+ * host did not dispatch. The host's capture dispatcher runs first and
+ * consumes any chord it resolves to a registered command, so reaching here
+ * means it could not (no binding yet, grant denied, no active thread). User
+ * and native rules still outrank the defaults: when the host keymap claims
+ * the chord for anything, the key is left to the encoder so typing is never
+ * swallowed by a displaced default.
+ */
+export function terminalEditingCommandForKey(
+  event: ShortcutEventLike,
+  keybindings: Pick<UiKeybindingsHost, "resolveTerminalFocusKey"> | undefined,
+  platform = typeof navigator === "undefined" ? "" : navigator.platform,
+): TerminalEditingCommandId | null {
+  const command = defaultTerminalEditingCommand(event, platform);
+  if (command === null) return null;
+  if (keybindings !== undefined && keybindings.resolveTerminalFocusKey(event) !== null) {
+    return null;
+  }
+  return command;
 }

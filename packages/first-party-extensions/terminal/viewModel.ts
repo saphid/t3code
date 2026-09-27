@@ -1391,10 +1391,9 @@ export const TERMINAL_FOCUS_WHEN = `extension.${TERMINAL_SURFACE_ID}.focus`;
  * `claimsTerminalFocus`, so while it owns focus the host leaves the
  * focused-terminal commands it resolves untouched, and the view's capture
  * handler dispatches them (`terminalChordAction`) instead of a native
- * terminal. The Ghostty-level editing intercepts (clear,
- * word-nav, delete) exist locally on the VT surface via `handleBeforeKey`;
- * what remains absent is adopting them as configurable commands through
- * `t3.ui/keybindings`.
+ * terminal. The Ghostty-level editing intercepts (clear, word-nav, delete)
+ * are a separate surface set (`terminalEditingCommands` in surfaceKeys.ts)
+ * registered only while a VT pane is mounted.
  */
 export const TERMINAL_VIEW_COMMANDS: readonly GlobalCommandDescriptor[] = [
   {
@@ -1576,15 +1575,17 @@ export interface PanelCommandRegistration {
 }
 
 /**
- * Registers the view command set through `t3.ui/keybindings` and binds the
- * dispatch handler. Returns null when the caller's signal aborted mid-flight;
- * a `bindCommands` failure unwinds the registration so unreachable commands
- * never linger in the host's registry.
+ * Registers a view command set (`TERMINAL_VIEW_COMMANDS` unless `commands`
+ * names another) through `t3.ui/keybindings` and binds the dispatch handler.
+ * Returns null when the caller's signal aborted mid-flight; a `bindCommands`
+ * failure unwinds the registration so unreachable commands never linger in
+ * the host's registry.
  */
 export async function registerPanelCommands(options: {
   readonly client: Pick<ApiClient, "invokeApi">;
   readonly context: ViewContext;
   readonly signal: AbortSignal;
+  readonly commands?: readonly GlobalCommandDescriptor[];
   readonly bindCommands: (
     commandSetToken: string,
     handler: (call: { readonly commandId: string; readonly context: ViewContext }) => void,
@@ -1594,7 +1595,7 @@ export async function registerPanelCommands(options: {
   const api = bindApi(uiKeybindingsApi, options.client, options.context);
   const response = await api.invoke(
     "registerCommands",
-    { commands: TERMINAL_VIEW_COMMANDS },
+    { commands: options.commands ?? TERMINAL_VIEW_COMMANDS },
     options.signal,
   );
   const release = () => {

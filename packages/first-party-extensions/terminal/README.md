@@ -26,7 +26,15 @@ Interactive terminal plugin driven entirely by public contracts:
   cold open (`t3.ui/keybindings.global` + `t3.ui/panels` grants). All actions
   are bound per view through `ViewSession.bindCommands` and stay panel-local.
   The focused chords resolve through the client-local
-  `host.keybindings.resolveTerminalFocusKey` (see below).
+  `host.keybindings.resolveTerminalFocusKey` (see below). While VT panes are
+  mounted, a second surface set carries the Ghostty-level editing intercepts
+  (`clear`, `wordBackward`/`wordForward`, `lineStart`/`lineEnd`,
+  `deleteToLineStart`) with the native drawer's defaults (macOS: `ctrl+l` and
+  `meta+k`, `alt+arrow`, `meta+arrow`, `meta+backspace`; elsewhere `ctrl+l`
+  and `ctrl`/`alt+arrow`, the line commands unbound), so user rules can
+  rebind them. Until that binding lands, or when it is denied, the VT surface
+  applies the same defaults locally, yielding any chord a user or native rule
+  claims to the key encoder.
 - `t3.ui/panels@^1.0.0` — the dispatched `toggle` closes the hosting surface
   via `closeSurface`; failures surface on the panel status row.
 - `t3.ui/external@^1.0.0` (`t3.ui/external.open` grant) — activating a
@@ -43,10 +51,7 @@ a capable host.
 `t3.ui/notifications` is deliberately not adopted: the native terminal only
 toasts on link-preview failure, and this panel has no in-app link preview —
 link failures are written on the pane, matching the native system-browser
-fallback. The Ghostty-level editing
-intercepts (clear, word-nav, delete) are implemented locally on the VT
-surface via `handleBeforeKey`; what remains absent is adopting them as
-configurable commands through `t3.ui/keybindings`.
+fallback.
 
 ## Split groups and focus claim
 
