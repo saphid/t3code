@@ -3,6 +3,12 @@ import SwiftUI
 struct SettingsDiagnosticsView: View {
     private let diagnostics = NativeDiagnostics.shared
     @State private var confirmingClear = false
+    @State private var activityLog = ""
+    @State private var markedAt: Date?
+
+    private var recentActivity: String {
+        activityLog.split(separator: "\n", omittingEmptySubsequences: true).suffix(80).joined(separator: "\n")
+    }
 
     var body: some View {
         ScrollView {
@@ -40,6 +46,40 @@ struct SettingsDiagnosticsView: View {
                         confirmingClear = true
                     }
                 }
+
+                Divider().overlay(T3Colors.separator)
+                Text("Activity log")
+                    .font(T3Typography.threadBody)
+                Text("Sends, connections and composer state on this device, without message text. If something gets stuck, tap Mark this moment, then share the log.")
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
+                HStack(spacing: 24) {
+                    Button {
+                        NativeEventLog.shared.record("user", "marked this moment")
+                        markedAt = .now
+                        Task { await reloadActivityLog() }
+                    } label: {
+                        Label(markedAt == nil ? "Mark this moment" : "Marked", systemImage: "flag")
+                    }
+                    ShareLink(item: activityLog) {
+                        Label("Share", systemImage: "square.and.arrow.up")
+                    }
+                    .disabled(activityLog.isEmpty)
+                }
+                if activityLog.isEmpty {
+                    Text("No activity recorded yet.")
+                        .foregroundStyle(T3Colors.textSecondary)
+                } else {
+                    Text(verbatim: recentActivity)
+                        .font(T3Typography.code)
+                        .textSelection(.enabled)
+                    Button("Clear activity log", role: .destructive) {
+                        Task {
+                            await NativeEventLog.shared.clear()
+                            await reloadActivityLog()
+                        }
+                    }
+                }
             }
             .padding(20)
         }
@@ -48,11 +88,18 @@ struct SettingsDiagnosticsView: View {
         .navigationTitle("Diagnostics")
         .navigationBarTitleDisplayMode(.inline)
         .t3NavigationChrome()
+        .task { await reloadActivityLog() }
         .confirmationDialog("Clear saved reports?", isPresented: $confirmingClear) {
             Button("Clear reports", role: .destructive) { diagnostics.clear() }
         } message: {
             Text("This removes up to five saved reports from this device.")
         }
+    }
+}
+
+extension SettingsDiagnosticsView {
+    private func reloadActivityLog() async {
+        activityLog = await NativeEventLog.shared.contents()
     }
 }
 

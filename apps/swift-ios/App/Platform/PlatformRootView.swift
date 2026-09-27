@@ -89,6 +89,7 @@ struct PlatformRootView: View {
             processThreadChanges()
         }
         .onChange(of: scenePhase) { _, phase in
+            NativeEventLog.shared.record("app", "scene \(phase)")
             if phase == .active {
                 Task { await model.applicationDidBecomeActive() }
                 consumeMailboxRouteIfAvailable()

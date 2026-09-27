@@ -44,7 +44,18 @@ public final class FeatureRootModel {
         var canObserveOutcome: Bool
         var phase: FeatureStopPhase
     }
-    private var stopRequests: [String: StopRequest] = [:]
+    private var stopRequests: [String: StopRequest] = [:] {
+        didSet {
+            for threadID in Set(oldValue.keys).union(stopRequests.keys) {
+                let before = oldValue[threadID]?.phase
+                let after = stopRequests[threadID]?.phase
+                guard before != after else { continue }
+                NativeEventLog.shared.record(
+                    "stop", "thread=\(threadID) phase \(before.map { "\($0)" } ?? "none") -> \(after.map { "\($0)" } ?? "none")"
+                )
+            }
+        }
+    }
 
     func stopPhase(threadID: String) -> FeatureStopPhase? {
         let key = stopKey(threadID: threadID)
@@ -990,7 +1001,14 @@ public final class FeatureRootModel {
             attachments: uploads,
             context: submission.context
         )
-        guard await enqueue(queued) else { return false }
+        let startedAt = Date()
+        let log = NativeEventLog.shared
+        log.record("send", "model begin thread=\(submission.threadID) message=\(identity.messageID)")
+        guard await enqueue(queued) else {
+            log.record("send", "model enqueue rejected message=\(identity.messageID)")
+            return false
+        }
+        log.record("send", "model enqueued message=\(identity.messageID) seconds=\(Self.elapsed(since: startedAt))")
 
         let optimistic = FeatureMessage(
             id: identity.messageID,
@@ -1032,17 +1050,24 @@ public final class FeatureRootModel {
                 identity: identity,
                 context: submission.context
             )
+            log.record("send", "model accepted message=\(identity.messageID) seconds=\(Self.elapsed(since: startedAt))")
             if !(await completeQueuedSubmission(queued)) {
+                log.record("send", "model outbox completion deferred message=\(identity.messageID)")
                 scheduleOutboxRetry()
             }
             return true
         } catch {
             if Self.shouldQueue(error, environmentID: environmentID, snapshot: snapshot) {
+                log.record(
+                    "send",
+                    "model queued for retry message=\(identity.messageID) connected=\(isEnvironmentConnected(environmentID)) error=\(error)"
+                )
                 if isEnvironmentConnected(environmentID) {
                     scheduleOutboxRetry()
                 }
                 return true
             }
+            log.record("send", "model failed message=\(identity.messageID) seconds=\(Self.elapsed(since: startedAt)) error=\(error)")
             let discarded = await discardQueuedSubmission(queued)
             if !discarded {
                 scheduleOutboxRetry()
@@ -1052,6 +1077,10 @@ public final class FeatureRootModel {
             }
             return false
         }
+    }
+
+    private static func elapsed(since date: Date) -> String {
+        String(format: "%.2f", Date().timeIntervalSince(date))
     }
 
     public func canRewindConversation(threadID: String, messageID: String) -> Bool {

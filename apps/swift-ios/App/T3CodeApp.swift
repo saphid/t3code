@@ -8,6 +8,11 @@ struct T3CodeApp: App {
 
     init() {
         NativeDiagnostics.shared.start()
+        let info = Bundle.main.infoDictionary
+        NativeEventLog.shared.record(
+            "app",
+            "launch version=\(info?["CFBundleShortVersionString"] as? String ?? "-") build=\(info?["CFBundleVersion"] as? String ?? "-")"
+        )
         let client = NativeFeatureClient()
         let model = FeatureRootModel(client: client)
         _model = State(initialValue: model)

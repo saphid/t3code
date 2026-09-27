@@ -2490,6 +2490,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             pendingTurnSubmissions[route.uiID] = pending
         }
 
+        let dispatchStartedAt = Date()
+        NativeEventLog.shared.record(
+            "send", "dispatch begin message=\(pending.identity.messageID) environment=\(environmentID) uploads=\(uploads.count)"
+        )
         do {
             _ = try await client.sendTurn(
                 threadID: submissionIdentity?.threadID ?? route.wireID,
@@ -2503,7 +2507,13 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 messageID: pending.identity.messageID,
                 createdAt: pending.identity.createdAt
             )
+            NativeEventLog.shared.record(
+                "send", "dispatch accepted message=\(pending.identity.messageID) seconds=\(String(format: "%.2f", Date().timeIntervalSince(dispatchStartedAt)))"
+            )
         } catch {
+            NativeEventLog.shared.record(
+                "send", "dispatch failed message=\(pending.identity.messageID) seconds=\(String(format: "%.2f", Date().timeIntervalSince(dispatchStartedAt))) error=\(error)"
+            )
             guard isKnownClient(client, environmentID: environmentID, generation: generation) else {
                 throw CancellationError()
             }
@@ -6374,6 +6384,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         // Shell event loops call this per event; only publish real transitions.
         guard environmentConnectionStates[environment.id] != state
             || environmentConnectionDetails[environment.id] != detail else { return }
+        NativeEventLog.shared.record(
+            "connection",
+            "environment=\(environment.id) \(environmentConnectionStates[environment.id].map { "\($0)" } ?? "none") -> \(state) detail=\(detail ?? "-")"
+        )
         environmentConnectionStates[environment.id] = state
         environmentConnectionDetails[environment.id] = detail
         let connection = FeatureConnection(

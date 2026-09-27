@@ -114,9 +114,15 @@ public struct ThreadDetailView: View {
         .task(id: thread.id) {
             // A cached thread can already show its composer while the server
             // is catching up. Local drafts must not wait for that request.
+            NativeEventLog.shared.record("composer", "open thread=\(thread.id) draftRestored=\(didRestoreDraft)")
             await model.checkRewindRecovery(for: currentThread)
             guard !didRestoreDraft else { return }
             await restoreDraft(from: composerDraft, key: draftKey)
+            if !didRestoreDraft {
+                NativeEventLog.shared.record(
+                    "composer", "draft restore incomplete thread=\(thread.id) cancelled=\(Task.isCancelled)"
+                )
+            }
         }
         .task(id: pullRequestObservationID) {
             await observeThreadPullRequest()
@@ -1050,7 +1056,12 @@ public struct ThreadDetailView: View {
     }
 
     private func send() {
-        guard !isRewinding, didRestoreDraft else { return }
+        guard !isRewinding, didRestoreDraft else {
+            NativeEventLog.shared.record(
+                "composer", "send ignored thread=\(thread.id) rewinding=\(isRewinding) draftRestored=\(didRestoreDraft)"
+            )
+            return
+        }
         let message = draft
         let pendingContext = composerContext
         let pendingAttachments = currentThread.environmentID.map {
@@ -1077,6 +1088,11 @@ public struct ThreadDetailView: View {
         pendingDraftSave?.cancel()
         draftSaveTask = nil
         isSending = true
+        let sendStartedAt = Date()
+        NativeEventLog.shared.record(
+            "composer",
+            "send start thread=\(thread.id) chars=\(message.count) attachments=\(pendingAttachments.count) pendingDraftSave=\(pendingDraftSave != nil)"
+        )
         submittingCompaction = FeatureContextCompaction.isCommand(
             message,
             hasAttachments: !pendingAttachments.isEmpty
@@ -1087,6 +1103,9 @@ public struct ThreadDetailView: View {
         composerFocused = false
         Task {
             await pendingDraftSave?.value
+            if pendingDraftSave != nil {
+                NativeEventLog.shared.record("composer", "send draft-save settled thread=\(thread.id)")
+            }
             let sent = await submitMessage(
                 FeatureMessageSubmission(
                 threadID: thread.id,
@@ -1139,6 +1158,10 @@ public struct ThreadDetailView: View {
             }
             submittingCompaction = false
             isSending = false
+            NativeEventLog.shared.record(
+                "composer",
+                "send end thread=\(thread.id) sent=\(sent) seconds=\(String(format: "%.2f", Date().timeIntervalSince(sendStartedAt)))"
+            )
             if !sent || !draft.isEmpty || !attachments.isEmpty {
                 persistDraftImmediately()
             }
@@ -1258,6 +1281,7 @@ public struct ThreadDetailView: View {
                 onMissingAttachments: { recoveredMissingFiles = true })
         } catch {
             draftSaveError = error.localizedDescription
+            NativeEventLog.shared.record("composer", "draft restore failed thread=\(thread.id) error=\(error)")
             return
         }
         restored.selection = ThreadComposerModelSelectionPolicy.explicitSelection(
@@ -1270,6 +1294,7 @@ public struct ThreadDetailView: View {
         attachments = restored.attachments
         selection = restored.selection
         didRestoreDraft = true
+        NativeEventLog.shared.record("composer", "draft restored thread=\(thread.id) chars=\(restored.text.count)")
         missingFileRecoverySnapshot = recoveredMissingFiles ? composerDraft : nil
         draftSaveError = recoveredMissingFiles ? FeatureComposerDraftRestoration.missingFilesWarning : nil
 

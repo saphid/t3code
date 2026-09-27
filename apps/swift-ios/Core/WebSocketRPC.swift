@@ -599,6 +599,7 @@ public actor WebSocketRPCClient {
                 }
                 openedID = id
                 logger.info("WebSocket connection installed")
+                NativeEventLog.shared.record("websocket", "installed host=\(url.host() ?? "-")")
                 try await withTaskCancellationHandler {
                     while await owner.ownsConnection(loopID: loopID, connectionID: id),
                           !Task.isCancelled {
@@ -622,6 +623,7 @@ public actor WebSocketRPCClient {
                 logger.warning(
                     "WebSocket connection failed: \(String(describing: error), privacy: .private)"
                 )
+                NativeEventLog.shared.record("websocket", "failed error=\(type(of: error)) retry=\(retry)")
                 if let openedID {
                     let protocolError: RPCError?
                     if error is DecodingError {
@@ -773,6 +775,7 @@ public actor WebSocketRPCClient {
         connection = nil
         connectionID = nil
         Self.logger.info("WebSocket connection closed")
+        NativeEventLog.shared.record("websocket", "closed pendingRequests=\(unary.count)")
         failUnary(RPCError.disconnected, includingUnsent: false)
         subscriptionByRequestID.removeAll()
         let oneShotSubscriptions = subscriptions.filter { !$0.value.reconnect }
@@ -966,6 +969,7 @@ public actor WebSocketRPCClient {
 
     private func failUnaryIfUnsent(_ id: Int) {
         guard let request = unary[id], !request.sent else { return }
+        NativeEventLog.shared.record("websocket", "request \(request.envelope.tag) gave up waiting for a connection")
         completeUnary(id, with: .failure(RPCError.connectionUnavailable))
     }
 
@@ -1026,12 +1030,14 @@ public actor WebSocketRPCClient {
         guard let request = unary[id],
               request.sent,
               request.sendDeadlineTask != nil else { return }
+        NativeEventLog.shared.record("websocket", "request \(request.envelope.tag) send timed out")
         completeUnary(id, with: .failure(RPCError.responseTimedOut))
         await disconnected(expectedConnectionID: connectionID)
     }
 
     private func failUnaryOnResponseDeadline(_ id: Int) async {
         guard let request = unary[id] else { return }
+        NativeEventLog.shared.record("websocket", "request \(request.envelope.tag) response timed out sent=\(request.sent)")
         let sent = request.sent
         completeUnary(id, with: .failure(RPCError.responseTimedOut))
         if sent {
