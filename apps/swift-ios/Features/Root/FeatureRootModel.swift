@@ -1060,14 +1060,14 @@ public final class FeatureRootModel {
             if Self.shouldQueue(error, environmentID: environmentID, snapshot: snapshot) {
                 log.record(
                     "send",
-                    "model queued for retry message=\(identity.messageID) connected=\(isEnvironmentConnected(environmentID)) error=\(error)"
+                    "model queued for retry message=\(identity.messageID) connected=\(isEnvironmentConnected(environmentID)) error=\(NativeEventLog.describe(error))"
                 )
                 if isEnvironmentConnected(environmentID) {
                     scheduleOutboxRetry()
                 }
                 return true
             }
-            log.record("send", "model failed message=\(identity.messageID) seconds=\(Self.elapsed(since: startedAt)) error=\(error)")
+            log.record("send", "model failed message=\(identity.messageID) seconds=\(Self.elapsed(since: startedAt)) error=\(NativeEventLog.describe(error))")
             let discarded = await discardQueuedSubmission(queued)
             if !discarded {
                 scheduleOutboxRetry()

@@ -2511,17 +2511,20 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 "send", "dispatch accepted message=\(pending.identity.messageID) seconds=\(String(format: "%.2f", Date().timeIntervalSince(dispatchStartedAt)))"
             )
         } catch {
-            NativeEventLog.shared.record(
-                "send", "dispatch failed message=\(pending.identity.messageID) seconds=\(String(format: "%.2f", Date().timeIntervalSince(dispatchStartedAt))) error=\(error)"
-            )
             guard isKnownClient(client, environmentID: environmentID, generation: generation) else {
+                NativeEventLog.shared.record("send", "dispatch abandoned message=\(pending.identity.messageID) environment changed")
                 throw CancellationError()
             }
-            guard await messageWasCommitted(
+            let committed = await messageWasCommitted(
                 client: client,
                 threadID: submissionIdentity?.threadID ?? route.wireID,
                 messageID: pending.identity.messageID
-            ) else {
+            )
+            NativeEventLog.shared.record(
+                "send",
+                "dispatch error message=\(pending.identity.messageID) seconds=\(String(format: "%.2f", Date().timeIntervalSince(dispatchStartedAt))) committed=\(committed) error=\(NativeEventLog.describe(error))"
+            )
+            guard committed else {
                 // Keep the stable identity. Retrying the same restored draft
                 // cannot enqueue a duplicate turn after an ambiguous failure.
                 throw error
@@ -6386,7 +6389,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             || environmentConnectionDetails[environment.id] != detail else { return }
         NativeEventLog.shared.record(
             "connection",
-            "environment=\(environment.id) \(environmentConnectionStates[environment.id].map { "\($0)" } ?? "none") -> \(state) detail=\(detail ?? "-")"
+            "environment=\(environment.id) \(environmentConnectionStates[environment.id].map { "\($0)" } ?? "none") -> \(state) hasDetail=\(detail != nil)"
         )
         environmentConnectionStates[environment.id] = state
         environmentConnectionDetails[environment.id] = detail

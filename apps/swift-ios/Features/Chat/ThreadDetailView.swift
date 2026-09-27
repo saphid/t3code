@@ -1281,7 +1281,7 @@ public struct ThreadDetailView: View {
                 onMissingAttachments: { recoveredMissingFiles = true })
         } catch {
             draftSaveError = error.localizedDescription
-            NativeEventLog.shared.record("composer", "draft restore failed thread=\(thread.id) error=\(error)")
+            NativeEventLog.shared.record("composer", "draft restore failed thread=\(thread.id) error=\(NativeEventLog.describe(error))")
             return
         }
         restored.selection = ThreadComposerModelSelectionPolicy.explicitSelection(

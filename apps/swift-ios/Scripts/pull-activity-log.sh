@@ -5,6 +5,10 @@
 # Physical devices need only normal developer pairing; the app must be a
 # development-signed build.
 set -eu
+if [ $# -lt 2 ]; then
+  echo "usage: $0 device|sim <id> [bundle-id]" >&2
+  exit 2
+fi
 mode=$1
 target=$2
 bundle=${3:-com.t3tools.t3code.swiftui.dev}
@@ -28,4 +32,8 @@ case $mode in
     exit 2
     ;;
 esac
-cat "$tmp/events.1.log" "$tmp/events.log" 2>/dev/null
+if ! ls "$tmp"/events*.log >/dev/null 2>&1; then
+  echo "No activity log found. Open the app once, then retry." >&2
+  exit 1
+fi
+cat "$tmp"/events.1.log "$tmp"/events.log 2>/dev/null || true

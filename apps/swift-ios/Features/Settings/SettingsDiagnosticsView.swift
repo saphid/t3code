@@ -4,11 +4,8 @@ struct SettingsDiagnosticsView: View {
     private let diagnostics = NativeDiagnostics.shared
     @State private var confirmingClear = false
     @State private var activityLog = ""
+    @State private var recentActivity = ""
     @State private var markedAt: Date?
-
-    private var recentActivity: String {
-        activityLog.split(separator: "\n", omittingEmptySubsequences: true).suffix(80).joined(separator: "\n")
-    }
 
     var body: some View {
         ScrollView {
@@ -100,6 +97,8 @@ struct SettingsDiagnosticsView: View {
 extension SettingsDiagnosticsView {
     private func reloadActivityLog() async {
         activityLog = await NativeEventLog.shared.contents()
+        recentActivity = activityLog.split(separator: "\n", omittingEmptySubsequences: true)
+            .suffix(80).joined(separator: "\n")
     }
 }
 

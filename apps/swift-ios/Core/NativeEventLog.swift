@@ -34,10 +34,19 @@ public final class NativeEventLog: @unchecked Sendable {
         formatter.timeZone = .current
     }
 
+    /// Errors can carry server-provided text. Log only their type and code.
+    public static func describe(_ error: any Error) -> String {
+        let nsError = error as NSError
+        return "\(type(of: error))(\(nsError.domain):\(nsError.code))"
+    }
+
     public func record(_ category: String, _ message: String) {
         let date = Date()
         Self.logger.log("[\(category, privacy: .public)] \(message, privacy: .public)")
-        queue.async { self.append("\(self.formatter.string(from: date)) [\(category)] \(message)\n") }
+        queue.async {
+            let line = "\(self.formatter.string(from: date)) [\(category)] \(message)"
+            self.append(String(line.prefix(self.maximumFileBytes / 4)) + "\n")
+        }
     }
 
     /// Both files, oldest line first.
@@ -96,7 +105,12 @@ public final class NativeEventLog: @unchecked Sendable {
         try? handle?.close()
         handle = nil
         try? FileManager.default.removeItem(at: previousURL)
-        try? FileManager.default.moveItem(at: currentURL, to: previousURL)
+        do {
+            try FileManager.default.moveItem(at: currentURL, to: previousURL)
+        } catch {
+            // Never grow past the cap when rotation fails.
+            try? FileManager.default.removeItem(at: currentURL)
+        }
         open()
     }
 }
