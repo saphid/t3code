@@ -165,29 +165,78 @@ var __t3Client = (() => {
     return manifest;
   }
 
+  // node_modules/@t3tools/extension-sdk/dist/semver.js
+  var NUMBER = "0|[1-9]\\d*";
+  var IDENTIFIER = `(?:${NUMBER}|\\d*[A-Za-z-][0-9A-Za-z-]*)`;
+  var BUILD = "(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?";
+  var VERSION = new RegExp(`^(${NUMBER})\\.(${NUMBER})\\.(${NUMBER})(?:-(${IDENTIFIER}(?:\\.${IDENTIFIER})*))?${BUILD}$`);
+  var PARTIAL = new RegExp(`^(${NUMBER}|[xX*])(?:\\.(${NUMBER}|[xX*]))?(?:\\.(${NUMBER}|[xX*]))?$`);
+  function parseVersion(text) {
+    const match = VERSION.exec(text);
+    if (!match)
+      return null;
+    return {
+      release: [match[1], match[2], match[3]],
+      prerelease: match[4]?.split(".") ?? []
+    };
+  }
+  var order = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+  var compareNumbers = (a, b) => Math.sign(a.length - b.length) || order(a, b);
+  var isNumber = (identifier) => /^\d+$/.test(identifier);
+  function compareVersions(a, b) {
+    for (let index = 0; index < 3; index++) {
+      const result = compareNumbers(a.release[index], b.release[index]);
+      if (result)
+        return result;
+    }
+    if (!a.prerelease.length || !b.prerelease.length)
+      return Math.sign(b.prerelease.length - a.prerelease.length);
+    for (let index = 0; index < Math.min(a.prerelease.length, b.prerelease.length); index++) {
+      const x = a.prerelease[index];
+      const y = b.prerelease[index];
+      const result = isNumber(x) && isNumber(y) ? compareNumbers(x, y) : isNumber(x) !== isNumber(y) ? isNumber(x) ? -1 : 1 : order(x, y);
+      if (result)
+        return result;
+    }
+    return Math.sign(a.prerelease.length - b.prerelease.length);
+  }
+  var ZERO = { release: ["0", "0", "0"], prerelease: [] };
+  function comparatorFloor(comparator) {
+    const [, operator = "", text = ""] = /^(<=|>=|<|>|=|\^|~)?v?(.*)$/.exec(comparator);
+    let floor = parseVersion(text);
+    if (!floor) {
+      const partial = PARTIAL.exec(text);
+      if (!partial)
+        return null;
+      const parts = partial.slice(1, 4);
+      const wildcard = parts.findIndex((part) => part === void 0 || /^[xX*]$/.test(part));
+      const release = parts.map((part, index) => index < wildcard ? part : "0");
+      floor = { release, prerelease: [] };
+    }
+    return operator.startsWith("<") ? ZERO : floor;
+  }
+  function rangeFloor(range) {
+    let lowest = null;
+    for (const set of range.split("||")) {
+      let floor = ZERO;
+      for (const comparator of set.trim().split(/\s+/).filter(Boolean)) {
+        const bound = comparatorFloor(comparator);
+        if (!bound)
+          return null;
+        if (compareVersions(bound, floor) > 0)
+          floor = bound;
+      }
+      if (!lowest || compareVersions(floor, lowest) < 0)
+        lowest = floor;
+    }
+    return lowest;
+  }
+
   // node_modules/@t3tools/extension-sdk/dist/capabilities.js
   var ApiVersionError = class extends Error {
     name = "ApiVersionError";
     code = "api-version-not-negotiated";
   };
-  var SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
-  var semverKey = (version) => {
-    const [, major, minor, patch] = SEMVER.exec(version);
-    return Number(major) * 1e12 + Number(minor) * 1e6 + Number(patch);
-  };
-  function rangeFloor(range) {
-    if (range.includes("||"))
-      return null;
-    let floor = null;
-    for (const comparator of range.trim().split(/\s+/)) {
-      const match = /^(\^|~|>=|=)?v?(\d+\.\d+\.\d+)$/.exec(comparator);
-      if (match)
-        floor = Math.max(floor ?? 0, semverKey(match[2]));
-      else if (!/^<=?v?\d+\.\d+\.\d+$/.test(comparator))
-        return null;
-    }
-    return floor;
-  }
   function hasInput(value, path3) {
     if (path3.length === 0)
       return value !== void 0;
@@ -207,15 +256,18 @@ var __t3Client = (() => {
         throw new Error("API additions need a baseline");
       return { definition: validated };
     }
-    const major = (version) => version.split(".")[0];
-    if (!SEMVER.test(options.baseline) || major(options.baseline) !== major(validated.version) || semverKey(options.baseline) > semverKey(validated.version))
+    const version = parseVersion(validated.version);
+    const baseline = parseVersion(options.baseline);
+    if (!version || !baseline || baseline.release[0] !== version.release[0] || compareVersions(baseline, version) > 0)
       throw new Error("API baseline must be an earlier version of the same major");
     const additions = (options.additions ?? []).map((addition) => ({ ...addition }));
-    if (options.baseline !== validated.version && additions.length === 0)
+    if (compareVersions(baseline, version) < 0 && additions.length === 0)
       throw new Error("An API baseline below the current version must list its additions");
-    for (const addition of additions)
-      if (!SEMVER.test(addition.version) || semverKey(addition.version) <= semverKey(options.baseline) || semverKey(addition.version) > semverKey(validated.version) || !validated.methods?.some((method) => method.name === addition.method) || !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(addition.input))
+    for (const addition of additions) {
+      const added = parseVersion(addition.version);
+      if (!added || compareVersions(added, baseline) <= 0 || compareVersions(added, version) > 0 || !validated.methods?.some((method) => method.name === addition.method) || !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(addition.input))
         throw new Error("Invalid API addition: " + JSON.stringify(addition));
+    }
     return { definition: validated, baseline: options.baseline, additions };
   }
   function defaultVersionRange(api) {
@@ -223,7 +275,10 @@ var __t3Client = (() => {
   }
   function bindApi(api, client, context, versionRange = defaultVersionRange(api)) {
     const floor = rangeFloor(versionRange);
-    const unnegotiated = (api.additions ?? []).filter((addition) => floor === null || floor < semverKey(addition.version));
+    const unnegotiated = (api.additions ?? []).filter((addition) => {
+      const added = parseVersion(addition.version);
+      return !floor || !added || compareVersions(floor, added) < 0;
+    });
     return {
       invoke(method, input, signal) {
         const addition = unnegotiated.find((item) => item.method === method && hasInput(input, item.input.split(".")));
@@ -9851,13 +9906,13 @@ ${ref.number}`;
     return offers;
   }
   function prsWriteVerdictOptions(verdicts) {
-    const order = ["comment", "approve", "request-changes"];
+    const order2 = ["comment", "approve", "request-changes"];
     const labels = {
       comment: "Comment",
       approve: "Approve",
       "request-changes": "Request changes"
     };
-    return order.filter((verdict) => verdicts.includes(verdict)).map((verdict) => ({ value: verdict, label: labels[verdict] }));
+    return order2.filter((verdict) => verdicts.includes(verdict)).map((verdict) => ({ value: verdict, label: labels[verdict] }));
   }
   function prsReviewVerdict(draft, verdicts) {
     return verdicts.some((option) => option.value === draft) ? draft : verdicts[0]?.value ?? "comment";

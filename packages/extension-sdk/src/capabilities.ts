@@ -1,5 +1,6 @@
 import { assertId, copyJson, type Json, type ViewContext } from "./contracts.js";
 import type { JsonObject } from "./environment.js";
+import { compareVersions, parseVersion, rangeFloor } from "./semver.js";
 
 export interface ApiMethod {
   readonly name: string;
@@ -116,22 +117,6 @@ export class ApiVersionError extends Error {
   readonly code = "api-version-not-negotiated";
 }
 
-const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
-const semverKey = (version: string) => {
-  const [, major, minor, patch] = SEMVER.exec(version)!;
-  return Number(major) * 1e12 + Number(minor) * 1e6 + Number(patch);
-};
-/** The lowest version a simple range admits, or null when it has no clear floor. */
-function rangeFloor(range: string): number | null {
-  if (range.includes("||")) return null;
-  let floor: number | null = null;
-  for (const comparator of range.trim().split(/\s+/)) {
-    const match = /^(\^|~|>=|=)?v?(\d+\.\d+\.\d+)$/.exec(comparator);
-    if (match) floor = Math.max(floor ?? 0, semverKey(match[2]!));
-    else if (!/^<=?v?\d+\.\d+\.\d+$/.test(comparator)) return null;
-  }
-  return floor;
-}
 function hasInput(value: unknown, path: readonly string[]): boolean {
   if (path.length === 0) return value !== undefined;
   if (value === null || typeof value !== "object") return false;
@@ -159,25 +144,29 @@ export function defineApi<T extends ApiMethodTypes>(
     if (options.additions?.length) throw new Error("API additions need a baseline");
     return { definition: validated };
   }
-  const major = (version: string) => version.split(".")[0];
+  const version = parseVersion(validated.version);
+  const baseline = parseVersion(options.baseline);
   if (
-    !SEMVER.test(options.baseline) ||
-    major(options.baseline) !== major(validated.version) ||
-    semverKey(options.baseline) > semverKey(validated.version)
+    !version ||
+    !baseline ||
+    baseline.release[0] !== version.release[0] ||
+    compareVersions(baseline, version) > 0
   )
     throw new Error("API baseline must be an earlier version of the same major");
   const additions = (options.additions ?? []).map((addition) => ({ ...addition }));
-  if (options.baseline !== validated.version && additions.length === 0)
+  if (compareVersions(baseline, version) < 0 && additions.length === 0)
     throw new Error("An API baseline below the current version must list its additions");
-  for (const addition of additions)
+  for (const addition of additions) {
+    const added = parseVersion(addition.version);
     if (
-      !SEMVER.test(addition.version) ||
-      semverKey(addition.version) <= semverKey(options.baseline) ||
-      semverKey(addition.version) > semverKey(validated.version) ||
+      !added ||
+      compareVersions(added, baseline) <= 0 ||
+      compareVersions(added, version) > 0 ||
       !validated.methods?.some((method) => method.name === addition.method) ||
       !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(addition.input)
     )
       throw new Error("Invalid API addition: " + JSON.stringify(addition));
+  }
   return { definition: validated, baseline: options.baseline, additions };
 }
 /** The range a consumer asks for when it names none: `^baseline`, else `^version`. */
@@ -195,9 +184,10 @@ export function bindApi<T extends ApiMethodTypes>(
 ) {
   // Additions this range does not guarantee; see `defineApi`.
   const floor = rangeFloor(versionRange);
-  const unnegotiated = (api.additions ?? []).filter(
-    (addition) => floor === null || floor < semverKey(addition.version),
-  );
+  const unnegotiated = (api.additions ?? []).filter((addition) => {
+    const added = parseVersion(addition.version);
+    return !floor || !added || compareVersions(floor, added) < 0;
+  });
   return {
     invoke<K extends keyof T & string>(
       method: K,

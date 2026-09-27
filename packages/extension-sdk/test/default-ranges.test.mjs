@@ -180,3 +180,44 @@ NodeTest.test(
     }
   },
 );
+
+NodeTest.test("a baseline works under prerelease and build-metadata versions", async () => {
+  const additions = [{ version: "1.1.0", method: "notify", input: "actions[].keepOpen" }];
+  for (const version of ["1.1.0+build.1", "1.2.0-rc.1"]) {
+    const api = defineApi(
+      { ...Catalogue.uiNotificationsApi.definition, version },
+      { baseline: "1.0.0", additions },
+    );
+    NodeAssert.equal(requireApi(api).versionRange, "^1.0.0", version);
+    await NodeAssert.rejects(
+      bindApi(api, recordingClient(), context).invoke(
+        "notify",
+        keepOpenNotify,
+        AbortSignal.timeout(1000),
+      ),
+      { name: "ApiVersionError" },
+    );
+  }
+  // An addition is still no later than a prerelease of the next minor.
+  NodeAssert.throws(
+    () =>
+      defineApi(
+        { ...Catalogue.uiNotificationsApi.definition, version: "1.1.0-rc.1" },
+        { baseline: "1.0.0", additions },
+      ),
+    /addition/,
+  );
+});
+
+NodeTest.test("a large patch below the adding minor does not guarantee it", async () => {
+  for (const range of [">=1.0.20260927", "^1.0.20260927", "~1.0.99999999999999999999"]) {
+    const client = recordingClient();
+    const notifications = bindApi(Catalogue.uiNotificationsApi, client, context, range);
+    await NodeAssert.rejects(
+      notifications.invoke("notify", keepOpenNotify, AbortSignal.timeout(1000)),
+      { name: "ApiVersionError" },
+      range,
+    );
+    NodeAssert.deepEqual(client.requests, [], range);
+  }
+});
