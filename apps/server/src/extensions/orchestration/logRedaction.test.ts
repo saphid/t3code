@@ -142,6 +142,10 @@ it("scans a full read region in linear time", () => {
     "a.".repeat(8192),
     `-----BEGIN PRIVATE KEY-----\n${"A ".repeat(8150)}.`,
     `${"A \t".repeat(5450)}-----END PRIVATE KEY-----`,
+    // Long backslash runs at a value, a key line, and above an END marker.
+    `"token":"${"\\".repeat(16370)}`,
+    `-----BEGIN PRIVATE KEY-----\\n${"A\\".repeat(8170)}`,
+    `${`${"\\".repeat(63)}n`.repeat(255)}-----END PRIVATE KEY-----`,
   ];
   for (const input of inputs) {
     const runs = Array.from({ length: 3 }, () => {
@@ -150,5 +154,80 @@ it("scans a full read region in linear time", () => {
       return performance.now() - started;
     });
     expect(Math.min(...runs), input.slice(0, 32)).toBeLessThan(25);
+  }
+});
+
+// Wraps `text` as the content of a transcript record `depth` times, so each
+// level escapes the one inside it again (`"` becomes `\"`, then `\\\"`).
+const nest = (text: string, depth: number) => {
+  let result = text;
+  for (let level = 0; level < depth; level += 1) result = JSON.stringify({ content: result });
+  return result;
+};
+const unnest = (text: string, depth: number) => {
+  let result: unknown = text;
+  for (let level = 0; level < depth; level += 1)
+    result = (JSON.parse(result as string) as { content: string }).content;
+  return result as string;
+};
+
+it("redacts credential fields and keys at every escaping depth", () => {
+  const field = String.raw`{"api_key":"sk-live\"quoted\\tail","client_secret":"s-3\\","next":"keep"}`;
+  const key =
+    "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKC\nQQQQ==\n-----END RSA PRIVATE KEY-----\n";
+  for (const depth of [1, 2, 3]) {
+    const redacted = redactLogSecrets(nest(field, depth));
+    expect(redacted, `field depth ${depth}`).not.toMatch(/sk-live|quoted|tail|s-3/);
+    expect(unnest(redacted, depth)).toBe(`{"api_key":"${R}","client_secret":"${R}","next":"keep"}`);
+    expect(unnest(redactLogSecrets(nest(key, depth)), depth), `key depth ${depth}`).toBe(`${R}\n`);
+    // A key tail whose BEGIN line fell before the read, and one cut off at END.
+    const tail = key.slice(key.indexOf("\n") + 1);
+    expect(unnest(redactLogSecrets(nest(tail, depth)), depth)).toBe(`${R}\n`);
+    const cut = key.slice(0, key.indexOf("-----END"));
+    expect(unnest(redactLogSecrets(nest(cut, depth)), depth)).toBe(R);
+    // Environment assignments quoted inside a nested string.
+    expect(unnest(redactLogSecrets(nest('GH_TOKEN="gho-1 2"', depth)), depth)).toBe(
+      `GH_TOKEN="${R}"`,
+    );
+  }
+});
+
+it("never leaks secrets when the read stops at any byte, or starts at any line", () => {
+  // `shapeLogTail` drops a region's partial first line before redacting, so a
+  // read starts at a line, raw or escaped; the file being written can stop
+  // the read at any byte, including inside an escape.
+  const key =
+    "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADAN\nBgkqhkiG9w0B\n-----END PRIVATE KEY-----\n";
+  const secrets = ["MIIEvQIBADAN", "BgkqhkiG9w0B", "sk-nested-VALUE-42"];
+  // Any five characters of a secret surviving redaction is a leak.
+  const leaks = (redacted: string) =>
+    secrets.some((secret) =>
+      [...secret].some(
+        (_, i) => i + 5 <= secret.length && redacted.includes(secret.slice(i, i + 5)),
+      ),
+    );
+  for (const depth of [1, 2, 3]) {
+    const record = nest(`${key}{"password":"sk-nested-VALUE-42"}`, depth);
+    const lineBreak = "\\".repeat(2 ** (depth - 1)) + "n";
+    for (let at = 0; at <= record.length; at += 1) {
+      const part = record.slice(0, at);
+      expect(leaks(redactLogSecrets(part)), `depth ${depth} stop ${at}`).toBe(false);
+    }
+    for (let at = record.indexOf(lineBreak); at !== -1; at = record.indexOf(lineBreak, at + 1)) {
+      const part = record.slice(at + lineBreak.length);
+      expect(leaks(redactLogSecrets(part)), `depth ${depth} start ${at}`).toBe(false);
+    }
+  }
+});
+
+it("keeps nested lookalikes that are not secrets", () => {
+  const plain = String.raw`{"input_tokens":12,"author":"Ada","tokens":"many","note":"a \"token\" and \\ path"}`;
+  const prose =
+    "The -----BEGIN PRIVATE KEY----- marker.\nSee -----END PRIVATE KEY----- too.\nbasic idea\nPWD=/work";
+  for (const depth of [1, 2, 3]) {
+    for (const text of [plain, prose]) {
+      const nested = nest(text, depth);
+      expect(redactLogSecrets(nested), `depth ${depth}`).toBe(nested);
+    }
   }
 });

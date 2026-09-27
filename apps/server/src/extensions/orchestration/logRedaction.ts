@@ -10,35 +10,44 @@ export const LOG_REDACTED = "[REDACTED]";
 // A secret-bearing name: the keyword must not run on into more letters, so
 // `token`/`apiKey`/`ACCESS_TOKEN` match while `tokens`/`author` do not.
 const keyword = String.raw`(?:api[_-]?key|secret|token|passw(?:or)?d|credentials?|private[_-]?key|access[_-]?key|auth(?:orization)?|cookie|session[_-]?id)(?![a-z])`;
-// A JSON string value, optionally unterminated at line end. Plain: `"…"`,
-// where `\"` is an escaped quote. Escaped inside another string: `\"…\"`,
-// where `\\\"` (an encoded backslash, then an encoded quote) is the value's
-// escaped quote and only a lone `\"` closes it.
-const quoted = String.raw`(?:"(?:[^"\\\n]|\\.)*"?|\\"(?:[^"\\\n]|\\\\\\.|\\\\|\\[^"\n])*(?:\\")?)`;
+/**
+ * A JSON string value at any escaping depth, optionally unterminated at line
+ * end. Each level of escaping doubles every backslash and puts one before
+ * every quote, so at depth d the value opens with `2^d - 1` backslashes and a
+ * quote (captured as `q`: `"`, `\"`, `\\\"`, …). Inside it, a quote after
+ * `q` plus an odd number of `2^d`-backslash units is an escaped quote; after
+ * `q` plus an even number of units (an escaped backslash, then the close) it
+ * closes the value, like the close after `q` alone. Any other backslash run is
+ * part of the value.
+ */
+const quoted = String.raw`(?<q>\\*)"(?:[^"\\\n]|\\+(?=[^"\\\n])|(?:\k<q>\\\k<q>\\)*\k<q>\\\k<q>")*(?:(?:\k<q>\\\k<q>\\)*\k<q>")?`;
 
-// A PEM line break: raw, or escaped inside a JSON string.
-const pemBreak = String.raw`(?:\r?\n|\\r\\n|\\n)`;
+// A PEM line break: raw, or escaped at any depth inside a JSON string.
+const pemBreak = String.raw`(?:\r?\n|\\+r\\+n|\\+n)`;
 // Horizontal whitespace a PEM parser skips: raw, or an escaped tab.
-const pemSpace = String.raw`(?:[ \t]|\\t)`;
+const pemSpace = String.raw`(?:[ \t]|\\+t)`;
 const base64 = "[A-Za-z0-9+/=]+";
 /**
  * A PEM private-key block: the BEGIN marker ending its line, then whole
  * header or base64 lines (runs separated by whitespace, which is consumed),
- * through END or the end of the read. A JSON string's closing quote also
- * ends a base64 line, so a key cut off before END redacts through the end of
- * its string. Prose that merely mentions the marker keeps its line, and a
- * block without END stops at the first line that is not key material.
+ * through END or the end of the read. A JSON string's closing quote, at any
+ * depth, also ends a base64 line, so a key cut off before END redacts through
+ * the end of its string, as does a read that stops inside an escape. Prose
+ * that merely mentions the marker keeps its line, and a block without END
+ * stops at the first line that is not key material.
  */
 const PEM_BLOCK = new RegExp(
-  String.raw`-----BEGIN[A-Z ]{0,40}PRIVATE KEY-----${pemSpace}*(?:${pemBreak}${pemSpace}*(?:[A-Za-z-]+:[ \t][^\r\n\\]*|${base64}(?:${pemSpace}+${base64})*${pemSpace}*(?=\r|\n|\\[rn]|"|-----END|$))?)+(?:-----END[A-Z ]{0,40}PRIVATE KEY-----)?`,
+  String.raw`-----BEGIN[A-Z ]{0,40}PRIVATE KEY-----${pemSpace}*(?:${pemBreak}${pemSpace}*(?:[A-Za-z-]+:[ \t][^\r\n\\]*|${base64}(?:${pemSpace}+${base64})*${pemSpace}*(?=\r|\n|\\+[rn"]|"|\\*$|-----END))?)+(?:-----END[A-Z ]{0,40}PRIVATE KEY-----)?`,
   "g",
 );
 
 const RULES: ReadonlyArray<readonly [RegExp, (match: string, ...groups: string[]) => string]> = [
-  // JSON fields, plain or escaped inside another string: "apiKey": "…".
+  // JSON fields, plain or escaped inside other strings: "apiKey": "…". The
+  // name's backslashes are matched only from the start of their run, so a
+  // long run is not rescanned from every backslash in it.
   [
     new RegExp(
-      String.raw`(\\?"[A-Za-z0-9_.-]{0,64}${keyword}[A-Za-z0-9_.-]{0,64}\\?"[ \t]*:[ \t]*)(${quoted})`,
+      String.raw`(?<!\\)(\\*"[A-Za-z0-9_.-]{0,64}${keyword}[A-Za-z0-9_.-]{0,64}\\*"[ \t]*:[ \t]*)(${quoted})`,
       "gi",
     ),
     (_match, name, value) => `${name}${quoteLike(value!)}`,
@@ -77,7 +86,7 @@ const perLine = (match: string) =>
 
 /** Replaces a value's body while keeping its (possibly escaped) quotes. */
 const quoteLike = (value: string) => {
-  const open = /^(\\?["'])/.exec(value)?.[1] ?? "";
+  const open = /^(\\*["'])/.exec(value)?.[1] ?? "";
   const close = open && value.length > open.length && value.endsWith(open) ? open : "";
   return `${open}${LOG_REDACTED}${close}`;
 };
@@ -96,9 +105,13 @@ const isSpace = (char: string | undefined) => char === " " || char === "\t" || c
 function redactPemTails(text: string): string {
   let result = "";
   let floor = 0;
-  // Length of the escape (`\n`, `\r`, `\t`) or raw break ending at `at`, or 0.
-  const escapeBefore = (at: number) =>
-    at - 2 >= floor && text[at - 2] === "\\" && /[nrt]/.test(text[at - 1]!) ? 2 : 0;
+  // Length of the escape (`\n`, `\r`, `\t`, at any depth) ending at `at`, or 0.
+  const escapeBefore = (at: number) => {
+    if (at - 2 < floor || !/[nrt]/.test(text[at - 1]!)) return 0;
+    let from = at - 1;
+    while (from > floor && text[from - 1] === "\\") from -= 1;
+    return from < at - 1 ? at - from : 0;
+  };
   for (const marker of text.matchAll(PEM_END)) {
     const escapedBreak = (at: number) => escapeBefore(at) > 0 && text[at - 1] !== "t";
     let start = marker.index;
@@ -120,7 +133,7 @@ function redactPemTails(text: string): string {
       else break;
     }
     // A bare END marker with no key material above it is prose; keep it.
-    if (!/[A-Za-z0-9+/=]/.test(text.slice(start, marker.index).replace(/\\[nrt]/g, ""))) continue;
+    if (!/[A-Za-z0-9+/=]/.test(text.slice(start, marker.index).replace(/\\+[nrt]/g, ""))) continue;
     const end = marker.index + marker[0].length;
     result += text.slice(floor, start) + perLine(text.slice(start, end));
     floor = end;
