@@ -181,32 +181,25 @@ NodeTest.test(
   },
 );
 
-NodeTest.test("a baseline works under prerelease and build-metadata versions", async () => {
+NodeTest.test("a baseline needs plain X.Y.Z versions throughout", () => {
   const additions = [{ version: "1.1.0", method: "notify", input: "actions[].keepOpen" }];
-  for (const version of ["1.1.0+build.1", "1.2.0-rc.1"]) {
-    const api = defineApi(
+  const define = (version, baseline, added = additions) =>
+    defineApi(
       { ...Catalogue.uiNotificationsApi.definition, version },
-      { baseline: "1.0.0", additions },
+      { baseline, additions: added },
     );
-    NodeAssert.equal(requireApi(api).versionRange, "^1.0.0", version);
-    await NodeAssert.rejects(
-      bindApi(api, recordingClient(), context).invoke(
-        "notify",
-        keepOpenNotify,
-        AbortSignal.timeout(1000),
-      ),
-      { name: "ApiVersionError" },
+  for (const version of ["1.1.0+build.1", "1.2.0-rc.1"])
+    NodeAssert.throws(() => define(version, "1.0.0"), /plain X\.Y\.Z version/, version);
+  for (const baseline of ["1.0.0-0", "1.0.0+build.1"])
+    NodeAssert.throws(() => define("1.1.0", baseline), /plain X\.Y\.Z version/, baseline);
+  for (const version of ["1.1.0-0", "1.1.0+build.1", "1.0.9007199254740992"])
+    NodeAssert.throws(
+      () => define("1.1.0", "1.0.0", [{ ...additions[0], version }]),
+      /plain X\.Y\.Z version/,
+      version,
     );
-  }
-  // An addition is still no later than a prerelease of the next minor.
-  NodeAssert.throws(
-    () =>
-      defineApi(
-        { ...Catalogue.uiNotificationsApi.definition, version: "1.1.0-rc.1" },
-        { baseline: "1.0.0", additions },
-      ),
-    /addition/,
-  );
+  // A definition without a baseline keeps any version the schema accepts.
+  defineApi({ ...Catalogue.uiNotificationsApi.definition, version: "1.2.0-rc.1" });
 });
 
 NodeTest.test("a large patch below the adding minor does not guarantee it", async () => {
@@ -220,4 +213,72 @@ NodeTest.test("a large patch below the adding minor does not guarantee it", asyn
     );
     NodeAssert.deepEqual(client.requests, [], range);
   }
+});
+
+// Reproductions from the sdk-capture-actions round-4 review.
+NodeTest.test("a prerelease range never dispatches a member added at its release", async () => {
+  // Prereleases cannot be declared, so the 0.0.0-0 baseline is gone; an
+  // exact 0.0.0-0 binding is refused rather than floored at 0.0.0.
+  NodeAssert.throws(
+    () =>
+      defineApi(
+        { ...Catalogue.uiNotificationsApi.definition, id: "review.zero", version: "0.0.0" },
+        {
+          baseline: "0.0.0-0",
+          additions: [{ version: "0.0.0", method: "notify", input: "title" }],
+        },
+      ),
+    /plain X\.Y\.Z version/,
+  );
+  for (const range of ["0.0.0-0", ">=1.1.0-0", "^1.1.0-rc.1", "1.1.0+build.1"]) {
+    const client = recordingClient();
+    await NodeAssert.rejects(
+      bindApi(Catalogue.uiNotificationsApi, client, context, range).invoke(
+        "notify",
+        keepOpenNotify,
+        AbortSignal.timeout(1000),
+      ),
+      { name: "ApiVersionError" },
+      range,
+    );
+    NodeAssert.deepEqual(client.requests, [], range);
+  }
+});
+
+NodeTest.test("a huge prerelease identifier cannot declare or bind an addition", async () => {
+  NodeAssert.throws(
+    () =>
+      defineApi(
+        { ...Catalogue.uiNotificationsApi.definition, id: "review.big", version: "1.1.0" },
+        {
+          baseline: "1.0.0",
+          additions: [
+            { version: "1.1.0-9007199254740993", method: "notify", input: "actions[].keepOpen" },
+          ],
+        },
+      ),
+    /plain X\.Y\.Z version/,
+  );
+  const client = recordingClient();
+  const notifications = bindApi(
+    Catalogue.uiNotificationsApi,
+    client,
+    context,
+    ">=1.1.0-9007199254740992",
+  );
+  await NodeAssert.rejects(
+    notifications.invoke("notify", keepOpenNotify, AbortSignal.timeout(1000)),
+    { name: "ApiVersionError" },
+  );
+  NodeAssert.deepEqual(client.requests, []);
+  // Members every 1.x host takes still pass the range through untouched.
+  await notifications.invoke(
+    "notify",
+    { severity: "info", title: "Plain" },
+    AbortSignal.timeout(1000),
+  );
+  NodeAssert.deepEqual(
+    client.requests.map((request) => request.versionRange),
+    [">=1.1.0-9007199254740992"],
+  );
 });

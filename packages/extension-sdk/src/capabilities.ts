@@ -133,7 +133,9 @@ function hasInput(value: unknown, path: readonly string[]): boolean {
  * list every such member in `additions`: a binding whose range admits a
  * version before an addition refuses calls that use it with
  * `ApiVersionError`, so a pack cannot declare the baseline and ship the new
- * member unprobed.
+ * member unprobed. The version, baseline and additions are plain `X.Y.Z`, and
+ * only `X.Y.Z`, `^X.Y.Z`, `~X.Y.Z`, `>=X.Y.Z` and `>=X.Y.Z <A.B.C` bindings
+ * can use additions; any other range refuses them.
  */
 export function defineApi<T extends ApiMethodTypes>(
   definition: ApiDefinition,
@@ -144,22 +146,21 @@ export function defineApi<T extends ApiMethodTypes>(
     if (options.additions?.length) throw new Error("API additions need a baseline");
     return { definition: validated };
   }
+  // The guard only orders plain X.Y.Z versions; see semver.ts.
   const version = parseVersion(validated.version);
+  if (!version)
+    throw new Error("An API with a baseline needs a plain X.Y.Z version: " + validated.version);
   const baseline = parseVersion(options.baseline);
-  if (
-    !version ||
-    !baseline ||
-    baseline.release[0] !== version.release[0] ||
-    compareVersions(baseline, version) > 0
-  )
-    throw new Error("API baseline must be an earlier version of the same major");
+  if (!baseline || baseline[0] !== version[0] || compareVersions(baseline, version) > 0)
+    throw new Error("API baseline must be an earlier plain X.Y.Z version of the same major");
   const additions = (options.additions ?? []).map((addition) => ({ ...addition }));
   if (compareVersions(baseline, version) < 0 && additions.length === 0)
     throw new Error("An API baseline below the current version must list its additions");
   for (const addition of additions) {
     const added = parseVersion(addition.version);
+    if (!added)
+      throw new Error("An API addition needs a plain X.Y.Z version: " + JSON.stringify(addition));
     if (
-      !added ||
       compareVersions(added, baseline) <= 0 ||
       compareVersions(added, version) > 0 ||
       !validated.methods?.some((method) => method.name === addition.method) ||

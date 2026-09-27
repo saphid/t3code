@@ -47,39 +47,20 @@ function copyJson(value, maxBytes = MAX_PAYLOAD_BYTES) {
 }
 
 // node_modules/@t3tools/extension-sdk/dist/semver.js
-var NUMBER = "0|[1-9]\\d*";
-var IDENTIFIER = `(?:${NUMBER}|\\d*[A-Za-z-][0-9A-Za-z-]*)`;
-var BUILD = "(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?";
-var VERSION = new RegExp(`^(${NUMBER})\\.(${NUMBER})\\.(${NUMBER})(?:-(${IDENTIFIER}(?:\\.${IDENTIFIER})*))?${BUILD}$`);
-var PARTIAL = new RegExp(`^(${NUMBER}|[xX*])(?:\\.(${NUMBER}|[xX*]))?(?:\\.(${NUMBER}|[xX*]))?$`);
+var TRIPLE = "(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)";
+var VERSION = new RegExp(`^${TRIPLE}$`);
+var RANGE = new RegExp(`^(?:\\^|~|>=)?${TRIPLE}$`);
+var BOUNDED = new RegExp(`^>=${TRIPLE} <${TRIPLE}$`);
+function toVersion(parts) {
+  const [major, minor, patch] = parts.map(Number);
+  return [major, minor, patch].every(Number.isSafeInteger) ? [major, minor, patch] : null;
+}
 function parseVersion(text) {
   const match4 = VERSION.exec(text);
-  if (!match4)
-    return null;
-  return {
-    release: [match4[1], match4[2], match4[3]],
-    prerelease: match4[4]?.split(".") ?? []
-  };
+  return match4 ? toVersion(match4.slice(1, 4)) : null;
 }
-var order = (a, b) => a < b ? -1 : a > b ? 1 : 0;
-var compareNumbers = (a, b) => Math.sign(a.length - b.length) || order(a, b);
-var isNumber = (identifier2) => /^\d+$/.test(identifier2);
 function compareVersions(a, b) {
-  for (let index = 0; index < 3; index++) {
-    const result2 = compareNumbers(a.release[index], b.release[index]);
-    if (result2)
-      return result2;
-  }
-  if (!a.prerelease.length || !b.prerelease.length)
-    return Math.sign(b.prerelease.length - a.prerelease.length);
-  for (let index = 0; index < Math.min(a.prerelease.length, b.prerelease.length); index++) {
-    const x = a.prerelease[index];
-    const y = b.prerelease[index];
-    const result2 = isNumber(x) && isNumber(y) ? compareNumbers(x, y) : isNumber(x) !== isNumber(y) ? isNumber(x) ? -1 : 1 : order(x, y);
-    if (result2)
-      return result2;
-  }
-  return Math.sign(a.prerelease.length - b.prerelease.length);
+  return Math.sign(a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
 }
 
 // node_modules/@t3tools/extension-sdk/dist/capabilities.js
@@ -91,15 +72,19 @@ function defineApi(definition, options = {}) {
     return { definition: validated };
   }
   const version = parseVersion(validated.version);
+  if (!version)
+    throw new Error("An API with a baseline needs a plain X.Y.Z version: " + validated.version);
   const baseline = parseVersion(options.baseline);
-  if (!version || !baseline || baseline.release[0] !== version.release[0] || compareVersions(baseline, version) > 0)
-    throw new Error("API baseline must be an earlier version of the same major");
+  if (!baseline || baseline[0] !== version[0] || compareVersions(baseline, version) > 0)
+    throw new Error("API baseline must be an earlier plain X.Y.Z version of the same major");
   const additions = (options.additions ?? []).map((addition) => ({ ...addition }));
   if (compareVersions(baseline, version) < 0 && additions.length === 0)
     throw new Error("An API baseline below the current version must list its additions");
   for (const addition of additions) {
     const added = parseVersion(addition.version);
-    if (!added || compareVersions(added, baseline) <= 0 || compareVersions(added, version) > 0 || !validated.methods?.some((method) => method.name === addition.method) || !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(addition.input))
+    if (!added)
+      throw new Error("An API addition needs a plain X.Y.Z version: " + JSON.stringify(addition));
+    if (compareVersions(added, baseline) <= 0 || compareVersions(added, version) > 0 || !validated.methods?.some((method) => method.name === addition.method) || !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(addition.input))
       throw new Error("Invalid API addition: " + JSON.stringify(addition));
   }
   return { definition: validated, baseline: options.baseline, additions };
@@ -7714,7 +7699,7 @@ var byReferenceInstances = /* @__PURE__ */ new WeakSet();
 function isString(input) {
   return typeof input === "string";
 }
-function isNumber2(input) {
+function isNumber(input) {
   return typeof input === "number";
 }
 function isFunction(input) {
@@ -10933,7 +10918,7 @@ var Number3 = class extends ASTNodeImpl {
   _tag = "Number";
   /** @internal */
   getParser() {
-    return fromRefinement(this, isNumber2);
+    return fromRefinement(this, isNumber);
   }
   /** @internal */
   matchKey(s, options) {
