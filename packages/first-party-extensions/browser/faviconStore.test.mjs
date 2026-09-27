@@ -7,9 +7,11 @@ import {
   emptyFaviconCache,
   expireStaleFaviconFailure,
   FAVICON_FAILURE_TTL_MS,
+  applyResolvedFaviconRefs,
   panelTabIndicators,
   pendingFaviconRefs,
   recordCapturedFavicon,
+  recordResolvedFaviconRef,
   faviconFallbackGlyph,
   faviconOriginKey,
   recordProviderFaviconFailure,
@@ -219,7 +221,7 @@ const session = (overrides = {}) => ({
 });
 
 NodeTest.describe("pendingFaviconRefs", () => {
-  NodeTest.it("asks once per unresolved ref and skips recorded or attempted ones", () => {
+  NodeTest.it("asks once per unresolved ref and skips resolved, in-flight or captured ones", () => {
     const sessions = [
       session({ faviconRef: "r1" }),
       session({ tabId: "tab-2", faviconRef: "r1" }),
@@ -231,16 +233,75 @@ NodeTest.describe("pendingFaviconRefs", () => {
       session({ tabId: "tab-4" }),
     ];
     NodeAssert.deepEqual(pendingFaviconRefs(emptyFaviconCache(), sessions, new Set()), [
-      { ref: "r1", url: "http://localhost:5173/" },
-      { ref: "r2", url: "https://example.com/" },
+      "r1",
+      "r2",
     ]);
-    const recorded = recordCapturedFavicon(
+    NodeAssert.deepEqual(pendingFaviconRefs(emptyFaviconCache(), sessions, new Set(["r2"])), [
+      "r1",
+    ]);
+    const resolved = recordResolvedFaviconRef(emptyFaviconCache(), "r1", null, 1);
+    NodeAssert.deepEqual(pendingFaviconRefs(resolved, sessions, new Set()), ["r2"]);
+    const captured = recordCapturedFavicon(
       emptyFaviconCache(),
-      "http://localhost:5173/",
-      { ref: "r1", src: "data:image/png;base64,AAAA" },
+      "https://example.com/",
+      { ref: "r2", src: "data:image/png;base64,AAAA" },
       1,
     );
-    NodeAssert.deepEqual(pendingFaviconRefs(recorded, sessions, new Set(["r2"])), []);
+    NodeAssert.deepEqual(pendingFaviconRefs(captured, sessions, new Set(["r1"])), []);
+  });
+});
+
+NodeTest.describe("applyResolvedFaviconRefs", () => {
+  const icon = "data:image/png;base64,AAAA";
+  const app = session({ faviconRef: "shared" });
+  const docs = session({
+    tabId: "tab-2",
+    faviconRef: "shared",
+    navigation: { kind: "loaded", url: "http://localhost:3000/docs", title: "" },
+  });
+
+  NodeTest.it("gives one read of a shared ref to every origin carrying it", () => {
+    const cache = applyResolvedFaviconRefs(
+      recordResolvedFaviconRef(emptyFaviconCache(), "shared", icon, 1),
+      [app, docs],
+      2,
+    );
+    NodeAssert.equal(resolveFavicon(cache, "http://localhost:5173/").tier, "captured");
+    NodeAssert.equal(resolveFavicon(cache, "http://localhost:3000/").tier, "captured");
+    NodeAssert.equal(applyResolvedFaviconRefs(cache, [app, docs], 3), cache);
+  });
+
+  NodeTest.it("reaches a view whose session arrives after the read, with no second read", () => {
+    let cache = recordResolvedFaviconRef(emptyFaviconCache(), "shared", icon, 1);
+    cache = applyResolvedFaviconRefs(cache, [app], 2);
+    NodeAssert.deepEqual(pendingFaviconRefs(cache, [app, docs], new Set()), []);
+    cache = applyResolvedFaviconRefs(cache, [docs], 3);
+    NodeAssert.equal(resolveFavicon(cache, "http://localhost:3000/").tier, "captured");
+  });
+
+  NodeTest.it("keeps refused refs and broken images off every origin", () => {
+    const refused = recordResolvedFaviconRef(emptyFaviconCache(), "shared", null, 1);
+    NodeAssert.equal(applyResolvedFaviconRefs(refused, [app, docs], 2), refused);
+    const notImage = recordResolvedFaviconRef(emptyFaviconCache(), "shared", "https://x/i.png", 1);
+    NodeAssert.equal(notImage.resolved.shared.src, null);
+
+    const shown = applyResolvedFaviconRefs(
+      recordResolvedFaviconRef(emptyFaviconCache(), "shared", icon, 1),
+      [app, docs],
+      2,
+    );
+    const dropped = dropCapturedFavicon(shown, "http://localhost:5173/");
+    NodeAssert.equal(dropped.resolved.shared.src, null);
+    NodeAssert.equal(applyResolvedFaviconRefs(dropped, [app], 3), dropped);
+    NodeAssert.deepEqual(pendingFaviconRefs(dropped, [app], new Set()), []);
+  });
+
+  NodeTest.it("keeps ref results bounded", () => {
+    let cache = emptyFaviconCache();
+    for (let index = 0; index <= FAVICON_CACHE_MAX_ENTRIES; index += 1)
+      cache = recordResolvedFaviconRef(cache, `r${index}`, icon, index);
+    NodeAssert.equal(Object.keys(cache.resolved).length, FAVICON_CACHE_MAX_ENTRIES);
+    NodeAssert.equal(cache.resolved.r0, undefined);
   });
 });
 

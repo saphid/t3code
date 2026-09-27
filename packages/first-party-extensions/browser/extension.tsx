@@ -31,7 +31,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useBrowserCapture } from "./capture.js";
 import { mintWorkspaceFileUrl } from "./fileOpen.js";
-import { BrowserFavicon, resolveSessionFavicons, useFaviconCache } from "./favicon.js";
+import {
+  BrowserFavicon,
+  applySessionFavicons,
+  resolveSessionFavicons,
+  useFaviconCache,
+} from "./favicon.js";
 import { panelTabIndicators } from "./faviconStore.js";
 import {
   adoptedFileSource,
@@ -389,6 +394,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
 
   // Captured favicons: each new ref the sessions carry is read once, when a
   // snapshot or upsert delivers it — no timer. Reads live as long as the view.
+  // A landed read reaches this view's origins through the cache change.
   const faviconCache = useFaviconCache();
   useEffect(() => {
     resolveSessionFavicons(
@@ -397,6 +403,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       session.signal,
     );
   }, [host, session, tabs]);
+  useEffect(() => applySessionFavicons(faviconCache, tabs), [faviconCache, tabs]);
 
   // The host renders this panel's tab icon and audio indicator from these.
   useEffect(() => {

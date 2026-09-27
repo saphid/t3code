@@ -1,5 +1,6 @@
 /**
- * `t3.browser/sessions@1.0.0` — public browser-session metadata capability.
+ * `t3.browser/sessions@1.2.0` (serving the frozen 1.1.0 and 1.0.0 consumers
+ * too) — public browser-session metadata capability.
  *
  * This adapter projects the server's native `PreviewManager` state through
  * the public contract and never exposes webview handles, partitions, preload
@@ -68,7 +69,7 @@ import { ProjectionThreadRepository } from "../../persistence/Services/Projectio
 import * as BrowserEngineHosts from "../../preview/BrowserEngineHosts.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import { makeExtensionScopeResolver } from "../scope.ts";
-import { type BrowserFaviconAssets, makeBrowserFaviconAssets } from "./faviconAssets.ts";
+import type { BrowserFaviconAssets } from "./faviconAssets.ts";
 
 const OPERATION = "browser.sessions";
 const MAX_SNAPSHOT_BYTES = 512 * 1024;
@@ -330,11 +331,12 @@ export function createBrowserSessionsApiProvider(
       BrowserEngineHosts.BrowserEngineHosts["Service"],
       "dispatch" | "hasHost"
     >;
-    readonly favicons?: BrowserFaviconAssets;
+    /** The environment's one favicon store, shared with `t3.browser/profiles`. */
+    readonly favicons: BrowserFaviconAssets;
   },
 ): HostApiProvider {
   const resolve = makeExtensionScopeResolver(dependencies);
-  const favicons = dependencies.favicons ?? makeBrowserFaviconAssets();
+  const favicons = dependencies.favicons;
   /** The projector for one resolved project; favicon assets never cross projects. */
   const projectorFor = (projectId: string | undefined) => {
     const capture = (dataUrl: string) =>
@@ -1220,16 +1222,16 @@ export function createBrowserSessionsApiProvider(
   };
 }
 
-export const makeBrowserSessionsApiProvider = Effect.fn("BrowserSessionsApi.make")(function* (
-  input?: { readonly favicons?: BrowserFaviconAssets },
-) {
-  const environment = yield* ServerEnvironment;
-  return createBrowserSessionsApiProvider({
-    environmentId: yield* environment.getEnvironmentId,
-    projects: yield* ProjectionProjectRepository,
-    threads: yield* ProjectionThreadRepository,
-    preview: yield* PreviewManager.PreviewManager,
-    engineHosts: yield* BrowserEngineHosts.BrowserEngineHosts,
-    ...(input?.favicons === undefined ? {} : { favicons: input.favicons }),
-  });
-});
+export const makeBrowserSessionsApiProvider = Effect.fn("BrowserSessionsApi.make")(
+  function* (input: { readonly favicons: BrowserFaviconAssets }) {
+    const environment = yield* ServerEnvironment;
+    return createBrowserSessionsApiProvider({
+      environmentId: yield* environment.getEnvironmentId,
+      projects: yield* ProjectionProjectRepository,
+      threads: yield* ProjectionThreadRepository,
+      preview: yield* PreviewManager.PreviewManager,
+      engineHosts: yield* BrowserEngineHosts.BrowserEngineHosts,
+      favicons: input.favicons,
+    });
+  },
+);

@@ -42,6 +42,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ProcessRunner from "../../processRunner.ts";
 import * as BrowserEngineHosts from "../../preview/BrowserEngineHosts.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
+import { makeBrowserFaviconAssets } from "./faviconAssets.ts";
 import { createBrowserSessionsApiProvider } from "./v1.ts";
 
 const isOperationError = Schema.is(ExtensionOperationError);
@@ -152,6 +153,7 @@ const makeDeps = (
   threads: overrides.threads ?? defaultThreads,
   preview,
   engineHosts: overrides.engineHosts ?? noEngineHosts,
+  favicons: makeBrowserFaviconAssets(),
 });
 
 /**
@@ -1219,6 +1221,46 @@ describe("browser sessions adapter", () => {
     }),
   );
 
+  it.effect("picture-in-picture pops out a natively opened session, unlike DevTools", () =>
+    Effect.gen(function* () {
+      const { preview, provider, engineHosts } = yield* harness;
+      // An agent (MCP) or the native panel opened this page, not the caller.
+      const native = yield* preview.open({
+        threadId: ThreadId.make(THREAD_ID),
+        url: "http://localhost:5173",
+      });
+      const listed = (yield* invoke(provider, "list", {})) as { readonly serverEpoch: string };
+      const { events, fence } = yield* attachDesktopHost(engineHosts, {
+        tabId: native.tabId,
+        serverEpoch: listed.serverEpoch,
+      });
+      const hostAnswer = yield* Effect.forkChild(
+        Effect.gen(function* () {
+          const event = yield* Queue.take(events);
+          if (event.type !== "command") throw new Error("expected a command event");
+          yield* engineHosts.commandResult(DESKTOP_SOCKET, {
+            hostConnectionId: fence.hostConnectionId,
+            commandId: event.commandId,
+            result: { outcome: "applied" },
+          });
+          return event;
+        }),
+      );
+      const receipt = (yield* invoke(provider, "setPictureInPicture", {
+        tabId: native.tabId,
+        serverEpoch: listed.serverEpoch,
+        expectedEngineGeneration: "41",
+        open: true,
+      })) as { readonly outcome: string };
+      expect(receipt.outcome).toBe("accepted");
+      // The owning desktop host runs the PiP window; the plugin only asked.
+      expect(yield* Fiber.join(hostAnswer)).toMatchObject({
+        target: fence.target,
+        command: { _tag: "setPictureInPicture", open: true },
+      });
+    }),
+  );
+
   it.effect("DevTools refuses a session another installation opened before any host is asked", () =>
     Effect.gen(function* () {
       const { provider, engineHosts } = yield* harness;
@@ -1817,7 +1859,7 @@ describe("browser sessions adapter", () => {
       ),
   );
   it.effect(
-    "a 1.1.0 consumer is incompatible-api on a 1.0.0 host before any DevTools call reaches it",
+    "a 1.2.0 consumer is incompatible-api on a 1.0.0 host before any DevTools call reaches it",
     () =>
       Effect.gen(function* () {
         const { provider } = yield* harness;

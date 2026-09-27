@@ -8,11 +8,13 @@
  *   here per origin so every surface (tab strip, recents) shows it.
  * - provider: the public-provider image the native tab strip renders
  *   (`faviconUrlForOrigin`: public hosts only). An origin whose provider
- *   image failed to load renders the fallback glyph on every surface and stops being
- *   requested.
+ *   image failed to load renders the fallback glyph on every surface and
+ *   stops being requested until the failure ages out, so a transient network
+ *   blip does not suppress the image for the whole session.
  *
- *   requested until the failure ages out, so a transient network blip does
- *   not suppress the image for the whole session.
+ * Refs are content hashes, so one ref can serve several origins: the result
+ * of its single read is kept per ref and applied to every origin a session
+ * carries it on, whenever that session arrives.
  * A missing, stale, or failed capture simply leaves the provider tier.
  * Nothing schedules the age-out: a surface expires its origin's stale
  * failure when it mounts or navigates.
@@ -28,6 +30,8 @@ export const FAVICON_CACHE_MAX_ENTRIES = 40;
 export const FAVICON_PROVIDER_SIZE = 32;
 /** How long a recorded provider failure keeps its origin on the glyph. */
 export const FAVICON_FAILURE_TTL_MS = 5 * 60_000;
+/** At most this many `getFavicon` reads run at once; the rest wait for a later session event. */
+export const MAX_FAVICON_READS = 8;
 
 export type FaviconOriginEntry = { readonly providerFailedAt: number };
 export type CapturedFavicon = {
@@ -36,13 +40,16 @@ export type CapturedFavicon = {
   readonly src: string;
   readonly capturedAt: number;
 };
+/** A ref's read result: the image, or null when it was refused, failed, or would not render. */
+export type ResolvedFaviconRef = { readonly src: string | null; readonly resolvedAt: number };
 export type FaviconCache = {
   readonly byOrigin: Readonly<Record<string, FaviconOriginEntry>>;
   readonly captured: Readonly<Record<string, CapturedFavicon>>;
+  readonly resolved: Readonly<Record<string, ResolvedFaviconRef>>;
 };
 
 export function emptyFaviconCache(): FaviconCache {
-  return { byOrigin: {}, captured: {} };
+  return { byOrigin: {}, captured: {}, resolved: {} };
 }
 
 /** Keeps the `FAVICON_CACHE_MAX_ENTRIES` newest entries by `stamp`. */
@@ -131,12 +138,68 @@ export function recordCapturedFavicon(
   };
 }
 
-/** Drop a captured favicon that failed to render; the origin falls back to the provider. */
+/**
+ * Drop a captured favicon that failed to render; the origin falls back to the
+ * provider. Its ref is marked broken so it is neither re-applied nor re-read.
+ */
 export function dropCapturedFavicon(cache: FaviconCache, rawUrl: string): FaviconCache {
   const key = faviconOriginKey(rawUrl);
-  if (!key || !cache.captured[key]) return cache;
+  const dropped = key ? cache.captured[key] : undefined;
+  if (!key || !dropped) return cache;
   const { [key]: _dropped, ...captured } = cache.captured;
-  return { ...cache, captured };
+  const resolved = cache.resolved[dropped.ref];
+  return {
+    ...cache,
+    captured,
+    resolved: {
+      ...cache.resolved,
+      [dropped.ref]: { src: null, resolvedAt: resolved?.resolvedAt ?? dropped.capturedAt },
+    },
+  };
+}
+
+/**
+ * Record the result of one ref's read (null: refused or failed). Re-recording
+ * the same result is a no-op returning the same cache reference; past the cap
+ * the oldest results drop off.
+ */
+export function recordResolvedFaviconRef(
+  cache: FaviconCache,
+  ref: string,
+  src: string | null,
+  at: number,
+): FaviconCache {
+  const image = src !== null && CAPTURED_SRC.test(src) ? src : null;
+  const existing = cache.resolved[ref];
+  if (existing && existing.src === image) return cache;
+  return {
+    ...cache,
+    resolved: capEntries(
+      { ...cache.resolved, [ref]: { src: image, resolvedAt: at } },
+      (entry) => entry.resolvedAt,
+    ),
+  };
+}
+
+/**
+ * Record the captured favicon for every session whose ref already resolved to
+ * an image — so a ref shared by several origins reaches each of them, whether
+ * the session arrived before, during or after the read. A no-op returns the
+ * same cache reference.
+ */
+export function applyResolvedFaviconRefs(
+  cache: FaviconCache,
+  sessions: readonly BrowserSession[],
+  at: number,
+): FaviconCache {
+  let next = cache;
+  for (const session of sessions) {
+    const ref = session.faviconRef;
+    const url = session.navigation.url;
+    const src = ref ? cache.resolved[ref]?.src : null;
+    if (ref && url && src) next = recordCapturedFavicon(next, url, { ref, src }, at);
+  }
+  return next;
 }
 
 /**
@@ -196,25 +259,25 @@ export function resolveFavicon(cache: FaviconCache, rawUrl: string | null): Favi
 }
 
 /**
- * Refs the sessions carry that still need a `getFavicon` read: not yet
- * attempted and not already the recorded capture for the page's origin.
- * One entry per ref.
+ * Refs the sessions carry that still need a `getFavicon` read: no recorded
+ * result, no read in flight, and not already the capture for the page's
+ * origin. One entry per ref.
  */
 export function pendingFaviconRefs(
   cache: FaviconCache,
   sessions: readonly BrowserSession[],
-  attempted: ReadonlySet<string>,
-): readonly { readonly ref: string; readonly url: string }[] {
-  const pending = new Map<string, string>();
+  inFlight: ReadonlySet<string>,
+): readonly string[] {
+  const pending = new Set<string>();
   for (const session of sessions) {
     const ref = session.faviconRef;
     const url = session.navigation.url;
-    if (!ref || !url || attempted.has(ref) || pending.has(ref)) continue;
+    if (!ref || !url || cache.resolved[ref] || inFlight.has(ref)) continue;
     const key = faviconOriginKey(url);
     if (!key || cache.captured[key]?.ref === ref) continue;
-    pending.set(ref, url);
+    pending.add(ref);
   }
-  return [...pending].map(([ref, url]) => ({ ref, url }));
+  return [...pending];
 }
 
 /**
