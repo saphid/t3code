@@ -32,9 +32,13 @@ Interactive terminal plugin driven entirely by public contracts:
   `deleteToLineStart`) with the native drawer's defaults (macOS: `ctrl+l` and
   `meta+k`, `alt+arrow`, `meta+arrow`, `meta+backspace`; elsewhere `ctrl+l`
   and `ctrl`/`alt+arrow`, the line commands unbound), so user rules can
-  rebind them. Until that binding lands, or when it is denied, the VT surface
-  applies the same defaults locally, yielding any chord a user or native rule
-  claims to the key encoder.
+  rebind them. The defaults are declared `defaultKeyLogicalOnly`, so they
+  match `event.key` like native rather than the physical key on non-Latin
+  layouts. Until that binding lands, or when it is denied, the VT surface
+  resolves keys through the same table locally: a user rule naming an editing
+  command runs it, any other claim goes to the key encoder, and the defaults
+  apply on a miss. A host without the resolver holds the default chords
+  until registration settles.
 - `t3.ui/panels@^1.0.0` — the dispatched `toggle` closes the hosting surface
   via `closeSurface`; failures surface on the panel status row.
 - `t3.ui/external@^1.0.0` (`t3.ui/external.open` grant) — activating a

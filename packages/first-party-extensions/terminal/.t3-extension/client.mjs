@@ -1365,6 +1365,7 @@ var __t3Client = (() => {
           }
         ]
       },
+      defaultKeyLogicalOnly: { type: "boolean" },
       when: { type: "string", minLength: 1, maxLength: 256 },
       scope: { enum: ["surface", "thread", "global"] },
       activation: {
@@ -10021,7 +10022,14 @@ var __t3Client = (() => {
     resizeNotified = false;
     canvasConfigured = false;
     theme;
-    suppressedKeyCodes = /* @__PURE__ */ new Set();
+    /**
+     * Codes whose latest press this surface encoded to the PTY. Only those get
+     * a release: a press consumed anywhere else — beforeKey, copy/paste, or a
+     * host dispatcher that stopped the keydown before it reached the input —
+     * must not leak a Kitty report-event-types release the shell never saw
+     * pressed.
+     */
+    encodedKeyCodes = /* @__PURE__ */ new Set();
     pasteShortcutToken = 0;
     copyShortcutToken = 0;
     clearSelectionAfterCopy = false;
@@ -10389,10 +10397,8 @@ var __t3Client = (() => {
       }
     }
     onKeyDown = (event) => {
-      if (isTerminalAltGraphText(event) || !this.options.beforeKey(event)) {
-        this.suppressedKeyCodes.add(event.code);
-        return;
-      }
+      this.encodedKeyCodes.delete(event.code);
+      if (isTerminalAltGraphText(event) || !this.options.beforeKey(event)) return;
       if (isTerminalCopyShortcut(event) && this.hasSelection()) {
         const selection = this.getSelection();
         this.primeCopy(selection);
@@ -10423,11 +10429,9 @@ var __t3Client = (() => {
             });
           }
         }
-        this.suppressedKeyCodes.add(event.code);
         return;
       }
       if (isTerminalPasteShortcut(event)) {
-        this.suppressedKeyCodes.add(event.code);
         const clipboard = navigator.clipboard;
         if (typeof clipboard?.readText === "function") {
           const token = ++this.pasteShortcutToken;
@@ -10449,13 +10453,13 @@ var __t3Client = (() => {
       this.clearPrimedCopy();
       const data = this.core.encodeKey(event);
       if (data.length === 0) return;
-      this.suppressedKeyCodes.delete(event.code);
+      this.encodedKeyCodes.add(event.code);
       event.preventDefault();
       event.stopPropagation();
       this.options.onData(data);
     };
     onKeyUp = (event) => {
-      if (this.suppressedKeyCodes.delete(event.code)) return;
+      if (!this.encodedKeyCodes.delete(event.code)) return;
       if (isTerminalCompositionKey(event, this.composing)) {
         return;
       }
@@ -12467,7 +12471,9 @@ var __t3Client = (() => {
       id: id2,
       title,
       scope: "surface",
-      ...defaultKey === null ? {} : { defaultKey },
+      // Native matches these on `event.key` alone, so a non-Latin layout's
+      // Cmd+л reaches the shell instead of clearing through physical KeyK.
+      ...defaultKey === null ? {} : { defaultKey, defaultKeyLogicalOnly: true },
       when: TERMINAL_FOCUS_WHEN
     });
     return [
@@ -12517,13 +12523,26 @@ var __t3Client = (() => {
     if (mac && key === "k" && meta && !ctrl && !alt && !shift) return "clear";
     return null;
   }
-  function terminalEditingCommandForKey(event, keybindings, platform = typeof navigator === "undefined" ? "" : navigator.platform) {
+  function terminalEditingCommandForKey(event, keybindings, options, platform = typeof navigator === "undefined" ? "" : navigator.platform) {
+    if (event.type !== void 0 && event.type !== "keydown") return null;
+    if (keybindings !== void 0) {
+      const resolved = keybindings.resolveTerminalFocusKey(event);
+      if (resolved === null) return defaultTerminalEditingCommand(event, platform);
+      const prefix = `ext.${options.pluginId}.`;
+      const own = resolved.startsWith(prefix) ? resolved.slice(prefix.length) : null;
+      return own !== null && isTerminalEditingCommand(own) ? own : null;
+    }
     const command = defaultTerminalEditingCommand(event, platform);
     if (command === null) return null;
-    if (keybindings !== void 0 && keybindings.resolveTerminalFocusKey(event) !== null) {
-      return null;
-    }
-    return command;
+    return options.binding === "pending" ? "hold" : command;
+  }
+  function terminalEditingBeforeKey(event, keybindings, options, send, platform = typeof navigator === "undefined" ? "" : navigator.platform) {
+    const action = terminalEditingCommandForKey(event, keybindings, options, platform);
+    if (action === null) return true;
+    event.preventDefault();
+    event.stopPropagation();
+    if (action !== "hold") send(TERMINAL_EDITING_INPUT[action]);
+    return false;
   }
 
   // selectionMenu.tsx
@@ -14303,8 +14322,10 @@ var __t3Client = (() => {
     return pane instanceof HTMLElement ? pane.dataset.t3TerminalPane ?? null : null;
   }
   function useEditingCommands(host, session, panel, active) {
+    const binding = (0, import_react2.useRef)("pending");
     (0, import_react2.useEffect)(() => {
       if (!active) return;
+      binding.current = "pending";
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       let release = null;
@@ -14323,16 +14344,30 @@ var __t3Client = (() => {
         (registration) => {
           if (registration === null) return;
           if (signal.aborted) registration.release();
-          else release = registration.release;
+          else {
+            release = registration.release;
+            binding.current = "bound";
+          }
         },
         () => {
+          if (!signal.aborted) binding.current = "unavailable";
         }
       );
       return () => {
         controller.abort();
+        binding.current = "pending";
         release?.();
       };
     }, [host, session, panel, active]);
+    return binding;
+  }
+  function handleBeforeKey(event, panel, terminalId, keybindings, binding) {
+    return terminalEditingBeforeKey(
+      event,
+      keybindings,
+      { pluginId: manifestId, binding },
+      (data) => panel.sendInput(terminalId, data)
+    );
   }
   function writeSystemMessage(surface, message) {
     surface.write(`\r
@@ -14352,14 +14387,6 @@ var __t3Client = (() => {
       insert: (selection) => composer.invoke("insertTerminalContext", selection, session.signal)
     };
   }
-  function handleBeforeKey(event, panel, terminalId, keybindings) {
-    const command = terminalEditingCommandForKey(event, keybindings);
-    if (command === null) return true;
-    event.preventDefault();
-    event.stopPropagation();
-    panel.sendInput(terminalId, TERMINAL_EDITING_INPUT[command]);
-    return false;
-  }
   function TerminalPane(props) {
     const {
       host,
@@ -14372,7 +14399,8 @@ var __t3Client = (() => {
       visible,
       assets,
       themeVars,
-      appearanceVars
+      appearanceVars,
+      editingBinding
     } = props;
     const [, bump] = (0, import_react2.useReducer)((value) => value + 1, 0);
     const [attachment] = (0, import_react2.useState)(
@@ -14520,7 +14548,7 @@ var __t3Client = (() => {
           onResize: (cols, rows) => panel.resize(terminalId, cols, rows),
           onSelectionChange: selectionMenu.onSelectionChange,
           onContextMenu: selectionMenu.onContextMenu,
-          beforeKey: (event) => handleBeforeKey(event, panel, terminalId, host.keybindings),
+          beforeKey: (event) => handleBeforeKey(event, panel, terminalId, host.keybindings, editingBinding.current),
           onLinkActivate: (text) => {
             if (surface === null) return;
             const paneSurface = surface;
@@ -14869,7 +14897,12 @@ var __t3Client = (() => {
     const themeVars = useThemeVars(host, session, visible);
     const appearanceVars = useTerminalAppearanceVars(host, session, visible);
     const assets = useGhosttyAssets(host, session);
-    useEditingCommands(host, session, panel, visible && assets.kind === "ready");
+    const editingBinding = useEditingCommands(
+      host,
+      session,
+      panel,
+      visible && assets.kind === "ready"
+    );
     const snapshot = panel.snapshot;
     const activeId = snapshot.activeTerminalId;
     const activeTab = snapshot.tabs.find((tab) => tab.terminalId === activeId) ?? null;
@@ -15253,7 +15286,8 @@ var __t3Client = (() => {
                         visible,
                         assets,
                         themeVars,
-                        appearanceVars
+                        appearanceVars,
+                        editingBinding
                       }
                     )
                   },

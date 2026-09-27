@@ -55,6 +55,7 @@ export interface ExtensionCommandDescriptor {
   readonly title: string;
   readonly description?: string;
   readonly defaultKey?: string | readonly string[];
+  readonly defaultKeyLogicalOnly?: boolean;
   readonly when?: string;
   readonly scope: "surface" | "thread" | "global";
   readonly activation?: {
@@ -358,6 +359,13 @@ export function registerCommands(input: {
     const defaultKeys = defaultKeysOf(command.defaultKey);
     if (defaultKeys === null || defaultKeys.some((key) => parseKeybindingShortcut(key) === null)) {
       reject("invalid default key");
+      continue;
+    }
+    if (
+      command.defaultKeyLogicalOnly !== undefined &&
+      typeof command.defaultKeyLogicalOnly !== "boolean"
+    ) {
+      reject("invalid defaultKeyLogicalOnly");
       continue;
     }
     if (command.activation !== undefined) {
@@ -974,7 +982,8 @@ export function dispatchExtensionCommand(
 
 /**
  * Matches a keydown against plugin `defaultKey` declarations — consulted only
- * after the user's resolved keybindings miss, so user rules always win.
+ * after the user's resolved keybindings miss, so user rules always win. A
+ * `defaultKeyLogicalOnly` declaration matches the layout key alone.
  */
 export function extensionCommandForKeydown(
   event: ShortcutEventLike,
@@ -988,7 +997,9 @@ export function extensionCommandForKeydown(
       if (command.defaultShortcuts.length === 0) continue;
       if (!matchesWhenClause(command.whenAst ?? undefined, when)) continue;
       if (
-        !command.defaultShortcuts.some(({ shortcut }) => matchesShortcut(event, shortcut, platform))
+        !command.defaultShortcuts.some(({ shortcut }) =>
+          matchesShortcut(event, shortcut, platform, command.defaultKeyLogicalOnly === true),
+        )
       )
         continue;
       return extensionCommandName(registration.installationId, command.id);

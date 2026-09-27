@@ -1214,6 +1214,7 @@ var commandDescriptorSchema = {
         }
       ]
     },
+    defaultKeyLogicalOnly: { type: "boolean" },
     when: { type: "string", minLength: 1, maxLength: 256 },
     scope: { enum: ["surface", "thread", "global"] },
     activation: {

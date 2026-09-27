@@ -155,38 +155,73 @@ NodeTest.describe("terminal editing commands — local fallback precedence", () 
       },
     };
   };
+  const own = (binding = "pending") => ({ pluginId: "t3.terminal", binding });
+  const ctrlL = () => keydown("l", { ctrlKey: true });
 
   NodeTest.it("applies the default when no user or native rule claims the chord", () => {
     const keybindings = resolver(null);
-    const event = keydown("l", { ctrlKey: true });
-    NodeAssert.equal(terminalEditingCommandForKey(event, keybindings, MAC), "clear");
+    const event = ctrlL();
+    NodeAssert.equal(terminalEditingCommandForKey(event, keybindings, own(), MAC), "clear");
     NodeAssert.deepEqual(keybindings.chords, [event]);
   });
 
-  NodeTest.it("yields a claimed chord to the encoder instead of the displaced default", () => {
-    // A user rule rebinding ctrl+l (to anything — a native command, another
-    // plugin, or this command itself) outranks the plugin default.
-    for (const claim of ["sidebar.toggle", "ext.acme.tools.run", "ext.t3.terminal.clear"]) {
+  NodeTest.it("applies the editing command a user rule binds, on any chord", () => {
+    // Ctrl+U is no default, but a user rule names clear: the fallback runs
+    // clear instead of letting Ghostty send its own 0x15.
+    const event = keydown("u", { ctrlKey: true });
+    NodeAssert.equal(
+      terminalEditingCommandForKey(event, resolver("ext.t3.terminal.clear"), own(), MAC),
+      "clear",
+    );
+    NodeAssert.equal(
+      terminalEditingCommandForKey(ctrlL(), resolver("ext.t3.terminal.wordBackward"), own(), MAC),
+      "wordBackward",
+    );
+  });
+
+  NodeTest.it("yields a chord claimed by anything else to the encoder", () => {
+    for (const claim of [
+      "sidebar.toggle",
+      "ext.acme.tools.run",
+      "ext.t3.terminal.toggle",
+      "ext.t3.terminal.toString",
+      "ext.t3.terminalx.clear",
+    ]) {
       NodeAssert.equal(
-        terminalEditingCommandForKey(keydown("l", { ctrlKey: true }), resolver(claim), MAC),
+        terminalEditingCommandForKey(ctrlL(), resolver(claim), own(), MAC),
         null,
         claim,
       );
     }
   });
 
-  NodeTest.it("keeps the defaults on a host without the resolver", () => {
-    NodeAssert.equal(
-      terminalEditingCommandForKey(keydown("ArrowLeft", { altKey: true }), undefined, MAC),
-      "wordBackward",
-    );
-  });
+  NodeTest.it(
+    "holds default chords while the binding is pending on a host without the resolver",
+    () => {
+      const altLeft = keydown("ArrowLeft", { altKey: true });
+      NodeAssert.equal(
+        terminalEditingCommandForKey(altLeft, undefined, own("pending"), MAC),
+        "hold",
+      );
+      NodeAssert.equal(
+        terminalEditingCommandForKey(altLeft, undefined, own("unavailable"), MAC),
+        "wordBackward",
+      );
+      NodeAssert.equal(
+        terminalEditingCommandForKey(altLeft, undefined, own("bound"), MAC),
+        "wordBackward",
+      );
+      NodeAssert.equal(
+        terminalEditingCommandForKey(keydown("a"), undefined, own("pending"), MAC),
+        null,
+      );
+    },
+  );
 
-  NodeTest.it("never consults the host for keys that are not editing defaults", () => {
-    const keybindings = resolver("sidebar.toggle");
-    NodeAssert.equal(terminalEditingCommandForKey(keydown("a"), keybindings, MAC), null);
+  NodeTest.it("ignores keyups", () => {
+    const keybindings = resolver("ext.t3.terminal.clear");
     NodeAssert.equal(
-      terminalEditingCommandForKey(keydown("n", { metaKey: true }), keybindings, MAC),
+      terminalEditingCommandForKey({ ...ctrlL(), type: "keyup" }, keybindings, own(), MAC),
       null,
     );
     NodeAssert.deepEqual(keybindings.chords, []);

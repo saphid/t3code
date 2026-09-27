@@ -1300,6 +1300,7 @@ var __t3Client = (() => {
           }
         ]
       },
+      defaultKeyLogicalOnly: { type: "boolean" },
       when: { type: "string", minLength: 1, maxLength: 256 },
       scope: { enum: ["surface", "thread", "global"] },
       activation: {

@@ -327,6 +327,8 @@ NodeTest.test("local Ghostty editing intercepts exist: Ctrl+L writes FF to the P
     },
     panel,
     "terminal-1",
+    undefined,
+    "bound",
   );
   NodeAssert.equal(result, false);
   NodeAssert.ok(prevented && stopped);

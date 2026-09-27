@@ -53,7 +53,9 @@ export function terminalEditingCommands(
     id,
     title,
     scope: "surface",
-    ...(defaultKey === null ? {} : { defaultKey }),
+    // Native matches these on `event.key` alone, so a non-Latin layout's
+    // Cmd+л reaches the shell instead of clearing through physical KeyK.
+    ...(defaultKey === null ? {} : { defaultKey, defaultKeyLogicalOnly: true }),
     when: TERMINAL_FOCUS_WHEN,
   });
   return [
@@ -114,24 +116,64 @@ export function defaultTerminalEditingCommand(
   return null;
 }
 
+/** Where the editing command set's host registration and binding stand. */
+export type TerminalEditingBindingState = "pending" | "bound" | "unavailable";
+
 /**
- * The editing command the VT surface should apply locally for a keydown the
- * host did not dispatch. The host's capture dispatcher runs first and
- * consumes any chord it resolves to a registered command, so reaching here
- * means it could not (no binding yet, grant denied, no active thread). User
- * and native rules still outrank the defaults: when the host keymap claims
- * the chord for anything, the key is left to the encoder so typing is never
- * swallowed by a displaced default.
+ * What the VT surface does with a keydown the host did not dispatch: apply
+ * an editing command locally, `"hold"` the key (consume it, write nothing),
+ * or null to leave it to Ghostty's encoder.
+ */
+export type TerminalEditingKeyAction = TerminalEditingCommandId | "hold" | null;
+
+/**
+ * The local fallback for the editing commands. The host's capture dispatcher
+ * runs first and consumes any chord it dispatches, so reaching here means it
+ * could not — typically because the set's binding is still pending. The
+ * fallback resolves through the same effective table the dispatcher uses:
+ * a user rule naming one of this plugin's editing commands applies that
+ * command (a Ctrl+U rebound to clear clears, never Ghostty's 0x15), any
+ * other claim leaves the key to the encoder so a conflict never swallows
+ * typing, and the native-matching defaults apply only on a miss. Without
+ * the host resolver the user's rules are unreadable, so default chords are
+ * held until the binding settles rather than run over a possible rebind.
  */
 export function terminalEditingCommandForKey(
   event: ShortcutEventLike,
   keybindings: Pick<UiKeybindingsHost, "resolveTerminalFocusKey"> | undefined,
+  options: { readonly pluginId: string; readonly binding: TerminalEditingBindingState },
   platform = typeof navigator === "undefined" ? "" : navigator.platform,
-): TerminalEditingCommandId | null {
+): TerminalEditingKeyAction {
+  if (event.type !== undefined && event.type !== "keydown") return null;
+  if (keybindings !== undefined) {
+    const resolved = keybindings.resolveTerminalFocusKey(event);
+    if (resolved === null) return defaultTerminalEditingCommand(event, platform);
+    const prefix = `ext.${options.pluginId}.`;
+    const own = resolved.startsWith(prefix) ? resolved.slice(prefix.length) : null;
+    return own !== null && isTerminalEditingCommand(own) ? own : null;
+  }
   const command = defaultTerminalEditingCommand(event, platform);
   if (command === null) return null;
-  if (keybindings !== undefined && keybindings.resolveTerminalFocusKey(event) !== null) {
-    return null;
-  }
-  return command;
+  return options.binding === "pending" ? "hold" : command;
+}
+
+/**
+ * The VT surface's `beforeKey` for the editing commands: applies the local
+ * fallback's action through `send` and returns whether Ghostty should still
+ * encode the key. Returning false also makes the surface swallow the key's
+ * release, so a held or applied chord never leaks a Kitty release event.
+ */
+export function terminalEditingBeforeKey(
+  event: ShortcutEventLike & { preventDefault(): void; stopPropagation(): void },
+  keybindings: Pick<UiKeybindingsHost, "resolveTerminalFocusKey"> | undefined,
+  options: { readonly pluginId: string; readonly binding: TerminalEditingBindingState },
+  send: (data: string) => void,
+  platform = typeof navigator === "undefined" ? "" : navigator.platform,
+): boolean {
+  const action = terminalEditingCommandForKey(event, keybindings, options, platform);
+  if (action === null) return true;
+  event.preventDefault();
+  event.stopPropagation();
+  if (action !== "hold") send(TERMINAL_EDITING_INPUT[action]);
+  return false;
 }

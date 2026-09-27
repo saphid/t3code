@@ -632,7 +632,14 @@ export class GhosttyTerminalSurface {
   private resizeNotified = false;
   private canvasConfigured = false;
   private theme: GhosttyTheme;
-  private readonly suppressedKeyCodes = new Set<string>();
+  /**
+   * Codes whose latest press this surface encoded to the PTY. Only those get
+   * a release: a press consumed anywhere else — beforeKey, copy/paste, or a
+   * host dispatcher that stopped the keydown before it reached the input —
+   * must not leak a Kitty report-event-types release the shell never saw
+   * pressed.
+   */
+  private readonly encodedKeyCodes = new Set<string>();
   private pasteShortcutToken = 0;
   private copyShortcutToken = 0;
   private clearSelectionAfterCopy = false;
@@ -1103,14 +1110,10 @@ export class GhosttyTerminalSurface {
   }
 
   private readonly onKeyDown = (event: KeyboardEvent) => {
-    // Presses handled outside the terminal must also swallow their release:
-    // beforeKey runs side effects (keybindings, navigation sends), so it cannot
-    // be consulted again on keyup, and Kitty report-event-types sessions would
-    // otherwise receive a release for a press the shell never saw.
-    if (isTerminalAltGraphText(event) || !this.options.beforeKey(event)) {
-      this.suppressedKeyCodes.add(event.code);
-      return;
-    }
+    // Every path that does not encode this press also drops its release (see
+    // encodedKeyCodes); beforeKey runs side effects, so keyup cannot re-ask it.
+    this.encodedKeyCodes.delete(event.code);
+    if (isTerminalAltGraphText(event) || !this.options.beforeKey(event)) return;
     if (isTerminalCopyShortcut(event) && this.hasSelection()) {
       // A plain Ctrl+C/Cmd+C fires the browser's native copy event, caught in
       // onCopyEvent; not preventing the default keeps that path alive. WebKit
@@ -1163,11 +1166,9 @@ export class GhosttyTerminalSurface {
           });
         }
       }
-      this.suppressedKeyCodes.add(event.code);
       return;
     }
     if (isTerminalPasteShortcut(event)) {
-      this.suppressedKeyCodes.add(event.code);
       const clipboard = navigator.clipboard;
       if (typeof clipboard?.readText === "function") {
         // Race the async clipboard read against the browser's own paste event:
@@ -1198,14 +1199,14 @@ export class GhosttyTerminalSurface {
     this.clearPrimedCopy();
     const data = this.core.encodeKey(event);
     if (data.length === 0) return;
-    this.suppressedKeyCodes.delete(event.code);
+    this.encodedKeyCodes.add(event.code);
     event.preventDefault();
     event.stopPropagation();
     this.options.onData(data);
   };
 
   private readonly onKeyUp = (event: KeyboardEvent) => {
-    if (this.suppressedKeyCodes.delete(event.code)) return;
+    if (!this.encodedKeyCodes.delete(event.code)) return;
     if (isTerminalCompositionKey(event, this.composing)) {
       return;
     }
@@ -1227,10 +1228,10 @@ export class GhosttyTerminalSurface {
   private readonly onBlur = () => {
     this.focused = false;
     this.refreshHoveredLink();
-    // Suppressions survive blur deliberately: a shortcut that moves focus (for
-    // example terminal-toggle) must still swallow its own keyup if focus comes
-    // back before release. Stale entries are harmless — an encoding keydown
-    // always removes its code first.
+    // Encoded presses survive blur deliberately: a key held across a focus
+    // round trip still owes the shell its release. A press that moved focus
+    // (for example terminal-toggle) was never encoded, so its keyup stays
+    // swallowed if focus comes back before release.
     // The steady unfocused hollow cursor must not inherit an off blink phase.
     this.cursorOn = true;
     this.requestRender();
