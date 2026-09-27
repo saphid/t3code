@@ -4421,6 +4421,61 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     );
   }
 
+  // The asset success contract decodes `x-content-type-options`, which a cross-origin
+  // browser client (desktop `t3code://app`, remote web) can only read when exposed.
+  const extensionAssetCorsCases = [
+    { name: "desktop renderer in development", origin: "t3code://app", dev: true },
+    { name: "remote web client", origin: crossOriginClientOrigin, dev: false },
+  ] as const;
+  for (const corsCase of extensionAssetCorsCases) {
+    it.effect(`exposes extension asset response headers to the ${corsCase.name}`, () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest(
+          corsCase.dev ? { config: { devUrl: new URL(crossOriginClientOrigin) } } : undefined,
+        );
+        const corsOptions = corsCase.dev
+          ? { origin: corsCase.origin, credentials: true }
+          : undefined;
+
+        const assetUrl = yield* getHttpServerUrl("/api/extensions/asset");
+        const preflight = yield* fetchEffect(assetUrl, {
+          method: "OPTIONS",
+          headers: {
+            origin: corsCase.origin,
+            "access-control-request-method": "POST",
+            "access-control-request-headers": "authorization, content-type",
+          },
+        });
+        assert.equal(preflight.status, 204);
+        assertBrowserApiCorsPreflightHeaders(preflight.headers, corsOptions);
+
+        const response = yield* fetchEffect(assetUrl, {
+          method: "POST",
+          headers: { origin: corsCase.origin, "content-type": "application/json" },
+          body: "{}",
+        });
+        assertBrowserApiCorsResponseHeaders(response.headers, corsOptions);
+        assert.deepEqual(splitHeaderTokens(response.headers["access-control-expose-headers"]), [
+          "x-content-type-options",
+        ]);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    );
+  }
+
+  it.effect("does not allow unlisted origins to read extension assets in development", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({ config: { devUrl: new URL(crossOriginClientOrigin) } });
+
+      const assetUrl = yield* getHttpServerUrl("/api/extensions/asset");
+      const response = yield* fetchEffect(assetUrl, {
+        method: "POST",
+        headers: { origin: "https://unlisted.example", "content-type": "application/json" },
+        body: "{}",
+      });
+      assert.equal(response.headers["access-control-allow-origin"], undefined);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("includes CORS headers on remote websocket-ticket auth failures", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
