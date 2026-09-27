@@ -14150,38 +14150,60 @@ ${ind(d)}}`;
   var SETTLED_REFS_MAX = 4096;
   function createFaviconReadQueue(options) {
     const queued = /* @__PURE__ */ new Map();
-    const running = /* @__PURE__ */ new Set();
+    const running = /* @__PURE__ */ new Map();
     const settled = /* @__PURE__ */ new Set();
     const finish = (ref, src) => {
       settled.add(ref);
       if (settled.size > SETTLED_REFS_MAX) settled.delete(settled.values().next().value);
       options.settle(ref, src);
     };
+    const start = (ref, views, read) => {
+      const controller = new AbortController();
+      const joined = /* @__PURE__ */ new Set();
+      const release = () => {
+        for (const signal of joined) if (!signal.aborted) return;
+        controller.abort();
+      };
+      const join = (signal) => {
+        joined.add(signal);
+        signal.addEventListener("abort", release, { once: true });
+      };
+      running.set(ref, { controller, join });
+      for (const signal of views.keys()) join(signal);
+      read(ref, controller.signal).then(
+        (src) => finish(ref, src),
+        () => {
+          if (!controller.signal.aborted) finish(ref, null);
+        }
+      ).finally(() => {
+        for (const signal of joined) signal.removeEventListener("abort", release);
+        running.delete(ref);
+        pump();
+      });
+    };
     const pump = () => {
-      for (const [ref, demand] of queued) {
+      for (const [ref, views] of queued) {
         if (running.size >= options.maxInFlight) return;
-        if (demand.signal.aborted || settled.has(ref)) {
+        for (const signal of views.keys()) if (signal.aborted) views.delete(signal);
+        const read = views.values().next().value;
+        if (read === void 0 || settled.has(ref)) {
           queued.delete(ref);
           continue;
         }
         if (running.has(ref)) continue;
         queued.delete(ref);
-        running.add(ref);
-        demand.read(ref, demand.signal).then(
-          (src) => finish(ref, src),
-          () => {
-            if (!demand.signal.aborted) finish(ref, null);
-          }
-        ).finally(() => {
-          running.delete(ref);
-          pump();
-        });
+        start(ref, views, read);
       }
     };
     return {
       request(refs, read, signal) {
         if (signal.aborted) return;
-        for (const ref of refs) if (!settled.has(ref)) queued.set(ref, { read, signal });
+        for (const ref of refs) {
+          if (settled.has(ref)) continue;
+          const reading = running.get(ref);
+          if (reading && !reading.controller.signal.aborted) reading.join(signal);
+          else queued.set(ref, (queued.get(ref) ?? /* @__PURE__ */ new Map()).set(signal, read));
+        }
         pump();
       },
       inFlight: () => running.size
@@ -14426,9 +14448,9 @@ ${ind(d)}}`;
     const key = faviconOriginKey(rawUrl);
     if (!key) return GLYPH;
     const own = ref ? cache2.resolved[ref]?.src : null;
-    if (own) return { kind: "image", src: own, tier: "captured" };
+    if (ref && own) return { kind: "image", src: own, tier: "captured", ref };
     const captured = cache2.captured[key];
-    if (captured) return { kind: "image", src: captured.src, tier: "captured" };
+    if (captured) return { kind: "image", src: captured.src, tier: "captured", ref: captured.ref };
     if (cache2.byOrigin[key]) return GLYPH;
     const src = faviconUrlForOrigin(rawUrl, FAVICON_PROVIDER_SIZE);
     return src ? { kind: "image", src, tier: "provider" } : GLYPH;
@@ -14471,9 +14493,9 @@ ${ind(d)}}`;
     version += 1;
     for (const listener of listeners) listener();
   }
-  function faviconImageFailed(rawUrl, tier, ref) {
+  function faviconImageFailed(rawUrl, shown) {
     commit(
-      tier === "captured" ? dropCapturedFavicon(cache, rawUrl, ref) : recordProviderFaviconFailure(cache, rawUrl, Date.now())
+      shown.tier === "captured" ? dropCapturedFavicon(cache, rawUrl, shown.ref) : recordProviderFaviconFailure(cache, rawUrl, Date.now())
     );
   }
   var reads = createFaviconReadQueue({
@@ -14544,7 +14566,7 @@ ${ind(d)}}`;
         width: size,
         height: size,
         style: { ...box, objectFit: "contain" },
-        onError: () => faviconImageFailed(props.url ?? "", resolution.tier, ref)
+        onError: () => faviconImageFailed(props.url ?? "", resolution)
       }
     );
   }

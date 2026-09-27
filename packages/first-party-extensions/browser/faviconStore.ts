@@ -153,10 +153,10 @@ export function recordCapturedFavicon(
 }
 
 /**
- * Drop a captured favicon that failed to render — the tab's own `ref` when it
- * rendered one, else the origin's capture. The ref is marked broken so it is
- * neither shown, re-applied nor re-read; an origin showing it falls back to
- * the provider.
+ * Drop a captured favicon that failed to render — the `ref` actually shown
+ * (`FaviconResolution.ref`), else the origin's capture. The ref is marked
+ * broken so it is neither shown, re-applied nor re-read; an origin showing it
+ * falls back to the provider.
  */
 export function dropCapturedFavicon(
   cache: FaviconCache,
@@ -265,7 +265,14 @@ export function expireStaleFaviconFailure(
 }
 
 export type FaviconResolution =
-  | { readonly kind: "image"; readonly src: string; readonly tier: "captured" | "provider" }
+  /** `ref` is the capture actually shown — the tab's own, or its origin's fallback. */
+  | {
+      readonly kind: "image";
+      readonly src: string;
+      readonly tier: "captured";
+      readonly ref: string;
+    }
+  | { readonly kind: "image"; readonly src: string; readonly tier: "provider" }
   | { readonly kind: "glyph" };
 
 const GLYPH: FaviconResolution = { kind: "glyph" };
@@ -302,9 +309,9 @@ export function resolveFavicon(
   const key = faviconOriginKey(rawUrl);
   if (!key) return GLYPH;
   const own = ref ? cache.resolved[ref]?.src : null;
-  if (own) return { kind: "image", src: own, tier: "captured" };
+  if (ref && own) return { kind: "image", src: own, tier: "captured", ref };
   const captured = cache.captured[key];
-  if (captured) return { kind: "image", src: captured.src, tier: "captured" };
+  if (captured) return { kind: "image", src: captured.src, tier: "captured", ref: captured.ref };
   if (cache.byOrigin[key]) return GLYPH;
   const src = faviconUrlForOrigin(rawUrl, FAVICON_PROVIDER_SIZE);
   return src ? { kind: "image", src, tier: "provider" } : GLYPH;

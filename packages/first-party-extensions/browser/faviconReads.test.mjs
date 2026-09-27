@@ -111,6 +111,41 @@ NodeTest.describe("createFaviconReadQueue", () => {
     NodeAssert.equal(cache().resolved.r9.src, icon("r9"));
   });
 
+  NodeTest.it("keeps a queued ref for a live view when a later requester closes", async () => {
+    const { queue, cache } = panel();
+    const reads = controlledReads();
+    const first = new AbortController();
+    const refs = restoredTabs(MAX_FAVICON_READS + 1).map((tab) => tab.faviconRef);
+    queue.request(refs, reads.read, first.signal);
+    const second = new AbortController();
+    queue.request([refs.at(-1)], reads.read, second.signal);
+    second.abort();
+    while (reads.waiting() > 0) await reads.releaseOne();
+    NodeAssert.equal(reads.started(), refs.length);
+    NodeAssert.equal(cache().resolved[refs.at(-1)].src, icon(refs.at(-1)));
+  });
+
+  NodeTest.it("aborts a running read only once every requesting view closes", async () => {
+    const { queue, cache } = panel();
+    const reads = controlledReads();
+    const first = new AbortController();
+    const second = new AbortController();
+    queue.request(["shared"], reads.read, first.signal);
+    queue.request(["shared"], reads.read, second.signal);
+    first.abort();
+    for (let turn = 0; turn < 4; turn += 1) await Promise.resolve();
+    NodeAssert.equal(queue.inFlight(), 1);
+    await reads.releaseOne();
+    NodeAssert.equal(reads.started(), 1);
+    NodeAssert.equal(cache().resolved.shared.src, icon("shared"));
+
+    queue.request(["closing"], reads.read, second.signal);
+    second.abort();
+    for (let turn = 0; turn < 4; turn += 1) await Promise.resolve();
+    NodeAssert.equal(queue.inFlight(), 0);
+    NodeAssert.equal(cache().resolved.closing, undefined);
+  });
+
   NodeTest.it("records a failed read once and never reads a settled ref again", async () => {
     const settled = [];
     const queue = createFaviconReadQueue({

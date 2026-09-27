@@ -45,12 +45,11 @@ function commit(next: FaviconCache): void {
 /** `<img onError>` entry point — shared by every surface's favicon. */
 export function faviconImageFailed(
   rawUrl: string,
-  tier: "captured" | "provider",
-  ref?: string | null,
+  shown: Extract<FaviconResolution, { kind: "image" }>,
 ): void {
   commit(
-    tier === "captured"
-      ? dropCapturedFavicon(cache, rawUrl, ref)
+    shown.tier === "captured"
+      ? dropCapturedFavicon(cache, rawUrl, shown.ref)
       : recordProviderFaviconFailure(cache, rawUrl, Date.now()),
   );
 }
@@ -162,7 +161,7 @@ export function BrowserFavicon(props: {
       width={size}
       height={size}
       style={{ ...box, objectFit: "contain" }}
-      onError={() => faviconImageFailed(props.url ?? "", resolution.tier, ref)}
+      onError={() => faviconImageFailed(props.url ?? "", resolution)}
     />
   );
 }

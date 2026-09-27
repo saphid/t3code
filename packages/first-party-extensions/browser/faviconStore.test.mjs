@@ -131,6 +131,7 @@ NodeTest.describe("resolveFavicon", () => {
       kind: "image",
       src: icon,
       tier: "captured",
+      ref: "r1",
     });
     // A failed provider image does not hide a capture for the same origin.
     cache = recordProviderFaviconFailure(cache, "https://example.com/", 1_000);
@@ -344,6 +345,19 @@ NodeTest.describe("applyResolvedFaviconRefs", () => {
     NodeAssert.equal(broken.resolved.a.src, null);
     NodeAssert.equal(resolveFavicon(broken, "http://localhost:3000/b", "b").src, other);
     NodeAssert.equal(dropCapturedFavicon(broken, "http://localhost:3000/a", "a"), broken);
+  });
+
+  NodeTest.it("names the displayed fallback ref, so its failure clears that capture", () => {
+    // Tab `b` captured the origin; the tab navigated to ref `a`, whose read failed.
+    let cache = recordResolvedFaviconRef(emptyFaviconCache(), "b", other, 1);
+    cache = applyResolvedFaviconRefs(cache, [routeB], 2);
+    cache = recordResolvedFaviconRef(cache, "a", null, 3);
+    const shown = resolveFavicon(cache, "http://localhost:3000/a", "a");
+    NodeAssert.deepEqual(shown, { kind: "image", src: other, tier: "captured", ref: "b" });
+    // The rendered image failing must invalidate `b`, not the requested `a`.
+    const broken = dropCapturedFavicon(cache, "http://localhost:3000/a", shown.ref);
+    NodeAssert.equal(broken.resolved.b.src, null);
+    NodeAssert.deepEqual(resolveFavicon(broken, "http://localhost:3000/a", "a"), { kind: "glyph" });
   });
 
   NodeTest.it("never evicts an origin live tabs show, so over-cap tabs still settle", () => {
