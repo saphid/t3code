@@ -556,6 +556,138 @@ describe("browser sessions adapter", () => {
     }),
   );
 
+  it.effect(
+    "navigate on a held session loads through the owning host and settles on its report",
+    () =>
+      Effect.gen(function* () {
+        const { provider, engineHosts } = yield* harness;
+        const opened = (yield* invoke(provider, "open", { url: "localhost:5173" })) as {
+          readonly serverEpoch: string;
+          readonly session: { readonly tabId: string };
+        };
+        const { events, fence } = yield* attachDesktopHost(engineHosts, {
+          tabId: opened.session.tabId,
+          serverEpoch: opened.serverEpoch,
+        });
+        yield* engineHosts.report(DESKTOP_SOCKET, {
+          ...fence,
+          status: pageStatus({ _tag: "Success", url: "http://localhost:5173/", title: "Dev" }),
+        });
+        const answer = (result: BrowserEngineHosts.BrowserEngineDispatchOutcome) =>
+          Effect.gen(function* () {
+            const event = yield* Queue.take(events);
+            if (event.type !== "command") throw new Error("expected a command event");
+            if (result.outcome !== "unknown") {
+              yield* engineHosts.commandResult(DESKTOP_SOCKET, {
+                hostConnectionId: fence.hostConnectionId,
+                commandId: event.commandId,
+                result,
+              });
+            }
+            return event;
+          });
+        const guard = {
+          tabId: opened.session.tabId,
+          serverEpoch: opened.serverEpoch,
+          expectedEngineGeneration: "41",
+        };
+        type Navigation = { readonly kind: string; readonly url: string | null };
+        const navigation = Effect.gen(function* () {
+          const listed = (yield* invoke(provider, "list", {})) as {
+            readonly sessions: readonly { readonly navigation: Navigation }[];
+          };
+          return listed.sessions[0]?.navigation;
+        });
+
+        const hostAnswer = yield* Effect.forkChild(answer({ outcome: "applied" }));
+        const navigated = (yield* invoke(provider, "navigate", {
+          ...guard,
+          url: "localhost:5173/next",
+        })) as { readonly outcome: string; readonly session: { readonly navigation: Navigation } };
+        const event = yield* Fiber.join(hostAnswer);
+        // The owner receives the normalized URL the server recorded, fenced like any page verb.
+        expect(event).toMatchObject({
+          target: fence.target,
+          engineGeneration: "41",
+          command: { _tag: "navigate", url: "http://localhost:5173/next" },
+        });
+        expect(navigated.outcome).toBe("accepted");
+        expect(navigated.session.navigation).toMatchObject({
+          kind: "pending",
+          url: "http://localhost:5173/next",
+        });
+
+        yield* engineHosts.report(DESKTOP_SOCKET, {
+          ...fence,
+          status: pageStatus({ _tag: "Loading", url: "http://localhost:5173/next", title: "Dev" }),
+        });
+        expect(yield* navigation).toMatchObject({
+          kind: "loading",
+          url: "http://localhost:5173/next",
+        });
+        yield* engineHosts.report(DESKTOP_SOCKET, {
+          ...fence,
+          status: pageStatus({ _tag: "Success", url: "http://localhost:5173/next", title: "Next" }),
+        });
+        expect(yield* navigation).toEqual({
+          kind: "loaded",
+          url: "http://localhost:5173/next",
+          title: "Next",
+        });
+
+        const refusing = yield* Effect.forkChild(
+          answer({ outcome: "rejected", reason: "stale-generation" }),
+        );
+        const refused = (yield* invoke(provider, "navigate", {
+          ...guard,
+          url: "localhost:5173/other",
+        })) as { readonly outcome: string };
+        yield* Fiber.join(refusing);
+        expect(refused.outcome).toBe("rejected");
+      }),
+  );
+
+  it.effect("navigate without an owning host stays a recorded request and asks no host", () =>
+    Effect.gen(function* () {
+      const { preview } = yield* harness;
+      let dispatched = 0;
+      const provider = createBrowserSessionsApiProvider(
+        makeDeps(preview, {
+          engineHosts: {
+            ...noEngineHosts,
+            dispatch: () => {
+              dispatched += 1;
+              return Effect.succeed({ outcome: "applied" as const });
+            },
+          } as unknown as BrowserEngineHosts.BrowserEngineHosts["Service"],
+        }),
+      );
+      const opened = (yield* invoke(provider, "open", { url: "localhost:5173" })) as {
+        readonly serverEpoch: string;
+        readonly session: { readonly tabId: string };
+      };
+      const navigated = (yield* invoke(provider, "navigate", {
+        tabId: opened.session.tabId,
+        serverEpoch: opened.serverEpoch,
+        url: "localhost:5173/next",
+        expectedEngineGeneration: null,
+      })) as {
+        readonly outcome: string;
+        readonly session: {
+          readonly requestedUrl: string | null;
+          readonly navigation: { readonly kind: string; readonly url: string | null };
+        };
+      };
+      expect(dispatched).toBe(0);
+      expect(navigated.outcome).toBe("accepted");
+      expect(navigated.session.requestedUrl).toBe("http://localhost:5173/next");
+      expect(navigated.session.navigation).toMatchObject({
+        kind: "pending",
+        url: "http://localhost:5173/next",
+      });
+    }),
+  );
+
   it.effect("engine-reported failure projects the closed failure enum, never native strings", () =>
     Effect.gen(function* () {
       const { provider, engineHosts } = yield* harness;
