@@ -1,6 +1,11 @@
 import * as NodeAssert from "node:assert/strict";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 import * as NodeTest from "node:test";
-import { defineApi } from "../dist/capabilities.js";
+import * as NodeURL from "node:url";
+import React from "react";
+import { bindApi, defineApi } from "../dist/capabilities.js";
 import { requireApi } from "../dist/authoring.js";
 import * as Catalogue from "../dist/catalogue.js";
 
@@ -48,9 +53,130 @@ NodeTest.test("notifications 1.1 keeps default consumers on ^1.0.0", () => {
 
 NodeTest.test("a baseline must be an earlier version of the same major", () => {
   const definition = { ...Catalogue.uiPanelsApi.definition, version: "1.2.3" };
-  const range = (baseline) => requireApi(defineApi(definition, { baseline })).versionRange;
+  const additions = [{ version: "1.2.3", method: definition.methods[1].name, input: "title" }];
+  const range = (baseline) =>
+    requireApi(
+      defineApi(
+        definition,
+        baseline === definition.version ? { baseline } : { baseline, additions },
+      ),
+    ).versionRange;
   NodeAssert.equal(range("1.0.0"), "^1.0.0");
   NodeAssert.equal(range("1.2.3"), "^1.2.3");
   for (const baseline of ["1.3.0", "1.2.4", "0.9.0", "2.0.0", "^1.0.0", "1.0"])
-    NodeAssert.throws(() => defineApi(definition, { baseline }), /baseline/, baseline);
+    NodeAssert.throws(() => defineApi(definition, { baseline, additions }), /baseline/, baseline);
 });
+
+const context = {
+  client: "web",
+  resource: { namespace: "t3.extensions", id: "ext.a", environmentId: "env", projectId: "p" },
+};
+const recordingClient = () => {
+  const requests = [];
+  return {
+    requests,
+    invokeApi: async (request) => {
+      requests.push(request);
+      return request.method === "notify" ? { notificationId: "n" } : { applied: true };
+    },
+  };
+};
+const keepOpenNotify = {
+  severity: "success",
+  title: "Capture",
+  actions: [{ id: "copy", label: "Copy", keepOpen: true }],
+};
+const flashUpdate = {
+  notificationId: "n",
+  flashAction: { actionId: "copy", label: "Copied!", durationMs: 2000 },
+};
+
+NodeTest.test("a default binding refuses members newer than its baseline", async () => {
+  const client = recordingClient();
+  const notifications = bindApi(Catalogue.uiNotificationsApi, client, context);
+  for (const [method, input] of [
+    ["notify", keepOpenNotify],
+    ["update", flashUpdate],
+  ])
+    await NodeAssert.rejects(notifications.invoke(method, input, AbortSignal.timeout(1000)), {
+      name: "ApiVersionError",
+      code: "api-version-not-negotiated",
+      message: new RegExp(`t3\\.ui/notifications#${method} .* needs \\^1\\.1\\.0`),
+    });
+  NodeAssert.deepEqual(client.requests, []);
+  // Members every 1.x host takes still go through at the baseline range.
+  await notifications.invoke(
+    "notify",
+    { severity: "info", title: "Plain", actions: [{ id: "open", label: "Open" }] },
+    AbortSignal.timeout(1000),
+  );
+  NodeAssert.deepEqual(
+    client.requests.map((request) => request.versionRange),
+    ["^1.0.0"],
+  );
+});
+
+NodeTest.test("a binding at the newer range sends those members", async () => {
+  for (const range of ["^1.1.0", "~1.1.0", ">=1.1.0 <2.0.0", "1.1.0"]) {
+    const client = recordingClient();
+    const notifications = bindApi(Catalogue.uiNotificationsApi, client, context, range);
+    await notifications.invoke("notify", keepOpenNotify, AbortSignal.timeout(1000));
+    await notifications.invoke("update", flashUpdate, AbortSignal.timeout(1000));
+    NodeAssert.equal(client.requests.length, 2, range);
+  }
+  // A range the SDK cannot bound from below stays refused.
+  const loose = bindApi(Catalogue.uiNotificationsApi, recordingClient(), context, "1.x || ^1.1.0");
+  await NodeAssert.rejects(loose.invoke("notify", keepOpenNotify, AbortSignal.timeout(1000)), {
+    name: "ApiVersionError",
+  });
+});
+
+NodeTest.test("a baseline below the current version must name what it added", () => {
+  const definition = { ...Catalogue.uiPanelsApi.definition, version: "1.2.0" };
+  NodeAssert.throws(() => defineApi(definition, { baseline: "1.0.0" }), /additions/);
+  const method = definition.methods[1].name;
+  for (const additions of [
+    [{ version: "1.0.0", method, input: "title" }],
+    [{ version: "1.3.0", method, input: "title" }],
+    [{ version: "1.1.0", method: "nope", input: "title" }],
+    [{ version: "1.1.0", method, input: "" }],
+  ])
+    NodeAssert.throws(() => defineApi(definition, { baseline: "1.0.0", additions }), /addition/);
+  defineApi(definition, {
+    baseline: "1.0.0",
+    additions: [{ version: "1.1.0", method, input: "title" }],
+  });
+});
+
+NodeTest.test(
+  "a built pack cannot ship an unprobed 1.1.0 call on a ^1.0.0 requirement",
+  async () => {
+    const sdk = NodeURL.fileURLToPath(new URL("..", import.meta.url));
+    const dir = await NodeFSP.mkdtemp(NodePath.join(sdk, ".tmp-unprobed-"));
+    try {
+      await NodeFSP.cp(NodePath.join(sdk, "test/fixtures/notifications-unprobed"), dir, {
+        recursive: true,
+      });
+      const build = NodeChildProcess.spawnSync(
+        process.execPath,
+        [NodePath.join(sdk, "bin/t3-extension.mjs"), "build", dir],
+        { encoding: "utf8" },
+      );
+      NodeAssert.equal(build.status, 0, build.stderr || build.stdout);
+      const built = JSON.parse(
+        await NodeFSP.readFile(NodePath.join(dir, ".t3-extension/t3-extension.json"), "utf8"),
+      );
+      NodeAssert.deepEqual(built.requires, [{ id: "t3.ui/notifications", versionRange: "^1.0.0" }]);
+      const { default: factory } = await import(
+        NodeURL.pathToFileURL(NodePath.join(dir, ".t3-extension/client.mjs")).href
+      );
+      const client = recordingClient();
+      const pack = factory({ React, invokeApi: client.invokeApi });
+      pack.surfaces[0].createView({ context, signal: AbortSignal.timeout(1000) });
+      await NodeAssert.rejects(globalThis.unprobedNotify, { name: "ApiVersionError" });
+      NodeAssert.deepEqual(client.requests, []);
+    } finally {
+      await NodeFSP.rm(dir, { recursive: true, force: true });
+    }
+  },
+);

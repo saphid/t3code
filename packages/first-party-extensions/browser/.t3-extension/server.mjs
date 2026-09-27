@@ -47,16 +47,28 @@ function copyJson(value, maxBytes = MAX_PAYLOAD_BYTES) {
 }
 
 // node_modules/@t3tools/extension-sdk/dist/capabilities.js
+var SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
+var semverKey = (version) => {
+  const [, major, minor, patch] = SEMVER.exec(version);
+  return Number(major) * 1e12 + Number(minor) * 1e6 + Number(patch);
+};
 function defineApi(definition, options = {}) {
   const validated = validateApiDefinition(definition);
-  if (options.baseline === void 0)
+  if (options.baseline === void 0) {
+    if (options.additions?.length)
+      throw new Error("API additions need a baseline");
     return { definition: validated };
-  const parse = (version) => version.split(".").map(Number);
-  const [major, minor, patch] = parse(options.baseline);
-  const [currentMajor, currentMinor, currentPatch] = parse(validated.version);
-  if (!/^\d+\.\d+\.\d+$/.test(options.baseline) || major !== currentMajor || minor * 1e6 + patch > currentMinor * 1e6 + currentPatch)
+  }
+  const major = (version) => version.split(".")[0];
+  if (!SEMVER.test(options.baseline) || major(options.baseline) !== major(validated.version) || semverKey(options.baseline) > semverKey(validated.version))
     throw new Error("API baseline must be an earlier version of the same major");
-  return { definition: validated, baseline: options.baseline };
+  const additions = (options.additions ?? []).map((addition) => ({ ...addition }));
+  if (options.baseline !== validated.version && additions.length === 0)
+    throw new Error("An API baseline below the current version must list its additions");
+  for (const addition of additions)
+    if (!SEMVER.test(addition.version) || semverKey(addition.version) <= semverKey(options.baseline) || semverKey(addition.version) > semverKey(validated.version) || !validated.methods?.some((method) => method.name === addition.method) || !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(addition.input))
+      throw new Error("Invalid API addition: " + JSON.stringify(addition));
+  return { definition: validated, baseline: options.baseline, additions };
 }
 function defineStreamApi(definition) {
   const validated = validateApiDefinition(definition);
@@ -7195,7 +7207,13 @@ var uiNotificationsApi = defineApi(
     ]
   },
   // Consumers keep loading on a 1.0.0 host; probe before using the 1.1.0 fields.
-  { baseline: "1.0.0" }
+  {
+    baseline: "1.0.0",
+    additions: [
+      { version: "1.1.0", method: "notify", input: "actions[].keepOpen" },
+      { version: "1.1.0", method: "update", input: "flashAction" }
+    ]
+  }
 );
 var uiPanelsApi = defineApi({
   id: "t3.ui/panels",

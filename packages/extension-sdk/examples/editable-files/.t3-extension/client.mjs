@@ -166,23 +166,69 @@ var __t3Client = (() => {
   }
 
   // node_modules/@t3tools/extension-sdk/dist/capabilities.js
+  var ApiVersionError = class extends Error {
+    name = "ApiVersionError";
+    code = "api-version-not-negotiated";
+  };
+  var SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
+  var semverKey = (version) => {
+    const [, major, minor, patch] = SEMVER.exec(version);
+    return Number(major) * 1e12 + Number(minor) * 1e6 + Number(patch);
+  };
+  function rangeFloor(range) {
+    if (range.includes("||"))
+      return null;
+    let floor = null;
+    for (const comparator of range.trim().split(/\s+/)) {
+      const match = /^(\^|~|>=|=)?v?(\d+\.\d+\.\d+)$/.exec(comparator);
+      if (match)
+        floor = Math.max(floor ?? 0, semverKey(match[2]));
+      else if (!/^<=?v?\d+\.\d+\.\d+$/.test(comparator))
+        return null;
+    }
+    return floor;
+  }
+  function hasInput(value, path3) {
+    if (path3.length === 0)
+      return value !== void 0;
+    if (value === null || typeof value !== "object")
+      return false;
+    const [head, ...rest] = path3;
+    const key = head.endsWith("[]") ? head.slice(0, -2) : head;
+    const child = value[key];
+    if (!head.endsWith("[]"))
+      return hasInput(child, rest);
+    return Array.isArray(child) && child.some((item) => hasInput(item, rest));
+  }
   function defineApi(definition, options = {}) {
     const validated = validateApiDefinition(definition);
-    if (options.baseline === void 0)
+    if (options.baseline === void 0) {
+      if (options.additions?.length)
+        throw new Error("API additions need a baseline");
       return { definition: validated };
-    const parse = (version) => version.split(".").map(Number);
-    const [major, minor, patch] = parse(options.baseline);
-    const [currentMajor, currentMinor, currentPatch] = parse(validated.version);
-    if (!/^\d+\.\d+\.\d+$/.test(options.baseline) || major !== currentMajor || minor * 1e6 + patch > currentMinor * 1e6 + currentPatch)
+    }
+    const major = (version) => version.split(".")[0];
+    if (!SEMVER.test(options.baseline) || major(options.baseline) !== major(validated.version) || semverKey(options.baseline) > semverKey(validated.version))
       throw new Error("API baseline must be an earlier version of the same major");
-    return { definition: validated, baseline: options.baseline };
+    const additions = (options.additions ?? []).map((addition) => ({ ...addition }));
+    if (options.baseline !== validated.version && additions.length === 0)
+      throw new Error("An API baseline below the current version must list its additions");
+    for (const addition of additions)
+      if (!SEMVER.test(addition.version) || semverKey(addition.version) <= semverKey(options.baseline) || semverKey(addition.version) > semverKey(validated.version) || !validated.methods?.some((method) => method.name === addition.method) || !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(addition.input))
+        throw new Error("Invalid API addition: " + JSON.stringify(addition));
+    return { definition: validated, baseline: options.baseline, additions };
   }
   function defaultVersionRange(api) {
     return "^" + (api.baseline ?? api.definition.version);
   }
   function bindApi(api, client, context, versionRange = defaultVersionRange(api)) {
+    const floor = rangeFloor(versionRange);
+    const unnegotiated = (api.additions ?? []).filter((addition) => floor === null || floor < semverKey(addition.version));
     return {
       invoke(method, input, signal) {
+        const addition = unnegotiated.find((item) => item.method === method && hasInput(input, item.input.split(".")));
+        if (addition)
+          return Promise.reject(new ApiVersionError(`${api.definition.id}#${method} ${addition.input} needs ^${addition.version}, but this binding asks for ${versionRange}; probe the host version, then bind at ^${addition.version}`));
         return client.invokeApi({ id: api.definition.id, versionRange, method, input, context }, signal);
       }
     };
@@ -7334,7 +7380,13 @@ var __t3Client = (() => {
       ]
     },
     // Consumers keep loading on a 1.0.0 host; probe before using the 1.1.0 fields.
-    { baseline: "1.0.0" }
+    {
+      baseline: "1.0.0",
+      additions: [
+        { version: "1.1.0", method: "notify", input: "actions[].keepOpen" },
+        { version: "1.1.0", method: "update", input: "flashAction" }
+      ]
+    }
   );
   var uiPanelsApi = defineApi({
     id: "t3.ui/panels",

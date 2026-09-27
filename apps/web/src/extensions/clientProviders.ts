@@ -35,7 +35,9 @@ import {
   persistClientSettingsUpdate,
   subscribeClientSettings,
 } from "../hooks/useSettings";
+import { createElement } from "react";
 import { toastManager, type ThreadToastData } from "../components/ui/toast";
+import { Spinner } from "../components/ui/spinner";
 import { terminalThemeFromApp } from "../components/ThreadTerminalDrawer";
 import {
   selectThreadExtensionDock,
@@ -400,8 +402,21 @@ interface OwnedNotification {
   readonly owner: string;
   data: ThreadToastData;
   readonly actions: readonly NotificationAction[];
+  /** Whether the notification carries an explicit `durationMs` lifetime. */
+  readonly timed: boolean;
   /** Temporary labels from `flashAction`, keyed by action id. */
   readonly flashes: Map<string, { label: string; timeoutId: ReturnType<typeof setTimeout> }>;
+}
+
+/**
+ * Base UI never times out a `type:"loading"` toast. A loading notification
+ * with an explicit `durationMs` keeps the store's pausable timer by rendering
+ * the native spinner through `leadingIcon` on an untyped toast instead.
+ */
+function notificationPresentation(severity: string, timed: boolean) {
+  return severity === "loading" && timed
+    ? { leadingIcon: createElement(Spinner, { className: "size-4 opacity-80" }) }
+    : { type: severity, leadingIcon: undefined };
 }
 
 const notificationsByEnvironment = new Map<string, Map<string, OwnedNotification>>();
@@ -540,6 +555,8 @@ export function createNotificationsClientProvider(deps: ClientProviderDeps): Cli
               keepOpen: record.keepOpen === true,
             };
           });
+          const timeout = typeof notification.durationMs === "number" ? notification.durationMs : 0;
+          const { leadingIcon, ...presentation } = notificationPresentation(severity, timeout > 0);
           const flashes: OwnedNotification["flashes"] = new Map();
           const rendered =
             ownedActions.length > 0
@@ -548,11 +565,12 @@ export function createNotificationsClientProvider(deps: ClientProviderDeps): Cli
           const toastData: ThreadToastData = {
             ...(threadRef !== undefined ? { threadRef } : {}),
             dismissible,
+            ...(leadingIcon ? { leadingIcon } : {}),
             onClose: () => settle(notificationId, { dismissed: true }),
             ...rendered?.data,
           };
           const toastId: string = toastManager.add({
-            type: severity,
+            ...presentation,
             title,
             ...(typeof body === "string" ? { description: body } : {}),
             ...(rendered?.actionProps ? { actionProps: rendered.actionProps } : {}),
@@ -561,7 +579,7 @@ export function createNotificationsClientProvider(deps: ClientProviderDeps): Cli
             // without `durationMs` open), and the top-level `onClose` settles
             // the outcome on every close path — timeout, closeAll, swipe,
             // programmatic — not just the X button, which reaches `data.onClose`.
-            timeout: typeof notification.durationMs === "number" ? notification.durationMs : 0,
+            timeout,
             onClose: () => settle(notificationId, { dismissed: true }),
             data: toastData,
           });
@@ -570,6 +588,7 @@ export function createNotificationsClientProvider(deps: ClientProviderDeps): Cli
             owner: call.caller.installationId,
             data: toastData,
             actions: ownedActions,
+            timed: timeout > 0,
             flashes,
           });
           return { applied: true } as unknown as Json;
@@ -579,7 +598,12 @@ export function createNotificationsClientProvider(deps: ClientProviderDeps): Cli
           const entry = ownedEntry(call, notificationId);
           const patch = readInputObject(input.patch ?? null);
           const patchRecord: Record<string, unknown> = {};
-          if (typeof patch.severity === "string") patchRecord.type = patch.severity;
+          if (typeof patch.severity === "string") {
+            const { type, leadingIcon } = notificationPresentation(patch.severity, entry.timed);
+            patchRecord.type = type;
+            entry.data = { ...entry.data, leadingIcon };
+            patchRecord.data = entry.data;
+          }
           if (typeof patch.title === "string") patchRecord.title = patch.title;
           if (typeof patch.body === "string") patchRecord.description = patch.body;
           if (typeof patch.dismissible === "boolean") {

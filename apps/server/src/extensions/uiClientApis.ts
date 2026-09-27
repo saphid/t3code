@@ -361,6 +361,9 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
     connectionId: string,
   ) => {
     const record = live.get(notificationId);
+    // Settlement is idempotent: the client's outcome event and an API
+    // dismiss response can both arrive, and the first keeps its queued clicks.
+    if (!record && outcomes.has(notificationId)) return;
     if (record) {
       live.delete(notificationId);
       for (const waiter of record.waiters.splice(0)) waiter.resolve(outcome);

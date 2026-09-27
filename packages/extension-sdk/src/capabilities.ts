@@ -90,35 +90,95 @@ export interface ApiClient {
   discoverApis(context: ViewContext, signal: AbortSignal): Promise<readonly ApiDiscovery[]>;
 }
 export type ApiMethodTypes = Record<string, { input: Json; output: Json }>;
+/** An optional method input member a minor release added after `baseline`. */
+export interface ApiAddition {
+  /** The release that added the member. */
+  readonly version: string;
+  readonly method: string;
+  /** Dotted input path; `[]` steps into array items, as in `"actions[].keepOpen"`. */
+  readonly input: string;
+}
 /** Phantom method types accompany an immutable, serializable runtime descriptor. */
 export interface TypedApi<T extends ApiMethodTypes> {
   readonly definition: ApiDefinition;
   /** See `defineApi`. */
   readonly baseline?: string;
+  readonly additions?: readonly ApiAddition[];
   readonly types?: T;
+}
+/**
+ * `bindApi` refused a call using a member newer than the binding's range
+ * guarantees. Probe the host version (`discoverApis`), then bind at the
+ * member's range.
+ */
+export class ApiVersionError extends Error {
+  override readonly name = "ApiVersionError";
+  readonly code = "api-version-not-negotiated";
+}
+
+const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
+const semverKey = (version: string) => {
+  const [, major, minor, patch] = SEMVER.exec(version)!;
+  return Number(major) * 1e12 + Number(minor) * 1e6 + Number(patch);
+};
+/** The lowest version a simple range admits, or null when it has no clear floor. */
+function rangeFloor(range: string): number | null {
+  if (range.includes("||")) return null;
+  let floor: number | null = null;
+  for (const comparator of range.trim().split(/\s+/)) {
+    const match = /^(\^|~|>=|=)?v?(\d+\.\d+\.\d+)$/.exec(comparator);
+    if (match) floor = Math.max(floor ?? 0, semverKey(match[2]!));
+    else if (!/^<=?v?\d+\.\d+\.\d+$/.test(comparator)) return null;
+  }
+  return floor;
+}
+function hasInput(value: unknown, path: readonly string[]): boolean {
+  if (path.length === 0) return value !== undefined;
+  if (value === null || typeof value !== "object") return false;
+  const [head, ...rest] = path as [string, ...string[]];
+  const key = head.endsWith("[]") ? head.slice(0, -2) : head;
+  const child = (value as Record<string, unknown>)[key];
+  if (!head.endsWith("[]")) return hasInput(child, rest);
+  return Array.isArray(child) && child.some((item) => hasInput(item, rest));
 }
 /**
  * `baseline` is the oldest version of this major that `requireApi` and
  * `bindApi` ask for by default. Set it when a minor release only adds
- * optional members, so existing consumers keep loading on older hosts; a
- * consumer that needs the new members passes its own range and probes.
+ * optional members, so existing consumers keep loading on older hosts, and
+ * list every such member in `additions`: a binding whose range admits a
+ * version before an addition refuses calls that use it with
+ * `ApiVersionError`, so a pack cannot declare the baseline and ship the new
+ * member unprobed.
  */
 export function defineApi<T extends ApiMethodTypes>(
   definition: ApiDefinition,
-  options: { readonly baseline?: string } = {},
+  options: { readonly baseline?: string; readonly additions?: readonly ApiAddition[] } = {},
 ): TypedApi<T> {
   const validated = validateApiDefinition(definition);
-  if (options.baseline === undefined) return { definition: validated };
-  const parse = (version: string) => version.split(".").map(Number);
-  const [major, minor, patch] = parse(options.baseline);
-  const [currentMajor, currentMinor, currentPatch] = parse(validated.version);
+  if (options.baseline === undefined) {
+    if (options.additions?.length) throw new Error("API additions need a baseline");
+    return { definition: validated };
+  }
+  const major = (version: string) => version.split(".")[0];
   if (
-    !/^\d+\.\d+\.\d+$/.test(options.baseline) ||
-    major !== currentMajor ||
-    minor! * 1e6 + patch! > currentMinor! * 1e6 + currentPatch!
+    !SEMVER.test(options.baseline) ||
+    major(options.baseline) !== major(validated.version) ||
+    semverKey(options.baseline) > semverKey(validated.version)
   )
     throw new Error("API baseline must be an earlier version of the same major");
-  return { definition: validated, baseline: options.baseline };
+  const additions = (options.additions ?? []).map((addition) => ({ ...addition }));
+  if (options.baseline !== validated.version && additions.length === 0)
+    throw new Error("An API baseline below the current version must list its additions");
+  for (const addition of additions)
+    if (
+      !SEMVER.test(addition.version) ||
+      semverKey(addition.version) <= semverKey(options.baseline) ||
+      semverKey(addition.version) > semverKey(validated.version) ||
+      !validated.methods?.some((method) => method.name === addition.method) ||
+      !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(addition.input)
+    )
+      throw new Error("Invalid API addition: " + JSON.stringify(addition));
+  return { definition: validated, baseline: options.baseline, additions };
 }
 /** The range a consumer asks for when it names none: `^baseline`, else `^version`. */
 export function defaultVersionRange(api: {
@@ -133,12 +193,27 @@ export function bindApi<T extends ApiMethodTypes>(
   context: ViewContext,
   versionRange = defaultVersionRange(api),
 ) {
+  // Additions this range does not guarantee; see `defineApi`.
+  const floor = rangeFloor(versionRange);
+  const unnegotiated = (api.additions ?? []).filter(
+    (addition) => floor === null || floor < semverKey(addition.version),
+  );
   return {
     invoke<K extends keyof T & string>(
       method: K,
       input: T[K]["input"],
       signal: AbortSignal,
     ): Promise<T[K]["output"]> {
+      const addition = unnegotiated.find(
+        (item) => item.method === method && hasInput(input, item.input.split(".")),
+      );
+      if (addition)
+        return Promise.reject(
+          new ApiVersionError(
+            `${api.definition.id}#${method} ${addition.input} needs ^${addition.version}, ` +
+              `but this binding asks for ${versionRange}; probe the host version, then bind at ^${addition.version}`,
+          ),
+        );
       return client.invokeApi(
         { id: api.definition.id, versionRange, method, input, context },
         signal,

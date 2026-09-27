@@ -249,7 +249,7 @@ function deferred() {
 }
 
 /** A notifications client whose answer the test settles, or that never answers. */
-function notifier(answer) {
+function notifier(answer, range) {
   const calls = [];
   const client = {
     invokeApi: (request, signal) => {
@@ -263,7 +263,7 @@ function notifier(answer) {
       return Promise.resolve(answer);
     },
   };
-  return { calls, client, api: bindApi(uiNotificationsApi, client, context) };
+  return { calls, client, api: bindApi(uiNotificationsApi, client, context, range) };
 }
 
 NodeTest.describe("reportCaptureOutcome", () => {
@@ -439,7 +439,7 @@ NodeTest.describe("Screenshot saved actions", () => {
     "flashes Copied! for 2 s on a restored success toast after a copy lands",
     async () => {
       const capture = actionCapture();
-      const { calls, api } = notifier({ applied: true });
+      const { calls, api } = notifier({ applied: true }, "^1.1.0");
       await runCaptureToastAction(api, capture, request, "n-1", "copy-image", signal);
       await runCaptureToastAction(api, capture, request, "n-1", "copy-path", signal);
       NodeAssert.deepEqual(
@@ -528,12 +528,14 @@ NodeTest.describe("Screenshot saved actions", () => {
       savedPage,
       signal,
       5_000,
-      { capture, context, discoverApis: discovering("1.1.0") },
+      { capture, context, discoverApis: discovering("1.1.0"), invokeApi: client.invokeApi },
     );
     NodeAssert.equal(await report.fallback, null);
     await done;
     await new Promise((resolve) => setImmediate(resolve));
     NodeAssert.equal(calls[0].input.actions.length, 3);
+    // The probed toast and its updates ask for the range that carries keepOpen.
+    NodeAssert.deepEqual(new Set(calls.map((call) => call.versionRange)), new Set(["^1.1.0"]));
     NodeAssert.deepEqual(
       capture.calls.map(([name]) => name),
       ["copyPath", "reveal"],
@@ -557,7 +559,12 @@ NodeTest.describe("Screenshot saved actions", () => {
       savedPage,
       signal,
       5_000,
-      { capture: actionCapture(), context, discoverApis: discovering("1.1.0") },
+      {
+        capture: actionCapture(),
+        context,
+        discoverApis: discovering("1.1.0"),
+        invokeApi: client.invokeApi,
+      },
     );
     NodeAssert.equal(await report.fallback, null);
     NodeAssert.equal(calls.length, 2);
@@ -581,7 +588,7 @@ NodeTest.describe("Screenshot saved actions", () => {
       outcome,
       signal,
       5_000,
-      { capture: actionCapture(), context, discoverApis },
+      { capture: actionCapture(), context, discoverApis, invokeApi: client.invokeApi },
     );
     NodeAssert.equal(await report.fallback, null);
     return calls.filter((call) => call.method === "notify").map((call) => call.input);

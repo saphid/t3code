@@ -1,3 +1,6 @@
+import * as NodeModule from "node:module";
+// @effect-diagnostics-next-line nodeBuiltinImport:off
+import * as NodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -17,7 +20,7 @@ import {
   getClientSettings,
   persistClientSettingsPatch,
 } from "../hooks/useSettings";
-import { toastManager } from "../components/ui/toast";
+import { toastManager, type ThreadToastData } from "../components/ui/toast";
 import { formatInlineContextReference } from "../lib/composerContextReferences";
 import { useComposerDraftStore, type ComposerContextInsertionHandler } from "../composerDraftStore";
 import {
@@ -37,6 +40,12 @@ import {
   type ExtensionCommandEnvironmentDeps,
 } from "./extensionCommandRegistry";
 import type { InstalledPackage } from "./installedController";
+
+// Base UI keeps ToastStore internal; tests drive the real store to cover its timer rules.
+const requireFromHere = NodeModule.createRequire(import.meta.url);
+const { ToastStore } = requireFromHere(
+  NodePath.join(NodePath.dirname(requireFromHere.resolve("@base-ui/react/toast")), "store.js"),
+);
 
 vi.mock("../components/ThreadTerminalDrawer", () => ({
   terminalThemeFromApp: () => ({
@@ -658,6 +667,155 @@ describe("notifications provider", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  describe("with the native toast store", () => {
+    interface StoreToast {
+      type?: string;
+      timeout?: number;
+      transitionStatus?: string;
+      data?: ThreadToastData;
+    }
+    // Wires the manager to a real store exactly as Base UI's ToastProvider does.
+    function toastHarness() {
+      const store = new ToastStore({
+        timeout: 5000,
+        limit: 3,
+        viewport: null,
+        toasts: [],
+        hovering: false,
+        focused: false,
+        isWindowFocused: true,
+        prevFocusElement: null,
+      });
+      const unsubscribe = (
+        toastManager as unknown as {
+          " subscribe": (
+            listener: (event: { action: string; options: { id: string } }) => void,
+          ) => () => void;
+        }
+      )[" subscribe"](({ action, options }) => {
+        if (action === "update") store.updateToast(options.id, options);
+        else if (action === "close") store.closeToast(options.id);
+        else store.addToast(options);
+      });
+      const emits: [string, ClientProviderEmitEvent][] = [];
+      const provider = createNotificationsClientProvider(
+        makeDeps(["t3.ui/notify"], (correlationId, event) => emits.push([correlationId, event])),
+      );
+      return {
+        store,
+        emits,
+        provider,
+        toasts: () => store.state.toasts as StoreToast[],
+        dispose() {
+          unsubscribe();
+          store.disposeEffect()();
+        },
+      };
+    }
+    const dismissed = (id: string) => [
+      id,
+      { type: "notificationOutcome", outcome: { dismissed: true } },
+    ];
+
+    it("honors durationMs on a loading notification and pauses it while hovered", () => {
+      vi.useFakeTimers();
+      const h = toastHarness();
+      try {
+        h.provider.invoke(
+          invokeCall("notify", {
+            notification: {
+              notificationId: "n-load",
+              severity: "loading",
+              title: "Working",
+              durationMs: 5000,
+            },
+          }),
+        );
+        const spinner = h.toasts()[0]!.data?.leadingIcon;
+        vi.advanceTimersByTime(3000);
+        h.store.setHovering(true);
+        h.store.pauseTimers();
+        vi.advanceTimersByTime(10_000);
+        expect(h.emits).toEqual([]);
+        h.store.setHovering(false);
+        h.store.resumeTimers();
+        vi.advanceTimersByTime(2001);
+        expect(h.emits).toEqual([dismissed("n-load")]);
+        // The spinner still renders even though the store type is timer-bearing.
+        expect(spinner).toBeTruthy();
+      } finally {
+        h.dispose();
+        vi.useRealTimers();
+      }
+    });
+
+    it("keeps an explicit lifetime across severity changes to and from loading", () => {
+      vi.useFakeTimers();
+      const h = toastHarness();
+      try {
+        h.provider.invoke(
+          invokeCall("notify", {
+            notification: {
+              notificationId: "n-to",
+              severity: "success",
+              title: "Saved",
+              durationMs: 5000,
+            },
+          }),
+        );
+        vi.advanceTimersByTime(2000);
+        h.provider.invoke(
+          invokeCall("update", { notificationId: "n-to", patch: { severity: "loading" } }),
+        );
+        const spinner = h.toasts()[0]!.data?.leadingIcon;
+        vi.advanceTimersByTime(3001);
+        expect(h.emits).toEqual([dismissed("n-to")]);
+        expect(spinner).toBeTruthy();
+
+        h.provider.invoke(
+          invokeCall("notify", {
+            notification: {
+              notificationId: "n-from",
+              severity: "loading",
+              title: "Working",
+              durationMs: 5000,
+            },
+          }),
+        );
+        vi.advanceTimersByTime(2000);
+        h.provider.invoke(
+          invokeCall("update", { notificationId: "n-from", patch: { severity: "success" } }),
+        );
+        const toast = h.toasts().find((candidate) => candidate.transitionStatus !== "ending")!;
+        expect(toast.type).toBe("success");
+        expect(toast.data?.leadingIcon).toBeUndefined();
+        vi.advanceTimersByTime(3001);
+        expect(h.emits).toEqual([dismissed("n-to"), dismissed("n-from")]);
+      } finally {
+        h.dispose();
+        vi.useRealTimers();
+      }
+    });
+
+    it("leaves a loading notification without durationMs open, like native", () => {
+      vi.useFakeTimers();
+      const h = toastHarness();
+      try {
+        h.provider.invoke(
+          invokeCall("notify", {
+            notification: { notificationId: "n-open", severity: "loading", title: "Working" },
+          }),
+        );
+        vi.advanceTimersByTime(60_000);
+        expect(h.toasts()[0]!.type).toBe("loading");
+        expect(h.emits).toEqual([]);
+      } finally {
+        h.dispose();
+        vi.useRealTimers();
+      }
+    });
   });
 
   it("puts a trailing primary action in native's bottom action row", () => {

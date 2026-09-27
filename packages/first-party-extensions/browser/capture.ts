@@ -17,7 +17,7 @@ import {
   type BrowserCaptureResult,
   type BrowserCaptureTarget,
 } from "@t3tools/extension-sdk/catalogue";
-import { bindApi, type ApiDiscovery } from "@t3tools/extension-sdk/capabilities";
+import { bindApi, type ApiClient, type ApiDiscovery } from "@t3tools/extension-sdk/capabilities";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
@@ -357,6 +357,8 @@ export interface CaptureToastActionHost {
     context: ViewContext,
     signal: AbortSignal,
   ) => Promise<readonly ApiDiscovery[]>;
+  /** Carries the keepOpen toast and its updates once the probe passes. */
+  readonly invokeApi: ApiClient["invokeApi"];
 }
 
 /** `keepOpen` actions and `flashAction` arrived in t3.ui/notifications 1.1.0. */
@@ -406,34 +408,43 @@ export function reportCaptureOutcome(
   if (toast === null) return { inline: message, fallback: Promise.resolve(null) };
   const ack = AbortSignal.timeout(ackTimeoutMs);
   const delivery = AbortSignal.any([signal, ack]);
-  const notify = (input: CaptureToast) =>
-    notifications.invoke("notify", { ...input, threadId, anchor: "thread" }, delivery);
+  const notify = (input: CaptureToast, via = notifications) =>
+    via.invoke("notify", { ...input, threadId, anchor: "thread" }, delivery);
   const { actions, ...plain } = toast;
   const fallback = Promise.resolve()
-    .then(async () =>
-      actions === undefined ||
-      actionHost === null ||
-      !(await hostTakesKeepOpen(actionHost, delivery))
-        ? notify(plain)
-        : notify(toast).then(
-            ({ notificationId }) => {
-              if (outcome.kind === "added")
-                void serveCaptureToastActions(
-                  notifications,
-                  actionHost.capture,
-                  { context: actionHost.context, artifactRef: outcome.artifact.artifactRef },
-                  notificationId,
-                  signal,
-                );
-            },
-            // A 1.1.0 host with a 1.0.0 client rejects keepOpen actions;
-            // native's toast without them still beats a status line.
-            (error: unknown) => {
-              if (signal.aborted || ack.aborted) throw error;
-              return notify(plain);
-            },
-          ),
-    )
+    .then(async () => {
+      if (
+        actions === undefined ||
+        actionHost === null ||
+        !(await hostTakesKeepOpen(actionHost, delivery))
+      )
+        return notify(plain);
+      // The SDK refuses keepOpen and flashAction below the range just probed.
+      const probed = bindApi(
+        uiNotificationsApi,
+        actionHost,
+        actionHost.context,
+        NOTIFICATIONS_KEEP_OPEN_RANGE,
+      );
+      return notify(toast, probed).then(
+        ({ notificationId }) => {
+          if (outcome.kind === "added")
+            void serveCaptureToastActions(
+              probed,
+              actionHost.capture,
+              { context: actionHost.context, artifactRef: outcome.artifact.artifactRef },
+              notificationId,
+              signal,
+            );
+        },
+        // A 1.1.0 host with a 1.0.0 client rejects keepOpen actions;
+        // native's toast without them still beats a status line.
+        (error: unknown) => {
+          if (signal.aborted || ack.aborted) throw error;
+          return notify(plain);
+        },
+      );
+    })
     .then(
       () => null,
       () => (signal.aborted || ack.aborted ? null : message),
@@ -475,6 +486,7 @@ export async function runBrowserCapture(
           capture: host.browserCapture,
           context,
           discoverApis: (probeContext, signal) => host.discoverApis(probeContext, signal),
+          invokeApi: (request, signal) => host.invokeApi(request, signal),
         }
       : null,
   );

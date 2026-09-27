@@ -5,7 +5,7 @@ import type {
   HostApiPrincipal,
   HostApiProvider,
 } from "@t3tools/extension-runtime";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import type { ClientApiProviders, CorrelationEntry } from "./ClientApiProviders.ts";
 import { createUiClientApiProviders } from "./uiClientApis.ts";
@@ -682,6 +682,54 @@ describe("notifications adapter", () => {
     await expect(awaitAction()).resolves.toEqual({ actionId: "copy-path" });
     await expect(awaitAction()).resolves.toEqual({ actionId: "reveal" });
     await expect(awaitAction()).resolves.toEqual({ dismissed: true });
+    await expect(awaitAction()).resolves.toEqual({ dismissed: true });
+  });
+
+  it("keeps queued clicks when an API dismiss settles before its response returns", async () => {
+    const bridge = fakeBridge();
+    const { notifications } = makeProviders(bridge);
+    const { notificationId } = (await notifications.invoke(
+      "notify",
+      notifyInput({
+        actions: [
+          { id: "copy-path", label: "Copy path", keepOpen: true },
+          { id: "reveal", label: "Reveal", keepOpen: true },
+        ],
+      }),
+      context,
+      signal,
+      metadata(),
+    )) as { notificationId: string };
+    const awaitAction = () =>
+      notifications.invoke(
+        "awaitAction",
+        { notificationId } as unknown as Json,
+        context,
+        signal,
+        metadata(),
+      );
+    const deliver = bridge.correlations.get(notificationId)!.deliver;
+    deliver({ type: "notificationAction", actionId: "copy-path" });
+    deliver({ type: "notificationAction", actionId: "reveal" });
+    // The web client settles inside its dismiss handler, so the outcome event
+    // can reach the server before the dismiss response does.
+    const invoke = bridge.service.invoke;
+    vi.spyOn(bridge.service, "invoke").mockImplementation((request) => {
+      if (request.method === "dismiss")
+        deliver({ type: "notificationOutcome", outcome: { dismissed: true } });
+      return invoke(request);
+    });
+    await expect(
+      notifications.invoke(
+        "dismiss",
+        { notificationId } as unknown as Json,
+        context,
+        signal,
+        metadata(),
+      ),
+    ).resolves.toEqual({ dismissed: true });
+    await expect(awaitAction()).resolves.toEqual({ actionId: "copy-path" });
+    await expect(awaitAction()).resolves.toEqual({ actionId: "reveal" });
     await expect(awaitAction()).resolves.toEqual({ dismissed: true });
   });
 

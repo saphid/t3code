@@ -183,23 +183,69 @@ var __t3Client = (() => {
   }
 
   // node_modules/@t3tools/extension-sdk/dist/capabilities.js
+  var ApiVersionError = class extends Error {
+    name = "ApiVersionError";
+    code = "api-version-not-negotiated";
+  };
+  var SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
+  var semverKey = (version2) => {
+    const [, major, minor, patch] = SEMVER.exec(version2);
+    return Number(major) * 1e12 + Number(minor) * 1e6 + Number(patch);
+  };
+  function rangeFloor(range) {
+    if (range.includes("||"))
+      return null;
+    let floor = null;
+    for (const comparator of range.trim().split(/\s+/)) {
+      const match4 = /^(\^|~|>=|=)?v?(\d+\.\d+\.\d+)$/.exec(comparator);
+      if (match4)
+        floor = Math.max(floor ?? 0, semverKey(match4[2]));
+      else if (!/^<=?v?\d+\.\d+\.\d+$/.test(comparator))
+        return null;
+    }
+    return floor;
+  }
+  function hasInput(value, path3) {
+    if (path3.length === 0)
+      return value !== void 0;
+    if (value === null || typeof value !== "object")
+      return false;
+    const [head2, ...rest] = path3;
+    const key = head2.endsWith("[]") ? head2.slice(0, -2) : head2;
+    const child = value[key];
+    if (!head2.endsWith("[]"))
+      return hasInput(child, rest);
+    return Array.isArray(child) && child.some((item) => hasInput(item, rest));
+  }
   function defineApi(definition, options = {}) {
     const validated = validateApiDefinition(definition);
-    if (options.baseline === void 0)
+    if (options.baseline === void 0) {
+      if (options.additions?.length)
+        throw new Error("API additions need a baseline");
       return { definition: validated };
-    const parse = (version2) => version2.split(".").map(Number);
-    const [major, minor, patch] = parse(options.baseline);
-    const [currentMajor, currentMinor, currentPatch] = parse(validated.version);
-    if (!/^\d+\.\d+\.\d+$/.test(options.baseline) || major !== currentMajor || minor * 1e6 + patch > currentMinor * 1e6 + currentPatch)
+    }
+    const major = (version2) => version2.split(".")[0];
+    if (!SEMVER.test(options.baseline) || major(options.baseline) !== major(validated.version) || semverKey(options.baseline) > semverKey(validated.version))
       throw new Error("API baseline must be an earlier version of the same major");
-    return { definition: validated, baseline: options.baseline };
+    const additions = (options.additions ?? []).map((addition) => ({ ...addition }));
+    if (options.baseline !== validated.version && additions.length === 0)
+      throw new Error("An API baseline below the current version must list its additions");
+    for (const addition of additions)
+      if (!SEMVER.test(addition.version) || semverKey(addition.version) <= semverKey(options.baseline) || semverKey(addition.version) > semverKey(validated.version) || !validated.methods?.some((method) => method.name === addition.method) || !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(addition.input))
+        throw new Error("Invalid API addition: " + JSON.stringify(addition));
+    return { definition: validated, baseline: options.baseline, additions };
   }
   function defaultVersionRange(api) {
     return "^" + (api.baseline ?? api.definition.version);
   }
   function bindApi(api, client2, context2, versionRange = defaultVersionRange(api)) {
+    const floor = rangeFloor(versionRange);
+    const unnegotiated = (api.additions ?? []).filter((addition) => floor === null || floor < semverKey(addition.version));
     return {
       invoke(method, input, signal) {
+        const addition = unnegotiated.find((item) => item.method === method && hasInput(input, item.input.split(".")));
+        if (addition)
+          return Promise.reject(new ApiVersionError(`${api.definition.id}#${method} ${addition.input} needs ^${addition.version}, but this binding asks for ${versionRange}; probe the host version, then bind at ^${addition.version}`));
         return client2.invokeApi({ id: api.definition.id, versionRange, method, input, context: context2 }, signal);
       }
     };
@@ -7367,7 +7413,13 @@ var __t3Client = (() => {
       ]
     },
     // Consumers keep loading on a 1.0.0 host; probe before using the 1.1.0 fields.
-    { baseline: "1.0.0" }
+    {
+      baseline: "1.0.0",
+      additions: [
+        { version: "1.1.0", method: "notify", input: "actions[].keepOpen" },
+        { version: "1.1.0", method: "update", input: "flashAction" }
+      ]
+    }
   );
   var uiPanelsApi = defineApi({
     id: "t3.ui/panels",
@@ -8593,14 +8645,22 @@ var __t3Client = (() => {
     if (toast === null) return { inline: message, fallback: Promise.resolve(null) };
     const ack = AbortSignal.timeout(ackTimeoutMs);
     const delivery = AbortSignal.any([signal, ack]);
-    const notify = (input) => notifications.invoke("notify", { ...input, threadId, anchor: "thread" }, delivery);
+    const notify = (input, via = notifications) => via.invoke("notify", { ...input, threadId, anchor: "thread" }, delivery);
     const { actions, ...plain } = toast;
-    const fallback = Promise.resolve().then(
-      async () => actions === void 0 || actionHost === null || !await hostTakesKeepOpen(actionHost, delivery) ? notify(plain) : notify(toast).then(
+    const fallback = Promise.resolve().then(async () => {
+      if (actions === void 0 || actionHost === null || !await hostTakesKeepOpen(actionHost, delivery))
+        return notify(plain);
+      const probed = bindApi(
+        uiNotificationsApi,
+        actionHost,
+        actionHost.context,
+        NOTIFICATIONS_KEEP_OPEN_RANGE
+      );
+      return notify(toast, probed).then(
         ({ notificationId }) => {
           if (outcome.kind === "added")
             void serveCaptureToastActions(
-              notifications,
+              probed,
               actionHost.capture,
               { context: actionHost.context, artifactRef: outcome.artifact.artifactRef },
               notificationId,
@@ -8613,8 +8673,8 @@ var __t3Client = (() => {
           if (signal.aborted || ack.aborted) throw error;
           return notify(plain);
         }
-      )
-    ).then(
+      );
+    }).then(
       () => null,
       () => signal.aborted || ack.aborted ? null : message
     );
@@ -8634,7 +8694,8 @@ var __t3Client = (() => {
       host.browserCapture ? {
         capture: host.browserCapture,
         context: context2,
-        discoverApis: (probeContext, signal) => host.discoverApis(probeContext, signal)
+        discoverApis: (probeContext, signal) => host.discoverApis(probeContext, signal),
+        invokeApi: (request, signal) => host.invokeApi(request, signal)
       } : null
     );
     onState({ kind: "done", message: report.inline });
@@ -11365,7 +11426,7 @@ ${ind(d)}}`;
   function isIssue(u) {
     return hasProperty(u, TypeId4) && u[TypeId4] === TypeId4;
   }
-  function hasInput(issue) {
+  function hasInput2(issue) {
     return Object.hasOwn(issue, "input");
   }
   var IssueNodeImpl = class {
@@ -11576,7 +11637,7 @@ ${ind(d)}}`;
   };
   var defaultCheckHook = (issue) => findMessage(issue.issue) ?? findMessage(issue);
   function formatInput(issue) {
-    return hasInput(issue) ? format(issue.input) : void 0;
+    return hasInput2(issue) ? format(issue.input) : void 0;
   }
   function findExpected(issue) {
     const expected = issue.annotations?.expected;

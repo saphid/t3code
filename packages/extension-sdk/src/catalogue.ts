@@ -8671,7 +8671,13 @@ export const uiNotificationsApi = defineApi<{
     ],
   },
   // Consumers keep loading on a 1.0.0 host; probe before using the 1.1.0 fields.
-  { baseline: "1.0.0" },
+  {
+    baseline: "1.0.0",
+    additions: [
+      { version: "1.1.0", method: "notify", input: "actions[].keepOpen" },
+      { version: "1.1.0", method: "update", input: "flashAction" },
+    ],
+  },
 );
 
 export const uiPanelsApi = defineApi<{
