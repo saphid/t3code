@@ -166,10 +166,21 @@ var __t3Client = (() => {
   }
 
   // node_modules/@t3tools/extension-sdk/dist/capabilities.js
-  function defineApi(definition) {
-    return { definition: validateApiDefinition(definition) };
+  function defineApi(definition, options = {}) {
+    const validated = validateApiDefinition(definition);
+    if (options.baseline === void 0)
+      return { definition: validated };
+    const parse = (version) => version.split(".").map(Number);
+    const [major, minor, patch] = parse(options.baseline);
+    const [currentMajor, currentMinor, currentPatch] = parse(validated.version);
+    if (!/^\d+\.\d+\.\d+$/.test(options.baseline) || major !== currentMajor || minor * 1e6 + patch > currentMinor * 1e6 + currentPatch)
+      throw new Error("API baseline must be an earlier version of the same major");
+    return { definition: validated, baseline: options.baseline };
   }
-  function bindApi(api, client, context, versionRange = "^" + api.definition.version) {
+  function defaultVersionRange(api) {
+    return "^" + (api.baseline ?? api.definition.version);
+  }
+  function bindApi(api, client, context, versionRange = defaultVersionRange(api)) {
     return {
       invoke(method, input, signal) {
         return client.invokeApi({ id: api.definition.id, versionRange, method, input, context }, signal);
@@ -182,7 +193,7 @@ var __t3Client = (() => {
       throw new Error("Expected API stream definitions");
     return { definition: validated };
   }
-  function bindStreamApi(api, client, context, versionRange = "^" + api.definition.version) {
+  function bindStreamApi(api, client, context, versionRange = defaultVersionRange(api)) {
     return {
       subscribe(name, input, signal, options) {
         return client.subscribeApi({
@@ -7228,114 +7239,118 @@ var __t3Client = (() => {
       durationMs: { type: "integer", minimum: 0, maximum: UI_NOTIFICATION_FLASH_MAX_MS }
     }
   };
-  var uiNotificationsApi = defineApi({
-    id: "t3.ui/notifications",
-    version: "1.1.0",
-    methods: [
-      {
-        name: "getCapabilities",
-        effect: "read",
-        requiredGrants: [],
-        inputSchema: composerEmptyInputSchema,
-        outputSchema: uiCapabilitiesOutput(["notify", "update", "dismiss", "awaitAction"])
-      },
-      {
-        name: "notify",
-        effect: "write",
-        requiredGrants: [UI_NOTIFY],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["severity", "title"],
-          properties: {
-            severity: { enum: ["info", "success", "warning", "error", "loading"] },
-            title: { type: "string", minLength: 1, maxLength: 200 },
-            body: { type: "string", maxLength: 2e3 },
-            threadId: { type: "string", maxLength: 128 },
-            projectId: { type: "string", maxLength: 128 },
-            anchor: { enum: ["global", "thread"] },
-            dismissible: { type: "boolean" },
-            durationMs: { type: "integer", minimum: 0, maximum: 6e4 },
-            actions: { type: "array", maxItems: 3, items: uiNotificationActionSchema }
-          }
+  var uiNotificationsApi = defineApi(
+    {
+      id: "t3.ui/notifications",
+      version: "1.1.0",
+      methods: [
+        {
+          name: "getCapabilities",
+          effect: "read",
+          requiredGrants: [],
+          inputSchema: composerEmptyInputSchema,
+          outputSchema: uiCapabilitiesOutput(["notify", "update", "dismiss", "awaitAction"])
         },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["notificationId"],
-          properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } }
-        }
-      },
-      {
-        name: "update",
-        effect: "write",
-        requiredGrants: [UI_NOTIFY],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["notificationId"],
-          properties: {
-            notificationId: { type: "string", minLength: 1, maxLength: 160 },
-            severity: { enum: ["info", "success", "warning", "error", "loading"] },
-            title: { type: "string", minLength: 1, maxLength: 200 },
-            body: { type: "string", maxLength: 2e3 },
-            dismissible: { type: "boolean" },
-            flashAction: uiNotificationFlashSchema
-          }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["applied"],
-          properties: { applied: { type: "boolean" } }
-        }
-      },
-      {
-        name: "dismiss",
-        effect: "write",
-        requiredGrants: [UI_NOTIFY],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["notificationId"],
-          properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["dismissed"],
-          properties: { dismissed: { type: "boolean" } }
-        }
-      },
-      {
-        name: "awaitAction",
-        effect: "read",
-        requiredGrants: [UI_NOTIFY],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["notificationId"],
-          properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } }
-        },
-        outputSchema: {
-          anyOf: [
-            {
-              type: "object",
-              additionalProperties: false,
-              required: ["actionId"],
-              properties: { actionId: { type: "string", minLength: 1, maxLength: 80 } }
-            },
-            {
-              type: "object",
-              additionalProperties: false,
-              required: ["dismissed"],
-              properties: { dismissed: { const: true } }
+        {
+          name: "notify",
+          effect: "write",
+          requiredGrants: [UI_NOTIFY],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["severity", "title"],
+            properties: {
+              severity: { enum: ["info", "success", "warning", "error", "loading"] },
+              title: { type: "string", minLength: 1, maxLength: 200 },
+              body: { type: "string", maxLength: 2e3 },
+              threadId: { type: "string", maxLength: 128 },
+              projectId: { type: "string", maxLength: 128 },
+              anchor: { enum: ["global", "thread"] },
+              dismissible: { type: "boolean" },
+              durationMs: { type: "integer", minimum: 0, maximum: 6e4 },
+              actions: { type: "array", maxItems: 3, items: uiNotificationActionSchema }
             }
-          ]
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["notificationId"],
+            properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } }
+          }
+        },
+        {
+          name: "update",
+          effect: "write",
+          requiredGrants: [UI_NOTIFY],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["notificationId"],
+            properties: {
+              notificationId: { type: "string", minLength: 1, maxLength: 160 },
+              severity: { enum: ["info", "success", "warning", "error", "loading"] },
+              title: { type: "string", minLength: 1, maxLength: 200 },
+              body: { type: "string", maxLength: 2e3 },
+              dismissible: { type: "boolean" },
+              flashAction: uiNotificationFlashSchema
+            }
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["applied"],
+            properties: { applied: { type: "boolean" } }
+          }
+        },
+        {
+          name: "dismiss",
+          effect: "write",
+          requiredGrants: [UI_NOTIFY],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["notificationId"],
+            properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } }
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["dismissed"],
+            properties: { dismissed: { type: "boolean" } }
+          }
+        },
+        {
+          name: "awaitAction",
+          effect: "read",
+          requiredGrants: [UI_NOTIFY],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["notificationId"],
+            properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } }
+          },
+          outputSchema: {
+            anyOf: [
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["actionId"],
+                properties: { actionId: { type: "string", minLength: 1, maxLength: 80 } }
+              },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["dismissed"],
+                properties: { dismissed: { const: true } }
+              }
+            ]
+          }
         }
-      }
-    ]
-  });
+      ]
+    },
+    // Consumers keep loading on a 1.0.0 host; probe before using the 1.1.0 fields.
+    { baseline: "1.0.0" }
+  );
   var uiPanelsApi = defineApi({
     id: "t3.ui/panels",
     version: "1.0.0",
@@ -7908,7 +7923,7 @@ var __t3Client = (() => {
       } : {}
     };
   }
-  function requireApi(api, versionRange = "^" + api.definition.version) {
+  function requireApi(api, versionRange = defaultVersionRange(api)) {
     return { id: api.definition.id, versionRange };
   }
 

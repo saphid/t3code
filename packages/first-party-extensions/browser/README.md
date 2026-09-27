@@ -85,7 +85,10 @@ The panel renders through public contracts only:
   Reveal and Copy image through the capability's 1.1.0 artifact actions,
   which act on the copy the desktop saved beside native screenshots; the
   toast stays open and a copy reads "Copied!" briefly
-  (`t3.ui/notifications` 1.1.0 `keepOpen` actions and `flashAction`).
+  (`t3.ui/notifications` 1.1.0 `keepOpen` actions and `flashAction`). The
+  pack still requires only notifications `^1.0.0`: it probes the host's
+  version, and offers the actions only for a capture the desktop saved;
+  otherwise the plain toast goes out.
   Unlike the native pick, the picked elements' text context is not added to
   the draft yet — the composer contract has no preview-annotation insert.
 - `t3.browser/local-servers` (`t3.browser/read-local-servers` grant) fills

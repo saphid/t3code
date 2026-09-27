@@ -617,14 +617,14 @@ describe("notifications provider", () => {
     ]);
   });
 
-  it("settles a durationMs toast through its own timer, not the toast manager", () => {
+  it("hands durationMs to the toast manager, whose timer pauses under the pointer", () => {
     vi.useFakeTimers();
     try {
       const emits: [string, ClientProviderEmitEvent][] = [];
       const provider = createNotificationsClientProvider(
         makeDeps(["t3.ui/notify"], (correlationId, event) => emits.push([correlationId, event])),
       );
-      vi.spyOn(toastManager, "add").mockReturnValue("toast-3" as never);
+      const addSpy = vi.spyOn(toastManager, "add").mockReturnValue("toast-3" as never);
       const closeSpy = vi.spyOn(toastManager, "close").mockImplementation(() => {});
       provider.invoke(
         invokeCall("notify", {
@@ -636,12 +636,20 @@ describe("notifications provider", () => {
           },
         }),
       );
-      vi.advanceTimersByTime(4000);
-      // A parked awaitAction can never be stranded by a timed-out toast.
+      const toastOptions = addSpy.mock.calls[0]![0] as unknown as {
+        timeout: number;
+        onClose: () => void;
+      };
+      expect(toastOptions.timeout).toBe(4000);
+      // A hovered toast outlives its duration: no timer of our own closes it.
+      vi.advanceTimersByTime(10_000);
+      expect(emits).toEqual([]);
+      expect(closeSpy).not.toHaveBeenCalled();
+      // The manager's timed close fires onClose, so a parked awaitAction is never stranded.
+      toastOptions.onClose();
       expect(emits).toEqual([
         ["n-3", { type: "notificationOutcome", outcome: { dismissed: true } }],
       ]);
-      expect(closeSpy).toHaveBeenCalledWith("toast-3");
       // Settled notifications expire honestly for later management.
       expectDenied(
         () => provider.invoke(invokeCall("dismiss", { notificationId: "n-3" })),
@@ -650,6 +658,48 @@ describe("notifications provider", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("puts a trailing primary action in native's bottom action row", () => {
+    const emits: [string, ClientProviderEmitEvent][] = [];
+    const provider = createNotificationsClientProvider(
+      makeDeps(["t3.ui/notify"], (correlationId, event) => emits.push([correlationId, event])),
+    );
+    const addSpy = vi.spyOn(toastManager, "add").mockReturnValue("toast-s" as never);
+    const updateSpy = vi.spyOn(toastManager, "update").mockImplementation(() => {});
+    provider.invoke(
+      invokeCall("notify", {
+        notification: {
+          notificationId: "n-s",
+          severity: "success",
+          title: "Screenshot saved",
+          actions: [
+            { id: "copy-path", label: "Copy path", keepOpen: true },
+            { id: "reveal", label: "Reveal in Finder", keepOpen: true },
+            { id: "copy-image", label: "Copy image", variant: "primary", keepOpen: true },
+          ],
+        },
+      }),
+    );
+    type Button = { children: string; disabled?: boolean; onClick: () => void };
+    const options = addSpy.mock.calls[0]![0] as unknown as {
+      actionProps?: Button;
+      data: { actionLayout?: string; additionalActions: { id: string; props: Button }[] };
+    };
+    expect(options.data.actionLayout).toBe("stacked-end");
+    expect(options.actionProps?.children).toBe("Copy image");
+    expect(options.data.additionalActions.map(({ id }) => id)).toEqual(["copy-path", "reveal"]);
+    options.actionProps!.onClick();
+    expect(emits).toEqual([["n-s", { type: "notificationAction", actionId: "copy-image" }]]);
+
+    provider.invoke(
+      invokeCall("update", {
+        notificationId: "n-s",
+        patch: { flashAction: { actionId: "copy-image", label: "Copied!", durationMs: 2000 } },
+      }),
+    );
+    const patch = updateSpy.mock.calls.at(-1)![1] as { actionProps?: Button };
+    expect(patch.actionProps).toMatchObject({ children: "Copied!", disabled: true });
   });
 
   it("settles the outcome when the manager closes the toast outside data.onClose", () => {

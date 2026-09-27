@@ -7366,6 +7366,12 @@ export interface BrowserCaptureArtifact {
   readonly comment?: string;
   /** Element target only: the picked elements, at most 16. */
   readonly elements?: readonly BrowserCapturePickedElement[];
+  /**
+   * 1.1.0: whether the artifact actions can act on this capture — true only
+   * for a page capture this client saved to disk. Offer them only when true.
+   * Absent on a 1.0.0 host.
+   */
+  readonly saved?: boolean;
 }
 
 export type BrowserCaptureFailureReason =
@@ -8555,114 +8561,118 @@ export const uiNotificationsApi = defineApi<{
     input: { notificationId: string };
     output: { actionId: string } | { dismissed: true };
   };
-}>({
-  id: "t3.ui/notifications",
-  version: "1.1.0",
-  methods: [
-    {
-      name: "getCapabilities",
-      effect: "read",
-      requiredGrants: [],
-      inputSchema: composerEmptyInputSchema,
-      outputSchema: uiCapabilitiesOutput(["notify", "update", "dismiss", "awaitAction"]),
-    },
-    {
-      name: "notify",
-      effect: "write",
-      requiredGrants: [UI_NOTIFY],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["severity", "title"],
-        properties: {
-          severity: { enum: ["info", "success", "warning", "error", "loading"] },
-          title: { type: "string", minLength: 1, maxLength: 200 },
-          body: { type: "string", maxLength: 2000 },
-          threadId: { type: "string", maxLength: 128 },
-          projectId: { type: "string", maxLength: 128 },
-          anchor: { enum: ["global", "thread"] },
-          dismissible: { type: "boolean" },
-          durationMs: { type: "integer", minimum: 0, maximum: 60_000 },
-          actions: { type: "array", maxItems: 3, items: uiNotificationActionSchema },
+}>(
+  {
+    id: "t3.ui/notifications",
+    version: "1.1.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput(["notify", "update", "dismiss", "awaitAction"]),
+      },
+      {
+        name: "notify",
+        effect: "write",
+        requiredGrants: [UI_NOTIFY],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["severity", "title"],
+          properties: {
+            severity: { enum: ["info", "success", "warning", "error", "loading"] },
+            title: { type: "string", minLength: 1, maxLength: 200 },
+            body: { type: "string", maxLength: 2000 },
+            threadId: { type: "string", maxLength: 128 },
+            projectId: { type: "string", maxLength: 128 },
+            anchor: { enum: ["global", "thread"] },
+            dismissible: { type: "boolean" },
+            durationMs: { type: "integer", minimum: 0, maximum: 60_000 },
+            actions: { type: "array", maxItems: 3, items: uiNotificationActionSchema },
+          },
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["notificationId"],
+          properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } },
         },
       },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["notificationId"],
-        properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } },
-      },
-    },
-    {
-      name: "update",
-      effect: "write",
-      requiredGrants: [UI_NOTIFY],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["notificationId"],
-        properties: {
-          notificationId: { type: "string", minLength: 1, maxLength: 160 },
-          severity: { enum: ["info", "success", "warning", "error", "loading"] },
-          title: { type: "string", minLength: 1, maxLength: 200 },
-          body: { type: "string", maxLength: 2000 },
-          dismissible: { type: "boolean" },
-          flashAction: uiNotificationFlashSchema,
+      {
+        name: "update",
+        effect: "write",
+        requiredGrants: [UI_NOTIFY],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["notificationId"],
+          properties: {
+            notificationId: { type: "string", minLength: 1, maxLength: 160 },
+            severity: { enum: ["info", "success", "warning", "error", "loading"] },
+            title: { type: "string", minLength: 1, maxLength: 200 },
+            body: { type: "string", maxLength: 2000 },
+            dismissible: { type: "boolean" },
+            flashAction: uiNotificationFlashSchema,
+          },
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: { applied: { type: "boolean" } },
         },
       },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["applied"],
-        properties: { applied: { type: "boolean" } },
+      {
+        name: "dismiss",
+        effect: "write",
+        requiredGrants: [UI_NOTIFY],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["notificationId"],
+          properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } },
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["dismissed"],
+          properties: { dismissed: { type: "boolean" } },
+        },
       },
-    },
-    {
-      name: "dismiss",
-      effect: "write",
-      requiredGrants: [UI_NOTIFY],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["notificationId"],
-        properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } },
+      {
+        name: "awaitAction",
+        effect: "read",
+        requiredGrants: [UI_NOTIFY],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["notificationId"],
+          properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } },
+        },
+        outputSchema: {
+          anyOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["actionId"],
+              properties: { actionId: { type: "string", minLength: 1, maxLength: 80 } },
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["dismissed"],
+              properties: { dismissed: { const: true } },
+            },
+          ],
+        },
       },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["dismissed"],
-        properties: { dismissed: { type: "boolean" } },
-      },
-    },
-    {
-      name: "awaitAction",
-      effect: "read",
-      requiredGrants: [UI_NOTIFY],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["notificationId"],
-        properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } },
-      },
-      outputSchema: {
-        anyOf: [
-          {
-            type: "object",
-            additionalProperties: false,
-            required: ["actionId"],
-            properties: { actionId: { type: "string", minLength: 1, maxLength: 80 } },
-          },
-          {
-            type: "object",
-            additionalProperties: false,
-            required: ["dismissed"],
-            properties: { dismissed: { const: true } },
-          },
-        ],
-      },
-    },
-  ],
-});
+    ],
+  },
+  // Consumers keep loading on a 1.0.0 host; probe before using the 1.1.0 fields.
+  { baseline: "1.0.0" },
+);
 
 export const uiPanelsApi = defineApi<{
   getCapabilities: { input: Record<string, never>; output: UiCapabilities };

@@ -158,8 +158,11 @@ export function createBrowserCaptureBridge(
     const support = deps.preview()
       ? ({ supported: true } as const)
       : ({ supported: false, reason: "desktop-required" } as const);
-    /** artifactRef → the saved file, for this installation's page captures only. */
-    const saved = new Map<string, string>();
+    /**
+     * artifactRef → the saved file and the project it was captured in, for
+     * this installation's page captures only.
+     */
+    const saved = new Map<string, { readonly path: string; readonly projectId: string }>();
 
     /** Authorizes one artifact action and resolves the file it acts on. */
     const savedCapture = (
@@ -210,19 +213,25 @@ export function createBrowserCaptureBridge(
             "Saved captures live in the T3 Code desktop app; this client has none.",
           ),
         };
-      const path = typeof request.artifactRef === "string" && saved.get(request.artifactRef);
-      if (!path)
+      const entry = typeof request.artifactRef === "string" && saved.get(request.artifactRef);
+      // Another project's capture reads as unknown, even with both granted.
+      if (!entry || entry.projectId !== resource.projectId)
         return {
           failure: actionFail(
             "artifact-not-found",
-            "No page capture this installation saved on this client has that artifactRef.",
+            "No page capture this installation saved in this project on this client has that artifactRef.",
           ),
         };
-      return { path };
+      return { path: entry.path };
     };
 
+    /**
+     * Desktop errors name the absolute artifact path, so the plugin gets only
+     * `failedDetail`; the raw error stays in this client's console.
+     */
     const runAction = async (
       request: BrowserCaptureArtifactActionRequest,
+      failedDetail: string,
       action: (path: string) => Promise<void>,
     ): Promise<BrowserCaptureArtifactActionResult> => {
       const resolved = savedCapture(request);
@@ -231,10 +240,8 @@ export function createBrowserCaptureBridge(
         await action(resolved.path);
         return { ok: true };
       } catch (error) {
-        return actionFail(
-          "action-failed",
-          error instanceof Error ? error.message : "The action failed.",
-        );
+        console.warn("Browser capture artifact action failed.", error);
+        return actionFail("action-failed", failedDetail);
       }
     };
 
@@ -249,10 +256,19 @@ export function createBrowserCaptureBridge(
         revealLabel: revealInFileExplorerLabel(deps.platform()),
       },
       copyArtifactToClipboard: (request) =>
-        runAction(request, (path) => deps.preview()!.copyArtifactToClipboard(path)),
-      copyArtifactPath: (request) => runAction(request, deps.writeClipboardText),
+        runAction(request, "The saved screenshot could not be copied to the clipboard.", (path) =>
+          deps.preview()!.copyArtifactToClipboard(path),
+        ),
+      copyArtifactPath: (request) =>
+        runAction(
+          request,
+          "The saved screenshot's path could not be copied to the clipboard.",
+          deps.writeClipboardText,
+        ),
       revealArtifact: (request) =>
-        runAction(request, (path) => deps.preview()!.revealArtifact(path)),
+        runAction(request, "The saved screenshot could not be shown in the file manager.", (path) =>
+          deps.preview()!.revealArtifact(path),
+        ),
       async capture(request): Promise<BrowserCaptureResult> {
         if (binding.lifetime.aborted)
           return fail("host-unavailable", "the installation's client lifetime has already ended.");
@@ -424,13 +440,21 @@ export function createBrowserCaptureBridge(
             );
           }
           if (savedPath !== null) {
-            saved.set(artifactRef, savedPath);
+            saved.set(artifactRef, { path: savedPath, projectId: resource.projectId });
             for (const oldest of saved.keys()) {
               if (saved.size <= SAVED_CAPTURES_MAX) break;
               saved.delete(oldest);
             }
           }
-          return { ok: true, artifact: { ...partial, artifactRef, sizeBytes: png.size } };
+          return {
+            ok: true,
+            artifact: {
+              ...partial,
+              artifactRef,
+              sizeBytes: png.size,
+              saved: savedPath !== null,
+            },
+          };
         } finally {
           detach();
           inFlight.delete(runtimeTabId);

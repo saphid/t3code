@@ -141,6 +141,7 @@ describe("browser capture bridge", () => {
         target: "page",
         pageUrl: "http://localhost:5173/",
         pageTitle: "Home",
+        saved: true,
       },
     });
     // The desktop tab id is the runtime identity, never the public tabId alone.
@@ -399,14 +400,74 @@ describe("browser capture bridge", () => {
       });
     });
 
-    it("names a refused OS action", async () => {
+    it("names a refused OS action without leaking the saved path", async () => {
       const h = harness();
       const host = h.host();
       await host.capture({ context, session, target: "page" });
-      h.preview.copyArtifactToClipboard.mockRejectedValueOnce(new Error("file is gone"));
-      expect(await host.copyArtifactToClipboard!(request)).toEqual({
+      const leak = new Error(`Preview artifact could not be loaded as an image: ${SAVED_PATH}`);
+      h.preview.copyArtifactToClipboard.mockRejectedValueOnce(leak);
+      h.preview.revealArtifact.mockRejectedValueOnce(leak);
+      const failures = [
+        await host.copyArtifactToClipboard!(request),
+        await host.revealArtifact!(request),
+        await h.host().copyArtifactPath!(request),
+      ];
+      const bridge = harness({
+        writeClipboardText: async () => {
+          throw leak;
+        },
+      });
+      const other = bridge.host();
+      await other.capture({ context, session, target: "page" });
+      failures.push(await other.copyArtifactPath!(request));
+      expect(failures.map((result) => !result.ok && result.failure.reason)).toEqual([
+        "action-failed",
+        "action-failed",
+        "artifact-not-found",
+        "action-failed",
+      ]);
+      const serialized = JSON.stringify(failures);
+      expect(serialized).not.toContain(SAVED_PATH);
+      expect(serialized).not.toContain("browser-artifacts");
+    });
+
+    it("binds a saved capture to the project it was taken in", async () => {
+      const h = harness();
+      const host = h.host({ projectIds: ["project-a", "project-b"] });
+      await host.capture({ context, session, target: "page" });
+      const projectB = {
+        ...context,
+        resource: { ...context.resource, projectId: "project-b", threadId: "thread-b" },
+      };
+      expect(await host.copyArtifactPath!({ ...request, context: projectB })).toMatchObject({
         ok: false,
-        failure: { reason: "action-failed", detail: "file is gone" },
+        failure: { reason: "artifact-not-found" },
+      });
+      expect(h.clipboardText).toEqual([]);
+      expect(await host.copyArtifactPath!(request)).toEqual({ ok: true });
+    });
+
+    it("marks which captures the artifact actions can act on", async () => {
+      const h = harness();
+      const host = h.host();
+      const page = await host.capture({ context, session, target: "page" });
+      expect(page).toMatchObject({ ok: true, artifact: { saved: true } });
+      h.preview.capturePageImage.mockResolvedValueOnce({
+        mimeType: "image/png",
+        data: PNG,
+        width: 1,
+        height: 1,
+        pageUrl: null,
+        pageTitle: null,
+        path: null,
+      });
+      expect(await host.capture({ context, session, target: "page" })).toMatchObject({
+        ok: true,
+        artifact: { saved: false },
+      });
+      expect(await host.capture({ context, session, target: "element" })).toMatchObject({
+        ok: true,
+        artifact: { saved: false },
       });
     });
 

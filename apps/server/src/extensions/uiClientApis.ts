@@ -335,11 +335,15 @@ interface LiveNotification {
 export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly HostApiProvider[] {
   /** Live notifications, keyed by server-minted notificationId. */
   const live = new Map<string, LiveNotification>();
-  /** Settled outcomes retained for 60 s so late `awaitAction` calls resolve. */
+  /**
+   * Settled outcomes retained for 60 s so late `awaitAction` calls resolve,
+   * after any `keepOpen` clicks still queued when the toast closed.
+   */
   const outcomes = new Map<
     string,
     {
       outcome: NotificationOutcome;
+      clicks: string[];
       expiresAt: number;
       ownerId: string;
       connectionId: string;
@@ -363,6 +367,7 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
     }
     outcomes.set(notificationId, {
       outcome,
+      clicks: record?.clicks ?? [],
       expiresAt: nowMs() + OUTCOME_RETENTION_MS,
       ownerId,
       connectionId,
@@ -799,6 +804,8 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
                   "notification-owner-mismatch",
                   "Notifications can only be managed by their owning installation and connection.",
                 );
+              const queued = retained.clicks.shift();
+              if (queued !== undefined) return { actionId: queued } satisfies Json;
               return retained.outcome as unknown as Json;
             }
             const record = ownedNotification(notificationId, metadata);

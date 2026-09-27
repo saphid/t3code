@@ -93,16 +93,45 @@ export type ApiMethodTypes = Record<string, { input: Json; output: Json }>;
 /** Phantom method types accompany an immutable, serializable runtime descriptor. */
 export interface TypedApi<T extends ApiMethodTypes> {
   readonly definition: ApiDefinition;
+  /** See `defineApi`. */
+  readonly baseline?: string;
   readonly types?: T;
 }
-export function defineApi<T extends ApiMethodTypes>(definition: ApiDefinition): TypedApi<T> {
-  return { definition: validateApiDefinition(definition) };
+/**
+ * `baseline` is the oldest version of this major that `requireApi` and
+ * `bindApi` ask for by default. Set it when a minor release only adds
+ * optional members, so existing consumers keep loading on older hosts; a
+ * consumer that needs the new members passes its own range and probes.
+ */
+export function defineApi<T extends ApiMethodTypes>(
+  definition: ApiDefinition,
+  options: { readonly baseline?: string } = {},
+): TypedApi<T> {
+  const validated = validateApiDefinition(definition);
+  if (options.baseline === undefined) return { definition: validated };
+  const parse = (version: string) => version.split(".").map(Number);
+  const [major, minor, patch] = parse(options.baseline);
+  const [currentMajor, currentMinor, currentPatch] = parse(validated.version);
+  if (
+    !/^\d+\.\d+\.\d+$/.test(options.baseline) ||
+    major !== currentMajor ||
+    minor! * 1e6 + patch! > currentMinor! * 1e6 + currentPatch!
+  )
+    throw new Error("API baseline must be an earlier version of the same major");
+  return { definition: validated, baseline: options.baseline };
+}
+/** The range a consumer asks for when it names none: `^baseline`, else `^version`. */
+export function defaultVersionRange(api: {
+  readonly definition: ApiDefinition;
+  readonly baseline?: string;
+}): string {
+  return "^" + (api.baseline ?? api.definition.version);
 }
 export function bindApi<T extends ApiMethodTypes>(
   api: TypedApi<T>,
   client: Pick<ApiClient, "invokeApi">,
   context: ViewContext,
-  versionRange = "^" + api.definition.version,
+  versionRange = defaultVersionRange(api),
 ) {
   return {
     invoke<K extends keyof T & string>(
@@ -138,7 +167,7 @@ export function bindStreamApi<T extends ApiStreamTypes>(
   api: TypedStreamApi<T>,
   client: Pick<ApiClient, "subscribeApi">,
   context: ViewContext,
-  versionRange = "^" + api.definition.version,
+  versionRange = defaultVersionRange(api),
 ) {
   return {
     subscribe<K extends keyof T & string>(

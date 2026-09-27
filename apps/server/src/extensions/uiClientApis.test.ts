@@ -651,6 +651,40 @@ describe("notifications adapter", () => {
     expect(bridge.correlations.has(notificationId)).toBe(false);
   });
 
+  it("drains clicks queued before the toast closed ahead of the final outcome", async () => {
+    const bridge = fakeBridge();
+    const { notifications } = makeProviders(bridge);
+    const { notificationId } = (await notifications.invoke(
+      "notify",
+      notifyInput({
+        actions: [
+          { id: "copy-path", label: "Copy path", keepOpen: true },
+          { id: "reveal", label: "Reveal", keepOpen: true },
+        ],
+      }),
+      context,
+      signal,
+      metadata(),
+    )) as { notificationId: string };
+    const awaitAction = () =>
+      notifications.invoke(
+        "awaitAction",
+        { notificationId } as unknown as Json,
+        context,
+        signal,
+        metadata(),
+      );
+    const deliver = bridge.correlations.get(notificationId)!.deliver;
+    // Both clicks and the close land before the plugin's next await round-trip.
+    deliver({ type: "notificationAction", actionId: "copy-path" });
+    deliver({ type: "notificationAction", actionId: "reveal" });
+    deliver({ type: "notificationOutcome", outcome: { dismissed: true } });
+    await expect(awaitAction()).resolves.toEqual({ actionId: "copy-path" });
+    await expect(awaitAction()).resolves.toEqual({ actionId: "reveal" });
+    await expect(awaitAction()).resolves.toEqual({ dismissed: true });
+    await expect(awaitAction()).resolves.toEqual({ dismissed: true });
+  });
+
   it("names the gap when the client predates keepOpen and flashAction", async () => {
     const bridge = fakeBridge({
       targets: [

@@ -190,6 +190,8 @@ const cropLost = {
   message: "Capture failed — capture-failed: the picker kept no crop",
 };
 const pageAdded = { kind: "added", artifact, inserted: true };
+/** A page capture the desktop saved, so the artifact actions can act on it. */
+const savedPage = { kind: "added", artifact: { ...artifact, saved: true }, inserted: true };
 const elementAdded = {
   kind: "added",
   artifact: { ...artifact, target: "element" },
@@ -373,6 +375,18 @@ NodeTest.describe("runBrowserCapture", () => {
 const supported = { supported: true };
 const desktopOnly = { supported: false, reason: "desktop-required" };
 
+/** A host's API discovery naming this t3.ui/notifications version. */
+const discovering = (version) => async () => [
+  {
+    id: "t3.ui/notifications",
+    version,
+    providerId: "host.ui.notifications",
+    generation: 1,
+    health: "ready",
+    selected: true,
+  },
+];
+
 /** A 1.1.0 capture host whose artifact actions record their calls. */
 function actionCapture({ support = supported, results = {} } = {}) {
   const calls = [];
@@ -450,7 +464,14 @@ NodeTest.describe("Screenshot saved actions", () => {
   );
 
   NodeTest.it("turns the toast into native's error when a copy fails", async () => {
-    const failure = { ok: false, failure: { reason: "action-failed", detail: "file is gone" } };
+    // Whatever the host says, the toast body is the pack's own path-free line.
+    const failure = {
+      ok: false,
+      failure: {
+        reason: "action-failed",
+        detail: "could not load /Users/me/.t3/browser-artifacts/browser-screenshot-x.png",
+      },
+    };
     const capture = actionCapture({ results: { copyImage: failure, copyPath: failure } });
     const { calls, api } = notifier({ applied: true });
     await runCaptureToastAction(api, capture, request, "n-1", "copy-image", signal);
@@ -462,13 +483,13 @@ NodeTest.describe("Screenshot saved actions", () => {
           notificationId: "n-1",
           severity: "error",
           title: "Unable to copy screenshot",
-          body: "file is gone",
+          body: "The saved screenshot could not be copied.",
         },
         {
           notificationId: "n-1",
           severity: "error",
           title: "Unable to copy screenshot path",
-          body: "file is gone",
+          body: "The saved screenshot could not be copied.",
         },
       ],
     );
@@ -501,13 +522,13 @@ NodeTest.describe("Screenshot saved actions", () => {
       },
     };
     const report = reportCaptureOutcome(
-      bindApi(uiNotificationsApi, client, context, "^1.0.0"),
+      bindApi(uiNotificationsApi, client, context),
       "thread-a",
       "page",
-      pageAdded,
+      savedPage,
       signal,
       5_000,
-      { capture, context },
+      { capture, context, discoverApis: discovering("1.1.0") },
     );
     NodeAssert.equal(await report.fallback, null);
     await done;
@@ -530,17 +551,60 @@ NodeTest.describe("Screenshot saved actions", () => {
       },
     };
     const report = reportCaptureOutcome(
-      bindApi(uiNotificationsApi, client, context, "^1.0.0"),
+      bindApi(uiNotificationsApi, client, context),
       "thread-a",
       "page",
-      pageAdded,
+      savedPage,
       signal,
       5_000,
-      { capture: actionCapture(), context },
+      { capture: actionCapture(), context, discoverApis: discovering("1.1.0") },
     );
     NodeAssert.equal(await report.fallback, null);
     NodeAssert.equal(calls.length, 2);
     NodeAssert.equal(calls[1].input.actions, undefined);
     NodeAssert.equal(calls[1].input.title, "Screenshot saved");
+  });
+
+  /** Reports a page capture through a recording client; returns what notify saw. */
+  const notifyInputs = async (outcome, discoverApis) => {
+    const calls = [];
+    const client = {
+      invokeApi: async (req) => {
+        calls.push(req);
+        return req.method === "notify" ? { notificationId: "n-9" } : { dismissed: true };
+      },
+    };
+    const report = reportCaptureOutcome(
+      bindApi(uiNotificationsApi, client, context),
+      "thread-a",
+      "page",
+      outcome,
+      signal,
+      5_000,
+      { capture: actionCapture(), context, discoverApis },
+    );
+    NodeAssert.equal(await report.fallback, null);
+    return calls.filter((call) => call.method === "notify").map((call) => call.input);
+  };
+
+  NodeTest.it("offers no file actions for a capture the desktop did not save", async () => {
+    const inputs = await notifyInputs(
+      { ...pageAdded, artifact: { ...artifact, saved: false } },
+      discovering("1.1.0"),
+    );
+    NodeAssert.equal(inputs.length, 1);
+    NodeAssert.equal(inputs[0].title, "Screenshot saved");
+    NodeAssert.equal(inputs[0].actions, undefined);
+    // A 1.0.0 capture host says nothing about saving, so it gets none either.
+    NodeAssert.equal((await notifyInputs(pageAdded, discovering("1.1.0")))[0].actions, undefined);
+  });
+
+  NodeTest.it("asks for keepOpen actions only when the host advertises 1.1.0", async () => {
+    for (const discoverApis of [discovering("1.0.0"), async () => Promise.reject(new Error("x"))]) {
+      const inputs = await notifyInputs(savedPage, discoverApis);
+      NodeAssert.equal(inputs.length, 1);
+      NodeAssert.equal(inputs[0].actions, undefined);
+    }
+    NodeAssert.equal((await notifyInputs(savedPage, discovering("1.1.0")))[0].actions.length, 3);
   });
 });

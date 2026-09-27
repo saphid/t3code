@@ -3027,8 +3027,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
+  /** Unique per capture: tabs on the same site can capture in the same millisecond. */
   const screenshotArtifactId = (pageUrl: string, millis: number) =>
-    `browser-screenshot-${artifactSiteSlug(pageUrl)}-${millis.toString(36)}`;
+    `browser-screenshot-${artifactSiteSlug(pageUrl)}-${millis.toString(36)}-${NodeCrypto.randomUUID().slice(0, 8)}`;
 
   /** Saves a screenshot PNG where `revealArtifact` and `copyArtifactToClipboard` accept it. */
   const writeScreenshotArtifact = Effect.fnUntraced(function* (
