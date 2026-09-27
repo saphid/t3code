@@ -2357,7 +2357,7 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect("captures the viewport as capped PNG bytes without writing a file", () =>
+  effectIt.effect("captures the viewport as capped PNG bytes and saves them as an artifact", () =>
     withManager((manager) =>
       Effect.gen(function* () {
         const png = Buffer.from("resized-png");
@@ -2412,8 +2412,42 @@ describe("PreviewManager", () => {
           height: 800,
           pageUrl: "https://example.com/page",
           pageTitle: "Example",
+          path: expect.stringMatching(
+            /\/browser-artifacts\/browser-screenshot-example-com-[^.]+\.png$/,
+          ),
         });
-        expect(writeFile).not.toHaveBeenCalled();
+        // The saved file is the capped PNG the caller uploads, not a second raster.
+        expect(writeFile).toHaveBeenCalledWith(image.path, png);
+      }),
+    ),
+  );
+
+  effectIt.effect("saves same-millisecond captures of the same site to different files", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const capturePage = vi.fn(async () => ({
+          toPNG: () => Buffer.from("png"),
+          toJPEG: () => Buffer.from("jpg"),
+          getSize: () => ({ width: 100, height: 100 }),
+        }));
+        const first = makeTestPreviewWebContents(capturePage, 41);
+        const second = makeTestPreviewWebContents(capturePage, 42);
+        fromId.mockImplementation((id) => (id === 41 ? first : second) as never);
+        yield* manager.createTab("tab_a");
+        yield* manager.registerWebview("tab_a", 41);
+        yield* manager.createTab("tab_b");
+        yield* manager.registerWebview("tab_b", 42);
+
+        const [pageA, pageB, shotA, shotB] = yield* Effect.all([
+          manager.capturePageImage("tab_a"),
+          manager.capturePageImage("tab_b"),
+          manager.captureScreenshot("tab_a"),
+          manager.captureScreenshot("tab_b"),
+        ]);
+
+        const paths = [pageA.path, pageB.path, shotA.path, shotB.path];
+        expect(new Set(paths).size).toBe(paths.length);
+        expect(new Set([shotA.id, shotB.id]).size).toBe(2);
       }),
     ),
   );

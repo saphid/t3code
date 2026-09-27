@@ -8,10 +8,12 @@ import {
   captureOutcomeMessage,
   captureOutcomeToast,
   capturePageView,
+  captureToastActions,
   captureToChat,
   captureUnavailableReason,
   reportCaptureOutcome,
   runBrowserCapture,
+  runCaptureToastAction,
 } from "./capture.ts";
 
 const ARTIFACT_REF = "pending-0f1e2d3c-4b5a-4968-8776-655443322110";
@@ -223,6 +225,8 @@ const cropLost = {
   message: "Capture failed — capture-failed: the picker kept no crop",
 };
 const pageAdded = { kind: "added", artifact, inserted: true };
+/** A page capture the desktop saved, so the artifact actions can act on it. */
+const savedPage = { kind: "added", artifact: { ...artifact, saved: true }, inserted: true };
 const elementAdded = {
   kind: "added",
   artifact: { ...artifact, target: "element" },
@@ -280,7 +284,7 @@ function deferred() {
 }
 
 /** A notifications client whose answer the test settles, or that never answers. */
-function notifier(answer) {
+function notifier(answer, range) {
   const calls = [];
   const client = {
     invokeApi: (request, signal) => {
@@ -294,7 +298,7 @@ function notifier(answer) {
       return Promise.resolve(answer);
     },
   };
-  return { calls, client, api: bindApi(uiNotificationsApi, client, context) };
+  return { calls, client, api: bindApi(uiNotificationsApi, client, context, range) };
 }
 
 NodeTest.describe("reportCaptureOutcome", () => {
@@ -470,5 +474,249 @@ NodeTest.describe("runBrowserCapture", () => {
       { kind: "capturing", target: "page" },
       { kind: "done", message: null },
     ]);
+  });
+});
+
+const supported = { supported: true };
+const desktopOnly = { supported: false, reason: "desktop-required" };
+
+/** A host's API discovery naming this t3.ui/notifications version. */
+const discovering = (version) => async () => [
+  {
+    id: "t3.ui/notifications",
+    version,
+    providerId: "host.ui.notifications",
+    generation: 1,
+    health: "ready",
+    selected: true,
+  },
+];
+
+/** A 1.1.0 capture host whose artifact actions record their calls. */
+function actionCapture({ support = supported, results = {} } = {}) {
+  const calls = [];
+  const run = (name) => async (request) => {
+    calls.push([name, request]);
+    return results[name] ?? { ok: true };
+  };
+  return {
+    calls,
+    artifactActions: {
+      copyImage: support,
+      copyPath: support,
+      reveal: support,
+      revealLabel: "Reveal in Finder",
+    },
+    copyArtifactToClipboard: run("copyImage"),
+    copyArtifactPath: run("copyPath"),
+    revealArtifact: run("reveal"),
+  };
+}
+
+NodeTest.describe("Screenshot saved actions", () => {
+  const signal = new AbortController().signal;
+  const request = { context, artifactRef: ARTIFACT_REF };
+
+  NodeTest.it("offers native's three actions in native's order, all keeping the toast", () => {
+    NodeAssert.deepEqual(captureToastActions(actionCapture()), [
+      { id: "copy-path", label: "Copy path", keepOpen: true },
+      { id: "reveal", label: "Reveal in Finder", keepOpen: true },
+      { id: "copy-image", label: "Copy image", variant: "primary", keepOpen: true },
+    ]);
+    NodeAssert.deepEqual(
+      captureOutcomeToast("page", pageAdded, captureToastActions(actionCapture())).actions.length,
+      3,
+    );
+  });
+
+  NodeTest.it("hides actions a client or an older host cannot run", () => {
+    NodeAssert.deepEqual(captureToastActions(actionCapture({ support: desktopOnly })), []);
+    NodeAssert.deepEqual(captureToastActions(fakeHost().browserCapture), []);
+    NodeAssert.deepEqual(captureToastActions(null), []);
+    // Failures and picks never carry them.
+    NodeAssert.equal(
+      captureOutcomeToast("page", failed, captureToastActions(actionCapture())).actions,
+      undefined,
+    );
+  });
+
+  NodeTest.it(
+    "flashes Copied! for 2 s on a restored success toast after a copy lands",
+    async () => {
+      const capture = actionCapture();
+      const { calls, api } = notifier({ applied: true }, "^1.1.0");
+      await runCaptureToastAction(api, capture, request, "n-1", "copy-image", signal);
+      await runCaptureToastAction(api, capture, request, "n-1", "copy-path", signal);
+      NodeAssert.deepEqual(
+        capture.calls.map(([name]) => name),
+        ["copyImage", "copyPath"],
+      );
+      NodeAssert.deepEqual(capture.calls[0][1], request);
+      NodeAssert.deepEqual(
+        calls.map((call) => [call.method, call.input]),
+        ["copy-image", "copy-path"].map((actionId) => [
+          "update",
+          {
+            notificationId: "n-1",
+            severity: "success",
+            title: "Screenshot saved",
+            body: "",
+            flashAction: { actionId, label: "Copied!", durationMs: 2_000 },
+          },
+        ]),
+      );
+    },
+  );
+
+  NodeTest.it("turns the toast into native's error when a copy fails", async () => {
+    // Whatever the host says, the toast body is the pack's own path-free line.
+    const failure = {
+      ok: false,
+      failure: {
+        reason: "action-failed",
+        detail: "could not load /Users/me/.t3/browser-artifacts/browser-screenshot-x.png",
+      },
+    };
+    const capture = actionCapture({ results: { copyImage: failure, copyPath: failure } });
+    const { calls, api } = notifier({ applied: true });
+    await runCaptureToastAction(api, capture, request, "n-1", "copy-image", signal);
+    await runCaptureToastAction(api, capture, request, "n-1", "copy-path", signal);
+    NodeAssert.deepEqual(
+      calls.map((call) => call.input),
+      [
+        {
+          notificationId: "n-1",
+          severity: "error",
+          title: "Unable to copy screenshot",
+          body: "The saved screenshot could not be copied.",
+        },
+        {
+          notificationId: "n-1",
+          severity: "error",
+          title: "Unable to copy screenshot path",
+          body: "The saved screenshot could not be copied.",
+        },
+      ],
+    );
+  });
+
+  NodeTest.it("reveals without touching the toast", async () => {
+    const capture = actionCapture();
+    const { calls, api } = notifier({ applied: true });
+    await runCaptureToastAction(api, capture, request, "n-1", "reveal", signal);
+    NodeAssert.deepEqual(capture.calls, [["reveal", request]]);
+    NodeAssert.equal(calls.length, 0);
+  });
+
+  NodeTest.it("serves every click until the toast closes", async () => {
+    const capture = actionCapture();
+    const answers = [{ actionId: "copy-path" }, { actionId: "reveal" }, { dismissed: true }];
+    const calls = [];
+    let served;
+    const done = new Promise((resolve) => (served = resolve));
+    const client = {
+      invokeApi: async (req) => {
+        calls.push(req);
+        if (req.method === "notify") return { notificationId: "n-7" };
+        if (req.method === "awaitAction") {
+          const next = answers.shift();
+          if (answers.length === 0) served();
+          return next;
+        }
+        return { applied: true };
+      },
+    };
+    const report = reportCaptureOutcome(
+      bindApi(uiNotificationsApi, client, context),
+      "thread-a",
+      "page",
+      savedPage,
+      signal,
+      5_000,
+      { capture, context, discoverApis: discovering("1.1.0"), invokeApi: client.invokeApi },
+    );
+    NodeAssert.equal(await report.fallback, null);
+    await done;
+    await new Promise((resolve) => setImmediate(resolve));
+    NodeAssert.equal(calls[0].input.actions.length, 3);
+    // The probed toast and its updates ask for the range that carries keepOpen.
+    NodeAssert.deepEqual(new Set(calls.map((call) => call.versionRange)), new Set(["^1.1.0"]));
+    NodeAssert.deepEqual(
+      capture.calls.map(([name]) => name),
+      ["copyPath", "reveal"],
+    );
+    NodeAssert.equal(calls.filter((call) => call.method === "awaitAction").length, 3);
+  });
+
+  NodeTest.it("falls back to the plain toast on a host that rejects the actions", async () => {
+    const calls = [];
+    const client = {
+      invokeApi: async (req) => {
+        calls.push(req);
+        if (req.input.actions) throw new Error("unknown property keepOpen");
+        return { notificationId: "n-8" };
+      },
+    };
+    const report = reportCaptureOutcome(
+      bindApi(uiNotificationsApi, client, context),
+      "thread-a",
+      "page",
+      savedPage,
+      signal,
+      5_000,
+      {
+        capture: actionCapture(),
+        context,
+        discoverApis: discovering("1.1.0"),
+        invokeApi: client.invokeApi,
+      },
+    );
+    NodeAssert.equal(await report.fallback, null);
+    NodeAssert.equal(calls.length, 2);
+    NodeAssert.equal(calls[1].input.actions, undefined);
+    NodeAssert.equal(calls[1].input.title, "Screenshot saved");
+  });
+
+  /** Reports a page capture through a recording client; returns what notify saw. */
+  const notifyInputs = async (outcome, discoverApis) => {
+    const calls = [];
+    const client = {
+      invokeApi: async (req) => {
+        calls.push(req);
+        return req.method === "notify" ? { notificationId: "n-9" } : { dismissed: true };
+      },
+    };
+    const report = reportCaptureOutcome(
+      bindApi(uiNotificationsApi, client, context),
+      "thread-a",
+      "page",
+      outcome,
+      signal,
+      5_000,
+      { capture: actionCapture(), context, discoverApis, invokeApi: client.invokeApi },
+    );
+    NodeAssert.equal(await report.fallback, null);
+    return calls.filter((call) => call.method === "notify").map((call) => call.input);
+  };
+
+  NodeTest.it("offers no file actions for a capture the desktop did not save", async () => {
+    const inputs = await notifyInputs(
+      { ...pageAdded, artifact: { ...artifact, saved: false } },
+      discovering("1.1.0"),
+    );
+    NodeAssert.equal(inputs.length, 1);
+    NodeAssert.equal(inputs[0].title, "Screenshot saved");
+    NodeAssert.equal(inputs[0].actions, undefined);
+    // A 1.0.0 capture host says nothing about saving, so it gets none either.
+    NodeAssert.equal((await notifyInputs(pageAdded, discovering("1.1.0")))[0].actions, undefined);
+  });
+
+  NodeTest.it("asks for keepOpen actions only when the host advertises 1.1.0", async () => {
+    for (const discoverApis of [discovering("1.0.0"), async () => Promise.reject(new Error("x"))]) {
+      const inputs = await notifyInputs(savedPage, discoverApis);
+      NodeAssert.equal(inputs.length, 1);
+      NodeAssert.equal(inputs[0].actions, undefined);
+    }
+    NodeAssert.equal((await notifyInputs(savedPage, discovering("1.1.0")))[0].actions.length, 3);
   });
 });

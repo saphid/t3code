@@ -5,7 +5,7 @@ import type {
   HostApiPrincipal,
   HostApiProvider,
 } from "@t3tools/extension-runtime";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import type { ClientApiProviders, CorrelationEntry } from "./ClientApiProviders.ts";
 import { createUiClientApiProviders } from "./uiClientApis.ts";
@@ -602,6 +602,175 @@ describe("notifications adapter", () => {
     await expect(action).resolves.toEqual({ actionId: "open" });
     // Settled outcomes release their correlation.
     expect(bridge.correlations.has(notificationId)).toBe(false);
+  });
+
+  it("reports keepOpen clicks without settling, queuing clicks nobody awaited", async () => {
+    const bridge = fakeBridge();
+    const { notifications } = makeProviders(bridge);
+    const { notificationId } = (await notifications.invoke(
+      "notify",
+      notifyInput({ actions: [{ id: "copy-path", label: "Copy path", keepOpen: true }] }),
+      context,
+      signal,
+      metadata(),
+    )) as { notificationId: string };
+    const awaitAction = () =>
+      notifications.invoke(
+        "awaitAction",
+        { notificationId } as unknown as Json,
+        context,
+        signal,
+        metadata(),
+      );
+    const deliver = bridge.correlations.get(notificationId)!.deliver;
+    const first = awaitAction();
+    deliver({ type: "notificationAction", actionId: "copy-path" });
+    await expect(first).resolves.toEqual({ actionId: "copy-path" });
+    // Still live: a click between awaits is queued, and update still reaches the toast.
+    deliver({ type: "notificationAction", actionId: "copy-path" });
+    await expect(awaitAction()).resolves.toEqual({ actionId: "copy-path" });
+    await expect(
+      notifications.invoke(
+        "update",
+        {
+          notificationId,
+          flashAction: { actionId: "copy-path", label: "Copied!", durationMs: 2000 },
+        } as unknown as Json,
+        context,
+        signal,
+        metadata(),
+      ),
+    ).resolves.toEqual({ applied: true });
+    expect(bridge.invoked.at(-1)).toMatchObject({
+      method: "update",
+      input: { patch: { flashAction: { actionId: "copy-path", label: "Copied!" } } },
+    });
+    const last = awaitAction();
+    deliver({ type: "notificationOutcome", outcome: { dismissed: true } });
+    await expect(last).resolves.toEqual({ dismissed: true });
+    expect(bridge.correlations.has(notificationId)).toBe(false);
+  });
+
+  it("drains clicks queued before the toast closed ahead of the final outcome", async () => {
+    const bridge = fakeBridge();
+    const { notifications } = makeProviders(bridge);
+    const { notificationId } = (await notifications.invoke(
+      "notify",
+      notifyInput({
+        actions: [
+          { id: "copy-path", label: "Copy path", keepOpen: true },
+          { id: "reveal", label: "Reveal", keepOpen: true },
+        ],
+      }),
+      context,
+      signal,
+      metadata(),
+    )) as { notificationId: string };
+    const awaitAction = () =>
+      notifications.invoke(
+        "awaitAction",
+        { notificationId } as unknown as Json,
+        context,
+        signal,
+        metadata(),
+      );
+    const deliver = bridge.correlations.get(notificationId)!.deliver;
+    // Both clicks and the close land before the plugin's next await round-trip.
+    deliver({ type: "notificationAction", actionId: "copy-path" });
+    deliver({ type: "notificationAction", actionId: "reveal" });
+    deliver({ type: "notificationOutcome", outcome: { dismissed: true } });
+    await expect(awaitAction()).resolves.toEqual({ actionId: "copy-path" });
+    await expect(awaitAction()).resolves.toEqual({ actionId: "reveal" });
+    await expect(awaitAction()).resolves.toEqual({ dismissed: true });
+    await expect(awaitAction()).resolves.toEqual({ dismissed: true });
+  });
+
+  it("keeps queued clicks when an API dismiss settles before its response returns", async () => {
+    const bridge = fakeBridge();
+    const { notifications } = makeProviders(bridge);
+    const { notificationId } = (await notifications.invoke(
+      "notify",
+      notifyInput({
+        actions: [
+          { id: "copy-path", label: "Copy path", keepOpen: true },
+          { id: "reveal", label: "Reveal", keepOpen: true },
+        ],
+      }),
+      context,
+      signal,
+      metadata(),
+    )) as { notificationId: string };
+    const awaitAction = () =>
+      notifications.invoke(
+        "awaitAction",
+        { notificationId } as unknown as Json,
+        context,
+        signal,
+        metadata(),
+      );
+    const deliver = bridge.correlations.get(notificationId)!.deliver;
+    deliver({ type: "notificationAction", actionId: "copy-path" });
+    deliver({ type: "notificationAction", actionId: "reveal" });
+    // The web client settles inside its dismiss handler, so the outcome event
+    // can reach the server before the dismiss response does.
+    const invoke = bridge.service.invoke;
+    vi.spyOn(bridge.service, "invoke").mockImplementation((request) => {
+      if (request.method === "dismiss")
+        deliver({ type: "notificationOutcome", outcome: { dismissed: true } });
+      return invoke(request);
+    });
+    await expect(
+      notifications.invoke(
+        "dismiss",
+        { notificationId } as unknown as Json,
+        context,
+        signal,
+        metadata(),
+      ),
+    ).resolves.toEqual({ dismissed: true });
+    await expect(awaitAction()).resolves.toEqual({ actionId: "copy-path" });
+    await expect(awaitAction()).resolves.toEqual({ actionId: "reveal" });
+    await expect(awaitAction()).resolves.toEqual({ dismissed: true });
+  });
+
+  it("names the gap when the client predates keepOpen and flashAction", async () => {
+    const bridge = fakeBridge({
+      targets: [
+        {
+          connectionId: "conn-1",
+          providers: [{ id: "t3.client/notifications", version: "1.0.0" }],
+        },
+      ],
+    });
+    const { notifications } = makeProviders(bridge);
+    await expect(
+      notifications.invoke(
+        "notify",
+        notifyInput({ actions: [{ id: "copy", label: "Copy", keepOpen: true }] }),
+        context,
+        signal,
+        metadata(),
+      ),
+    ).rejects.toMatchObject({ code: "provider-rejected" });
+    const { notificationId } = (await notifications.invoke(
+      "notify",
+      notifyInput({ actions: [{ id: "copy", label: "Copy" }] }),
+      context,
+      signal,
+      metadata(),
+    )) as { notificationId: string };
+    await expect(
+      notifications.invoke(
+        "update",
+        {
+          notificationId,
+          flashAction: { actionId: "copy", label: "Copied!", durationMs: 2000 },
+        } as unknown as Json,
+        context,
+        signal,
+        metadata(),
+      ),
+    ).rejects.toMatchObject({ code: "provider-rejected" });
   });
 
   it("withholds a retained outcome from a foreign installation", async () => {

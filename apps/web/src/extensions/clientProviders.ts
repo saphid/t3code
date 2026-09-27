@@ -35,7 +35,9 @@ import {
   persistClientSettingsUpdate,
   subscribeClientSettings,
 } from "../hooks/useSettings";
+import { createElement } from "react";
 import { toastManager, type ThreadToastData } from "../components/ui/toast";
+import { Spinner } from "../components/ui/spinner";
 import { terminalThemeFromApp } from "../components/ThreadTerminalDrawer";
 import {
   selectThreadExtensionDock,
@@ -387,11 +389,34 @@ export function createThemeClientProvider(deps: ClientProviderDeps): ClientLocal
 // ---------------------------------------------------------------------------
 // Notifications — toast-backed, owner-scoped, outcomes over emit.
 
+interface NotificationAction {
+  readonly id: string;
+  readonly label: string;
+  readonly variant?: NonNullable<ThreadToastData["secondaryActionVariant"]>;
+  readonly primary: boolean;
+  readonly keepOpen: boolean;
+}
+
 interface OwnedNotification {
   readonly toastId: string;
   readonly owner: string;
-  readonly data: ThreadToastData;
-  readonly timeoutId?: ReturnType<typeof setTimeout>;
+  data: ThreadToastData;
+  readonly actions: readonly NotificationAction[];
+  /** Whether the notification carries an explicit `durationMs` lifetime. */
+  readonly timed: boolean;
+  /** Temporary labels from `flashAction`, keyed by action id. */
+  readonly flashes: Map<string, { label: string; timeoutId: ReturnType<typeof setTimeout> }>;
+}
+
+/**
+ * Base UI never times out a `type:"loading"` toast. A loading notification
+ * with an explicit `durationMs` keeps the store's pausable timer by rendering
+ * the native spinner through `leadingIcon` on an untyped toast instead.
+ */
+function notificationPresentation(severity: string, timed: boolean) {
+  return severity === "loading" && timed
+    ? { leadingIcon: createElement(Spinner, { className: "size-4 opacity-80" }) }
+    : { type: severity, leadingIcon: undefined };
 }
 
 const notificationsByEnvironment = new Map<string, Map<string, OwnedNotification>>();
@@ -423,8 +448,50 @@ export function createNotificationsClientProvider(deps: ClientProviderDeps): Cli
     const entry = owned.get(notificationId);
     if (!entry) return;
     owned.delete(notificationId);
-    if (entry.timeoutId !== undefined) clearTimeout(entry.timeoutId);
+    for (const flash of entry.flashes.values()) clearTimeout(flash.timeoutId);
     deps.emit(notificationId, { type: "notificationOutcome", outcome });
+  };
+  /**
+   * A `keepOpen` click reports without settling, so the toast and its other
+   * actions stay usable (native "Copy path"); any other click settles and closes.
+   * A trailing primary action becomes the toast's own action in native's
+   * bottom row (`stackedThreadToast`), like native "Copy image".
+   */
+  const renderActions = (
+    notificationId: string,
+    actions: readonly NotificationAction[],
+    flashes: OwnedNotification["flashes"],
+    toastId: () => string,
+  ) => {
+    const button = (action: NotificationAction) => {
+      const flash = flashes.get(action.id);
+      return {
+        children: flash?.label ?? action.label,
+        disabled: flash !== undefined,
+        onClick: () => {
+          if (action.keepOpen) {
+            if (owned.has(notificationId))
+              deps.emit(notificationId, { type: "notificationAction", actionId: action.id });
+            return;
+          }
+          settle(notificationId, { actionId: action.id });
+          toastManager.close(toastId());
+        },
+      };
+    };
+    const main = actions.at(-1)?.primary ? actions.at(-1) : undefined;
+    const rest = main ? actions.slice(0, -1) : actions;
+    return {
+      ...(main ? { actionProps: button(main) } : {}),
+      data: {
+        ...(main ? { actionLayout: "stacked-end" as const } : {}),
+        additionalActions: rest.map((action) => ({
+          id: action.id,
+          ...(action.variant !== undefined ? { variant: action.variant } : {}),
+          props: button(action),
+        })),
+      },
+    };
   };
   const variantMap = {
     default: "secondary",
@@ -475,59 +542,54 @@ export function createNotificationsClientProvider(deps: ClientProviderDeps): Cli
               ? scopeThreadRef(deps.environmentId, ThreadId.make(effectiveThreadId))
               : undefined;
           const dismissible = notification.dismissible !== false;
+          const ownedActions = actions.slice(0, 3).map((action): NotificationAction => {
+            const record = readInputObject(action);
+            const variant = readInputString(record, "variant", false);
+            return {
+              id: readInputString(record, "id")!,
+              label: readInputString(record, "label")!,
+              ...(variant !== undefined && variant in variantMap
+                ? { variant: variantMap[variant as keyof typeof variantMap] }
+                : {}),
+              primary: variant === "primary",
+              keepOpen: record.keepOpen === true,
+            };
+          });
+          const timeout = typeof notification.durationMs === "number" ? notification.durationMs : 0;
+          const { leadingIcon, ...presentation } = notificationPresentation(severity, timeout > 0);
+          const flashes: OwnedNotification["flashes"] = new Map();
+          const rendered =
+            ownedActions.length > 0
+              ? renderActions(notificationId, ownedActions, flashes, () => toastId)
+              : null;
           const toastData: ThreadToastData = {
             ...(threadRef !== undefined ? { threadRef } : {}),
             dismissible,
+            ...(leadingIcon ? { leadingIcon } : {}),
             onClose: () => settle(notificationId, { dismissed: true }),
-            ...(actions.length > 0
-              ? {
-                  additionalActions: actions.slice(0, 3).map((action) => {
-                    const record = readInputObject(action);
-                    const actionId = readInputString(record, "id")!;
-                    const label = readInputString(record, "label")!;
-                    const variant = readInputString(record, "variant", false);
-                    return {
-                      id: actionId,
-                      ...(variant !== undefined && variant in variantMap
-                        ? { variant: variantMap[variant as keyof typeof variantMap] }
-                        : {}),
-                      props: {
-                        children: label,
-                        onClick: () => {
-                          settle(notificationId, { actionId });
-                          toastManager.close(toastId);
-                        },
-                      },
-                    };
-                  }),
-                }
-              : {}),
+            ...rendered?.data,
           };
-          const toastId = toastManager.add({
-            type: severity,
+          const toastId: string = toastManager.add({
+            ...presentation,
             title,
             ...(typeof body === "string" ? { description: body } : {}),
-            // The manager defaults every toast to a 5 s auto-dismiss whose
-            // close path never reaches `data.onClose` — `timeout: 0` keeps
-            // lifetime owned here, and the top-level `onClose` settles the
-            // outcome record on every remaining close path (timeout close,
-            // closeAll, swipe, programmatic close), not just the X button.
-            timeout: 0,
+            ...(rendered?.actionProps ? { actionProps: rendered.actionProps } : {}),
+            // The manager owns the lifetime, so hovering pauses it like any
+            // native toast. Its 5 s default never applies (`0` keeps a toast
+            // without `durationMs` open), and the top-level `onClose` settles
+            // the outcome on every close path — timeout, closeAll, swipe,
+            // programmatic — not just the X button, which reaches `data.onClose`.
+            timeout,
             onClose: () => settle(notificationId, { dismissed: true }),
             data: toastData,
           });
-          const timeoutId =
-            typeof notification.durationMs === "number"
-              ? setTimeout(() => {
-                  settle(notificationId, { dismissed: true });
-                  toastManager.close(toastId);
-                }, notification.durationMs)
-              : undefined;
           owned.set(notificationId, {
             toastId,
             owner: call.caller.installationId,
             data: toastData,
-            ...(timeoutId !== undefined ? { timeoutId } : {}),
+            actions: ownedActions,
+            timed: timeout > 0,
+            flashes,
           });
           return { applied: true } as unknown as Json;
         }
@@ -536,12 +598,46 @@ export function createNotificationsClientProvider(deps: ClientProviderDeps): Cli
           const entry = ownedEntry(call, notificationId);
           const patch = readInputObject(input.patch ?? null);
           const patchRecord: Record<string, unknown> = {};
-          if (typeof patch.severity === "string") patchRecord.type = patch.severity;
+          if (typeof patch.severity === "string") {
+            const { type, leadingIcon } = notificationPresentation(patch.severity, entry.timed);
+            patchRecord.type = type;
+            entry.data = { ...entry.data, leadingIcon };
+            patchRecord.data = entry.data;
+          }
           if (typeof patch.title === "string") patchRecord.title = patch.title;
           if (typeof patch.body === "string") patchRecord.description = patch.body;
           if (typeof patch.dismissible === "boolean") {
             // `data` replaces wholesale on update — merge onto the stored copy.
-            patchRecord.data = { ...entry.data, dismissible: patch.dismissible };
+            entry.data = { ...entry.data, dismissible: patch.dismissible };
+            patchRecord.data = entry.data;
+          }
+          const flash = patch.flashAction === undefined ? null : readInputObject(patch.flashAction);
+          if (flash !== null) {
+            const actionId = readInputString(flash, "actionId")!;
+            if (!entry.actions.some((action) => action.id === actionId))
+              throw new ClientProviderOpError("provider-rejected", "Unknown notification action");
+            const rerender = () => {
+              const { actionProps, data } = renderActions(
+                notificationId,
+                entry.actions,
+                entry.flashes,
+                () => entry.toastId,
+              );
+              entry.data = { ...entry.data, ...data };
+              return { ...(actionProps ? { actionProps } : {}), data: entry.data };
+            };
+            const previous = entry.flashes.get(actionId);
+            if (previous) clearTimeout(previous.timeoutId);
+            const durationMs = typeof flash.durationMs === "number" ? flash.durationMs : 0;
+            entry.flashes.set(actionId, {
+              label: readInputString(flash, "label")!,
+              timeoutId: setTimeout(() => {
+                entry.flashes.delete(actionId);
+                if (owned.get(notificationId) === entry)
+                  toastManager.update(entry.toastId, rerender());
+              }, durationMs),
+            });
+            Object.assign(patchRecord, rerender());
           }
           toastManager.update(entry.toastId, patchRecord);
           return { applied: true } as unknown as Json;
@@ -1414,7 +1510,7 @@ export function createClientProviders(
 
 export const CLIENT_PROVIDER_DESCRIPTORS = [
   { id: "t3.client/theme", version: "1.0.0" },
-  { id: "t3.client/notifications", version: "1.0.0" },
+  { id: "t3.client/notifications", version: "1.1.0" },
   { id: "t3.client/keybindings", version: "1.0.0" },
   { id: "t3.client/panels", version: "1.0.0" },
   { id: "t3.client/composer", version: "1.2.0" },

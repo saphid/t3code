@@ -1,5 +1,6 @@
 import { assertId, copyJson, type Json, type ViewContext } from "./contracts.js";
 import type { JsonObject } from "./environment.js";
+import { compareVersions, parseVersion, rangeFloor } from "./semver.js";
 
 export interface ApiMethod {
   readonly name: string;
@@ -90,26 +91,120 @@ export interface ApiClient {
   discoverApis(context: ViewContext, signal: AbortSignal): Promise<readonly ApiDiscovery[]>;
 }
 export type ApiMethodTypes = Record<string, { input: Json; output: Json }>;
+/** An optional method input member a minor release added after `baseline`. */
+export interface ApiAddition {
+  /** The release that added the member. */
+  readonly version: string;
+  readonly method: string;
+  /** Dotted input path; `[]` steps into array items, as in `"actions[].keepOpen"`. */
+  readonly input: string;
+}
 /** Phantom method types accompany an immutable, serializable runtime descriptor. */
 export interface TypedApi<T extends ApiMethodTypes> {
   readonly definition: ApiDefinition;
+  /** See `defineApi`. */
+  readonly baseline?: string;
+  readonly additions?: readonly ApiAddition[];
   readonly types?: T;
 }
-export function defineApi<T extends ApiMethodTypes>(definition: ApiDefinition): TypedApi<T> {
-  return { definition: validateApiDefinition(definition) };
+/**
+ * `bindApi` refused a call using a member newer than the binding's range
+ * guarantees. Probe the host version (`discoverApis`), then bind at the
+ * member's range.
+ */
+export class ApiVersionError extends Error {
+  override readonly name = "ApiVersionError";
+  readonly code = "api-version-not-negotiated";
+}
+
+function hasInput(value: unknown, path: readonly string[]): boolean {
+  if (path.length === 0) return value !== undefined;
+  if (value === null || typeof value !== "object") return false;
+  const [head, ...rest] = path as [string, ...string[]];
+  const key = head.endsWith("[]") ? head.slice(0, -2) : head;
+  const child = (value as Record<string, unknown>)[key];
+  if (!head.endsWith("[]")) return hasInput(child, rest);
+  return Array.isArray(child) && child.some((item) => hasInput(item, rest));
+}
+/**
+ * `baseline` is the oldest version of this major that `requireApi` and
+ * `bindApi` ask for by default. Set it when a minor release only adds
+ * optional members, so existing consumers keep loading on older hosts, and
+ * list every such member in `additions`: a binding whose range admits a
+ * version before an addition refuses calls that use it with
+ * `ApiVersionError`, so a pack cannot declare the baseline and ship the new
+ * member unprobed. The version, baseline and additions are plain `X.Y.Z`, and
+ * only `X.Y.Z`, `^X.Y.Z`, `~X.Y.Z`, `>=X.Y.Z` and `>=X.Y.Z <A.B.C` bindings
+ * can use additions; any other range refuses them.
+ */
+export function defineApi<T extends ApiMethodTypes>(
+  definition: ApiDefinition,
+  options: { readonly baseline?: string; readonly additions?: readonly ApiAddition[] } = {},
+): TypedApi<T> {
+  const validated = validateApiDefinition(definition);
+  if (options.baseline === undefined) {
+    if (options.additions?.length) throw new Error("API additions need a baseline");
+    return { definition: validated };
+  }
+  // The guard only orders plain X.Y.Z versions; see semver.ts.
+  const version = parseVersion(validated.version);
+  if (!version)
+    throw new Error("An API with a baseline needs a plain X.Y.Z version: " + validated.version);
+  const baseline = parseVersion(options.baseline);
+  if (!baseline || baseline[0] !== version[0] || compareVersions(baseline, version) > 0)
+    throw new Error("API baseline must be an earlier plain X.Y.Z version of the same major");
+  const additions = (options.additions ?? []).map((addition) => ({ ...addition }));
+  if (compareVersions(baseline, version) < 0 && additions.length === 0)
+    throw new Error("An API baseline below the current version must list its additions");
+  for (const addition of additions) {
+    const added = parseVersion(addition.version);
+    if (!added)
+      throw new Error("An API addition needs a plain X.Y.Z version: " + JSON.stringify(addition));
+    if (
+      compareVersions(added, baseline) <= 0 ||
+      compareVersions(added, version) > 0 ||
+      !validated.methods?.some((method) => method.name === addition.method) ||
+      !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(addition.input)
+    )
+      throw new Error("Invalid API addition: " + JSON.stringify(addition));
+  }
+  return { definition: validated, baseline: options.baseline, additions };
+}
+/** The range a consumer asks for when it names none: `^baseline`, else `^version`. */
+export function defaultVersionRange(api: {
+  readonly definition: ApiDefinition;
+  readonly baseline?: string;
+}): string {
+  return "^" + (api.baseline ?? api.definition.version);
 }
 export function bindApi<T extends ApiMethodTypes>(
   api: TypedApi<T>,
   client: Pick<ApiClient, "invokeApi">,
   context: ViewContext,
-  versionRange = "^" + api.definition.version,
+  versionRange = defaultVersionRange(api),
 ) {
+  // Additions this range does not guarantee; see `defineApi`.
+  const floor = rangeFloor(versionRange);
+  const unnegotiated = (api.additions ?? []).filter((addition) => {
+    const added = parseVersion(addition.version);
+    return !floor || !added || compareVersions(floor, added) < 0;
+  });
   return {
     invoke<K extends keyof T & string>(
       method: K,
       input: T[K]["input"],
       signal: AbortSignal,
     ): Promise<T[K]["output"]> {
+      const addition = unnegotiated.find(
+        (item) => item.method === method && hasInput(input, item.input.split(".")),
+      );
+      if (addition)
+        return Promise.reject(
+          new ApiVersionError(
+            `${api.definition.id}#${method} ${addition.input} needs ^${addition.version}, ` +
+              `but this binding asks for ${versionRange}; probe the host version, then bind at ^${addition.version}`,
+          ),
+        );
       return client.invokeApi(
         { id: api.definition.id, versionRange, method, input, context },
         signal,
@@ -138,7 +233,7 @@ export function bindStreamApi<T extends ApiStreamTypes>(
   api: TypedStreamApi<T>,
   client: Pick<ApiClient, "subscribeApi">,
   context: ViewContext,
-  versionRange = "^" + api.definition.version,
+  versionRange = defaultVersionRange(api),
 ) {
   return {
     subscribe<K extends keyof T & string>(

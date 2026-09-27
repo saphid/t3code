@@ -10,15 +10,19 @@ import {
   composerContextApi,
   uiNotificationsApi,
   type BrowserCaptureArtifact,
+  type BrowserCaptureArtifactActionFailureReason,
+  type BrowserCaptureArtifactActionRequest,
   type BrowserCaptureFailureReason,
+  type BrowserCaptureHost,
   type BrowserCaptureResult,
   type BrowserCaptureTarget,
   type BrowserSurfaceLeaseState,
 } from "@t3tools/extension-sdk/catalogue";
-import { bindApi } from "@t3tools/extension-sdk/capabilities";
+import { bindApi, type ApiClient, type ApiDiscovery } from "@t3tools/extension-sdk/capabilities";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
+import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import { useRef, useState } from "react";
 
 import type { BoundApi } from "./uiContracts.ts";
@@ -175,25 +179,60 @@ export function captureOutcomeMessage(
 
 /** Native toasts use the toast manager's default lifetime. */
 export const CAPTURE_TOAST_DURATION_MS = 5_000;
+/** How long a copy action reads "Copied!", like native. */
+export const CAPTURE_COPIED_FLASH_MS = 2_000;
+
+export type CaptureToastActionId = "copy-image" | "copy-path" | "reveal";
+
+export interface CaptureToastAction {
+  readonly id: CaptureToastActionId;
+  readonly label: string;
+  readonly variant?: "primary";
+  readonly keepOpen: true;
+}
 
 export interface CaptureToast {
   readonly severity: "success" | "error";
   readonly title: string;
   readonly body?: string;
   readonly durationMs: number;
+  readonly actions?: readonly CaptureToastAction[];
+}
+
+/**
+ * Native's "Screenshot saved" actions this host can run, in native's order:
+ * outline Copy path and Reveal, then the primary Copy image. Every click keeps
+ * the toast open. Empty on a 1.0.0 host or a client without saved captures.
+ */
+export function captureToastActions(
+  capture: Pick<
+    BrowserCaptureHost,
+    "artifactActions" | "copyArtifactToClipboard" | "copyArtifactPath" | "revealArtifact"
+  > | null,
+): readonly CaptureToastAction[] {
+  const support = capture?.artifactActions;
+  if (!capture || !support) return [];
+  const actions: CaptureToastAction[] = [];
+  if (support.copyPath.supported && capture.copyArtifactPath)
+    actions.push({ id: "copy-path", label: "Copy path", keepOpen: true });
+  if (support.reveal.supported && capture.revealArtifact)
+    actions.push({ id: "reveal", label: support.revealLabel, keepOpen: true });
+  if (support.copyImage.supported && capture.copyArtifactToClipboard)
+    actions.push({ id: "copy-image", label: "Copy image", variant: "primary", keepOpen: true });
+  return actions;
 }
 
 /**
  * The toast native `PreviewView` raises for the same outcome, or null where
  * native stays silent. Titles are native's verbatim: a page capture toasts
  * "Screenshot saved" / "Unable to capture screenshot"; a pick toasts only when
- * it loses its image ("Could not capture the picked element"). Native's
- * success toast also offers Copy image / Copy path / Reveal, which need an
- * artifact clipboard and reveal contract that `t3.browser/capture` lacks.
+ * it loses its image ("Could not capture the picked element"). `actions`
+ * ride only on "Screenshot saved", as in native.
  */
 export function captureOutcomeToast(
   target: BrowserCaptureTarget,
   outcome: CaptureToChatOutcome,
+  actions: readonly CaptureToastAction[] = [],
 ): CaptureToast | null {
   switch (outcome.kind) {
     case "cancelled":
@@ -215,7 +254,111 @@ export function captureOutcomeToast(
         severity: "success",
         title: "Screenshot saved",
         durationMs: CAPTURE_TOAST_DURATION_MS,
+        ...(actions.length > 0 ? { actions } : {}),
       };
+  }
+}
+
+type Notifications = BoundApi<typeof uiNotificationsApi>;
+
+/**
+ * The toast body for a copy the host refused. Host details can name the
+ * saved file's absolute path, so the pack words every reason itself.
+ */
+function copyFailureBody(reason: BrowserCaptureArtifactActionFailureReason): string {
+  switch (reason) {
+    case "artifact-not-found":
+      return "This screenshot is no longer available to copy.";
+    case "desktop-required":
+      return "Saved screenshots live in the T3 Code desktop app.";
+    case "grant-denied":
+    case "scope-invalid":
+    case "host-unavailable":
+      return "This panel can no longer reach the saved screenshot.";
+    case "action-failed":
+      return "The saved screenshot could not be copied.";
+  }
+}
+
+/**
+ * Runs one clicked action the way native's toast does: a copy that lands
+ * reads "Copied!" for 2 s on a restored "Screenshot saved"; a copy that fails
+ * turns the toast into the error native shows; reveal reports nothing.
+ */
+export async function runCaptureToastAction(
+  notifications: Notifications,
+  capture: Pick<
+    BrowserCaptureHost,
+    "copyArtifactToClipboard" | "copyArtifactPath" | "revealArtifact"
+  >,
+  request: BrowserCaptureArtifactActionRequest,
+  notificationId: string,
+  actionId: string,
+  signal: AbortSignal,
+): Promise<void> {
+  if (actionId === "reveal") {
+    await capture.revealArtifact?.(request);
+    return;
+  }
+  const copy =
+    actionId === "copy-image"
+      ? { run: capture.copyArtifactToClipboard, failTitle: "Unable to copy screenshot" }
+      : actionId === "copy-path"
+        ? { run: capture.copyArtifactPath, failTitle: "Unable to copy screenshot path" }
+        : null;
+  if (!copy?.run) return;
+  const result = await copy.run(request);
+  if (signal.aborted) return;
+  await notifications.invoke(
+    "update",
+    result.ok
+      ? {
+          notificationId,
+          severity: "success",
+          title: "Screenshot saved",
+          body: "",
+          flashAction: { actionId, label: "Copied!", durationMs: CAPTURE_COPIED_FLASH_MS },
+        }
+      : {
+          notificationId,
+          severity: "error",
+          title: copy.failTitle,
+          body: copyFailureBody(result.failure.reason),
+        },
+    signal,
+  );
+}
+
+/**
+ * Serves a "Screenshot saved" toast's clicks until it closes. Each click runs
+ * on its own, so a slow copy never swallows the next one.
+ */
+export async function serveCaptureToastActions(
+  notifications: Notifications,
+  capture: Pick<
+    BrowserCaptureHost,
+    "copyArtifactToClipboard" | "copyArtifactPath" | "revealArtifact"
+  >,
+  request: BrowserCaptureArtifactActionRequest,
+  notificationId: string,
+  signal: AbortSignal,
+): Promise<void> {
+  while (!signal.aborted) {
+    let outcome;
+    try {
+      outcome = await notifications.invoke("awaitAction", { notificationId }, signal);
+    } catch {
+      return;
+    }
+    if (!("actionId" in outcome)) return;
+    void runCaptureToastAction(
+      notifications,
+      capture,
+      request,
+      notificationId,
+      outcome.actionId,
+      signal,
+    ).catch(() => {});
   }
 }
 
@@ -234,27 +377,106 @@ export interface CaptureReport {
   readonly fallback: Promise<string | null>;
 }
 
-/** Reports an outcome without waiting on notify; see `CaptureReport`. */
+/** Where the "Screenshot saved" actions run, when the host offers any. */
+export interface CaptureToastActionHost {
+  readonly capture: Pick<
+    BrowserCaptureHost,
+    "artifactActions" | "copyArtifactToClipboard" | "copyArtifactPath" | "revealArtifact"
+  >;
+  readonly context: ViewContext;
+  /** Probes the host's t3.ui/notifications version before asking for keepOpen. */
+  readonly discoverApis: (
+    context: ViewContext,
+    signal: AbortSignal,
+  ) => Promise<readonly ApiDiscovery[]>;
+  /** Carries the keepOpen toast and its updates once the probe passes. */
+  readonly invokeApi: ApiClient["invokeApi"];
+}
+
+/** `keepOpen` actions and `flashAction` arrived in t3.ui/notifications 1.1.0. */
+const NOTIFICATIONS_KEEP_OPEN_RANGE = "^1.1.0";
+
+/** Whether the host's selected t3.ui/notifications takes keepOpen actions. */
+async function hostTakesKeepOpen(
+  actionHost: CaptureToastActionHost,
+  signal: AbortSignal,
+): Promise<boolean> {
+  try {
+    const selected = (await actionHost.discoverApis(actionHost.context, signal)).find(
+      (api) => api.id === uiNotificationsApi.definition.id && api.selected,
+    );
+    return (
+      selected !== undefined &&
+      satisfiesSemverRange(selected.version, NOTIFICATIONS_KEEP_OPEN_RANGE)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Reports an outcome without waiting on notify; see `CaptureReport`. With
+ * `actionHost`, a "Screenshot saved" toast for a capture the desktop saved
+ * carries native's actions and is served until it closes. A host that does
+ * not advertise notifications 1.1.0, or whose client still rejects the
+ * actions, gets the plain toast.
+ */
 export function reportCaptureOutcome(
-  notifications: BoundApi<typeof uiNotificationsApi>,
+  notifications: Notifications,
   threadId: string,
   target: BrowserCaptureTarget,
   outcome: CaptureToChatOutcome,
   signal: AbortSignal,
   ackTimeoutMs = NOTIFY_ACK_TIMEOUT_MS,
+  actionHost: CaptureToastActionHost | null = null,
 ): CaptureReport {
   const message = captureOutcomeMessage(target, outcome);
-  const toast = captureOutcomeToast(target, outcome);
+  const saved = outcome.kind === "added" && outcome.artifact.saved === true;
+  const toast = captureOutcomeToast(
+    target,
+    outcome,
+    saved ? captureToastActions(actionHost?.capture ?? null) : [],
+  );
   if (toast === null) return { inline: message, fallback: Promise.resolve(null) };
   const ack = AbortSignal.timeout(ackTimeoutMs);
+  const delivery = AbortSignal.any([signal, ack]);
+  const notify = (input: CaptureToast, via = notifications) =>
+    via.invoke("notify", { ...input, threadId, anchor: "thread" }, delivery);
+  const { actions, ...plain } = toast;
   const fallback = Promise.resolve()
-    .then(() =>
-      notifications.invoke(
-        "notify",
-        { ...toast, threadId, anchor: "thread" },
-        AbortSignal.any([signal, ack]),
-      ),
-    )
+    .then(async () => {
+      if (
+        actions === undefined ||
+        actionHost === null ||
+        !(await hostTakesKeepOpen(actionHost, delivery))
+      )
+        return notify(plain);
+      // The SDK refuses keepOpen and flashAction below the range just probed.
+      const probed = bindApi(
+        uiNotificationsApi,
+        actionHost,
+        actionHost.context,
+        NOTIFICATIONS_KEEP_OPEN_RANGE,
+      );
+      return notify(toast, probed).then(
+        ({ notificationId }) => {
+          if (outcome.kind === "added")
+            void serveCaptureToastActions(
+              probed,
+              actionHost.capture,
+              { context: actionHost.context, artifactRef: outcome.artifact.artifactRef },
+              notificationId,
+              signal,
+            );
+        },
+        // A 1.1.0 host with a 1.0.0 client rejects keepOpen actions;
+        // native's toast without them still beats a status line.
+        (error: unknown) => {
+          if (signal.aborted || ack.aborted) throw error;
+          return notify(plain);
+        },
+      );
+    })
     .then(
       () => null,
       () => (signal.aborted || ack.aborted ? null : message),
@@ -276,7 +498,7 @@ export type BrowserCaptureState =
  * `cancel` dismisses an open picker, which settles as a silent cancel.
  */
 export async function runBrowserCapture(
-  host: Pick<ClientHost, "browserCapture" | "invokeApi">,
+  host: Pick<ClientHost, "browserCapture" | "invokeApi" | "discoverApis">,
   session: Pick<ViewSession, "context" | "signal">,
   held: CaptureSessionRef,
   target: BrowserCaptureTarget,
@@ -297,6 +519,14 @@ export async function runBrowserCapture(
     outcome,
     session.signal,
     ackTimeoutMs,
+    host.browserCapture
+      ? {
+          capture: host.browserCapture,
+          context,
+          discoverApis: (probeContext, signal) => host.discoverApis(probeContext, signal),
+          invokeApi: (request, signal) => host.invokeApi(request, signal),
+        }
+      : null,
   );
   onState({ kind: "done", message: report.inline });
   const message = await report.fallback;

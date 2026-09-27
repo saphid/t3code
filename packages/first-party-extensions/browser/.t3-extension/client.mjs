@@ -182,13 +182,90 @@ var __t3Client = (() => {
     return manifest;
   }
 
-  // node_modules/@t3tools/extension-sdk/dist/capabilities.js
-  function defineApi(definition) {
-    return { definition: validateApiDefinition(definition) };
+  // node_modules/@t3tools/extension-sdk/dist/semver.js
+  var TRIPLE = "(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)";
+  var VERSION = new RegExp(`^${TRIPLE}$`);
+  var RANGE = new RegExp(`^(?:\\^|~|>=)?${TRIPLE}$`);
+  var BOUNDED = new RegExp(`^>=${TRIPLE} <${TRIPLE}$`);
+  function toVersion(parts) {
+    const [major, minor, patch] = parts.map(Number);
+    return [major, minor, patch].every(Number.isSafeInteger) ? [major, minor, patch] : null;
   }
-  function bindApi(api, client2, context2, versionRange = "^" + api.definition.version) {
+  function parseVersion(text) {
+    const match4 = VERSION.exec(text);
+    return match4 ? toVersion(match4.slice(1, 4)) : null;
+  }
+  function compareVersions(a, b) {
+    return Math.sign(a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+  }
+  function rangeFloor(range) {
+    const match4 = RANGE.exec(range);
+    if (match4)
+      return toVersion(match4.slice(1, 4));
+    const bounded = BOUNDED.exec(range);
+    if (!bounded)
+      return null;
+    const floor = toVersion(bounded.slice(1, 4));
+    const ceiling = toVersion(bounded.slice(4, 7));
+    return floor && ceiling && compareVersions(floor, ceiling) < 0 ? floor : null;
+  }
+
+  // node_modules/@t3tools/extension-sdk/dist/capabilities.js
+  var ApiVersionError = class extends Error {
+    name = "ApiVersionError";
+    code = "api-version-not-negotiated";
+  };
+  function hasInput(value, path3) {
+    if (path3.length === 0)
+      return value !== void 0;
+    if (value === null || typeof value !== "object")
+      return false;
+    const [head2, ...rest] = path3;
+    const key = head2.endsWith("[]") ? head2.slice(0, -2) : head2;
+    const child = value[key];
+    if (!head2.endsWith("[]"))
+      return hasInput(child, rest);
+    return Array.isArray(child) && child.some((item) => hasInput(item, rest));
+  }
+  function defineApi(definition, options = {}) {
+    const validated = validateApiDefinition(definition);
+    if (options.baseline === void 0) {
+      if (options.additions?.length)
+        throw new Error("API additions need a baseline");
+      return { definition: validated };
+    }
+    const version2 = parseVersion(validated.version);
+    if (!version2)
+      throw new Error("An API with a baseline needs a plain X.Y.Z version: " + validated.version);
+    const baseline = parseVersion(options.baseline);
+    if (!baseline || baseline[0] !== version2[0] || compareVersions(baseline, version2) > 0)
+      throw new Error("API baseline must be an earlier plain X.Y.Z version of the same major");
+    const additions = (options.additions ?? []).map((addition) => ({ ...addition }));
+    if (compareVersions(baseline, version2) < 0 && additions.length === 0)
+      throw new Error("An API baseline below the current version must list its additions");
+    for (const addition of additions) {
+      const added = parseVersion(addition.version);
+      if (!added)
+        throw new Error("An API addition needs a plain X.Y.Z version: " + JSON.stringify(addition));
+      if (compareVersions(added, baseline) <= 0 || compareVersions(added, version2) > 0 || !validated.methods?.some((method) => method.name === addition.method) || !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(addition.input))
+        throw new Error("Invalid API addition: " + JSON.stringify(addition));
+    }
+    return { definition: validated, baseline: options.baseline, additions };
+  }
+  function defaultVersionRange(api) {
+    return "^" + (api.baseline ?? api.definition.version);
+  }
+  function bindApi(api, client2, context2, versionRange = defaultVersionRange(api)) {
+    const floor = rangeFloor(versionRange);
+    const unnegotiated = (api.additions ?? []).filter((addition) => {
+      const added = parseVersion(addition.version);
+      return !floor || !added || compareVersions(floor, added) < 0;
+    });
     return {
       invoke(method, input, signal) {
+        const addition = unnegotiated.find((item) => item.method === method && hasInput(input, item.input.split(".")));
+        if (addition)
+          return Promise.reject(new ApiVersionError(`${api.definition.id}#${method} ${addition.input} needs ^${addition.version}, but this binding asks for ${versionRange}; probe the host version, then bind at ^${addition.version}`));
         return client2.invokeApi({ id: api.definition.id, versionRange, method, input, context: context2 }, signal);
       }
     };
@@ -199,7 +276,7 @@ var __t3Client = (() => {
       throw new Error("Expected API stream definitions");
     return { definition: validated };
   }
-  function bindStreamApi(api, client2, context2, versionRange = "^" + api.definition.version) {
+  function bindStreamApi(api, client2, context2, versionRange = defaultVersionRange(api)) {
     return {
       subscribe(name, input, signal, options) {
         return client2.subscribeApi({
@@ -1294,7 +1371,8 @@ var __t3Client = (() => {
     properties: {
       id: { type: "string", minLength: 1, maxLength: 80 },
       label: { type: "string", minLength: 1, maxLength: 80 },
-      variant: { enum: ["default", "primary", "destructive"] }
+      variant: { enum: ["default", "primary", "destructive"] },
+      keepOpen: { type: "boolean" }
     }
   };
   var notificationBodySchema = {
@@ -1320,7 +1398,7 @@ var __t3Client = (() => {
   };
   var CLIENT_NOTIFICATIONS_API = validateApiDefinition({
     id: "t3.client/notifications",
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
       {
         name: "notify",
@@ -1342,7 +1420,17 @@ var __t3Client = (() => {
               severity: { enum: ["info", "success", "warning", "error", "loading"] },
               title: { type: "string", minLength: 1, maxLength: 200 },
               body: { type: "string", maxLength: 2e3 },
-              dismissible: { type: "boolean" }
+              dismissible: { type: "boolean" },
+              flashAction: {
+                type: "object",
+                additionalProperties: false,
+                required: ["actionId", "label", "durationMs"],
+                properties: {
+                  actionId: { type: "string", minLength: 1, maxLength: 80 },
+                  label: { type: "string", minLength: 1, maxLength: 80 },
+                  durationMs: { type: "integer", minimum: 0, maximum: 1e4 }
+                }
+              }
             }
           }
         }, ["notificationId", "patch"]),
@@ -7221,116 +7309,139 @@ var __t3Client = (() => {
     properties: {
       id: { type: "string", minLength: 1, maxLength: 80 },
       label: { type: "string", minLength: 1, maxLength: 80 },
-      variant: { enum: ["default", "primary", "destructive"] }
+      variant: { enum: ["default", "primary", "destructive"] },
+      keepOpen: { type: "boolean" }
     }
   };
-  var uiNotificationsApi = defineApi({
-    id: "t3.ui/notifications",
-    version: "1.0.0",
-    methods: [
-      {
-        name: "getCapabilities",
-        effect: "read",
-        requiredGrants: [],
-        inputSchema: composerEmptyInputSchema,
-        outputSchema: uiCapabilitiesOutput(["notify", "update", "dismiss", "awaitAction"])
-      },
-      {
-        name: "notify",
-        effect: "write",
-        requiredGrants: [UI_NOTIFY],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["severity", "title"],
-          properties: {
-            severity: { enum: ["info", "success", "warning", "error", "loading"] },
-            title: { type: "string", minLength: 1, maxLength: 200 },
-            body: { type: "string", maxLength: 2e3 },
-            threadId: { type: "string", maxLength: 128 },
-            projectId: { type: "string", maxLength: 128 },
-            anchor: { enum: ["global", "thread"] },
-            dismissible: { type: "boolean" },
-            durationMs: { type: "integer", minimum: 0, maximum: 6e4 },
-            actions: { type: "array", maxItems: 3, items: uiNotificationActionSchema }
-          }
+  var UI_NOTIFICATION_FLASH_MAX_MS = 1e4;
+  var uiNotificationFlashSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["actionId", "label", "durationMs"],
+    properties: {
+      actionId: { type: "string", minLength: 1, maxLength: 80 },
+      label: { type: "string", minLength: 1, maxLength: 80 },
+      durationMs: { type: "integer", minimum: 0, maximum: UI_NOTIFICATION_FLASH_MAX_MS }
+    }
+  };
+  var uiNotificationsApi = defineApi(
+    {
+      id: "t3.ui/notifications",
+      version: "1.1.0",
+      methods: [
+        {
+          name: "getCapabilities",
+          effect: "read",
+          requiredGrants: [],
+          inputSchema: composerEmptyInputSchema,
+          outputSchema: uiCapabilitiesOutput(["notify", "update", "dismiss", "awaitAction"])
         },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["notificationId"],
-          properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } }
-        }
-      },
-      {
-        name: "update",
-        effect: "write",
-        requiredGrants: [UI_NOTIFY],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["notificationId"],
-          properties: {
-            notificationId: { type: "string", minLength: 1, maxLength: 160 },
-            severity: { enum: ["info", "success", "warning", "error", "loading"] },
-            title: { type: "string", minLength: 1, maxLength: 200 },
-            body: { type: "string", maxLength: 2e3 },
-            dismissible: { type: "boolean" }
-          }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["applied"],
-          properties: { applied: { type: "boolean" } }
-        }
-      },
-      {
-        name: "dismiss",
-        effect: "write",
-        requiredGrants: [UI_NOTIFY],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["notificationId"],
-          properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["dismissed"],
-          properties: { dismissed: { type: "boolean" } }
-        }
-      },
-      {
-        name: "awaitAction",
-        effect: "read",
-        requiredGrants: [UI_NOTIFY],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["notificationId"],
-          properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } }
-        },
-        outputSchema: {
-          anyOf: [
-            {
-              type: "object",
-              additionalProperties: false,
-              required: ["actionId"],
-              properties: { actionId: { type: "string", minLength: 1, maxLength: 80 } }
-            },
-            {
-              type: "object",
-              additionalProperties: false,
-              required: ["dismissed"],
-              properties: { dismissed: { const: true } }
+        {
+          name: "notify",
+          effect: "write",
+          requiredGrants: [UI_NOTIFY],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["severity", "title"],
+            properties: {
+              severity: { enum: ["info", "success", "warning", "error", "loading"] },
+              title: { type: "string", minLength: 1, maxLength: 200 },
+              body: { type: "string", maxLength: 2e3 },
+              threadId: { type: "string", maxLength: 128 },
+              projectId: { type: "string", maxLength: 128 },
+              anchor: { enum: ["global", "thread"] },
+              dismissible: { type: "boolean" },
+              durationMs: { type: "integer", minimum: 0, maximum: 6e4 },
+              actions: { type: "array", maxItems: 3, items: uiNotificationActionSchema }
             }
-          ]
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["notificationId"],
+            properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } }
+          }
+        },
+        {
+          name: "update",
+          effect: "write",
+          requiredGrants: [UI_NOTIFY],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["notificationId"],
+            properties: {
+              notificationId: { type: "string", minLength: 1, maxLength: 160 },
+              severity: { enum: ["info", "success", "warning", "error", "loading"] },
+              title: { type: "string", minLength: 1, maxLength: 200 },
+              body: { type: "string", maxLength: 2e3 },
+              dismissible: { type: "boolean" },
+              flashAction: uiNotificationFlashSchema
+            }
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["applied"],
+            properties: { applied: { type: "boolean" } }
+          }
+        },
+        {
+          name: "dismiss",
+          effect: "write",
+          requiredGrants: [UI_NOTIFY],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["notificationId"],
+            properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } }
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["dismissed"],
+            properties: { dismissed: { type: "boolean" } }
+          }
+        },
+        {
+          name: "awaitAction",
+          effect: "read",
+          requiredGrants: [UI_NOTIFY],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["notificationId"],
+            properties: { notificationId: { type: "string", minLength: 1, maxLength: 160 } }
+          },
+          outputSchema: {
+            anyOf: [
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["actionId"],
+                properties: { actionId: { type: "string", minLength: 1, maxLength: 80 } }
+              },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["dismissed"],
+                properties: { dismissed: { const: true } }
+              }
+            ]
+          }
         }
-      }
-    ]
-  });
+      ]
+    },
+    // Consumers keep loading on a 1.0.0 host; probe before using the 1.1.0 fields.
+    {
+      baseline: "1.0.0",
+      additions: [
+        { version: "1.1.0", method: "notify", input: "actions[].keepOpen" },
+        { version: "1.1.0", method: "update", input: "flashAction" }
+      ]
+    }
+  );
   var uiPanelsApi = defineApi({
     id: "t3.ui/panels",
     version: "1.0.0",
@@ -7913,7 +8024,7 @@ var __t3Client = (() => {
       } : {}
     };
   }
-  function requireApi(api, versionRange = "^" + api.definition.version) {
+  function requireApi(api, versionRange = defaultVersionRange(api)) {
     return { id: api.definition.id, versionRange };
   }
   var OVERFLOW_CLIP_PATTERN = /(auto|scroll|hidden|clip)/;
@@ -8305,6 +8416,74 @@ var __t3Client = (() => {
   // extension.tsx
   var import_react7 = __toESM(require_react(), 1);
 
+  // node_modules/@t3tools/shared/src/semver.ts
+  var satisfiesSemverRange = function satisfiesSemverRange2(rawVersion, range) {
+    const normalizedVersion = String(rawVersion).trim().replace(/^v/, "");
+    const versionMatch = normalizedVersion.match(
+      /^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-[0-9A-Za-z.-]+)?$/
+    );
+    if (!versionMatch) {
+      return false;
+    }
+    const version2 = {
+      major: Number(versionMatch[1]),
+      minor: Number(versionMatch[2] || 0),
+      patch: Number(versionMatch[3] || 0)
+    };
+    return range.split("||").some((group) => {
+      const comparators = group.trim().split(/\s+/).filter(Boolean);
+      if (comparators.length === 0) {
+        return false;
+      }
+      return comparators.every((comparator) => {
+        const match4 = comparator.trim().match(/^(\^|>=|>|<=|<|=)?\s*v?(\d+(?:\.\d+){0,2})$/);
+        if (!match4) {
+          return false;
+        }
+        const targetVersion = match4[2];
+        if (targetVersion === void 0) {
+          return false;
+        }
+        const targetMatch = targetVersion.match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?$/);
+        if (!targetMatch) {
+          return false;
+        }
+        const target = {
+          major: Number(targetMatch[1]),
+          minor: Number(targetMatch[2] || 0),
+          patch: Number(targetMatch[3] || 0)
+        };
+        const compared = version2.major !== target.major ? version2.major > target.major ? 1 : -1 : version2.minor !== target.minor ? version2.minor > target.minor ? 1 : -1 : version2.patch !== target.patch ? version2.patch > target.patch ? 1 : -1 : 0;
+        const operator = match4[1] || "=";
+        switch (operator) {
+          case "^":
+            if (compared < 0) {
+              return false;
+            }
+            if (target.major > 0) {
+              return version2.major === target.major;
+            }
+            if (target.minor > 0) {
+              return version2.major === 0 && version2.minor === target.minor;
+            }
+            return version2.major === 0 && version2.minor === 0 && version2.patch === target.patch;
+          case ">=":
+            return compared >= 0;
+          case ">":
+            return compared > 0;
+          case "<=":
+            return compared <= 0;
+          case "<":
+            return compared < 0;
+          case "=":
+            return compared === 0;
+          default:
+            return false;
+        }
+      });
+    });
+  };
+
   // capture.ts
   var import_react = __toESM(require_react(), 1);
   function capturePageView(lease, presentedVisible, navigation) {
@@ -8388,7 +8567,20 @@ var __t3Client = (() => {
     }
   }
   var CAPTURE_TOAST_DURATION_MS = 5e3;
-  function captureOutcomeToast(target, outcome) {
+  var CAPTURE_COPIED_FLASH_MS = 2e3;
+  function captureToastActions(capture) {
+    const support = capture?.artifactActions;
+    if (!capture || !support) return [];
+    const actions = [];
+    if (support.copyPath.supported && capture.copyArtifactPath)
+      actions.push({ id: "copy-path", label: "Copy path", keepOpen: true });
+    if (support.reveal.supported && capture.revealArtifact)
+      actions.push({ id: "reveal", label: support.revealLabel, keepOpen: true });
+    if (support.copyImage.supported && capture.copyArtifactToClipboard)
+      actions.push({ id: "copy-image", label: "Copy image", variant: "primary", keepOpen: true });
+    return actions;
+  }
+  function captureOutcomeToast(target, outcome, actions = []) {
     switch (outcome.kind) {
       case "cancelled":
         return null;
@@ -8405,23 +8597,124 @@ var __t3Client = (() => {
         return {
           severity: "success",
           title: "Screenshot saved",
-          durationMs: CAPTURE_TOAST_DURATION_MS
+          durationMs: CAPTURE_TOAST_DURATION_MS,
+          ...actions.length > 0 ? { actions } : {}
         };
     }
   }
+  function copyFailureBody(reason) {
+    switch (reason) {
+      case "artifact-not-found":
+        return "This screenshot is no longer available to copy.";
+      case "desktop-required":
+        return "Saved screenshots live in the T3 Code desktop app.";
+      case "grant-denied":
+      case "scope-invalid":
+      case "host-unavailable":
+        return "This panel can no longer reach the saved screenshot.";
+      case "action-failed":
+        return "The saved screenshot could not be copied.";
+    }
+  }
+  async function runCaptureToastAction(notifications, capture, request, notificationId, actionId, signal) {
+    if (actionId === "reveal") {
+      await capture.revealArtifact?.(request);
+      return;
+    }
+    const copy = actionId === "copy-image" ? { run: capture.copyArtifactToClipboard, failTitle: "Unable to copy screenshot" } : actionId === "copy-path" ? { run: capture.copyArtifactPath, failTitle: "Unable to copy screenshot path" } : null;
+    if (!copy?.run) return;
+    const result2 = await copy.run(request);
+    if (signal.aborted) return;
+    await notifications.invoke(
+      "update",
+      result2.ok ? {
+        notificationId,
+        severity: "success",
+        title: "Screenshot saved",
+        body: "",
+        flashAction: { actionId, label: "Copied!", durationMs: CAPTURE_COPIED_FLASH_MS }
+      } : {
+        notificationId,
+        severity: "error",
+        title: copy.failTitle,
+        body: copyFailureBody(result2.failure.reason)
+      },
+      signal
+    );
+  }
+  async function serveCaptureToastActions(notifications, capture, request, notificationId, signal) {
+    while (!signal.aborted) {
+      let outcome;
+      try {
+        outcome = await notifications.invoke("awaitAction", { notificationId }, signal);
+      } catch {
+        return;
+      }
+      if (!("actionId" in outcome)) return;
+      void runCaptureToastAction(
+        notifications,
+        capture,
+        request,
+        notificationId,
+        outcome.actionId,
+        signal
+      ).catch(() => {
+      });
+    }
+  }
   var NOTIFY_ACK_TIMEOUT_MS = 5e3;
-  function reportCaptureOutcome(notifications, threadId, target, outcome, signal, ackTimeoutMs = NOTIFY_ACK_TIMEOUT_MS) {
+  var NOTIFICATIONS_KEEP_OPEN_RANGE = "^1.1.0";
+  async function hostTakesKeepOpen(actionHost, signal) {
+    try {
+      const selected = (await actionHost.discoverApis(actionHost.context, signal)).find(
+        (api) => api.id === uiNotificationsApi.definition.id && api.selected
+      );
+      return selected !== void 0 && satisfiesSemverRange(selected.version, NOTIFICATIONS_KEEP_OPEN_RANGE);
+    } catch {
+      return false;
+    }
+  }
+  function reportCaptureOutcome(notifications, threadId, target, outcome, signal, ackTimeoutMs = NOTIFY_ACK_TIMEOUT_MS, actionHost = null) {
     const message = captureOutcomeMessage(target, outcome);
-    const toast = captureOutcomeToast(target, outcome);
+    const saved = outcome.kind === "added" && outcome.artifact.saved === true;
+    const toast = captureOutcomeToast(
+      target,
+      outcome,
+      saved ? captureToastActions(actionHost?.capture ?? null) : []
+    );
     if (toast === null) return { inline: message, fallback: Promise.resolve(null) };
     const ack = AbortSignal.timeout(ackTimeoutMs);
-    const fallback = Promise.resolve().then(
-      () => notifications.invoke(
-        "notify",
-        { ...toast, threadId, anchor: "thread" },
-        AbortSignal.any([signal, ack])
-      )
-    ).then(
+    const delivery = AbortSignal.any([signal, ack]);
+    const notify = (input, via = notifications) => via.invoke("notify", { ...input, threadId, anchor: "thread" }, delivery);
+    const { actions, ...plain } = toast;
+    const fallback = Promise.resolve().then(async () => {
+      if (actions === void 0 || actionHost === null || !await hostTakesKeepOpen(actionHost, delivery))
+        return notify(plain);
+      const probed = bindApi(
+        uiNotificationsApi,
+        actionHost,
+        actionHost.context,
+        NOTIFICATIONS_KEEP_OPEN_RANGE
+      );
+      return notify(toast, probed).then(
+        ({ notificationId }) => {
+          if (outcome.kind === "added")
+            void serveCaptureToastActions(
+              probed,
+              actionHost.capture,
+              { context: actionHost.context, artifactRef: outcome.artifact.artifactRef },
+              notificationId,
+              signal
+            );
+        },
+        // A 1.1.0 host with a 1.0.0 client rejects keepOpen actions;
+        // native's toast without them still beats a status line.
+        (error) => {
+          if (signal.aborted || ack.aborted) throw error;
+          return notify(plain);
+        }
+      );
+    }).then(
       () => null,
       () => signal.aborted || ack.aborted ? null : message
     );
@@ -8439,7 +8732,13 @@ var __t3Client = (() => {
       target,
       outcome,
       session.signal,
-      ackTimeoutMs
+      ackTimeoutMs,
+      host.browserCapture ? {
+        capture: host.browserCapture,
+        context: context2,
+        discoverApis: (probeContext, signal2) => host.discoverApis(probeContext, signal2),
+        invokeApi: (request, signal2) => host.invokeApi(request, signal2)
+      } : null
     );
     onState({ kind: "done", message: report.inline });
     const message = await report.fallback;
@@ -11188,7 +11487,7 @@ ${ind(d)}}`;
   function isIssue(u) {
     return hasProperty(u, TypeId4) && u[TypeId4] === TypeId4;
   }
-  function hasInput(issue) {
+  function hasInput2(issue) {
     return Object.hasOwn(issue, "input");
   }
   var IssueNodeImpl = class {
@@ -11399,7 +11698,7 @@ ${ind(d)}}`;
   };
   var defaultCheckHook = (issue) => findMessage(issue.issue) ?? findMessage(issue);
   function formatInput(issue) {
-    return hasInput(issue) ? format(issue.input) : void 0;
+    return hasInput2(issue) ? format(issue.input) : void 0;
   }
   function findExpected(issue) {
     const expected = issue.annotations?.expected;

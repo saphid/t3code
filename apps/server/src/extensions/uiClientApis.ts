@@ -18,6 +18,8 @@ import {
 } from "@t3tools/extension-sdk/catalogue";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
+import { CLIENT_NOTIFICATIONS_V11_RANGE } from "@t3tools/extension-sdk/clientProviders";
+import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import type { HostApiInvocationMetadata, HostApiProvider } from "@t3tools/extension-runtime";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -28,6 +30,8 @@ const DEFAULT_TIMEOUT_MS = 5_000;
 /** Notification outcomes stay resolvable by `awaitAction` for one minute. */
 const OUTCOME_RETENTION_MS = 60_000;
 const OUTCOME_RETENTION_CAP = 256;
+/** `keepOpen` clicks queued for the next `awaitAction`; older clicks drop first. */
+const PENDING_CLICKS_CAP = 8;
 
 /**
  * The public `t3.ui/*` contracts backed by `t3.client/*` client providers.
@@ -320,6 +324,8 @@ interface LiveNotification {
   readonly ownerId: string;
   /** The seam connection the toast lives on — outcomes stay connection-owned. */
   readonly connectionId: string;
+  /** `keepOpen` action ids clicked while no `awaitAction` was waiting. */
+  readonly clicks: string[];
   readonly waiters: {
     resolve: (outcome: NotificationOutcome) => void;
     reject: (error: unknown) => void;
@@ -329,11 +335,15 @@ interface LiveNotification {
 export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly HostApiProvider[] {
   /** Live notifications, keyed by server-minted notificationId. */
   const live = new Map<string, LiveNotification>();
-  /** Settled outcomes retained for 60 s so late `awaitAction` calls resolve. */
+  /**
+   * Settled outcomes retained for 60 s so late `awaitAction` calls resolve,
+   * after any `keepOpen` clicks still queued when the toast closed.
+   */
   const outcomes = new Map<
     string,
     {
       outcome: NotificationOutcome;
+      clicks: string[];
       expiresAt: number;
       ownerId: string;
       connectionId: string;
@@ -351,12 +361,16 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
     connectionId: string,
   ) => {
     const record = live.get(notificationId);
+    // Settlement is idempotent: the client's outcome event and an API
+    // dismiss response can both arrive, and the first keeps its queued clicks.
+    if (!record && outcomes.has(notificationId)) return;
     if (record) {
       live.delete(notificationId);
       for (const waiter of record.waiters.splice(0)) waiter.resolve(outcome);
     }
     outcomes.set(notificationId, {
       outcome,
+      clicks: record?.clicks ?? [],
       expiresAt: nowMs() + OUTCOME_RETENTION_MS,
       ownerId,
       connectionId,
@@ -407,6 +421,41 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
         "Notifications can only be managed by their owning installation.",
       );
     return record;
+  };
+
+  /** A click on a `keepOpen` action: wakes current waiters, or queues for the next one. */
+  const recordClick = (notificationId: string, actionId: string) => {
+    const record = live.get(notificationId);
+    if (!record) return;
+    if (record.waiters.length === 0) {
+      record.clicks.push(actionId);
+      record.clicks.splice(0, Math.max(0, record.clicks.length - PENDING_CLICKS_CAP));
+      return;
+    }
+    for (const waiter of record.waiters.splice(0)) waiter.resolve({ actionId });
+  };
+
+  /**
+   * `keepOpen` and `flashAction` only render on a 1.1.0 client; an older one
+   * would reject the frame, so name the gap instead.
+   */
+  const requireNotificationsV11 = async (
+    connectionId: string,
+    operation: string,
+    signal: AbortSignal,
+  ) => {
+    const targets = await Effect.runPromise(
+      deps.clientApiProviders.listTargets(deps.environmentId),
+      { signal },
+    );
+    const version = targets
+      .find((target) => target.connectionId === connectionId)
+      ?.providers.find((provider) => provider.id === CLIENT_NOTIFICATIONS)?.version;
+    if (version !== undefined && !satisfiesSemverRange(version, CLIENT_NOTIFICATIONS_V11_RANGE))
+      throw providerError(
+        "provider-rejected",
+        `${operation} needs t3.client/notifications ${CLIENT_NOTIFICATIONS_V11_RANGE}; this client runs ${version}.`,
+      );
   };
 
   const themeProvider: HostApiProvider = {
@@ -617,10 +666,14 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
             const connectionId = await Effect.runPromise(resolveConnectionId(deps, metadata), {
               signal,
             });
+            const actions = (input as { actions?: readonly { keepOpen?: boolean }[] }).actions;
+            if (actions?.some((action) => action.keepOpen !== undefined))
+              await requireNotificationsV11(connectionId, "A keepOpen action", signal);
             const notificationId = `ntf-${NodeCrypto.randomUUID()}`;
             const record: LiveNotification = {
               ownerId: callerOf(metadata).installationId,
               connectionId,
+              clicks: [],
               waiters: [],
             };
             live.set(notificationId, record);
@@ -632,6 +685,10 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
                   connectionId,
                   kind: "notification",
                   deliver: (event) => {
+                    if (event.type === "notificationAction") {
+                      recordClick(notificationId, event.actionId);
+                      return;
+                    }
                     if (event.type !== "notificationOutcome") return;
                     const outcome = event.outcome as NotificationOutcome;
                     recordOutcome(
@@ -679,8 +736,10 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
         case "update": {
           const notificationId = (input as { notificationId: string }).notificationId;
           return (async () => {
-            ownedNotification(notificationId, metadata);
+            const record = ownedNotification(notificationId, metadata);
             const { notificationId: _omit, ...patch } = input as Record<string, unknown>;
+            if (patch.flashAction !== undefined)
+              await requireNotificationsV11(record.connectionId, "flashAction", signal);
             return Effect.runPromise(
               invokeClient(deps, {
                 apiId: CLIENT_NOTIFICATIONS,
@@ -748,6 +807,8 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
                   "notification-owner-mismatch",
                   "Notifications can only be managed by their owning installation and connection.",
                 );
+              const queued = retained.clicks.shift();
+              if (queued !== undefined) return { actionId: queued } satisfies Json;
               return retained.outcome as unknown as Json;
             }
             const record = ownedNotification(notificationId, metadata);
@@ -756,6 +817,8 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
                 "notification-owner-mismatch",
                 "Notifications can only be managed by their owning connection.",
               );
+            const queued = record.clicks.shift();
+            if (queued !== undefined) return { actionId: queued } satisfies Json;
             return new Promise<Json>((resolve, reject) => {
               const waiter = {
                 resolve: (outcome: NotificationOutcome) => resolve(outcome as Json),

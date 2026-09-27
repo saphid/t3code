@@ -26,6 +26,7 @@ const ARTIFACT_REF = "pending-0f1e2d3c-4b5a-4968-8776-655443322110";
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7, 7]);
 // "iVBORw0KGgoHBw==" is PNG above, as the picker's data URL carries it.
 const PNG_DATA_URL = "data:image/png;base64,iVBORw0KGgoHBw==";
+const SAVED_PATH = "/home/u/.t3/browser-artifacts/browser-screenshot-localhost-1.png";
 
 function pick(overrides: Partial<PreviewAnnotationSubmissionResult["annotation"]> = {}) {
   return {
@@ -83,10 +84,14 @@ function harness(overrides: Partial<BrowserCaptureBridgeDeps> = {}) {
       height: 800,
       pageUrl: "http://localhost:5173/",
       pageTitle: "Home",
+      path: SAVED_PATH,
     })),
     pickElement: vi.fn(async (): Promise<PreviewAnnotationSubmissionResult | null> => pick()),
     cancelPickElement: vi.fn(async () => {}),
+    revealArtifact: vi.fn(async (_path: string) => {}),
+    copyArtifactToClipboard: vi.fn(async (_path: string) => {}),
   };
+  const clipboardText: string[] = [];
   const deps: Partial<BrowserCaptureBridgeDeps> = {
     preview: () => preview,
     resolveThreadScope: () => ({ projectId: "project-a", authoritative: true }),
@@ -101,6 +106,10 @@ function harness(overrides: Partial<BrowserCaptureBridgeDeps> = {}) {
       });
       return ARTIFACT_REF;
     },
+    writeClipboardText: async (text) => {
+      clipboardText.push(text);
+    },
+    platform: () => "MacIntel",
     ...overrides,
   };
   const lifetime = new AbortController();
@@ -114,7 +123,7 @@ function harness(overrides: Partial<BrowserCaptureBridgeDeps> = {}) {
       },
       lifetime: lifetime.signal,
     });
-  return { host, preview, uploads, lifetime };
+  return { host, preview, uploads, lifetime, clipboardText };
 }
 
 describe("browser capture bridge", () => {
@@ -132,6 +141,7 @@ describe("browser capture bridge", () => {
         target: "page",
         pageUrl: "http://localhost:5173/",
         pageTitle: "Home",
+        saved: true,
       },
     });
     // The desktop tab id is the runtime identity, never the public tabId alone.
@@ -279,6 +289,7 @@ describe("browser capture bridge", () => {
               height: 1,
               pageUrl: null,
               pageTitle: null,
+              path: null,
             });
         }),
     );
@@ -310,6 +321,7 @@ describe("browser capture bridge", () => {
               height: 1,
               pageUrl: null,
               pageTitle: null,
+              path: null,
             });
         }),
     );
@@ -335,6 +347,166 @@ describe("browser capture bridge", () => {
     });
     expect(await store.host().capture({ context, session, target: "page" })).toMatchObject({
       failure: { reason: "upload-failed", detail: "Capture upload rejected (413)." },
+    });
+  });
+
+  describe("artifact actions", () => {
+    const request = { context, artifactRef: ARTIFACT_REF };
+
+    it("acts on the file its own page capture saved, through the desktop bridge", async () => {
+      const h = harness();
+      const host = h.host();
+      expect(host.artifactActions).toEqual({
+        copyImage: { supported: true },
+        copyPath: { supported: true },
+        reveal: { supported: true },
+        revealLabel: "Reveal in Finder",
+      });
+      // Nothing saved yet: the ref is unknown rather than guessed at.
+      expect(await host.revealArtifact!(request)).toMatchObject({
+        ok: false,
+        failure: { reason: "artifact-not-found" },
+      });
+      await host.capture({ context, session, target: "page" });
+      expect(await host.copyArtifactToClipboard!(request)).toEqual({ ok: true });
+      expect(await host.copyArtifactPath!(request)).toEqual({ ok: true });
+      expect(await host.revealArtifact!(request)).toEqual({ ok: true });
+      expect(h.preview.copyArtifactToClipboard).toHaveBeenCalledWith(SAVED_PATH);
+      expect(h.preview.revealArtifact).toHaveBeenCalledWith(SAVED_PATH);
+      expect(h.clipboardText).toEqual([SAVED_PATH]);
+    });
+
+    it("keeps one installation's saved captures from another", async () => {
+      const h = harness();
+      await h.host().capture({ context, session, target: "page" });
+      expect(await h.host().revealArtifact!(request)).toMatchObject({
+        ok: false,
+        failure: { reason: "artifact-not-found" },
+      });
+      expect(h.preview.revealArtifact).not.toHaveBeenCalled();
+    });
+
+    it("authorizes by the capture grants and the granted project", async () => {
+      const h = harness();
+      const host = h.host();
+      await host.capture({ context, session, target: "page" });
+      expect(
+        await h.host({ capabilities: [BROWSER_SESSIONS] }).copyArtifactPath!(request),
+      ).toMatchObject({ ok: false, failure: { reason: "grant-denied", grant: BROWSER_CAPTURE } });
+      const foreign = { ...context, resource: { ...context.resource, projectId: "project-b" } };
+      expect(await host.copyArtifactPath!({ ...request, context: foreign })).toMatchObject({
+        ok: false,
+        failure: { reason: "scope-invalid" },
+      });
+      expect(h.clipboardText).toEqual([]);
+    });
+
+    it("reports element picks and unsaved pages as having no saved file", async () => {
+      const h = harness();
+      const host = h.host();
+      await host.capture({ context, session, target: "element" });
+      expect(await host.copyArtifactToClipboard!(request)).toMatchObject({
+        ok: false,
+        failure: { reason: "artifact-not-found" },
+      });
+      h.preview.capturePageImage.mockResolvedValueOnce({
+        mimeType: "image/png",
+        data: PNG,
+        width: 1,
+        height: 1,
+        pageUrl: null,
+        pageTitle: null,
+        path: null,
+      });
+      await host.capture({ context, session, target: "page" });
+      expect(await host.revealArtifact!(request)).toMatchObject({
+        ok: false,
+        failure: { reason: "artifact-not-found" },
+      });
+    });
+
+    it("names a refused OS action without leaking the saved path", async () => {
+      const h = harness();
+      const host = h.host();
+      await host.capture({ context, session, target: "page" });
+      const leak = new Error(`Preview artifact could not be loaded as an image: ${SAVED_PATH}`);
+      h.preview.copyArtifactToClipboard.mockRejectedValueOnce(leak);
+      h.preview.revealArtifact.mockRejectedValueOnce(leak);
+      const failures = [
+        await host.copyArtifactToClipboard!(request),
+        await host.revealArtifact!(request),
+        await h.host().copyArtifactPath!(request),
+      ];
+      const bridge = harness({
+        writeClipboardText: async () => {
+          throw leak;
+        },
+      });
+      const other = bridge.host();
+      await other.capture({ context, session, target: "page" });
+      failures.push(await other.copyArtifactPath!(request));
+      expect(failures.map((result) => !result.ok && result.failure.reason)).toEqual([
+        "action-failed",
+        "action-failed",
+        "artifact-not-found",
+        "action-failed",
+      ]);
+      const serialized = JSON.stringify(failures);
+      expect(serialized).not.toContain(SAVED_PATH);
+      expect(serialized).not.toContain("browser-artifacts");
+    });
+
+    it("binds a saved capture to the project it was taken in", async () => {
+      const h = harness();
+      const host = h.host({ projectIds: ["project-a", "project-b"] });
+      await host.capture({ context, session, target: "page" });
+      const projectB = {
+        ...context,
+        resource: { ...context.resource, projectId: "project-b", threadId: "thread-b" },
+      };
+      expect(await host.copyArtifactPath!({ ...request, context: projectB })).toMatchObject({
+        ok: false,
+        failure: { reason: "artifact-not-found" },
+      });
+      expect(h.clipboardText).toEqual([]);
+      expect(await host.copyArtifactPath!(request)).toEqual({ ok: true });
+    });
+
+    it("marks which captures the artifact actions can act on", async () => {
+      const h = harness();
+      const host = h.host();
+      const page = await host.capture({ context, session, target: "page" });
+      expect(page).toMatchObject({ ok: true, artifact: { saved: true } });
+      h.preview.capturePageImage.mockResolvedValueOnce({
+        mimeType: "image/png",
+        data: PNG,
+        width: 1,
+        height: 1,
+        pageUrl: null,
+        pageTitle: null,
+        path: null,
+      });
+      expect(await host.capture({ context, session, target: "page" })).toMatchObject({
+        ok: true,
+        artifact: { saved: false },
+      });
+      expect(await host.capture({ context, session, target: "element" })).toMatchObject({
+        ok: true,
+        artifact: { saved: false },
+      });
+    });
+
+    it("reports every action as desktop-only on a client without the engine", async () => {
+      const h = harness({ preview: () => null });
+      const host = h.host();
+      expect(host.artifactActions?.reveal).toEqual({
+        supported: false,
+        reason: "desktop-required",
+      });
+      expect(await host.copyArtifactPath!(request)).toMatchObject({
+        ok: false,
+        failure: { reason: "desktop-required" },
+      });
     });
   });
 });

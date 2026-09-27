@@ -559,7 +559,7 @@ export const make = Effect.gen(function* () {
           connectionId: request.connectionId,
           kind: "subscription",
           deliver: (event) => {
-            if (event.type === "notificationOutcome") return;
+            if (event.type === "notificationOutcome" || event.type === "notificationAction") return;
             // Every emitted payload obeys the envelope bound — including the
             // terminal `closed` frame — before any schema checks.
             let value: Json;

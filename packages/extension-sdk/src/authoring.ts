@@ -12,6 +12,7 @@ import {
 } from "./environment.js";
 import {
   bindApi,
+  defaultVersionRange,
   type ApiDefinition,
   type ApiRequirement,
   type PluginDependency,
@@ -241,8 +242,8 @@ export function defineExtension(source: ExtensionSource): AuthoredExtension {
 }
 
 export function requireApi(
-  api: { readonly definition: ApiDefinition },
-  versionRange = "^" + api.definition.version,
+  api: { readonly definition: ApiDefinition; readonly baseline?: string },
+  versionRange = defaultVersionRange(api),
 ): ApiRequirement {
   return { id: api.definition.id, versionRange };
 }

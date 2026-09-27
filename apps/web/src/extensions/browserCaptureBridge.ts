@@ -1,5 +1,5 @@
 /**
- * Host bridge for `t3.browser/capture@1.0.0`. `installedController` invokes the
+ * Host bridge for `t3.browser/capture@1.1.0`. `installedController` invokes the
  * returned factory once per installed client, so each
  * `ClientHost.browserCapture` checks that installation's grants and lifetime.
  *
@@ -7,6 +7,12 @@
  * rasterizes the page, or runs the in-page picker and keeps its crop. The PNG
  * goes straight to the environment's attachment store; the plugin only ever
  * receives the pending attachment id as its artifactRef.
+ *
+ * A page capture is also saved in the desktop's preview artifact directory,
+ * like the built-in browser's screenshots. The 1.1.0 artifact actions (copy
+ * image, copy path, reveal) act on that file through the same desktop bridge
+ * calls the built-in "Screenshot saved" toast uses. Each installation only
+ * reaches the files its own captures saved on this client.
  */
 import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
@@ -20,6 +26,9 @@ import {
   BROWSER_CAPTURE_REQUIRED_GRANTS,
   BROWSER_CAPTURE_VERSION,
   type BrowserCaptureArtifact,
+  type BrowserCaptureArtifactActionFailureReason,
+  type BrowserCaptureArtifactActionRequest,
+  type BrowserCaptureArtifactActionResult,
   type BrowserCaptureFailureReason,
   type BrowserCaptureHost,
   type BrowserCapturePickedElement,
@@ -30,6 +39,7 @@ import { validateContext } from "@t3tools/extension-sdk/contracts";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import { uploadBrowserCapture } from "~/browser/browserCaptureArtifacts";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
+import { revealInFileExplorerLabel } from "~/components/preview/fileExplorerLabel";
 import { previewBridge } from "~/components/preview/previewBridge";
 import { dataUrlToFile } from "~/lib/imageCompression";
 import { readThreadPreviewState } from "~/previewStateStore";
@@ -51,8 +61,14 @@ export interface BrowserCaptureBinding {
 export interface BrowserCaptureBridgeDeps {
   readonly preview: () => Pick<
     DesktopPreviewBridge,
-    "capturePageImage" | "pickElement" | "cancelPickElement"
+    | "capturePageImage"
+    | "pickElement"
+    | "cancelPickElement"
+    | "revealArtifact"
+    | "copyArtifactToClipboard"
   > | null;
+  readonly writeClipboardText: (text: string) => Promise<void>;
+  readonly platform: () => string;
   /** Thread → project, trusted only from a live shell (see the surface bridge). */
   readonly resolveThreadScope: (threadRef: ScopedThreadRef) => {
     readonly projectId: string | null;
@@ -68,6 +84,8 @@ export interface BrowserCaptureBridgeDeps {
 }
 
 const PICKED_ELEMENTS_MAX = 16;
+/** Saved page captures each installation can still act on; the oldest drops first. */
+const SAVED_CAPTURES_MAX = 32;
 const clamp = (value: string, max: number) => (value.length <= max ? value : value.slice(0, max));
 const clampOrNull = (value: string | null | undefined, max: number) =>
   value ? clamp(value, max) : null;
@@ -96,6 +114,15 @@ function pickedElements(annotation: PreviewAnnotationPayload): BrowserCapturePic
   }));
 }
 
+const actionFail = (
+  reason: BrowserCaptureArtifactActionFailureReason,
+  detail: string,
+  grant?: string,
+): BrowserCaptureArtifactActionResult => ({
+  ok: false,
+  failure: { reason, detail, ...(grant === undefined ? {} : { grant }) },
+});
+
 const captureName = (target: string, millis: number) =>
   `browser-${target}-${millis.toString(36)}.png`;
 
@@ -119,6 +146,11 @@ export function createBrowserCaptureBridge(
     presented: (runtimeTabId) =>
       useBrowserSurfaceStore.getState().byTabId[runtimeTabId]?.visible === true,
     upload: uploadBrowserCapture,
+    writeClipboardText: async (text) => {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable.");
+      await navigator.clipboard.writeText(text);
+    },
+    platform: () => navigator.platform,
     ...overrides,
   };
   // One capture per runtime tab across every installation: the picker is modal
@@ -129,10 +161,117 @@ export function createBrowserCaptureBridge(
     const support = deps.preview()
       ? ({ supported: true } as const)
       : ({ supported: false, reason: "desktop-required" } as const);
+    /**
+     * artifactRef → the saved file and the project it was captured in, for
+     * this installation's page captures only.
+     */
+    const saved = new Map<string, { readonly path: string; readonly projectId: string }>();
+
+    /** Authorizes one artifact action and resolves the file it acts on. */
+    const savedCapture = (
+      request: BrowserCaptureArtifactActionRequest,
+    ): { readonly path: string } | { readonly failure: BrowserCaptureArtifactActionResult } => {
+      if (binding.lifetime.aborted)
+        return {
+          failure: actionFail(
+            "host-unavailable",
+            "the installation's client lifetime has already ended.",
+          ),
+        };
+      for (const grant of BROWSER_CAPTURE_REQUIRED_GRANTS)
+        if (!binding.grants.capabilities.includes(grant))
+          return {
+            failure: actionFail(
+              "grant-denied",
+              `${BROWSER_CAPTURE} requires the ${grant} installation grant.`,
+              grant,
+            ),
+          };
+      let resource;
+      try {
+        resource = validateContext(request.context).resource;
+      } catch (error) {
+        return {
+          failure: actionFail(
+            "scope-invalid",
+            error instanceof Error ? error.message : "Invalid view context.",
+          ),
+        };
+      }
+      if (
+        resource.environmentId !== environmentId ||
+        !resource.projectId ||
+        !binding.grants.projectIds.includes(resource.projectId)
+      )
+        return {
+          failure: actionFail(
+            "scope-invalid",
+            `${BROWSER_CAPTURE} artifact actions require a context in this environment and a granted project.`,
+          ),
+        };
+      if (!deps.preview())
+        return {
+          failure: actionFail(
+            "desktop-required",
+            "Saved captures live in the T3 Code desktop app; this client has none.",
+          ),
+        };
+      const entry = typeof request.artifactRef === "string" && saved.get(request.artifactRef);
+      // Another project's capture reads as unknown, even with both granted.
+      if (!entry || entry.projectId !== resource.projectId)
+        return {
+          failure: actionFail(
+            "artifact-not-found",
+            "No page capture this installation saved in this project on this client has that artifactRef.",
+          ),
+        };
+      return { path: entry.path };
+    };
+
+    /**
+     * Desktop errors name the absolute artifact path, so the plugin gets only
+     * `failedDetail`; the raw error stays in this client's console.
+     */
+    const runAction = async (
+      request: BrowserCaptureArtifactActionRequest,
+      failedDetail: string,
+      action: (path: string) => Promise<void>,
+    ): Promise<BrowserCaptureArtifactActionResult> => {
+      const resolved = savedCapture(request);
+      if ("failure" in resolved) return resolved.failure;
+      try {
+        await action(resolved.path);
+        return { ok: true };
+      } catch (error) {
+        console.warn("Browser capture artifact action failed.", error);
+        return actionFail("action-failed", failedDetail);
+      }
+    };
+
     return {
       id: BROWSER_CAPTURE,
       version: BROWSER_CAPTURE_VERSION,
       support,
+      artifactActions: {
+        copyImage: support,
+        copyPath: support,
+        reveal: support,
+        revealLabel: revealInFileExplorerLabel(deps.platform()),
+      },
+      copyArtifactToClipboard: (request) =>
+        runAction(request, "The saved screenshot could not be copied to the clipboard.", (path) =>
+          deps.preview()!.copyArtifactToClipboard(path),
+        ),
+      copyArtifactPath: (request) =>
+        runAction(
+          request,
+          "The saved screenshot's path could not be copied to the clipboard.",
+          deps.writeClipboardText,
+        ),
+      revealArtifact: (request) =>
+        runAction(request, "The saved screenshot could not be shown in the file manager.", (path) =>
+          deps.preview()!.revealArtifact(path),
+        ),
       async capture(request): Promise<BrowserCaptureResult> {
         if (binding.lifetime.aborted)
           return fail("host-unavailable", "the installation's client lifetime has already ended.");
@@ -223,6 +362,7 @@ export function createBrowserCaptureBridge(
         };
         try {
           let png: Blob;
+          let savedPath: string | null = null;
           let partial: Omit<BrowserCaptureArtifact, "artifactRef" | "sizeBytes">;
           if (request.target === "page") {
             let image;
@@ -239,6 +379,7 @@ export function createBrowserCaptureBridge(
             if (request.signal?.aborted || binding.lifetime.aborted)
               return fail("cancelled", "The capture was cancelled.");
             png = new Blob([new Uint8Array(image.data)], { type: "image/png" });
+            savedPath = image.path;
             partial = {
               mimeType: "image/png",
               width: image.width,
@@ -303,7 +444,22 @@ export function createBrowserCaptureBridge(
               error instanceof Error ? error.message : "The capture could not be stored.",
             );
           }
-          return { ok: true, artifact: { ...partial, artifactRef, sizeBytes: png.size } };
+          if (savedPath !== null) {
+            saved.set(artifactRef, { path: savedPath, projectId: resource.projectId });
+            for (const oldest of saved.keys()) {
+              if (saved.size <= SAVED_CAPTURES_MAX) break;
+              saved.delete(oldest);
+            }
+          }
+          return {
+            ok: true,
+            artifact: {
+              ...partial,
+              artifactRef,
+              sizeBytes: png.size,
+              saved: savedPath !== null,
+            },
+          };
         } finally {
           detach();
           inFlight.delete(runtimeTabId);

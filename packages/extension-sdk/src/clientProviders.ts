@@ -218,8 +218,12 @@ export const notificationActionSchema = {
     id: { type: "string", minLength: 1, maxLength: 80 },
     label: { type: "string", minLength: 1, maxLength: 80 },
     variant: { enum: ["default", "primary", "destructive"] },
+    keepOpen: { type: "boolean" },
   },
 } as const;
+
+/** `keepOpen` actions and `flashAction` need a 1.1.0 client. */
+export const CLIENT_NOTIFICATIONS_V11_RANGE = "^1.1.0";
 
 const notificationBodySchema = {
   type: "object",
@@ -245,7 +249,7 @@ const notificationBodySchema = {
 
 export const CLIENT_NOTIFICATIONS_API = validateApiDefinition({
   id: "t3.client/notifications",
-  version: "1.0.0",
+  version: "1.1.0",
   methods: [
     {
       name: "notify",
@@ -269,6 +273,16 @@ export const CLIENT_NOTIFICATIONS_API = validateApiDefinition({
               title: { type: "string", minLength: 1, maxLength: 200 },
               body: { type: "string", maxLength: 2000 },
               dismissible: { type: "boolean" },
+              flashAction: {
+                type: "object",
+                additionalProperties: false,
+                required: ["actionId", "label", "durationMs"],
+                properties: {
+                  actionId: { type: "string", minLength: 1, maxLength: 80 },
+                  label: { type: "string", minLength: 1, maxLength: 80 },
+                  durationMs: { type: "integer", minimum: 0, maximum: 10_000 },
+                },
+              },
             },
           },
         },

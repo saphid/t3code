@@ -3027,6 +3027,46 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
+  /** Unique per capture: tabs on the same site can capture in the same millisecond. */
+  const screenshotArtifactId = (pageUrl: string, millis: number) =>
+    `browser-screenshot-${artifactSiteSlug(pageUrl)}-${millis.toString(36)}-${NodeCrypto.randomUUID().slice(0, 8)}`;
+
+  /** Saves a screenshot PNG where `revealArtifact` and `copyArtifactToClipboard` accept it. */
+  const writeScreenshotArtifact = Effect.fnUntraced(function* (
+    operation: "captureScreenshot" | "capturePageImage",
+    tabId: string,
+    webContentsId: number,
+    id: string,
+    data: Uint8Array,
+  ) {
+    const artifactPath = path.join(resolvedArtifactDirectory, `${id}.png`);
+    yield* fileSystem.makeDirectory(resolvedArtifactDirectory, { recursive: true }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PreviewOperationError({
+            operation: `${operation}.makeDirectory`,
+            tabId,
+            webContentsId,
+            artifactPath,
+            cause,
+          }),
+      ),
+    );
+    yield* fileSystem.writeFile(artifactPath, data).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PreviewOperationError({
+            operation: `${operation}.writeFile`,
+            tabId,
+            webContentsId,
+            artifactPath,
+            cause,
+          }),
+      ),
+    );
+    return artifactPath;
+  });
+
   const captureScreenshot = Effect.fn("PreviewManager.captureScreenshot")(function* (
     tabId: string,
   ) {
@@ -3044,32 +3084,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc,
       ),
     ]);
-    const id = `browser-screenshot-${artifactSiteSlug(wc.getURL())}-${millis.toString(36)}`;
-    const artifactPath = path.join(resolvedArtifactDirectory, `${id}.png`);
+    const id = screenshotArtifactId(wc.getURL(), millis);
     const data = image.toPNG();
-    yield* fileSystem.makeDirectory(resolvedArtifactDirectory, { recursive: true }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new PreviewOperationError({
-            operation: "captureScreenshot.makeDirectory",
-            tabId,
-            webContentsId: wc.id,
-            artifactPath,
-            cause,
-          }),
-      ),
-    );
-    yield* fileSystem.writeFile(artifactPath, data).pipe(
-      Effect.mapError(
-        (cause) =>
-          new PreviewOperationError({
-            operation: "captureScreenshot.writeFile",
-            tabId,
-            webContentsId: wc.id,
-            artifactPath,
-            cause,
-          }),
-      ),
+    const artifactPath = yield* writeScreenshotArtifact(
+      "captureScreenshot",
+      tabId,
+      wc.id,
+      id,
+      data,
     );
     return {
       id,
@@ -3081,9 +3103,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     };
   });
 
-  /** The viewport as PNG bytes, capped like automation snapshots; nothing touches disk. */
+  /**
+   * The viewport as PNG bytes, capped like automation snapshots, and saved
+   * like `captureScreenshot` so the caller can reveal or copy the file. A
+   * failed save keeps the bytes and reports `path: null`.
+   */
   const capturePageImage = Effect.fn("PreviewManager.capturePageImage")(function* (tabId: string) {
     const wc = yield* requireWebContents(tabId);
+    const millis = yield* currentMillis;
     const sourceImage = yield* capturePageWithRetry(
       {
         operation: "capturePageImage.capturePage",
@@ -3099,13 +3126,29 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         ? sourceImage.resize({ width: MAX_SCREENSHOT_WIDTH })
         : sourceImage;
     const size = image.getSize();
+    const data = image.toPNG();
+    const pageUrl = wc.getURL();
+    const artifactPath = yield* writeScreenshotArtifact(
+      "capturePageImage",
+      tabId,
+      wc.id,
+      screenshotArtifactId(pageUrl, millis),
+      data,
+    ).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Preview page image was not saved.", { tabId, error }).pipe(
+          Effect.as(null),
+        ),
+      ),
+    );
     return {
       mimeType: "image/png" as const,
-      data: image.toPNG(),
+      data,
       width: size.width,
       height: size.height,
-      pageUrl: wc.getURL() || null,
+      pageUrl: pageUrl || null,
       pageTitle: wc.getTitle() || null,
+      path: artifactPath,
     };
   });
 

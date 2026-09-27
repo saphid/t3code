@@ -123,6 +123,11 @@ export const ClientProviderEmitEvent = Schema.Union([
       Schema.Struct({ dismissed: Schema.Literal(true) }),
     ]),
   }),
+  /** A `keepOpen` action was clicked; the notification stays live. */
+  Schema.Struct({
+    type: Schema.Literal("notificationAction"),
+    actionId: Identity,
+  }),
 ]);
 export type ClientProviderEmitEvent = typeof ClientProviderEmitEvent.Type;
 
