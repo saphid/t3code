@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -21,7 +22,12 @@ import type { HostApiInvocationMetadata, HostApiProvider } from "@t3tools/extens
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { claudeWorkspaceSlug, createOrchestrationLogsApiProvider, shapeLogTail } from "./logs.ts";
+import {
+  claudeWorkspaceSlug,
+  createOrchestrationLogsApiProvider,
+  keyStateBefore,
+  shapeLogTail,
+} from "./logs.ts";
 
 const decodeActivity = Schema.decodeUnknownSync(OrchestrationThreadActivity);
 const decodeSnapshot = Schema.decodeUnknownSync(OrchestrationThreadDetailSnapshot);
@@ -243,8 +249,9 @@ it("reads a symlinked transcript tail at a line boundary with a truncation marke
 const limits = { maxBytes: 8192, maxLines: 1000 };
 it("never splits a UTF-8 sequence or keeps an unbounded partial line", () => {
   const encoded = new TextEncoder().encode("é first\nsecond\n");
-  // Window starts inside the two-byte "é".
-  expect(shapeLogTail(encoded.subarray(1), 1, limits)).toEqual({
+  // Window starts inside the two-byte "é"; the lead read before it reaches
+  // the source's start, so no key can be open.
+  expect(shapeLogTail(encoded.subarray(1), 1, limits, encoded.subarray(0, 1))).toEqual({
     contents: "second\n",
     truncated: true,
   });
@@ -276,9 +283,427 @@ it("keeps whole lines when the byte cut lands exactly on a line boundary", () =>
 it("redacts a transcript record whose key is cut off before its closing quote", () => {
   const record = JSON.stringify({ content: "-----BEGIN PRIVATE KEY-----\nAAAA \nBBBB" });
   expect(shapeLogTail(new TextEncoder().encode(`${record}\n`), 0, limits)).toEqual({
-    contents: `{"content":"[REDACTED]"}\n`,
+    contents: `{"content":"[REDACTED]\n`,
     truncated: false,
   });
+});
+
+it("redacts key material when the read cuts both ends of a key", () => {
+  // Deterministic base64 key lines, 64 wide as PEM writes them.
+  let seed = 7;
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const keyLine = () =>
+    Array.from({ length: 64 }, () => {
+      seed = (seed * 1103515245 + 12345) % 2 ** 31;
+      return alphabet[seed % 64];
+    }).join("");
+  const body = Array.from({ length: 282 }, keyLine);
+  const leaks = (contents: string) =>
+    body.some((line) =>
+      Array.from({ length: 8 }, (_, i) => line.slice(i * 8, i * 8 + 8)).some((part) =>
+        contents.includes(part),
+      ),
+    );
+  for (const lineBreak of ["\n", "\r\n"]) {
+    const begin = `-----BEGIN PRIVATE KEY-----${lineBreak}`;
+    const end = `-----END PRIVATE KEY-----${lineBreak}after${lineBreak}`;
+    // Unfinished (the writer is mid-key), and finished with END in the read.
+    for (const source of [
+      begin + body.join(lineBreak),
+      begin + body.join(lineBreak) + lineBreak + end,
+    ]) {
+      const encoded = new TextEncoder().encode(source);
+      for (const maxBytes of [8192, 4000, 100]) {
+        // The bounded read: the delivered window plus its redaction context.
+        const from = encoded.length - Math.min(encoded.length, maxBytes + 8192);
+        expect(from).toBeGreaterThan(begin.length);
+        const shaped = shapeLogTail(encoded.subarray(from), from, { maxBytes, maxLines: 1000 });
+        expect(leaks(shaped.contents), `${JSON.stringify(lineBreak)} ${maxBytes}`).toBe(false);
+        expect(shaped.truncated).toBe(true);
+        if (source.endsWith(end)) expect(shaped.contents.endsWith(`after${lineBreak}`)).toBe(true);
+      }
+    }
+  }
+});
+
+it("decides whether a window starts inside a key from the markers before it", () => {
+  const state = (before: string, complete = true) =>
+    keyStateBefore(new TextEncoder().encode(before), complete);
+  const inside = (type = "") => ({ inside: type });
+  expect(state("log\n")).toBe("outside");
+  expect(state("log\n", false)).toBe("unknown");
+  expect(state("-----BEGIN PRIVATE KEY-----\nAAAA\n", false)).toEqual(inside());
+  expect(state("-----BEGIN RSA PRIVATE KEY----- \r\nAAAA AAAA\n\nBBBB\n")).toEqual(inside("RSA"));
+  expect(state("-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\nok\n")).toBe(
+    "outside",
+  );
+  // An escaped END closes it too.
+  expect(
+    state("-----BEGIN PRIVATE KEY-----\n" + String.raw`{"c":"-----END PRIVATE KEY-----"}` + "\n"),
+  ).toBe("outside");
+  expect(state("-----BEGIN PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\n\nAAAA\n")).toEqual(inside());
+  // A BEGIN in any form opens a key, whatever lines follow it.
+  expect(
+    state("-----BEGIN PRIVATE KEY-----\nAAAA\nThe -----BEGIN PRIVATE KEY----- line.\n"),
+  ).toEqual(inside());
+  expect(state("-----BEGIN PRIVATE KEY-----\nBuild passed.\nAAAA\n")).toEqual(inside());
+  expect(state("The -----BEGIN PRIVATE KEY----- line.\n", false)).toEqual(inside());
+  expect(state(String.raw`{"c":"-----BEGIN EC PRIVATE KEY-----\nAAAA"}` + "\n")).toEqual(
+    inside("EC"),
+  );
+  expect(state(String.raw`{"c":"-----BEGIN PRIVATE KEY-----\n-----END PRIVATE KEY-----"}`)).toBe(
+    "outside",
+  );
+  // Markers are read after decoding escapes, at any depth.
+  expect(state(String.raw`{"content":"-----BEGIN PRIVATE KEY-----"}` + "\n")).toEqual(inside());
+  expect(
+    state(JSON.stringify({ c: String.raw`{"c":"-----BEGIN OPENSSH PRIVATE KEY-----"}` })),
+  ).toEqual(inside("OPENSSH"));
+  // Only an END of the key's own type closes it.
+  expect(state("-----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END EC PRIVATE KEY-----\n")).toEqual(
+    inside("RSA"),
+  );
+  expect(state("-----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n")).toEqual(
+    inside("RSA"),
+  );
+  expect(
+    state("-----BEGIN ENCRYPTED PRIVATE KEY-----\nAAAA\n-----END ENCRYPTED PRIVATE KEY-----\n"),
+  ).toBe("outside");
+});
+
+// Base64 key rows as the review's reproductions wrote them.
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const shapeTail = (source: string, maxBytes = 8192, withLead = false) => {
+  const bytes = new TextEncoder().encode(source);
+  const from = bytes.length - Math.min(bytes.length, maxBytes + 8192);
+  expect(from).toBeGreaterThan(0);
+  const lead = withLead ? bytes.subarray(0, from) : undefined;
+  return shapeLogTail(bytes.subarray(from), from, { maxBytes, maxLines: 1000 }, lead).contents;
+};
+
+it("redacts a window that starts inside a key, whatever its wrapping", () => {
+  const begin = "-----BEGIN PRIVATE KEY-----\n";
+  const rows = {
+    standard: `${B64}\n`,
+    wrapped32: `${B64.slice(0, 32)}\n${B64.slice(32)}\n`,
+    spaced: `${B64.slice(0, 32)} ${B64.slice(32)}\n`,
+    blank: `${B64}\n\n`,
+    initialBlank: `\n${B64}\n`,
+    indented: `${" ".repeat(80)}${B64.slice(0, 32)}\n`,
+    tabbed: `${"\t".repeat(1000)}${B64.slice(0, 32)} ${B64.slice(32)}\n`,
+  };
+  for (const [name, row] of Object.entries(rows)) {
+    // Neither marker is in the read: the writer is mid-key.
+    const source = begin + row.repeat(400);
+    for (const withLead of [false, true])
+      for (const maxBytes of [8192, 100]) {
+        const contents = shapeTail(source, maxBytes, withLead);
+        expect(contents, `${name} ${maxBytes} ${withLead}`).not.toContain(B64.slice(32, 48));
+        expect(contents, `${name} ${maxBytes} ${withLead}`).not.toContain(B64.slice(0, 16));
+      }
+  }
+  // The review's exact reproduction: 32-column halves joined by a space.
+  const row = `${"A".repeat(32)} ${"B".repeat(32)}\n`;
+  const bytes = new TextEncoder().encode(begin + row.repeat(400));
+  const from = bytes.length - 16384;
+  const shaped = shapeLogTail(bytes.subarray(from), from, limits);
+  expect(shaped.contents).not.toContain("BBBBBBBB");
+  expect(
+    shapeLogTail(bytes.subarray(from), from, limits, bytes.subarray(0, from)).contents,
+  ).not.toMatch(/AAAAAAAA|BBBBBBBB/);
+});
+
+it("redacts through END a window that starts inside a key, and keeps what follows", () => {
+  const key = `-----BEGIN PRIVATE KEY-----\n${`${B64.slice(0, 32)} ${B64.slice(32)}\n`.repeat(300)}`;
+  const source = `${key}-----END PRIVATE KEY-----\nafter one\nafter two\n`;
+  const contents = shapeTail(source, 8192, true);
+  expect(contents).not.toContain(B64.slice(0, 16));
+  expect(contents.endsWith("[REDACTED]\nafter one\nafter two\n")).toBe(true);
+  // A key closed before the window leaves ordinary base64-looking lines alone.
+  const closed = `${key}-----END PRIVATE KEY-----\n${"AAAA BBBB\n".repeat(2000)}`;
+  expect(shapeTail(closed, 8192, true)).toMatch(/^AAAA BBBB\n/);
+  // Without the lead the key state is unknown: leading key-like lines are
+  // withheld up to the first line that cannot be key material.
+  const unknown = shapeTail(`${"AAAA BBBB\n".repeat(2000)}done.\nAAAA\n`, 8192);
+  expect(unknown.endsWith("[REDACTED]\ndone.\nAAAA\n")).toBe(true);
+  expect(unknown).not.toContain("AAAA BBBB");
+});
+
+it("redacts valid RSA keys rewrapped or spaced when the read cuts both ends", () => {
+  const pem = NodeCrypto.generateKeyPairSync("rsa", { modulusLength: 4096 })
+    .privateKey.export({ format: "pem", type: "pkcs8" })
+    .toString()
+    .trim()
+    .split("\n");
+  const base64 = pem.slice(1, -1).join("");
+  const shapes: [string, number, string, boolean][] = [
+    ["wrapped32", 32, " ".repeat(80), false],
+    ["spaced64", 64, " ".repeat(120), true],
+    ["tabs64", 64, "\t".repeat(1000), true],
+    ["blank64", 64, "\t".repeat(1000), false],
+  ];
+  for (const [name, width, indent, spaced] of shapes) {
+    const body = base64.match(new RegExp(`.{1,${width}}`, "g"))!;
+    const blank = name.startsWith("blank") ? "\n" : "";
+    const rows = body.map(
+      (line) => `${indent}${spaced ? `${line.slice(0, 32)} ${line.slice(32)}` : line}\n${blank}`,
+    );
+    const source = `${pem[0]}\n${rows.join("")}`;
+    // The review's rewrappings are still keys Node accepts.
+    if (!indent.includes("\t"))
+      expect(() => NodeCrypto.createPrivateKey(`${source}${pem.at(-1)}\n`)).not.toThrow();
+    const fragments = body.flatMap((line) =>
+      Array.from({ length: Math.floor(line.length / 8) }, (_, i) => line.slice(i * 8, i * 8 + 8)),
+    );
+    for (const withLead of [false, true])
+      for (const maxBytes of [100, 1000]) {
+        const contents = shapeTail(source, maxBytes, withLead);
+        const leaked = fragments.filter((fragment) => contents.includes(fragment));
+        expect(leaked, `${name} ${maxBytes} ${withLead}`).toEqual([]);
+      }
+  }
+});
+
+it("shapes escaped keys, escaped fields, and malformed quotes without leaking", () => {
+  const shape = (text: string) => shapeLogTail(new TextEncoder().encode(text), 0, limits).contents;
+  const encoded = String.raw`-----BEGIN PRIVATE KEY-----\nUNIQUESECRET\n-----END PRIVATE KEY-----`;
+  expect(shape(`ok\n${encoded}`)).toBe("ok\n[REDACTED]");
+  expect(shape(JSON.stringify({ content: encoded }))).toBe(`{"content":"[REDACTED]"}`);
+  expect(shape("ok\n" + String.raw`{"password":"UNIQUESECRET"}`)).toBe(
+    "ok\n" + String.raw`{"password":"[REDACTED]"}`,
+  );
+  expect(shape('{"password":"first"-UNIQUESECRET"}')).toBe('{"password":"[REDACTED]"}');
+  expect(shape('[{"password":"UNIQUESECRET"},1]')).toBe('[{"password":"[REDACTED]"},1]');
+  // An unfinished escaped key after a word runs to the end.
+  const echo = String.raw`echo -----BEGIN PRIVATE KEY-----\nUNIQUESECRET`;
+  expect(shape(`ok\n${echo}`)).toBe("ok\necho [REDACTED]");
+});
+
+it("reads the key state before the window from the file", async () => {
+  const f = await fixture();
+  const row = `${"A".repeat(32)} ${"B".repeat(32)}\n`;
+  const file = await f.write(
+    NodePath.join(f.projects, SLUG, "s", "k.jsonl"),
+    `line\n-----BEGIN PRIVATE KEY-----\n${row.repeat(400)}`,
+  );
+  f.rosters.set("thread", [task("k", { outputFile: file })]);
+  const tail = (await f.call("readTail", { runId: "k", source: "output" })) as AgentLogTail;
+  expect(tail.contents).not.toMatch(/AAAAAAAA|BBBBBBBB/);
+  expect(tail.contents).toContain("[REDACTED]");
+  // Once END lands, later lines are delivered.
+  await NodeFSP.appendFile(file, `-----END PRIVATE KEY-----\n${"AAAA later\n".repeat(1000)}`);
+  const after = (await f.call("readTail", { runId: "k", source: "output" })) as AgentLogTail;
+  expect(after.contents).toMatch(/^AAAA later\n/);
+});
+
+it("keeps a window inside a key after interleaved lines, until END", async () => {
+  const f = await fixture();
+  const row = `${"A".repeat(32)} ${"B".repeat(32)}\n`;
+  const file = await f.write(
+    NodePath.join(f.projects, SLUG, "s", "k.jsonl"),
+    `line\n-----BEGIN PRIVATE KEY-----\nAAAA\n[progress] reading key\n${row.repeat(400)}`,
+  );
+  f.rosters.set("thread", [task("k", { outputFile: file })]);
+  for (const maxBytes of [100, 8192]) {
+    const tail = (await f.call("readTail", {
+      runId: "k",
+      source: "output",
+      maxBytes,
+    })) as AgentLogTail;
+    expect(tail.contents, `${maxBytes}`).not.toMatch(/AAAAAAAA|BBBBBBBB/);
+  }
+  // The same source read whole: the interleaved line does not end the key.
+  const whole = shapeLogTail(
+    new TextEncoder().encode(`-----BEGIN PRIVATE KEY-----\n[progress]\n${row.repeat(20)}`),
+    0,
+    limits,
+  );
+  expect(whole.contents).not.toMatch(/AAAAAAAA|BBBBBBBB/);
+  await NodeFSP.appendFile(file, `-----END PRIVATE KEY-----\n${"AAAA later\n".repeat(1000)}`);
+  const after = (await f.call("readTail", { runId: "k", source: "output" })) as AgentLogTail;
+  expect(after.contents).toMatch(/^AAAA later\n/);
+});
+
+/** Opens files through a handle that counts the bytes it reads. */
+const countingOpen = () => {
+  const counter = { bytes: 0 };
+  const open = (async (path: string, flags: number) => {
+    const file = await NodeFSP.open(path, flags);
+    const read = file.read.bind(file);
+    file.read = (async (buffer: Uint8Array, offset: number, length: number, position: number) => {
+      const result = await read(buffer, offset, length, position);
+      counter.bytes += result.bytesRead;
+      return result;
+    }) as typeof file.read;
+    return file;
+  }) as typeof NodeFSP.open;
+  return { counter, open };
+};
+const ordinaryLines = (bytes: number) =>
+  '{"type":"assistant","text":"normal output."}\n'.repeat(Math.ceil(bytes / 45)).slice(0, bytes);
+
+const SECRET_ROW = `UNIQUESECRET${"A".repeat(52)}\n`;
+const fill = (pattern: string, bytes: number) =>
+  pattern.repeat(Math.ceil(bytes / pattern.length)).slice(0, bytes);
+
+it("reads a fixed 256 KiB before the window on every call", async () => {
+  const { counter, open } = countingOpen();
+  const f = await fixture({ open });
+  const file = await f.write(
+    NodePath.join(f.projects, SLUG, "s", "a.jsonl"),
+    ordinaryLines(8 * 1024 * 1024),
+  );
+  f.rosters.set("thread", [task("a", { outputFile: file })]);
+  const read = async (maxBytes?: number) => {
+    counter.bytes = 0;
+    const tail = (await f.call("readTail", {
+      runId: "a",
+      source: "output",
+      ...(maxBytes ? { maxBytes } : {}),
+    })) as AgentLogTail;
+    return { tail, bytes: counter.bytes };
+  };
+  // The window and its context, plus at most the scan before its first line.
+  for (const maxBytes of [undefined, 100]) {
+    const window = (maxBytes ?? 8192) + 8192;
+    const first = await read(maxBytes);
+    expect(first.bytes).toBeGreaterThan(window + 250 * 1024);
+    expect(first.bytes).toBeLessThanOrEqual(window + 256 * 1024);
+    expect((await read(maxBytes)).bytes).toBe(first.bytes);
+  }
+  // A BEGIN appended after the scan was last read is found.
+  await NodeFSP.appendFile(file, `-----BEGIN PRIVATE KEY-----\n${SECRET_ROW.repeat(400)}`);
+  expect((await read()).tail.contents).not.toContain("UNIQUESECRET");
+});
+
+it("finds the key state again after any rewrite, truncation, or append", async () => {
+  const f = await fixture();
+  const file = NodePath.join(f.projects, SLUG, "s", "a.jsonl");
+  f.rosters.set("thread", [task("a", { outputFile: file })]);
+  const begin = "-----BEGIN PRIVATE KEY-----\n";
+  const end = "-----END PRIVATE KEY-----\n";
+  // The review's reproductions: secret rows after ordinary lines, a marker at
+  // 4096 or END at 8192, and the file's head and tail bytes kept the same.
+  const size = 256 * 1024;
+  const base = Buffer.from(fill("normal log line.\n", 8192) + fill(SECRET_ROW, size - 8192));
+  const keyed = Buffer.from(base);
+  keyed.write(begin, 4096);
+  const ended = Buffer.from(keyed);
+  ended.write(end, 8192);
+  const bigAppend = fill("ordinary line.\n", 4 * 1024 * 1024) + begin + fill(SECRET_ROW, 65536);
+  const read = async () =>
+    ((await f.call("readTail", { runId: "a", source: "output" })) as AgentLogTail).contents;
+  const cases: [string, Buffer, () => Promise<unknown>][] = [
+    [
+      "middle rewrite adds BEGIN",
+      base,
+      async () => {
+        const handle = await NodeFSP.open(file, "r+");
+        await handle.write(begin, 4096).finally(() => handle.close());
+      },
+    ],
+    ["same-size rewrite", base, () => NodeFSP.writeFile(file, keyed)],
+    [
+      "middle rewrite removes END",
+      ended,
+      async () => {
+        const handle = await NodeFSP.open(file, "r+");
+        await handle
+          .write(base.subarray(8192, 8192 + end.length), 0, end.length, 8192)
+          .finally(() => handle.close());
+      },
+    ],
+    [
+      "rewrite plus append",
+      base,
+      async () => {
+        await NodeFSP.writeFile(file, keyed);
+        await NodeFSP.appendFile(file, fill(SECRET_ROW, 100_000));
+      },
+    ],
+    [
+      "truncate and regrow",
+      base,
+      async () => {
+        await NodeFSP.truncate(file, 0);
+        await NodeFSP.writeFile(
+          file,
+          Buffer.concat([keyed, Buffer.from(fill(SECRET_ROW, 100_000))]),
+        );
+      },
+    ],
+    [
+      "hard link rewritten",
+      base,
+      async () => {
+        const alias = `${file}.link`;
+        await NodeFSP.rm(alias, { force: true });
+        await NodeFSP.link(file, alias);
+        await NodeFSP.writeFile(alias, keyed);
+      },
+    ],
+    ["append over 4 MiB", base, () => NodeFSP.appendFile(file, bigAppend)],
+    ["append over 4 MiB after END", ended, () => NodeFSP.appendFile(file, bigAppend)],
+  ];
+  for (const [name, initial, mutate] of cases) {
+    await f.write(file, initial);
+    await read();
+    await read();
+    await mutate();
+    expect(await read(), name).not.toContain("UNIQUESECRET");
+  }
+  // Removing BEGIN releases lines the key withheld.
+  await f.write(file, keyed);
+  expect(await read()).not.toContain("UNIQUESECRET");
+  await NodeFSP.writeFile(file, base);
+  expect(await read()).toContain("UNIQUESECRET");
+});
+
+it("keeps a window inside a key opened by an escaped or mismatched marker", async () => {
+  const f = await fixture();
+  const cases = {
+    unicode: String.raw`{"content":"-----BEGIN PRIVATE KEY-----"}` + "\n",
+    literal: JSON.stringify({ content: "-----BEGIN PRIVATE KEY-----" }) + "\n",
+    mismatched: "-----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END EC PRIVATE KEY-----\n",
+  };
+  for (const [name, lead] of Object.entries(cases)) {
+    const file = await f.write(
+      NodePath.join(f.projects, SLUG, "s", `${name}.jsonl`),
+      `${lead}[progress]\n${SECRET_ROW.repeat(800)}`,
+    );
+    f.rosters.set("thread", [task(name, { outputFile: file })]);
+    const tail = (await f.call("readTail", { runId: name, source: "output" })) as AgentLogTail;
+    expect(tail.contents, name).not.toContain("UNIQUESECRET");
+  }
+});
+
+it("fails closed through the provider on encoded markers and invalid continuations", async () => {
+  const f = await fixture();
+  const nest = (text: string, depth: number) => {
+    for (let level = 0; level < depth; level++) text = JSON.stringify({ content: text });
+    return text;
+  };
+  const cases: Record<string, string> = {};
+  for (const depth of [0, 1, 2, 3]) {
+    cases[`wrapper-${depth}`] = nest('{"wrapper":{"password":"first"},"UNIQUESECRET"]', depth);
+    cases[`root-${depth}`] = nest('{"password":"first"},"UNIQUESECRET"]', depth);
+  }
+  // A BEGIN that needs `passes` decoding passes, read in the window or only
+  // in the scan before it.
+  for (const passes of [12, 13, 14, 20]) {
+    const record = JSON.stringify({
+      content: `-----\\${"u005c".repeat(passes - 2)}u0042EGIN PRIVATE KEY-----`,
+    });
+    cases[`window-${passes}`] = `${record}\n[progress]\nUNIQUESECRET\n`;
+    cases[`scan-${passes}`] =
+      `${"ordinary log.\n".repeat(2000)}${record}\n[progress]\n${SECRET_ROW.repeat(800)}`;
+  }
+  for (const [name, contents] of Object.entries(cases)) {
+    const file = await f.write(NodePath.join(f.projects, SLUG, "s", `${name}.jsonl`), contents);
+    f.rosters.set("thread", [task(name, { outputFile: file })]);
+    const tail = (await f.call("readTail", { runId: name, source: "output" })) as AgentLogTail;
+    expect(tail.contents, name).not.toContain("UNIQUESECRET");
+  }
 });
 
 it("withholds a leading line whose secret name fell before the read", async () => {
