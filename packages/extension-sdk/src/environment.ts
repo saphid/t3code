@@ -264,25 +264,21 @@ export interface ClientTooltip {
   readonly Tooltip: React.ComponentType<TooltipProps>;
 }
 
-const TooltipPassthrough = (props: TooltipProps) => props.children;
-
 /**
- * The host's tooltip when it offers version 1 or a compatible later one,
- * else a passthrough that renders the trigger alone (mobile, older hosts).
- * Resolve once per host and render the result like any component.
+ * The host's tooltip when it offers version 1 or a compatible later one, else
+ * null. Packs usually render the `Tooltip` from `authoring`, which falls back
+ * to the trigger alone.
  */
-export function resolveTooltip(
-  host: Pick<ClientHost, "tooltip">,
-): React.ComponentType<TooltipProps> {
+export function resolveTooltip(host: Pick<ClientHost, "tooltip">): ClientTooltip | null {
   const member: unknown = host.tooltip;
-  if (!member || typeof member !== "object") return TooltipPassthrough;
+  if (!member || typeof member !== "object") return null;
   const { version, Tooltip } = member as Record<string, unknown>;
   const isComponent =
     typeof Tooltip === "function" ||
     (typeof Tooltip === "object" && Tooltip !== null && "$$typeof" in Tooltip);
   return typeof version === "number" && version >= 1 && isComponent
-    ? (Tooltip as React.ComponentType<TooltipProps>)
-    : TooltipPassthrough;
+    ? (member as ClientTooltip)
+    : null;
 }
 
 export interface ClientHost {
@@ -340,8 +336,8 @@ export interface ClientHost {
    */
   readonly codeView?: ClientCodeView;
   /**
-   * Host-rendered tooltip. Absent on hosts without one — read it through
-   * `resolveTooltip`, which falls back to rendering the trigger alone.
+   * Host-rendered tooltip. Absent on hosts without one — render it through
+   * `authoring`'s `Tooltip`, which falls back to the trigger alone.
    */
   readonly tooltip?: ClientTooltip;
 }

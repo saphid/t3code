@@ -1,6 +1,7 @@
 import {
   defineExtension,
   requireApi,
+  Tooltip,
   useBrowserSurfaceSlot,
   useRemoteBrowserFrames,
 } from "@t3tools/extension-sdk/authoring";
@@ -922,83 +923,100 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           alignItems: "center",
         }}
       >
-        <button
-          type="button"
-          aria-label="Back"
-          disabled={held ? pageBlock !== null || !(live?.canGoBack ?? false) : !canGoBack(state)}
-          onClick={() => (held ? command("back") : commit(goBack(state)))}
-          style={buttonStyle}
+        <Tooltip host={host} label="Back">
+          <button
+            type="button"
+            aria-label="Back"
+            disabled={held ? pageBlock !== null || !(live?.canGoBack ?? false) : !canGoBack(state)}
+            onClick={() => (held ? command("back") : commit(goBack(state)))}
+            style={buttonStyle}
+          >
+            ←
+          </button>
+        </Tooltip>
+        <Tooltip host={host} label="Forward">
+          <button
+            type="button"
+            aria-label="Forward"
+            disabled={
+              held ? pageBlock !== null || !(live?.canGoForward ?? false) : !canGoForward(state)
+            }
+            onClick={() => (held ? command("forward") : commit(goForward(state)))}
+            style={buttonStyle}
+          >
+            →
+          </button>
+        </Tooltip>
+        <Tooltip host={host} label="Reload">
+          <button
+            type="button"
+            aria-label="Reload"
+            disabled={
+              fileSource === null &&
+              (held
+                ? pageBlock !== null && !isRecoveryExhausted(live)
+                : state.status.kind !== "target")
+            }
+            onClick={() => (held || fileSource ? command("reload") : commit(reload(state)))}
+            style={buttonStyle}
+          >
+            ⟳
+          </button>
+        </Tooltip>
+        <Tooltip
+          host={host}
+          label={deviceMode ? "Turn off device toolbar" : "Turn on device toolbar"}
         >
-          ←
-        </button>
-        <button
-          type="button"
-          aria-label="Forward"
-          disabled={
-            held ? pageBlock !== null || !(live?.canGoForward ?? false) : !canGoForward(state)
-          }
-          onClick={() => (held ? command("forward") : commit(goForward(state)))}
-          style={buttonStyle}
-        >
-          →
-        </button>
-        <button
-          type="button"
-          aria-label="Reload"
-          disabled={
-            fileSource === null &&
-            (held
-              ? pageBlock !== null && !isRecoveryExhausted(live)
-              : state.status.kind !== "target")
-          }
-          onClick={() => (held || fileSource ? command("reload") : commit(reload(state)))}
-          style={buttonStyle}
-        >
-          ⟳
-        </button>
-        <button
-          type="button"
-          aria-label={deviceMode ? "Turn off device toolbar" : "Turn on device toolbar"}
-          aria-pressed={deviceMode}
-          disabled={!held || viewportPending}
-          onClick={() => {
-            if (!viewportSetting) return;
-            // Native toggle semantics: non-fill → fill; fill → a responsive
-            // freeform sized from the panel this slot fills.
-            commitViewport(
-              viewportSetting._tag !== "fill"
-                ? { _tag: "fill" }
-                : responsiveViewportForToggle(contentSize),
-            );
-          }}
-          style={{
-            ...buttonStyle,
-            ...(deviceMode
-              ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" }
-              : {}),
-          }}
-        >
-          ⛶
-        </button>
-        <button
-          type="button"
-          aria-label="Screenshot page to chat"
-          disabled={capture.blockReason !== null || capture.state.kind === "capturing"}
-          onClick={() => capture.capture("page")}
-          style={buttonStyle}
-        >
-          ▣
-        </button>
-        <button
-          type="button"
-          aria-label="Pick element to chat"
-          aria-pressed={capture.state.kind === "capturing" && capture.state.target === "element"}
-          disabled={capture.blockReason !== null || capture.state.kind === "capturing"}
-          onClick={() => capture.capture("element")}
-          style={buttonStyle}
-        >
-          ⌖
-        </button>
+          <button
+            type="button"
+            aria-label={deviceMode ? "Turn off device toolbar" : "Turn on device toolbar"}
+            aria-pressed={deviceMode}
+            disabled={!held || viewportPending}
+            onClick={() => {
+              if (!viewportSetting) return;
+              // Native toggle semantics: non-fill → fill; fill → a responsive
+              // freeform sized from the panel this slot fills.
+              commitViewport(
+                viewportSetting._tag !== "fill"
+                  ? { _tag: "fill" }
+                  : responsiveViewportForToggle(contentSize),
+              );
+            }}
+            style={{
+              ...buttonStyle,
+              ...(deviceMode
+                ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" }
+                : {}),
+            }}
+          >
+            ⛶
+          </button>
+        </Tooltip>
+        <Tooltip host={host} label={capture.blockReason ?? "Screenshot page to chat"}>
+          <button
+            type="button"
+            aria-label="Screenshot page to chat"
+            aria-description={capture.blockReason ?? undefined}
+            disabled={capture.blockReason !== null || capture.state.kind === "capturing"}
+            onClick={() => capture.capture("page")}
+            style={buttonStyle}
+          >
+            ▣
+          </button>
+        </Tooltip>
+        <Tooltip host={host} label={capture.blockReason ?? "Pick element to chat"}>
+          <button
+            type="button"
+            aria-label="Pick element to chat"
+            aria-description={capture.blockReason ?? undefined}
+            aria-pressed={capture.state.kind === "capturing" && capture.state.target === "element"}
+            disabled={capture.blockReason !== null || capture.state.kind === "capturing"}
+            onClick={() => capture.capture("element")}
+            style={buttonStyle}
+          >
+            ⌖
+          </button>
+        </Tooltip>
         <input
           type="text"
           aria-label="Address"
@@ -1021,26 +1039,29 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             padding: "0 4px",
           }}
         />
-        <button
-          type="button"
-          aria-label="Open in system browser"
-          disabled={externalTarget === null}
-          onClick={() => {
-            if (externalTarget === null) return;
-            void openExternally(
-              bindApi(uiExternalApi, host, session.context),
-              externalTarget,
-              session.signal,
-            ).then((fault) => {
-              if (fault !== null && !session.signal.aborted) setFault(fault);
-            });
-          }}
-          style={buttonStyle}
-        >
-          ↗
-        </button>
+        <Tooltip host={host} label="Open in system browser">
+          <button
+            type="button"
+            aria-label="Open in system browser"
+            disabled={externalTarget === null}
+            onClick={() => {
+              if (externalTarget === null) return;
+              void openExternally(
+                bindApi(uiExternalApi, host, session.context),
+                externalTarget,
+                session.signal,
+              ).then((fault) => {
+                if (fault !== null && !session.signal.aborted) setFault(fault);
+              });
+            }}
+            style={buttonStyle}
+          >
+            ↗
+          </button>
+        </Tooltip>
 
         <PageMenu
+          host={host}
           session={held ? live : null}
           blockReason={pageBlock}
           run={(verb) => runPage(verb)}

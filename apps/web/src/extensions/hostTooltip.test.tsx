@@ -1,4 +1,4 @@
-import { resolveTooltip, type TooltipProps } from "@t3tools/extension-sdk/environment";
+import type { TooltipProps } from "@t3tools/extension-sdk/environment";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
@@ -23,7 +23,7 @@ vi.mock("~/components/ui/tooltip", () => ({
 }));
 
 const { hostTooltip } = await import("./hostTooltip");
-const Tooltip = resolveTooltip({ tooltip: hostTooltip });
+const { Tooltip } = hostTooltip;
 
 let renderer: ReactTestRenderer | undefined;
 function render(props: Omit<TooltipProps, "children">, disabled: boolean) {
@@ -48,11 +48,6 @@ afterEach(() => {
 });
 
 describe("host tooltip", () => {
-  it("is the tooltip installed clients resolve", () => {
-    expect(hostTooltip.version).toBe(1);
-    expect(Tooltip).toBe(hostTooltip.Tooltip);
-  });
-
   it("makes an enabled control its own trigger so hover and keyboard focus open it", () => {
     render({ label: "Screenshot page to chat" }, false);
     const [trigger] = native.triggers;

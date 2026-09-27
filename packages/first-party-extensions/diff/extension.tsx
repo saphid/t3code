@@ -519,8 +519,8 @@ function commentAffordance(ui: PanelTheme, comment: RowCommentUi, label: string)
   return (
     <button
       type="button"
-      // The blocking reason rides the accessible name — the host Tooltip is
-      // not bundleable into an extension, and the toolbar names it visually.
+      // The blocking reason rides the accessible name and the toolbar names it
+      // visually; a host tooltip here would mount one per diff line.
       aria-label={comment.reason !== null ? `${label} — unavailable: ${comment.reason}` : label}
       disabled={comment.disabled}
       onClick={(event) => comment.onSelect(event.shiftKey)}

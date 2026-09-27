@@ -3,7 +3,11 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, it, expect, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, type ExtensionInstallation } from "@t3tools/contracts";
 import type { ApiStreamFrame } from "@t3tools/extension-sdk/capabilities";
-import { resolveCodeView, type ClientHost } from "@t3tools/extension-sdk/environment";
+import {
+  resolveCodeView,
+  resolveTooltip,
+  type ClientHost,
+} from "@t3tools/extension-sdk/environment";
 import type { Extension } from "@t3tools/extension-sdk/host";
 import type { SurfaceRenderer } from "@t3tools/extension-sdk/react";
 import type { ViewRecord } from "@t3tools/extension-sdk/contracts";
@@ -48,7 +52,10 @@ const context = {
 };
 function harness(
   environmentId = "env-a",
-  extra: Pick<Parameters<typeof createInstalledExtensionController>[0], "codeView"> = {},
+  extra: Pick<
+    Parameters<typeof createInstalledExtensionController>[0],
+    "codeView" | "tooltip"
+  > = {},
 ) {
   let catalog: readonly ExtensionInstallation[] = [installation];
   let host!: ClientHost;
@@ -107,6 +114,18 @@ describe("installed environment controller", () => {
     const offered = harness("env-a", { codeView });
     await offered.controller.refresh();
     expect(resolveCodeView(offered.getHost())).toBe(codeView);
+    offered.controller.dispose();
+  });
+  it("offers the host tooltip to installed clients only where the host has one", async () => {
+    const bare = harness();
+    await bare.controller.refresh();
+    expect(resolveTooltip(bare.getHost())).toBeNull();
+    bare.controller.dispose();
+
+    const tooltip = { version: 1 as const, Tooltip: () => null };
+    const offered = harness("env-a", { tooltip });
+    await offered.controller.refresh();
+    expect(resolveTooltip(offered.getHost())).toBe(tooltip);
     offered.controller.dispose();
   });
   it("retains unchanged factories and unloads disabled/replaced/removed generations", async () => {

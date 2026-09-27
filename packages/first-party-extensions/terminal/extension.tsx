@@ -12,7 +12,7 @@ import {
   type TerminalOutputEventsValue,
   type TerminalSessionsListEvent,
 } from "@t3tools/extension-sdk/catalogue";
-import { defineExtension, requireApi } from "@t3tools/extension-sdk/authoring";
+import { defineExtension, requireApi, Tooltip } from "@t3tools/extension-sdk/authoring";
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
@@ -1433,14 +1433,16 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
                         >
                           Restart
                         </button>
-                        <button
-                          type="button"
-                          aria-label={`Close ${tab.terminalId}`}
-                          onClick={() => panel.requestAction(tab.terminalId, "close")}
-                          style={control}
-                        >
-                          ×
-                        </button>
+                        <Tooltip host={host} label={`Close ${tab.label}`}>
+                          <button
+                            type="button"
+                            aria-label={`Close ${tab.terminalId}`}
+                            onClick={() => panel.requestAction(tab.terminalId, "close")}
+                            style={control}
+                          >
+                            ×
+                          </button>
+                        </Tooltip>
                       </>
                     ) : (
                       <>
