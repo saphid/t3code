@@ -461,7 +461,7 @@ function releaseCommandSet(host: ClientHost, session: ViewSession, commandSetTok
     return;
   }
   commandSetUsers.delete(commandSetToken);
-  void bindApi(uiKeybindingsApi, host, session.context)
+  void bindApi(uiKeybindingsApi, host, session.context, "^1.1.0")
     .invoke("unregisterCommands", { commandSetToken }, new AbortController().signal)
     .catch(() => {});
 }
@@ -503,7 +503,7 @@ function useFilesCommands(
   useEffect(() => {
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
-    void bindApi(uiKeybindingsApi, host, session.context)
+    void bindApi(uiKeybindingsApi, host, session.context, "^1.1.0")
       .invoke("registerCommands", { commands: FILES_VIEW_COMMANDS }, signal)
       .then((result) => {
         const ids = new Set(
@@ -2422,7 +2422,8 @@ export default defineExtension({
     requireApi(workspaceResourcesApi),
     requireApi(resourcesLeaseApi),
     requireApi(uiThemeApi),
-    requireApi(uiKeybindingsApi),
+    // Explicit floor until the defineApi `baseline` option unifies these at merge.
+    requireApi(uiKeybindingsApi, "^1.1.0"),
     requireApi(uiNotificationsApi),
     requireApi(uiPreferencesApi),
     requireApi(messagesEnrichmentApi),

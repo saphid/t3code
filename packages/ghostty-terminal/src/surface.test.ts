@@ -92,6 +92,7 @@ describe("GhosttyTerminalSurface visibility", () => {
 
     const canvas = new TerminalTestElement();
     const mount = new TerminalTestElement();
+    let input: TerminalTestElement | undefined;
     const context = {
       canvas,
       beginPath() {},
@@ -111,7 +112,12 @@ describe("GhosttyTerminalSurface visibility", () => {
       }),
     };
     vi.stubGlobal("document", {
-      createElement: (tag: string) => (tag === "canvas" ? canvas : new TerminalTestElement()),
+      createElement: (tag: string) => {
+        if (tag === "canvas") return canvas;
+        const element = new TerminalTestElement();
+        if (tag === "textarea") input = element;
+        return element;
+      },
       fonts: Object.assign(new EventTarget(), { load: async () => [], add() {} }),
     });
     vi.stubGlobal(
@@ -148,6 +154,27 @@ describe("GhosttyTerminalSurface visibility", () => {
     return {
       mount,
       frames,
+      get input() {
+        if (!input) throw new Error("The surface has not created its textarea");
+        return input;
+      },
+      key(target: EventTarget, type: "keydown" | "keyup", init: Partial<KeyboardEvent>) {
+        target.dispatchEvent(
+          Object.assign(new Event(type, { cancelable: true }), {
+            key: "",
+            code: "",
+            shiftKey: false,
+            ctrlKey: false,
+            altKey: false,
+            metaKey: false,
+            repeat: false,
+            isComposing: false,
+            keyCode: 0,
+            getModifierState: () => false,
+            ...init,
+          }),
+        );
+      },
       paint,
       requestFrame,
       snapshot,
@@ -438,6 +465,49 @@ describe("GhosttyTerminalSurface visibility", () => {
     harness.pointer("pointerup", 37, 0, true);
     expect(onLinkActivate).not.toHaveBeenCalled();
     expect(surface.getSelection()).toBe("https");
+  });
+
+  // Kitty flags 1|2 (disambiguate + report event types) make releases encode.
+  async function createKittySurface(harness: ReturnType<typeof createHarness>) {
+    const surface = await harness.create({ beforeKey: () => true });
+    surface.write("\x1b[>3u");
+    return surface;
+  }
+
+  it("retires a press released outside the terminal before a host chord reuses its code", async () => {
+    const harness = createHarness();
+    await createKittySurface(harness);
+    const { input } = harness;
+    harness.key(input, "keydown", { code: "KeyL", key: "l" });
+    input.dispatchEvent(new Event("blur"));
+    // The release lands on whatever took focus and bubbles to the window.
+    harness.key(window, "keyup", { code: "KeyL", key: "l" });
+    input.dispatchEvent(new Event("focus"));
+    // A host dispatcher consumed the Ctrl+L keydown; only its keyup arrives.
+    harness.key(input, "keyup", { code: "KeyL", key: "l", ctrlKey: true });
+    expect(harness.onData.mock.calls).toEqual([["l"]]);
+  });
+
+  it("still releases a press whose key comes up after focus returns", async () => {
+    const harness = createHarness();
+    await createKittySurface(harness);
+    const { input } = harness;
+    harness.key(input, "keydown", { code: "KeyL", key: "l" });
+    input.dispatchEvent(new Event("blur"));
+    input.dispatchEvent(new Event("focus"));
+    harness.key(input, "keyup", { code: "KeyL", key: "l" });
+    expect(harness.onData.mock.calls).toEqual([["l"], ["\x1b[108;1:3u"]]);
+  });
+
+  it("retires held presses when the window loses focus", async () => {
+    const harness = createHarness();
+    await createKittySurface(harness);
+    const { input } = harness;
+    harness.key(input, "keydown", { code: "KeyL", key: "l" });
+    // Releases in another app never reach the page.
+    window.dispatchEvent(new Event("blur"));
+    harness.key(input, "keyup", { code: "KeyL", key: "l", ctrlKey: true });
+    expect(harness.onData.mock.calls).toEqual([["l"]]);
   });
 
   it("does not activate a link replaced before pointer release", async () => {

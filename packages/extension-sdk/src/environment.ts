@@ -133,7 +133,7 @@ export type GlobalCommandDescriptor = {
    * Match `defaultKey` on the layout's `event.key` only, skipping the host's
    * physical-key (`event.code`) fallback for non-Latin layouts. For defaults
    * that must behave like a terminal's own key handling; user rules are
-   * unaffected.
+   * unaffected. Since t3.ui/keybindings 1.2.0; older hosts reject it.
    */
   readonly defaultKeyLogicalOnly?: boolean;
   /** Host-computable `when` expression over the shortcut context only. */

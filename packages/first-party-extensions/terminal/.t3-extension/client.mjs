@@ -6957,7 +6957,7 @@ var __t3Client = (() => {
   var UI_THEME_READ = "t3.ui/theme.read";
   var UI_THEME_WRITE = "t3.ui/theme.write";
   var UI_KEYBINDINGS = "t3.ui/keybindings";
-  var UI_KEYBINDINGS_VERSION = "1.1.0";
+  var UI_KEYBINDINGS_VERSION = "1.2.0";
   var UI_NOTIFY = "t3.ui/notify";
   var UI_PANELS = "t3.ui/panels";
   var UI_PREFERENCES = "t3.ui/preferences";
@@ -10469,6 +10469,20 @@ var __t3Client = (() => {
       event.stopPropagation();
       this.options.onData(data);
     };
+    // A release delivered outside the textarea means the shell will never get
+    // one from here; forget the press so a later host-consumed chord on the same
+    // code cannot inherit it. Capture phase sees the keyup even if the focused
+    // element stops it.
+    onWindowKeyUp = (event) => {
+      if (event.composedPath().includes(this.input)) return;
+      this.encodedKeyCodes.delete(event.code);
+    };
+    // Releases while another app has focus never reach the page, so every held
+    // press is retired. A key still down when the window refocuses sends no
+    // release; that is safer than a later chord leaking one.
+    onWindowBlur = (event) => {
+      if (event.target === window) this.encodedKeyCodes.clear();
+    };
     onFocus = () => {
       this.focused = true;
       this.cursorOn = true;
@@ -10886,6 +10900,8 @@ var __t3Client = (() => {
     installEvents() {
       this.input.addEventListener("keydown", this.onKeyDown);
       this.input.addEventListener("keyup", this.onKeyUp);
+      window.addEventListener("keyup", this.onWindowKeyUp, true);
+      window.addEventListener("blur", this.onWindowBlur);
       this.input.addEventListener("focus", this.onFocus);
       this.input.addEventListener("blur", this.onBlur);
       this.input.addEventListener("input", this.onInput);
@@ -10911,6 +10927,8 @@ var __t3Client = (() => {
     removeEvents() {
       this.input.removeEventListener("keydown", this.onKeyDown);
       this.input.removeEventListener("keyup", this.onKeyUp);
+      window.removeEventListener("keyup", this.onWindowKeyUp, true);
+      window.removeEventListener("blur", this.onWindowBlur);
       this.input.removeEventListener("focus", this.onFocus);
       this.input.removeEventListener("blur", this.onBlur);
       this.input.removeEventListener("input", this.onInput);
@@ -11180,6 +11198,74 @@ var __t3Client = (() => {
       if ((buttons & 16) !== 0) return 5;
       return null;
     }
+  };
+
+  // node_modules/@t3tools/shared/src/semver.ts
+  var satisfiesSemverRange = function satisfiesSemverRange2(rawVersion, range) {
+    const normalizedVersion = String(rawVersion).trim().replace(/^v/, "");
+    const versionMatch = normalizedVersion.match(
+      /^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-[0-9A-Za-z.-]+)?$/
+    );
+    if (!versionMatch) {
+      return false;
+    }
+    const version = {
+      major: Number(versionMatch[1]),
+      minor: Number(versionMatch[2] || 0),
+      patch: Number(versionMatch[3] || 0)
+    };
+    return range.split("||").some((group) => {
+      const comparators = group.trim().split(/\s+/).filter(Boolean);
+      if (comparators.length === 0) {
+        return false;
+      }
+      return comparators.every((comparator) => {
+        const match = comparator.trim().match(/^(\^|>=|>|<=|<|=)?\s*v?(\d+(?:\.\d+){0,2})$/);
+        if (!match) {
+          return false;
+        }
+        const targetVersion = match[2];
+        if (targetVersion === void 0) {
+          return false;
+        }
+        const targetMatch = targetVersion.match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?$/);
+        if (!targetMatch) {
+          return false;
+        }
+        const target = {
+          major: Number(targetMatch[1]),
+          minor: Number(targetMatch[2] || 0),
+          patch: Number(targetMatch[3] || 0)
+        };
+        const compared = version.major !== target.major ? version.major > target.major ? 1 : -1 : version.minor !== target.minor ? version.minor > target.minor ? 1 : -1 : version.patch !== target.patch ? version.patch > target.patch ? 1 : -1 : 0;
+        const operator = match[1] || "=";
+        switch (operator) {
+          case "^":
+            if (compared < 0) {
+              return false;
+            }
+            if (target.major > 0) {
+              return version.major === target.major;
+            }
+            if (target.minor > 0) {
+              return version.major === 0 && version.minor === target.minor;
+            }
+            return version.major === 0 && version.minor === 0 && version.patch === target.patch;
+          case ">=":
+            return compared >= 0;
+          case ">":
+            return compared > 0;
+          case "<=":
+            return compared <= 0;
+          case "<":
+            return compared < 0;
+          case "=":
+            return compared === 0;
+          default:
+            return false;
+        }
+      });
+    });
   };
 
   // inputQueue.ts
@@ -12308,7 +12394,7 @@ var __t3Client = (() => {
     }
   }
   async function registerPanelCommands(options) {
-    const api = bindApi(uiKeybindingsApi, options.client, options.context);
+    const api = bindApi(uiKeybindingsApi, options.client, options.context, "^1.0.0");
     const response = await api.invoke(
       "registerCommands",
       { commands: options.commands ?? TERMINAL_VIEW_COMMANDS },
@@ -12465,7 +12551,23 @@ var __t3Client = (() => {
   function isTerminalEditingCommand(commandId) {
     return Object.hasOwn(TERMINAL_EDITING_INPUT, commandId);
   }
-  function terminalEditingCommands(platform = typeof navigator === "undefined" ? "" : navigator.platform) {
+  var LOGICAL_DEFAULTS_RANGE = "^1.2.0";
+  function hostTakesLogicalDefaults(clientVersion, discovered) {
+    const selected = discovered.find((api) => api.id === UI_KEYBINDINGS && api.selected);
+    return clientVersion !== void 0 && selected !== void 0 && satisfiesSemverRange(clientVersion, LOGICAL_DEFAULTS_RANGE) && satisfiesSemverRange(selected.version, LOGICAL_DEFAULTS_RANGE);
+  }
+  async function negotiatedEditingCommands(host, context, signal, platform) {
+    let logicalDefaults = false;
+    try {
+      logicalDefaults = hostTakesLogicalDefaults(
+        host.keybindings?.version,
+        await host.discoverApis(context, signal)
+      );
+    } catch {
+    }
+    return terminalEditingCommands(platform, logicalDefaults);
+  }
+  function terminalEditingCommands(platform = typeof navigator === "undefined" ? "" : navigator.platform, logicalDefaults = true) {
     const mac = isMacPlatform(platform);
     const command = (id2, title, defaultKey) => ({
       id: id2,
@@ -12473,7 +12575,7 @@ var __t3Client = (() => {
       scope: "surface",
       // Native matches these on `event.key` alone, so a non-Latin layout's
       // Cmd+л reaches the shell instead of clearing through physical KeyK.
-      ...defaultKey === null ? {} : { defaultKey, defaultKeyLogicalOnly: true },
+      ...defaultKey === null || !logicalDefaults ? {} : { defaultKey, defaultKeyLogicalOnly: true },
       when: TERMINAL_FOCUS_WHEN
     });
     return [
@@ -14329,18 +14431,20 @@ var __t3Client = (() => {
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       let release = null;
-      void registerPanelCommands({
-        client: host,
-        context: session.context,
-        signal,
-        commands: terminalEditingCommands(),
-        bindCommands: (token, handler) => session.bindCommands(token, handler),
-        onCommand: (commandId) => {
-          if (!isTerminalEditingCommand(commandId)) return;
-          const terminalId = focusedVtTerminalId() ?? panel.snapshot.activeTerminalId;
-          if (terminalId !== null) panel.sendInput(terminalId, TERMINAL_EDITING_INPUT[commandId]);
-        }
-      }).then(
+      void negotiatedEditingCommands(host, session.context, signal).then(
+        (commands) => registerPanelCommands({
+          client: host,
+          context: session.context,
+          signal,
+          commands,
+          bindCommands: (token, handler) => session.bindCommands(token, handler),
+          onCommand: (commandId) => {
+            if (!isTerminalEditingCommand(commandId)) return;
+            const terminalId = focusedVtTerminalId() ?? panel.snapshot.activeTerminalId;
+            if (terminalId !== null) panel.sendInput(terminalId, TERMINAL_EDITING_INPUT[commandId]);
+          }
+        })
+      ).then(
         (registration) => {
           if (registration === null) return;
           if (signal.aborted) registration.release();

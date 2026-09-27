@@ -1592,7 +1592,8 @@ export async function registerPanelCommands(options: {
   ) => string;
   readonly onCommand: (commandId: string) => void;
 }): Promise<PanelCommandRegistration | null> {
-  const api = bindApi(uiKeybindingsApi, options.client, options.context);
+  // Every payload here fits 1.0.0; the API baseline option will own this floor at merge.
+  const api = bindApi(uiKeybindingsApi, options.client, options.context, "^1.0.0");
   const response = await api.invoke(
     "registerCommands",
     { commands: options.commands ?? TERMINAL_VIEW_COMMANDS },

@@ -1,6 +1,13 @@
-import type { UiKeybindingChord, UiKeybindingsHost } from "@t3tools/extension-sdk/catalogue";
+import type { ApiDiscovery } from "@t3tools/extension-sdk/capabilities";
+import {
+  UI_KEYBINDINGS,
+  type UiKeybindingChord,
+  type UiKeybindingsHost,
+} from "@t3tools/extension-sdk/catalogue";
+import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { GlobalCommandDescriptor } from "@t3tools/extension-sdk/environment";
 import { isMacPlatform } from "@t3tools/ghostty-terminal/platform";
+import { satisfiesSemverRange } from "@t3tools/shared/semver";
 
 import { TERMINAL_FOCUS_WHEN } from "./viewModel.ts";
 
@@ -35,14 +42,66 @@ export function isTerminalEditingCommand(commandId: string): commandId is Termin
   return Object.hasOwn(TERMINAL_EDITING_INPUT, commandId);
 }
 
+/** `defaultKeyLogicalOnly` arrived in t3.ui/keybindings 1.2.0; older closed schemas reject it. */
+const LOGICAL_DEFAULTS_RANGE = "^1.2.0";
+
+/**
+ * Whether both halves of `t3.ui/keybindings` take `defaultKeyLogicalOnly`:
+ * the client's own advertisement (its registry validates and matches the
+ * defaults) and the API the server selected for this installation (its
+ * broker validates the registration). A remote client and server can differ,
+ * so an absent or older side on either end means no.
+ */
+export function hostTakesLogicalDefaults(
+  clientVersion: string | undefined,
+  discovered: readonly ApiDiscovery[],
+): boolean {
+  const selected = discovered.find((api) => api.id === UI_KEYBINDINGS && api.selected);
+  return (
+    clientVersion !== undefined &&
+    selected !== undefined &&
+    satisfiesSemverRange(clientVersion, LOGICAL_DEFAULTS_RANGE) &&
+    satisfiesSemverRange(selected.version, LOGICAL_DEFAULTS_RANGE)
+  );
+}
+
+/**
+ * The editing command set this installation's host can take: defaults ride
+ * along only when both sides speak 1.2.0 (see hostTakesLogicalDefaults). A
+ * failed discovery takes the old payload, which every host accepts.
+ */
+export async function negotiatedEditingCommands(
+  host: {
+    readonly keybindings?: Pick<UiKeybindingsHost, "version">;
+    discoverApis(context: ViewContext, signal: AbortSignal): Promise<readonly ApiDiscovery[]>;
+  },
+  context: ViewContext,
+  signal: AbortSignal,
+  platform?: string,
+): Promise<readonly GlobalCommandDescriptor[]> {
+  let logicalDefaults = false;
+  try {
+    logicalDefaults = hostTakesLogicalDefaults(
+      host.keybindings?.version,
+      await host.discoverApis(context, signal),
+    );
+  } catch {
+    // Unknown support takes the payload every host accepts.
+  }
+  return terminalEditingCommands(platform, logicalDefaults);
+}
+
 /**
  * Surface-scoped editing command set with the native drawer's defaults for
  * `platform`. Commands native only binds on macOS (line start/end, delete to
  * line start) still register elsewhere, just without a default, so a user
- * rule can bind them.
+ * rule can bind them. Without `logicalDefaults` the host would match the
+ * defaults on the physical key, so they are left off and the local fallback
+ * (terminalEditingCommandForKey) applies them on the layout key instead.
  */
 export function terminalEditingCommands(
   platform = typeof navigator === "undefined" ? "" : navigator.platform,
+  logicalDefaults = true,
 ): readonly GlobalCommandDescriptor[] {
   const mac = isMacPlatform(platform);
   const command = (
@@ -55,7 +114,7 @@ export function terminalEditingCommands(
     scope: "surface",
     // Native matches these on `event.key` alone, so a non-Latin layout's
     // Cmd+л reaches the shell instead of clearing through physical KeyK.
-    ...(defaultKey === null ? {} : { defaultKey, defaultKeyLogicalOnly: true }),
+    ...(defaultKey === null || !logicalDefaults ? {} : { defaultKey, defaultKeyLogicalOnly: true }),
     when: TERMINAL_FOCUS_WHEN,
   });
   return [

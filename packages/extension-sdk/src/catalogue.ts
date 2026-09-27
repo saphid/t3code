@@ -8027,8 +8027,10 @@ export const UI_KEYBINDINGS_GLOBAL = "t3.ui/keybindings.global";
 /**
  * 1.1.0 adds the client-local `ClientHost.keybindings` capability
  * (`UiKeybindingsHost`); the brokered methods are unchanged from 1.0.0.
+ * 1.2.0 adds `defaultKeyLogicalOnly` to command descriptors. Older hosts'
+ * closed schemas reject the field, so callers send it only to a 1.2.0 host.
  */
-export const UI_KEYBINDINGS_VERSION = "1.1.0";
+export const UI_KEYBINDINGS_VERSION = "1.2.0";
 export const UI_NOTIFY = "t3.ui/notify";
 export const UI_PANELS = "t3.ui/panels";
 export const UI_PREFERENCES = "t3.ui/preferences";

@@ -817,7 +817,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     if (!visible) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
-    void bindApi(uiKeybindingsApi, host, session.context)
+    void bindApi(uiKeybindingsApi, host, session.context, "^1.1.0")
       .invoke("registerCommands", { commands: BROWSER_VIEW_COMMANDS }, signal)
       .then(
         ({ commandSetToken }) => {
@@ -1315,7 +1315,8 @@ const authored = defineExtension({
     requireApi(browserFramesApi),
     requireApi(resourcesLeaseApi),
     requireApi(uiThemeApi),
-    requireApi(uiKeybindingsApi),
+    // Explicit floor until the defineApi `baseline` option unifies these at merge.
+    requireApi(uiKeybindingsApi, "^1.1.0"),
     requireApi(uiPanelsApi),
     requireApi(uiNotificationsApi),
     requireApi(composerContextApi),

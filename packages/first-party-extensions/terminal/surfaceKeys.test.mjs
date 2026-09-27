@@ -6,6 +6,7 @@ import { parseKeybindingShortcut } from "@t3tools/shared/keybindings";
 import {
   defaultTerminalEditingCommand,
   isTerminalEditingCommand,
+  negotiatedEditingCommands,
   TERMINAL_EDITING_INPUT,
   terminalEditingCommandForKey,
   terminalEditingCommands,
@@ -268,4 +269,159 @@ NodeTest.describe("terminal editing commands — registration", () => {
     bound.handler({ commandId: "lineEnd", context: viewContext });
     NodeAssert.deepEqual(dispatched, ["clear"]);
   });
+});
+
+NodeTest.describe("terminal editing commands — host version negotiation", () => {
+  const viewContext = { resource: { environmentId: "env-1", threadId: "thread-1" } };
+  const discovery = (version, selected = true) => ({
+    id: "t3.ui/keybindings",
+    version,
+    providerId: "host",
+    generation: 1,
+    health: "ready",
+    selected,
+  });
+  /** `clientVersion` is the renderer's ClientHost advertisement; `discovered`, the server's. */
+  const hostWith = (clientVersion, discovered) => ({
+    ...(clientVersion === undefined ? {} : { keybindings: { version: clientVersion } }),
+    discoverApis: async () => {
+      if (discovered instanceof Error) throw discovered;
+      return discovered;
+    },
+  });
+  const negotiate = (clientVersion, discovered, platform) =>
+    negotiatedEditingCommands(
+      hostWith(clientVersion, discovered),
+      viewContext,
+      new AbortController().signal,
+      platform,
+    );
+
+  let descriptorKeys;
+  NodeTest.before(async () => {
+    const { uiKeybindingsApi } = await import("@t3tools/extension-sdk/catalogue");
+    const items = uiKeybindingsApi.definition.methods.find(
+      (method) => method.name === "registerCommands",
+    ).inputSchema.properties.commands.items;
+    NodeAssert.equal(items.additionalProperties, false);
+    descriptorKeys = new Set(Object.keys(items.properties));
+  });
+  // A 1.0.0/1.1.0 host's closed descriptor schema: today's keys minus the 1.2.0 field.
+  const fitsClosedSchema = (commands, keys) =>
+    commands.every((command) => Object.keys(command).every((key) => keys.has(key)));
+  const oldKeys = () => new Set([...descriptorKeys].filter((k) => k !== "defaultKeyLogicalOnly"));
+
+  const cases = [
+    // [renderer, server-selected, defaults sent]
+    [undefined, [discovery("1.2.0")], false],
+    ["1.0.0", [discovery("1.2.0")], false],
+    ["1.1.0", [discovery("1.2.0")], false],
+    ["1.1.0", [discovery("1.1.0")], false],
+    ["1.2.0", [discovery("1.1.0")], false],
+    ["1.2.0", [discovery("1.0.0")], false],
+    ["1.2.0", [], false],
+    ["1.2.0", [discovery("1.2.0", false)], false],
+    ["1.2.0", new Error("discovery unavailable"), false],
+    ["1.2.0", [discovery("1.2.0")], true],
+    ["1.3.0", [discovery("1.2.1")], true],
+  ];
+  for (const [client, server, logical] of cases) {
+    const serverLabel = server instanceof Error ? "failed" : server.map((d) => d.version);
+    NodeTest.it(
+      `renderer ${client ?? "absent"} / server ${serverLabel} → defaults ${logical}`,
+      async () => {
+        for (const platform of [MAC, LINUX]) {
+          const commands = await negotiate(client, server, platform);
+          NodeAssert.deepEqual(
+            commands.map((command) => command.id),
+            terminalEditingCommands(platform).map((command) => command.id),
+          );
+          if (logical) {
+            NodeAssert.deepEqual(commands, terminalEditingCommands(platform));
+            NodeAssert.ok(commands.some((command) => command.defaultKeyLogicalOnly === true));
+          } else {
+            for (const command of commands) {
+              NodeAssert.equal("defaultKey" in command, false, command.id);
+              NodeAssert.equal("defaultKeyLogicalOnly" in command, false, command.id);
+            }
+          }
+        }
+      },
+    );
+  }
+
+  NodeTest.it(
+    "an older host's closed schema accepts the old payload and rejects the new",
+    async () => {
+      const old = await negotiate("1.1.0", [discovery("1.1.0")], MAC);
+      const current = await negotiate("1.2.0", [discovery("1.2.0")], MAC);
+      NodeAssert.equal(fitsClosedSchema(old, oldKeys()), true);
+      NodeAssert.equal(fitsClosedSchema(current, oldKeys()), false);
+      NodeAssert.equal(fitsClosedSchema(current, descriptorKeys), true);
+    },
+  );
+
+  NodeTest.it(
+    "an older host keeps non-Latin chords logical through the local fallback",
+    async () => {
+      // No defaults registered, so the old host never claims physical KeyK;
+      // the fallback matches the layout key whether or not the renderer resolves.
+      const noClaim = { resolveTerminalFocusKey: () => null };
+      for (const keybindings of [undefined, noClaim]) {
+        const binding = { pluginId: "t3.terminal", binding: "bound" };
+        NodeAssert.equal(
+          terminalEditingCommandForKey(keydown("k", { metaKey: true }), keybindings, binding, MAC),
+          "clear",
+        );
+        NodeAssert.equal(
+          terminalEditingCommandForKey(keydown("л", { metaKey: true }), keybindings, binding, MAC),
+          null,
+        );
+      }
+    },
+  );
+
+  NodeTest.it("registers and unregisters on the manifest's ^1.0.0 range", async () => {
+    const ranges = [];
+    const client = {
+      invokeApi(request) {
+        ranges.push([request.method, request.versionRange]);
+        return Promise.resolve(
+          request.method === "registerCommands"
+            ? { commandSetToken: "cmdset", results: [] }
+            : { unregistered: true },
+        );
+      },
+    };
+    const registration = await registerPanelCommands({
+      client,
+      context: viewContext,
+      signal: new AbortController().signal,
+      commands: await negotiate("1.1.0", [discovery("1.1.0")], MAC),
+      bindCommands: () => "binding",
+      onCommand: () => {},
+    });
+    registration.release();
+    NodeAssert.deepEqual(ranges, [
+      ["registerCommands", "^1.0.0"],
+      ["unregisterCommands", "^1.0.0"],
+    ]);
+  });
+});
+
+NodeTest.it("the 1.2.0 bump leaves every pack's keybindings floor where it was", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const floor = async (pack) => {
+    const manifest = JSON.parse(
+      await readFile(
+        new URL(`../${pack}/.t3-extension/t3-extension.json`, import.meta.url),
+        "utf8",
+      ),
+    );
+    return manifest.requires.find((requirement) => requirement.id === "t3.ui/keybindings")
+      ?.versionRange;
+  };
+  NodeAssert.equal(await floor("terminal"), "^1.0.0");
+  NodeAssert.equal(await floor("browser"), "^1.1.0");
+  NodeAssert.equal(await floor("diff"), "^1.1.0");
 });

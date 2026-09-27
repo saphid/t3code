@@ -2291,7 +2291,8 @@ const authored = defineExtension({
     requireApi(orchestrationControlApi),
     requireApi(messagesEnrichmentApi),
     requireApi(uiThemeApi),
-    requireApi(uiKeybindingsApi),
+    // Explicit floor until the defineApi `baseline` option unifies these at merge.
+    requireApi(uiKeybindingsApi, "^1.1.0"),
     requireApi(uiPanelsApi),
     requireApi(uiNotificationsApi),
   ],

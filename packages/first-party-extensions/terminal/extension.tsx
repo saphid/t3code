@@ -40,7 +40,7 @@ import {
   isTerminalEditingCommand,
   TERMINAL_EDITING_INPUT,
   terminalEditingBeforeKey,
-  terminalEditingCommands,
+  negotiatedEditingCommands,
   type TerminalEditingBindingState,
 } from "./surfaceKeys.ts";
 import { useTerminalSelectionMenu, type TerminalChatSink } from "./selectionMenu.tsx";
@@ -481,7 +481,9 @@ function focusedVtTerminalId(): string | null {
  * a miss, and user rules can rebind them. Registered only while VT panes are
  * mounted — the text fallback's input keeps its own caret editing. Returns
  * the binding state the VT `beforeKey` reads to apply the commands locally
- * until the binding lands (or when it is denied).
+ * until the binding lands (or when it is denied). Hosts older than
+ * t3.ui/keybindings 1.2.0 get the commands without defaults, which the
+ * local fallback then applies on the layout key.
  */
 function useEditingCommands(
   host: ClientHost,
@@ -496,33 +498,37 @@ function useEditingCommands(
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
     let release: (() => void) | null = null;
-    void registerPanelCommands({
-      client: host,
-      context: session.context,
-      signal,
-      commands: terminalEditingCommands(),
-      bindCommands: (token, handler) => session.bindCommands(token, handler),
-      onCommand: (commandId) => {
-        if (!isTerminalEditingCommand(commandId)) return;
-        // The host already consumed the chord, so chrome focus edits the
-        // active pane rather than dropping it.
-        const terminalId = focusedVtTerminalId() ?? panel.snapshot.activeTerminalId;
-        if (terminalId !== null) panel.sendInput(terminalId, TERMINAL_EDITING_INPUT[commandId]);
-      },
-    }).then(
-      (registration) => {
-        if (registration === null) return;
-        if (signal.aborted) registration.release();
-        else {
-          release = registration.release;
-          binding.current = "bound";
-        }
-      },
-      () => {
-        // Denied or unavailable registration: the local defaults still apply.
-        if (!signal.aborted) binding.current = "unavailable";
-      },
-    );
+    void negotiatedEditingCommands(host, session.context, signal)
+      .then((commands) =>
+        registerPanelCommands({
+          client: host,
+          context: session.context,
+          signal,
+          commands,
+          bindCommands: (token, handler) => session.bindCommands(token, handler),
+          onCommand: (commandId) => {
+            if (!isTerminalEditingCommand(commandId)) return;
+            // The host already consumed the chord, so chrome focus edits the
+            // active pane rather than dropping it.
+            const terminalId = focusedVtTerminalId() ?? panel.snapshot.activeTerminalId;
+            if (terminalId !== null) panel.sendInput(terminalId, TERMINAL_EDITING_INPUT[commandId]);
+          },
+        }),
+      )
+      .then(
+        (registration) => {
+          if (registration === null) return;
+          if (signal.aborted) registration.release();
+          else {
+            release = registration.release;
+            binding.current = "bound";
+          }
+        },
+        () => {
+          // Denied or unavailable registration: the local defaults still apply.
+          if (!signal.aborted) binding.current = "unavailable";
+        },
+      );
     return () => {
       controller.abort();
       binding.current = "pending";
