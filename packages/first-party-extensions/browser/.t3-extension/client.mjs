@@ -7961,17 +7961,17 @@ var __t3Client = (() => {
     return covering.some((node) => !element.contains(node) && !(typeof node.closest === "function" && node.closest("[data-preview-viewport]") !== null));
   }
   function useBrowserSurfaceSlot(host, session, options) {
-    const { useCallback: useCallback2, useLayoutEffect, useRef: useRef3, useState: useState7 } = host.React;
+    const { useCallback: useCallback2, useLayoutEffect, useRef: useRef4, useState: useState7 } = host.React;
     const [element, setElement] = useState7(null);
     const [result2, setResult] = useState7(null);
     const [, setLeaseVersion] = useState7(0);
     const targetKey = options.session ? `${options.session.serverEpoch}${options.session.tabId}` : "";
-    const presentationRef = useRef3({
+    const presentationRef = useRef4({
       visible: options.visible,
       cornerRadius: options.cornerRadius ?? 0,
       zIndex: options.zIndex ?? 30
     });
-    const updateRef = useRef3(null);
+    const updateRef = useRef4(null);
     const ref = useCallback2((node) => setElement(node), []);
     useLayoutEffect(() => {
       presentationRef.current = {
@@ -8105,7 +8105,7 @@ var __t3Client = (() => {
     };
   }
   function useRemoteBrowserFrames(host, session, options) {
-    const { useCallback: useCallback2, useEffect: useEffect7, useRef: useRef3, useState: useState7 } = host.React;
+    const { useCallback: useCallback2, useEffect: useEffect7, useRef: useRef4, useState: useState7 } = host.React;
     const [element, setElement] = useState7(null);
     const [status, setStatus] = useState7({ kind: "idle" });
     const [view, setView] = useState7({
@@ -8114,7 +8114,7 @@ var __t3Client = (() => {
       droppedFrames: 0,
       rejectedInput: 0
     });
-    const sessionRef = useRef3(options.session);
+    const sessionRef = useRef4(options.session);
     sessionRef.current = options.session;
     const targetKey = options.session ? `${options.session.serverEpoch} ${options.session.tabId}` : "";
     const ref = useCallback2((node) => setElement(node), []);
@@ -8305,16 +8305,35 @@ var __t3Client = (() => {
     if (held === null) return "Open a page to capture it.";
     return null;
   }
+  var IMAGE_LOST_REASONS = /* @__PURE__ */ new Set([
+    "capture-failed",
+    "too-large",
+    "upload-failed"
+  ]);
   async function captureToChat(host, context2, held, target, signal) {
     const threadId = context2.resource.threadId;
     if (!host.browserCapture || threadId === void 0)
-      return { kind: "failed", message: "This host cannot capture browser sessions." };
-    const captured = await host.browserCapture.capture({ context: context2, session: held, target, signal });
+      return {
+        kind: "failed",
+        stage: "request",
+        message: "This host cannot capture browser sessions."
+      };
+    let captured;
+    try {
+      captured = await host.browserCapture.capture({ context: context2, session: held, target, signal });
+    } catch (error) {
+      return {
+        kind: "failed",
+        stage: "request",
+        message: `Capture failed: ${error instanceof Error ? error.message : "the host threw"}`
+      };
+    }
     if (!captured.ok) {
       if (captured.failure.reason === "cancelled") return { kind: "cancelled" };
       const grant = captured.failure.grant ? ` (missing grant: ${captured.failure.grant})` : "";
       return {
         kind: "failed",
+        stage: IMAGE_LOST_REASONS.has(captured.failure.reason) ? "image" : "request",
         message: `Capture failed \u2014 ${captured.failure.reason}${grant}: ${captured.failure.detail}`
       };
     }
@@ -8328,68 +8347,92 @@ var __t3Client = (() => {
     } catch (error) {
       return {
         kind: "failed",
+        stage: "insert",
         message: `Captured, but it could not be added to chat: ${error instanceof Error ? error.message : "the composer refused it"}`
       };
     }
   }
-  function captureOutcomeMessage(outcome) {
+  function isSilentFailure(target, stage) {
+    return target === "element" && stage === "request";
+  }
+  function captureOutcomeMessage(target, outcome) {
     switch (outcome.kind) {
       case "cancelled":
         return null;
       case "failed":
-        return outcome.message;
+        return isSilentFailure(target, outcome.stage) ? null : outcome.message;
       case "added": {
         const what = outcome.artifact.target === "page" ? "Page screenshot" : "Element capture";
         return outcome.inserted ? `${what} added to chat.` : `${what} is already in chat.`;
       }
     }
   }
+  var CAPTURE_TOAST_DURATION_MS = 5e3;
   function captureOutcomeToast(target, outcome) {
     switch (outcome.kind) {
       case "cancelled":
         return null;
       case "failed":
+        if (isSilentFailure(target, outcome.stage)) return null;
         return {
           severity: "error",
           title: target === "page" ? "Unable to capture screenshot" : "Could not capture the picked element",
-          body: outcome.message
+          body: outcome.message,
+          durationMs: CAPTURE_TOAST_DURATION_MS
         };
-      case "added": {
+      case "added":
         if (target !== "page") return null;
-        const body = captureOutcomeMessage(outcome);
-        return { severity: "success", title: "Screenshot saved", ...body ? { body } : {} };
-      }
+        return {
+          severity: "success",
+          title: "Screenshot saved",
+          durationMs: CAPTURE_TOAST_DURATION_MS
+        };
     }
   }
-  async function reportCaptureOutcome(notifications, threadId, target, outcome, signal) {
-    const message = captureOutcomeMessage(outcome);
+  var NOTIFY_ACK_TIMEOUT_MS = 5e3;
+  function reportCaptureOutcome(notifications, threadId, target, outcome, signal, ackTimeoutMs = NOTIFY_ACK_TIMEOUT_MS) {
+    const message = captureOutcomeMessage(target, outcome);
     const toast = captureOutcomeToast(target, outcome);
-    if (toast === null) return message;
-    try {
-      await notifications.invoke("notify", { ...toast, threadId, anchor: "thread" }, signal);
-      return null;
-    } catch {
-      return message;
-    }
+    if (toast === null) return { inline: message, fallback: Promise.resolve(null) };
+    const ack = AbortSignal.timeout(ackTimeoutMs);
+    const fallback = Promise.resolve().then(
+      () => notifications.invoke(
+        "notify",
+        { ...toast, threadId, anchor: "thread" },
+        AbortSignal.any([signal, ack])
+      )
+    ).then(
+      () => null,
+      () => signal.aborted || ack.aborted ? null : message
+    );
+    return { inline: null, fallback };
+  }
+  async function runBrowserCapture(host, session, held, target, isCurrent, onState, ackTimeoutMs = NOTIFY_ACK_TIMEOUT_MS) {
+    const context2 = session.context;
+    const outcome = await captureToChat(host, context2, held, target, session.signal);
+    if (session.signal.aborted) return;
+    const report = reportCaptureOutcome(
+      bindApi(uiNotificationsApi, host, context2),
+      context2.resource.threadId ?? "",
+      target,
+      outcome,
+      session.signal,
+      ackTimeoutMs
+    );
+    onState({ kind: "done", message: report.inline });
+    const message = await report.fallback;
+    if (message !== null && isCurrent() && !session.signal.aborted)
+      onState({ kind: "done", message });
   }
   function useBrowserCapture(host, session, held) {
     const [state2, setState] = (0, import_react.useState)({ kind: "idle" });
+    const latestRun = (0, import_react.useRef)(0);
     const blockReason = captureUnavailableReason(host, held, session.context.resource.threadId);
     const capture = (target) => {
       if (blockReason !== null || held === null || state2.kind === "capturing") return;
+      const run2 = ++latestRun.current;
       setState({ kind: "capturing", target });
-      const context2 = session.context;
-      void captureToChat(host, context2, held, target, session.signal).then(
-        (outcome) => reportCaptureOutcome(
-          bindApi(uiNotificationsApi, host, context2),
-          context2.resource.threadId ?? "",
-          target,
-          outcome,
-          AbortSignal.any([session.signal, AbortSignal.timeout(5e3)])
-        )
-      ).then((message) => {
-        if (!session.signal.aborted) setState({ kind: "done", message });
-      });
+      void runBrowserCapture(host, session, held, target, () => run2 === latestRun.current, setState);
     };
     return { blockReason, state: state2, capture };
   }
