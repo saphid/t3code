@@ -261,9 +261,10 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   // snapshot arrived under (adoptions fence on it like every other command).
   const [tabs, setTabs] = useState<readonly BrowserSession[]>([]);
   const tabsEpoch = useRef<string | null>(null);
-  const [fault, setFault] = useState<string | null>(null);
-  // Named result of the last profile action (clear/import) for the status line.
-  const [profileNote, setProfileNote] = useState<string | null>(null);
+  // The status line's latest event: a fault, a capture run's progress or
+  // result, or a profile action's result. Each replaces the last; null falls
+  // back to the session line, so an older message never resurfaces.
+  const [notice, setNotice] = useState<string | null>(null);
   const [visible, setVisible] = useState(session.visible);
   const heldRef = useRef(held);
   const historyRef = useRef(history);
@@ -343,7 +344,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                   heldRef.current = null;
                   setHeld(null);
                   setLive(null);
-                  setFault(
+                  setNotice(
                     value.serverEpoch !== current.serverEpoch
                       ? "Session ended (epoch-changed)"
                       : "Session ended (session-closed)",
@@ -387,7 +388,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                 heldRef.current = null;
                 setHeld(null);
                 setLive(null);
-                setFault(`Session ended (session-closed: ${value.reason})`);
+                setNotice(`Session ended (session-closed: ${value.reason})`);
               }
               break;
             case "closed":
@@ -398,13 +399,13 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
               }
               tabsEpoch.current = null;
               setTabs([]);
-              setFault(`Sessions stream closed (${value.reason})`);
+              setNotice(`Sessions stream closed (${value.reason})`);
               break;
           }
         }
       } catch (error) {
         if (!signal.aborted)
-          setFault(error instanceof Error ? error.message : "Sessions stream unavailable");
+          setNotice(error instanceof Error ? error.message : "Sessions stream unavailable");
       }
     })();
     return () => controller.abort();
@@ -513,7 +514,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         lastRevision.current = receipt.revision;
         heldRevision.current = Math.max(heldRevision.current, receipt.revision);
         if (receipt.outcome !== "accepted") {
-          setFault(`Browser command ${receipt.outcome}`);
+          setNotice(`Browser command ${receipt.outcome}`);
           return false;
         }
         const heldNext = {
@@ -524,7 +525,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         heldRef.current = heldNext;
         setHeld(heldNext);
         setLive(receipt.session);
-        setFault(null);
+        setNotice(null);
         return true;
       },
       (error) => {
@@ -535,7 +536,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         // inline fault line otherwise. The committed setting is untouched —
         // the rollback.
         const message = viewportFailureMessage(error);
-        setFault(message);
+        setNotice(message);
         void notifyViewportResizeFailure(
           bindApi(uiNotificationsApi, host, session.context),
           session.context.resource.threadId ?? "",
@@ -609,8 +610,8 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const dispatch = createCommandDispatch<BrowserSessionReceipt>({
     signal: session.signal,
     lastRevision,
-    refuse: (outcome) => setFault(`Browser command ${outcome}`),
-    fail: (error) => setFault(error instanceof Error ? error.message : "Browser command failed"),
+    refuse: (outcome) => setNotice(`Browser command ${outcome}`),
+    fail: (error) => setNotice(error instanceof Error ? error.message : "Browser command failed"),
     adopt: (receipt) => {
       heldRevision.current = receipt.revision;
       const next = {
@@ -621,8 +622,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       heldRef.current = next;
       setHeld(next);
       setLive(receipt.session);
-      setFault(null);
-      setProfileNote(null);
+      setNotice(null);
       const requested = receipt.session.requestedUrl;
       const base: { url?: string; relativePath?: string; tabId: string; serverEpoch: string } = {
         ...restoreTarget(fileSourceRef.current, requested),
@@ -687,7 +687,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   /** Switching profile opens the current page in a new session under it (a profile is fixed at open). */
   const openInProfile = (profileId: string) => {
     const url = live?.navigation.url ?? live?.requestedUrl ?? undefined;
-    setProfileNote(null);
+    setNotice(null);
     dispatch((signal) =>
       profilesApi
         .invoke("open", { profileId, ...(url === undefined ? {} : { url }) }, signal)
@@ -716,7 +716,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       heldRevision.current = -1;
       setHeld(next);
       setLive(tab);
-      setFault(null);
+      setNotice(null);
       const url = tab.navigation.url ?? tab.requestedUrl ?? null;
       setAddress(url ?? "");
       if (url) setState((current) => submitAddress(current, url));
@@ -744,7 +744,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     const signal = AbortSignal.any([controller.signal, session.signal]);
     presentFile(relativePath);
     setAddress(relativePath);
-    setFault(`Opening ${relativePath}…`);
+    setNotice(`Opening ${relativePath}…`);
     const lease = bindApi(resourcesLeaseApi, host, session.context);
     void mintWorkspaceFileUrl({
       lease: {
@@ -761,7 +761,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       (result) => {
         if (signal.aborted) return;
         if (!result.ok) {
-          setFault(result.message);
+          setNotice(result.message);
           return;
         }
         fileLeaseUrl.current = result.url;
@@ -805,10 +805,10 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       if (session.signal.aborted) return;
       if (outcome.kind !== "accepted") {
         if (verb.method === "zoom" && !tab) pendingZoom.current = null;
-        setFault(outcome.message);
+        setNotice(outcome.message);
         return;
       }
-      setFault(null);
+      setNotice(null);
       const { receipt } = outcome;
       const current = heldRef.current;
       if (!current || receipt.session.tabId !== current.tabId) return;
@@ -841,7 +841,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       return;
     }
     if (pageBlock !== null) {
-      setFault(pageBlock);
+      setNotice(pageBlock);
       return;
     }
     if (method === "back") commit(goBack(state));
@@ -929,16 +929,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           : null;
   // Native disables capture until the page is on screen here and while it failed to load.
   const capturePage = capturePageView(surfaceLease, surfaceShown, live?.navigation.kind);
-  // A new run supersedes any earlier action fault, so its status line shows.
-  const capture = useBrowserCapture(host, session, held, capturePage, () => setFault(null));
-  const captureStatus =
-    capture.state.kind === "capturing"
-      ? capture.state.target === "element"
-        ? "Pick an element in the page — Esc cancels."
-        : "Capturing the page…"
-      : capture.state.kind === "done"
-        ? capture.state.message
-        : null;
+  const capture = useBrowserCapture(host, session, held, capturePage, setNotice);
   const surfaceNotice =
     leaseState?.kind === "ended"
       ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.`
@@ -1096,7 +1087,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
               externalTarget,
               session.signal,
             ).then((fault) => {
-              if (fault !== null && !session.signal.aborted) setFault(fault);
+              if (fault !== null && !session.signal.aborted) setNotice(fault);
             });
           }}
           style={buttonStyle}
@@ -1116,10 +1107,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
               api={profilesApi}
               signal={session.signal}
               onOpenInProfile={openInProfile}
-              report={(message) => {
-                setFault(null);
-                setProfileNote(message);
-              }}
+              report={setNotice}
             />
           )}
         </PageMenu>
@@ -1196,9 +1184,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         aria-label="Browser status"
         style={{ padding: "6px 10px", color: muted, fontSize: 11, flexShrink: 0 }}
       >
-        {fault ??
-          captureStatus ??
-          profileNote ??
+        {notice ??
           (held && live
             ? `${live.navigation.title || live.navigation.url || "session"} — ${engineStatusLabel(live)}`
             : describeStatus(state))}

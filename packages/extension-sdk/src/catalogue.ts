@@ -7331,7 +7331,9 @@ export const BROWSER_CAPTURE_REQUIRED_GRANTS = [BROWSER_SESSIONS, BROWSER_CAPTUR
 /**
  * An artifactRef is the pending attachment id the environment minted for the
  * upload. The store sweeps pending uploads after 24 hours, so insert a capture
- * into the chat soon after taking it.
+ * into the chat soon after taking it. A successful `insertImage` consumes the
+ * ref: the draft keeps its own copy and the pending upload is deleted. A refused
+ * insert (`inserted: false`) leaves the ref intact for a retry.
  */
 export const BROWSER_CAPTURE_ARTIFACT_REF_PATTERN =
   "^pending-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
@@ -7552,7 +7554,7 @@ export type ComposerMentionInsertResult = {
 };
 export type ComposerImageInsertInput = {
   readonly threadId?: string;
-  /** A `t3.browser/capture` artifactRef. */
+  /** A `t3.browser/capture` artifactRef; a successful insert consumes it. */
   readonly artifactRef: string;
   /** Attachment name shown in the composer; defaults to a capture name. */
   readonly name?: string;

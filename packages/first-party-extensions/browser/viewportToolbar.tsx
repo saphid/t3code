@@ -4,6 +4,7 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
@@ -133,6 +134,11 @@ export function BrowserViewportToolbar(props: {
     onCommit({ _tag: "freeform", width: customWidth, height: customHeight });
   };
 
+  // Toolbar actions keep focus where it is. A clicked button takes no focus
+  // on macOS, so the press would blur the edited field out of the toolbar,
+  // commit the edit, and disable the button before its click landed.
+  const keepFocus = (event: MouseEvent) => event.preventDefault();
+
   const selectViewport = (value: string) => {
     if (value === "responsive") {
       // Already freeform: the size is the user's to edit, nothing to switch.
@@ -192,6 +198,13 @@ export function BrowserViewportToolbar(props: {
         style={{ display: "flex", alignItems: "center", gap: 4, margin: 0 }}
         aria-label="Viewport dimensions"
         onSubmit={(event) => {
+          event.preventDefault();
+          applyCustomSize();
+        }}
+        // Two number fields and no submit button block implicit submission,
+        // so Enter commits here, as native's onSubmit intends.
+        onKeyDown={(event) => {
+          if (event.key !== "Enter") return;
           event.preventDefault();
           applyCustomSize();
         }}
@@ -264,6 +277,7 @@ export function BrowserViewportToolbar(props: {
         type="button"
         aria-label="Rotate viewport"
         disabled={pending}
+        onMouseDown={keepFocus}
         onClick={() =>
           onCommit(
             rotateViewport(
@@ -280,7 +294,11 @@ export function BrowserViewportToolbar(props: {
         type="button"
         aria-label="Close device toolbar"
         disabled={pending}
-        onClick={() => onCommit({ _tag: "fill" })}
+        onMouseDown={keepFocus}
+        onClick={() => {
+          setEdit(null);
+          onCommit({ _tag: "fill" });
+        }}
         style={{ ...chromeButton, marginLeft: "auto" }}
       >
         ×

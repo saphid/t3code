@@ -1,4 +1,5 @@
 import * as NodeAssert from "node:assert/strict";
+import * as NodeModule from "node:module";
 import * as NodeTest from "node:test";
 
 import { bindApi } from "@t3tools/extension-sdk/capabilities";
@@ -14,7 +15,13 @@ import {
   reportCaptureOutcome,
   runBrowserCapture,
   runCaptureToastAction,
+  useBrowserCapture,
 } from "./capture.ts";
+
+const require = NodeModule.createRequire(new URL(".", import.meta.url));
+const React = require("react");
+const { act, create } = require("react-test-renderer");
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const ARTIFACT_REF = "pending-0f1e2d3c-4b5a-4968-8776-655443322110";
 const held = { tabId: "tab-1", serverEpoch: "epoch-1" };
@@ -718,5 +725,68 @@ NodeTest.describe("Screenshot saved actions", () => {
       NodeAssert.equal(inputs[0].actions, undefined);
     }
     NodeAssert.equal((await notifyInputs(savedPage, discovering("1.1.0")))[0].actions.length, 3);
+  });
+});
+
+NodeTest.describe("useBrowserCapture status", () => {
+  /** Mounts the hook and records every status line it reports. */
+  function mountCapture(host) {
+    const reports = [];
+    const session = { context, signal: new AbortController().signal };
+    const Probe = () => {
+      const { capture } = useBrowserCapture(host, session, held, "shown", (line) =>
+        reports.push(line),
+      );
+      return React.createElement("probe", { capture });
+    };
+    let renderer;
+    act(() => {
+      renderer = create(React.createElement(Probe));
+    });
+    return {
+      reports,
+      capture: (target) => act(() => renderer.root.findByType("probe").props.capture(target)),
+    };
+  }
+
+  // The panel's status line shows only the latest event, so a run that ends
+  // with nothing to say must still report that, or an older unrelated line
+  // (a profile action's result) resurfaces.
+  NodeTest.it("reports a cancelled pick as a cleared line", async () => {
+    const opened = deferred();
+    const settled = deferred();
+    const host = fakeHost({
+      capture: (request) =>
+        new Promise((resolve) => {
+          opened.resolve();
+          request.signal.addEventListener("abort", () => {
+            resolve({ ok: false, failure: { reason: "cancelled", detail: "dismissed" } });
+            setImmediate(settled.resolve);
+          });
+        }),
+    });
+    const view = mountCapture(host);
+    view.capture("element");
+    await opened.promise;
+    // Pressing pick again while the picker is open is Cancel annotation.
+    view.capture("element");
+    await act(() => settled.promise);
+    NodeAssert.deepEqual(view.reports, ["Pick an element in the page — Esc cancels.", null]);
+  });
+
+  NodeTest.it("reports a toasted page capture as a cleared line", async () => {
+    const notified = deferred();
+    const host = fakeHost({
+      insert: (request) => {
+        if (request.method === "notify") setImmediate(notified.resolve);
+        return request.method === "notify"
+          ? { notificationId: "n-1" }
+          : { inserted: true, target: "env-a:thread-a" };
+      },
+    });
+    const view = mountCapture(host);
+    view.capture("page");
+    await act(() => notified.promise);
+    NodeAssert.deepEqual(view.reports, ["Capturing the page…", null]);
   });
 });
