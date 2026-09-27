@@ -403,7 +403,10 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       session.signal,
     );
   }, [host, session, tabs]);
-  useEffect(() => applySessionFavicons(faviconCache, tabs), [faviconCache, tabs]);
+  // Keyed on ref results, not the whole cache: applying writes only origin
+  // captures, so it cannot re-trigger itself.
+  const resolvedFaviconRefs = faviconCache.resolved;
+  useEffect(() => applySessionFavicons(resolvedFaviconRefs, tabs), [resolvedFaviconRefs, tabs]);
 
   // The host renders this panel's tab icon and audio indicator from these.
   useEffect(() => {
@@ -1108,7 +1111,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                       : {}),
                   }}
                 >
-                  <BrowserFavicon url={tabUrl} />
+                  <BrowserFavicon url={tabUrl} faviconRef={tab.faviconRef} />
                   <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
                     {label}
                   </span>

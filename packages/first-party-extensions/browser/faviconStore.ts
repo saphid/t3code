@@ -13,8 +13,10 @@
  *   blip does not suppress the image for the whole session.
  *
  * Refs are content hashes, so one ref can serve several origins: the result
- * of its single read is kept per ref and applied to every origin a session
- * carries it on, whenever that session arrives.
+ * of its single read is kept per ref. A tab renders its own ref's image, so
+ * two tabs on one origin keep their own icons; each origin also remembers one
+ * live ref's image for surfaces that know only a URL (recents, a tab whose
+ * ref has not resolved). Applying the same sessions twice changes nothing.
  * A missing, stale, or failed capture simply leaves the provider tier.
  * Nothing schedules the age-out: a surface expires its origin's stale
  * failure when it mounts or navigates.
@@ -30,8 +32,10 @@ export const FAVICON_CACHE_MAX_ENTRIES = 40;
 export const FAVICON_PROVIDER_SIZE = 32;
 /** How long a recorded provider failure keeps its origin on the glyph. */
 export const FAVICON_FAILURE_TTL_MS = 5 * 60_000;
-/** At most this many `getFavicon` reads run at once; the rest wait for a later session event. */
+/** At most this many `getFavicon` reads run at once; the rest queue (`faviconReads.ts`). */
 export const MAX_FAVICON_READS = 8;
+/** Ref results kept — above the origin cap so a panel's live tabs all keep their own icons. */
+export const FAVICON_REF_MAX_ENTRIES = 256;
 
 export type FaviconOriginEntry = { readonly providerFailedAt: number };
 export type CapturedFavicon = {
@@ -52,15 +56,25 @@ export function emptyFaviconCache(): FaviconCache {
   return { byOrigin: {}, captured: {}, resolved: {} };
 }
 
-/** Keeps the `FAVICON_CACHE_MAX_ENTRIES` newest entries by `stamp`. */
-function capEntries<T>(entries: Record<string, T>, stamp: (entry: T) => number): Record<string, T> {
+/**
+ * Keeps the `max` newest entries by `stamp`. `pinned` keys (what live sessions
+ * show) are never evicted, so re-applying them cannot evict and re-add forever.
+ */
+function capEntries<T>(
+  entries: Record<string, T>,
+  stamp: (entry: T) => number,
+  max = FAVICON_CACHE_MAX_ENTRIES,
+  pinned: ReadonlySet<string> = new Set(),
+): Record<string, T> {
   const keys = Object.keys(entries);
-  if (keys.length <= FAVICON_CACHE_MAX_ENTRIES) return entries;
-  const keep = new Set(
-    keys
+  if (keys.length <= max) return entries;
+  const keep = new Set([
+    ...keys.filter((key) => pinned.has(key)),
+    ...keys
+      .filter((key) => !pinned.has(key))
       .toSorted((left, right) => stamp(entries[right]!) - stamp(entries[left]!))
-      .slice(0, FAVICON_CACHE_MAX_ENTRIES),
-  );
+      .slice(0, Math.max(0, max - pinned.size)),
+  ]);
   return Object.fromEntries(keys.filter((key) => keep.has(key)).map((key) => [key, entries[key]!]));
 }
 
@@ -139,21 +153,33 @@ export function recordCapturedFavicon(
 }
 
 /**
- * Drop a captured favicon that failed to render; the origin falls back to the
- * provider. Its ref is marked broken so it is neither re-applied nor re-read.
+ * Drop a captured favicon that failed to render — the tab's own `ref` when it
+ * rendered one, else the origin's capture. The ref is marked broken so it is
+ * neither shown, re-applied nor re-read; an origin showing it falls back to
+ * the provider.
  */
-export function dropCapturedFavicon(cache: FaviconCache, rawUrl: string): FaviconCache {
+export function dropCapturedFavicon(
+  cache: FaviconCache,
+  rawUrl: string,
+  ref?: string | null,
+): FaviconCache {
   const key = faviconOriginKey(rawUrl);
-  const dropped = key ? cache.captured[key] : undefined;
-  if (!key || !dropped) return cache;
-  const { [key]: _dropped, ...captured } = cache.captured;
-  const resolved = cache.resolved[dropped.ref];
+  const originCapture = key ? cache.captured[key] : undefined;
+  const brokenRef = ref ?? originCapture?.ref;
+  if (!key || !brokenRef) return cache;
+  const resolved = cache.resolved[brokenRef];
+  if (resolved?.src === null && originCapture?.ref !== brokenRef) return cache;
+  const captured = { ...cache.captured };
+  if (originCapture?.ref === brokenRef) delete captured[key];
   return {
     ...cache,
     captured,
     resolved: {
       ...cache.resolved,
-      [dropped.ref]: { src: null, resolvedAt: resolved?.resolvedAt ?? dropped.capturedAt },
+      [brokenRef]: {
+        src: null,
+        resolvedAt: resolved?.resolvedAt ?? originCapture?.capturedAt ?? 0,
+      },
     },
   };
 }
@@ -177,29 +203,48 @@ export function recordResolvedFaviconRef(
     resolved: capEntries(
       { ...cache.resolved, [ref]: { src: image, resolvedAt: at } },
       (entry) => entry.resolvedAt,
+      FAVICON_REF_MAX_ENTRIES,
     ),
   };
 }
 
 /**
- * Record the captured favicon for every session whose ref already resolved to
- * an image — so a ref shared by several origins reaches each of them, whether
- * the session arrived before, during or after the read. A no-op returns the
- * same cache reference.
+ * Give every origin a live session shows one resolved ref's image — so a ref
+ * shared by several origins reaches each of them, whether the session arrived
+ * before, during or after the read. An origin whose capture is already one of
+ * its sessions' refs keeps it; otherwise the last session's ref wins. So the
+ * result is stable: applying the same sessions again returns the same cache
+ * reference, and tabs on one origin cannot overwrite each other.
  */
 export function applyResolvedFaviconRefs(
   cache: FaviconCache,
   sessions: readonly BrowserSession[],
   at: number,
 ): FaviconCache {
-  let next = cache;
+  const refsByOrigin = new Map<string, string[]>();
   for (const session of sessions) {
     const ref = session.faviconRef;
-    const url = session.navigation.url;
-    const src = ref ? cache.resolved[ref]?.src : null;
-    if (ref && url && src) next = recordCapturedFavicon(next, url, { ref, src }, at);
+    const key = session.navigation.url ? faviconOriginKey(session.navigation.url) : null;
+    if (!ref || !key || !cache.resolved[ref]?.src) continue;
+    refsByOrigin.set(key, [...(refsByOrigin.get(key) ?? []), ref]);
   }
-  return next;
+  const updates: Record<string, CapturedFavicon> = {};
+  for (const [key, refs] of refsByOrigin) {
+    const current = cache.captured[key]?.ref;
+    if (current !== undefined && refs.includes(current)) continue;
+    const ref = refs.at(-1)!;
+    updates[key] = { ref, src: cache.resolved[ref]!.src!, capturedAt: at };
+  }
+  if (Object.keys(updates).length === 0) return cache;
+  return {
+    ...cache,
+    captured: capEntries(
+      { ...cache.captured, ...updates },
+      (entry) => entry.capturedAt,
+      FAVICON_CACHE_MAX_ENTRIES,
+      new Set(refsByOrigin.keys()),
+    ),
+  };
 }
 
 /**
@@ -241,16 +286,23 @@ export function faviconFallbackGlyph(rawUrl: string | null): string {
 }
 
 /**
- * What a surface renders for a page URL: the captured image when the origin
- * has one (loopback included — the capture came from the page itself), else
+ * What a surface renders for a page URL: the tab's own `ref` image when it
+ * resolved, else the origin's captured image (loopback included — the
+ * capture came from the page itself), else
  * the provider image when the origin is public and has not failed, else the
  * glyph — non-URLs, non-http(s), private/loopback hosts the provider must
  * not be told about, and origins whose provider image already failed.
  */
-export function resolveFavicon(cache: FaviconCache, rawUrl: string | null): FaviconResolution {
+export function resolveFavicon(
+  cache: FaviconCache,
+  rawUrl: string | null,
+  ref?: string | null,
+): FaviconResolution {
   if (!rawUrl) return GLYPH;
   const key = faviconOriginKey(rawUrl);
   if (!key) return GLYPH;
+  const own = ref ? cache.resolved[ref]?.src : null;
+  if (own) return { kind: "image", src: own, tier: "captured" };
   const captured = cache.captured[key];
   if (captured) return { kind: "image", src: captured.src, tier: "captured" };
   if (cache.byOrigin[key]) return GLYPH;
@@ -260,19 +312,18 @@ export function resolveFavicon(cache: FaviconCache, rawUrl: string | null): Favi
 
 /**
  * Refs the sessions carry that still need a `getFavicon` read: no recorded
- * result, no read in flight, and not already the capture for the page's
- * origin. One entry per ref.
+ * result and not already the capture for the page's origin. One entry per
+ * ref; the read queue skips refs already read or reading.
  */
 export function pendingFaviconRefs(
   cache: FaviconCache,
   sessions: readonly BrowserSession[],
-  inFlight: ReadonlySet<string>,
 ): readonly string[] {
   const pending = new Set<string>();
   for (const session of sessions) {
     const ref = session.faviconRef;
     const url = session.navigation.url;
-    if (!ref || !url || cache.resolved[ref] || inFlight.has(ref)) continue;
+    if (!ref || !url || cache.resolved[ref]) continue;
     const key = faviconOriginKey(url);
     if (!key || cache.captured[key]?.ref === ref) continue;
     pending.add(ref);
@@ -293,7 +344,7 @@ export function panelTabIndicators(
 ): ViewTabIndicators | null {
   const rawUrl = presented ? (presented.navigation.url ?? presented.requestedUrl) : null;
   const pageUrl = rawUrl && rawUrl.length <= 2048 && faviconOriginKey(rawUrl) ? rawUrl : null;
-  const resolution = resolveFavicon(cache, pageUrl);
+  const resolution = resolveFavicon(cache, pageUrl, presented?.faviconRef);
   const audible = sessions.filter((session) => session.audible === true);
   const audio = audible.some((session) => session.audioMuted !== true)
     ? "audible"

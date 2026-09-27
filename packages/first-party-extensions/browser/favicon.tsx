@@ -12,6 +12,7 @@
 import type { BrowserSession, browserSessionsApi } from "@t3tools/extension-sdk/catalogue";
 import { useEffect, useSyncExternalStore } from "react";
 
+import { createFaviconReadQueue } from "./faviconReads.js";
 import {
   type FaviconCache,
   type FaviconResolution,
@@ -34,9 +35,6 @@ const listeners = new Set<() => void>();
 let cache: FaviconCache = emptyFaviconCache();
 let version = 0;
 
-/** Refs with a `getFavicon` read running; results land in the cache's `resolved`. */
-const readsInFlight = new Set<string>();
-
 function commit(next: FaviconCache): void {
   if (next === cache) return;
   cache = next;
@@ -45,51 +43,56 @@ function commit(next: FaviconCache): void {
 }
 
 /** `<img onError>` entry point — shared by every surface's favicon. */
-export function faviconImageFailed(rawUrl: string, tier: "captured" | "provider"): void {
+export function faviconImageFailed(
+  rawUrl: string,
+  tier: "captured" | "provider",
+  ref?: string | null,
+): void {
   commit(
     tier === "captured"
-      ? dropCapturedFavicon(cache, rawUrl)
+      ? dropCapturedFavicon(cache, rawUrl, ref)
       : recordProviderFaviconFailure(cache, rawUrl, Date.now()),
   );
 }
 
+const reads = createFaviconReadQueue({
+  maxInFlight: MAX_FAVICON_READS,
+  settle: (ref, src) => commit(recordResolvedFaviconRef(cache, ref, src, Date.now())),
+});
+
 /**
  * Reads the sessions' new favicon refs, once each and at most
- * `MAX_FAVICON_READS` at a time. Driven by session events, never a timer. A
- * miss (`BrowserFaviconNotFound`: evicted, restarted server) or any other
- * failure is recorded, so the ref is not re-read and its origins stay on the
- * provider tier; a cancelled read is left for the next session event.
+ * `MAX_FAVICON_READS` at a time; the rest queue and start as reads finish.
+ * Driven by session events, never a timer. A miss (`BrowserFaviconNotFound`:
+ * evicted, restarted server) or any other failure is recorded, so the ref is
+ * not re-read and its origins stay on the provider tier; a read cancelled
+ * with its view is dropped.
  */
 export function resolveSessionFavicons(
   api: BoundApi<typeof browserSessionsApi>,
   sessions: readonly BrowserSession[],
   signal: AbortSignal,
 ): void {
-  for (const ref of pendingFaviconRefs(cache, sessions, readsInFlight)) {
-    if (readsInFlight.size >= MAX_FAVICON_READS) return;
-    readsInFlight.add(ref);
-    api
-      .invoke("getFavicon", { ref }, signal)
-      .then(
-        (favicon) => commit(recordResolvedFaviconRef(cache, ref, favicon.dataUrl, Date.now())),
-        () => {
-          if (!signal.aborted) commit(recordResolvedFaviconRef(cache, ref, null, Date.now()));
-        },
-      )
-      .finally(() => readsInFlight.delete(ref));
-  }
+  reads.request(
+    pendingFaviconRefs(cache, sessions),
+    (ref, readSignal) =>
+      api.invoke("getFavicon", { ref }, readSignal).then((favicon) => favicon.dataUrl),
+    signal,
+  );
 }
 
 /**
- * Shows each session's resolved ref on its origin; call on every session or
- * cache change. A render's cache that is no longer current is skipped — the
- * newer commit renders again.
+ * Shows each session's resolved ref on its origin. Call when the sessions or
+ * the rendered ref results (`cache.resolved`) change — not on every cache
+ * change: applying writes only origin captures, never `resolved`, so it cannot
+ * re-trigger itself, and the same sessions apply to the same cache. Results
+ * that are no longer current are skipped; the newer ones render again.
  */
 export function applySessionFavicons(
-  rendered: FaviconCache,
+  rendered: FaviconCache["resolved"],
   sessions: readonly BrowserSession[],
 ): void {
-  if (rendered === cache) commit(applyResolvedFaviconRefs(cache, sessions, Date.now()));
+  if (rendered === cache.resolved) commit(applyResolvedFaviconRefs(cache, sessions, Date.now()));
 }
 
 /** The current cache, re-read on every change. */
@@ -105,22 +108,28 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
-function useFaviconResolution(url: string | null): FaviconResolution {
+function useFaviconResolution(url: string | null, ref: string | null): FaviconResolution {
   useSyncExternalStore(subscribe, () => version);
   useEffect(() => {
     commit(expireStaleFaviconFailure(cache, url, Date.now()));
   }, [url]);
-  return resolveFavicon(cache, url);
+  return resolveFavicon(cache, url, ref);
 }
 
 /**
- * One favicon slot: the provider image when the origin resolves one, the
- * fallback glyph otherwise. Failures record into the shared cache, so the
- * next render of any surface for that origin shows the glyph.
+ * One favicon slot: the tab's own captured `faviconRef` image, else the
+ * origin's capture or provider image, else the fallback glyph. Failures
+ * record into the shared cache, so the next render of any surface for that
+ * origin shows the next tier.
  */
-export function BrowserFavicon(props: { url: string | null; size?: number }) {
+export function BrowserFavicon(props: {
+  url: string | null;
+  faviconRef?: string | null | undefined;
+  size?: number;
+}) {
   const size = props.size ?? 12;
-  const resolution = useFaviconResolution(props.url);
+  const ref = props.faviconRef ?? null;
+  const resolution = useFaviconResolution(props.url, ref);
   const box = {
     width: size,
     height: size,
@@ -153,7 +162,7 @@ export function BrowserFavicon(props: { url: string | null; size?: number }) {
       width={size}
       height={size}
       style={{ ...box, objectFit: "contain" }}
-      onError={() => faviconImageFailed(props.url ?? "", resolution.tier)}
+      onError={() => faviconImageFailed(props.url ?? "", resolution.tier, ref)}
     />
   );
 }
