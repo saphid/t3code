@@ -1490,10 +1490,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           </div>
         ) : null}
         {props.layoutControls}
-        {ownsDesktopTitleBar && !props.layoutControls ? (
-          // Keeps the tabs clear of the window controls when the layout toggles live elsewhere.
-          <span aria-hidden className="hidden w-24 shrink-0 wco:block" />
-        ) : null}
         {ownsDesktopTitleBar ? (
           <span
             aria-hidden
