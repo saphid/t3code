@@ -65,10 +65,18 @@ import {
 import { PageMenu, ZoomIndicator } from "./pageMenu.js";
 import { bindProfilesApi, ProfileSection } from "./profileMenu.js";
 import { profileFailureMessage, reopenRequest } from "./profiles.js";
-import { BrowserViewportToolbar, ViewportDeviceFrame, useElementSize } from "./viewportToolbar.js";
+import {
+  BrowserViewportToolbar,
+  ViewportDeviceFrame,
+  ViewportResizeRails,
+  useElementSize,
+  useViewportRails,
+} from "./viewportToolbar.js";
 import {
   FALLBACK_RESPONSIVE_VIEWPORT_SIZE,
+  ViewportTargetChangedError,
   createViewportCommitter,
+  deviceViewportLayout,
   notifyViewportResizeFailure,
   responsiveViewportForToggle,
   viewportFailureMessage,
@@ -260,9 +268,18 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const heldRef = useRef(held);
   const historyRef = useRef(history);
   const lastRevision = useRef(-1);
+  /**
+   * Newest revision applied to the held tab's `live` session, reset when the
+   * view adopts a tab. The stream is ordered, so upserts never go backwards
+   * among themselves; only a receipt that overtook its own upsert leaves an
+   * older upsert still to arrive, which must not roll `live` back.
+   * `lastRevision` cannot fence that: revisions are stream-wide, so another
+   * tab's receipt would swallow this tab's updates.
+   */
+  const heldRevision = useRef(-1);
   const addressRef = useRef<HTMLInputElement | null>(null);
-  const contentRef = useRef<HTMLDivElement | null>(null);
-  const contentSize = useElementSize(contentRef);
+  const [contentElement, setContentElement] = useState<HTMLDivElement | null>(null);
+  const contentSize = useElementSize(contentElement);
   const [viewportPending, setViewportPending] = useState(false);
   const viewportCommitter = useRef<ViewportCommitter | null>(null);
   const themeVars = useThemeVars(host, session, visible);
@@ -334,6 +351,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                 } else {
                   setLive(found);
                   lastRevision.current = value.revision;
+                  heldRevision.current = value.revision;
                 }
               }
               pending = null;
@@ -348,7 +366,12 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                       itemIndex === index ? value.session : item,
                     );
               });
-              if (current && value.session.tabId === current.tabId) {
+              if (
+                current &&
+                value.session.tabId === current.tabId &&
+                value.revision >= heldRevision.current
+              ) {
+                heldRevision.current = value.revision;
                 setLive(value.session);
                 lastRevision.current = Math.max(lastRevision.current, value.revision);
                 setHeld((previous) =>
@@ -446,9 +469,12 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
    */
   useEffect(() => {
     const api = bindApi(browserSessionsApi, host, session.context);
-    viewportCommitter.current = createViewportCommitter((viewport, signal) => {
+    viewportCommitter.current = createViewportCommitter((viewport, signal, target) => {
       const current = heldRef.current;
       if (!current) return Promise.reject(new Error("No browser session to resize"));
+      if (target !== undefined && current.tabId !== target) {
+        return Promise.reject(new ViewportTargetChangedError());
+      }
       return api.invoke(
         "resize",
         {
@@ -465,19 +491,29 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     };
   }, [host, session]);
 
-  const commitViewport = (next: BrowserSessionViewport) => {
+  /**
+   * Settles (never rejects) once the resize has been applied or reported:
+   * true when the server accepted it for the tab the view still holds.
+   */
+  const commitViewport = (next: BrowserSessionViewport, target?: string): Promise<boolean> => {
     const committer = viewportCommitter.current;
-    if (!committer) return;
+    if (!committer) return Promise.resolve(false);
     setViewportPending(true);
-    void committer.commit(next, session.signal).then(
+    return committer.commit(next, session.signal, target).then(
       (receipt) => {
         setViewportPending(false);
-        // Stale receipts (older revision than already applied) never win.
-        if (session.signal.aborted || receipt.revision < lastRevision.current) return;
+        // Stale receipts (older revision than already applied) never win,
+        // and a receipt for a tab the view has since left or closed never
+        // re-adopts it.
+        if (session.signal.aborted) return false;
+        // Superseded but accepted: the server applied it, so it still lands.
+        if (receipt.revision < lastRevision.current) return receipt.outcome === "accepted";
+        if (heldRef.current?.tabId !== receipt.session.tabId) return false;
         lastRevision.current = receipt.revision;
+        heldRevision.current = Math.max(heldRevision.current, receipt.revision);
         if (receipt.outcome !== "accepted") {
           setFault(`Browser command ${receipt.outcome}`);
-          return;
+          return false;
         }
         const heldNext = {
           tabId: receipt.session.tabId,
@@ -488,10 +524,12 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         setHeld(heldNext);
         setLive(receipt.session);
         setFault(null);
+        return true;
       },
       (error) => {
         setViewportPending(false);
-        if (session.signal.aborted) return;
+        // A rail edit left behind by a tab switch is dropped, not reported.
+        if (session.signal.aborted || error instanceof ViewportTargetChangedError) return false;
         // Native parity: the toast when `t3.ui/notify` is granted, the
         // inline fault line otherwise. The committed setting is untouched —
         // the rollback.
@@ -503,13 +541,28 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           error,
           AbortSignal.timeout(5_000),
         ).catch(() => {});
+        return false;
       },
     );
   };
 
-  /** Session-snapshot viewport — the only source the toolbar trusts. */
+  /** Session-snapshot viewport — the only committed source the chrome trusts. */
   const viewportSetting: BrowserSessionViewport | null = live?.viewport ?? null;
   const deviceMode = viewportSetting !== null && viewportSetting._tag !== "fill";
+  const viewportSlot = contentSize ?? FALLBACK_RESPONSIVE_VIEWPORT_SIZE;
+  const pageZoom = live?.zoomFactor ?? 1;
+  const rails = useViewportRails({
+    setting: viewportSetting !== null && viewportSetting._tag !== "fill" ? viewportSetting : null,
+    target: held?.tabId ?? null,
+    slot: viewportSlot,
+    zoomFactor: pageZoom,
+    commit: commitViewport,
+  });
+  /** Toolbar and toggle changes supersede any rail edit still pending, like native. */
+  const commitViewportChange = (next: BrowserSessionViewport) => {
+    rails.cancel();
+    void commitViewport(next);
+  };
 
   /**
    * Persist the restore record: the url the view reopens on, the held
@@ -558,6 +611,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     refuse: (outcome) => setFault(`Browser command ${outcome}`),
     fail: (error) => setFault(error instanceof Error ? error.message : "Browser command failed"),
     adopt: (receipt) => {
+      heldRevision.current = receipt.revision;
       const next = {
         tabId: receipt.session.tabId,
         serverEpoch: receipt.serverEpoch,
@@ -658,6 +712,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       fileRun.current?.abort();
       const next = { tabId: tab.tabId, serverEpoch, engineGeneration: tab.engine.generation };
       heldRef.current = next;
+      heldRevision.current = -1;
       setHeld(next);
       setLive(tab);
       setFault(null);
@@ -758,6 +813,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       if (!current || receipt.session.tabId !== current.tabId) return;
       if (receipt.revision < lastRevision.current) return;
       lastRevision.current = receipt.revision;
+      heldRevision.current = Math.max(heldRevision.current, receipt.revision);
       const next = { ...current, engineGeneration: receipt.session.engine.generation };
       heldRef.current = next;
       setHeld(next);
@@ -965,7 +1021,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             if (!viewportSetting) return;
             // Native toggle semantics: non-fill → fill; fill → a responsive
             // freeform sized from the panel this slot fills.
-            commitViewport(
+            commitViewportChange(
               viewportSetting._tag !== "fill"
                 ? { _tag: "fill" }
                 : responsiveViewportForToggle(contentSize),
@@ -1140,7 +1196,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             : describeStatus(state))}
       </div>
       {held ? (
-        <div ref={contentRef} style={{ position: "relative", flex: 1, minHeight: 0 }}>
+        <div ref={setContentElement} style={{ position: "relative", flex: 1, minHeight: 0 }}>
           <div
             ref={surfaceSlotRef}
             aria-label="Browser surface"
@@ -1154,7 +1210,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             />
           )}
           <ZoomIndicator key={held.tabId} zoomFactor={live?.zoomFactor ?? null} />
-          {deviceMode && viewportSetting && (
+          {rails.displayed && (
             <>
               {/*
                * Slot sizing: the slot keeps presenting the whole content
@@ -1167,14 +1223,21 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                * plugin chrome and engine chrome never stack.
                */}
               <BrowserViewportToolbar
-                setting={viewportSetting}
+                setting={rails.displayed}
                 pending={viewportPending}
-                onCommit={commitViewport}
+                onCommit={commitViewportChange}
               />
               <ViewportDeviceFrame
                 slot={contentSize}
-                setting={viewportSetting}
+                setting={rails.displayed}
                 fallbackSlot={FALLBACK_RESPONSIVE_VIEWPORT_SIZE}
+                zoomFactor={pageZoom}
+              />
+              <ViewportResizeRails
+                layout={deviceViewportLayout(viewportSlot, rails.displayed, pageZoom)}
+                preview={rails.preview}
+                onPointerDown={rails.onPointerDown}
+                onKeyDown={rails.onKeyDown}
               />
             </>
           )}

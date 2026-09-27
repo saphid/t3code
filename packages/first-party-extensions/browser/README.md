@@ -135,7 +135,11 @@ The panel renders through public contracts only:
   whole content area — the host's engine view lays the W × H frame out
   inside it exactly as for the native panel — while the plugin paints its
   toolbar over the strip the engine reserves and a visible frame plus fit
-  percentage from the mirrored layout math.
+  percentage from the mirrored layout math. Native's resize rails (left,
+  right and bottom edges, both bottom corners, arrow keys on a focused rail)
+  sit in the rail gutter the engine reserves; a drag commits as it moves
+  with at most one `resize` in flight, and its preview clears once the last
+  commit settles.
 - `t3.ui/theme` — under the `t3.ui/theme.read` grant: `getTokens` resolves
   the host's effective theme (stored preference, session overlay, or
   external preview — the provider folds them) and `subscribeState` re-reads

@@ -32,7 +32,13 @@ import {
   VIEWPORT_COMMIT_TIMEOUT_MS,
   clampViewportSize,
   createViewportCommitter,
+  createRailGestures,
+  createViewportDragCoalescer,
+  deviceViewportArea,
   deviceViewportLayout,
+  railKeyDelta,
+  resizeViewportBy,
+  resizeViewportFromRail,
   freeformFromSetting,
   notifyViewportResizeFailure,
   presetViewport,
@@ -387,6 +393,624 @@ NodeTest.test("a tiny panel still produces a sane frame", () => {
   NodeAssert.equal(layout.y, 32);
   NodeAssert.equal(layout.x, 106);
 });
+
+// Golden values in this section were computed by the native
+// `browserViewportLayout.ts` at 227c7dc216. The pack's import audit forbids
+// reaching into apps/web from here, so native drift surfaces as a diff in
+// these tables when they are regenerated, not as a live comparison.
+
+NodeTest.test("the frame layout follows native under page zoom and fractional slots", () => {
+  const golden = [
+    [
+      { width: 1000, height: 800 },
+      { width: 375, height: 667 },
+      1.25,
+      { x: 287, y: 32, width: 426.16191904047975, height: 758, scale: 0.9091454272863568 },
+    ],
+    [
+      { width: 1000, height: 800 },
+      { width: 800, height: 600 },
+      2,
+      { x: 10, y: 44, width: 980.0000000000001, height: 735, scale: 0.6125 },
+    ],
+    [
+      { width: 413.5, height: 297.25 },
+      { width: 375, height: 667 },
+      1,
+      { x: 135, y: 32, width: 143.36581709145426, height: 255, scale: 0.3823088455772114 },
+    ],
+  ];
+  for (const [slot, size, zoomFactor, expected] of golden) {
+    const layout = deviceViewportLayout(slot, size, zoomFactor);
+    NodeAssert.deepEqual(
+      { x: layout.x, y: layout.y, width: layout.width, height: layout.height, scale: layout.scale },
+      expected,
+    );
+  }
+  // The drag's `available` box stays unrounded, like native.
+  NodeAssert.deepEqual(deviceViewportArea({ width: 413.5, height: 297.25 }), {
+    width: 393.5,
+    height: 255.25,
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Resize rails — drag → size math
+
+const RAIL_DIRECTIONS = ["west", "east", "south", "southwest", "southeast"];
+
+NodeTest.test("rail drags reach the native size: fit, scaled, clamped, zoomed", () => {
+  // [direction, start, pointer delta, device area, render scale, native size]
+  const golden = [
+    [
+      "east",
+      { width: 800, height: 600 },
+      { x: 10, y: 0 },
+      { width: 980, height: 758 },
+      1,
+      { width: 820, height: 600 },
+    ],
+    [
+      "east",
+      { width: 2000, height: 1500 },
+      { x: 49, y: 0 },
+      { width: 980, height: 758 },
+      0.49,
+      { width: 2100, height: 1500 },
+    ],
+    [
+      "west",
+      { width: 800, height: 600 },
+      { x: -10, y: 0 },
+      { width: 980, height: 758 },
+      1,
+      { width: 820, height: 600 },
+    ],
+    [
+      "west",
+      { width: 2000, height: 1500 },
+      { x: 30, y: 0 },
+      { width: 980, height: 758 },
+      0.49,
+      { width: 1878, height: 1500 },
+    ],
+    [
+      "west",
+      { width: 2000, height: 1500 },
+      { x: 600, y: 0 },
+      { width: 980, height: 758 },
+      0.49,
+      { width: 240, height: 1500 },
+    ],
+    [
+      "south",
+      { width: 800, height: 600 },
+      { x: 10, y: 10 },
+      { width: 980, height: 758 },
+      1,
+      { width: 800, height: 620 },
+    ],
+    [
+      "south",
+      { width: 375, height: 667 },
+      { x: 0, y: -400 },
+      { width: 300, height: 158 },
+      0.2368815592203898,
+      { width: 375, height: 240 },
+    ],
+    [
+      "southwest",
+      { width: 800, height: 600 },
+      { x: -10, y: 10 },
+      { width: 980, height: 758 },
+      1,
+      { width: 820, height: 620 },
+    ],
+    [
+      "southeast",
+      { width: 800, height: 600 },
+      { x: 5000, y: 5000 },
+      { width: 980, height: 758 },
+      1,
+      { width: 2160, height: 3840 },
+    ],
+    [
+      "southeast",
+      { width: 3840, height: 2160 },
+      { x: -333, y: 90 },
+      { width: 980, height: 758 },
+      0.3203125,
+      { width: 2541, height: 2544 },
+    ],
+    [
+      "east",
+      { width: 800, height: 600 },
+      { x: 57, y: 0 },
+      { width: 980, height: 758 },
+      1.25,
+      { width: 846, height: 600 },
+    ],
+    [
+      "southwest",
+      { width: 240, height: 240 },
+      { x: 41, y: -120 },
+      { width: 393.5, height: 255.25 },
+      2,
+      { width: 240, height: 240 },
+    ],
+  ];
+  for (const [direction, start, delta, area, renderScale, expected] of golden) {
+    NodeAssert.deepEqual(
+      resizeViewportFromRail(start, delta, area, renderScale, direction),
+      expected,
+      `${direction} ${JSON.stringify({ start, delta, area, renderScale })}`,
+    );
+  }
+});
+
+NodeTest.test("a fitting frame grows twice the pointer travel, a scaled one tracks it", () => {
+  // Centered frame: dragging the right edge 10px moves that edge 10px, so the
+  // width grows 20px (both edges move apart around the center).
+  NodeAssert.deepEqual(
+    resizeViewportFromRail(
+      { width: 800, height: 600 },
+      { x: 10, y: 0 },
+      { width: 980, height: 758 },
+      1,
+      "east",
+    ),
+    { width: 820, height: 600 },
+  );
+  // Past the fit the frame is scaled at 0.49; 49 screen px is 100 CSS px.
+  NodeAssert.deepEqual(
+    resizeViewportFromRail(
+      { width: 2000, height: 1500 },
+      { x: 49, y: 0 },
+      { width: 980, height: 758 },
+      0.49,
+      "east",
+    ),
+    { width: 2100, height: 1500 },
+  );
+  // The left rail mirrors: moving it left grows the width.
+  NodeAssert.deepEqual(
+    resizeViewportFromRail(
+      { width: 800, height: 600 },
+      { x: -10, y: 0 },
+      { width: 980, height: 758 },
+      1,
+      "west",
+    ),
+    { width: 820, height: 600 },
+  );
+  // Edge rails ignore the off-axis component; corners take both.
+  NodeAssert.deepEqual(
+    resizeViewportFromRail(
+      { width: 800, height: 600 },
+      { x: 10, y: 10 },
+      { width: 980, height: 758 },
+      1,
+      "south",
+    ),
+    { width: 800, height: 620 },
+  );
+  NodeAssert.deepEqual(
+    resizeViewportFromRail(
+      { width: 800, height: 600 },
+      { x: -10, y: 10 },
+      { width: 980, height: 758 },
+      1,
+      "southwest",
+    ),
+    { width: 820, height: 620 },
+  );
+});
+
+NodeTest.test("rail sizes clamp into the vendored envelope", () => {
+  // Floor: nothing below 240 on either axis.
+  NodeAssert.deepEqual(
+    resizeViewportBy({ width: 300, height: 300 }, { x: -1000, y: 1000 }, "east"),
+    { width: PREVIEW_VIEWPORT_MIN_DIMENSION, height: 300 },
+  );
+  // Ceiling: nothing past 3840.
+  NodeAssert.deepEqual(
+    resizeViewportBy({ width: 1000, height: 1000 }, { x: 0, y: 99_999 }, "south"),
+    { width: 1000, height: PREVIEW_VIEWPORT_MAX_DIMENSION },
+  );
+  // Area cap: the axis that moved most gives way.
+  const wide = resizeViewportBy({ width: 3000, height: 2160 }, { x: 900, y: 0 }, "east");
+  NodeAssert.deepEqual(wide, { width: 3840, height: 2160 });
+  const capped = resizeViewportBy({ width: 3840, height: 2000 }, { x: 0, y: 500 }, "south");
+  NodeAssert.equal(capped.width, 3840);
+  NodeAssert.equal(capped.height, Math.floor(PREVIEW_VIEWPORT_MAX_AREA / 3840));
+  NodeAssert.ok(capped.width * capped.height <= PREVIEW_VIEWPORT_MAX_AREA);
+  // Native `resizeFreeformViewport` answers for every rail (no aspect lock
+  // in the plugin): each dimension clamps, then the area cap.
+  const start = { width: 3500, height: 2100 };
+  const golden = {
+    west: [
+      [3840, 2100],
+      [2700, 2100],
+      [3493, 2100],
+    ],
+    east: [
+      [2500, 2100],
+      [3840, 2100],
+      [3507, 2100],
+    ],
+    south: [
+      [3500, 2369],
+      [3500, 2369],
+      [3500, 2097],
+    ],
+    southwest: [
+      [2675, 3100],
+      [2700, 3000],
+      [3493, 2097],
+    ],
+    southeast: [
+      [2500, 3100],
+      [3840, 2160],
+      [3507, 2097],
+    ],
+  };
+  const deltas = [
+    { x: -1000, y: 1000 },
+    { x: 800, y: 900 },
+    { x: 7, y: -3 },
+  ];
+  for (const direction of RAIL_DIRECTIONS) {
+    deltas.forEach((delta, index) => {
+      const [width, height] = golden[direction][index];
+      NodeAssert.deepEqual(resizeViewportBy(start, delta, direction), { width, height });
+    });
+  }
+});
+
+NodeTest.test("arrow keys step 10 (50 with Shift) along the rail's own axes", () => {
+  NodeAssert.deepEqual(railKeyDelta("east", "ArrowRight", false), { x: 10, y: 0 });
+  NodeAssert.deepEqual(railKeyDelta("west", "ArrowLeft", true), { x: -50, y: 0 });
+  NodeAssert.deepEqual(railKeyDelta("south", "ArrowDown", false), { x: 0, y: 10 });
+  NodeAssert.deepEqual(railKeyDelta("southeast", "ArrowUp", true), { x: 0, y: -50 });
+  NodeAssert.equal(railKeyDelta("south", "ArrowLeft", false), null);
+  NodeAssert.equal(railKeyDelta("east", "ArrowUp", false), null);
+  NodeAssert.equal(railKeyDelta("east", "Enter", false), null);
+  // The west rail grows the width when moved left, like dragging it.
+  NodeAssert.deepEqual(
+    resizeViewportBy({ width: 800, height: 600 }, railKeyDelta("west", "ArrowLeft", false), "west"),
+    { width: 810, height: 600 },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Resize rails — commit coalescing
+
+const deferred = () => {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+};
+
+const freeform = (width, height) => ({ _tag: "freeform", width, height });
+
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+NodeTest.test("a drag keeps one resize in flight and sends only the latest size next", async () => {
+  const calls = [];
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const coalescer = createViewportDragCoalescer((viewport) => {
+    inFlight += 1;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    const pending = deferred();
+    calls.push({ viewport, settle: pending.resolve });
+    return pending.promise.finally(() => {
+      inFlight -= 1;
+    });
+  });
+
+  coalescer.push(freeform(500, 400));
+  for (let width = 501; width <= 540; width += 1) coalescer.push(freeform(width, 400));
+  await flush();
+  NodeAssert.deepEqual(
+    calls.map((call) => call.viewport),
+    [freeform(500, 400)],
+  );
+
+  calls[0].settle();
+  await flush();
+  // The 39 intermediate sizes collapsed into the newest one.
+  NodeAssert.deepEqual(
+    calls.map((call) => call.viewport),
+    [freeform(500, 400), freeform(540, 400)],
+  );
+
+  let idle = false;
+  void coalescer.whenIdle().then(() => {
+    idle = true;
+  });
+  await flush();
+  NodeAssert.equal(idle, false);
+  calls[1].settle();
+  await flush();
+  NodeAssert.equal(idle, true);
+  NodeAssert.equal(calls.length, 2);
+  NodeAssert.equal(maxInFlight, 1);
+});
+
+NodeTest.test("the coalescer skips a waiting size equal to the one in flight", async () => {
+  const calls = [];
+  const coalescer = createViewportDragCoalescer((viewport) => {
+    const pending = deferred();
+    calls.push({ viewport, settle: pending.resolve });
+    return pending.promise;
+  });
+  coalescer.push(freeform(600, 400));
+  coalescer.push(freeform(610, 400));
+  // Dragged back to where the in-flight commit is headed: nothing more to send.
+  coalescer.push(freeform(600, 400));
+  await flush();
+  calls[0].settle();
+  await flush();
+  NodeAssert.equal(calls.length, 1);
+  await coalescer.whenIdle();
+});
+
+NodeTest.test(
+  "a failed resize does not stall the coalescer, and drop forgets the waiter",
+  async () => {
+    const calls = [];
+    const coalescer = createViewportDragCoalescer((viewport) => {
+      const pending = deferred();
+      calls.push({ viewport, pending });
+      return pending.promise;
+    });
+    coalescer.push(freeform(700, 500));
+    coalescer.push(freeform(720, 500));
+    await flush();
+    calls[0].pending.reject(new Error("engine gone"));
+    await flush();
+    NodeAssert.deepEqual(calls[1].viewport, freeform(720, 500));
+
+    coalescer.push(freeform(740, 500));
+    coalescer.drop();
+    calls[1].pending.resolve();
+    await coalescer.whenIdle();
+    NodeAssert.equal(calls.length, 2);
+
+    // Idle again: the next push dispatches immediately.
+    coalescer.push(freeform(760, 500));
+    await flush();
+    NodeAssert.deepEqual(calls[2].viewport, freeform(760, 500));
+    calls[2].pending.resolve();
+    await coalescer.whenIdle();
+  },
+);
+
+NodeTest.test("the same size for another tab is not a duplicate", async () => {
+  const calls = [];
+  const coalescer = createViewportDragCoalescer((viewport, target) => {
+    const pending = deferred();
+    calls.push({ viewport, target, settle: pending.resolve });
+    return pending.promise;
+  });
+  coalescer.push(freeform(820, 600), "tab-a");
+  coalescer.push(freeform(820, 600), "tab-b");
+  await flush();
+  calls[0].settle();
+  await flush();
+  NodeAssert.deepEqual(
+    calls.map((call) => call.target),
+    ["tab-a", "tab-b"],
+  );
+  calls[1].settle();
+  await coalescer.whenIdle();
+});
+
+NodeTest.test("the committer hands each resize's target tab to the port at dispatch", async () => {
+  const seen = [];
+  const committer = createViewportCommitter(async (viewport, _signal, target) => {
+    seen.push(target);
+    return receipt(seen.length, viewport);
+  });
+  const signal = new AbortController().signal;
+  await committer.commit(freeform(500, 400), signal, "tab-a");
+  await committer.commit({ _tag: "fill" }, signal);
+  NodeAssert.deepEqual(seen, ["tab-a", undefined]);
+});
+
+NodeTest.test("a coalesced drag rides the serialized committer in order", async () => {
+  const dispatched = [];
+  const gates = [];
+  const committer = createViewportCommitter((viewport) => {
+    dispatched.push(viewport);
+    const gate = deferred();
+    gates.push(gate);
+    return gate.promise.then(() => receipt(dispatched.length, viewport));
+  });
+  const signal = new AbortController().signal;
+  const coalescer = createViewportDragCoalescer((viewport) =>
+    committer.commit(viewport, signal).then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  coalescer.push(freeform(400, 300));
+  coalescer.push(freeform(420, 300));
+  coalescer.push(freeform(440, 300));
+  await flush();
+  NodeAssert.equal(dispatched.length, 1);
+  gates[0].resolve();
+  await flush();
+  NodeAssert.deepEqual(dispatched, [freeform(400, 300), freeform(440, 300)]);
+  gates[1].resolve();
+  await coalescer.whenIdle();
+  NodeAssert.equal(dispatched.length, 2);
+});
+
+// ---------------------------------------------------------------------------
+// Resize rails — the gesture state machine behind the hook
+
+const railHarness = () => {
+  const previews = [];
+  const sent = [];
+  const gestures = createRailGestures((preview) => previews.push(preview));
+  gestures.bindCommit((viewport, target) => {
+    const pending = deferred();
+    sent.push({
+      viewport,
+      target,
+      settle: () => pending.resolve(true),
+      reject: () => pending.resolve(false),
+    });
+    return pending.promise;
+  });
+  return { gestures, previews, sent };
+};
+
+const keyOf = (width, height) => viewportSettingKey(freeform(width, height));
+
+NodeTest.test(
+  "a drag's own receipts keep it alive; an older size set elsewhere ends it",
+  async () => {
+    const { gestures, previews, sent } = railHarness();
+    const drag = gestures.begin("tab-a", freeform(800, 600), false);
+    gestures.push(drag, freeform(820, 600));
+    gestures.push(drag, freeform(840, 600));
+    await flush();
+    gestures.observe("tab-a", keyOf(820, 600));
+    sent[0].settle();
+    await flush();
+    gestures.observe("tab-a", keyOf(840, 600));
+    NodeAssert.equal(previews.length, 0);
+    // Another client puts 820 back: ours already landed, so this is foreign.
+    gestures.observe("tab-a", keyOf(820, 600));
+    NodeAssert.deepEqual(previews, [null]);
+    gestures.push(drag, freeform(860, 600));
+    sent[1].settle();
+    await flush();
+    NodeAssert.deepEqual(
+      sent.map((call) => call.viewport),
+      [freeform(820, 600), freeform(840, 600)],
+    );
+  },
+);
+
+NodeTest.test("a coalesced-away size never excuses the same size set elsewhere", async () => {
+  const { gestures, previews, sent } = railHarness();
+  const drag = gestures.begin("tab-a", freeform(800, 600), false);
+  gestures.push(drag, freeform(840, 600));
+  // 820 waits, then 840 replaces it: 820 is never sent.
+  gestures.push(drag, freeform(820, 600));
+  gestures.push(drag, freeform(860, 600));
+  await flush();
+  sent[0].settle();
+  await flush();
+  gestures.observe("tab-a", keyOf(840, 600));
+  NodeAssert.equal(previews.length, 0);
+  gestures.observe("tab-a", keyOf(820, 600));
+  NodeAssert.deepEqual(previews, [null]);
+  NodeAssert.deepEqual(
+    sent.map((call) => call.viewport),
+    [freeform(840, 600), freeform(860, 600)],
+  );
+  sent[1].settle();
+});
+
+NodeTest.test("a rejected resize never excuses the same size set elsewhere", async () => {
+  const { gestures, previews, sent } = railHarness();
+  const drag = gestures.begin("tab-a", freeform(800, 600), false);
+  gestures.push(drag, freeform(820, 600));
+  await flush();
+  sent[0].reject();
+  await flush();
+  // The drag is still live; another client now sets the size we failed at.
+  gestures.observe("tab-a", keyOf(820, 600));
+  NodeAssert.deepEqual(previews, [null]);
+});
+
+NodeTest.test("switching tabs ends the gesture and drops its waiting size", async () => {
+  const { gestures, previews, sent } = railHarness();
+  const drag = gestures.begin("tab-a", freeform(800, 600), false);
+  gestures.push(drag, freeform(820, 600));
+  gestures.push(drag, freeform(840, 600));
+  gestures.observe("tab-b", keyOf(800, 600));
+  NodeAssert.deepEqual(previews, [null]);
+  await flush();
+  sent[0].settle();
+  await flush();
+  NodeAssert.equal(sent.length, 1);
+  NodeAssert.equal(sent[0].target, "tab-a");
+  // The same size on the new tab still goes out.
+  const next = gestures.begin("tab-b", freeform(800, 600), false);
+  gestures.push(next, freeform(820, 600));
+  await flush();
+  NodeAssert.deepEqual(
+    sent.map((call) => call.target),
+    ["tab-a", "tab-b"],
+  );
+});
+
+NodeTest.test(
+  "a new drag keeps the settling one's queued size and cancels back to it",
+  async () => {
+    const { gestures, sent } = railHarness();
+    const first = gestures.begin("tab-a", freeform(800, 600), false);
+    gestures.push(first, freeform(820, 600));
+    gestures.push(first, freeform(840, 600));
+    gestures.settle();
+    // Second drag starts from the 840 on screen before it has landed.
+    const second = gestures.begin("tab-a", freeform(840, 600), false);
+    NodeAssert.notEqual(second, first);
+    await flush();
+    sent[0].settle();
+    await flush();
+    // The first drag's 840 still went out, and its receipt is not foreign.
+    NodeAssert.deepEqual(sent[1].viewport, freeform(840, 600));
+    gestures.observe("tab-a", keyOf(820, 600));
+    gestures.observe("tab-a", keyOf(840, 600));
+    gestures.push(second, freeform(860, 600));
+    // Cancel: restore the second drag's start (840), not the first's (800).
+    // 840 is already in flight, so the queued 860 is simply withdrawn.
+    gestures.push(second, second.start);
+    sent[1].settle();
+    await flush();
+    NodeAssert.deepEqual(
+      sent.map((call) => call.viewport),
+      [freeform(820, 600), freeform(840, 600)],
+    );
+  },
+);
+
+NodeTest.test(
+  "the preview clears only when the last commit settles and no input followed",
+  async () => {
+    const { gestures, previews, sent } = railHarness();
+    const drag = gestures.begin("tab-a", freeform(800, 600), false);
+    gestures.input(drag, { width: 820, height: 600, direction: "east" });
+    gestures.push(drag, freeform(820, 600));
+    gestures.settle();
+    await flush();
+    NodeAssert.equal(previews.at(-1)?.width, 820);
+    sent[0].settle();
+    await flush();
+    NodeAssert.equal(previews.at(-1), null);
+
+    // Input after the settle was scheduled keeps the newer preview.
+    const keys = gestures.begin("tab-a", freeform(820, 600), true);
+    gestures.push(keys, freeform(830, 600));
+    gestures.settle();
+    gestures.input(keys, { width: 840, height: 600, direction: "east" });
+    await flush();
+    sent[1].settle();
+    await flush();
+    NodeAssert.equal(previews.at(-1)?.width, 840);
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Failure reporting — the toast hop and the message
