@@ -263,6 +263,7 @@ describe("browser capture bridge", () => {
               height: 1,
               pageUrl: null,
               pageTitle: null,
+              path: null,
             });
         }),
     );
@@ -294,6 +295,7 @@ describe("browser capture bridge", () => {
               height: 1,
               pageUrl: null,
               pageTitle: null,
+              path: null,
             });
         }),
     );

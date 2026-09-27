@@ -1212,7 +1212,8 @@ var __t3Client = (() => {
     properties: {
       id: { type: "string", minLength: 1, maxLength: 80 },
       label: { type: "string", minLength: 1, maxLength: 80 },
-      variant: { enum: ["default", "primary", "destructive"] }
+      variant: { enum: ["default", "primary", "destructive"] },
+      keepOpen: { type: "boolean" }
     }
   };
   var notificationBodySchema = {
@@ -1238,7 +1239,7 @@ var __t3Client = (() => {
   };
   var CLIENT_NOTIFICATIONS_API = validateApiDefinition({
     id: "t3.client/notifications",
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
       {
         name: "notify",
@@ -1260,7 +1261,17 @@ var __t3Client = (() => {
               severity: { enum: ["info", "success", "warning", "error", "loading"] },
               title: { type: "string", minLength: 1, maxLength: 200 },
               body: { type: "string", maxLength: 2e3 },
-              dismissible: { type: "boolean" }
+              dismissible: { type: "boolean" },
+              flashAction: {
+                type: "object",
+                additionalProperties: false,
+                required: ["actionId", "label", "durationMs"],
+                properties: {
+                  actionId: { type: "string", minLength: 1, maxLength: 80 },
+                  label: { type: "string", minLength: 1, maxLength: 80 },
+                  durationMs: { type: "integer", minimum: 0, maximum: 1e4 }
+                }
+              }
             }
           }
         }, ["notificationId", "patch"]),
@@ -7137,12 +7148,24 @@ var __t3Client = (() => {
     properties: {
       id: { type: "string", minLength: 1, maxLength: 80 },
       label: { type: "string", minLength: 1, maxLength: 80 },
-      variant: { enum: ["default", "primary", "destructive"] }
+      variant: { enum: ["default", "primary", "destructive"] },
+      keepOpen: { type: "boolean" }
+    }
+  };
+  var UI_NOTIFICATION_FLASH_MAX_MS = 1e4;
+  var uiNotificationFlashSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["actionId", "label", "durationMs"],
+    properties: {
+      actionId: { type: "string", minLength: 1, maxLength: 80 },
+      label: { type: "string", minLength: 1, maxLength: 80 },
+      durationMs: { type: "integer", minimum: 0, maximum: UI_NOTIFICATION_FLASH_MAX_MS }
     }
   };
   var uiNotificationsApi = defineApi({
     id: "t3.ui/notifications",
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
       {
         name: "getCapabilities",
@@ -7191,7 +7214,8 @@ var __t3Client = (() => {
             severity: { enum: ["info", "success", "warning", "error", "loading"] },
             title: { type: "string", minLength: 1, maxLength: 200 },
             body: { type: "string", maxLength: 2e3 },
-            dismissible: { type: "boolean" }
+            dismissible: { type: "boolean" },
+            flashAction: uiNotificationFlashSchema
           }
         },
         outputSchema: {

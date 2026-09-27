@@ -4,8 +4,8 @@
   "packageId": "t3.version-control",
   "version": "0.5.0",
   "hashes": {
-    "t3-extension.json": "013c3f4276fcdeefea4619d2900e192e2f1f7a00e91d4e047e962a250a946ef4",
-    "client.mjs": "209634915204e40119fa1247738c698bcd93b0e20c78e6981e885c8db5031c3e"
+    "t3-extension.json": "27ddeb030e553b0d7a639907f58ae91dea3f8ea9fce749de6504efd2bc3fd1a8",
+    "client.mjs": "c8e6fe2af9796377fb704165920d8124b55d5d52fa0cf14097dc7dbbf5cbd902"
   },
   "generator": "t3-extension",
   "sourceEntrySha256": "fb20f105ee5f533a9f4e318318e5684b06a72b91698d80a7e6451c11a824d5cb"

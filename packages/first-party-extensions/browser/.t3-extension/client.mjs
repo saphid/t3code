@@ -1294,7 +1294,8 @@ var __t3Client = (() => {
     properties: {
       id: { type: "string", minLength: 1, maxLength: 80 },
       label: { type: "string", minLength: 1, maxLength: 80 },
-      variant: { enum: ["default", "primary", "destructive"] }
+      variant: { enum: ["default", "primary", "destructive"] },
+      keepOpen: { type: "boolean" }
     }
   };
   var notificationBodySchema = {
@@ -1320,7 +1321,7 @@ var __t3Client = (() => {
   };
   var CLIENT_NOTIFICATIONS_API = validateApiDefinition({
     id: "t3.client/notifications",
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
       {
         name: "notify",
@@ -1342,7 +1343,17 @@ var __t3Client = (() => {
               severity: { enum: ["info", "success", "warning", "error", "loading"] },
               title: { type: "string", minLength: 1, maxLength: 200 },
               body: { type: "string", maxLength: 2e3 },
-              dismissible: { type: "boolean" }
+              dismissible: { type: "boolean" },
+              flashAction: {
+                type: "object",
+                additionalProperties: false,
+                required: ["actionId", "label", "durationMs"],
+                properties: {
+                  actionId: { type: "string", minLength: 1, maxLength: 80 },
+                  label: { type: "string", minLength: 1, maxLength: 80 },
+                  durationMs: { type: "integer", minimum: 0, maximum: 1e4 }
+                }
+              }
             }
           }
         }, ["notificationId", "patch"]),
@@ -7220,12 +7231,24 @@ var __t3Client = (() => {
     properties: {
       id: { type: "string", minLength: 1, maxLength: 80 },
       label: { type: "string", minLength: 1, maxLength: 80 },
-      variant: { enum: ["default", "primary", "destructive"] }
+      variant: { enum: ["default", "primary", "destructive"] },
+      keepOpen: { type: "boolean" }
+    }
+  };
+  var UI_NOTIFICATION_FLASH_MAX_MS = 1e4;
+  var uiNotificationFlashSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["actionId", "label", "durationMs"],
+    properties: {
+      actionId: { type: "string", minLength: 1, maxLength: 80 },
+      label: { type: "string", minLength: 1, maxLength: 80 },
+      durationMs: { type: "integer", minimum: 0, maximum: UI_NOTIFICATION_FLASH_MAX_MS }
     }
   };
   var uiNotificationsApi = defineApi({
     id: "t3.ui/notifications",
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
       {
         name: "getCapabilities",
@@ -7274,7 +7297,8 @@ var __t3Client = (() => {
             severity: { enum: ["info", "success", "warning", "error", "loading"] },
             title: { type: "string", minLength: 1, maxLength: 200 },
             body: { type: "string", maxLength: 2e3 },
-            dismissible: { type: "boolean" }
+            dismissible: { type: "boolean" },
+            flashAction: uiNotificationFlashSchema
           }
         },
         outputSchema: {
@@ -8368,7 +8392,20 @@ var __t3Client = (() => {
     }
   }
   var CAPTURE_TOAST_DURATION_MS = 5e3;
-  function captureOutcomeToast(target, outcome) {
+  var CAPTURE_COPIED_FLASH_MS = 2e3;
+  function captureToastActions(capture) {
+    const support = capture?.artifactActions;
+    if (!capture || !support) return [];
+    const actions = [];
+    if (support.copyPath.supported && capture.copyArtifactPath)
+      actions.push({ id: "copy-path", label: "Copy path", keepOpen: true });
+    if (support.reveal.supported && capture.revealArtifact)
+      actions.push({ id: "reveal", label: support.revealLabel, keepOpen: true });
+    if (support.copyImage.supported && capture.copyArtifactToClipboard)
+      actions.push({ id: "copy-image", label: "Copy image", variant: "primary", keepOpen: true });
+    return actions;
+  }
+  function captureOutcomeToast(target, outcome, actions = []) {
     switch (outcome.kind) {
       case "cancelled":
         return null;
@@ -8385,21 +8422,91 @@ var __t3Client = (() => {
         return {
           severity: "success",
           title: "Screenshot saved",
-          durationMs: CAPTURE_TOAST_DURATION_MS
+          durationMs: CAPTURE_TOAST_DURATION_MS,
+          ...actions.length > 0 ? { actions } : {}
         };
     }
   }
+  async function runCaptureToastAction(notifications, capture, request, notificationId, actionId, signal) {
+    if (actionId === "reveal") {
+      await capture.revealArtifact?.(request);
+      return;
+    }
+    const copy = actionId === "copy-image" ? { run: capture.copyArtifactToClipboard, failTitle: "Unable to copy screenshot" } : actionId === "copy-path" ? { run: capture.copyArtifactPath, failTitle: "Unable to copy screenshot path" } : null;
+    if (!copy?.run) return;
+    const result2 = await copy.run(request);
+    if (signal.aborted) return;
+    await notifications.invoke(
+      "update",
+      result2.ok ? {
+        notificationId,
+        severity: "success",
+        title: "Screenshot saved",
+        body: "",
+        flashAction: { actionId, label: "Copied!", durationMs: CAPTURE_COPIED_FLASH_MS }
+      } : {
+        notificationId,
+        severity: "error",
+        title: copy.failTitle,
+        body: result2.failure.detail
+      },
+      signal
+    );
+  }
+  async function serveCaptureToastActions(notifications, capture, request, notificationId, signal) {
+    while (!signal.aborted) {
+      let outcome;
+      try {
+        outcome = await notifications.invoke("awaitAction", { notificationId }, signal);
+      } catch {
+        return;
+      }
+      if (!("actionId" in outcome)) return;
+      void runCaptureToastAction(
+        notifications,
+        capture,
+        request,
+        notificationId,
+        outcome.actionId,
+        signal
+      ).catch(() => {
+      });
+    }
+  }
   var NOTIFY_ACK_TIMEOUT_MS = 5e3;
-  function reportCaptureOutcome(notifications, threadId, target, outcome, signal, ackTimeoutMs = NOTIFY_ACK_TIMEOUT_MS) {
+  function reportCaptureOutcome(notifications, threadId, target, outcome, signal, ackTimeoutMs = NOTIFY_ACK_TIMEOUT_MS, actionHost = null) {
     const message = captureOutcomeMessage(target, outcome);
-    const toast = captureOutcomeToast(target, outcome);
+    const toast = captureOutcomeToast(
+      target,
+      outcome,
+      captureToastActions(actionHost?.capture ?? null)
+    );
     if (toast === null) return { inline: message, fallback: Promise.resolve(null) };
     const ack = AbortSignal.timeout(ackTimeoutMs);
+    const notify = (input) => notifications.invoke(
+      "notify",
+      { ...input, threadId, anchor: "thread" },
+      AbortSignal.any([signal, ack])
+    );
+    const { actions, ...plain } = toast;
     const fallback = Promise.resolve().then(
-      () => notifications.invoke(
-        "notify",
-        { ...toast, threadId, anchor: "thread" },
-        AbortSignal.any([signal, ack])
+      () => actions === void 0 ? notify(toast) : notify(toast).then(
+        ({ notificationId }) => {
+          if (actionHost !== null && outcome.kind === "added")
+            void serveCaptureToastActions(
+              notifications,
+              actionHost.capture,
+              { context: actionHost.context, artifactRef: outcome.artifact.artifactRef },
+              notificationId,
+              signal
+            );
+        },
+        // A 1.0.0 host rejects keepOpen actions; native's toast without
+        // them still beats a status line.
+        (error) => {
+          if (signal.aborted || ack.aborted) throw error;
+          return notify(plain);
+        }
       )
     ).then(
       () => null,
@@ -8412,12 +8519,14 @@ var __t3Client = (() => {
     const outcome = await captureToChat(host, context2, held, target, session.signal);
     if (session.signal.aborted) return;
     const report = reportCaptureOutcome(
-      bindApi(uiNotificationsApi, host, context2),
+      // ^1.0.0 keeps the plain toast on hosts that predate keepOpen actions.
+      bindApi(uiNotificationsApi, host, context2, "^1.0.0"),
       context2.resource.threadId ?? "",
       target,
       outcome,
       session.signal,
-      ackTimeoutMs
+      ackTimeoutMs,
+      host.browserCapture ? { capture: host.browserCapture, context: context2 } : null
     );
     onState({ kind: "done", message: report.inline });
     const message = await report.fallback;

@@ -4,8 +4,8 @@
   "packageId": "t3.diff",
   "version": "0.6.0",
   "hashes": {
-    "t3-extension.json": "cad895bd30416903df5622b57c05cf6a270ed983821089f1c884cedf7b56bb2e",
-    "client.mjs": "6370aaf61e08daa817db5d9ea707a6ba51de01df7949637ad5e97546771d22b2"
+    "t3-extension.json": "216337defa6b231b2cacb8cfde2bdb6596d1124b6bfa648f7f3eabe74b94a92e",
+    "client.mjs": "4577a0f71c99719ec45cfc779454c3fba945d018c778de9abe6c70ef75399464"
   },
   "generator": "t3-extension",
   "sourceEntrySha256": "fb20f105ee5f533a9f4e318318e5684b06a72b91698d80a7e6451c11a824d5cb"

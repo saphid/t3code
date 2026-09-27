@@ -446,7 +446,7 @@ export function createNotificationsClientProvider(deps: ClientProviderDeps): Cli
     actions: readonly NotificationAction[],
     flashes: OwnedNotification["flashes"],
     toastId: () => string,
-  ): ThreadToastData["additionalActions"] =>
+  ): NonNullable<ThreadToastData["additionalActions"]> =>
     actions.map((action) => {
       const flash = flashes.get(action.id);
       return {

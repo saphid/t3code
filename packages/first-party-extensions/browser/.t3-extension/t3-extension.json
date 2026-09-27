@@ -118,7 +118,7 @@
     },
     {
       "id": "t3.ui/notifications",
-      "versionRange": "^1.0.0"
+      "versionRange": "^1.1.0"
     },
     {
       "id": "t3.composer/context",
