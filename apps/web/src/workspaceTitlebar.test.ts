@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { TITLEBAR_CONTROLS_WIDTH_VAR, publishTitlebarControlsWidth } from "./workspaceTitlebar";
+import {
+  TITLEBAR_CONTROLS_WIDTH_VAR,
+  TITLEBAR_PANEL_CONTROLS_WIDTH_VAR,
+  publishTitlebarControlsWidth,
+} from "./workspaceTitlebar";
 
 // Minimal DOM: the root style the tab bar's padding reads, and resize delivery per element.
 const rootProperties = new Map<string, string>();
@@ -22,22 +26,35 @@ class FakeResizeObserver {
   }
 }
 
-function cluster(initialWidth: number) {
+/**
+ * The fixed cluster. `panelControls` is the width of the panel layout controls
+ * it hosts (Extensions menu, dock toggle, panel toggles); the rest of the
+ * cluster is the maximize slot, laid out but invisible while the panel is closed.
+ */
+function cluster(initialWidth: number, initialPanelControls: number | null = null) {
   let width = initialWidth;
+  let panelControlsWidth = initialPanelControls;
+  const panelControls = { getBoundingClientRect: () => ({ width: panelControlsWidth }) };
   const element = {
     ownerDocument: { documentElement: { style: rootStyle } },
     getBoundingClientRect: () => ({ width }),
+    querySelector: (selector: string) =>
+      selector === "[data-panel-layout-controls]" && panelControlsWidth !== null
+        ? panelControls
+        : null,
   };
   return {
     element: element as unknown as HTMLElement,
-    resize(next: number) {
+    resize(next: number, nextPanelControls = panelControlsWidth) {
       width = next;
+      panelControlsWidth = nextPanelControls;
       observers.get(element)?.();
     },
   };
 }
 
 const published = () => rootProperties.get(TITLEBAR_CONTROLS_WIDTH_VAR) ?? null;
+const publishedPanelControls = () => rootProperties.get(TITLEBAR_PANEL_CONTROLS_WIDTH_VAR) ?? null;
 
 beforeEach(() => {
   rootProperties.clear();
@@ -92,5 +109,24 @@ describe("titlebar controls width", () => {
     controls.resize(300);
     expect(published()).toBeNull();
     expect(publishTitlebarControlsWidth(null)).toBeUndefined();
+  });
+
+  it("reserves the visible panel controls for the chat header as the Extensions menu arrives", () => {
+    // Closed panel: two toggles (60px) visible, the 32px maximize slot invisible.
+    const controls = cluster(92, 60);
+    const release = publishTitlebarControlsWidth(controls.element);
+    expect(publishedPanelControls()).toBe("60px");
+    // The Extensions menu mounts once installed packs load.
+    controls.resize(184.2, 152.2);
+    expect(publishedPanelControls()).toBe("153px");
+    expect(published()).toBe("185px");
+    release?.();
+    expect(publishedPanelControls()).toBeNull();
+  });
+
+  it("publishes no panel controls reservation for a cluster without them", () => {
+    const release = publishTitlebarControlsWidth(cluster(40).element);
+    expect(publishedPanelControls()).toBeNull();
+    release?.();
   });
 });

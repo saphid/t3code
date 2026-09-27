@@ -9,6 +9,14 @@ export const COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS =
  */
 export const TITLEBAR_CONTROLS_WIDTH_VAR = "--workspace-titlebar-controls-width";
 
+/**
+ * Width of the panel layout controls inside the cluster (`[data-panel-layout-controls]`):
+ * the Extensions menu, dock toggle, and panel toggles. The chat header reserves this
+ * while the right panel is closed; the cluster's maximize slot stays laid out but
+ * invisible then, so the header does not reserve it.
+ */
+export const TITLEBAR_PANEL_CONTROLS_WIDTH_VAR = "--workspace-titlebar-panel-controls-width";
+
 let titlebarControlsPublisher: object | null = null;
 
 /**
@@ -25,12 +33,22 @@ export function publishTitlebarControlsWidth(
   const style = element.ownerDocument.documentElement.style;
   const publisher = {};
   titlebarControlsPublisher = publisher;
+  const publish = (name: string, measured: HTMLElement | null) => {
+    if (!measured) {
+      style.removeProperty(name);
+      return;
+    }
+    const next = `${Math.ceil(measured.getBoundingClientRect().width)}px`;
+    if (style.getPropertyValue(name) !== next) style.setProperty(name, next);
+  };
+  // The panel controls sit inside the cluster, so any change to them resizes it.
   const measure = () => {
     if (titlebarControlsPublisher !== publisher) return;
-    const next = `${Math.ceil(element.getBoundingClientRect().width)}px`;
-    if (style.getPropertyValue(TITLEBAR_CONTROLS_WIDTH_VAR) !== next) {
-      style.setProperty(TITLEBAR_CONTROLS_WIDTH_VAR, next);
-    }
+    publish(TITLEBAR_CONTROLS_WIDTH_VAR, element);
+    publish(
+      TITLEBAR_PANEL_CONTROLS_WIDTH_VAR,
+      element.querySelector<HTMLElement>("[data-panel-layout-controls]"),
+    );
   };
   const resizeObserver = new ResizeObserver(measure);
   resizeObserver.observe(element);
@@ -40,5 +58,6 @@ export function publishTitlebarControlsWidth(
     if (titlebarControlsPublisher !== publisher) return;
     titlebarControlsPublisher = null;
     style.removeProperty(TITLEBAR_CONTROLS_WIDTH_VAR);
+    style.removeProperty(TITLEBAR_PANEL_CONTROLS_WIDTH_VAR);
   };
 }
