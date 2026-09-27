@@ -499,12 +499,13 @@ function useEditingCommands(
     const signal = AbortSignal.any([controller.signal, session.signal]);
     let release: (() => void) | null = null;
     void negotiatedEditingCommands(host, session.context, signal)
-      .then((commands) =>
+      .then(({ commands, versionRange }) =>
         registerPanelCommands({
           client: host,
           context: session.context,
           signal,
           commands,
+          versionRange,
           bindCommands: (token, handler) => session.bindCommands(token, handler),
           onCommand: (commandId) => {
             if (!isTerminalEditingCommand(commandId)) return;

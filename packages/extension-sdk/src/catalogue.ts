@@ -8360,97 +8360,106 @@ export const uiKeybindingsApi = defineApi<{
       }[];
     };
   };
-}>({
-  id: UI_KEYBINDINGS,
-  version: UI_KEYBINDINGS_VERSION,
-  methods: [
-    {
-      name: "getCapabilities",
-      effect: "read",
-      requiredGrants: [],
-      inputSchema: composerEmptyInputSchema,
-      outputSchema: uiCapabilitiesOutput([
-        "registerCommands",
-        "unregisterCommands",
-        "listConflicts",
-      ]),
-    },
-    {
-      name: "registerCommands",
-      effect: "write",
-      requiredGrants: [UI_KEYBINDINGS],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["commands"],
-        properties: {
-          commands: {
-            type: "array",
-            minItems: 1,
-            maxItems: 64,
-            items: commandDescriptorSchema,
+}>(
+  {
+    id: UI_KEYBINDINGS,
+    version: UI_KEYBINDINGS_VERSION,
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput([
+          "registerCommands",
+          "unregisterCommands",
+          "listConflicts",
+        ]),
+      },
+      {
+        name: "registerCommands",
+        effect: "write",
+        requiredGrants: [UI_KEYBINDINGS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["commands"],
+          properties: {
+            commands: {
+              type: "array",
+              minItems: 1,
+              maxItems: 64,
+              items: commandDescriptorSchema,
+            },
+          },
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["commandSetToken", "results"],
+          properties: {
+            commandSetToken: { type: "string", minLength: 1, maxLength: 160 },
+            results: { type: "array", maxItems: 64, items: commandResultSchema },
           },
         },
       },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["commandSetToken", "results"],
-        properties: {
-          commandSetToken: { type: "string", minLength: 1, maxLength: 160 },
-          results: { type: "array", maxItems: 64, items: commandResultSchema },
+      {
+        name: "unregisterCommands",
+        effect: "write",
+        requiredGrants: [UI_KEYBINDINGS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["commandSetToken"],
+          properties: {
+            commandSetToken: { type: "string", minLength: 1, maxLength: 160 },
+          },
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["unregistered"],
+          properties: { unregistered: { type: "boolean" } },
         },
       },
-    },
-    {
-      name: "unregisterCommands",
-      effect: "write",
-      requiredGrants: [UI_KEYBINDINGS],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["commandSetToken"],
-        properties: {
-          commandSetToken: { type: "string", minLength: 1, maxLength: 160 },
-        },
-      },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["unregistered"],
-        properties: { unregistered: { type: "boolean" } },
-      },
-    },
-    {
-      name: "listConflicts",
-      effect: "read",
-      requiredGrants: [UI_KEYBINDINGS],
-      inputSchema: composerEmptyInputSchema,
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["conflicts"],
-        properties: {
-          conflicts: {
-            type: "array",
-            maxItems: 256,
-            items: {
-              type: "object",
-              additionalProperties: false,
-              required: ["command", "key", "winner", "loser"],
-              properties: {
-                command: { type: "string", maxLength: 256 },
-                key: { type: "string", maxLength: 64 },
-                winner: { enum: ["user", "native", "plugin"] },
-                loser: { type: "string", maxLength: 256 },
+      {
+        name: "listConflicts",
+        effect: "read",
+        requiredGrants: [UI_KEYBINDINGS],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["conflicts"],
+          properties: {
+            conflicts: {
+              type: "array",
+              maxItems: 256,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["command", "key", "winner", "loser"],
+                properties: {
+                  command: { type: "string", maxLength: 256 },
+                  key: { type: "string", maxLength: 64 },
+                  winner: { enum: ["user", "native", "plugin"] },
+                  loser: { type: "string", maxLength: 256 },
+                },
               },
             },
           },
         },
       },
-    },
-  ],
-});
+    ],
+  },
+  // Consumers keep loading on a 1.1.0 host; probe before sending the 1.2.0 field.
+  {
+    baseline: "1.1.0",
+    additions: [
+      { version: "1.2.0", method: "registerCommands", input: "commands[].defaultKeyLogicalOnly" },
+    ],
+  },
+);
 
 /**
  * A keydown as the host keymap matches it: the `KeyboardEvent` fields its

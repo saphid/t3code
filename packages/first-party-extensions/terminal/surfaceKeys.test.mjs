@@ -256,6 +256,7 @@ NodeTest.describe("terminal editing commands — registration", () => {
       context: viewContext,
       signal: new AbortController().signal,
       commands,
+      versionRange: "^1.2.0",
       bindCommands: (token, handler) => {
         bound = { token, handler };
         return "binding-1";
@@ -289,13 +290,15 @@ NodeTest.describe("terminal editing commands — host version negotiation", () =
       return discovered;
     },
   });
-  const negotiate = (clientVersion, discovered, platform) =>
+  const negotiated = (clientVersion, discovered, platform) =>
     negotiatedEditingCommands(
       hostWith(clientVersion, discovered),
       viewContext,
       new AbortController().signal,
       platform,
     );
+  const negotiate = async (clientVersion, discovered, platform) =>
+    (await negotiated(clientVersion, discovered, platform)).commands;
 
   let descriptorKeys;
   NodeTest.before(async () => {
@@ -381,7 +384,7 @@ NodeTest.describe("terminal editing commands — host version negotiation", () =
     },
   );
 
-  NodeTest.it("registers and unregisters on the manifest's ^1.0.0 range", async () => {
+  const registerNegotiated = async (clientVersion, discovered) => {
     const ranges = [];
     const client = {
       invokeApi(request) {
@@ -397,15 +400,41 @@ NodeTest.describe("terminal editing commands — host version negotiation", () =
       client,
       context: viewContext,
       signal: new AbortController().signal,
-      commands: await negotiate("1.1.0", [discovery("1.1.0")], MAC),
+      ...(await negotiated(clientVersion, discovered, MAC)),
       bindCommands: () => "binding",
       onCommand: () => {},
     });
     registration.release();
-    NodeAssert.deepEqual(ranges, [
+    return ranges;
+  };
+
+  NodeTest.it("registers an older host's payload on the manifest's ^1.0.0 range", async () => {
+    NodeAssert.deepEqual(await registerNegotiated("1.1.0", [discovery("1.1.0")]), [
       ["registerCommands", "^1.0.0"],
       ["unregisterCommands", "^1.0.0"],
     ]);
+  });
+
+  NodeTest.it("registers logical defaults on the probed ^1.2.0 range", async () => {
+    NodeAssert.deepEqual(await registerNegotiated("1.2.0", [discovery("1.2.0")]), [
+      ["registerCommands", "^1.2.0"],
+      ["unregisterCommands", "^1.2.0"],
+    ]);
+  });
+
+  NodeTest.it("the SDK refuses logical defaults on an unprobed ^1.0.0 binding", async () => {
+    const { ApiVersionError } = await import("@t3tools/extension-sdk/capabilities");
+    await NodeAssert.rejects(
+      registerPanelCommands({
+        client: { invokeApi: () => Promise.reject(new Error("must not reach the host")) },
+        context: viewContext,
+        signal: new AbortController().signal,
+        commands: await negotiate("1.2.0", [discovery("1.2.0")], MAC),
+        bindCommands: () => "binding",
+        onCommand: () => {},
+      }),
+      ApiVersionError,
+    );
   });
 });
 

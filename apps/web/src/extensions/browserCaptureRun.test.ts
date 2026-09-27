@@ -84,9 +84,12 @@ function rig(overrides: Partial<BrowserCaptureBridgeDeps> = {}, realPresence = f
       height: 1,
       pageUrl: null,
       pageTitle: null,
+      path: null,
     })),
     pickElement: vi.fn(async (): Promise<PreviewAnnotationSubmissionResult | null> => picked),
     cancelPickElement: vi.fn(async () => {}),
+    revealArtifact: vi.fn(async (_path: string) => {}),
+    copyArtifactToClipboard: vi.fn(async (_path: string) => {}),
   };
   const bridge = createBrowserCaptureBridge("env-a", {
     preview: () => preview,
@@ -183,6 +186,7 @@ describe("browser capture run through the bridge", () => {
         height: 1,
         pageUrl: null,
         pageTitle: null,
+        path: null,
       };
     });
     await r.run("page");

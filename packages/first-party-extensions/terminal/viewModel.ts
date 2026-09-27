@@ -1586,14 +1586,20 @@ export async function registerPanelCommands(options: {
   readonly context: ViewContext;
   readonly signal: AbortSignal;
   readonly commands?: readonly GlobalCommandDescriptor[];
+  /** The manifest's ^1.0.0 unless the caller probed the host for a newer member. */
+  readonly versionRange?: string;
   readonly bindCommands: (
     commandSetToken: string,
     handler: (call: { readonly commandId: string; readonly context: ViewContext }) => void,
   ) => string;
   readonly onCommand: (commandId: string) => void;
 }): Promise<PanelCommandRegistration | null> {
-  // Every payload here fits 1.0.0; the API baseline option will own this floor at merge.
-  const api = bindApi(uiKeybindingsApi, options.client, options.context, "^1.0.0");
+  const api = bindApi(
+    uiKeybindingsApi,
+    options.client,
+    options.context,
+    options.versionRange ?? "^1.0.0",
+  );
   const response = await api.invoke(
     "registerCommands",
     { commands: options.commands ?? TERMINAL_VIEW_COMMANDS },

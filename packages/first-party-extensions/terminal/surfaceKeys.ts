@@ -66,9 +66,10 @@ export function hostTakesLogicalDefaults(
 }
 
 /**
- * The editing command set this installation's host can take: defaults ride
- * along only when both sides speak 1.2.0 (see hostTakesLogicalDefaults). A
- * failed discovery takes the old payload, which every host accepts.
+ * The editing command set this installation's host can take, and the range to
+ * bind `registerCommands` at: defaults ride along, bound at ^1.2.0, only when
+ * both sides speak 1.2.0 (see hostTakesLogicalDefaults). A failed discovery
+ * takes the old payload on ^1.0.0, which every host accepts.
  */
 export async function negotiatedEditingCommands(
   host: {
@@ -78,7 +79,10 @@ export async function negotiatedEditingCommands(
   context: ViewContext,
   signal: AbortSignal,
   platform?: string,
-): Promise<readonly GlobalCommandDescriptor[]> {
+): Promise<{
+  readonly commands: readonly GlobalCommandDescriptor[];
+  readonly versionRange: string;
+}> {
   let logicalDefaults = false;
   try {
     logicalDefaults = hostTakesLogicalDefaults(
@@ -88,7 +92,10 @@ export async function negotiatedEditingCommands(
   } catch {
     // Unknown support takes the payload every host accepts.
   }
-  return terminalEditingCommands(platform, logicalDefaults);
+  return {
+    commands: terminalEditingCommands(platform, logicalDefaults),
+    versionRange: logicalDefaults ? LOGICAL_DEFAULTS_RANGE : "^1.0.0",
+  };
 }
 
 /**

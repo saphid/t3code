@@ -7193,97 +7193,106 @@ var __t3Client = (() => {
       }
     ]
   });
-  var uiKeybindingsApi = defineApi({
-    id: UI_KEYBINDINGS,
-    version: UI_KEYBINDINGS_VERSION,
-    methods: [
-      {
-        name: "getCapabilities",
-        effect: "read",
-        requiredGrants: [],
-        inputSchema: composerEmptyInputSchema,
-        outputSchema: uiCapabilitiesOutput([
-          "registerCommands",
-          "unregisterCommands",
-          "listConflicts"
-        ])
-      },
-      {
-        name: "registerCommands",
-        effect: "write",
-        requiredGrants: [UI_KEYBINDINGS],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["commands"],
-          properties: {
-            commands: {
-              type: "array",
-              minItems: 1,
-              maxItems: 64,
-              items: commandDescriptorSchema
+  var uiKeybindingsApi = defineApi(
+    {
+      id: UI_KEYBINDINGS,
+      version: UI_KEYBINDINGS_VERSION,
+      methods: [
+        {
+          name: "getCapabilities",
+          effect: "read",
+          requiredGrants: [],
+          inputSchema: composerEmptyInputSchema,
+          outputSchema: uiCapabilitiesOutput([
+            "registerCommands",
+            "unregisterCommands",
+            "listConflicts"
+          ])
+        },
+        {
+          name: "registerCommands",
+          effect: "write",
+          requiredGrants: [UI_KEYBINDINGS],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["commands"],
+            properties: {
+              commands: {
+                type: "array",
+                minItems: 1,
+                maxItems: 64,
+                items: commandDescriptorSchema
+              }
+            }
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["commandSetToken", "results"],
+            properties: {
+              commandSetToken: { type: "string", minLength: 1, maxLength: 160 },
+              results: { type: "array", maxItems: 64, items: commandResultSchema }
             }
           }
         },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["commandSetToken", "results"],
-          properties: {
-            commandSetToken: { type: "string", minLength: 1, maxLength: 160 },
-            results: { type: "array", maxItems: 64, items: commandResultSchema }
-          }
-        }
-      },
-      {
-        name: "unregisterCommands",
-        effect: "write",
-        requiredGrants: [UI_KEYBINDINGS],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["commandSetToken"],
-          properties: {
-            commandSetToken: { type: "string", minLength: 1, maxLength: 160 }
+        {
+          name: "unregisterCommands",
+          effect: "write",
+          requiredGrants: [UI_KEYBINDINGS],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["commandSetToken"],
+            properties: {
+              commandSetToken: { type: "string", minLength: 1, maxLength: 160 }
+            }
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["unregistered"],
+            properties: { unregistered: { type: "boolean" } }
           }
         },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["unregistered"],
-          properties: { unregistered: { type: "boolean" } }
-        }
-      },
-      {
-        name: "listConflicts",
-        effect: "read",
-        requiredGrants: [UI_KEYBINDINGS],
-        inputSchema: composerEmptyInputSchema,
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["conflicts"],
-          properties: {
-            conflicts: {
-              type: "array",
-              maxItems: 256,
-              items: {
-                type: "object",
-                additionalProperties: false,
-                required: ["command", "key", "winner", "loser"],
-                properties: {
-                  command: { type: "string", maxLength: 256 },
-                  key: { type: "string", maxLength: 64 },
-                  winner: { enum: ["user", "native", "plugin"] },
-                  loser: { type: "string", maxLength: 256 }
+        {
+          name: "listConflicts",
+          effect: "read",
+          requiredGrants: [UI_KEYBINDINGS],
+          inputSchema: composerEmptyInputSchema,
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["conflicts"],
+            properties: {
+              conflicts: {
+                type: "array",
+                maxItems: 256,
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["command", "key", "winner", "loser"],
+                  properties: {
+                    command: { type: "string", maxLength: 256 },
+                    key: { type: "string", maxLength: 64 },
+                    winner: { enum: ["user", "native", "plugin"] },
+                    loser: { type: "string", maxLength: 256 }
+                  }
                 }
               }
             }
           }
         }
-      }
-    ]
-  });
+      ]
+    },
+    // Consumers keep loading on a 1.1.0 host; probe before sending the 1.2.0 field.
+    {
+      baseline: "1.1.0",
+      additions: [
+        { version: "1.2.0", method: "registerCommands", input: "commands[].defaultKeyLogicalOnly" }
+      ]
+    }
+  );
   var uiNotificationActionSchema = {
     type: "object",
     additionalProperties: false,
@@ -12507,7 +12516,12 @@ var __t3Client = (() => {
     }
   }
   async function registerPanelCommands(options) {
-    const api = bindApi(uiKeybindingsApi, options.client, options.context, "^1.0.0");
+    const api = bindApi(
+      uiKeybindingsApi,
+      options.client,
+      options.context,
+      options.versionRange ?? "^1.0.0"
+    );
     const response = await api.invoke(
       "registerCommands",
       { commands: options.commands ?? TERMINAL_VIEW_COMMANDS },
@@ -12678,7 +12692,10 @@ var __t3Client = (() => {
       );
     } catch {
     }
-    return terminalEditingCommands(platform, logicalDefaults);
+    return {
+      commands: terminalEditingCommands(platform, logicalDefaults),
+      versionRange: logicalDefaults ? LOGICAL_DEFAULTS_RANGE : "^1.0.0"
+    };
   }
   function terminalEditingCommands(platform = typeof navigator === "undefined" ? "" : navigator.platform, logicalDefaults = true) {
     const mac = isMacPlatform(platform);
@@ -14545,11 +14562,12 @@ var __t3Client = (() => {
       const signal = AbortSignal.any([controller.signal, session.signal]);
       let release = null;
       void negotiatedEditingCommands(host, session.context, signal).then(
-        (commands) => registerPanelCommands({
+        ({ commands, versionRange }) => registerPanelCommands({
           client: host,
           context: session.context,
           signal,
           commands,
+          versionRange,
           bindCommands: (token, handler) => session.bindCommands(token, handler),
           onCommand: (commandId) => {
             if (!isTerminalEditingCommand(commandId)) return;
