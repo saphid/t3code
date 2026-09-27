@@ -288,7 +288,7 @@ const dispatchToggle = (
       if (result !== "unavailable") return;
       reportToggleUnavailable(host, context);
       if (commandSetToken === undefined) return;
-      await bindApi(uiKeybindingsApi, host, context)
+      await bindApi(uiKeybindingsApi, host, context, "^1.1.0")
         .invoke("unregisterCommands", { commandSetToken }, AbortSignal.timeout(10_000))
         .catch(() => {});
     })
@@ -326,7 +326,7 @@ export function stageDiffCommands(host: ClientHost): void {
 export function bindDiffViewCommands(host: ClientHost, session: ViewSession): void {
   const threadId = session.context.resource.threadId;
   if (threadId === undefined) return;
-  const keybindings = bindApi(uiKeybindingsApi, host, session.context);
+  const keybindings = bindApi(uiKeybindingsApi, host, session.context, "^1.1.0");
   const panels = bindApi(uiPanelsApi, host, session.context);
   void panels.invoke("listSurfaces", { threadId }, session.signal).then(
     () => {

@@ -32,3 +32,29 @@ NodeTest.test("command descriptors accept a single default key or a bounded list
   NodeAssert.equal(accepts(["mod+=", ""]), false);
   NodeAssert.equal(accepts(42), false);
 });
+
+NodeTest.test(
+  "defaultKeyLogicalOnly is 1.2.0-only: a closed 1.1.0 descriptor schema rejects it",
+  () => {
+    NodeAssert.equal(uiKeybindingsApi.definition.version, "1.2.0");
+    const descriptor = { id: "clear", title: "Clear", scope: "surface", defaultKey: "ctrl+l" };
+    const commands = registerCommands.inputSchema.properties.commands;
+    const { defaultKeyLogicalOnly: _added, ...oldProperties } = commands.items.properties;
+    const validateOld = new Ajv({ strict: true, addUsedSchema: false }).compile({
+      ...registerCommands.inputSchema,
+      properties: {
+        ...registerCommands.inputSchema.properties,
+        commands: { ...commands, items: { ...commands.items, properties: oldProperties } },
+      },
+    });
+    NodeAssert.equal(validateOld({ commands: [descriptor] }), true);
+    NodeAssert.equal(
+      validateOld({ commands: [{ ...descriptor, defaultKeyLogicalOnly: true }] }),
+      false,
+    );
+    NodeAssert.equal(
+      validate({ commands: [{ ...descriptor, defaultKeyLogicalOnly: true }] }),
+      true,
+    );
+  },
+);

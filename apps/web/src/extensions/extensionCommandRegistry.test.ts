@@ -440,6 +440,45 @@ describe("keydown matching + palette enumeration", () => {
     expect(extensionCommandForKeydown(keydownEvent("-", { ctrl: true }), "Linux")).toBeNull();
   });
 
+  it("matches a logical-only default on the layout key, never the physical key", () => {
+    configureExtensionCommandEnvironment(ENV, envDeps());
+    register(
+      [
+        command({
+          id: "clear",
+          scope: "global",
+          defaultKey: "meta+k",
+          defaultKeyLogicalOnly: true,
+        }),
+        command({ id: "legacy", scope: "global", defaultKey: "meta+j" }),
+      ],
+      { capabilities: ["t3.ui/keybindings", "t3.ui/keybindings.global"] },
+    );
+    // Russian layout: Cmd + physical K types "л", Cmd + physical J types "о".
+    const russian = (key: string, code: string) => ({
+      ...keydownEvent(key, { meta: true }),
+      code,
+    });
+    expect(extensionCommandForKeydown(russian("л", "KeyK"), "MacIntel")).toBeNull();
+    expect(extensionCommandForKeydown(keydownEvent("k", { meta: true }), "MacIntel")).toBe(
+      `ext.${INSTALL}.clear`,
+    );
+    // Commands without the flag keep the physical-key fallback.
+    expect(extensionCommandForKeydown(russian("о", "KeyJ"), "MacIntel")).toBe(
+      `ext.${INSTALL}.legacy`,
+    );
+  });
+
+  it("rejects a non-boolean defaultKeyLogicalOnly", () => {
+    configureExtensionCommandEnvironment(ENV, envDeps());
+    const { results } = register([
+      command({ defaultKey: "ctrl+l", defaultKeyLogicalOnly: "yes" as unknown as boolean }),
+    ]);
+    expect(results).toEqual([
+      { commandId: "run", status: "rejected", reason: "invalid defaultKeyLogicalOnly" },
+    ]);
+  });
+
   it("lists palette items with per-scope enabled state", () => {
     configureExtensionCommandEnvironment(ENV, envDeps());
     restoreDom = installFakeDom("host-1:view-1", SURFACE);

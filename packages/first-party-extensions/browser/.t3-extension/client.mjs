@@ -1382,6 +1382,7 @@ var __t3Client = (() => {
           }
         ]
       },
+      defaultKeyLogicalOnly: { type: "boolean" },
       when: { type: "string", minLength: 1, maxLength: 256 },
       scope: { enum: ["surface", "thread", "global"] },
       activation: {
@@ -6974,7 +6975,7 @@ var __t3Client = (() => {
   var UI_THEME_READ = "t3.ui/theme.read";
   var UI_THEME_WRITE = "t3.ui/theme.write";
   var UI_KEYBINDINGS = "t3.ui/keybindings";
-  var UI_KEYBINDINGS_VERSION = "1.1.0";
+  var UI_KEYBINDINGS_VERSION = "1.2.0";
   var UI_NOTIFY = "t3.ui/notify";
   var UI_PANELS = "t3.ui/panels";
   var UI_PREFERENCES = "t3.ui/preferences";
@@ -16657,7 +16658,7 @@ ${ind(d)}}`;
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
-      void bindApi(uiKeybindingsApi, host, session.context).invoke("registerCommands", { commands: BROWSER_VIEW_COMMANDS }, signal).then(
+      void bindApi(uiKeybindingsApi, host, session.context, "^1.1.0").invoke("registerCommands", { commands: BROWSER_VIEW_COMMANDS }, signal).then(
         ({ commandSetToken }) => {
           if (signal.aborted) return;
           try {
@@ -17117,7 +17118,8 @@ ${titledTitle}`;
       requireApi(browserFramesApi),
       requireApi(resourcesLeaseApi),
       requireApi(uiThemeApi),
-      requireApi(uiKeybindingsApi),
+      // Explicit floor until the defineApi `baseline` option unifies these at merge.
+      requireApi(uiKeybindingsApi, "^1.1.0"),
       requireApi(uiPanelsApi),
       requireApi(uiNotificationsApi),
       requireApi(composerContextApi),

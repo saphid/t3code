@@ -163,7 +163,7 @@ NodeTest.describe(
         lifetime: lifetime.signal,
       });
       NodeAssert.equal(host.id, "t3.ui/keybindings");
-      NodeAssert.equal(host.version, "1.1.0");
+      NodeAssert.equal(host.version, "1.2.0");
       NodeAssert.equal(host.resolveTerminalFocusKey(macEvent("d")), "terminal.split");
       lifetime.abort();
       NodeAssert.equal(host.resolveTerminalFocusKey(macEvent("d")), null);
@@ -176,10 +176,10 @@ NodeTest.describe(
       NodeAssert.equal(terminalChordAction(macEvent("j"), undefined, true), null);
     });
 
-    NodeTest.test("the contract is additive: 1.1.0 keeps every 1.0.0 method", async () => {
+    NodeTest.test("the contract is additive: 1.2.0 keeps every 1.0.0 method", async () => {
       const catalogue = await import("@t3tools/extension-sdk/catalogue");
-      NodeAssert.equal(catalogue.uiKeybindingsApi.definition.version, "1.1.0");
-      NodeAssert.equal(catalogue.UI_KEYBINDINGS_VERSION, "1.1.0");
+      NodeAssert.equal(catalogue.uiKeybindingsApi.definition.version, "1.2.0");
+      NodeAssert.equal(catalogue.UI_KEYBINDINGS_VERSION, "1.2.0");
       const names = catalogue.uiKeybindingsApi.definition.methods
         .map((method) => method.name)
         .sort();

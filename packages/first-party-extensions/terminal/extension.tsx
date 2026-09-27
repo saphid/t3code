@@ -37,9 +37,11 @@ import {
   type GhosttyTerminalSurfaceOptions,
 } from "@t3tools/ghostty-terminal/surface";
 import {
-  isTerminalClearShortcut,
-  terminalDeleteShortcutData,
-  terminalNavigationShortcutData,
+  isTerminalEditingCommand,
+  TERMINAL_EDITING_INPUT,
+  terminalEditingBeforeKey,
+  negotiatedEditingCommands,
+  type TerminalEditingBindingState,
 } from "./surfaceKeys.ts";
 import { useTerminalSelectionMenu, type TerminalChatSink } from "./selectionMenu.tsx";
 import { readAssetWithRetry, sharedLoad, type ReadAsset } from "./assetLoader.ts";
@@ -462,6 +464,98 @@ function usePanelCommands(
   }, [host, session, panel, visible, actions]);
 }
 
+/**
+ * The VT pane holding focus, by terminal id — the pane an editing command
+ * edits. Null when focus sits on panel chrome; callers use the active pane.
+ */
+function focusedVtTerminalId(): string | null {
+  const active = document.activeElement;
+  const pane = active?.closest("[data-t3-terminal-output]")?.closest("[data-t3-terminal-pane]");
+  return pane instanceof HTMLElement ? (pane.dataset.t3TerminalPane ?? null) : null;
+}
+
+/**
+ * Registers the Ghostty-level editing intercepts (clear, word-nav, delete) as
+ * `t3.ui/keybindings` surface commands, so the host arbitrates them like any
+ * chord: user and native rules first, these native-matching defaults only on
+ * a miss, and user rules can rebind them. Registered only while VT panes are
+ * mounted — the text fallback's input keeps its own caret editing. Returns
+ * the binding state the VT `beforeKey` reads to apply the commands locally
+ * until the binding lands (or when it is denied). Hosts older than
+ * t3.ui/keybindings 1.2.0 get the commands without defaults, which the
+ * local fallback then applies on the layout key.
+ */
+function useEditingCommands(
+  host: ClientHost,
+  session: ViewSession,
+  panel: TerminalPanel,
+  active: boolean,
+): { readonly current: TerminalEditingBindingState } {
+  const binding = useRef<TerminalEditingBindingState>("pending");
+  useEffect(() => {
+    if (!active) return;
+    binding.current = "pending";
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    let release: (() => void) | null = null;
+    void negotiatedEditingCommands(host, session.context, signal)
+      .then((commands) =>
+        registerPanelCommands({
+          client: host,
+          context: session.context,
+          signal,
+          commands,
+          bindCommands: (token, handler) => session.bindCommands(token, handler),
+          onCommand: (commandId) => {
+            if (!isTerminalEditingCommand(commandId)) return;
+            // The host already consumed the chord, so chrome focus edits the
+            // active pane rather than dropping it.
+            const terminalId = focusedVtTerminalId() ?? panel.snapshot.activeTerminalId;
+            if (terminalId !== null) panel.sendInput(terminalId, TERMINAL_EDITING_INPUT[commandId]);
+          },
+        }),
+      )
+      .then(
+        (registration) => {
+          if (registration === null) return;
+          if (signal.aborted) registration.release();
+          else {
+            release = registration.release;
+            binding.current = "bound";
+          }
+        },
+        () => {
+          // Denied or unavailable registration: the local defaults still apply.
+          if (!signal.aborted) binding.current = "unavailable";
+        },
+      );
+    return () => {
+      controller.abort();
+      binding.current = "pending";
+      release?.();
+    };
+  }, [host, session, panel, active]);
+  return binding;
+}
+
+/**
+ * Local fallback for the editing commands (see useEditingCommands). The host
+ * dispatches bound editing chords before the key reaches the surface, and
+ * the focused terminal chords are captured at the view root (see
+ * terminalChordAction), so this only acts on keys both left alone.
+ */
+function handleBeforeKey(
+  event: KeyboardEvent,
+  panel: TerminalPanel,
+  terminalId: string,
+  keybindings: ClientHost["keybindings"],
+  binding: TerminalEditingBindingState,
+): boolean {
+  return terminalEditingBeforeKey(event, keybindings, { pluginId: manifestId, binding }, (data) =>
+    panel.sendInput(terminalId, data),
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /* VT pane: Ghostty surface + output stream + input queue wiring       */
 /* ------------------------------------------------------------------ */
@@ -496,34 +590,6 @@ function composerChatSink(
   };
 }
 
-/**
- * Surface-local key intercepts the plugin owns: readline-style navigation,
- * line delete, and screen clear. The focused terminal chords are captured at
- * the view root (resolved by the host keymap — see terminalChordAction), so
- * `handleBeforeKey` only intercepts editing keys and never sees them.
- */
-function handleBeforeKey(event: KeyboardEvent, panel: TerminalPanel, terminalId: string): boolean {
-  const navigationData = terminalNavigationShortcutData(event);
-  if (navigationData !== null) {
-    event.preventDefault();
-    event.stopPropagation();
-    panel.sendInput(terminalId, navigationData);
-    return false;
-  }
-  const deleteData = terminalDeleteShortcutData(event);
-  if (deleteData !== null) {
-    event.preventDefault();
-    event.stopPropagation();
-    panel.sendInput(terminalId, deleteData);
-    return false;
-  }
-  if (!isTerminalClearShortcut(event)) return true;
-  event.preventDefault();
-  event.stopPropagation();
-  panel.sendInput(terminalId, "\u000c");
-  return false;
-}
-
 function TerminalPane(props: {
   readonly host: ClientHost;
   readonly session: ViewSession;
@@ -539,6 +605,7 @@ function TerminalPane(props: {
   readonly assets: GhosttyAssets;
   readonly themeVars: Record<string, string> | null;
   readonly appearanceVars: Record<string, string> | null;
+  readonly editingBinding: { readonly current: TerminalEditingBindingState };
 }) {
   const {
     host,
@@ -552,6 +619,7 @@ function TerminalPane(props: {
     assets,
     themeVars,
     appearanceVars,
+    editingBinding,
   } = props;
   const [, bump] = useReducer((value: number) => value + 1, 0);
   const [attachment] = useState(
@@ -750,7 +818,8 @@ function TerminalPane(props: {
         onResize: (cols, rows) => panel.resize(terminalId, cols, rows),
         onSelectionChange: selectionMenu.onSelectionChange,
         onContextMenu: selectionMenu.onContextMenu,
-        beforeKey: (event) => handleBeforeKey(event, panel, terminalId),
+        beforeKey: (event) =>
+          handleBeforeKey(event, panel, terminalId, host.keybindings, editingBinding.current),
         onLinkActivate: (text) => {
           // Terminal 22: a detected URL opens through t3.ui/external on the
           // user's own client; a path link opens through t3.file/presentation
@@ -1174,6 +1243,12 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
   const themeVars = useThemeVars(host, session, visible);
   const appearanceVars = useTerminalAppearanceVars(host, session, visible);
   const assets = useGhosttyAssets(host, session);
+  const editingBinding = useEditingCommands(
+    host,
+    session,
+    panel,
+    visible && assets.kind === "ready",
+  );
   const snapshot: TerminalPanelSnapshot = panel.snapshot;
   const activeId = snapshot.activeTerminalId;
   const activeTab = snapshot.tabs.find((tab) => tab.terminalId === activeId) ?? null;
@@ -1590,6 +1665,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
                   assets={assets}
                   themeVars={themeVars}
                   appearanceVars={appearanceVars}
+                  editingBinding={editingBinding}
                 />
               </div>
             );

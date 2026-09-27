@@ -112,7 +112,7 @@ describe("t3.ui/keybindings@1.1.0 client capability", () => {
   it("is absent without the grant and resolves nothing after its lifetime", () => {
     expect(bind(DEFAULT_RESOLVED_KEYBINDINGS, []).host).toBeUndefined();
     const { host, lifetime } = bind(DEFAULT_RESOLVED_KEYBINDINGS);
-    expect(host).toMatchObject({ id: "t3.ui/keybindings", version: "1.1.0" });
+    expect(host).toMatchObject({ id: "t3.ui/keybindings", version: "1.2.0" });
     expect(host?.resolveTerminalFocusKey(chord("d"))).toBe("terminal.split");
     lifetime.abort();
     expect(host?.resolveTerminalFocusKey(chord("d"))).toBeNull();

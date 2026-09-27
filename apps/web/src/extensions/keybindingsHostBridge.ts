@@ -1,5 +1,5 @@
 /**
- * Host bridge for the client-local half of `t3.ui/keybindings@1.1.0`.
+ * Host bridge for the client-local half of `t3.ui/keybindings` (since 1.1.0).
  * `installedController` invokes the returned factory once per installed
  * client, so each `ClientHost.keybindings` binds that installation's grants
  * and lifetime. Resolution is the keydown dispatcher's own

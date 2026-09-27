@@ -115,7 +115,7 @@ function installDom() {
     removeEventListener() {},
   });
   Object.defineProperty(globalThis, "navigator", {
-    value: { platform: "MacIntel" },
+    value: { platform: "MacIntel", userAgent: "" },
     configurable: true,
   });
   globalThis.ResizeObserver = class {
@@ -139,6 +139,9 @@ const El = installDom();
 const { GhosttyTerminalSurface } = await import("@t3tools/ghostty-terminal/surface");
 const { loadGhosttyRuntime } = await import("@t3tools/ghostty-terminal/runtime");
 const { TerminalInputQueue } = await import("./inputQueue.ts");
+const { terminalEditingBeforeKey, terminalEditingCommands } = await import("./surfaceKeys.ts");
+const { DEFAULT_RESOLVED_KEYBINDINGS } = await import("@t3tools/shared/keybindings");
+const { hostKeybindings, loadHostKeymap, userRule } = await import("./fixtures/hostKeymap.mjs");
 
 const THEME = {
   foreground: { r: 229, g: 231, b: 235 },
@@ -146,8 +149,8 @@ const THEME = {
   cursor: { r: 229, g: 231, b: 235 },
 };
 
-function keydown(overrides = {}) {
-  return Object.assign(new Event("keydown"), {
+function keydown(overrides = {}, type = "keydown") {
+  return Object.assign(new Event(type), {
     code: "KeyA",
     key: "a",
     shiftKey: false,
@@ -162,7 +165,9 @@ function keydown(overrides = {}) {
   });
 }
 
-async function makeRig() {
+const keyup = (overrides = {}) => keydown(overrides, "keyup");
+
+async function makeRig(options = {}) {
   const [vt, writePty] = await Promise.all([
     NodeFSP.readFile(new URL("ghostty-vt.wasm", `file://${assetsDir}`)),
     NodeFSP.readFile(new URL("ghostty-write-pty.wasm", `file://${assetsDir}`)),
@@ -184,7 +189,7 @@ async function makeRig() {
     onData: (data) => queue.enqueue(data),
     onResize: () => {},
     onSelectionChange: () => {},
-    beforeKey: () => true,
+    beforeKey: (event) => options.beforeKey?.(event, queue) ?? true,
     onLinkActivate: () => {},
   });
   const drain = async () => {
@@ -302,5 +307,134 @@ NodeTest.describe("PTY byte-transport oracle — surface → queue → write", (
     NodeAssert.equal(wireWrites.join(""), "x".repeat(60 * 1024));
     q2.dispose();
     surface.dispose();
+  });
+});
+
+// Kitty flags 1|2: disambiguate + report event types, so releases encode.
+const KITTY_REPORT_EVENTS = "\x1b[>3u";
+
+NodeTest.describe("editing commands on the real surface — releases", () => {
+  NodeTest.it("an encoded press still reports its kitty release", async () => {
+    const { surface, queue, mount, drain } = await makeRig();
+    surface.write(KITTY_REPORT_EVENTS);
+    const input = mount.children[1];
+    input.dispatchEvent(keydown({ code: "KeyA", key: "a" }));
+    input.dispatchEvent(keyup({ code: "KeyA", key: "a" }));
+    NodeAssert.equal(await drain(), "a\x1b[97;1:3u");
+    queue.dispose();
+    surface.dispose();
+  });
+
+  NodeTest.it("a host-dispatched chord never leaks its kitty release", async () => {
+    const { surface, queue, mount, drain } = await makeRig();
+    surface.write(KITTY_REPORT_EVENTS);
+    const input = mount.children[1];
+    // The host's window-capture dispatcher consumed each keydown before the
+    // input saw it and the bound command wrote the editing bytes; only the
+    // keyup reaches the surface.
+    for (const [chord, bytes] of [
+      [{ code: "KeyL", key: "l", ctrlKey: true }, "\f"],
+      [{ code: "ArrowLeft", key: "ArrowLeft", altKey: true }, "\x1bb"],
+    ]) {
+      queue.enqueue(bytes);
+      input.dispatchEvent(keyup(chord));
+      NodeAssert.equal(await drain(), bytes, chord.code);
+    }
+    queue.dispose();
+    surface.dispose();
+  });
+
+  NodeTest.it("a locally applied or held editing chord swallows its release", async () => {
+    let binding = "pending";
+    const { surface, queue, mount, drain } = await makeRig({
+      beforeKey: (event, target) =>
+        terminalEditingBeforeKey(
+          event,
+          undefined,
+          { pluginId: "t3.terminal", binding },
+          (data) => target.enqueue(data),
+          "MacIntel",
+        ),
+    });
+    surface.write(KITTY_REPORT_EVENTS);
+    const input = mount.children[1];
+    const ctrlL = { code: "KeyL", key: "l", ctrlKey: true };
+    // No resolver and a pending binding: the default chord is held.
+    input.dispatchEvent(keydown(ctrlL));
+    input.dispatchEvent(keyup(ctrlL));
+    NodeAssert.equal(await drain(), "");
+    binding = "unavailable";
+    input.dispatchEvent(keydown(ctrlL));
+    input.dispatchEvent(keyup(ctrlL));
+    NodeAssert.equal(await drain(), "\f");
+    queue.dispose();
+    surface.dispose();
+  });
+});
+
+NodeTest.describe("editing commands on the real surface — pending binding", () => {
+  let keymap;
+  NodeTest.before(async () => {
+    keymap = await loadHostKeymap();
+  });
+
+  const rigWith = (rules) => {
+    const host = hostKeybindings(keymap, () => rules, { platform: "MacIntel" });
+    return makeRig({
+      beforeKey: (event, target) =>
+        terminalEditingBeforeKey(
+          event,
+          host,
+          { pluginId: "t3.terminal", binding: "pending" },
+          (data) => target.enqueue(data),
+          "MacIntel",
+        ),
+    });
+  };
+
+  NodeTest.it("a user rebinding runs its editing command, not Ghostty's default", async () => {
+    const { surface, queue, mount, drain } = await rigWith([
+      ...DEFAULT_RESOLVED_KEYBINDINGS,
+      userRule("ext.t3.terminal.clear", "ctrl+u"),
+    ]);
+    const input = mount.children[1];
+    input.dispatchEvent(keydown({ code: "KeyU", key: "u", ctrlKey: true }));
+    NodeAssert.equal(await drain(), "\f");
+    queue.dispose();
+    surface.dispose();
+  });
+
+  NodeTest.it("an unrelated claim yields the default chord to Ghostty's encoder", async () => {
+    const { surface, queue, mount, drain } = await rigWith([
+      ...DEFAULT_RESOLVED_KEYBINDINGS,
+      userRule("ext.acme.tools.run", "alt+arrowleft"),
+    ]);
+    const input = mount.children[1];
+    input.dispatchEvent(keydown({ code: "ArrowLeft", key: "ArrowLeft", altKey: true }));
+    NodeAssert.equal(await drain(), "\x1b[1;3D");
+    queue.dispose();
+    surface.dispose();
+  });
+
+  NodeTest.it("unclaimed defaults apply, matched on the layout key like native", async () => {
+    const { surface, queue, mount, drain } = await rigWith(DEFAULT_RESOLVED_KEYBINDINGS);
+    const input = mount.children[1];
+    input.dispatchEvent(keydown({ code: "KeyK", key: "k", metaKey: true }));
+    NodeAssert.equal(await drain(), "\f");
+    // Russian layout: Cmd + physical K types "л", which native passes on.
+    input.dispatchEvent(keydown({ code: "KeyK", key: "л", metaKey: true }));
+    NodeAssert.equal(await drain(), "л");
+    queue.dispose();
+    surface.dispose();
+  });
+
+  NodeTest.it("registers every default as layout-key-only for the host dispatcher", () => {
+    for (const platform of ["MacIntel", "Linux x86_64"]) {
+      for (const command of terminalEditingCommands(platform)) {
+        if (command.defaultKey !== undefined) {
+          NodeAssert.equal(command.defaultKeyLogicalOnly, true, command.id);
+        }
+      }
+    }
   });
 });

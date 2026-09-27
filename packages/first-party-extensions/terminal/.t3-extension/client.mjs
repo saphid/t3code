@@ -1365,6 +1365,7 @@ var __t3Client = (() => {
           }
         ]
       },
+      defaultKeyLogicalOnly: { type: "boolean" },
       when: { type: "string", minLength: 1, maxLength: 256 },
       scope: { enum: ["surface", "thread", "global"] },
       activation: {
@@ -6956,7 +6957,7 @@ var __t3Client = (() => {
   var UI_THEME_READ = "t3.ui/theme.read";
   var UI_THEME_WRITE = "t3.ui/theme.write";
   var UI_KEYBINDINGS = "t3.ui/keybindings";
-  var UI_KEYBINDINGS_VERSION = "1.1.0";
+  var UI_KEYBINDINGS_VERSION = "1.2.0";
   var UI_NOTIFY = "t3.ui/notify";
   var UI_PANELS = "t3.ui/panels";
   var UI_PREFERENCES = "t3.ui/preferences";
@@ -10021,7 +10022,14 @@ var __t3Client = (() => {
     resizeNotified = false;
     canvasConfigured = false;
     theme;
-    suppressedKeyCodes = /* @__PURE__ */ new Set();
+    /**
+     * Codes whose latest press this surface encoded to the PTY. Only those get
+     * a release: a press consumed anywhere else — beforeKey, copy/paste, or a
+     * host dispatcher that stopped the keydown before it reached the input —
+     * must not leak a Kitty report-event-types release the shell never saw
+     * pressed.
+     */
+    encodedKeyCodes = /* @__PURE__ */ new Set();
     pasteShortcutToken = 0;
     copyShortcutToken = 0;
     clearSelectionAfterCopy = false;
@@ -10389,10 +10397,8 @@ var __t3Client = (() => {
       }
     }
     onKeyDown = (event) => {
-      if (isTerminalAltGraphText(event) || !this.options.beforeKey(event)) {
-        this.suppressedKeyCodes.add(event.code);
-        return;
-      }
+      this.encodedKeyCodes.delete(event.code);
+      if (isTerminalAltGraphText(event) || !this.options.beforeKey(event)) return;
       if (isTerminalCopyShortcut(event) && this.hasSelection()) {
         const selection = this.getSelection();
         this.primeCopy(selection);
@@ -10423,11 +10429,9 @@ var __t3Client = (() => {
             });
           }
         }
-        this.suppressedKeyCodes.add(event.code);
         return;
       }
       if (isTerminalPasteShortcut(event)) {
-        this.suppressedKeyCodes.add(event.code);
         const clipboard = navigator.clipboard;
         if (typeof clipboard?.readText === "function") {
           const token = ++this.pasteShortcutToken;
@@ -10449,13 +10453,13 @@ var __t3Client = (() => {
       this.clearPrimedCopy();
       const data = this.core.encodeKey(event);
       if (data.length === 0) return;
-      this.suppressedKeyCodes.delete(event.code);
+      this.encodedKeyCodes.add(event.code);
       event.preventDefault();
       event.stopPropagation();
       this.options.onData(data);
     };
     onKeyUp = (event) => {
-      if (this.suppressedKeyCodes.delete(event.code)) return;
+      if (!this.encodedKeyCodes.delete(event.code)) return;
       if (isTerminalCompositionKey(event, this.composing)) {
         return;
       }
@@ -10464,6 +10468,22 @@ var __t3Client = (() => {
       event.preventDefault();
       event.stopPropagation();
       this.options.onData(data);
+    };
+    // A release delivered outside the textarea means the shell will never get
+    // one from here; forget the press so a later host-consumed chord on the same
+    // code cannot inherit it. Capture phase sees the keyup even if the focused
+    // element stops it.
+    onWindowKeyUp = (event) => {
+      if (event.composedPath().includes(this.input)) return;
+      this.encodedKeyCodes.delete(event.code);
+    };
+    // A release while another app has focus never reaches the page, but a later
+    // keydown of the same code proves it happened. Retire the press here, in
+    // capture phase before any host dispatcher can stop the event; onKeyDown
+    // re-adds the code when this surface encodes the new press itself. A key
+    // held across a window focus round trip keeps its press and its release.
+    onWindowKeyDown = (event) => {
+      this.encodedKeyCodes.delete(event.code);
     };
     onFocus = () => {
       this.focused = true;
@@ -10882,6 +10902,8 @@ var __t3Client = (() => {
     installEvents() {
       this.input.addEventListener("keydown", this.onKeyDown);
       this.input.addEventListener("keyup", this.onKeyUp);
+      window.addEventListener("keyup", this.onWindowKeyUp, { capture: true });
+      window.addEventListener("keydown", this.onWindowKeyDown, { capture: true });
       this.input.addEventListener("focus", this.onFocus);
       this.input.addEventListener("blur", this.onBlur);
       this.input.addEventListener("input", this.onInput);
@@ -10907,6 +10929,8 @@ var __t3Client = (() => {
     removeEvents() {
       this.input.removeEventListener("keydown", this.onKeyDown);
       this.input.removeEventListener("keyup", this.onKeyUp);
+      window.removeEventListener("keyup", this.onWindowKeyUp, { capture: true });
+      window.removeEventListener("keydown", this.onWindowKeyDown, { capture: true });
       this.input.removeEventListener("focus", this.onFocus);
       this.input.removeEventListener("blur", this.onBlur);
       this.input.removeEventListener("input", this.onInput);
@@ -11178,1032 +11202,73 @@ var __t3Client = (() => {
     }
   };
 
-  // surfaceKeys.ts
-  var TERMINAL_WORD_BACKWARD = "\x1Bb";
-  var TERMINAL_WORD_FORWARD = "\x1Bf";
-  var TERMINAL_LINE_START = "";
-  var TERMINAL_LINE_END = "";
-  var TERMINAL_DELETE_TO_LINE_START = "";
-  function normalizeEventKey(key) {
-    const normalized = key.toLowerCase();
-    if (normalized === "esc") return "escape";
-    return normalized;
-  }
-  function isTerminalClearShortcut(event, platform = typeof navigator === "undefined" ? "" : navigator.platform) {
-    if (event.type !== void 0 && event.type !== "keydown") {
+  // node_modules/@t3tools/shared/src/semver.ts
+  var satisfiesSemverRange = function satisfiesSemverRange2(rawVersion, range) {
+    const normalizedVersion = String(rawVersion).trim().replace(/^v/, "");
+    const versionMatch = normalizedVersion.match(
+      /^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-[0-9A-Za-z.-]+)?$/
+    );
+    if (!versionMatch) {
       return false;
     }
-    const key = event.key.toLowerCase();
-    if (key === "l" && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
-      return true;
-    }
-    return isMacPlatform(platform) && key === "k" && event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
-  }
-  function terminalDeleteShortcutData(event, platform = typeof navigator === "undefined" ? "" : navigator.platform) {
-    if (event.type !== void 0 && event.type !== "keydown") {
-      return null;
-    }
-    if (!isMacPlatform(platform)) {
-      return null;
-    }
-    const key = normalizeEventKey(event.key);
-    if (key !== "backspace") {
-      return null;
-    }
-    return event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey ? TERMINAL_DELETE_TO_LINE_START : null;
-  }
-  function terminalNavigationShortcutData(event, platform = typeof navigator === "undefined" ? "" : navigator.platform) {
-    if (event.type !== void 0 && event.type !== "keydown") {
-      return null;
-    }
-    if (event.shiftKey) return null;
-    const key = normalizeEventKey(event.key);
-    if (key !== "arrowleft" && key !== "arrowright") {
-      return null;
-    }
-    const moveWord = key === "arrowleft" ? TERMINAL_WORD_BACKWARD : TERMINAL_WORD_FORWARD;
-    const moveLine = key === "arrowleft" ? TERMINAL_LINE_START : TERMINAL_LINE_END;
-    if (isMacPlatform(platform)) {
-      if (event.altKey && !event.metaKey && !event.ctrlKey) {
-        return moveWord;
-      }
-      if (event.metaKey && !event.altKey && !event.ctrlKey) {
-        return moveLine;
-      }
-      return null;
-    }
-    if (event.ctrlKey && !event.metaKey && !event.altKey) {
-      return moveWord;
-    }
-    if (event.altKey && !event.metaKey && !event.ctrlKey) {
-      return moveWord;
-    }
-    return null;
-  }
-
-  // selectionMenu.tsx
-  var import_react = __toESM(require_react(), 1);
-
-  // selectionMenuModel.ts
-  function terminalSelectionMenuItems(options) {
-    return [
-      ...options?.canAddToChat === false ? [] : [{ id: "add-to-chat", label: "Add to chat" }],
-      { id: "copy", label: "Copy" }
-    ];
-  }
-  function terminalContextMenuItems(options) {
-    const { hasSelection, canAddToChat = true } = options;
-    return [
-      ...terminalSelectionMenuItems({ canAddToChat }).map((item) => ({
-        ...item,
-        disabled: !hasSelection
-      })),
-      { id: "paste", label: "Paste" }
-    ];
-  }
-  var TERMINAL_CHAT_TEXT_MAX_CHARS = 1e4;
-  var TERMINAL_CHAT_LABEL_MAX_CHARS = 128;
-  function terminalSelectionLineRange(position) {
-    const lineStart = position.start.y + 1;
-    return { lineStart, lineEnd: Math.max(lineStart, position.end.y + 1) };
-  }
-  function buildTerminalChatSelection(input) {
-    const text = normalizeSelectionText(input.text);
-    if (input.position === null || text.length === 0) return null;
-    const label = input.terminalLabel.trim() || "Terminal";
-    return {
-      terminalId: input.terminalId,
-      terminalLabel: truncateUtf16(label, TERMINAL_CHAT_LABEL_MAX_CHARS),
-      ...terminalSelectionLineRange(input.position),
-      text
+    const version = {
+      major: Number(versionMatch[1]),
+      minor: Number(versionMatch[2] || 0),
+      patch: Number(versionMatch[3] || 0)
     };
-  }
-  function terminalChatSelectionError(selection) {
-    if (selection.text.length > TERMINAL_CHAT_TEXT_MAX_CHARS) {
-      return "Selection is too long to add to chat (10,000 characters at most).";
-    }
-    if (selection.terminalLabel.length > TERMINAL_CHAT_LABEL_MAX_CHARS) {
-      return "Terminal name is too long to add to chat (128 characters at most).";
-    }
-    return null;
-  }
-  async function addTerminalSelectionToChat(options) {
-    try {
-      const tooLong = terminalChatSelectionError(options.selection);
-      if (tooLong !== null) throw new Error(tooLong);
-      await options.insert(options.selection);
-    } catch (error) {
-      if (!options.isCurrent()) return;
-      options.reportError(
-        error instanceof Error ? error.message : "Unable to add the terminal selection to chat"
-      );
-      options.focusTerminal();
-      return;
-    }
-    if (options.isCurrent()) options.clearSelection();
-  }
-  var TerminalChatTarget = class {
-    availableValue = false;
-    probing = false;
-    probe;
-    constructor(probe) {
-      this.probe = probe;
-    }
-    get available() {
-      return this.availableValue;
-    }
-    refresh() {
-      if (this.availableValue || this.probing) return;
-      this.probing = true;
-      void this.probe().then(
-        (available) => {
-          this.availableValue = available;
-        },
-        () => {
+    return range.split("||").some((group) => {
+      const comparators = group.trim().split(/\s+/).filter(Boolean);
+      if (comparators.length === 0) {
+        return false;
+      }
+      return comparators.every((comparator) => {
+        const match = comparator.trim().match(/^(\^|>=|>|<=|<|=)?\s*v?(\d+(?:\.\d+){0,2})$/);
+        if (!match) {
+          return false;
         }
-      ).finally(() => {
-        this.probing = false;
-      });
-    }
-  };
-  function resolveSelectionActionPosition(options) {
-    const { bounds, selectionRect, pointer, viewport } = options;
-    const preferred = pointer ?? {
-      x: selectionRect?.right ?? bounds.left + bounds.width - 140,
-      y: selectionRect ? selectionRect.bottom + 4 : bounds.top + 12
-    };
-    return {
-      x: Math.max(
-        8,
-        Math.min(Math.max(bounds.left, preferred.x), bounds.left + bounds.width, viewport.width - 8)
-      ),
-      y: Math.max(
-        8,
-        Math.min(Math.max(bounds.top, preferred.y), bounds.top + bounds.height, viewport.height - 8)
-      )
-    };
-  }
-  function clampMenuToViewport(options) {
-    const { point, size, viewport, margin = 4 } = options;
-    return {
-      x: Math.min(Math.max(margin, point.x), Math.max(margin, viewport.width - size.width - margin)),
-      y: Math.min(
-        Math.max(margin, point.y),
-        Math.max(margin, viewport.height - size.height - margin)
-      )
-    };
-  }
-  var TerminalSelectionMenuFlow = class {
-    requestId = 0;
-    open = null;
-    onChange;
-    canAddToChat;
-    constructor(onChange = () => {
-    }, options) {
-      this.onChange = onChange;
-      this.canAddToChat = options?.canAddToChat ?? (() => false);
-    }
-    get menu() {
-      return this.open;
-    }
-    isCurrent(requestId) {
-      return requestId === this.requestId;
-    }
-    /** A right-click supersedes a pending or open popup and any in-flight action. */
-    openContextMenu(input) {
-      const selectionText = nonEmpty(input.selectionText);
-      const chatSelection = selectionText === null ? null : input.chatSelection ?? null;
-      return this.show({
-        requestId: ++this.requestId,
-        kind: "context",
-        items: withChatAvailability(
-          terminalContextMenuItems({
-            hasSelection: selectionText !== null,
-            canAddToChat: this.canAddToChat()
-          }),
-          chatSelection
-        ),
-        position: input.position,
-        clipboardText: selectionText,
-        chatSelection
-      });
-    }
-    /**
-     * Opens the post-selection popup. A current popup stays as is (a repeated
-     * selection-end must not reopen it); an empty selection opens nothing.
-     */
-    openSelectionPopup(input) {
-      if (this.ownsOpenMenu("selection")) return this.open;
-      const selectionText = nonEmpty(input.selectionText);
-      if (selectionText === null) {
-        this.supersede();
-        return null;
-      }
-      const chatSelection = input.chatSelection ?? null;
-      return this.show({
-        requestId: ++this.requestId,
-        kind: "selection",
-        items: withChatAvailability(
-          terminalSelectionMenuItems({ canAddToChat: this.canAddToChat() }),
-          chatSelection
-        ),
-        position: input.position,
-        clipboardText: selectionText,
-        chatSelection
-      });
-    }
-    /**
-     * Resolves a click on an item of the menu opened as `requestId`. A stale
-     * menu, a disabled item, or a missing selection resolves to null. The menu
-     * closes but the id stays current, so the action it starts can still report
-     * and return focus unless a newer flow supersedes it.
-     */
-    choose(requestId, action) {
-      const menu = this.open;
-      if (menu === null || menu.requestId !== requestId || !this.isCurrent(requestId)) return null;
-      const item = menu.items.find((candidate) => candidate.id === action);
-      this.close();
-      if (!item || item.disabled === true) return null;
-      if (action !== "paste" && menu.clipboardText === null) return null;
-      if (action === "add-to-chat" && menu.chatSelection === null) return null;
-      return {
-        action,
-        requestId,
-        clipboardText: menu.clipboardText,
-        chatSelection: menu.chatSelection
-      };
-    }
-    /**
-     * Passive cancellation (Escape, outside click, scroll, blur): closes the
-     * open menu. It only invalidates the id when the menu it closes is current,
-     * so it can never cancel a newer flow's in-flight action.
-     */
-    dismiss() {
-      if (this.open === null) return;
-      if (this.isCurrent(this.open.requestId)) this.requestId += 1;
-      this.close();
-    }
-    /** Active cancellation: invalidates every flow, open or in flight. */
-    supersede() {
-      this.requestId += 1;
-      this.close();
-    }
-    /**
-     * An emptied selection may only cancel a selection flow that is still
-     * current — a pending popup timer, or the open popup. A right-click menu
-     * keeps the text it captured.
-     */
-    shouldClearOnEmptySelection(popupPending) {
-      return popupPending || this.ownsOpenMenu("selection");
-    }
-    ownsOpenMenu(kind) {
-      return this.open?.kind === kind && this.isCurrent(this.open.requestId);
-    }
-    show(menu) {
-      this.open = menu;
-      this.onChange(menu);
-      return menu;
-    }
-    close() {
-      if (this.open === null) return;
-      this.open = null;
-      this.onChange(null);
-    }
-  };
-  function withChatAvailability(items, chatSelection) {
-    if (chatSelection !== null) return items;
-    return items.map((item) => item.id === "add-to-chat" ? { ...item, disabled: true } : item);
-  }
-  function truncateUtf16(text, max) {
-    if (text.length <= max) return text;
-    const cut = text.slice(0, max);
-    return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
-  }
-  function normalizeSelectionText(text) {
-    return text.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "");
-  }
-  function nonEmpty(text) {
-    if (text === null) return null;
-    return normalizeSelectionText(text).length > 0 ? text : null;
-  }
-
-  // selectionMenu.tsx
-  var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
-  var TerminalSelectionMenuController = class {
-    flow;
-    deps;
-    menuElement = null;
-    timer = null;
-    frame = null;
-    gestureActive = false;
-    chatTarget;
-    constructor(deps, onChange) {
-      this.deps = deps;
-      this.chatTarget = deps.chat ? new TerminalChatTarget(deps.chat.probe) : null;
-      this.flow = new TerminalSelectionMenuFlow(onChange, {
-        canAddToChat: () => this.chatTarget?.available === true
-      });
-    }
-    /** Ref callback for the rendered menu, used by the outside-click test. */
-    setMenuElement = (element) => {
-      this.menuElement = element;
-    };
-    /** Surface option: a right-click the running app did not claim through mouse reporting. */
-    onContextMenu = (event) => {
-      event.preventDefault();
-      this.cancelPending();
-      this.gestureActive = false;
-      const surface = this.deps.getSurface();
-      if (surface === null) return;
-      surface.focus();
-      this.chatTarget?.refresh();
-      const selectionText = surface.hasSelection() ? surface.getSelection() : null;
-      this.flow.openContextMenu({
-        selectionText,
-        chatSelection: this.readChatSelection(surface, selectionText),
-        position: { x: event.clientX, y: event.clientY }
-      });
-    };
-    /** Surface option: an emptied selection cancels a still-current popup flow. */
-    onSelectionChange = () => {
-      if (this.deps.getSurface()?.hasSelection()) return;
-      if (!this.flow.shouldClearOnEmptySelection(this.pending)) return;
-      this.cancelPending();
-      this.flow.supersede();
-    };
-    choose = async (requestId, action) => {
-      const choice = this.flow.choose(requestId, action);
-      const surface = this.deps.getSurface();
-      if (choice === null || surface === null) return;
-      const reportIfCurrent = (error, fallback) => {
-        if (this.flow.isCurrent(requestId)) {
-          this.deps.reportError(surface, error instanceof Error ? error.message : fallback);
+        const targetVersion = match[2];
+        if (targetVersion === void 0) {
+          return false;
         }
-      };
-      if (choice.action === "add-to-chat" && choice.chatSelection !== null && this.deps.chat) {
-        await addTerminalSelectionToChat({
-          selection: choice.chatSelection,
-          insert: this.deps.chat.insert,
-          isCurrent: () => this.flow.isCurrent(requestId),
-          clearSelection: () => surface.clearSelection(),
-          focusTerminal: () => surface.focus(),
-          reportError: (message) => this.deps.reportError(surface, message)
-        });
-        return;
-      }
-      if (choice.action === "copy" && choice.clipboardText !== null) {
-        try {
-          await copyText(choice.clipboardText, surface);
-        } catch (error) {
-          reportIfCurrent(error, "Unable to copy terminal selection");
+        const targetMatch = targetVersion.match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?$/);
+        if (!targetMatch) {
+          return false;
         }
-      } else if (choice.action === "paste") {
-        try {
-          await surface.pasteFromClipboard(readClipboardText, () => this.flow.isCurrent(requestId));
-        } catch (error) {
-          reportIfCurrent(error, "Unable to read the clipboard");
-          return;
-        }
-      }
-      if (this.flow.isCurrent(requestId)) surface.focus();
-    };
-    install(mount) {
-      this.chatTarget?.refresh();
-      const document2 = mount.ownerDocument;
-      const view = document2.defaultView;
-      const insideMenu = (event) => this.menuElement !== null && event.composedPath().includes(this.menuElement);
-      const onMountPointerDown = (event) => {
-        if (!event.isPrimary) return;
-        this.cancelPending();
-        this.gestureActive = event.button === 0 && !event.defaultPrevented;
-      };
-      const onDocumentPointerDown = (event) => {
-        if (insideMenu(event)) return;
-        this.cancelPending();
-        this.flow.dismiss();
-      };
-      const onMouseUp = (event) => {
-        if (event.button !== 0 || !this.gestureActive) return;
-        this.gestureActive = false;
-        const pointer = { x: event.clientX, y: event.clientY };
-        this.schedule(pointer, event.detail >= 2 ? SELECTION_MULTI_CLICK_INTERVAL_MS : 0);
-      };
-      const onKeyDown = (event) => {
-        if (event.key === "Escape" && this.flow.menu !== null) {
-          this.flow.dismiss();
-          if (event.composedPath().includes(mount)) {
-            event.preventDefault();
-            event.stopPropagation();
-          }
-          return;
-        }
-        if (!insideMenu(event)) this.cancelPending();
-      };
-      const dismiss = () => {
-        this.cancelPending();
-        this.gestureActive = false;
-        this.flow.dismiss();
-      };
-      const onFocusOut = (event) => {
-        const next = event.relatedTarget;
-        if (next instanceof Node && (mount.contains(next) || this.menuElement?.contains(next)))
-          return;
-        dismiss();
-      };
-      const onScroll = (event) => {
-        const target = event.target;
-        if (target === document2 || target instanceof Node && target.contains(mount)) dismiss();
-      };
-      mount.addEventListener("pointerdown", onMountPointerDown);
-      mount.addEventListener("wheel", dismiss, { passive: true });
-      document2.addEventListener("scroll", onScroll, true);
-      document2.addEventListener("pointerdown", onDocumentPointerDown, true);
-      document2.addEventListener("keydown", onKeyDown, true);
-      mount.addEventListener("focusout", onFocusOut);
-      view.addEventListener("mouseup", onMouseUp);
-      view.addEventListener("pointercancel", dismiss);
-      view.addEventListener("blur", dismiss);
-      view.addEventListener("resize", dismiss);
-      return () => {
-        mount.removeEventListener("pointerdown", onMountPointerDown);
-        mount.removeEventListener("wheel", dismiss);
-        document2.removeEventListener("scroll", onScroll, true);
-        document2.removeEventListener("pointerdown", onDocumentPointerDown, true);
-        document2.removeEventListener("keydown", onKeyDown, true);
-        mount.removeEventListener("focusout", onFocusOut);
-        view.removeEventListener("mouseup", onMouseUp);
-        view.removeEventListener("pointercancel", dismiss);
-        view.removeEventListener("blur", dismiss);
-        view.removeEventListener("resize", dismiss);
-        this.cancelPending();
-        this.gestureActive = false;
-        this.flow.supersede();
-      };
-    }
-    get pending() {
-      return this.timer !== null || this.frame !== null;
-    }
-    // Timers and viewport reads use the global `window`, while install() binds
-    // listeners through the mount's own document and view. Surfaces render
-    // in-document, so both are one realm; a cross-document surface would need
-    // these moved to the mount's defaultView.
-    schedule(pointer, delay) {
-      this.cancelPending();
-      this.timer = window.setTimeout(() => {
-        this.timer = null;
-        this.frame = window.requestAnimationFrame(() => {
-          this.frame = null;
-          this.showSelectionPopup(pointer);
-        });
-      }, delay);
-    }
-    showSelectionPopup(pointer) {
-      const surface = this.deps.getSurface();
-      const mount = this.deps.getMount();
-      if (surface === null || mount === null) {
-        this.flow.supersede();
-        return;
-      }
-      const hasSelection = surface.hasSelection();
-      const selectionText = hasSelection ? surface.getSelection() : null;
-      this.chatTarget?.refresh();
-      this.flow.openSelectionPopup({
-        selectionText,
-        chatSelection: this.readChatSelection(surface, selectionText),
-        position: resolveSelectionActionPosition({
-          bounds: mount.getBoundingClientRect(),
-          selectionRect: hasSelection ? surface.getSelectionEndClientRect() : null,
-          pointer,
-          viewport: { width: window.innerWidth, height: window.innerHeight }
-        })
-      });
-    }
-    readChatSelection(surface, selectionText) {
-      const chat = this.deps.chat;
-      if (!chat || selectionText === null) return null;
-      return buildTerminalChatSelection({
-        terminalId: chat.terminalId,
-        terminalLabel: chat.terminalLabel(),
-        text: selectionText,
-        position: surface.getSelectionPosition()
-      });
-    }
-    cancelPending() {
-      if (this.timer !== null) window.clearTimeout(this.timer);
-      if (this.frame !== null) window.cancelAnimationFrame(this.frame);
-      this.timer = this.frame = null;
-    }
-  };
-  async function copyText(text, surface) {
-    let failure = new Error("Clipboard writes are unavailable in this browser.");
-    const clipboard = navigator.clipboard;
-    if (typeof clipboard?.writeText === "function") {
-      try {
-        await clipboard.writeText(text);
-        return;
-      } catch (error) {
-        failure = error;
-      }
-    }
-    if (surface.hasSelection() && surface.getSelection() === text) {
-      surface.focus();
-      if (document.execCommand("copy")) return;
-    }
-    throw failure;
-  }
-  async function readClipboardText() {
-    const clipboard = navigator.clipboard;
-    if (typeof clipboard?.readText !== "function") {
-      throw new Error("Clipboard reads are unavailable in this browser.");
-    }
-    return clipboard.readText();
-  }
-  function useTerminalSelectionMenu(options) {
-    const { mountRef, surfaceRef, reportError, chat } = options;
-    const [menu, setMenu] = (0, import_react.useState)(null);
-    const [controller] = (0, import_react.useState)(
-      () => new TerminalSelectionMenuController(
-        {
-          getMount: () => mountRef.current,
-          getSurface: () => surfaceRef.current,
-          reportError,
-          chat
-        },
-        setMenu
-      )
-    );
-    (0, import_react.useEffect)(() => {
-      const mount = mountRef.current;
-      if (mount === null || typeof mount.addEventListener !== "function") return;
-      return controller.install(mount);
-    }, [controller, mountRef]);
-    return {
-      onContextMenu: controller.onContextMenu,
-      onSelectionChange: controller.onSelectionChange,
-      menu: menu === null ? null : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-        TerminalMenu,
-        {
-          menu,
-          elementRef: controller.setMenuElement,
-          onChoose: (action) => void controller.choose(menu.requestId, action)
-        },
-        menu.requestId
-      )
-    };
-  }
-  var MENU_STYLE = `
-[data-t3-terminal-menu] button{display:flex;width:100%;align-items:center;min-height:26px;padding:4px 10px;border:0;border-radius:4px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:default}
-[data-t3-terminal-menu] button:not(:disabled):hover,[data-t3-terminal-menu] button:not(:disabled):focus-visible{background:var(--t3-terminal-accent-surface,var(--accent,#e8eef7));outline:none}
-[data-t3-terminal-menu] button:disabled{color:var(--t3-terminal-muted,var(--muted-foreground,#667085));opacity:.64}
-`;
-  function TerminalMenu(props) {
-    const { menu, elementRef, onChoose } = props;
-    const ref = (0, import_react.useRef)(null);
-    (0, import_react.useLayoutEffect)(() => {
-      const element = ref.current;
-      if (element === null) return;
-      element.style.left = `${menu.position.x}px`;
-      element.style.top = `${menu.position.y}px`;
-      const rect = element.getBoundingClientRect();
-      const clamped = clampMenuToViewport({
-        point: menu.position,
-        size: rect,
-        viewport: { width: window.innerWidth, height: window.innerHeight }
-      });
-      element.style.left = `${clamped.x - (rect.left - menu.position.x)}px`;
-      element.style.top = `${clamped.y - (rect.top - menu.position.y)}px`;
-    }, [menu]);
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-      "div",
-      {
-        ref: (element) => {
-          ref.current = element;
-          elementRef(element);
-        },
-        role: "menu",
-        "aria-label": menu.kind === "selection" ? "Selection actions" : "Terminal actions",
-        "data-t3-terminal-menu": menu.kind,
-        onMouseDown: (event) => event.preventDefault(),
-        onContextMenu: (event) => event.preventDefault(),
-        style: {
-          position: "fixed",
-          left: menu.position.x,
-          top: menu.position.y,
-          zIndex: 1e4,
-          minWidth: 120,
-          padding: 4,
-          borderRadius: 6,
-          border: "1px solid var(--t3-terminal-border, var(--border, #dfe3e8))",
-          background: "var(--t3-terminal-canvas, var(--popover, var(--background, #fff)))",
-          color: "var(--t3-terminal-text, var(--foreground, #20252d))",
-          boxShadow: "0 4px 16px rgb(0 0 0 / 0.18)",
-          fontFamily: "var(--font-sans, system-ui, sans-serif)",
-          fontSize: 13,
-          lineHeight: "18px"
-        },
-        children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("style", { children: MENU_STYLE }),
-          menu.items.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            "button",
-            {
-              type: "button",
-              role: "menuitem",
-              disabled: item.disabled === true,
-              onClick: () => onChoose(item.id),
-              children: item.label
-            },
-            item.id
-          ))
-        ]
-      }
-    );
-  }
-
-  // assetLoader.ts
-  var ASSET_READ_RETRY_DELAYS_MS = [250, 500, 1e3, 2e3];
-  function isAssetReadLimitError(error) {
-    return error instanceof Error && /asset read limit reached/i.test(error.message);
-  }
-  var sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-  async function readAssetWithRetry(read, path3, signal, delays = ASSET_READ_RETRY_DELAYS_MS, wait = sleep) {
-    for (let attempt = 0; ; attempt++) {
-      try {
-        return await read(path3, signal);
-      } catch (error) {
-        const delay = delays[attempt];
-        if (delay === void 0 || signal.aborted || !isAssetReadLimitError(error)) throw error;
-        await wait(delay);
-        if (signal.aborted) throw error;
-      }
-    }
-  }
-  function sharedLoad(load) {
-    const loads = /* @__PURE__ */ new WeakMap();
-    return (key) => {
-      const existing = loads.get(key);
-      if (existing) return existing;
-      const promise = load(key).catch((error) => {
-        if (loads.get(key) === promise) loads.delete(key);
-        throw error;
-      });
-      loads.set(key, promise);
-      return promise;
-    };
-  }
-
-  // streamHub.ts
-  var BROKER_STREAM_CAP = 8;
-  var FEED_REPLAY_MAX_FRAMES = 64;
-  function isBrokerStreamRefusal(error) {
-    if (!(error instanceof Error)) return false;
-    return error.message === "Plugin stream limit reached" || error.message === "Environment stream limit reached" || error.message === "Worker stream limit reached";
-  }
-  var advanceReplay = (replay, frame, policy) => {
-    if (policy === void 0 || policy.isStateFrame(frame)) return [frame];
-    if (replay.length === 0) return [];
-    if (replay.length >= FEED_REPLAY_MAX_FRAMES) return [...replay.slice(1), frame];
-    return [...replay, frame];
-  };
-  var TerminalStreamHub = class {
-    #feeds = /* @__PURE__ */ new Map();
-    #panes = /* @__PURE__ */ new Map();
-    #paneWaiters = /* @__PURE__ */ new Set();
-    /** Evicted victims whose teardown is draining — resolves their replacements' admission. */
-    #drainResolvers = /* @__PURE__ */ new Map();
-    #now;
-    constructor(options = {}) {
-      this.#now = options.now ?? (() => Date.now());
-    }
-    /** Slots the installation budget leaves for pane output streams. */
-    paneStreamBudget() {
-      return Math.max(0, BROKER_STREAM_CAP - this.#feeds.size);
-    }
-    /** Whether a new mandatory pane slot can be granted right now. */
-    paneSlotAvailable() {
-      return this.#panes.size < this.paneStreamBudget() || this.#evictablePane() !== null;
-    }
-    /**
-     * Joins a shared fixed feed. The driver starts on the first listener and
-     * stops when the last one leaves; frames and status fan out to every
-     * listener, and a late joiner immediately hears the current status and
-     * then the replayed frames (per the feed's policy) so a placement that
-     * mounts while the feed is already live catches up instead of waiting
-     * for the next server event. Returns the detach function (a plain
-     * cleanup so React effects can hand it straight back).
-     */
-    acquireFixedFeed(key, listener, driver, replayPolicy) {
-      let feed = this.#feeds.get(key);
-      if (feed === void 0) {
-        const drains = [];
-        while (this.#panes.size + this.#feeds.size >= BROKER_STREAM_CAP) {
-          const victim = this.#evictablePane();
-          if (victim === null) break;
-          this.#panes.delete(victim.key);
-          drains.push(this.#beginDrain(victim.state));
-          victim.state.onEvicted();
-        }
-        feed = {
-          controller: new AbortController(),
-          driver,
-          listeners: /* @__PURE__ */ new Set(),
-          lastStatus: null,
-          replay: [],
-          // The generic policy is wrapped, not cast: isStateFrame must only
-          // ever see frames the driver emits through this typed call.
-          replayPolicy: replayPolicy === void 0 ? void 0 : { isStateFrame: (frame) => replayPolicy.isStateFrame(frame) }
+        const target = {
+          major: Number(targetMatch[1]),
+          minor: Number(targetMatch[2] || 0),
+          patch: Number(targetMatch[3] || 0)
         };
-        this.#feeds.set(key, feed);
-        const entry2 = feed;
-        if (drains.length > 0) {
-          void Promise.all(drains).then(() => this.#startDriver(key, entry2));
-        } else {
-          this.#startDriver(key, entry2);
+        const compared = version.major !== target.major ? version.major > target.major ? 1 : -1 : version.minor !== target.minor ? version.minor > target.minor ? 1 : -1 : version.patch !== target.patch ? version.patch > target.patch ? 1 : -1 : 0;
+        const operator = match[1] || "=";
+        switch (operator) {
+          case "^":
+            if (compared < 0) {
+              return false;
+            }
+            if (target.major > 0) {
+              return version.major === target.major;
+            }
+            if (target.minor > 0) {
+              return version.major === 0 && version.minor === target.minor;
+            }
+            return version.major === 0 && version.minor === 0 && version.patch === target.patch;
+          case ">=":
+            return compared >= 0;
+          case ">":
+            return compared > 0;
+          case "<=":
+            return compared <= 0;
+          case "<":
+            return compared < 0;
+          case "=":
+            return compared === 0;
+          default:
+            return false;
         }
-      }
-      const entry = feed;
-      const bound = listener;
-      const anchorEvicted = entry.replayPolicy !== void 0 && entry.replay.length > 0 && !entry.replayPolicy.isStateFrame(entry.replay[0]);
-      if (anchorEvicted && this.#feeds.get(key) === entry) this.#restartFeed(key, entry);
-      const replayFrames = entry.replay;
-      entry.listeners.add(bound);
-      if (entry.lastStatus !== null)
-        bound.onStatus(entry.lastStatus.status, entry.lastStatus.message);
-      for (const frame of replayFrames) bound.onFrame(frame);
-      return () => {
-        if (!entry.listeners.delete(bound)) return;
-        if (entry.listeners.size === 0 && this.#feeds.get(key) === entry) {
-          this.#feeds.delete(key);
-          entry.controller.abort();
-        }
-      };
-    }
-    /**
-     * Takes a pane slot. `null` means the budget is exhausted by mandatory
-     * slots — the caller shows a waiting state and retries via
-     * `onPaneSlotFree`. An optional (hidden-pane) lease can be preempted at
-     * any later acquisition; its `onEvicted` fires exactly once.
-     */
-    acquirePaneStream(key, options) {
-      const existing = this.#panes.get(key);
-      if (existing !== void 0) {
-        const wasMandatory = existing.mandatory;
-        existing.mandatory = options.mandatory;
-        existing.demotedAt = options.mandatory ? Number.POSITIVE_INFINITY : this.#now();
-        existing.onEvicted = options.onEvicted;
-        if (wasMandatory && !options.mandatory) this.#wakeWaiters();
-        return this.#lease(key, existing, Promise.resolve());
-      }
-      let evicted = null;
-      let victimState = null;
-      if (this.#panes.size >= this.paneStreamBudget()) {
-        if (!options.mandatory) return null;
-        const victim = this.#evictablePane();
-        if (victim === null) return null;
-        this.#panes.delete(victim.key);
-        victimState = victim.state;
-        evicted = victim.state.onEvicted;
-      }
-      const state2 = {
-        mandatory: options.mandatory,
-        demotedAt: options.mandatory ? Number.POSITIVE_INFINITY : this.#now(),
-        onEvicted: options.onEvicted,
-        draining: null
-      };
-      this.#panes.set(key, state2);
-      const admitted = victimState === null ? Promise.resolve() : this.#beginDrain(victimState);
-      evicted?.();
-      return this.#lease(key, state2, admitted);
-    }
-    /**
-     * One-shot notification that a pane slot freed (release or eviction) —
-     * waiters are dropped after firing, so a caller whose acquire fails again
-     * simply registers a fresh one.
-     */
-    onPaneSlotFree(listener) {
-      this.#paneWaiters.add(listener);
-      return () => {
-        this.#paneWaiters.delete(listener);
-      };
-    }
-    /**
-     * Runs the feed's driver against its current controller. The sink captures
-     * that controller, so a restart (or the last detach) renders the previous
-     * sink inert — an in-flight frame from the old subscription can no longer
-     * advance the new replay window.
-     */
-    #startDriver(key, feed) {
-      if (feed.controller.signal.aborted || this.#feeds.get(key) !== feed) return;
-      const controller = feed.controller;
-      const sink = {
-        frame: (frame) => {
-          if (controller.signal.aborted) return;
-          feed.replay = advanceReplay(feed.replay, frame, feed.replayPolicy);
-          for (const listener of feed.listeners) listener.onFrame(frame);
-        },
-        status: (status, message) => {
-          if (controller.signal.aborted) return;
-          feed.lastStatus = { status, message };
-          for (const listener of feed.listeners) listener.onStatus(status, message);
-        }
-      };
-      feed.driver(sink, controller.signal);
-    }
-    /**
-     * Tears the feed's subscription down and starts it again. The old
-     * subscription's broker-side teardown resolves on the microtask queue, so
-     * the replacement starts one microtask later — overlapping the two would
-     * transiently exceed the stream cap.
-     */
-    #restartFeed(key, feed) {
-      feed.controller.abort();
-      feed.controller = new AbortController();
-      feed.replay = [];
-      queueMicrotask(() => this.#startDriver(key, feed));
-    }
-    #lease(key, state2, admitted) {
-      const hub = this;
-      return {
-        admitted,
-        setPriority(mandatory) {
-          if (hub.#panes.get(key) !== state2) return;
-          const wasMandatory = state2.mandatory;
-          state2.mandatory = mandatory;
-          state2.demotedAt = mandatory ? Number.POSITIVE_INFINITY : hub.#now();
-          if (wasMandatory && !mandatory) hub.#wakeWaiters();
-        },
-        release() {
-          if (hub.#panes.get(key) !== state2) return;
-          hub.#panes.delete(key);
-          hub.#wakeWaiters();
-        },
-        streamSettled() {
-          const settle = hub.#drainResolvers.get(state2);
-          if (settle === void 0) return;
-          hub.#drainResolvers.delete(state2);
-          state2.draining = null;
-          settle();
-        }
-      };
-    }
-    /**
-     * Marks an evicted victim's teardown as draining and returns the promise
-     * its replacement's admission (or a preempting feed's driver start)
-     * waits on. The victim's caller resolves it with `streamSettled()` once
-     * its pump has fully exited; a state that was never evicted has none.
-     */
-    #beginDrain(state2) {
-      if (state2.draining !== null) return state2.draining;
-      let settle;
-      state2.draining = new Promise((resolve) => {
-        settle = resolve;
       });
-      this.#drainResolvers.set(state2, settle);
-      return state2.draining;
-    }
-    #evictablePane() {
-      let victim = null;
-      for (const [key, state2] of this.#panes) {
-        if (state2.mandatory) continue;
-        if (victim === null || state2.demotedAt < victim.state.demotedAt) victim = { key, state: state2 };
-      }
-      return victim;
-    }
-    #wakeWaiters() {
-      const waiters = [...this.#paneWaiters];
-      this.#paneWaiters.clear();
-      for (const waiter of waiters) waiter();
-    }
+    });
   };
-
-  // terminalTheme.ts
-  function parseTerminalColor(value, fallback) {
-    if (typeof document === "undefined") return fallback;
-    const canvas = document.createElement("canvas");
-    canvas.width = 1;
-    canvas.height = 1;
-    const context = canvas.getContext("2d", { willReadFrequently: true });
-    if (!context) return fallback;
-    context.clearRect(0, 0, 1, 1);
-    context.fillStyle = value;
-    context.fillRect(0, 0, 1, 1);
-    const [red, green, blue, alpha] = context.getImageData(0, 0, 1, 1).data;
-    if (alpha === 0) return fallback;
-    return {
-      r: red ?? fallback.r,
-      g: green ?? fallback.g,
-      b: blue ?? fallback.b
-    };
-  }
-  function normalizeComputedColor(value, fallback) {
-    const normalizedValue = value?.trim().toLowerCase();
-    if (!normalizedValue || normalizedValue === "transparent" || normalizedValue === "rgba(0, 0, 0, 0)" || normalizedValue === "rgba(0 0 0 / 0)") {
-      return fallback;
-    }
-    return value ?? fallback;
-  }
-  function readThemeColor(styles, variable, fallback) {
-    let value = styles.getPropertyValue(variable).trim();
-    for (let depth = 0; depth < 4; depth += 1) {
-      if (!value.startsWith("var(") || !value.endsWith(")")) break;
-      const inner = value.slice(4, -1);
-      let split = -1;
-      let nested = 0;
-      for (let i = 0; i < inner.length; i += 1) {
-        const char = inner[i];
-        if (char === "(") nested += 1;
-        else if (char === ")") nested -= 1;
-        else if (char === "," && nested === 0) {
-          split = i;
-          break;
-        }
-      }
-      const name = (split === -1 ? inner : inner.slice(0, split)).trim();
-      const next = styles.getPropertyValue(name).trim();
-      value = next !== "" ? next : split === -1 ? "" : inner.slice(split + 1).trim();
-      if (value === "") return fallback;
-    }
-    return normalizeComputedColor(value, fallback);
-  }
-  function terminalThemeFromApp(mountElement) {
-    if (typeof document === "undefined") {
-      return {
-        background: { r: 255, g: 255, b: 255 },
-        foreground: { r: 28, g: 33, b: 41 },
-        cursor: { r: 38, g: 56, b: 78 }
-      };
-    }
-    const themeStyles = getComputedStyle(mountElement ?? document.body);
-    const colorScheme = themeStyles.colorScheme;
-    const isDark = colorScheme === "dark" ? true : colorScheme === "light" ? false : document.documentElement.classList.contains("dark");
-    const fallbackBackground = isDark ? "rgb(14, 18, 24)" : "rgb(255, 255, 255)";
-    const fallbackForeground = isDark ? "rgb(237, 241, 247)" : "rgb(28, 33, 41)";
-    const bodyStyles = getComputedStyle(document.body);
-    const rootThemeStyles = getComputedStyle(document.documentElement);
-    const background = normalizeComputedColor(
-      themeStyles.backgroundColor,
-      normalizeComputedColor(bodyStyles.backgroundColor, fallbackBackground)
-    );
-    const foreground = normalizeComputedColor(
-      themeStyles.color,
-      normalizeComputedColor(bodyStyles.color, fallbackForeground)
-    );
-    const terminalBackground = readThemeColor(
-      themeStyles,
-      "--t3-terminal-background",
-      readThemeColor(
-        themeStyles,
-        "--terminal-background",
-        readThemeColor(rootThemeStyles, "--terminal-background", background)
-      )
-    );
-    const terminalForeground = readThemeColor(
-      themeStyles,
-      "--t3-terminal-foreground",
-      readThemeColor(
-        themeStyles,
-        "--terminal-foreground",
-        readThemeColor(rootThemeStyles, "--terminal-foreground", foreground)
-      )
-    );
-    const terminalCursor = readThemeColor(
-      themeStyles,
-      "--terminal-cursor",
-      isDark ? "rgb(180, 203, 255)" : "rgb(38, 56, 78)"
-    );
-    const terminalSelection = readThemeColor(
-      themeStyles,
-      "--t3-terminal-selection",
-      readThemeColor(
-        themeStyles,
-        "--terminal-selection-background",
-        isDark ? "rgba(180, 203, 255, 0.25)" : "rgba(37, 63, 99, 0.2)"
-      )
-    );
-    return {
-      background: parseTerminalColor(
-        terminalBackground,
-        isDark ? { r: 14, g: 18, b: 24 } : { r: 255, g: 255, b: 255 }
-      ),
-      foreground: parseTerminalColor(
-        terminalForeground,
-        isDark ? { r: 237, g: 241, b: 247 } : { r: 28, g: 33, b: 41 }
-      ),
-      cursor: parseTerminalColor(
-        terminalCursor,
-        isDark ? { r: 180, g: 203, b: 255 } : { r: 38, g: 56, b: 78 }
-      ),
-      selectionBackground: terminalSelection
-    };
-  }
-  function terminalFontFromVars(vars) {
-    if (vars === null) return {};
-    const family = vars["--t3-terminal-font-family"]?.trim();
-    const sizeMatch = /^\s*([0-9]*\.?[0-9]+)px\s*$/.exec(vars["--t3-terminal-font-size"] ?? "");
-    return {
-      family: family === void 0 || family === "" || family.startsWith("var(") ? void 0 : family,
-      size: sizeMatch === null ? void 0 : Number.parseFloat(sizeMatch[1] ?? "")
-    };
-  }
 
   // inputQueue.ts
   var TERMINAL_INPUT_SERIALIZED_BUDGET = 48 * 1024;
@@ -13331,10 +12396,10 @@ var __t3Client = (() => {
     }
   }
   async function registerPanelCommands(options) {
-    const api = bindApi(uiKeybindingsApi, options.client, options.context);
+    const api = bindApi(uiKeybindingsApi, options.client, options.context, "^1.0.0");
     const response = await api.invoke(
       "registerCommands",
-      { commands: TERMINAL_VIEW_COMMANDS },
+      { commands: options.commands ?? TERMINAL_VIEW_COMMANDS },
       options.signal
     );
     const release = () => {
@@ -13474,6 +12539,1078 @@ var __t3Client = (() => {
         if (!options.signal.aborted) options.apply(null);
       }
     })();
+  }
+
+  // surfaceKeys.ts
+  var TERMINAL_EDITING_INPUT = {
+    clear: "\f",
+    wordBackward: "\x1Bb",
+    wordForward: "\x1Bf",
+    lineStart: "",
+    lineEnd: "",
+    deleteToLineStart: ""
+  };
+  function isTerminalEditingCommand(commandId) {
+    return Object.hasOwn(TERMINAL_EDITING_INPUT, commandId);
+  }
+  var LOGICAL_DEFAULTS_RANGE = "^1.2.0";
+  function hostTakesLogicalDefaults(clientVersion, discovered) {
+    const selected = discovered.find((api) => api.id === UI_KEYBINDINGS && api.selected);
+    return clientVersion !== void 0 && selected !== void 0 && satisfiesSemverRange(clientVersion, LOGICAL_DEFAULTS_RANGE) && satisfiesSemverRange(selected.version, LOGICAL_DEFAULTS_RANGE);
+  }
+  async function negotiatedEditingCommands(host, context, signal, platform) {
+    let logicalDefaults = false;
+    try {
+      logicalDefaults = hostTakesLogicalDefaults(
+        host.keybindings?.version,
+        await host.discoverApis(context, signal)
+      );
+    } catch {
+    }
+    return terminalEditingCommands(platform, logicalDefaults);
+  }
+  function terminalEditingCommands(platform = typeof navigator === "undefined" ? "" : navigator.platform, logicalDefaults = true) {
+    const mac = isMacPlatform(platform);
+    const command = (id2, title, defaultKey) => ({
+      id: id2,
+      title,
+      scope: "surface",
+      // Native matches these on `event.key` alone, so a non-Latin layout's
+      // Cmd+л reaches the shell instead of clearing through physical KeyK.
+      ...defaultKey === null || !logicalDefaults ? {} : { defaultKey, defaultKeyLogicalOnly: true },
+      when: TERMINAL_FOCUS_WHEN
+    });
+    return [
+      command("clear", "Clear terminal screen", mac ? ["ctrl+l", "meta+k"] : "ctrl+l"),
+      command(
+        "wordBackward",
+        "Move cursor back one word",
+        mac ? "alt+arrowleft" : ["ctrl+arrowleft", "alt+arrowleft"]
+      ),
+      command(
+        "wordForward",
+        "Move cursor forward one word",
+        mac ? "alt+arrowright" : ["ctrl+arrowright", "alt+arrowright"]
+      ),
+      command("lineStart", "Move cursor to line start", mac ? "meta+arrowleft" : null),
+      command("lineEnd", "Move cursor to line end", mac ? "meta+arrowright" : null),
+      command("deleteToLineStart", "Delete to line start", mac ? "meta+backspace" : null)
+    ];
+  }
+  function normalizeEventKey(key) {
+    const normalized = key.toLowerCase();
+    if (normalized === "esc") return "escape";
+    return normalized;
+  }
+  function defaultTerminalEditingCommand(event, platform = typeof navigator === "undefined" ? "" : navigator.platform) {
+    if (event.type !== void 0 && event.type !== "keydown") return null;
+    const mac = isMacPlatform(platform);
+    const key = normalizeEventKey(event.key);
+    const { metaKey: meta, ctrlKey: ctrl, altKey: alt, shiftKey: shift } = event;
+    if (key === "arrowleft" || key === "arrowright") {
+      if (shift) return null;
+      const left = key === "arrowleft";
+      const word = left ? "wordBackward" : "wordForward";
+      if (mac) {
+        if (alt && !meta && !ctrl) return word;
+        if (meta && !alt && !ctrl) return left ? "lineStart" : "lineEnd";
+        return null;
+      }
+      if (ctrl && !meta && !alt) return word;
+      if (alt && !meta && !ctrl) return word;
+      return null;
+    }
+    if (key === "backspace") {
+      return mac && meta && !ctrl && !alt && !shift ? "deleteToLineStart" : null;
+    }
+    if (key === "l" && ctrl && !meta && !alt && !shift) return "clear";
+    if (mac && key === "k" && meta && !ctrl && !alt && !shift) return "clear";
+    return null;
+  }
+  function terminalEditingCommandForKey(event, keybindings, options, platform = typeof navigator === "undefined" ? "" : navigator.platform) {
+    if (event.type !== void 0 && event.type !== "keydown") return null;
+    if (keybindings !== void 0) {
+      const resolved = keybindings.resolveTerminalFocusKey(event);
+      if (resolved === null) return defaultTerminalEditingCommand(event, platform);
+      const prefix = `ext.${options.pluginId}.`;
+      const own = resolved.startsWith(prefix) ? resolved.slice(prefix.length) : null;
+      return own !== null && isTerminalEditingCommand(own) ? own : null;
+    }
+    const command = defaultTerminalEditingCommand(event, platform);
+    if (command === null) return null;
+    return options.binding === "pending" ? "hold" : command;
+  }
+  function terminalEditingBeforeKey(event, keybindings, options, send, platform = typeof navigator === "undefined" ? "" : navigator.platform) {
+    const action = terminalEditingCommandForKey(event, keybindings, options, platform);
+    if (action === null) return true;
+    event.preventDefault();
+    event.stopPropagation();
+    if (action !== "hold") send(TERMINAL_EDITING_INPUT[action]);
+    return false;
+  }
+
+  // selectionMenu.tsx
+  var import_react = __toESM(require_react(), 1);
+
+  // selectionMenuModel.ts
+  function terminalSelectionMenuItems(options) {
+    return [
+      ...options?.canAddToChat === false ? [] : [{ id: "add-to-chat", label: "Add to chat" }],
+      { id: "copy", label: "Copy" }
+    ];
+  }
+  function terminalContextMenuItems(options) {
+    const { hasSelection, canAddToChat = true } = options;
+    return [
+      ...terminalSelectionMenuItems({ canAddToChat }).map((item) => ({
+        ...item,
+        disabled: !hasSelection
+      })),
+      { id: "paste", label: "Paste" }
+    ];
+  }
+  var TERMINAL_CHAT_TEXT_MAX_CHARS = 1e4;
+  var TERMINAL_CHAT_LABEL_MAX_CHARS = 128;
+  function terminalSelectionLineRange(position) {
+    const lineStart = position.start.y + 1;
+    return { lineStart, lineEnd: Math.max(lineStart, position.end.y + 1) };
+  }
+  function buildTerminalChatSelection(input) {
+    const text = normalizeSelectionText(input.text);
+    if (input.position === null || text.length === 0) return null;
+    const label = input.terminalLabel.trim() || "Terminal";
+    return {
+      terminalId: input.terminalId,
+      terminalLabel: truncateUtf16(label, TERMINAL_CHAT_LABEL_MAX_CHARS),
+      ...terminalSelectionLineRange(input.position),
+      text
+    };
+  }
+  function terminalChatSelectionError(selection) {
+    if (selection.text.length > TERMINAL_CHAT_TEXT_MAX_CHARS) {
+      return "Selection is too long to add to chat (10,000 characters at most).";
+    }
+    if (selection.terminalLabel.length > TERMINAL_CHAT_LABEL_MAX_CHARS) {
+      return "Terminal name is too long to add to chat (128 characters at most).";
+    }
+    return null;
+  }
+  async function addTerminalSelectionToChat(options) {
+    try {
+      const tooLong = terminalChatSelectionError(options.selection);
+      if (tooLong !== null) throw new Error(tooLong);
+      await options.insert(options.selection);
+    } catch (error) {
+      if (!options.isCurrent()) return;
+      options.reportError(
+        error instanceof Error ? error.message : "Unable to add the terminal selection to chat"
+      );
+      options.focusTerminal();
+      return;
+    }
+    if (options.isCurrent()) options.clearSelection();
+  }
+  var TerminalChatTarget = class {
+    availableValue = false;
+    probing = false;
+    probe;
+    constructor(probe) {
+      this.probe = probe;
+    }
+    get available() {
+      return this.availableValue;
+    }
+    refresh() {
+      if (this.availableValue || this.probing) return;
+      this.probing = true;
+      void this.probe().then(
+        (available) => {
+          this.availableValue = available;
+        },
+        () => {
+        }
+      ).finally(() => {
+        this.probing = false;
+      });
+    }
+  };
+  function resolveSelectionActionPosition(options) {
+    const { bounds, selectionRect, pointer, viewport } = options;
+    const preferred = pointer ?? {
+      x: selectionRect?.right ?? bounds.left + bounds.width - 140,
+      y: selectionRect ? selectionRect.bottom + 4 : bounds.top + 12
+    };
+    return {
+      x: Math.max(
+        8,
+        Math.min(Math.max(bounds.left, preferred.x), bounds.left + bounds.width, viewport.width - 8)
+      ),
+      y: Math.max(
+        8,
+        Math.min(Math.max(bounds.top, preferred.y), bounds.top + bounds.height, viewport.height - 8)
+      )
+    };
+  }
+  function clampMenuToViewport(options) {
+    const { point, size, viewport, margin = 4 } = options;
+    return {
+      x: Math.min(Math.max(margin, point.x), Math.max(margin, viewport.width - size.width - margin)),
+      y: Math.min(
+        Math.max(margin, point.y),
+        Math.max(margin, viewport.height - size.height - margin)
+      )
+    };
+  }
+  var TerminalSelectionMenuFlow = class {
+    requestId = 0;
+    open = null;
+    onChange;
+    canAddToChat;
+    constructor(onChange = () => {
+    }, options) {
+      this.onChange = onChange;
+      this.canAddToChat = options?.canAddToChat ?? (() => false);
+    }
+    get menu() {
+      return this.open;
+    }
+    isCurrent(requestId) {
+      return requestId === this.requestId;
+    }
+    /** A right-click supersedes a pending or open popup and any in-flight action. */
+    openContextMenu(input) {
+      const selectionText = nonEmpty(input.selectionText);
+      const chatSelection = selectionText === null ? null : input.chatSelection ?? null;
+      return this.show({
+        requestId: ++this.requestId,
+        kind: "context",
+        items: withChatAvailability(
+          terminalContextMenuItems({
+            hasSelection: selectionText !== null,
+            canAddToChat: this.canAddToChat()
+          }),
+          chatSelection
+        ),
+        position: input.position,
+        clipboardText: selectionText,
+        chatSelection
+      });
+    }
+    /**
+     * Opens the post-selection popup. A current popup stays as is (a repeated
+     * selection-end must not reopen it); an empty selection opens nothing.
+     */
+    openSelectionPopup(input) {
+      if (this.ownsOpenMenu("selection")) return this.open;
+      const selectionText = nonEmpty(input.selectionText);
+      if (selectionText === null) {
+        this.supersede();
+        return null;
+      }
+      const chatSelection = input.chatSelection ?? null;
+      return this.show({
+        requestId: ++this.requestId,
+        kind: "selection",
+        items: withChatAvailability(
+          terminalSelectionMenuItems({ canAddToChat: this.canAddToChat() }),
+          chatSelection
+        ),
+        position: input.position,
+        clipboardText: selectionText,
+        chatSelection
+      });
+    }
+    /**
+     * Resolves a click on an item of the menu opened as `requestId`. A stale
+     * menu, a disabled item, or a missing selection resolves to null. The menu
+     * closes but the id stays current, so the action it starts can still report
+     * and return focus unless a newer flow supersedes it.
+     */
+    choose(requestId, action) {
+      const menu = this.open;
+      if (menu === null || menu.requestId !== requestId || !this.isCurrent(requestId)) return null;
+      const item = menu.items.find((candidate) => candidate.id === action);
+      this.close();
+      if (!item || item.disabled === true) return null;
+      if (action !== "paste" && menu.clipboardText === null) return null;
+      if (action === "add-to-chat" && menu.chatSelection === null) return null;
+      return {
+        action,
+        requestId,
+        clipboardText: menu.clipboardText,
+        chatSelection: menu.chatSelection
+      };
+    }
+    /**
+     * Passive cancellation (Escape, outside click, scroll, blur): closes the
+     * open menu. It only invalidates the id when the menu it closes is current,
+     * so it can never cancel a newer flow's in-flight action.
+     */
+    dismiss() {
+      if (this.open === null) return;
+      if (this.isCurrent(this.open.requestId)) this.requestId += 1;
+      this.close();
+    }
+    /** Active cancellation: invalidates every flow, open or in flight. */
+    supersede() {
+      this.requestId += 1;
+      this.close();
+    }
+    /**
+     * An emptied selection may only cancel a selection flow that is still
+     * current — a pending popup timer, or the open popup. A right-click menu
+     * keeps the text it captured.
+     */
+    shouldClearOnEmptySelection(popupPending) {
+      return popupPending || this.ownsOpenMenu("selection");
+    }
+    ownsOpenMenu(kind) {
+      return this.open?.kind === kind && this.isCurrent(this.open.requestId);
+    }
+    show(menu) {
+      this.open = menu;
+      this.onChange(menu);
+      return menu;
+    }
+    close() {
+      if (this.open === null) return;
+      this.open = null;
+      this.onChange(null);
+    }
+  };
+  function withChatAvailability(items, chatSelection) {
+    if (chatSelection !== null) return items;
+    return items.map((item) => item.id === "add-to-chat" ? { ...item, disabled: true } : item);
+  }
+  function truncateUtf16(text, max) {
+    if (text.length <= max) return text;
+    const cut = text.slice(0, max);
+    return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
+  }
+  function normalizeSelectionText(text) {
+    return text.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "");
+  }
+  function nonEmpty(text) {
+    if (text === null) return null;
+    return normalizeSelectionText(text).length > 0 ? text : null;
+  }
+
+  // selectionMenu.tsx
+  var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
+  var TerminalSelectionMenuController = class {
+    flow;
+    deps;
+    menuElement = null;
+    timer = null;
+    frame = null;
+    gestureActive = false;
+    chatTarget;
+    constructor(deps, onChange) {
+      this.deps = deps;
+      this.chatTarget = deps.chat ? new TerminalChatTarget(deps.chat.probe) : null;
+      this.flow = new TerminalSelectionMenuFlow(onChange, {
+        canAddToChat: () => this.chatTarget?.available === true
+      });
+    }
+    /** Ref callback for the rendered menu, used by the outside-click test. */
+    setMenuElement = (element) => {
+      this.menuElement = element;
+    };
+    /** Surface option: a right-click the running app did not claim through mouse reporting. */
+    onContextMenu = (event) => {
+      event.preventDefault();
+      this.cancelPending();
+      this.gestureActive = false;
+      const surface = this.deps.getSurface();
+      if (surface === null) return;
+      surface.focus();
+      this.chatTarget?.refresh();
+      const selectionText = surface.hasSelection() ? surface.getSelection() : null;
+      this.flow.openContextMenu({
+        selectionText,
+        chatSelection: this.readChatSelection(surface, selectionText),
+        position: { x: event.clientX, y: event.clientY }
+      });
+    };
+    /** Surface option: an emptied selection cancels a still-current popup flow. */
+    onSelectionChange = () => {
+      if (this.deps.getSurface()?.hasSelection()) return;
+      if (!this.flow.shouldClearOnEmptySelection(this.pending)) return;
+      this.cancelPending();
+      this.flow.supersede();
+    };
+    choose = async (requestId, action) => {
+      const choice = this.flow.choose(requestId, action);
+      const surface = this.deps.getSurface();
+      if (choice === null || surface === null) return;
+      const reportIfCurrent = (error, fallback) => {
+        if (this.flow.isCurrent(requestId)) {
+          this.deps.reportError(surface, error instanceof Error ? error.message : fallback);
+        }
+      };
+      if (choice.action === "add-to-chat" && choice.chatSelection !== null && this.deps.chat) {
+        await addTerminalSelectionToChat({
+          selection: choice.chatSelection,
+          insert: this.deps.chat.insert,
+          isCurrent: () => this.flow.isCurrent(requestId),
+          clearSelection: () => surface.clearSelection(),
+          focusTerminal: () => surface.focus(),
+          reportError: (message) => this.deps.reportError(surface, message)
+        });
+        return;
+      }
+      if (choice.action === "copy" && choice.clipboardText !== null) {
+        try {
+          await copyText(choice.clipboardText, surface);
+        } catch (error) {
+          reportIfCurrent(error, "Unable to copy terminal selection");
+        }
+      } else if (choice.action === "paste") {
+        try {
+          await surface.pasteFromClipboard(readClipboardText, () => this.flow.isCurrent(requestId));
+        } catch (error) {
+          reportIfCurrent(error, "Unable to read the clipboard");
+          return;
+        }
+      }
+      if (this.flow.isCurrent(requestId)) surface.focus();
+    };
+    install(mount) {
+      this.chatTarget?.refresh();
+      const document2 = mount.ownerDocument;
+      const view = document2.defaultView;
+      const insideMenu = (event) => this.menuElement !== null && event.composedPath().includes(this.menuElement);
+      const onMountPointerDown = (event) => {
+        if (!event.isPrimary) return;
+        this.cancelPending();
+        this.gestureActive = event.button === 0 && !event.defaultPrevented;
+      };
+      const onDocumentPointerDown = (event) => {
+        if (insideMenu(event)) return;
+        this.cancelPending();
+        this.flow.dismiss();
+      };
+      const onMouseUp = (event) => {
+        if (event.button !== 0 || !this.gestureActive) return;
+        this.gestureActive = false;
+        const pointer = { x: event.clientX, y: event.clientY };
+        this.schedule(pointer, event.detail >= 2 ? SELECTION_MULTI_CLICK_INTERVAL_MS : 0);
+      };
+      const onKeyDown = (event) => {
+        if (event.key === "Escape" && this.flow.menu !== null) {
+          this.flow.dismiss();
+          if (event.composedPath().includes(mount)) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+          return;
+        }
+        if (!insideMenu(event)) this.cancelPending();
+      };
+      const dismiss = () => {
+        this.cancelPending();
+        this.gestureActive = false;
+        this.flow.dismiss();
+      };
+      const onFocusOut = (event) => {
+        const next = event.relatedTarget;
+        if (next instanceof Node && (mount.contains(next) || this.menuElement?.contains(next)))
+          return;
+        dismiss();
+      };
+      const onScroll = (event) => {
+        const target = event.target;
+        if (target === document2 || target instanceof Node && target.contains(mount)) dismiss();
+      };
+      mount.addEventListener("pointerdown", onMountPointerDown);
+      mount.addEventListener("wheel", dismiss, { passive: true });
+      document2.addEventListener("scroll", onScroll, true);
+      document2.addEventListener("pointerdown", onDocumentPointerDown, true);
+      document2.addEventListener("keydown", onKeyDown, true);
+      mount.addEventListener("focusout", onFocusOut);
+      view.addEventListener("mouseup", onMouseUp);
+      view.addEventListener("pointercancel", dismiss);
+      view.addEventListener("blur", dismiss);
+      view.addEventListener("resize", dismiss);
+      return () => {
+        mount.removeEventListener("pointerdown", onMountPointerDown);
+        mount.removeEventListener("wheel", dismiss);
+        document2.removeEventListener("scroll", onScroll, true);
+        document2.removeEventListener("pointerdown", onDocumentPointerDown, true);
+        document2.removeEventListener("keydown", onKeyDown, true);
+        mount.removeEventListener("focusout", onFocusOut);
+        view.removeEventListener("mouseup", onMouseUp);
+        view.removeEventListener("pointercancel", dismiss);
+        view.removeEventListener("blur", dismiss);
+        view.removeEventListener("resize", dismiss);
+        this.cancelPending();
+        this.gestureActive = false;
+        this.flow.supersede();
+      };
+    }
+    get pending() {
+      return this.timer !== null || this.frame !== null;
+    }
+    // Timers and viewport reads use the global `window`, while install() binds
+    // listeners through the mount's own document and view. Surfaces render
+    // in-document, so both are one realm; a cross-document surface would need
+    // these moved to the mount's defaultView.
+    schedule(pointer, delay) {
+      this.cancelPending();
+      this.timer = window.setTimeout(() => {
+        this.timer = null;
+        this.frame = window.requestAnimationFrame(() => {
+          this.frame = null;
+          this.showSelectionPopup(pointer);
+        });
+      }, delay);
+    }
+    showSelectionPopup(pointer) {
+      const surface = this.deps.getSurface();
+      const mount = this.deps.getMount();
+      if (surface === null || mount === null) {
+        this.flow.supersede();
+        return;
+      }
+      const hasSelection = surface.hasSelection();
+      const selectionText = hasSelection ? surface.getSelection() : null;
+      this.chatTarget?.refresh();
+      this.flow.openSelectionPopup({
+        selectionText,
+        chatSelection: this.readChatSelection(surface, selectionText),
+        position: resolveSelectionActionPosition({
+          bounds: mount.getBoundingClientRect(),
+          selectionRect: hasSelection ? surface.getSelectionEndClientRect() : null,
+          pointer,
+          viewport: { width: window.innerWidth, height: window.innerHeight }
+        })
+      });
+    }
+    readChatSelection(surface, selectionText) {
+      const chat = this.deps.chat;
+      if (!chat || selectionText === null) return null;
+      return buildTerminalChatSelection({
+        terminalId: chat.terminalId,
+        terminalLabel: chat.terminalLabel(),
+        text: selectionText,
+        position: surface.getSelectionPosition()
+      });
+    }
+    cancelPending() {
+      if (this.timer !== null) window.clearTimeout(this.timer);
+      if (this.frame !== null) window.cancelAnimationFrame(this.frame);
+      this.timer = this.frame = null;
+    }
+  };
+  async function copyText(text, surface) {
+    let failure = new Error("Clipboard writes are unavailable in this browser.");
+    const clipboard = navigator.clipboard;
+    if (typeof clipboard?.writeText === "function") {
+      try {
+        await clipboard.writeText(text);
+        return;
+      } catch (error) {
+        failure = error;
+      }
+    }
+    if (surface.hasSelection() && surface.getSelection() === text) {
+      surface.focus();
+      if (document.execCommand("copy")) return;
+    }
+    throw failure;
+  }
+  async function readClipboardText() {
+    const clipboard = navigator.clipboard;
+    if (typeof clipboard?.readText !== "function") {
+      throw new Error("Clipboard reads are unavailable in this browser.");
+    }
+    return clipboard.readText();
+  }
+  function useTerminalSelectionMenu(options) {
+    const { mountRef, surfaceRef, reportError, chat } = options;
+    const [menu, setMenu] = (0, import_react.useState)(null);
+    const [controller] = (0, import_react.useState)(
+      () => new TerminalSelectionMenuController(
+        {
+          getMount: () => mountRef.current,
+          getSurface: () => surfaceRef.current,
+          reportError,
+          chat
+        },
+        setMenu
+      )
+    );
+    (0, import_react.useEffect)(() => {
+      const mount = mountRef.current;
+      if (mount === null || typeof mount.addEventListener !== "function") return;
+      return controller.install(mount);
+    }, [controller, mountRef]);
+    return {
+      onContextMenu: controller.onContextMenu,
+      onSelectionChange: controller.onSelectionChange,
+      menu: menu === null ? null : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        TerminalMenu,
+        {
+          menu,
+          elementRef: controller.setMenuElement,
+          onChoose: (action) => void controller.choose(menu.requestId, action)
+        },
+        menu.requestId
+      )
+    };
+  }
+  var MENU_STYLE = `
+[data-t3-terminal-menu] button{display:flex;width:100%;align-items:center;min-height:26px;padding:4px 10px;border:0;border-radius:4px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:default}
+[data-t3-terminal-menu] button:not(:disabled):hover,[data-t3-terminal-menu] button:not(:disabled):focus-visible{background:var(--t3-terminal-accent-surface,var(--accent,#e8eef7));outline:none}
+[data-t3-terminal-menu] button:disabled{color:var(--t3-terminal-muted,var(--muted-foreground,#667085));opacity:.64}
+`;
+  function TerminalMenu(props) {
+    const { menu, elementRef, onChoose } = props;
+    const ref = (0, import_react.useRef)(null);
+    (0, import_react.useLayoutEffect)(() => {
+      const element = ref.current;
+      if (element === null) return;
+      element.style.left = `${menu.position.x}px`;
+      element.style.top = `${menu.position.y}px`;
+      const rect = element.getBoundingClientRect();
+      const clamped = clampMenuToViewport({
+        point: menu.position,
+        size: rect,
+        viewport: { width: window.innerWidth, height: window.innerHeight }
+      });
+      element.style.left = `${clamped.x - (rect.left - menu.position.x)}px`;
+      element.style.top = `${clamped.y - (rect.top - menu.position.y)}px`;
+    }, [menu]);
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+      "div",
+      {
+        ref: (element) => {
+          ref.current = element;
+          elementRef(element);
+        },
+        role: "menu",
+        "aria-label": menu.kind === "selection" ? "Selection actions" : "Terminal actions",
+        "data-t3-terminal-menu": menu.kind,
+        onMouseDown: (event) => event.preventDefault(),
+        onContextMenu: (event) => event.preventDefault(),
+        style: {
+          position: "fixed",
+          left: menu.position.x,
+          top: menu.position.y,
+          zIndex: 1e4,
+          minWidth: 120,
+          padding: 4,
+          borderRadius: 6,
+          border: "1px solid var(--t3-terminal-border, var(--border, #dfe3e8))",
+          background: "var(--t3-terminal-canvas, var(--popover, var(--background, #fff)))",
+          color: "var(--t3-terminal-text, var(--foreground, #20252d))",
+          boxShadow: "0 4px 16px rgb(0 0 0 / 0.18)",
+          fontFamily: "var(--font-sans, system-ui, sans-serif)",
+          fontSize: 13,
+          lineHeight: "18px"
+        },
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("style", { children: MENU_STYLE }),
+          menu.items.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "button",
+            {
+              type: "button",
+              role: "menuitem",
+              disabled: item.disabled === true,
+              onClick: () => onChoose(item.id),
+              children: item.label
+            },
+            item.id
+          ))
+        ]
+      }
+    );
+  }
+
+  // assetLoader.ts
+  var ASSET_READ_RETRY_DELAYS_MS = [250, 500, 1e3, 2e3];
+  function isAssetReadLimitError(error) {
+    return error instanceof Error && /asset read limit reached/i.test(error.message);
+  }
+  var sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  async function readAssetWithRetry(read, path3, signal, delays = ASSET_READ_RETRY_DELAYS_MS, wait = sleep) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await read(path3, signal);
+      } catch (error) {
+        const delay = delays[attempt];
+        if (delay === void 0 || signal.aborted || !isAssetReadLimitError(error)) throw error;
+        await wait(delay);
+        if (signal.aborted) throw error;
+      }
+    }
+  }
+  function sharedLoad(load) {
+    const loads = /* @__PURE__ */ new WeakMap();
+    return (key) => {
+      const existing = loads.get(key);
+      if (existing) return existing;
+      const promise = load(key).catch((error) => {
+        if (loads.get(key) === promise) loads.delete(key);
+        throw error;
+      });
+      loads.set(key, promise);
+      return promise;
+    };
+  }
+
+  // streamHub.ts
+  var BROKER_STREAM_CAP = 8;
+  var FEED_REPLAY_MAX_FRAMES = 64;
+  function isBrokerStreamRefusal(error) {
+    if (!(error instanceof Error)) return false;
+    return error.message === "Plugin stream limit reached" || error.message === "Environment stream limit reached" || error.message === "Worker stream limit reached";
+  }
+  var advanceReplay = (replay, frame, policy) => {
+    if (policy === void 0 || policy.isStateFrame(frame)) return [frame];
+    if (replay.length === 0) return [];
+    if (replay.length >= FEED_REPLAY_MAX_FRAMES) return [...replay.slice(1), frame];
+    return [...replay, frame];
+  };
+  var TerminalStreamHub = class {
+    #feeds = /* @__PURE__ */ new Map();
+    #panes = /* @__PURE__ */ new Map();
+    #paneWaiters = /* @__PURE__ */ new Set();
+    /** Evicted victims whose teardown is draining — resolves their replacements' admission. */
+    #drainResolvers = /* @__PURE__ */ new Map();
+    #now;
+    constructor(options = {}) {
+      this.#now = options.now ?? (() => Date.now());
+    }
+    /** Slots the installation budget leaves for pane output streams. */
+    paneStreamBudget() {
+      return Math.max(0, BROKER_STREAM_CAP - this.#feeds.size);
+    }
+    /** Whether a new mandatory pane slot can be granted right now. */
+    paneSlotAvailable() {
+      return this.#panes.size < this.paneStreamBudget() || this.#evictablePane() !== null;
+    }
+    /**
+     * Joins a shared fixed feed. The driver starts on the first listener and
+     * stops when the last one leaves; frames and status fan out to every
+     * listener, and a late joiner immediately hears the current status and
+     * then the replayed frames (per the feed's policy) so a placement that
+     * mounts while the feed is already live catches up instead of waiting
+     * for the next server event. Returns the detach function (a plain
+     * cleanup so React effects can hand it straight back).
+     */
+    acquireFixedFeed(key, listener, driver, replayPolicy) {
+      let feed = this.#feeds.get(key);
+      if (feed === void 0) {
+        const drains = [];
+        while (this.#panes.size + this.#feeds.size >= BROKER_STREAM_CAP) {
+          const victim = this.#evictablePane();
+          if (victim === null) break;
+          this.#panes.delete(victim.key);
+          drains.push(this.#beginDrain(victim.state));
+          victim.state.onEvicted();
+        }
+        feed = {
+          controller: new AbortController(),
+          driver,
+          listeners: /* @__PURE__ */ new Set(),
+          lastStatus: null,
+          replay: [],
+          // The generic policy is wrapped, not cast: isStateFrame must only
+          // ever see frames the driver emits through this typed call.
+          replayPolicy: replayPolicy === void 0 ? void 0 : { isStateFrame: (frame) => replayPolicy.isStateFrame(frame) }
+        };
+        this.#feeds.set(key, feed);
+        const entry2 = feed;
+        if (drains.length > 0) {
+          void Promise.all(drains).then(() => this.#startDriver(key, entry2));
+        } else {
+          this.#startDriver(key, entry2);
+        }
+      }
+      const entry = feed;
+      const bound = listener;
+      const anchorEvicted = entry.replayPolicy !== void 0 && entry.replay.length > 0 && !entry.replayPolicy.isStateFrame(entry.replay[0]);
+      if (anchorEvicted && this.#feeds.get(key) === entry) this.#restartFeed(key, entry);
+      const replayFrames = entry.replay;
+      entry.listeners.add(bound);
+      if (entry.lastStatus !== null)
+        bound.onStatus(entry.lastStatus.status, entry.lastStatus.message);
+      for (const frame of replayFrames) bound.onFrame(frame);
+      return () => {
+        if (!entry.listeners.delete(bound)) return;
+        if (entry.listeners.size === 0 && this.#feeds.get(key) === entry) {
+          this.#feeds.delete(key);
+          entry.controller.abort();
+        }
+      };
+    }
+    /**
+     * Takes a pane slot. `null` means the budget is exhausted by mandatory
+     * slots — the caller shows a waiting state and retries via
+     * `onPaneSlotFree`. An optional (hidden-pane) lease can be preempted at
+     * any later acquisition; its `onEvicted` fires exactly once.
+     */
+    acquirePaneStream(key, options) {
+      const existing = this.#panes.get(key);
+      if (existing !== void 0) {
+        const wasMandatory = existing.mandatory;
+        existing.mandatory = options.mandatory;
+        existing.demotedAt = options.mandatory ? Number.POSITIVE_INFINITY : this.#now();
+        existing.onEvicted = options.onEvicted;
+        if (wasMandatory && !options.mandatory) this.#wakeWaiters();
+        return this.#lease(key, existing, Promise.resolve());
+      }
+      let evicted = null;
+      let victimState = null;
+      if (this.#panes.size >= this.paneStreamBudget()) {
+        if (!options.mandatory) return null;
+        const victim = this.#evictablePane();
+        if (victim === null) return null;
+        this.#panes.delete(victim.key);
+        victimState = victim.state;
+        evicted = victim.state.onEvicted;
+      }
+      const state2 = {
+        mandatory: options.mandatory,
+        demotedAt: options.mandatory ? Number.POSITIVE_INFINITY : this.#now(),
+        onEvicted: options.onEvicted,
+        draining: null
+      };
+      this.#panes.set(key, state2);
+      const admitted = victimState === null ? Promise.resolve() : this.#beginDrain(victimState);
+      evicted?.();
+      return this.#lease(key, state2, admitted);
+    }
+    /**
+     * One-shot notification that a pane slot freed (release or eviction) —
+     * waiters are dropped after firing, so a caller whose acquire fails again
+     * simply registers a fresh one.
+     */
+    onPaneSlotFree(listener) {
+      this.#paneWaiters.add(listener);
+      return () => {
+        this.#paneWaiters.delete(listener);
+      };
+    }
+    /**
+     * Runs the feed's driver against its current controller. The sink captures
+     * that controller, so a restart (or the last detach) renders the previous
+     * sink inert — an in-flight frame from the old subscription can no longer
+     * advance the new replay window.
+     */
+    #startDriver(key, feed) {
+      if (feed.controller.signal.aborted || this.#feeds.get(key) !== feed) return;
+      const controller = feed.controller;
+      const sink = {
+        frame: (frame) => {
+          if (controller.signal.aborted) return;
+          feed.replay = advanceReplay(feed.replay, frame, feed.replayPolicy);
+          for (const listener of feed.listeners) listener.onFrame(frame);
+        },
+        status: (status, message) => {
+          if (controller.signal.aborted) return;
+          feed.lastStatus = { status, message };
+          for (const listener of feed.listeners) listener.onStatus(status, message);
+        }
+      };
+      feed.driver(sink, controller.signal);
+    }
+    /**
+     * Tears the feed's subscription down and starts it again. The old
+     * subscription's broker-side teardown resolves on the microtask queue, so
+     * the replacement starts one microtask later — overlapping the two would
+     * transiently exceed the stream cap.
+     */
+    #restartFeed(key, feed) {
+      feed.controller.abort();
+      feed.controller = new AbortController();
+      feed.replay = [];
+      queueMicrotask(() => this.#startDriver(key, feed));
+    }
+    #lease(key, state2, admitted) {
+      const hub = this;
+      return {
+        admitted,
+        setPriority(mandatory) {
+          if (hub.#panes.get(key) !== state2) return;
+          const wasMandatory = state2.mandatory;
+          state2.mandatory = mandatory;
+          state2.demotedAt = mandatory ? Number.POSITIVE_INFINITY : hub.#now();
+          if (wasMandatory && !mandatory) hub.#wakeWaiters();
+        },
+        release() {
+          if (hub.#panes.get(key) !== state2) return;
+          hub.#panes.delete(key);
+          hub.#wakeWaiters();
+        },
+        streamSettled() {
+          const settle = hub.#drainResolvers.get(state2);
+          if (settle === void 0) return;
+          hub.#drainResolvers.delete(state2);
+          state2.draining = null;
+          settle();
+        }
+      };
+    }
+    /**
+     * Marks an evicted victim's teardown as draining and returns the promise
+     * its replacement's admission (or a preempting feed's driver start)
+     * waits on. The victim's caller resolves it with `streamSettled()` once
+     * its pump has fully exited; a state that was never evicted has none.
+     */
+    #beginDrain(state2) {
+      if (state2.draining !== null) return state2.draining;
+      let settle;
+      state2.draining = new Promise((resolve) => {
+        settle = resolve;
+      });
+      this.#drainResolvers.set(state2, settle);
+      return state2.draining;
+    }
+    #evictablePane() {
+      let victim = null;
+      for (const [key, state2] of this.#panes) {
+        if (state2.mandatory) continue;
+        if (victim === null || state2.demotedAt < victim.state.demotedAt) victim = { key, state: state2 };
+      }
+      return victim;
+    }
+    #wakeWaiters() {
+      const waiters = [...this.#paneWaiters];
+      this.#paneWaiters.clear();
+      for (const waiter of waiters) waiter();
+    }
+  };
+
+  // terminalTheme.ts
+  function parseTerminalColor(value, fallback) {
+    if (typeof document === "undefined") return fallback;
+    const canvas = document.createElement("canvas");
+    canvas.width = 1;
+    canvas.height = 1;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return fallback;
+    context.clearRect(0, 0, 1, 1);
+    context.fillStyle = value;
+    context.fillRect(0, 0, 1, 1);
+    const [red, green, blue, alpha] = context.getImageData(0, 0, 1, 1).data;
+    if (alpha === 0) return fallback;
+    return {
+      r: red ?? fallback.r,
+      g: green ?? fallback.g,
+      b: blue ?? fallback.b
+    };
+  }
+  function normalizeComputedColor(value, fallback) {
+    const normalizedValue = value?.trim().toLowerCase();
+    if (!normalizedValue || normalizedValue === "transparent" || normalizedValue === "rgba(0, 0, 0, 0)" || normalizedValue === "rgba(0 0 0 / 0)") {
+      return fallback;
+    }
+    return value ?? fallback;
+  }
+  function readThemeColor(styles, variable, fallback) {
+    let value = styles.getPropertyValue(variable).trim();
+    for (let depth = 0; depth < 4; depth += 1) {
+      if (!value.startsWith("var(") || !value.endsWith(")")) break;
+      const inner = value.slice(4, -1);
+      let split = -1;
+      let nested = 0;
+      for (let i = 0; i < inner.length; i += 1) {
+        const char = inner[i];
+        if (char === "(") nested += 1;
+        else if (char === ")") nested -= 1;
+        else if (char === "," && nested === 0) {
+          split = i;
+          break;
+        }
+      }
+      const name = (split === -1 ? inner : inner.slice(0, split)).trim();
+      const next = styles.getPropertyValue(name).trim();
+      value = next !== "" ? next : split === -1 ? "" : inner.slice(split + 1).trim();
+      if (value === "") return fallback;
+    }
+    return normalizeComputedColor(value, fallback);
+  }
+  function terminalThemeFromApp(mountElement) {
+    if (typeof document === "undefined") {
+      return {
+        background: { r: 255, g: 255, b: 255 },
+        foreground: { r: 28, g: 33, b: 41 },
+        cursor: { r: 38, g: 56, b: 78 }
+      };
+    }
+    const themeStyles = getComputedStyle(mountElement ?? document.body);
+    const colorScheme = themeStyles.colorScheme;
+    const isDark = colorScheme === "dark" ? true : colorScheme === "light" ? false : document.documentElement.classList.contains("dark");
+    const fallbackBackground = isDark ? "rgb(14, 18, 24)" : "rgb(255, 255, 255)";
+    const fallbackForeground = isDark ? "rgb(237, 241, 247)" : "rgb(28, 33, 41)";
+    const bodyStyles = getComputedStyle(document.body);
+    const rootThemeStyles = getComputedStyle(document.documentElement);
+    const background = normalizeComputedColor(
+      themeStyles.backgroundColor,
+      normalizeComputedColor(bodyStyles.backgroundColor, fallbackBackground)
+    );
+    const foreground = normalizeComputedColor(
+      themeStyles.color,
+      normalizeComputedColor(bodyStyles.color, fallbackForeground)
+    );
+    const terminalBackground = readThemeColor(
+      themeStyles,
+      "--t3-terminal-background",
+      readThemeColor(
+        themeStyles,
+        "--terminal-background",
+        readThemeColor(rootThemeStyles, "--terminal-background", background)
+      )
+    );
+    const terminalForeground = readThemeColor(
+      themeStyles,
+      "--t3-terminal-foreground",
+      readThemeColor(
+        themeStyles,
+        "--terminal-foreground",
+        readThemeColor(rootThemeStyles, "--terminal-foreground", foreground)
+      )
+    );
+    const terminalCursor = readThemeColor(
+      themeStyles,
+      "--terminal-cursor",
+      isDark ? "rgb(180, 203, 255)" : "rgb(38, 56, 78)"
+    );
+    const terminalSelection = readThemeColor(
+      themeStyles,
+      "--t3-terminal-selection",
+      readThemeColor(
+        themeStyles,
+        "--terminal-selection-background",
+        isDark ? "rgba(180, 203, 255, 0.25)" : "rgba(37, 63, 99, 0.2)"
+      )
+    );
+    return {
+      background: parseTerminalColor(
+        terminalBackground,
+        isDark ? { r: 14, g: 18, b: 24 } : { r: 255, g: 255, b: 255 }
+      ),
+      foreground: parseTerminalColor(
+        terminalForeground,
+        isDark ? { r: 237, g: 241, b: 247 } : { r: 28, g: 33, b: 41 }
+      ),
+      cursor: parseTerminalColor(
+        terminalCursor,
+        isDark ? { r: 180, g: 203, b: 255 } : { r: 38, g: 56, b: 78 }
+      ),
+      selectionBackground: terminalSelection
+    };
+  }
+  function terminalFontFromVars(vars) {
+    if (vars === null) return {};
+    const family = vars["--t3-terminal-font-family"]?.trim();
+    const sizeMatch = /^\s*([0-9]*\.?[0-9]+)px\s*$/.exec(vars["--t3-terminal-font-size"] ?? "");
+    return {
+      family: family === void 0 || family === "" || family.startsWith("var(") ? void 0 : family,
+      size: sizeMatch === null ? void 0 : Number.parseFloat(sizeMatch[1] ?? "")
+    };
   }
 
   // vtAttachment.ts
@@ -14283,6 +14420,61 @@ var __t3Client = (() => {
       };
     }, [host, session, panel, visible, actions]);
   }
+  function focusedVtTerminalId() {
+    const active = document.activeElement;
+    const pane = active?.closest("[data-t3-terminal-output]")?.closest("[data-t3-terminal-pane]");
+    return pane instanceof HTMLElement ? pane.dataset.t3TerminalPane ?? null : null;
+  }
+  function useEditingCommands(host, session, panel, active) {
+    const binding = (0, import_react2.useRef)("pending");
+    (0, import_react2.useEffect)(() => {
+      if (!active) return;
+      binding.current = "pending";
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      let release = null;
+      void negotiatedEditingCommands(host, session.context, signal).then(
+        (commands) => registerPanelCommands({
+          client: host,
+          context: session.context,
+          signal,
+          commands,
+          bindCommands: (token, handler) => session.bindCommands(token, handler),
+          onCommand: (commandId) => {
+            if (!isTerminalEditingCommand(commandId)) return;
+            const terminalId = focusedVtTerminalId() ?? panel.snapshot.activeTerminalId;
+            if (terminalId !== null) panel.sendInput(terminalId, TERMINAL_EDITING_INPUT[commandId]);
+          }
+        })
+      ).then(
+        (registration) => {
+          if (registration === null) return;
+          if (signal.aborted) registration.release();
+          else {
+            release = registration.release;
+            binding.current = "bound";
+          }
+        },
+        () => {
+          if (!signal.aborted) binding.current = "unavailable";
+        }
+      );
+      return () => {
+        controller.abort();
+        binding.current = "pending";
+        release?.();
+      };
+    }, [host, session, panel, active]);
+    return binding;
+  }
+  function handleBeforeKey(event, panel, terminalId, keybindings, binding) {
+    return terminalEditingBeforeKey(
+      event,
+      keybindings,
+      { pluginId: manifestId, binding },
+      (data) => panel.sendInput(terminalId, data)
+    );
+  }
   function writeSystemMessage(surface, message) {
     surface.write(`\r
 [terminal] ${message}\r
@@ -14301,27 +14493,6 @@ var __t3Client = (() => {
       insert: (selection) => composer.invoke("insertTerminalContext", selection, session.signal)
     };
   }
-  function handleBeforeKey(event, panel, terminalId) {
-    const navigationData = terminalNavigationShortcutData(event);
-    if (navigationData !== null) {
-      event.preventDefault();
-      event.stopPropagation();
-      panel.sendInput(terminalId, navigationData);
-      return false;
-    }
-    const deleteData = terminalDeleteShortcutData(event);
-    if (deleteData !== null) {
-      event.preventDefault();
-      event.stopPropagation();
-      panel.sendInput(terminalId, deleteData);
-      return false;
-    }
-    if (!isTerminalClearShortcut(event)) return true;
-    event.preventDefault();
-    event.stopPropagation();
-    panel.sendInput(terminalId, "\f");
-    return false;
-  }
   function TerminalPane(props) {
     const {
       host,
@@ -14334,7 +14505,8 @@ var __t3Client = (() => {
       visible,
       assets,
       themeVars,
-      appearanceVars
+      appearanceVars,
+      editingBinding
     } = props;
     const [, bump] = (0, import_react2.useReducer)((value) => value + 1, 0);
     const [attachment] = (0, import_react2.useState)(
@@ -14482,7 +14654,7 @@ var __t3Client = (() => {
           onResize: (cols, rows) => panel.resize(terminalId, cols, rows),
           onSelectionChange: selectionMenu.onSelectionChange,
           onContextMenu: selectionMenu.onContextMenu,
-          beforeKey: (event) => handleBeforeKey(event, panel, terminalId),
+          beforeKey: (event) => handleBeforeKey(event, panel, terminalId, host.keybindings, editingBinding.current),
           onLinkActivate: (text) => {
             if (surface === null) return;
             const paneSurface = surface;
@@ -14831,6 +15003,12 @@ var __t3Client = (() => {
     const themeVars = useThemeVars(host, session, visible);
     const appearanceVars = useTerminalAppearanceVars(host, session, visible);
     const assets = useGhosttyAssets(host, session);
+    const editingBinding = useEditingCommands(
+      host,
+      session,
+      panel,
+      visible && assets.kind === "ready"
+    );
     const snapshot = panel.snapshot;
     const activeId = snapshot.activeTerminalId;
     const activeTab = snapshot.tabs.find((tab) => tab.terminalId === activeId) ?? null;
@@ -15214,7 +15392,8 @@ var __t3Client = (() => {
                         visible,
                         assets,
                         themeVars,
-                        appearanceVars
+                        appearanceVars,
+                        editingBinding
                       }
                     )
                   },

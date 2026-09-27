@@ -864,7 +864,13 @@ async function mountKeyView({ keybindings, invokeKeymap }) {
     });
     if (
       !event.stopped &&
-      bundle.handleBeforeKey(event, { sendInput: (_id, data) => pty.push(data) }, "keypane") &&
+      bundle.handleBeforeKey(
+        event,
+        { sendInput: (_id, data) => pty.push(data) },
+        "keypane",
+        undefined,
+        "bound",
+      ) &&
       encoded !== undefined
     ) {
       pty.push(encoded);
