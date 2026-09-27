@@ -398,6 +398,91 @@ it("closes a secret value only where JSON validly continues", () => {
     }
 });
 
+it("validates what follows a secret value through its enclosing containers", () => {
+  // Invalid wherever the enclosing container's grammar is broken.
+  for (const fragment of [
+    '{"wrapper":{"password":"first"},"UNIQUESECRET"}',
+    '{"wrapper":{"password":"first"},1UNIQUESECRET}',
+    '[{"password":"first"},trueUNIQUESECRET]',
+    '[{"password":"first"},nullUNIQUESECRET]',
+    '[{"password":"first"},1UNIQUESECRET]',
+    '[{"password":"first"},{"UNIQUESECRET"}]',
+    '{"wrapper":{"password":"first"},[["UNIQUESECRET"]]}',
+  ])
+    for (const depth of [0, 1, 2, 3])
+      expect(
+        redactLogSecrets(nest(fragment, depth), { lineStart: true }),
+        `${fragment} ${depth}`,
+      ).not.toContain("UNIQUESECRET");
+  // Valid JSON keeps its structure: siblings of any shape, and member names
+  // of any length or escaping.
+  const valid: [unknown, unknown][] = [];
+  for (const sibling of [
+    0,
+    -1,
+    1.3,
+    1e21,
+    null,
+    true,
+    false,
+    "kept",
+    {},
+    [],
+    { n: [false, { a: "kept" }] },
+  ]) {
+    const wraps = [
+      (x: unknown) => [x, sibling],
+      (x: unknown) => ({ x, next: sibling }),
+      (x: unknown) => [[x], sibling],
+      (x: unknown) => ({ x: { inner: x }, next: sibling }),
+    ];
+    for (const wrap of wraps)
+      valid.push([wrap({ password: "UNIQUESECRET" }), wrap({ password: R })]);
+  }
+  for (const length of [128, 130, 131, 300]) {
+    const name = "x".repeat(length);
+    valid.push([
+      { password: "UNIQUESECRET", [name]: 1 },
+      { password: R, [name]: 1 },
+    ]);
+  }
+  const cases = valid.map(([input, output]) => [JSON.stringify(input), JSON.stringify(output)]);
+  const escapedName = String.raw`a`.repeat(24);
+  cases.push([
+    `{"password":"UNIQUESECRET","${escapedName}":1}`,
+    `{"password":"${R}","${escapedName}":1}`,
+  ]);
+  for (const [input, output] of cases)
+    for (const depth of [0, 1, 2, 3]) {
+      const redacted = unnest(redactLogSecrets(nest(input!, depth), { lineStart: true }), depth);
+      expect(JSON.parse(redacted), `${input} ${depth}`).toEqual(JSON.parse(output!));
+    }
+});
+
+it("opens a key at a BEGIN spelled with escapes, and closes it only at its own END", () => {
+  const unicode = String.raw`{"content":"-----BEGIN PRIVATE KEY-----"}`;
+  const literal = JSON.stringify({ content: "-----BEGIN PRIVATE KEY-----" });
+  const mismatched = "-----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END EC PRIVATE KEY-----";
+  for (const lead of [unicode, literal, mismatched])
+    for (const depth of [0, 1, 2, 3]) {
+      const input = nest(`${lead}\n[progress]\nUNIQUESECRET\n`, depth);
+      expect(redactLogSecrets(input, { lineStart: true }), `${lead} ${depth}`).not.toContain(
+        "UNIQUESECRET",
+      );
+    }
+  // A matching END closes it; what follows is kept.
+  const closed = `${mismatched}\nsecret\n-----END RSA PRIVATE KEY-----\nafter\n`;
+  expect(redactLogSecrets(closed, { lineStart: true })).toBe(
+    `${R}\n${R}\n${R}\n${R}\n${R}\nafter\n`,
+  );
+  expect(
+    redactLogSecrets("AAAA\n-----END EC PRIVATE KEY-----\nstill\n", {
+      lineStart: true,
+      key: { inside: "RSA" },
+    }),
+  ).toBe(`${R}\n${R}\n${R}\n`);
+});
+
 it("redacts passphrases, sessions, and quoted header values", () => {
   for (const name of [
     "passphrase",
@@ -435,10 +520,10 @@ it("redacts a key with a malformed body line through its END, at every depth", (
 
 it("redacts from the start through END a text that begins inside a key", () => {
   const text = "AAAA BBBB\n\nCCCC\n-----END PRIVATE KEY-----\nafter\n";
-  expect(redactLogSecrets(text, { lineStart: true, key: "inside" })).toBe(
+  expect(redactLogSecrets(text, { lineStart: true, key: { inside: "" } })).toBe(
     `${R}\n\n${R}\n${R}\nafter\n`,
   );
-  expect(redactLogSecrets("AAAA\nnot key.\n", { lineStart: true, key: "inside" })).toBe(
+  expect(redactLogSecrets("AAAA\nnot key.\n", { lineStart: true, key: { inside: "" } })).toBe(
     `${R}\n${R}\n`,
   );
   // Unknown: leading lines of possible key material, then the first other line.
@@ -488,7 +573,7 @@ it("bounds scanning work linearly on 1 MiB adversarial inputs", { timeout: 60_00
     const input = shape(size).slice(0, size);
     for (const start of [
       {},
-      { lineStart: true, key: "inside" as const },
+      { lineStart: true, key: { inside: "" } },
       { lineStart: true, key: "unknown" as const },
     ]) {
       const { visits } = measureLogRedaction(input, start);

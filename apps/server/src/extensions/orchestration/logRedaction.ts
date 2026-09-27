@@ -10,6 +10,9 @@
  * one. A redaction found in decoded text replaces the exact source span of the
  * characters it covers, re-escaped for that string. Each depth scans at most
  * the text of the one above it and depth is capped, so work stays linear.
+ * Private-key markers are the exception: they are read once, in the whole
+ * text decoded through every depth (`findKeys`), so a key opened in one
+ * string stays open across later strings and lines.
  *
  * Raw line structure survives: a redaction at the top level that spans lines
  * keeps one marker per line, so `maxLines` counting still holds.
@@ -20,13 +23,14 @@ const R = LOG_REDACTED;
 /**
  * Where a text begins in its source. By default it may begin inside a JSON
  * string, and outside any private key. `lineStart` says it begins a line;
- * `key` whether that is inside a key (its BEGIN line came earlier), or may be.
+ * `key` whether that is inside a key (its BEGIN line came earlier, with the
+ * type `inside` names), or may be.
  */
 export interface LogTextStart {
   readonly lineStart?: boolean;
   readonly key?: KeyStart;
 }
-type KeyStart = "outside" | "inside" | "unknown";
+export type KeyStart = "outside" | "unknown" | { readonly inside: string };
 
 /** Strings nested deeper than this are redacted whole instead of decoded. */
 const MAX_DEPTH = 12;
@@ -81,8 +85,8 @@ let escaped = false;
  * the line break or end of text that cuts it off. A quote followed by
  * anything but JSON punctuation cannot close a well-formed string, so it is
  * read as contents, keeping the rest of a mis-escaped value inside it. A
- * `strict` string (a secret value) fails closed further: only a quote
- * followed by valid JSON structure closes it (`closesValue`).
+ * `strict` string (a secret value) fails closed further: only a quote after
+ * which the line validly continues as JSON closes it (`continuesJson`).
  */
 function stringEnd(text: string, from: number, strict = false): number {
   escaped = false;
@@ -92,7 +96,13 @@ function stringEnd(text: string, from: number, strict = false): number {
     const char = text[at];
     if (char === "\n") return at;
     if (char === '"') {
-      if (strict ? closesValue(text, at + 1) : closesString(text, at + 1)) return at;
+      if (!strict ? closesString(text, at + 1) : closes.has(at)) return at;
+      if (strict) {
+        const verdict = continuesJson(text, at + 1);
+        if (verdict) return at;
+        // Out of budget: the rest of the line stays in the value.
+        if (verdict === null) return skip(text, at, (next) => next !== "\n");
+      }
       at++;
     } else if (char === "\\" && text[at + 1] !== "\n") {
       escaped = true;
@@ -114,58 +124,120 @@ function closesString(text: string, at: number): boolean {
     char === "]"
   );
 }
+
 /**
- * Whether the text from `at`, just after a quote ending an object member's
- * value, continues as JSON: closing brackets, then the end of the line, or a
- * comma before the next element. Directly after the value that element is a
- * member of the same object (`"name":`); after a closing bracket it may be
- * any value. Anything else fails closed.
+ * Quotes known to close a secret value: a successful `continuesJson` run
+ * records every member value it read, so later values on its line need no
+ * run of their own. Reset with `budget` for each text.
  */
-function closesValue(text: string, at: number): boolean {
-  let member = true;
+const closes = new Set<number>();
+/** Steps `continuesJson` may still take in the current text. */
+let budget = 0;
+const LITERAL_AT = /(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)/y;
+const STRING_ESCAPE = /["\\/bfnrt]/;
+/**
+ * Where a JSON string whose contents start at `at` ends (after its closing
+ * quote): -1 if it is invalid or broken by a line, past the text if cut off.
+ */
+function jsonStringEnd(text: string, at: number): number {
+  while (at < text.length) {
+    visits++;
+    budget--;
+    const char = text[at];
+    if (char === '"') return at + 1;
+    if (char === "\n") return -1;
+    if (char !== "\\") at++;
+    else if (at + 1 >= text.length) break;
+    else if (STRING_ESCAPE.test(text[at + 1]!)) at += 2;
+    else if (text[at + 1] !== "u") return -1;
+    else if (at + 6 > text.length) break;
+    else if (HEX4.test(text.slice(at + 2, at + 6))) at += 6;
+    else return -1;
+  }
+  return text.length + 1;
+}
+/**
+ * Whether the text from `at`, just after a quote that would end a secret
+ * member's value, continues as JSON to the end of its line or text. A stack
+ * follows the containers: the value's own object, then enclosing ones whose
+ * kind is unseen (`?`) until an element or a closing bracket shows it. Names
+ * and strings are unbounded. `null` when the text's `budget` runs out.
+ */
+function continuesJson(text: string, at: number): boolean | null {
+  const stack = ["{"];
+  const values: number[] = [];
+  // The next token: what follows a value, a value, a member name, or either
+  // of the last two in a container of unseen kind. `open` just after a bracket.
+  let want: "after" | "value" | "name" | "element" = "after";
+  let open = false;
   for (;;) {
     at = skip(text, at, isSpace);
-    const char = text[at];
-    if (char === "}" || char === "]") {
-      member = false;
-      at++;
-    } else if (char === ",") {
-      at = skip(text, at + 1, isSpace);
-      if (at === text.length || text[at] === "\n") return true;
-      return member ? startsMember(text, at) : startsValue(text, at);
-    } else return char === undefined || char === "\n";
-  }
-}
-/** Whether an object member (`"name":`) starts at `at`. */
-function startsMember(text: string, at: number): boolean {
-  if (text[at] !== '"') return false;
-  for (let stop = at + 1; stop < text.length && stop <= at + 130; stop++) {
+    if (--budget < 0) return null;
     visits++;
-    const char = text[stop];
-    if (char === "\n") return false;
-    if (char === "\\") stop++;
-    else if (char === '"') return text[skip(text, stop + 1, isSpace)] === ":";
+    const char = text[at];
+    if (char === undefined || char === "\n") {
+      for (const value of values) closes.add(value);
+      return true;
+    }
+    const top = stack.length - 1;
+    if ((want === "after" || open) && (char === "}" || char === "]")) {
+      if (stack[top] !== "?" && stack[top] !== (char === "}" ? "{" : "[")) return false;
+      stack.pop();
+      if (stack.length === 0) stack.push("?");
+      want = "after";
+      open = false;
+      at++;
+      continue;
+    }
+    open = false;
+    if (want === "after") {
+      if (char !== ",") return false;
+      want = stack[top] === "{" ? "name" : stack[top] === "[" ? "value" : "element";
+      at++;
+      continue;
+    }
+    if (char === '"') {
+      const end = jsonStringEnd(text, at + 1);
+      if (end === -1) return false;
+      if (end > text.length) return true;
+      if (want === "value") {
+        if (stack[top] === "{") values.push(end - 1);
+        want = "after";
+        at = end;
+        continue;
+      }
+      const next = skip(text, end, isSpace);
+      if (text[next] === ":") {
+        if (want === "element") stack[top] = "{";
+        want = "value";
+        at = next + 1;
+        continue;
+      }
+      if (want === "name") return next === text.length;
+      stack[top] = "[";
+      want = "after";
+      at = end;
+      continue;
+    }
+    if (want === "name") return false;
+    if (want === "element") stack[top] = "[";
+    if (char === "{" || char === "[") {
+      stack.push(char);
+      want = char === "{" ? "name" : "value";
+      open = true;
+      at++;
+      continue;
+    }
+    LITERAL_AT.lastIndex = at;
+    if (!LITERAL_AT.test(text)) return false;
+    visits += LITERAL_AT.lastIndex - at;
+    budget -= LITERAL_AT.lastIndex - at;
+    at = LITERAL_AT.lastIndex;
+    const next = text[at];
+    if (!(next === undefined || isSpace(next) || next === "\n" || ",}]".includes(next)))
+      return false;
+    want = "after";
   }
-  return false;
-}
-const LITERAL_AT = /(?:true|false|null|-?[0-9])/y;
-/**
- * Whether a JSON value starts at `at`: an array opening onto a value or
- * closing empty, an object opening onto a member or closing empty, a string,
- * a number, or a literal.
- */
-function startsValue(text: string, at: number): boolean {
-  while (text[at] === "[") {
-    at = skip(text, at + 1, isSpace);
-    if (text[at] === "]") return true;
-  }
-  if (text[at] === '"') return true;
-  if (text[at] === "{") {
-    const next = text[skip(text, at + 1, isSpace)];
-    return next === '"' || next === "}";
-  }
-  LITERAL_AT.lastIndex = at;
-  return LITERAL_AT.test(text);
 }
 
 const ESCAPES: Readonly<Record<string, string>> = { b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
@@ -237,8 +309,29 @@ function skipBack(
   return at;
 }
 
-const MARKER = /-----(BEGIN|END)[A-Z0-9 ]{0,40}PRIVATE KEY-----/g;
-const END = /-----END[A-Z0-9 ]{0,40}PRIVATE KEY-----/g;
+const MARKER = /-----(BEGIN|END)([A-Z0-9 ]{0,40})PRIVATE KEY-----/g;
+/** A marker's key type (`RSA`, `OPENSSH`, empty for a bare key): END closes only its own. */
+const keyType = (words: string) => words.trim().replace(/ +/g, " ");
+
+/**
+ * `text` with its escapes decoded again and again, so a marker escaped at
+ * any depth (`\\n`, `\u0042`) reads plainly, and `at(i)`, where its character
+ * `i` starts in `text`.
+ */
+function normalize(text: string) {
+  let plain = text;
+  let offsets: number[] | null = null;
+  for (let pass = 0; pass <= MAX_DEPTH && plain.includes("\\"); pass++) {
+    visits += plain.length;
+    const next = decode(plain, 0, plain.length);
+    const outer: number[] | null = offsets;
+    offsets = outer ? next.offsets.map((index) => outer[index]!) : next.offsets;
+    plain = next.decoded;
+  }
+  visits += plain.length;
+  const map = offsets;
+  return { plain, at: (index: number) => (map ? map[index]! : index) };
+}
 
 /**
  * Start of the key material above an END marker at `marker` whose BEGIN line
@@ -290,40 +383,56 @@ function keyLinesEnd(text: string): number {
 }
 
 /**
- * PEM private keys. A BEGIN marker in any form (its own line, after a word,
- * inside a string, escaped at any depth) opens a key that runs through the
- * next END marker, or to the end of the text: prose that merely mentions a
- * marker loses the rest of its text rather than risk a key. Also tails whose
- * BEGIN is gone, and the lines opening a text that begins inside a key
- * (through its END) or may (`keyLinesEnd`).
+ * PEM private keys, read in the normalized text so a marker counts in any
+ * form (its own line, after a word, inside a string, escaped at any depth).
+ * A BEGIN opens a key that runs through the next END of its own type, or to
+ * the end of the text: prose that merely mentions a marker loses the rest of
+ * its text rather than risk a key. Also tails whose BEGIN is gone, and the
+ * lines opening a text that begins inside a key (through its END) or may
+ * (`keyLinesEnd`). Returns the key state at the end of the text.
  */
-function findKeys(text: string, spans: Span[], key: KeyStart) {
-  const endAfter = (from: number) => {
-    END.lastIndex = from;
-    const end = END.exec(text);
-    visits += (end ? END.lastIndex : text.length) - from;
-    return end ? END.lastIndex : text.length;
+function findKeys(text: string, spans: Span[], key: KeyStart): KeyStart {
+  const { plain, at } = normalize(text);
+  const push = (start: number, end: number) =>
+    spans.push({ start: at(start), end: at(end), kind: "lines" });
+  /** End of the first END of `type` from `from`, or -1. */
+  const endOf = (type: string, from: number) => {
+    MARKER.lastIndex = from;
+    for (let match = MARKER.exec(plain); match; match = MARKER.exec(plain))
+      if (match[1] === "END" && keyType(match[2]!) === type) return MARKER.lastIndex;
+    return -1;
   };
+  let state = key;
   let floor = 0;
-  if (key === "inside") floor = endAfter(0);
-  else if (key === "unknown") floor = keyLinesEnd(text);
+  if (typeof key === "object") {
+    const end = endOf(key.inside, 0);
+    if (end === -1) floor = plain.length;
+    else [floor, state] = [end, "outside"];
+  } else if (key === "unknown") floor = keyLinesEnd(plain);
   const keyFloor = floor;
-  if (floor > 0) spans.push({ start: 0, end: floor, kind: "lines" });
-  visits += text.length;
+  if (floor > 0) push(0, floor);
   MARKER.lastIndex = floor;
-  for (let match = MARKER.exec(text); match; match = MARKER.exec(text)) {
+  for (let match = MARKER.exec(plain); match; match = MARKER.exec(plain)) {
     const markerEnd = match.index + match[0].length;
     if (match[1] === "BEGIN") {
-      const end = endAfter(markerEnd);
-      spans.push({ start: match.index, end, kind: "lines" });
+      const type = keyType(match[2]!);
+      const end = endOf(type, markerEnd);
+      push(match.index, end === -1 ? plain.length : end);
+      if (end === -1) return { inside: type };
+      state = "outside";
       floor = MARKER.lastIndex = end;
       continue;
     }
-    const start = tailStart(text, match.index, floor, floor > 0 && floor === keyFloor);
-    if (start !== -1) spans.push({ start, end: markerEnd, kind: "lines" });
+    const start = tailStart(plain, match.index, floor, floor > 0 && floor === keyFloor);
+    if (start !== -1) push(start, markerEnd);
+    state = "outside";
     floor = markerEnd;
   }
+  return state;
 }
+
+/** The private-key state at the end of `text`, which begins in state `start`. */
+export const keyStateAfter = (text: string, start: KeyStart): KeyStart => findKeys(text, [], start);
 
 /**
  * A quoted name, then JSON whitespace, a colon, and more whitespace. The
@@ -360,6 +469,8 @@ function valueSpan(text: string, at: number): Span {
 /** JSON fields with a secret-bearing name: the whole value. */
 function findFields(text: string, spans: Span[]) {
   visits += text.length;
+  closes.clear();
+  budget = 4 * text.length + 256;
   FIELD.lastIndex = 0;
   for (let match = FIELD.exec(text); match; match = FIELD.exec(text)) {
     const name = match[1]!;
@@ -431,7 +542,9 @@ function render(text: string, depth: number, span: Span): string {
  */
 function redactText(text: string, depth: number, unknownStart: boolean, key: KeyStart): Span[] {
   const spans: Span[] = [];
-  findKeys(text, spans, key);
+  // Keys are found once, at the top, in text decoded through every depth.
+  if (depth === 0) findKeys(text, spans, key);
+  else if (key === "unknown") spans.push({ start: 0, end: keyLinesEnd(text), kind: "lines" });
   findFields(text, spans);
   for (const [pattern, toSpan] of RULES) {
     visits += text.length;

@@ -39,7 +39,7 @@ import { ProjectionThreadRepository } from "../../persistence/Services/Projectio
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { makeExtensionScopeResolver } from "../scope.ts";
 import { boundedPrefix } from "../vcsDiffApi.ts";
-import { redactLogSecrets } from "./logRedaction.ts";
+import { keyStateAfter, redactLogSecrets, type KeyStart } from "./logRedaction.ts";
 
 const fail = (detail: string) =>
   new ExtensionOperationError({ operation: "orchestration.logs", detail });
@@ -69,13 +69,12 @@ const tailInput = Schema.decodeUnknownSync(
  */
 export const AGENT_LOG_REDACTION_CONTEXT_BYTES = 8192;
 /**
- * Bytes before the read searched for the last private-key marker, so a window
- * that starts inside a key is known to (`keyStateBefore`). A cold search reads
- * backward in `AGENT_LOG_KEY_SCAN_CHUNK_BYTES` chunks and stops at the first
- * marker; later reads of the same file reuse it and read only appended bytes.
+ * Bytes before the delivered lines read to learn whether they start inside a
+ * private key (`keyStateBefore`). Keys are far smaller, so a BEGIN in them
+ * without its END means the window starts inside one; with no marker at all,
+ * the state is unknown and leading key-like lines are withheld.
  */
-export const AGENT_LOG_KEY_SCAN_BYTES = 4 * 1024 * 1024;
-export const AGENT_LOG_KEY_SCAN_CHUNK_BYTES = 64 * 1024;
+export const AGENT_LOG_KEY_SCAN_BYTES = 256 * 1024;
 
 /**
  * Directories the Claude harness writes agent output under: transcripts in
@@ -91,123 +90,14 @@ export function defaultAgentLogRoots(): readonly string[] {
 /** Claude's per-workspace directory name: every non-alphanumeric becomes `-`. */
 export const claudeWorkspaceSlug = (cwd: string) => cwd.replace(/[^A-Za-z0-9]/g, "-");
 
-const KEY_MARKER_TAIL = Buffer.from("PRIVATE KEY-----");
-const KEY_MARKER = /-----(BEGIN|END)[A-Z0-9 ]{0,40}PRIVATE KEY-----$/;
-/** Longest key marker: bytes a chunked scan re-reads across a boundary. */
-const KEY_MARKER_MAX_BYTES = 66;
-type KeyState = "outside" | "inside" | "unknown";
-interface KeyMarker {
-  readonly begin: boolean;
-  /** Offset just past the marker, in the scanned bytes' coordinates. */
-  readonly end: number;
-}
-
-/**
- * The last private-key marker (`-----BEGIN … PRIVATE KEY-----` or END, in any
- * form: its own line, after a word, escaped, inside a string) wholly inside
- * `bytes`.
- */
-function lastKeyMarker(bytes: Buffer): KeyMarker | null {
-  for (let at = bytes.lastIndexOf(KEY_MARKER_TAIL); at > 0;) {
-    const end = at + KEY_MARKER_TAIL.length;
-    const marker = KEY_MARKER.exec(bytes.toString("latin1", Math.max(0, at - 50), end));
-    if (marker) return { begin: marker[1] === "BEGIN", end };
-    at = bytes.lastIndexOf(KEY_MARKER_TAIL, at - 1);
-  }
-  return null;
-}
-
 /**
  * Whether the source continues inside a private key after `scan`, the bytes
- * directly before a line; `complete` when they reach the source's start. The
- * last marker in any form decides, whatever lines follow it: a BEGIN opens a
- * key, an END closes it. With no marker in an incomplete scan the state is
- * unknown.
+ * directly before a line; `complete` when they reach the source's start.
+ * Markers count in any form, and a BEGIN stays open until an END of its type.
+ * With no marker in an incomplete scan the state is unknown.
  */
-export function keyStateBefore(scan: Uint8Array, complete: boolean): KeyState {
-  const marker = lastKeyMarker(Buffer.from(scan.buffer, scan.byteOffset, scan.byteLength));
-  if (marker) return marker.begin ? "inside" : "outside";
-  return complete ? "outside" : "unknown";
-}
-
-/** Reads `length` bytes of the source at `position`. */
-type ReadAt = (position: number, length: number) => Promise<Buffer>;
-/**
- * What a key scan learned about one file (by dev + inode): the last marker
- * before `end`, with `from` the lowest offset scanned (0 when it reached the
- * start). `head` and `anchor` are the bytes at the start and directly before
- * `end`; they must read the same for the scan to be reused, so a truncated or
- * rewritten file is scanned again.
- */
-interface KeyScan {
-  readonly end: number;
-  readonly from: number;
-  readonly marker: KeyMarker | null;
-  readonly head: Buffer;
-  readonly anchor: Buffer;
-}
-const KEY_SCAN_CHECK_BYTES = 256;
-const KEY_SCAN_CACHE_SIZE = 64;
-
-const scanState = (scan: KeyScan): KeyState =>
-  scan.marker
-    ? scan.marker.begin
-      ? "inside"
-      : "outside"
-    : scan.from === 0
-      ? "outside"
-      : "unknown";
-
-/**
- * The key state just before offset `at` of a source of `size` bytes, and the
- * scan that decided it. A valid `cached` scan is reused: extended over the
- * bytes appended since (up to `AGENT_LOG_KEY_SCAN_BYTES`), or answered
- * directly when its last marker precedes `at`. Otherwise it scans backward
- * from `at` in chunks until a marker, at most `AGENT_LOG_KEY_SCAN_BYTES`.
- */
-async function scanKeyState(
-  read: ReadAt,
-  size: number,
-  at: number,
-  cached?: KeyScan,
-): Promise<{ readonly state: KeyState; readonly scan: KeyScan }> {
-  const checks = async (end: number) => ({
-    head: await read(0, Math.min(KEY_SCAN_CHECK_BYTES, size)),
-    anchor: await read(
-      Math.max(0, end - KEY_SCAN_CHECK_BYTES),
-      Math.min(KEY_SCAN_CHECK_BYTES, end),
-    ),
-  });
-  if (cached && cached.end <= size) {
-    const { head, anchor } = await checks(cached.end);
-    if (head.subarray(0, cached.head.length).equals(cached.head) && anchor.equals(cached.anchor)) {
-      if (at === cached.end) return { state: scanState(cached), scan: cached };
-      if (at > cached.end && at - cached.end <= AGENT_LOG_KEY_SCAN_BYTES) {
-        const from = Math.max(0, cached.end - KEY_MARKER_MAX_BYTES);
-        const found = lastKeyMarker(await read(from, at - from));
-        const marker =
-          found && from + found.end > cached.end
-            ? { ...found, end: from + found.end }
-            : cached.marker;
-        const scan = { end: at, from: cached.from, marker, ...(await checks(at)) };
-        return { state: scanState(scan), scan };
-      }
-      if (cached.marker ? cached.marker.end <= at : cached.from === 0)
-        return { state: scanState(cached), scan: cached };
-    }
-  }
-  const floor = Math.max(0, at - AGENT_LOG_KEY_SCAN_BYTES);
-  let from = at;
-  let marker: KeyMarker | null = null;
-  while (from > floor && !marker) {
-    const to = Math.min(at, from + KEY_MARKER_MAX_BYTES);
-    from = Math.max(floor, from - AGENT_LOG_KEY_SCAN_CHUNK_BYTES);
-    const found = lastKeyMarker(await read(from, to - from));
-    if (found) marker = { ...found, end: from + found.end };
-  }
-  const scan = { end: at, from, marker, ...(await checks(at)) };
-  return { state: scanState(scan), scan };
-}
+export const keyStateBefore = (scan: Uint8Array, complete: boolean): KeyStart =>
+  keyStateAfter(new TextDecoder().decode(scan), complete ? "outside" : "unknown");
 
 /**
  * Shapes a byte region that ends at the end of the source; `start` is its
@@ -226,13 +116,13 @@ export function shapeLogTail(
   region: Uint8Array,
   start: number,
   limits: { readonly maxBytes: number; readonly maxLines: number },
-  before: Uint8Array | KeyState = new Uint8Array(),
+  before: Uint8Array | KeyStart = new Uint8Array(),
 ): { readonly contents: string; readonly truncated: boolean } {
   const offset = start > 0 ? region.indexOf(0x0a) + 1 || region.length : 0;
   const key =
     start === 0
       ? "outside"
-      : typeof before === "string"
+      : !(before instanceof Uint8Array)
         ? before
         : keyStateBefore(
             Buffer.concat([before, region.subarray(0, offset)]),
@@ -289,8 +179,6 @@ const sameFile = (a: { ino: number; dev: number }, b: { ino: number; dev: number
 
 export function createOrchestrationLogsApiProvider(deps: Dependencies): HostApiProvider {
   const resolve = makeExtensionScopeResolver(deps);
-  /** Key scans by opened file identity, least recently used first. */
-  const keyScans = new Map<string, KeyScan>();
   const guard = async (
     context: ViewContext,
     signal: AbortSignal,
@@ -396,21 +284,19 @@ export function createOrchestrationLogsApiProvider(deps: Dependencies): HostApiP
         throw fail("AgentLogsSourceChanged");
       const start = Math.max(0, stat.size - maxBytes - AGENT_LOG_REDACTION_CONTEXT_BYTES);
       const region = await readFully(file, start, stat.size - start);
-      if (start === 0) return { region, key: "outside" as const, start, byteLength: stat.size };
-      // Bytes before the region come from the file; the region is already read.
-      const read: ReadAt = async (position, length) => {
-        if (position >= start) return region.subarray(position - start, position - start + length);
-        const own = Math.min(length, start - position);
-        const bytes = await readFully(file, position, own);
-        return own === length ? bytes : Buffer.concat([bytes, region.subarray(0, length - own)]);
-      };
-      const id = `${stat.dev}:${stat.ino}`;
+      // The key state comes from a fixed scan of the bytes before the first
+      // whole line, re-read every call: nothing is cached to go stale.
       const lineStart = start + (region.indexOf(0x0a) + 1 || region.length);
-      const { state, scan } = await scanKeyState(read, stat.size, lineStart, keyScans.get(id));
-      keyScans.delete(id);
-      keyScans.set(id, scan);
-      if (keyScans.size > KEY_SCAN_CACHE_SIZE) keyScans.delete(keyScans.keys().next().value!);
-      return { region, key: state, start, byteLength: stat.size };
+      const from = Math.max(0, lineStart - AGENT_LOG_KEY_SCAN_BYTES);
+      const scan =
+        from >= start
+          ? region.subarray(from - start, lineStart - start)
+          : Buffer.concat([
+              await readFully(file, from, start - from),
+              region.subarray(0, lineStart - start),
+            ]);
+      const key = start === 0 ? ("outside" as const) : keyStateBefore(scan, from === 0);
+      return { region, key, start, byteLength: stat.size };
     } catch (error) {
       // Raw filesystem errors carry host paths; only fixed codes leave here.
       if (isOperationError(error)) throw error;
