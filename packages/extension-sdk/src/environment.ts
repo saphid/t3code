@@ -237,6 +237,54 @@ export function resolveCodeView(host: Pick<ClientHost, "codeView">): ClientCodeV
     : null;
 }
 
+/** One host-rendered tooltip around a single trigger element. */
+export interface TooltipProps {
+  /** Tooltip text. Null or empty renders `children` alone. */
+  readonly label: string | null | undefined;
+  /**
+   * The trigger: one DOM element, or a component that forwards its ref and
+   * props to one. A trigger with `disabled` set is wrapped in a hoverable
+   * span, since disabled controls receive no pointer events. The tooltip is
+   * visual; keep the trigger's own `aria-label`.
+   */
+  readonly children: React.ReactElement;
+  /** Defaults to `"top"`. */
+  readonly side?: "top" | "bottom" | "left" | "right";
+  /** Defaults to `"center"`. */
+  readonly align?: "start" | "center" | "end";
+}
+
+/**
+ * `ClientHost.tooltip` version 1. A rendering primitive like `codeView`: no
+ * grant, no broker. The host owns the popup's look, open delay, placement,
+ * focus behavior and theme.
+ */
+export interface ClientTooltip {
+  readonly version: 1;
+  readonly Tooltip: React.ComponentType<TooltipProps>;
+}
+
+const TooltipPassthrough = (props: TooltipProps) => props.children;
+
+/**
+ * The host's tooltip when it offers version 1 or a compatible later one,
+ * else a passthrough that renders the trigger alone (mobile, older hosts).
+ * Resolve once per host and render the result like any component.
+ */
+export function resolveTooltip(
+  host: Pick<ClientHost, "tooltip">,
+): React.ComponentType<TooltipProps> {
+  const member: unknown = host.tooltip;
+  if (!member || typeof member !== "object") return TooltipPassthrough;
+  const { version, Tooltip } = member as Record<string, unknown>;
+  const isComponent =
+    typeof Tooltip === "function" ||
+    (typeof Tooltip === "object" && Tooltip !== null && "$$typeof" in Tooltip);
+  return typeof version === "number" && version >= 1 && isComponent
+    ? (Tooltip as React.ComponentType<TooltipProps>)
+    : TooltipPassthrough;
+}
+
 export interface ClientHost {
   /** Use this React identity; a client entry must not bundle or import another React runtime. */
   readonly React: typeof React;
@@ -291,6 +339,11 @@ export interface ClientHost {
    * and keep plugin-owned rows as the fallback.
    */
   readonly codeView?: ClientCodeView;
+  /**
+   * Host-rendered tooltip. Absent on hosts without one — read it through
+   * `resolveTooltip`, which falls back to rendering the trigger alone.
+   */
+  readonly tooltip?: ClientTooltip;
 }
 export type ClientFactory = (host: ClientHost) => Extension<SurfaceRenderer>;
 
