@@ -496,6 +496,87 @@ describe("notifications provider", () => {
     expect(closeSpy).toHaveBeenCalledWith("toast-1");
   });
 
+  it("keeps the toast open for keepOpen actions and flashes a confirmation label", () => {
+    vi.useFakeTimers();
+    try {
+      const emits: [string, ClientProviderEmitEvent][] = [];
+      const provider = createNotificationsClientProvider(
+        makeDeps(["t3.ui/notify"], (correlationId, event) => emits.push([correlationId, event])),
+      );
+      vi.spyOn(toastManager, "add").mockReturnValue("toast-k" as never);
+      const updateSpy = vi.spyOn(toastManager, "update").mockImplementation(() => {});
+      const closeSpy = vi.spyOn(toastManager, "close").mockImplementation(() => {});
+      provider.invoke(
+        invokeCall("notify", {
+          notification: {
+            notificationId: "n-k",
+            severity: "success",
+            title: "Screenshot saved",
+            actions: [
+              { id: "copy-path", label: "Copy path", keepOpen: true },
+              { id: "open", label: "Open" },
+            ],
+          },
+        }),
+      );
+      type Actions = {
+        id: string;
+        props: { children: string; disabled?: boolean; onClick: () => void };
+      }[];
+      const addOptions = vi.mocked(toastManager.add).mock.calls[0]![0] as unknown as {
+        data: { additionalActions: Actions };
+      };
+      addOptions.data.additionalActions[0]!.props.onClick();
+      addOptions.data.additionalActions[0]!.props.onClick();
+      expect(emits).toEqual([
+        ["n-k", { type: "notificationAction", actionId: "copy-path" }],
+        ["n-k", { type: "notificationAction", actionId: "copy-path" }],
+      ]);
+      expect(closeSpy).not.toHaveBeenCalled();
+
+      provider.invoke(
+        invokeCall("update", {
+          notificationId: "n-k",
+          patch: { flashAction: { actionId: "copy-path", label: "Copied!", durationMs: 2000 } },
+        }),
+      );
+      const labels = () =>
+        (
+          updateSpy.mock.calls.at(-1)![1] as { data: { additionalActions: Actions } }
+        ).data.additionalActions.map(({ props }) => [props.children, props.disabled]);
+      expect(labels()).toEqual([
+        ["Copied!", true],
+        ["Open", false],
+      ]);
+      vi.advanceTimersByTime(2000);
+      expect(labels()).toEqual([
+        ["Copy path", false],
+        ["Open", false],
+      ]);
+      expectDenied(
+        () =>
+          provider.invoke(
+            invokeCall("update", {
+              notificationId: "n-k",
+              patch: { flashAction: { actionId: "nope", label: "Copied!", durationMs: 10 } },
+            }),
+          ),
+        "provider-rejected",
+      );
+
+      // A plain action still settles and closes.
+      const latest = updateSpy.mock.calls.at(-1)![1] as { data: { additionalActions: Actions } };
+      latest.data.additionalActions[1]!.props.onClick();
+      expect(emits.at(-1)).toEqual([
+        "n-k",
+        { type: "notificationOutcome", outcome: { actionId: "open" } },
+      ]);
+      expect(closeSpy).toHaveBeenCalledWith("toast-k");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("enforces owner-scoped update and dismiss", () => {
     const emits: [string, ClientProviderEmitEvent][] = [];
     const other = installation(["t3.ui/notify"], { id: "ext.b", contentHash: "hash-b" });

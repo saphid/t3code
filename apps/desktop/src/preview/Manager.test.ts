@@ -2357,7 +2357,7 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect("captures the viewport as capped PNG bytes without writing a file", () =>
+  effectIt.effect("captures the viewport as capped PNG bytes and saves them as an artifact", () =>
     withManager((manager) =>
       Effect.gen(function* () {
         const png = Buffer.from("resized-png");
@@ -2412,8 +2412,12 @@ describe("PreviewManager", () => {
           height: 800,
           pageUrl: "https://example.com/page",
           pageTitle: "Example",
+          path: expect.stringMatching(
+            /\/browser-artifacts\/browser-screenshot-example-com-[^.]+\.png$/,
+          ),
         });
-        expect(writeFile).not.toHaveBeenCalled();
+        // The saved file is the capped PNG the caller uploads, not a second raster.
+        expect(writeFile).toHaveBeenCalledWith(image.path, png);
       }),
     ),
   );

@@ -820,6 +820,12 @@ export interface DesktopPreviewPageImage {
   height: number;
   pageUrl: string | null;
   pageTitle: string | null;
+  /**
+   * The same PNG saved in the preview artifact directory, where
+   * `revealArtifact` and `copyArtifactToClipboard` accept it; null when the
+   * write failed (the bytes are still good).
+   */
+  path: string | null;
 }
 
 export const DesktopPreviewPageImageSchema: Schema.Codec<DesktopPreviewPageImage> = Schema.Struct({
@@ -829,6 +835,7 @@ export const DesktopPreviewPageImageSchema: Schema.Codec<DesktopPreviewPageImage
   height: Schema.Int,
   pageUrl: Schema.NullOr(Schema.String),
   pageTitle: Schema.NullOr(Schema.String),
+  path: Schema.NullOr(Schema.String),
 });
 
 /**

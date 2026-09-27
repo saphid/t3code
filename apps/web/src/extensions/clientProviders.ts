@@ -387,10 +387,20 @@ export function createThemeClientProvider(deps: ClientProviderDeps): ClientLocal
 // ---------------------------------------------------------------------------
 // Notifications — toast-backed, owner-scoped, outcomes over emit.
 
+interface NotificationAction {
+  readonly id: string;
+  readonly label: string;
+  readonly variant?: NonNullable<ThreadToastData["secondaryActionVariant"]>;
+  readonly keepOpen: boolean;
+}
+
 interface OwnedNotification {
   readonly toastId: string;
   readonly owner: string;
-  readonly data: ThreadToastData;
+  data: ThreadToastData;
+  readonly actions: readonly NotificationAction[];
+  /** Temporary labels from `flashAction`, keyed by action id. */
+  readonly flashes: Map<string, { label: string; timeoutId: ReturnType<typeof setTimeout> }>;
   readonly timeoutId?: ReturnType<typeof setTimeout>;
 }
 
@@ -424,8 +434,39 @@ export function createNotificationsClientProvider(deps: ClientProviderDeps): Cli
     if (!entry) return;
     owned.delete(notificationId);
     if (entry.timeoutId !== undefined) clearTimeout(entry.timeoutId);
+    for (const flash of entry.flashes.values()) clearTimeout(flash.timeoutId);
     deps.emit(notificationId, { type: "notificationOutcome", outcome });
   };
+  /**
+   * A `keepOpen` click reports without settling, so the toast and its other
+   * actions stay usable (native "Copy path"); any other click settles and closes.
+   */
+  const renderActions = (
+    notificationId: string,
+    actions: readonly NotificationAction[],
+    flashes: OwnedNotification["flashes"],
+    toastId: () => string,
+  ): ThreadToastData["additionalActions"] =>
+    actions.map((action) => {
+      const flash = flashes.get(action.id);
+      return {
+        id: action.id,
+        ...(action.variant !== undefined ? { variant: action.variant } : {}),
+        props: {
+          children: flash?.label ?? action.label,
+          disabled: flash !== undefined,
+          onClick: () => {
+            if (action.keepOpen) {
+              if (owned.has(notificationId))
+                deps.emit(notificationId, { type: "notificationAction", actionId: action.id });
+              return;
+            }
+            settle(notificationId, { actionId: action.id });
+            toastManager.close(toastId());
+          },
+        },
+      };
+    });
   const variantMap = {
     default: "secondary",
     primary: "default",
@@ -475,31 +516,31 @@ export function createNotificationsClientProvider(deps: ClientProviderDeps): Cli
               ? scopeThreadRef(deps.environmentId, ThreadId.make(effectiveThreadId))
               : undefined;
           const dismissible = notification.dismissible !== false;
+          const ownedActions = actions.slice(0, 3).map((action): NotificationAction => {
+            const record = readInputObject(action);
+            const variant = readInputString(record, "variant", false);
+            return {
+              id: readInputString(record, "id")!,
+              label: readInputString(record, "label")!,
+              ...(variant !== undefined && variant in variantMap
+                ? { variant: variantMap[variant as keyof typeof variantMap] }
+                : {}),
+              keepOpen: record.keepOpen === true,
+            };
+          });
+          const flashes: OwnedNotification["flashes"] = new Map();
           const toastData: ThreadToastData = {
             ...(threadRef !== undefined ? { threadRef } : {}),
             dismissible,
             onClose: () => settle(notificationId, { dismissed: true }),
-            ...(actions.length > 0
+            ...(ownedActions.length > 0
               ? {
-                  additionalActions: actions.slice(0, 3).map((action) => {
-                    const record = readInputObject(action);
-                    const actionId = readInputString(record, "id")!;
-                    const label = readInputString(record, "label")!;
-                    const variant = readInputString(record, "variant", false);
-                    return {
-                      id: actionId,
-                      ...(variant !== undefined && variant in variantMap
-                        ? { variant: variantMap[variant as keyof typeof variantMap] }
-                        : {}),
-                      props: {
-                        children: label,
-                        onClick: () => {
-                          settle(notificationId, { actionId });
-                          toastManager.close(toastId);
-                        },
-                      },
-                    };
-                  }),
+                  additionalActions: renderActions(
+                    notificationId,
+                    ownedActions,
+                    flashes,
+                    () => toastId,
+                  ),
                 }
               : {}),
           };
@@ -527,6 +568,8 @@ export function createNotificationsClientProvider(deps: ClientProviderDeps): Cli
             toastId,
             owner: call.caller.installationId,
             data: toastData,
+            actions: ownedActions,
+            flashes,
             ...(timeoutId !== undefined ? { timeoutId } : {}),
           });
           return { applied: true } as unknown as Json;
@@ -541,7 +584,38 @@ export function createNotificationsClientProvider(deps: ClientProviderDeps): Cli
           if (typeof patch.body === "string") patchRecord.description = patch.body;
           if (typeof patch.dismissible === "boolean") {
             // `data` replaces wholesale on update — merge onto the stored copy.
-            patchRecord.data = { ...entry.data, dismissible: patch.dismissible };
+            entry.data = { ...entry.data, dismissible: patch.dismissible };
+            patchRecord.data = entry.data;
+          }
+          const flash = patch.flashAction === undefined ? null : readInputObject(patch.flashAction);
+          if (flash !== null) {
+            const actionId = readInputString(flash, "actionId")!;
+            if (!entry.actions.some((action) => action.id === actionId))
+              throw new ClientProviderOpError("provider-rejected", "Unknown notification action");
+            const rerender = () => {
+              entry.data = {
+                ...entry.data,
+                additionalActions: renderActions(
+                  notificationId,
+                  entry.actions,
+                  entry.flashes,
+                  () => entry.toastId,
+                ),
+              };
+              return entry.data;
+            };
+            const previous = entry.flashes.get(actionId);
+            if (previous) clearTimeout(previous.timeoutId);
+            const durationMs = typeof flash.durationMs === "number" ? flash.durationMs : 0;
+            entry.flashes.set(actionId, {
+              label: readInputString(flash, "label")!,
+              timeoutId: setTimeout(() => {
+                entry.flashes.delete(actionId);
+                if (owned.get(notificationId) === entry)
+                  toastManager.update(entry.toastId, { data: rerender() });
+              }, durationMs),
+            });
+            patchRecord.data = rerender();
           }
           toastManager.update(entry.toastId, patchRecord);
           return { applied: true } as unknown as Json;
@@ -1414,7 +1488,7 @@ export function createClientProviders(
 
 export const CLIENT_PROVIDER_DESCRIPTORS = [
   { id: "t3.client/theme", version: "1.0.0" },
-  { id: "t3.client/notifications", version: "1.0.0" },
+  { id: "t3.client/notifications", version: "1.1.0" },
   { id: "t3.client/keybindings", version: "1.0.0" },
   { id: "t3.client/panels", version: "1.0.0" },
   { id: "t3.client/composer", version: "1.2.0" },

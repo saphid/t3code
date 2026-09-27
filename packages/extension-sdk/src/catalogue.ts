@@ -7316,9 +7316,16 @@ export interface BrowserFramesHost {
  * the built-in Browser panel), because that is where the engine renders it;
  * otherwise the named `not-presented` failure comes back. Clients without the
  * engine report `desktop-required` up front.
+ *
+ * 1.1.0 adds the native "Screenshot saved" actions for a page capture this
+ * client took: `copyArtifactToClipboard`, `copyArtifactPath` and
+ * `revealArtifact`. They act on the copy the desktop app saved beside the
+ * built-in browser's own screenshots, so the plugin never sees a filesystem
+ * path. `artifactActions` says which ones work here; web clients report
+ * `desktop-required`.
  * --------------------------------------------------------------------- */
 export const BROWSER_CAPTURE = "t3.browser/capture";
-export const BROWSER_CAPTURE_VERSION = "1.0.0";
+export const BROWSER_CAPTURE_VERSION = "1.1.0";
 /** Both grants are required to capture. */
 export const BROWSER_CAPTURE_REQUIRED_GRANTS = [BROWSER_SESSIONS, BROWSER_CAPTURE] as const;
 /**
@@ -7407,10 +7414,55 @@ export type BrowserCaptureResult =
   | { readonly ok: true; readonly artifact: BrowserCaptureArtifact }
   | { readonly ok: false; readonly failure: BrowserCaptureFailure };
 
+/** 1.1.0: which artifact actions this client supports. Static for the host's lifetime. */
+export interface BrowserCaptureArtifactActions {
+  /** Put the image itself on the system clipboard. */
+  readonly copyImage: BrowserSurfacePresentationSupport;
+  /** Put the saved file's path on the system clipboard. */
+  readonly copyPath: BrowserSurfacePresentationSupport;
+  /** Show the saved file in the OS file manager. */
+  readonly reveal: BrowserSurfacePresentationSupport;
+  /** The platform's name for reveal, e.g. "Reveal in Finder". */
+  readonly revealLabel: string;
+}
+
+export type BrowserCaptureArtifactActionFailureReason =
+  /** `grant` names the missing installation grant. */
+  | "grant-denied"
+  /** Context is not inside this environment and a granted project. */
+  | "scope-invalid"
+  /** The installation's client lifetime has ended. */
+  | "host-unavailable"
+  /** This client cannot do this action; see `artifactActions`. */
+  | "desktop-required"
+  /** This installation took no saved page capture with that ref on this client. */
+  | "artifact-not-found"
+  /** The OS refused: the file is gone, or the clipboard or file manager failed. */
+  | "action-failed";
+
+export interface BrowserCaptureArtifactActionRequest {
+  /** The calling view's own context. */
+  readonly context: ViewContext;
+  /** A ref this installation's `capture` returned for a page target. */
+  readonly artifactRef: string;
+}
+
+export type BrowserCaptureArtifactActionResult =
+  | { readonly ok: true }
+  | {
+      readonly ok: false;
+      readonly failure: {
+        readonly reason: BrowserCaptureArtifactActionFailureReason;
+        readonly detail: string;
+        /** Set when reason is "grant-denied". */
+        readonly grant?: string;
+      };
+    };
+
 /**
- * The host side of `t3.browser/capture@1.0.0`. Present on `ClientHost` as
+ * The host side of `t3.browser/capture@1.1.0`. Present on `ClientHost` as
  * `browserCapture`; absence means the host predates the contract (treat as
- * `host-unavailable`).
+ * `host-unavailable`). The 1.1.0 members are absent on a 1.0.0 host.
  */
 export interface BrowserCaptureHost {
   readonly id: typeof BROWSER_CAPTURE;
@@ -7418,6 +7470,16 @@ export interface BrowserCaptureHost {
   /** Static for the host's lifetime, like `BrowserSurfaceHost.presentation`. */
   readonly support: BrowserSurfacePresentationSupport;
   capture(request: BrowserCaptureRequest): Promise<BrowserCaptureResult>;
+  readonly artifactActions?: BrowserCaptureArtifactActions;
+  copyArtifactToClipboard?(
+    request: BrowserCaptureArtifactActionRequest,
+  ): Promise<BrowserCaptureArtifactActionResult>;
+  copyArtifactPath?(
+    request: BrowserCaptureArtifactActionRequest,
+  ): Promise<BrowserCaptureArtifactActionResult>;
+  revealArtifact?(
+    request: BrowserCaptureArtifactActionRequest,
+  ): Promise<BrowserCaptureArtifactActionResult>;
 }
 
 /**
@@ -8426,6 +8488,21 @@ const uiNotificationActionSchema = {
     id: { type: "string", minLength: 1, maxLength: 80 },
     label: { type: "string", minLength: 1, maxLength: 80 },
     variant: { enum: ["default", "primary", "destructive"] },
+    keepOpen: { type: "boolean" },
+  },
+} as const;
+
+/** Longest `update.flashAction` the host honors. */
+export const UI_NOTIFICATION_FLASH_MAX_MS = 10_000;
+
+const uiNotificationFlashSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["actionId", "label", "durationMs"],
+  properties: {
+    actionId: { type: "string", minLength: 1, maxLength: 80 },
+    label: { type: "string", minLength: 1, maxLength: 80 },
+    durationMs: { type: "integer", minimum: 0, maximum: UI_NOTIFICATION_FLASH_MAX_MS },
   },
 } as const;
 
@@ -8442,9 +8519,23 @@ export type UiNotificationInput = {
     readonly id: string;
     readonly label: string;
     readonly variant?: "default" | "primary" | "destructive";
+    /**
+     * 1.1.0: a click reports the action through `awaitAction` but leaves the
+     * notification open, like native "Copy path". Await again for the next
+     * click or the final outcome.
+     */
+    readonly keepOpen?: boolean;
   }[];
 };
 
+/**
+ * t3.ui/notifications — host toasts.
+ *
+ * 1.1.0 adds `keepOpen` actions and `update.flashAction`, which shows a
+ * confirmation label on one action and disables it for `durationMs`, then
+ * restores it (native "Copied!" for 2 s). Both need a 1.1.0 host; a 1.0.0
+ * host rejects the unknown fields.
+ */
 export const uiNotificationsApi = defineApi<{
   getCapabilities: { input: Record<string, never>; output: UiCapabilities };
   notify: { input: UiNotificationInput; output: { notificationId: string } };
@@ -8455,6 +8546,7 @@ export const uiNotificationsApi = defineApi<{
       title?: string;
       body?: string;
       dismissible?: boolean;
+      flashAction?: { actionId: string; label: string; durationMs: number };
     };
     output: { applied: boolean };
   };
@@ -8465,7 +8557,7 @@ export const uiNotificationsApi = defineApi<{
   };
 }>({
   id: "t3.ui/notifications",
-  version: "1.0.0",
+  version: "1.1.0",
   methods: [
     {
       name: "getCapabilities",
@@ -8515,6 +8607,7 @@ export const uiNotificationsApi = defineApi<{
           title: { type: "string", minLength: 1, maxLength: 200 },
           body: { type: "string", maxLength: 2000 },
           dismissible: { type: "boolean" },
+          flashAction: uiNotificationFlashSchema,
         },
       },
       outputSchema: {
