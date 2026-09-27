@@ -4,12 +4,14 @@
  * This adapter projects the server's native `PreviewManager` state through
  * the public contract and never exposes webview handles, partitions, preload
  * URLs, evaluation endpoints, or presentation slots. Metadata writes (open,
- * navigate, resize, close) record acceptance, never engine execution. Page
- * commands (back … closeDevTools) route to the authenticated desktop engine
- * host that owns the session (see `preview/BrowserEngineHosts.ts`); with no
- * owner they fail by name. The DevTools methods' own `t3.browser/devtools`
- * grant is enforced by the broker from their `requiredGrants`; the adapter
- * additionally limits them to sessions the calling installation opened.
+ * resize, close) record acceptance, never engine execution. Page commands
+ * (back … closeDevTools) route to the authenticated desktop engine host that
+ * owns the session (see `preview/BrowserEngineHosts.ts`); with no owner they
+ * fail by name. `navigate` records the request, then routes to the owner
+ * when one exists; an ownerless session keeps the recorded request. The
+ * DevTools methods' own `t3.browser/devtools` grant is enforced by the
+ * broker from their `requiredGrants`; the adapter additionally limits them
+ * to sessions the calling installation opened.
  * Navigation honesty compares the dispatch-side
  * request revision against the last owner-host report carried by
  * `PreviewSessionDetail` (P08-NAV-ACK, see `Manager.ts`). Favicons ride as a
@@ -751,16 +753,22 @@ export function createBrowserSessionsApiProvider(
             decodeNavigateInput,
             "navigate input fails the declared schema.",
           );
-          return yield* command(
-            safe,
-            metadataWrite(
-              dependencies.preview
+          return yield* command(safe, (guarded) =>
+            Effect.gen(function* () {
+              const recorded = yield* dependencies.preview
                 .navigate({ threadId, tabId: safe.tabId, url: safe.url })
                 .pipe(
                   Effect.catchTag("PreviewSessionLookupError", lookupRemoved),
                   Effect.mapError(operationError(operation)),
-                ),
-            ),
+                );
+              // With no owning host (web, mobile, remote-only) the request stays
+              // recorded metadata; an owner loads the recorded URL and its next
+              // fenced report settles the pending navigation.
+              if (guarded.detail.engine === null || recorded.navStatus._tag === "Idle") {
+                return "accepted" as const;
+              }
+              return yield* engineWrite({ _tag: "navigate", url: recorded.navStatus.url })(guarded);
+            }),
           );
         }
         case "back":
@@ -1220,16 +1228,16 @@ export function createBrowserSessionsApiProvider(
   };
 }
 
-export const makeBrowserSessionsApiProvider = Effect.fn("BrowserSessionsApi.make")(function* (
-  input?: { readonly favicons?: BrowserFaviconAssets },
-) {
-  const environment = yield* ServerEnvironment;
-  return createBrowserSessionsApiProvider({
-    environmentId: yield* environment.getEnvironmentId,
-    projects: yield* ProjectionProjectRepository,
-    threads: yield* ProjectionThreadRepository,
-    preview: yield* PreviewManager.PreviewManager,
-    engineHosts: yield* BrowserEngineHosts.BrowserEngineHosts,
-    ...(input?.favicons === undefined ? {} : { favicons: input.favicons }),
-  });
-});
+export const makeBrowserSessionsApiProvider = Effect.fn("BrowserSessionsApi.make")(
+  function* (input?: { readonly favicons?: BrowserFaviconAssets }) {
+    const environment = yield* ServerEnvironment;
+    return createBrowserSessionsApiProvider({
+      environmentId: yield* environment.getEnvironmentId,
+      projects: yield* ProjectionProjectRepository,
+      threads: yield* ProjectionThreadRepository,
+      preview: yield* PreviewManager.PreviewManager,
+      engineHosts: yield* BrowserEngineHosts.BrowserEngineHosts,
+      ...(input?.favicons === undefined ? {} : { favicons: input.favicons }),
+    });
+  },
+);

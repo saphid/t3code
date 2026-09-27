@@ -140,6 +140,7 @@ type CommandResult = BrowserEngineHostCommandResultInput["result"];
 
 type EngineCommandBridge = Pick<
   DesktopPreviewBridge,
+  | "navigate"
   | "goBack"
   | "goForward"
   | "refresh"
@@ -167,6 +168,10 @@ export async function executeEngineCommand(
   if (engineGenerationOf(state) !== engineGeneration) return rejected("stale-generation");
   try {
     switch (command._tag) {
+      case "navigate":
+        // The same desktop load the native address bar performs.
+        await bridge.navigate(runtimeTabId, command.url);
+        break;
       case "back":
         if (!state.canGoBack) return rejected("not-applicable");
         await bridge.goBack(runtimeTabId);

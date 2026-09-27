@@ -37,6 +37,7 @@ describe("BrowserEngineCommand", () => {
       { _tag: "forward" },
       { _tag: "reload" },
       { _tag: "hardReload" },
+      { _tag: "navigate", url: "https://example.com/" },
       { _tag: "zoom", zoomFactor: 1.5 },
       { _tag: "setAppearance", appearance: "light" },
       { _tag: "setAudioMuted", muted: true },
@@ -50,7 +51,11 @@ describe("BrowserEngineCommand", () => {
 
   it("rejects zoom factors off the fixed ladder and verbs outside the set", () => {
     expect(() => decodeCommand({ _tag: "zoom", zoomFactor: 1.3 })).toThrow();
-    expect(() => decodeCommand({ _tag: "navigate", url: "https://example.com" })).toThrow();
+    expect(() => decodeCommand({ _tag: "navigate", url: "" })).toThrow();
+    expect(() =>
+      decodeCommand({ _tag: "navigate", url: `https://e.com/${"a".repeat(2048)}` }),
+    ).toThrow();
+    expect(() => decodeCommand({ _tag: "resize" })).toThrow();
     expect(() => decodeCommand({ _tag: "openDevTools" })).toThrow();
     expect(() => decodeCommand({ _tag: "setDevToolsOpen" })).toThrow();
     expect(() => decodeCommand({ _tag: "setPictureInPicture" })).toThrow();

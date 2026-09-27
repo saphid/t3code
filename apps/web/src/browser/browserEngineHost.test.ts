@@ -47,6 +47,7 @@ const tabState = (overrides: Partial<DesktopPreviewTabState> = {}): DesktopPrevi
 });
 
 const makeBridge = () => ({
+  navigate: vi.fn(async (_tabId: string, _url: string) => {}),
   goBack: vi.fn(async () => {}),
   goForward: vi.fn(async () => {}),
   refresh: vi.fn(async () => {}),
@@ -80,6 +81,28 @@ describe("executeEngineCommand", () => {
       reason: "stale-generation",
     });
     expect(bridge.refresh).not.toHaveBeenCalled();
+    expect(await run(bridge, { _tag: "navigate", url: "http://localhost:5173/next" })).toEqual({
+      outcome: "rejected",
+      reason: "stale-generation",
+    });
+    expect(bridge.navigate).not.toHaveBeenCalled();
+  });
+
+  it("loads a navigate on the fenced guest the way the native address bar does", async () => {
+    const bridge = makeBridge();
+    recordHostedTabState(RUNTIME_TAB, tabState());
+    expect(await run(bridge, { _tag: "navigate", url: "http://localhost:5173/next" })).toEqual({
+      outcome: "applied",
+    });
+    expect(bridge.navigate).toHaveBeenCalledExactlyOnceWith(
+      RUNTIME_TAB,
+      "http://localhost:5173/next",
+    );
+    bridge.navigate.mockRejectedValueOnce(new Error("guest detached"));
+    expect(await run(bridge, { _tag: "navigate", url: "http://localhost:5173/" })).toEqual({
+      outcome: "rejected",
+      reason: "failed",
+    });
   });
 
   it("routes page verbs to the native bridge for the fenced guest", async () => {

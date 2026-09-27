@@ -46,11 +46,16 @@ export const BrowserEngineCommandId = TrimmedNonEmptyString.check(Schema.isMaxLe
 export type BrowserEngineCommandId = typeof BrowserEngineCommandId.Type;
 
 /**
- * Page commands. Navigation, resize and privileged verbs are not here.
- * `setPictureInPicture` pops the guest out into the host's native
- * picture-in-picture window; the server gates it on its own grant.
+ * Page commands. Resize and privileged verbs are not here. `navigate` loads
+ * the URL the server already recorded as the session's request, so the
+ * owner's next report settles it. `setPictureInPicture` pops the guest out
+ * into the host's native picture-in-picture window; the server gates it on
+ * its own grant.
  */
 export const BrowserEngineCommand = Schema.Union([
+  Schema.TaggedStruct("navigate", {
+    url: TrimmedNonEmptyString.check(Schema.isMaxLength(PREVIEW_URL_MAX_LENGTH)),
+  }),
   Schema.TaggedStruct("back", {}),
   Schema.TaggedStruct("forward", {}),
   Schema.TaggedStruct("reload", {}),
