@@ -46,17 +46,25 @@ it("consumes escaped quotes inside credential values", () => {
   );
 });
 
-it("keeps prose that mentions a PEM delimiter, and later records", () => {
+it("redacts from any BEGIN marker through END, or to the end, even in prose", () => {
+  // Prose that mentions BEGIN cannot be told from command output mid-key, so
+  // it loses the rest of the text (accepted over-redaction).
   const prose =
     "The test checks the literal -----BEGIN PRIVATE KEY----- marker.\nBuild passed.\nCommitted the fix.\n";
-  expect(redactLogSecrets(prose)).toBe(prose);
+  expect(redactLogSecrets(prose)).toBe(`The test checks the literal ${R}\n${R}\n${R}\n`);
   expect(redactLogSecrets("See -----END PRIVATE KEY----- too")).toBe(
     "See -----END PRIVATE KEY----- too",
   );
-  // A marker line followed by prose redacts only the marker line.
-  expect(redactLogSecrets("-----BEGIN PRIVATE KEY-----\nBuild passed.\n")).toBe(
-    `${R}\nBuild passed.\n`,
-  );
+  expect(redactLogSecrets("-----BEGIN PRIVATE KEY-----\nBuild passed.\n")).toBe(`${R}\n${R}\n`);
+  // Interleaved non-key lines do not end an unfinished key.
+  expect(
+    redactLogSecrets("ok\n-----BEGIN PRIVATE KEY-----\nAAAA\n[progress]\nUNIQUESECRET\n"),
+  ).toBe(`ok\n${R}\n${R}\n${R}\n${R}\n`);
+  expect(
+    redactLogSecrets(
+      "-----BEGIN PRIVATE KEY-----\nAAAA\n[progress]\nUNIQUESECRET\n-----END PRIVATE KEY-----\nafter\n",
+    ),
+  ).toBe(`${R}\n${R}\n${R}\n${R}\n${R}\nafter\n`);
   // A key escaped inside a transcript record, with headers and a blank line.
   const key =
     "-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\n\nMIIEowIBAAKC\nQQQQ==\n-----END RSA PRIVATE KEY-----\n";
@@ -96,16 +104,13 @@ it("redacts every line of a key whose lines carry spaces or tabs", () => {
     // Truncated end: the read stops inside the key.
     const cut = block.slice(0, block.indexOf("-----END"));
     expect(redactLogSecrets(cut), cut).toBe(whole.slice(0, -`${R}\n`.length));
-    expect(JSON.parse(redactLogSecrets(JSON.stringify({ content: cut })))).toEqual({
-      content: R,
-    });
+    // Unfinished inside a string, it runs to the end of the text.
+    expect(redactLogSecrets(JSON.stringify({ content: cut }))).toBe(`{"content":"${R}`);
     // Truncated inside the last key line: no break before the end of the
     // read or the closing JSON quote.
     const open = cut.slice(0, -1);
     expect(redactLogSecrets(open), open).toBe(whole.slice(0, -`${R}\n`.length - 1));
-    expect(JSON.parse(redactLogSecrets(JSON.stringify({ content: open })))).toEqual({
-      content: R,
-    });
+    expect(redactLogSecrets(JSON.stringify({ content: open }))).toBe(`{"content":"${R}`);
   }
 });
 
@@ -113,17 +118,16 @@ it("redacts a key cut off inside a JSON string, even on one spaced line", () => 
   // The reviewer's repro: the closing quote ends the last base64 line.
   expect(
     redactLogSecrets(JSON.stringify({ content: "-----BEGIN PRIVATE KEY-----\nAAAA \nBBBB" })),
-  ).toBe(`{"content":"${R}"}`);
+  ).toBe(`{"content":"${R}`);
   const line = Array.from({ length: 29 }, (_, i) => `${"MIIE".repeat(14)}${i}`).join(" ");
   const record = JSON.stringify({ content: `-----BEGIN RSA PRIVATE KEY-----\n${line}` });
-  expect(redactLogSecrets(record)).toBe(`{"content":"${R}"}`);
+  expect(redactLogSecrets(`${record}\n{"next":"line"}`)).toBe(`{"content":"${R}\n${R}`);
 });
 
-it("redacts plain prose lines directly under a BEGIN marker (accepted trade-off)", () => {
-  // Letters, digits, and spaces cannot be told apart from spaced base64, so
-  // such a line after BEGIN is redacted; whitespace-only lines are kept.
+it("redacts every line after an unfinished BEGIN marker, whatever it holds", () => {
+  // Whitespace-only lines are kept, so line structure still shows.
   expect(redactLogSecrets("-----BEGIN PRIVATE KEY-----\nBuild passed 42\n  \ndone.\n")).toBe(
-    `${R}\n${R}\n  \ndone.\n`,
+    `${R}\n${R}\n  \n${R}\n`,
   );
 });
 
@@ -153,8 +157,8 @@ it("redacts credential fields and keys at every escaping depth", () => {
     // A key tail whose BEGIN line fell before the read, and one cut off at END.
     const tail = key.slice(key.indexOf("\n") + 1);
     expect(unnest(redactLogSecrets(nest(tail, depth)), depth)).toBe(`${R}\n`);
-    const cut = key.slice(0, key.indexOf("-----END"));
-    expect(unnest(redactLogSecrets(nest(cut, depth)), depth)).toBe(R);
+    const cut = nest(key.slice(0, key.indexOf("-----END")), depth);
+    expect(redactLogSecrets(cut)).toBe(`${cut.slice(0, cut.indexOf("-----BEGIN"))}${R}`);
     // Environment assignments quoted inside a nested string.
     expect(unnest(redactLogSecrets(nest('GH_TOKEN="gho-1 2"', depth)), depth)).toBe(
       `GH_TOKEN="${R}"`,
@@ -192,8 +196,7 @@ it("never leaks secrets when the read stops at any byte, or starts at any line",
 
 it("keeps nested lookalikes that are not secrets", () => {
   const plain = String.raw`{"input_tokens":12,"author":"Ada","tokens":"many","note":"a \"token\" and \\ path"}`;
-  const prose =
-    "The -----BEGIN PRIVATE KEY----- marker.\nSee -----END PRIVATE KEY----- too.\nbasic idea\nPWD=/work";
+  const prose = "See -----END PRIVATE KEY----- too.\nbasic idea\nPWD=/work";
   for (const depth of [1, 2, 3]) {
     for (const text of [plain, prose]) {
       const nested = nest(text, depth);
@@ -261,12 +264,15 @@ it("redacts tab-indented key tails at every depth, with LF or CRLF", () => {
     }
 });
 
-it("keeps a literal backslash-n after a BEGIN mention in prose", () => {
-  const prose = String.raw`The -----BEGIN PRIVATE KEY-----\nBuild passed\nLater ordinary content.`;
-  for (const depth of [1, 2, 3]) {
-    const nested = nest(prose, depth);
-    expect(redactLogSecrets(nested), `depth ${depth}`).toBe(nested);
-  }
+it("redacts an unfinished escaped key after any prefix, at every depth", () => {
+  const echo = String.raw`echo -----BEGIN PRIVATE KEY-----\nUNIQUESECRET`;
+  for (const prefix of ["", "ok\n", "tool output: ", "[12:34:56] "])
+    for (const depth of [0, 1, 2, 3]) {
+      const input = nest(prefix + echo, depth);
+      const redacted = redactLogSecrets(input);
+      expect(redacted, `${prefix} ${depth}`).not.toContain("UNIQUESECRET");
+      expect(redacted).toBe(`${input.slice(0, input.indexOf("-----BEGIN"))}${R}`);
+    }
 });
 
 it("redacts keys spelled with escaped line breaks anywhere in a line", () => {
@@ -286,11 +292,10 @@ it("redacts keys spelled with escaped line breaks anywhere in a line", () => {
       if (depth <= 12) expect(unnest(redacted, depth)).toBe(R);
     }
   }
-  // Cut off before END: a marker opening its value runs to the end of its
-  // string or line.
+  // Cut off before END, the key runs to the end of the text, after any word.
   expect(
     redactLogSecrets(String.raw`x -----BEGIN PRIVATE KEY-----\nUNIQUESECRET`, { lineStart: true }),
-  ).toBe(String.raw`x -----BEGIN PRIVATE KEY-----\nUNIQUESECRET`);
+  ).toBe(`x ${R}`);
   expect(
     redactLogSecrets(`ok\nkey: ${String.raw`-----BEGIN PRIVATE KEY-----\nUNIQUESECRET`}`),
   ).toBe(`ok\nkey: ${R}`);
@@ -298,16 +303,16 @@ it("redacts keys spelled with escaped line breaks anywhere in a line", () => {
     redactLogSecrets(
       `export SSH_KEY="${String.raw`-----BEGIN PRIVATE KEY-----\nUNIQUESECRET`}"\nnext`,
     ),
-  ).toBe(`export SSH_KEY="${R}"\nnext`);
+  ).toBe(`export SSH_KEY="${R}\n${R}`);
   const cut = JSON.stringify({
     content: String.raw`-----BEGIN PRIVATE KEY-----\nUNIQUESECRET`,
     n: 1,
   });
-  expect(JSON.parse(redactLogSecrets(cut))).toEqual({ content: R, n: 1 });
-  // Prose that mentions the marker before a literal backslash-n keeps its text.
+  expect(redactLogSecrets(cut)).toBe(`{"content":"${R}`);
+  // Prose that mentions the marker is redacted too (accepted over-redaction).
   const prose = String.raw`The -----BEGIN PRIVATE KEY-----\nBuild passed\nLater ordinary content.`;
-  expect(redactLogSecrets(prose, { lineStart: true })).toBe(prose);
-  expect(redactLogSecrets(`ok\n${prose}`, { lineStart: true })).toBe(`ok\n${prose}`);
+  expect(redactLogSecrets(prose, { lineStart: true })).toBe(`The ${R}`);
+  expect(redactLogSecrets(`ok\n${prose}`, { lineStart: true })).toBe(`ok\nThe ${R}`);
 });
 
 it("reads delimiters spelled \\u0022 outside any string", () => {
@@ -353,6 +358,44 @@ it("fails closed on a secret value whose closing quote is not followed by JSON",
   expect(redactLogSecrets(valid)).toBe(
     `{"a":[{"password":"${R}"}],"password":"${R}" ,\n"b":"keep"}`,
   );
+});
+
+it("closes a secret value only where JSON validly continues", () => {
+  // After a comma, the same object needs a member; past a closing bracket any
+  // value may follow. Anything else keeps the rest of the line in the value.
+  for (const fragment of [
+    '{"password":"first",{UNIQUESECRET}',
+    '{"password":"first",[UNIQUESECRET}',
+    '{"password":"first","UNIQUESECRET"}',
+    '{"password":"first"},{UNIQUESECRET}',
+    '{"password":"first"},[UNIQUESECRET]',
+    '{"password":"first"},tru UNIQUESECRET',
+  ])
+    for (const depth of [0, 1, 2, 3])
+      expect(redactLogSecrets(nest(fragment, depth)), `${fragment} ${depth}`).not.toContain(
+        "UNIQUESECRET",
+      );
+  // Valid JSON keeps its structure and every sibling.
+  for (const sibling of [
+    "1",
+    "true",
+    "false",
+    "null",
+    "-1",
+    "1e3",
+    '"kept"',
+    "{}",
+    "[]",
+    '{"a":1}',
+    "[[1]]",
+  ])
+    for (const depth of [0, 1, 2, 3]) {
+      const input = nest(`[{"password":"UNIQUESECRET"},${sibling}]`, depth);
+      const redacted = unnest(redactLogSecrets(input), depth);
+      expect(JSON.parse(redacted), `${sibling} ${depth}`).toEqual(
+        JSON.parse(`[{"password":"${R}"},${sibling}]`),
+      );
+    }
 });
 
 it("redacts passphrases, sessions, and quoted header values", () => {

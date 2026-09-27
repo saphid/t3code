@@ -70,9 +70,12 @@ const tailInput = Schema.decodeUnknownSync(
 export const AGENT_LOG_REDACTION_CONTEXT_BYTES = 8192;
 /**
  * Bytes before the read searched for the last private-key marker, so a window
- * that starts inside a key is known to (`shapeLogTail`).
+ * that starts inside a key is known to (`keyStateBefore`). A cold search reads
+ * backward in `AGENT_LOG_KEY_SCAN_CHUNK_BYTES` chunks and stops at the first
+ * marker; later reads of the same file reuse it and read only appended bytes.
  */
 export const AGENT_LOG_KEY_SCAN_BYTES = 4 * 1024 * 1024;
+export const AGENT_LOG_KEY_SCAN_CHUNK_BYTES = 64 * 1024;
 
 /**
  * Directories the Claude harness writes agent output under: transcripts in
@@ -89,74 +92,130 @@ export function defaultAgentLogRoots(): readonly string[] {
 export const claudeWorkspaceSlug = (cwd: string) => cwd.replace(/[^A-Za-z0-9]/g, "-");
 
 const KEY_MARKER_TAIL = Buffer.from("PRIVATE KEY-----");
-const KEY_MARKER = /-----(BEGIN|END)[A-Z ]{0,40}PRIVATE KEY-----$/;
-const isKeyByte = (byte: number) =>
-  (byte >= 0x41 && byte <= 0x5a) ||
-  (byte >= 0x61 && byte <= 0x7a) ||
-  (byte >= 0x30 && byte <= 0x39) ||
-  byte === 0x2b ||
-  byte === 0x2f ||
-  byte === 0x3d ||
-  byte === 0x20 ||
-  byte === 0x09 ||
-  byte === 0x0d;
+const KEY_MARKER = /-----(BEGIN|END)[A-Z0-9 ]{0,40}PRIVATE KEY-----$/;
+/** Longest key marker: bytes a chunked scan re-reads across a boundary. */
+const KEY_MARKER_MAX_BYTES = 66;
+type KeyState = "outside" | "inside" | "unknown";
+interface KeyMarker {
+  readonly begin: boolean;
+  /** Offset just past the marker, in the scanned bytes' coordinates. */
+  readonly end: number;
+}
 
 /**
- * Whether every line of `bytes` from `from` is key material as redaction
- * reads it: base64 and spaces, blank, or a `Name: value` header.
+ * The last private-key marker (`-----BEGIN … PRIVATE KEY-----` or END, in any
+ * form: its own line, after a word, escaped, inside a string) wholly inside
+ * `bytes`.
  */
-function keyLinesOnly(bytes: Uint8Array, from: number): boolean {
-  let name = true;
-  let header = false;
-  for (let at = from; at < bytes.length; at++) {
-    const byte = bytes[at]!;
-    if (byte === 0x0a) {
-      name = true;
-      header = false;
-    } else if (header) continue;
-    else if (byte === 0x3a && name && (bytes[at + 1] === 0x20 || bytes[at + 1] === 0x09))
-      header = true;
-    else {
-      const letter = (byte >= 0x41 && byte <= 0x5a) || (byte >= 0x61 && byte <= 0x7a);
-      if (!letter && byte !== 0x2d && byte !== 0x20 && byte !== 0x09) name = false;
-      if (!isKeyByte(byte) && !(byte === 0x2d && name)) return false;
-    }
+function lastKeyMarker(bytes: Buffer): KeyMarker | null {
+  for (let at = bytes.lastIndexOf(KEY_MARKER_TAIL); at > 0;) {
+    const end = at + KEY_MARKER_TAIL.length;
+    const marker = KEY_MARKER.exec(bytes.toString("latin1", Math.max(0, at - 50), end));
+    if (marker) return { begin: marker[1] === "BEGIN", end };
+    at = bytes.lastIndexOf(KEY_MARKER_TAIL, at - 1);
   }
-  return true;
+  return null;
 }
 
 /**
  * Whether the source continues inside a private key after `scan`, the bytes
  * directly before a line; `complete` when they reach the source's start. The
- * last marker decides: an END (raw or escaped) closes the key; a BEGIN that
- * ends its line opens one that runs on while every later line is key
- * material, as redaction reads a visible block; a BEGIN inside a line is
- * prose. With no marker in an incomplete scan the state is unknown.
+ * last marker in any form decides, whatever lines follow it: a BEGIN opens a
+ * key, an END closes it. With no marker in an incomplete scan the state is
+ * unknown.
  */
-export function keyStateBefore(scan: Uint8Array, complete: boolean) {
-  const bytes = Buffer.from(scan.buffer, scan.byteOffset, scan.byteLength);
-  for (let at = bytes.lastIndexOf(KEY_MARKER_TAIL); at > 0;) {
-    const end = at + KEY_MARKER_TAIL.length;
-    const marker = KEY_MARKER.exec(bytes.toString("latin1", Math.max(0, at - 50), end));
-    if (marker?.[1] === "END") return "outside";
-    if (marker) {
-      let next = end;
-      while (bytes[next] === 0x20 || bytes[next] === 0x09 || bytes[next] === 0x0d) next++;
-      if (next === bytes.length || bytes[next] === 0x0a)
-        return keyLinesOnly(bytes, next) ? "inside" : "outside";
-    }
-    at = bytes.lastIndexOf(KEY_MARKER_TAIL, at - 1);
-  }
+export function keyStateBefore(scan: Uint8Array, complete: boolean): KeyState {
+  const marker = lastKeyMarker(Buffer.from(scan.buffer, scan.byteOffset, scan.byteLength));
+  if (marker) return marker.begin ? "inside" : "outside";
   return complete ? "outside" : "unknown";
+}
+
+/** Reads `length` bytes of the source at `position`. */
+type ReadAt = (position: number, length: number) => Promise<Buffer>;
+/**
+ * What a key scan learned about one file (by dev + inode): the last marker
+ * before `end`, with `from` the lowest offset scanned (0 when it reached the
+ * start). `head` and `anchor` are the bytes at the start and directly before
+ * `end`; they must read the same for the scan to be reused, so a truncated or
+ * rewritten file is scanned again.
+ */
+interface KeyScan {
+  readonly end: number;
+  readonly from: number;
+  readonly marker: KeyMarker | null;
+  readonly head: Buffer;
+  readonly anchor: Buffer;
+}
+const KEY_SCAN_CHECK_BYTES = 256;
+const KEY_SCAN_CACHE_SIZE = 64;
+
+const scanState = (scan: KeyScan): KeyState =>
+  scan.marker
+    ? scan.marker.begin
+      ? "inside"
+      : "outside"
+    : scan.from === 0
+      ? "outside"
+      : "unknown";
+
+/**
+ * The key state just before offset `at` of a source of `size` bytes, and the
+ * scan that decided it. A valid `cached` scan is reused: extended over the
+ * bytes appended since (up to `AGENT_LOG_KEY_SCAN_BYTES`), or answered
+ * directly when its last marker precedes `at`. Otherwise it scans backward
+ * from `at` in chunks until a marker, at most `AGENT_LOG_KEY_SCAN_BYTES`.
+ */
+async function scanKeyState(
+  read: ReadAt,
+  size: number,
+  at: number,
+  cached?: KeyScan,
+): Promise<{ readonly state: KeyState; readonly scan: KeyScan }> {
+  const checks = async (end: number) => ({
+    head: await read(0, Math.min(KEY_SCAN_CHECK_BYTES, size)),
+    anchor: await read(
+      Math.max(0, end - KEY_SCAN_CHECK_BYTES),
+      Math.min(KEY_SCAN_CHECK_BYTES, end),
+    ),
+  });
+  if (cached && cached.end <= size) {
+    const { head, anchor } = await checks(cached.end);
+    if (head.subarray(0, cached.head.length).equals(cached.head) && anchor.equals(cached.anchor)) {
+      if (at === cached.end) return { state: scanState(cached), scan: cached };
+      if (at > cached.end && at - cached.end <= AGENT_LOG_KEY_SCAN_BYTES) {
+        const from = Math.max(0, cached.end - KEY_MARKER_MAX_BYTES);
+        const found = lastKeyMarker(await read(from, at - from));
+        const marker =
+          found && from + found.end > cached.end
+            ? { ...found, end: from + found.end }
+            : cached.marker;
+        const scan = { end: at, from: cached.from, marker, ...(await checks(at)) };
+        return { state: scanState(scan), scan };
+      }
+      if (cached.marker ? cached.marker.end <= at : cached.from === 0)
+        return { state: scanState(cached), scan: cached };
+    }
+  }
+  const floor = Math.max(0, at - AGENT_LOG_KEY_SCAN_BYTES);
+  let from = at;
+  let marker: KeyMarker | null = null;
+  while (from > floor && !marker) {
+    const to = Math.min(at, from + KEY_MARKER_MAX_BYTES);
+    from = Math.max(floor, from - AGENT_LOG_KEY_SCAN_CHUNK_BYTES);
+    const found = lastKeyMarker(await read(from, to - from));
+    if (found) marker = { ...found, end: from + found.end };
+  }
+  const scan = { end: at, from, marker, ...(await checks(at)) };
+  return { state: scanState(scan), scan };
 }
 
 /**
  * Shapes a byte region that ends at the end of the source; `start` is its
- * offset in the source, and `lead` the bytes directly before it that were
- * read to find the key state (`keyStateBefore`). A region starting mid-source
- * first drops its leading partial line: that line's start (and any secret
- * name on it) is unread, so redaction cannot classify it, even when it is
- * the only line. The rest is decoded and redacted, from the key state at its
+ * offset in the source. `before` is the key state at its first whole line, or
+ * the bytes directly before the region to find it in (`keyStateBefore`). A
+ * region starting mid-source first drops its leading partial line: that
+ * line's start (and any secret name on it) is unread, so redaction cannot
+ * classify it, even when it is the only line. The rest is decoded and redacted, from the key state at its
  * first line: inside a key it is redacted through END, and where the state
  * is unknown its leading lines of possible key material are withheld. It is
  * then cut to `maxBytes` UTF-8 bytes. A cut inside a line drops leading UTF-8
@@ -167,13 +226,18 @@ export function shapeLogTail(
   region: Uint8Array,
   start: number,
   limits: { readonly maxBytes: number; readonly maxLines: number },
-  lead: Uint8Array = new Uint8Array(),
+  before: Uint8Array | KeyState = new Uint8Array(),
 ): { readonly contents: string; readonly truncated: boolean } {
   const offset = start > 0 ? region.indexOf(0x0a) + 1 || region.length : 0;
   const key =
-    start > 0
-      ? keyStateBefore(Buffer.concat([lead, region.subarray(0, offset)]), lead.length >= start)
-      : "outside";
+    start === 0
+      ? "outside"
+      : typeof before === "string"
+        ? before
+        : keyStateBefore(
+            Buffer.concat([before, region.subarray(0, offset)]),
+            before.length >= start,
+          );
   let bytes = new TextEncoder().encode(
     redactLogSecrets(new TextDecoder().decode(region.subarray(offset)), { lineStart: true, key }),
   );
@@ -213,11 +277,20 @@ type Dependencies = Parameters<typeof makeExtensionScopeResolver>[0] & {
 
 const OPEN_FLAGS =
   NodeFSP.constants.O_RDONLY | NodeFSP.constants.O_NOFOLLOW | NodeFSP.constants.O_NONBLOCK;
+/** Reads exactly `length` bytes at `position`; a short read means the file changed. */
+async function readFully(file: NodeFSP.FileHandle, position: number, length: number) {
+  const bytes = Buffer.alloc(length);
+  const { bytesRead } = await file.read(bytes, 0, length, position);
+  if (bytesRead !== length) throw fail("AgentLogsSourceChanged");
+  return bytes;
+}
 const sameFile = (a: { ino: number; dev: number }, b: { ino: number; dev: number }) =>
   a.ino === b.ino && a.dev === b.dev;
 
 export function createOrchestrationLogsApiProvider(deps: Dependencies): HostApiProvider {
   const resolve = makeExtensionScopeResolver(deps);
+  /** Key scans by opened file identity, least recently used first. */
+  const keyScans = new Map<string, KeyScan>();
   const guard = async (
     context: ViewContext,
     signal: AbortSignal,
@@ -322,17 +395,22 @@ export function createOrchestrationLogsApiProvider(deps: Dependencies): HostApiP
       )
         throw fail("AgentLogsSourceChanged");
       const start = Math.max(0, stat.size - maxBytes - AGENT_LOG_REDACTION_CONTEXT_BYTES);
-      const leadStart = Math.max(0, start - AGENT_LOG_KEY_SCAN_BYTES);
-      const bytes = Buffer.alloc(stat.size - leadStart);
-      const { bytesRead } = await file.read(bytes, 0, bytes.length, leadStart);
-      const read = bytes.subarray(0, bytesRead);
-      const split = Math.min(start - leadStart, read.length);
-      return {
-        region: read.subarray(split),
-        lead: read.subarray(0, split),
-        start,
-        byteLength: stat.size,
+      const region = await readFully(file, start, stat.size - start);
+      if (start === 0) return { region, key: "outside" as const, start, byteLength: stat.size };
+      // Bytes before the region come from the file; the region is already read.
+      const read: ReadAt = async (position, length) => {
+        if (position >= start) return region.subarray(position - start, position - start + length);
+        const own = Math.min(length, start - position);
+        const bytes = await readFully(file, position, own);
+        return own === length ? bytes : Buffer.concat([bytes, region.subarray(0, length - own)]);
       };
+      const id = `${stat.dev}:${stat.ino}`;
+      const lineStart = start + (region.indexOf(0x0a) + 1 || region.length);
+      const { state, scan } = await scanKeyState(read, stat.size, lineStart, keyScans.get(id));
+      keyScans.delete(id);
+      keyScans.set(id, scan);
+      if (keyScans.size > KEY_SCAN_CACHE_SIZE) keyScans.delete(keyScans.keys().next().value!);
+      return { region, key: state, start, byteLength: stat.size };
     } catch (error) {
       // Raw filesystem errors carry host paths; only fixed codes leave here.
       if (isOperationError(error)) throw error;
@@ -387,7 +465,7 @@ export function createOrchestrationLogsApiProvider(deps: Dependencies): HostApiP
         read.region,
         read.start,
         { maxBytes, maxLines: safe.maxLines ?? AGENT_LOG_TAIL_MAX_LINES },
-        read.lead,
+        read.key,
       );
       if (Buffer.byteLength(shaped.contents) > maxBytes) throw fail("AgentLogsTailTooLarge");
       const result: AgentLogTail = {

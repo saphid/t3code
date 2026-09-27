@@ -283,7 +283,7 @@ it("keeps whole lines when the byte cut lands exactly on a line boundary", () =>
 it("redacts a transcript record whose key is cut off before its closing quote", () => {
   const record = JSON.stringify({ content: "-----BEGIN PRIVATE KEY-----\nAAAA \nBBBB" });
   expect(shapeLogTail(new TextEncoder().encode(`${record}\n`), 0, limits)).toEqual({
-    contents: `{"content":"[REDACTED]"}\n`,
+    contents: `{"content":"[REDACTED]\n`,
     truncated: false,
   });
 });
@@ -336,18 +336,21 @@ it("decides whether a window starts inside a key from the last marker before it"
   expect(state("-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\nok\n")).toBe(
     "outside",
   );
-  // An escaped END closes it too; a BEGIN inside a line is prose.
+  // An escaped END closes it too.
   expect(
     state("-----BEGIN PRIVATE KEY-----\n" + String.raw`{"c":"-----END PRIVATE KEY-----"}` + "\n"),
   ).toBe("outside");
   expect(state("-----BEGIN PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\n\nAAAA\n")).toBe("inside");
-  // A line that is not key material ends the key, as it ends a visible block.
+  // The last BEGIN in any form opens a key, whatever lines follow it.
   expect(state("-----BEGIN PRIVATE KEY-----\nAAAA\nThe -----BEGIN PRIVATE KEY----- line.\n")).toBe(
+    "inside",
+  );
+  expect(state("-----BEGIN PRIVATE KEY-----\nBuild passed.\nAAAA\n")).toBe("inside");
+  expect(state("The -----BEGIN PRIVATE KEY----- line.\n", false)).toBe("inside");
+  expect(state(String.raw`{"c":"-----BEGIN EC PRIVATE KEY-----\nAAAA"}` + "\n")).toBe("inside");
+  expect(state(String.raw`{"c":"-----BEGIN PRIVATE KEY-----\n-----END PRIVATE KEY-----"}`)).toBe(
     "outside",
   );
-  expect(state("-----BEGIN PRIVATE KEY-----\nBuild passed.\nAAAA\n")).toBe("outside");
-  expect(state("The -----BEGIN PRIVATE KEY----- line.\n", false)).toBe("unknown");
-  expect(state(String.raw`{"c":"-----BEGIN PRIVATE KEY-----\nAAAA"}` + "\n")).toBe("outside");
 });
 
 // Base64 key rows as the review's reproductions wrote them.
@@ -452,10 +455,10 @@ it("shapes escaped keys, escaped fields, and malformed quotes without leaking", 
     "ok\n" + String.raw`{"password":"[REDACTED]"}`,
   );
   expect(shape('{"password":"first"-UNIQUESECRET"}')).toBe('{"password":"[REDACTED]"}');
-  // Prose quoting a BEGIN marker before a literal backslash-n keeps its text.
-  const prose = String.raw`The -----BEGIN PRIVATE KEY-----\nBuild passed\nLater ordinary content.`;
-  expect(shape(prose)).toBe(prose);
-  expect(shape(`ok\n${prose}`)).toBe(`ok\n${prose}`);
+  expect(shape('[{"password":"UNIQUESECRET"},1]')).toBe('[{"password":"[REDACTED]"},1]');
+  // An unfinished escaped key after a word runs to the end.
+  const echo = String.raw`echo -----BEGIN PRIVATE KEY-----\nUNIQUESECRET`;
+  expect(shape(`ok\n${echo}`)).toBe("ok\necho [REDACTED]");
 });
 
 it("reads the key state before the window from the file", async () => {
@@ -473,6 +476,126 @@ it("reads the key state before the window from the file", async () => {
   await NodeFSP.appendFile(file, `-----END PRIVATE KEY-----\n${"AAAA later\n".repeat(1000)}`);
   const after = (await f.call("readTail", { runId: "k", source: "output" })) as AgentLogTail;
   expect(after.contents).toMatch(/^AAAA later\n/);
+});
+
+it("keeps a window inside a key after interleaved lines, until END", async () => {
+  const f = await fixture();
+  const row = `${"A".repeat(32)} ${"B".repeat(32)}\n`;
+  const file = await f.write(
+    NodePath.join(f.projects, SLUG, "s", "k.jsonl"),
+    `line\n-----BEGIN PRIVATE KEY-----\nAAAA\n[progress] reading key\n${row.repeat(400)}`,
+  );
+  f.rosters.set("thread", [task("k", { outputFile: file })]);
+  for (const maxBytes of [100, 8192]) {
+    const tail = (await f.call("readTail", {
+      runId: "k",
+      source: "output",
+      maxBytes,
+    })) as AgentLogTail;
+    expect(tail.contents, `${maxBytes}`).not.toMatch(/AAAAAAAA|BBBBBBBB/);
+  }
+  // The same source read whole: the interleaved line does not end the key.
+  const whole = shapeLogTail(
+    new TextEncoder().encode(`-----BEGIN PRIVATE KEY-----\n[progress]\n${row.repeat(20)}`),
+    0,
+    limits,
+  );
+  expect(whole.contents).not.toMatch(/AAAAAAAA|BBBBBBBB/);
+  await NodeFSP.appendFile(file, `-----END PRIVATE KEY-----\n${"AAAA later\n".repeat(1000)}`);
+  const after = (await f.call("readTail", { runId: "k", source: "output" })) as AgentLogTail;
+  expect(after.contents).toMatch(/^AAAA later\n/);
+});
+
+/** Opens files through a handle that counts the bytes it reads. */
+const countingOpen = () => {
+  const counter = { bytes: 0 };
+  const open = (async (path: string, flags: number) => {
+    const file = await NodeFSP.open(path, flags);
+    const read = file.read.bind(file);
+    file.read = (async (buffer: Uint8Array, offset: number, length: number, position: number) => {
+      const result = await read(buffer, offset, length, position);
+      counter.bytes += result.bytesRead;
+      return result;
+    }) as typeof file.read;
+    return file;
+  }) as typeof NodeFSP.open;
+  return { counter, open };
+};
+const ordinaryLines = (bytes: number) =>
+  '{"type":"assistant","text":"normal output."}\n'.repeat(Math.ceil(bytes / 45)).slice(0, bytes);
+
+it("reuses the key scan of an unchanged file and reads only appended bytes", async () => {
+  const { counter, open } = countingOpen();
+  const f = await fixture({ open });
+  const file = await f.write(
+    NodePath.join(f.projects, SLUG, "s", "a.jsonl"),
+    ordinaryLines(8 * 1024 * 1024),
+  );
+  f.rosters.set("thread", [task("a", { outputFile: file })]);
+  const read = async () => {
+    counter.bytes = 0;
+    const tail = (await f.call("readTail", { runId: "a", source: "output" })) as AgentLogTail;
+    return { tail, bytes: counter.bytes };
+  };
+  const window = 16384;
+  // Cold: no marker, so the scan runs to its 4 MiB bound.
+  const cold = await read();
+  expect(cold.bytes).toBeGreaterThan(4 * 1024 * 1024);
+  // Warm: the window plus the head and anchor checks.
+  const warm = await read();
+  expect(warm.bytes).toBeLessThanOrEqual(window + 512);
+  // Appended: the window, the checks, and the new bytes.
+  const appended = 100_000;
+  await NodeFSP.appendFile(file, ordinaryLines(appended));
+  const append = await read();
+  expect(append.bytes).toBeGreaterThan(appended);
+  expect(append.bytes).toBeLessThanOrEqual(window + appended + 2048);
+  // A BEGIN in the appended bytes is found without rescanning.
+  const row = `${"A".repeat(32)} ${"B".repeat(32)}\n`;
+  await NodeFSP.appendFile(file, `-----BEGIN PRIVATE KEY-----\n${row.repeat(400)}`);
+  const key = await read();
+  expect(key.tail.contents).not.toMatch(/AAAAAAAA|BBBBBBBB/);
+  expect(key.bytes).toBeLessThan(window + 64 * 1024);
+});
+
+it("scans again after a truncation, a rewrite, or a replaced file", async () => {
+  const { counter, open } = countingOpen();
+  const f = await fixture({ open });
+  const file = NodePath.join(f.projects, SLUG, "s", "a.jsonl");
+  f.rosters.set("thread", [task("a", { outputFile: file })]);
+  const row = `${"A".repeat(32)} ${"B".repeat(32)}\n`;
+  const size = 1024 * 1024;
+  // The head stays the same, so only the anchor before the window shows a rewrite.
+  const head = ordinaryLines(4096);
+  const keyed = (bytes: number) =>
+    `${head}-----BEGIN PRIVATE KEY-----\n${row.repeat(Math.floor((bytes - head.length) / row.length))}`;
+  const read = async () => {
+    counter.bytes = 0;
+    const tail = (await f.call("readTail", { runId: "a", source: "output" })) as AgentLogTail;
+    expect(tail.contents).toContain("[REDACTED]");
+    expect(tail.contents).not.toMatch(/AAAAAAAA|BBBBBBBB/);
+    return counter.bytes;
+  };
+  const rewrites: [string, () => Promise<unknown>][] = [
+    ["rewrite", () => NodeFSP.writeFile(file, keyed(size))],
+    ["truncation", () => NodeFSP.writeFile(file, keyed(size / 2))],
+    [
+      "replacement",
+      async () => {
+        await NodeFSP.writeFile(`${file}.new`, keyed(size));
+        await NodeFSP.rename(`${file}.new`, file);
+      },
+    ],
+  ];
+  for (const [name, rewrite] of rewrites) {
+    // The cached scan says the window starts outside any key.
+    await f.write(file, `${head}${ordinaryLines(size - head.length)}`);
+    counter.bytes = 0;
+    await f.call("readTail", { runId: "a", source: "output" });
+    await f.call("readTail", { runId: "a", source: "output" });
+    await rewrite();
+    expect(await read(), name).toBeGreaterThan(16384 + 512);
+  }
 });
 
 it("withholds a leading line whose secret name fell before the read", async () => {

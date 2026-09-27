@@ -116,19 +116,56 @@ function closesString(text: string, at: number): boolean {
 }
 /**
  * Whether the text from `at`, just after a quote ending an object member's
- * value, continues as JSON: closing brackets, then the end of the line or a
- * comma before the next member (or array element).
+ * value, continues as JSON: closing brackets, then the end of the line, or a
+ * comma before the next element. Directly after the value that element is a
+ * member of the same object (`"name":`); after a closing bracket it may be
+ * any value. Anything else fails closed.
  */
 function closesValue(text: string, at: number): boolean {
+  let member = true;
   for (;;) {
     at = skip(text, at, isSpace);
     const char = text[at];
-    if (char === "}" || char === "]") at++;
-    else if (char === ",") {
-      const next = text[skip(text, at + 1, isSpace)];
-      return next === undefined || next === "\n" || next === '"' || next === "{" || next === "[";
+    if (char === "}" || char === "]") {
+      member = false;
+      at++;
+    } else if (char === ",") {
+      at = skip(text, at + 1, isSpace);
+      if (at === text.length || text[at] === "\n") return true;
+      return member ? startsMember(text, at) : startsValue(text, at);
     } else return char === undefined || char === "\n";
   }
+}
+/** Whether an object member (`"name":`) starts at `at`. */
+function startsMember(text: string, at: number): boolean {
+  if (text[at] !== '"') return false;
+  for (let stop = at + 1; stop < text.length && stop <= at + 130; stop++) {
+    visits++;
+    const char = text[stop];
+    if (char === "\n") return false;
+    if (char === "\\") stop++;
+    else if (char === '"') return text[skip(text, stop + 1, isSpace)] === ":";
+  }
+  return false;
+}
+const LITERAL_AT = /(?:true|false|null|-?[0-9])/y;
+/**
+ * Whether a JSON value starts at `at`: an array opening onto a value or
+ * closing empty, an object opening onto a member or closing empty, a string,
+ * a number, or a literal.
+ */
+function startsValue(text: string, at: number): boolean {
+  while (text[at] === "[") {
+    at = skip(text, at + 1, isSpace);
+    if (text[at] === "]") return true;
+  }
+  if (text[at] === '"') return true;
+  if (text[at] === "{") {
+    const next = text[skip(text, at + 1, isSpace)];
+    return next === '"' || next === "}";
+  }
+  LITERAL_AT.lastIndex = at;
+  return LITERAL_AT.test(text);
 }
 
 const ESCAPES: Readonly<Record<string, string>> = { b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
@@ -200,106 +237,8 @@ function skipBack(
   return at;
 }
 
-const MARKER = /-----(BEGIN|END)[A-Z ]{0,40}PRIVATE KEY-----/g;
-const END_AT = /-----END[A-Z ]{0,40}PRIVATE KEY-----/y;
-const HEADER_AT = /[A-Za-z-]+:[ \t]/y;
-/** A line break spelled as an escape, at any escaping depth: `\n`, `\\n`, `\u000a`. */
-const ESCAPED_BREAK_AT = /\\+(?:[nr]|u000[aAdD])/y;
-const ESCAPED_BREAK_BEFORE = /\\(?:[nr]|u000[aAdD])$/;
-
-/**
- * First match of a global `pattern` at or after `from`. Queries must not move
- * backward, so repeated lookups over one text scan it once.
- */
-function ahead(text: string, pattern: RegExp) {
-  let found: RegExpExecArray | null | undefined;
-  return (from: number) => {
-    if (found === undefined || (found !== null && found.index < from)) {
-      pattern.lastIndex = from;
-      found = pattern.exec(text);
-      visits += (found ? found.index + found[0].length : text.length) - from;
-    }
-    return found;
-  };
-}
-type Ahead = ReturnType<typeof ahead>;
-
-/**
- * End of a BEGIN block whose marker ends at `from`, or -1 when the marker
- * does not end its line (prose that mentions it). The block takes whole
- * header lines, base64 lines (runs separated by spaces or tabs), and blank
- * lines, through END. A line that is none of these runs the block on through
- * the next marker when that is an END, so a malformed key line never keeps
- * its neighbours. Otherwise the block stops after the last key line before
- * it, or runs to the end of the text.
- */
-function blockEnd(text: string, from: number, nextMarker: Ahead): number {
-  let at = from;
-  at = skip(text, at, isSpace);
-  if (at < text.length && text[at] !== "\n") return -1;
-  let end = at;
-  while (at < text.length) {
-    let line = at + 1;
-    line = skip(text, line, isSpace);
-    HEADER_AT.lastIndex = line;
-    let stop = line;
-    if (HEADER_AT.test(text)) {
-      stop = skip(text, stop, (char) => char !== "\n");
-      end = at = stop;
-      continue;
-    }
-    let key = false;
-    for (; isBase64(text[stop]) || isSpace(text[stop]); stop++) {
-      visits++;
-      if (isBase64(text[stop])) key = true;
-    }
-    if (stop === text.length || text[stop] === "\n") {
-      if (key) end = stop;
-      at = stop;
-      continue;
-    }
-    END_AT.lastIndex = stop;
-    if (END_AT.test(text)) return END_AT.lastIndex;
-    const next = nextMarker(stop);
-    return next?.[1] === "END" ? next.index + next[0].length : end;
-  }
-  return text.length;
-}
-
-/**
- * Whether a marker at `at` opens its line or a value: only spaces stand
- * between it and the start of the text, a line break (raw or escaped), or a
- * delimiter. A marker after a word is prose that mentions it.
- */
-function opensValue(text: string, at: number): boolean {
-  const before = skipBack(text, at, 0, isSpace);
-  if (before === 0 || "\n\"'=:([{,>".includes(text[before - 1]!)) return true;
-  return ESCAPED_BREAK_BEFORE.test(text.slice(Math.max(0, before - 6), before));
-}
-
-/**
- * End of a key spelled with escaped line breaks whose BEGIN marker ends at
- * `from`, or -1 for prose. Through the next END on the line; without one,
- * a marker opening its value (`opensValue`) runs to the end of its string
- * or line.
- */
-function escapedBlockEnd(
-  text: string,
-  start: number,
-  from: number,
-  nextEnd: Ahead,
-  nextBreak: Ahead,
-): number {
-  ESCAPED_BREAK_AT.lastIndex = from;
-  if (!ESCAPED_BREAK_AT.test(text)) return -1;
-  const end = nextEnd(from);
-  const lineEnd = nextBreak(from)?.index ?? text.length;
-  if (end && end.index < lineEnd) return end.index + end[0].length;
-  // A break escaped more than once belongs to a string nested deeper, whose
-  // end this depth cannot see; that string is decoded and read in its turn.
-  if (text[from + 1] === "\\") return -1;
-  return opensValue(text, start) ? stringEnd(text, from, true) : -1;
-}
+const MARKER = /-----(BEGIN|END)[A-Z0-9 ]{0,40}PRIVATE KEY-----/g;
+const END = /-----END[A-Z0-9 ]{0,40}PRIVATE KEY-----/g;
 
 /**
  * Start of the key material above an END marker at `marker` whose BEGIN line
@@ -351,19 +290,23 @@ function keyLinesEnd(text: string): number {
 }
 
 /**
- * PEM private keys: whole blocks, keys spelled with escaped line breaks, tails
- * whose BEGIN is gone, and the lines opening a text that begins inside a key
+ * PEM private keys. A BEGIN marker in any form (its own line, after a word,
+ * inside a string, escaped at any depth) opens a key that runs through the
+ * next END marker, or to the end of the text: prose that merely mentions a
+ * marker loses the rest of its text rather than risk a key. Also tails whose
+ * BEGIN is gone, and the lines opening a text that begins inside a key
  * (through its END) or may (`keyLinesEnd`).
  */
 function findKeys(text: string, spans: Span[], key: KeyStart) {
-  const nextEnd = ahead(text, new RegExp(END_AT.source, "g"));
-  const nextMarker = ahead(text, new RegExp(MARKER.source, "g"));
-  const nextBreak = ahead(text, /\n/g);
+  const endAfter = (from: number) => {
+    END.lastIndex = from;
+    const end = END.exec(text);
+    visits += (end ? END.lastIndex : text.length) - from;
+    return end ? END.lastIndex : text.length;
+  };
   let floor = 0;
-  if (key === "inside") {
-    const end = nextEnd(0);
-    floor = end ? end.index + end[0].length : text.length;
-  } else if (key === "unknown") floor = keyLinesEnd(text);
+  if (key === "inside") floor = endAfter(0);
+  else if (key === "unknown") floor = keyLinesEnd(text);
   const keyFloor = floor;
   if (floor > 0) spans.push({ start: 0, end: floor, kind: "lines" });
   visits += text.length;
@@ -371,17 +314,13 @@ function findKeys(text: string, spans: Span[], key: KeyStart) {
   for (let match = MARKER.exec(text); match; match = MARKER.exec(text)) {
     const markerEnd = match.index + match[0].length;
     if (match[1] === "BEGIN") {
-      let end = blockEnd(text, markerEnd, nextMarker);
-      if (end === -1) end = escapedBlockEnd(text, match.index, markerEnd, nextEnd, nextBreak);
-      if (end !== -1) {
-        spans.push({ start: match.index, end, kind: "lines" });
-        floor = MARKER.lastIndex = Math.max(end, markerEnd);
-        continue;
-      }
-    } else {
-      const start = tailStart(text, match.index, floor, floor > 0 && floor === keyFloor);
-      if (start !== -1) spans.push({ start, end: markerEnd, kind: "lines" });
+      const end = endAfter(markerEnd);
+      spans.push({ start: match.index, end, kind: "lines" });
+      floor = MARKER.lastIndex = end;
+      continue;
     }
+    const start = tailStart(text, match.index, floor, floor > 0 && floor === keyFloor);
+    if (start !== -1) spans.push({ start, end: markerEnd, kind: "lines" });
     floor = markerEnd;
   }
 }
