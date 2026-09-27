@@ -349,11 +349,15 @@ NodeTest.test(
         { document: dom.document, computedStyle: { overflowX: "hidden", overflowY: "hidden" } },
       );
       const slotElement = fakeElement(rect, { parent: container, document: dom.document });
+      let slot;
       function View() {
         const value = useBrowserSurfaceSlot(host, session, {
           session: sessionRef,
           visible: true,
         });
+        React.useEffect(() => {
+          slot = value;
+        }, [value]);
         return React.createElement("div", { ref: value.ref });
       }
       const renderer = render(View, slotElement);
@@ -368,6 +372,7 @@ NodeTest.test(
             zIndex: 30,
           },
         ]);
+        NodeAssert.equal(slot.shown, true);
         // A foreign overlay covering the slot hides the surface entirely.
         const modal = { closest: () => null };
         dom.document.elementsFromPoint = () => [modal, slotElement];
@@ -375,6 +380,9 @@ NodeTest.test(
           for (const listener of dom.listeners.get("scroll") ?? []) listener();
         });
         NodeAssert.equal(calls.presents.at(-1).visible, false);
+        // The lease stays active, but the slot reports the surface off screen.
+        NodeAssert.equal(slot.lease.state.kind, "active");
+        NodeAssert.equal(slot.shown, false);
         NodeAssert.deepEqual(calls.presents.at(-1).rect, {
           x: 4,
           y: 100,
@@ -390,6 +398,7 @@ NodeTest.test(
           for (const listener of dom.listeners.get("scroll") ?? []) listener();
         });
         NodeAssert.equal(calls.presents.at(-1).visible, true);
+        NodeAssert.equal(slot.shown, true);
       } finally {
         await TestRenderer.act(async () => renderer.unmount());
       }
@@ -611,3 +620,31 @@ NodeTest.test(
     }
   },
 );
+
+NodeTest.test("useBrowserSurfaceSlot clears shown when the host ends the held lease", async () => {
+  const dom = domStubs();
+  let renderer;
+  try {
+    const session = makeSession();
+    const h = fakeLeaseHost();
+    let current;
+    function View() {
+      const value = useBrowserSurfaceSlot(h.host, session, { session: sessionRef, visible: true });
+      React.useEffect(() => {
+        current = value;
+      }, [value]);
+      return React.createElement("div", { ref: value.ref });
+    }
+    renderer = render(View, fakeElement(rect, { document: dom.document }));
+    NodeAssert.equal(current.shown, true);
+    await TestRenderer.act(async () => {
+      h.lease.state = { kind: "ended", reason: "superseded" };
+      for (const listener of h.calls.listeners) listener(h.lease.state);
+    });
+    NodeAssert.equal(current.lease.state.kind, "ended");
+    NodeAssert.equal(current.shown, false);
+  } finally {
+    if (renderer) await TestRenderer.act(async () => renderer.unmount());
+    dom.restore();
+  }
+});

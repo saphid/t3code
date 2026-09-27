@@ -59,7 +59,10 @@ export interface BrowserCaptureBridgeDeps {
     readonly authoritative: boolean;
   };
   readonly serverEpoch: (threadRef: ScopedThreadRef) => string | null;
-  /** Whether some slot on this client presents the runtime tab, so the engine has its pixels. */
+  /**
+   * Whether some slot on this client shows the runtime tab, so the engine has
+   * its pixels. A claimed slot that is clipped away or occluded does not count.
+   */
   readonly presented: (runtimeTabId: string) => boolean;
   readonly upload: (environmentId: EnvironmentId, png: Blob, name: string) => Promise<string>;
 }
@@ -114,7 +117,7 @@ export function createBrowserCaptureBridge(
     },
     serverEpoch: (threadRef) => readThreadPreviewState(threadRef).serverEpoch,
     presented: (runtimeTabId) =>
-      useBrowserSurfaceStore.getState().byTabId[runtimeTabId] !== undefined,
+      useBrowserSurfaceStore.getState().byTabId[runtimeTabId]?.visible === true,
     upload: uploadBrowserCapture,
     ...overrides,
   };
@@ -251,9 +254,11 @@ export function createBrowserCaptureBridge(
             try {
               picked = await preview.pickElement(runtimeTabId);
             } catch (error) {
+              // Native treats a picker that throws as a dismissal: no image
+              // was ever taken, so capture-failed stays reserved for a lost crop.
               return fail(
-                "capture-failed",
-                error instanceof Error ? error.message : "The element picker failed.",
+                "cancelled",
+                error instanceof Error ? error.message : "The element picker closed.",
               );
             } finally {
               detach();
