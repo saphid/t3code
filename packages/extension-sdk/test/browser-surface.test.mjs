@@ -6,8 +6,10 @@ import { useBrowserSurfaceSlot } from "../dist/authoring.js";
 import {
   BROWSER_OPERATE,
   BROWSER_SURFACE,
+  BROWSER_SURFACE_OVERLAY_ATTRIBUTE,
   BROWSER_SURFACE_REQUIRED_GRANTS,
   BROWSER_SURFACE_VERSION,
+  BROWSER_SURFACE_Z_INDEX,
   GENERIC_API_CATALOGUE,
   HOST_CAPABILITY_GRANTS,
   BROWSER_CAPTURE,
@@ -399,6 +401,70 @@ NodeTest.test(
         });
         NodeAssert.equal(calls.presents.at(-1).visible, true);
         NodeAssert.equal(slot.shown, true);
+      } finally {
+        await TestRenderer.act(async () => renderer.unmount());
+      }
+    } finally {
+      dom.restore();
+    }
+  },
+);
+
+NodeTest.test(
+  "useBrowserSurfaceSlot keeps the page presented under plugin UI floating above it",
+  async () => {
+    const dom = domStubs();
+    try {
+      const session = makeSession();
+      const { host, calls } = fakeLeaseHost();
+      const slotElement = fakeElement(rect, { document: dom.document });
+      let slot;
+      function View({ zIndex }) {
+        const value = useBrowserSurfaceSlot(host, session, {
+          session: sessionRef,
+          visible: true,
+          ...(zIndex === undefined ? {} : { zIndex }),
+        });
+        React.useEffect(() => {
+          slot = value;
+        }, [value]);
+        return React.createElement("div", { ref: value.ref });
+      }
+      let renderer;
+      TestRenderer.act(() => {
+        renderer = TestRenderer.create(React.createElement(View, {}), {
+          createNodeMock: () => slotElement,
+        });
+      });
+      try {
+        // The overlay layer sits directly above the presented surface.
+        NodeAssert.equal(calls.presents.at(-1).zIndex, BROWSER_SURFACE_Z_INDEX);
+        NodeAssert.equal(slot.overlayZIndex, BROWSER_SURFACE_Z_INDEX + 1);
+        // An open plugin menu over the slot's center: a marked descendant of
+        // the menu is the topmost hit, and the page stays presented beneath.
+        const menuItem = {
+          closest: (sel) => (sel === `[${BROWSER_SURFACE_OVERLAY_ATTRIBUTE}]` ? {} : null),
+        };
+        dom.document.elementsFromPoint = () => [menuItem, slotElement];
+        TestRenderer.act(() => {
+          for (const listener of dom.listeners.get("scroll") ?? []) listener();
+        });
+        NodeAssert.equal(calls.presents.at(-1).visible, true);
+        NodeAssert.equal(slot.shown, true);
+        // Unmarked UI covering the page is still occlusion.
+        dom.document.elementsFromPoint = () => [menuItem, { closest: () => null }, slotElement];
+        TestRenderer.act(() => {
+          for (const listener of dom.listeners.get("scroll") ?? []) listener();
+        });
+        NodeAssert.equal(calls.presents.at(-1).visible, false);
+        NodeAssert.equal(slot.shown, false);
+        // A caller-chosen surface layer moves the overlay layer with it.
+        dom.document.elementsFromPoint = () => [];
+        TestRenderer.act(() => {
+          renderer.update(React.createElement(View, { zIndex: 50 }));
+        });
+        NodeAssert.equal(calls.presents.at(-1).zIndex, 50);
+        NodeAssert.equal(slot.overlayZIndex, 51);
       } finally {
         await TestRenderer.act(async () => renderer.unmount());
       }

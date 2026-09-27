@@ -8,6 +8,7 @@
 import type { BrowserSession } from "@t3tools/extension-sdk/catalogue";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
+import { floatingOverPage } from "./floating.js";
 import {
   DEFAULT_ZOOM_FACTOR,
   ZOOM_LADDER,
@@ -42,8 +43,12 @@ const ZOOM_INDICATOR_MS = 1500;
  * changes. The first reported value never flashes, and there is no animation
  * — the pill appears and disappears.
  */
-export function ZoomIndicator(props: { zoomFactor: number | null }) {
-  const { zoomFactor } = props;
+export function ZoomIndicator(props: {
+  zoomFactor: number | null;
+  /** Stacks the pill over the composited page (`floatingLayers().transient`). */
+  zIndex: number;
+}) {
+  const { zoomFactor, zIndex } = props;
   const [shown, setShown] = useState<number | null>(null);
   const last = useRef(zoomFactor);
   useEffect(() => {
@@ -63,11 +68,12 @@ export function ZoomIndicator(props: { zoomFactor: number | null }) {
     <div
       role="status"
       aria-label="Page zoom"
+      {...floatingOverPage}
       style={{
         position: "absolute",
         top: 12,
         right: 12,
-        zIndex: 2,
+        zIndex,
         pointerEvents: "none",
         padding: "3px 10px",
         borderRadius: 999,
@@ -94,10 +100,12 @@ export function PageMenu(props: {
   run: (verb: PageVerb) => void;
   /** One ladder step from the last requested factor (shared with the chords). */
   zoomStep: (direction: "in" | "out") => void;
+  /** Stacks the open menu over the composited page (`floatingLayers().transient`). */
+  zIndex: number;
   /** Rendered under the page items while open; profile actions do not need a live page. */
   children?: ReactNode;
 }) {
-  const { session, blockReason, run, zoomStep, children } = props;
+  const { session, blockReason, run, zoomStep, zIndex, children } = props;
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -140,11 +148,12 @@ export function PageMenu(props: {
         <div
           role="menu"
           aria-label="Page"
+          {...floatingOverPage}
           style={{
             position: "absolute",
             right: 0,
             top: "calc(100% + 6px)",
-            zIndex: 3,
+            zIndex,
             minWidth: 220,
             display: "grid",
             gap: 8,

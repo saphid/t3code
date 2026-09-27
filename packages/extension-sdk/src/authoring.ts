@@ -21,6 +21,8 @@ import {
 import {
   BROWSER_FRAMES,
   BROWSER_SURFACE,
+  BROWSER_SURFACE_OVERLAY_ATTRIBUTE,
+  BROWSER_SURFACE_Z_INDEX,
   browserFramesApi,
   resourcesLeaseApi,
   type BrowserFramesViewState,
@@ -317,6 +319,12 @@ export interface BrowserSurfaceSlot {
    * suppressed, clipped away, occluded, uncomposited, or without a lease.
    */
   readonly shown: boolean;
+  /**
+   * The z-index that stacks plugin UI over the presented page. Give it to
+   * floating UI (menus, pills) together with `BROWSER_SURFACE_OVERLAY_ATTRIBUTE`
+   * so the page stays presented beneath it.
+   */
+  readonly overlayZIndex: number;
 }
 
 const OVERFLOW_CLIP_PATTERN = /(auto|scroll|hidden|clip)/;
@@ -382,9 +390,10 @@ function clippedSlotRect(element: HTMLElement): BrowserSurfaceRect | null {
 
 /**
  * Probe the center of the visible region: the only elements allowed to paint
- * above the slot are the slot's own descendants and presented native surfaces
- * (`data-preview-viewport`), which z-order correctly among themselves.
- * Anything else — a modal, overlay, or covering panel — means hide.
+ * above the slot are the slot's own descendants, presented native surfaces
+ * (`data-preview-viewport`), which z-order correctly among themselves, and
+ * plugin UI marked as floating over the page. Anything else — a modal,
+ * overlay, or covering panel — means hide.
  */
 function slotOccluded(element: HTMLElement, clip: BrowserSurfaceRect): boolean {
   const stack = element.ownerDocument.elementsFromPoint(
@@ -396,7 +405,11 @@ function slotOccluded(element: HTMLElement, clip: BrowserSurfaceRect): boolean {
   return covering.some(
     (node) =>
       !element.contains(node) &&
-      !(typeof node.closest === "function" && node.closest("[data-preview-viewport]") !== null),
+      !(
+        typeof node.closest === "function" &&
+        (node.closest("[data-preview-viewport]") !== null ||
+          node.closest(`[${BROWSER_SURFACE_OVERLAY_ATTRIBUTE}]`) !== null)
+      ),
   );
 }
 
@@ -430,7 +443,7 @@ export function useBrowserSurfaceSlot(
   const presentationRef = useRef({
     visible: options.visible,
     cornerRadius: options.cornerRadius ?? 0,
-    zIndex: options.zIndex ?? 30,
+    zIndex: options.zIndex ?? BROWSER_SURFACE_Z_INDEX,
   });
   const updateRef = useRef<(() => void) | null>(null);
 
@@ -440,7 +453,7 @@ export function useBrowserSurfaceSlot(
     presentationRef.current = {
       visible: options.visible,
       cornerRadius: options.cornerRadius ?? 0,
-      zIndex: options.zIndex ?? 30,
+      zIndex: options.zIndex ?? BROWSER_SURFACE_Z_INDEX,
     };
     updateRef.current?.();
   }, [options.visible, options.cornerRadius, options.zIndex]);
@@ -587,6 +600,7 @@ export function useBrowserSurfaceSlot(
     lease: result?.ok ? result.lease : null,
     denial: result && !result.ok ? result.denial : null,
     shown: result?.ok === true && shown,
+    overlayZIndex: (options.zIndex ?? BROWSER_SURFACE_Z_INDEX) + 1,
   };
 }
 

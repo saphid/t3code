@@ -7029,6 +7029,18 @@ export const BROWSER_SURFACE = "t3.browser/surface";
 export const BROWSER_SURFACE_VERSION = "1.0.0";
 /** Both grants are required to acquire a presentation lease. */
 export const BROWSER_SURFACE_REQUIRED_GRANTS = [BROWSER_SESSIONS, BROWSER_SURFACE] as const;
+/**
+ * The composited surface paints at the presented `zIndex` (this default when
+ * omitted) in the renderer's root stacking context, above extension views,
+ * whose containers never create a stacking context of their own. Plugin UI
+ * that must float over the page — menus, a zoom pill — stacks above the
+ * presented `zIndex`, the way the native preview portals its menus above the
+ * webview, and carries `BROWSER_SURFACE_OVERLAY_ATTRIBUTE` so the slot's
+ * occlusion probe keeps the page presented beneath it. `useBrowserSurfaceSlot`
+ * reports the layer as `overlayZIndex`.
+ */
+export const BROWSER_SURFACE_Z_INDEX = 30;
+export const BROWSER_SURFACE_OVERLAY_ATTRIBUTE = "data-browser-surface-overlay";
 
 /**
  * Integer CSS-pixel bounds, viewport-relative. The composited surface is not
@@ -7037,7 +7049,8 @@ export const BROWSER_SURFACE_REQUIRED_GRANTS = [BROWSER_SESSIONS, BROWSER_SURFAC
  * `useBrowserSurfaceSlot` intersects the slot with its overflow-clipping
  * ancestors' padding boxes and the viewport, and hides the surface while the
  * slot's visible center is covered by an unrelated element — a center-point
- * heuristic, not arbitrary-region clipping.
+ * heuristic, not arbitrary-region clipping. Elements marked with
+ * `BROWSER_SURFACE_OVERLAY_ATTRIBUTE` float over the page and never count.
  */
 export interface BrowserSurfaceRect {
   readonly x: number;

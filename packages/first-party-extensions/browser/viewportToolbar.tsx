@@ -15,6 +15,7 @@ import {
   type FixedViewport,
   type ViewportFrameLayout,
 } from "./viewport.js";
+import { floatingOverPage } from "./floating.js";
 
 const muted = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
 const border = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
@@ -81,8 +82,10 @@ export function BrowserViewportToolbar(props: {
   readonly setting: FixedViewport;
   readonly pending: boolean;
   readonly onCommit: (next: BrowserSessionViewport) => void;
+  /** Stacks the toolbar over the composited page (`floatingLayers().deviceChrome`). */
+  readonly zIndex: number;
 }) {
-  const { setting, pending, onCommit } = props;
+  const { setting, pending, onCommit, zIndex } = props;
   // An in-progress edit is keyed to the setting it was typed against: a
   // resize landing from anywhere — this view's receipt, the events stream,
   // another client — retires the edit instead of showing it against a
@@ -132,13 +135,14 @@ export function BrowserViewportToolbar(props: {
     <div
       role="toolbar"
       aria-label="Browser device toolbar"
+      {...floatingOverPage}
       style={{
         position: "absolute",
         top: 0,
         left: 0,
         right: 0,
         height: DEVICE_TOOLBAR_HEIGHT,
-        zIndex: 40,
+        zIndex,
         display: "flex",
         alignItems: "center",
         gap: 4,
@@ -284,8 +288,10 @@ export function ViewportDeviceFrame(props: {
   readonly slot: { readonly width: number; readonly height: number } | null;
   readonly setting: FixedViewport;
   readonly fallbackSlot: { readonly width: number; readonly height: number };
+  /** Stacks the frame over the composited page (`floatingLayers().deviceChrome`). */
+  readonly zIndex: number;
 }): ReactNode {
-  const { slot, setting, fallbackSlot } = props;
+  const { slot, setting, fallbackSlot, zIndex } = props;
   const layout: ViewportFrameLayout = deviceViewportLayout(slot ?? fallbackSlot, setting);
   const percent = Math.round(layout.scale * 100);
   return (
@@ -302,7 +308,7 @@ export function ViewportDeviceFrame(props: {
           borderRadius: 6,
           boxShadow: "0 1px 4px rgba(15, 23, 42, 0.18)",
           pointerEvents: "none",
-          zIndex: 40,
+          zIndex,
           boxSizing: "border-box",
         }}
       />
@@ -321,7 +327,7 @@ export function ViewportDeviceFrame(props: {
             border,
             borderRadius: 999,
             pointerEvents: "none",
-            zIndex: 40,
+            zIndex,
           }}
         >
           {percent}%

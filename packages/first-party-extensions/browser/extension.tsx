@@ -62,6 +62,7 @@ import {
   type PageTarget,
   type PageVerb,
 } from "./pageControls.js";
+import { floatingLayers } from "./floating.js";
 import { PageMenu, ZoomIndicator } from "./pageMenu.js";
 import { bindProfilesApi, ProfileSection } from "./profileMenu.js";
 import { profileFailureMessage, reopenRequest } from "./profiles.js";
@@ -416,11 +417,13 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     lease: surfaceLease,
     denial: surfaceDenial,
     shown: surfaceShown,
+    overlayZIndex,
   } = useBrowserSurfaceSlot(host, session, {
     session: held,
     visible: visible && held !== null,
     cornerRadius: 8,
   });
+  const layers = floatingLayers(overlayZIndex);
 
   /**
    * Remote-pixel fallback: hosts that cannot composite a native surface
@@ -1053,6 +1056,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           blockReason={pageBlock}
           run={(verb) => runPage(verb)}
           zoomStep={zoomStep}
+          zIndex={layers.transient}
         >
           {held && live && (
             <ProfileSection
@@ -1161,7 +1165,11 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
               style={{ position: "absolute", inset: 0 }}
             />
           )}
-          <ZoomIndicator key={held.tabId} zoomFactor={live?.zoomFactor ?? null} />
+          <ZoomIndicator
+            key={held.tabId}
+            zoomFactor={live?.zoomFactor ?? null}
+            zIndex={layers.transient}
+          />
           {deviceMode && viewportSetting && (
             <>
               {/*
@@ -1178,11 +1186,13 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                 setting={viewportSetting}
                 pending={viewportPending}
                 onCommit={commitViewport}
+                zIndex={layers.deviceChrome}
               />
               <ViewportDeviceFrame
                 slot={contentSize}
                 setting={viewportSetting}
                 fallbackSlot={FALLBACK_RESPONSIVE_VIEWPORT_SIZE}
+                zIndex={layers.deviceChrome}
               />
             </>
           )}

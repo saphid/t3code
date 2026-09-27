@@ -1,7 +1,12 @@
 import { describe, it, expect } from "vite-plus/test";
-import { BROWSER_SESSIONS, BROWSER_SURFACE } from "@t3tools/extension-sdk/catalogue";
+import {
+  BROWSER_SESSIONS,
+  BROWSER_SURFACE,
+  BROWSER_SURFACE_Z_INDEX,
+} from "@t3tools/extension-sdk/catalogue";
 
 import type { BrowserSurfacePresentation } from "~/browser/browserSurfaceStore";
+import { resolveHostedBrowserWebviewWrapperStyle } from "~/browser/hostedBrowserWebviewStyle";
 
 import {
   createBrowserSurfaceBridge,
@@ -302,6 +307,27 @@ describe("browserSurfaceBridge", () => {
     expect(h.nativeLeases[0]?.presents).toEqual([
       { rect: { x: 5, y: 5, width: 20, height: 20 }, visible: false, cornerRadius: 4, zIndex: 7 },
     ]);
+  });
+
+  it("composites the webview at the contract layer, below plugin UI floating over the page", () => {
+    const h = harness();
+    const acquired = h.host().acquire({ context, session: sessionRef });
+    if (!acquired.ok) throw new Error("expected a lease");
+    const rect = { x: 0, y: 0, width: 10, height: 10 };
+    acquired.lease.present(rect, true);
+    h.flush();
+    const written = h.nativeLeases[0]?.presents[0];
+    expect(written?.zIndex).toBe(BROWSER_SURFACE_Z_INDEX);
+    // The engine host paints the webview wrapper at exactly the presented
+    // layer, so plugin menus stacked above it (the SDK's overlayZIndex) win.
+    const wrapper = resolveHostedBrowserWebviewWrapperStyle({
+      active: true,
+      renderingActive: true,
+      rect,
+      hiddenSize: { width: 10, height: 10 },
+      ...(written?.zIndex === undefined ? {} : { zIndex: written.zIndex }),
+    });
+    expect(wrapper.zIndex).toBe(BROWSER_SURFACE_Z_INDEX);
   });
 
   it("keeps preview sync mounted for the lease lifetime and releases on release()", () => {

@@ -6589,6 +6589,8 @@ var __t3Client = (() => {
   });
   var BROWSER_FRAMES_API = browserFramesApi.definition;
   var BROWSER_SURFACE = "t3.browser/surface";
+  var BROWSER_SURFACE_Z_INDEX = 30;
+  var BROWSER_SURFACE_OVERLAY_ATTRIBUTE = "data-browser-surface-overlay";
   var BROWSER_CAPTURE_ARTIFACT_REF_PATTERN2 = "^pending-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
   var COMPOSER_CONTEXT = "t3.composer/context";
   var COMPOSER_WRITE = "t3.composer/write";
@@ -7959,7 +7961,7 @@ var __t3Client = (() => {
     const stack = element.ownerDocument.elementsFromPoint(clip.x + clip.width / 2, clip.y + clip.height / 2);
     const index = stack.indexOf(element);
     const covering = index === -1 ? stack : stack.slice(0, index);
-    return covering.some((node) => !element.contains(node) && !(typeof node.closest === "function" && node.closest("[data-preview-viewport]") !== null));
+    return covering.some((node) => !element.contains(node) && !(typeof node.closest === "function" && (node.closest("[data-preview-viewport]") !== null || node.closest(`[${BROWSER_SURFACE_OVERLAY_ATTRIBUTE}]`) !== null)));
   }
   function useBrowserSurfaceSlot(host, session, options) {
     const { useCallback: useCallback2, useLayoutEffect, useRef: useRef4, useState: useState7 } = host.React;
@@ -7971,7 +7973,7 @@ var __t3Client = (() => {
     const presentationRef = useRef4({
       visible: options.visible,
       cornerRadius: options.cornerRadius ?? 0,
-      zIndex: options.zIndex ?? 30
+      zIndex: options.zIndex ?? BROWSER_SURFACE_Z_INDEX
     });
     const updateRef = useRef4(null);
     const ref = useCallback2((node) => setElement(node), []);
@@ -7979,7 +7981,7 @@ var __t3Client = (() => {
       presentationRef.current = {
         visible: options.visible,
         cornerRadius: options.cornerRadius ?? 0,
-        zIndex: options.zIndex ?? 30
+        zIndex: options.zIndex ?? BROWSER_SURFACE_Z_INDEX
       };
       updateRef.current?.();
     }, [options.visible, options.cornerRadius, options.zIndex]);
@@ -8111,7 +8113,8 @@ var __t3Client = (() => {
       ref,
       lease: result2?.ok ? result2.lease : null,
       denial: result2 && !result2.ok ? result2.denial : null,
-      shown: result2?.ok === true && shown
+      shown: result2?.ok === true && shown,
+      overlayZIndex: (options.zIndex ?? BROWSER_SURFACE_Z_INDEX) + 1
     };
   }
   function useRemoteBrowserFrames(host, session, options) {
@@ -15046,6 +15049,12 @@ ${ind(d)}}`;
     };
   }
 
+  // floating.ts
+  function floatingLayers(overlayZIndex) {
+    return { deviceChrome: overlayZIndex, transient: overlayZIndex + 1 };
+  }
+  var floatingOverPage = { [BROWSER_SURFACE_OVERLAY_ATTRIBUTE]: "" };
+
   // pageMenu.tsx
   var import_react4 = __toESM(require_react(), 1);
   var import_jsx_runtime3 = __toESM(require_jsx_runtime(), 1);
@@ -15067,7 +15076,7 @@ ${ind(d)}}`;
   ];
   var ZOOM_INDICATOR_MS = 1500;
   function ZoomIndicator(props) {
-    const { zoomFactor } = props;
+    const { zoomFactor, zIndex } = props;
     const [shown, setShown] = (0, import_react4.useState)(null);
     const last = (0, import_react4.useRef)(zoomFactor);
     (0, import_react4.useEffect)(() => {
@@ -15088,11 +15097,12 @@ ${ind(d)}}`;
       {
         role: "status",
         "aria-label": "Page zoom",
+        ...floatingOverPage,
         style: {
           position: "absolute",
           top: 12,
           right: 12,
-          zIndex: 2,
+          zIndex,
           pointerEvents: "none",
           padding: "3px 10px",
           borderRadius: 999,
@@ -15106,7 +15116,7 @@ ${ind(d)}}`;
     );
   }
   function PageMenu(props) {
-    const { session, blockReason, run: run2, zoomStep, children } = props;
+    const { session, blockReason, run: run2, zoomStep, zIndex, children } = props;
     const [open, setOpen] = (0, import_react4.useState)(false);
     const root = (0, import_react4.useRef)(null);
     (0, import_react4.useEffect)(() => {
@@ -15148,11 +15158,12 @@ ${ind(d)}}`;
         {
           role: "menu",
           "aria-label": "Page",
+          ...floatingOverPage,
           style: {
             position: "absolute",
             right: 0,
             top: "calc(100% + 6px)",
-            zIndex: 3,
+            zIndex,
             minWidth: 220,
             display: "grid",
             gap: 8,
@@ -15780,7 +15791,7 @@ ${ind(d)}}`;
     return size;
   }
   function BrowserViewportToolbar(props) {
-    const { setting, pending, onCommit } = props;
+    const { setting, pending, onCommit, zIndex } = props;
     const [edit, setEdit] = (0, import_react6.useState)(null);
     const committedKey = viewportSettingKey(setting);
     const customSize = edit !== null && edit.key === committedKey ? { width: edit.width, height: edit.height } : null;
@@ -15813,13 +15824,14 @@ ${ind(d)}}`;
       {
         role: "toolbar",
         "aria-label": "Browser device toolbar",
+        ...floatingOverPage,
         style: {
           position: "absolute",
           top: 0,
           left: 0,
           right: 0,
           height: DEVICE_TOOLBAR_HEIGHT,
-          zIndex: 40,
+          zIndex,
           display: "flex",
           alignItems: "center",
           gap: 4,
@@ -15948,7 +15960,7 @@ ${ind(d)}}`;
     );
   }
   function ViewportDeviceFrame(props) {
-    const { slot, setting, fallbackSlot } = props;
+    const { slot, setting, fallbackSlot, zIndex } = props;
     const layout = deviceViewportLayout(slot ?? fallbackSlot, setting);
     const percent = Math.round(layout.scale * 100);
     return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(import_jsx_runtime5.Fragment, { children: [
@@ -15966,7 +15978,7 @@ ${ind(d)}}`;
             borderRadius: 6,
             boxShadow: "0 1px 4px rgba(15, 23, 42, 0.18)",
             pointerEvents: "none",
-            zIndex: 40,
+            zIndex,
             boxSizing: "border-box"
           }
         }
@@ -15987,7 +15999,7 @@ ${ind(d)}}`;
             border: border3,
             borderRadius: 999,
             pointerEvents: "none",
-            zIndex: 40
+            zIndex
           },
           children: [
             percent,
@@ -16364,12 +16376,14 @@ ${ind(d)}}`;
       ref: surfaceSlotRef,
       lease: surfaceLease,
       denial: surfaceDenial,
-      shown: surfaceShown
+      shown: surfaceShown,
+      overlayZIndex
     } = useBrowserSurfaceSlot(host, session, {
       session: held,
       visible: visible && held !== null,
       cornerRadius: 8
     });
+    const layers = floatingLayers(overlayZIndex);
     const remoteEligible = held !== null && (host.browserSurface === void 0 || host.browserSurface.presentation.supported === false);
     const remote = useRemoteBrowserFrames(host, session, {
       session: held,
@@ -16860,6 +16874,7 @@ ${titledTitle}`;
                     blockReason: pageBlock,
                     run: (verb) => runPage(verb),
                     zoomStep,
+                    zIndex: layers.transient,
                     children: held && live && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                       ProfileSection,
                       {
@@ -16969,14 +16984,22 @@ ${titledTitle}`;
                 style: { position: "absolute", inset: 0 }
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(ZoomIndicator, { zoomFactor: live?.zoomFactor ?? null }, held.tabId),
+            /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+              ZoomIndicator,
+              {
+                zoomFactor: live?.zoomFactor ?? null,
+                zIndex: layers.transient
+              },
+              held.tabId
+            ),
             deviceMode && viewportSetting && /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(import_jsx_runtime6.Fragment, { children: [
               /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                 BrowserViewportToolbar,
                 {
                   setting: viewportSetting,
                   pending: viewportPending,
-                  onCommit: commitViewport
+                  onCommit: commitViewport,
+                  zIndex: layers.deviceChrome
                 }
               ),
               /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
@@ -16984,7 +17007,8 @@ ${titledTitle}`;
                 {
                   slot: contentSize,
                   setting: viewportSetting,
-                  fallbackSlot: FALLBACK_RESPONSIVE_VIEWPORT_SIZE
+                  fallbackSlot: FALLBACK_RESPONSIVE_VIEWPORT_SIZE,
+                  zIndex: layers.deviceChrome
                 }
               )
             ] }),
