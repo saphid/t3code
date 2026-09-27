@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { LOG_REDACTED as R, redactLogSecrets } from "./logRedaction.ts";
+import { LOG_REDACTED as R, measureLogRedaction, redactLogSecrets } from "./logRedaction.ts";
 
 it("scrubs env assignments, credential fields, headers, and token shapes", () => {
   const cases: [string, string][] = [
@@ -127,36 +127,6 @@ it("redacts plain prose lines directly under a BEGIN marker (accepted trade-off)
   );
 });
 
-it("scans a full read region in linear time", () => {
-  // A 16 KiB region is the most a refresh redacts (8 KiB budget plus 8 KiB of
-  // context). The quadratic PEM-tail scan took ~300 ms on this input; the
-  // linear scan takes well under 1 ms, so 25 ms (the minimum of three runs,
-  // to shed GC and scheduler noise) leaves slow CI ample headroom while any
-  // suffix-rescanning pattern still fails.
-  const inputs = [
-    "A".repeat(16384),
-    "AAAA\n".repeat(3277),
-    "-----BEGIN PRIVATE KEY-----\nAAAA".repeat(500),
-    "x-----END PRIVATE KEY-----".repeat(630),
-    // Every word boundary starts a URL-scheme candidate.
-    "a.".repeat(8192),
-    `-----BEGIN PRIVATE KEY-----\n${"A ".repeat(8150)}.`,
-    `${"A \t".repeat(5450)}-----END PRIVATE KEY-----`,
-    // Long backslash runs at a value, a key line, and above an END marker.
-    `"token":"${"\\".repeat(16370)}`,
-    `-----BEGIN PRIVATE KEY-----\\n${"A\\".repeat(8170)}`,
-    `${`${"\\".repeat(63)}n`.repeat(255)}-----END PRIVATE KEY-----`,
-  ];
-  for (const input of inputs) {
-    const runs = Array.from({ length: 3 }, () => {
-      const started = performance.now();
-      redactLogSecrets(input);
-      return performance.now() - started;
-    });
-    expect(Math.min(...runs), input.slice(0, 32)).toBeLessThan(25);
-  }
-});
-
 // Wraps `text` as the content of a transcript record `depth` times, so each
 // level escapes the one inside it again (`"` becomes `\"`, then `\\\"`).
 const nest = (text: string, depth: number) => {
@@ -230,4 +200,105 @@ it("keeps nested lookalikes that are not secrets", () => {
       expect(redactLogSecrets(nested), `depth ${depth}`).toBe(nested);
     }
   }
+});
+
+it("reads names, delimiters, and key line breaks spelled as unicode escapes", () => {
+  const cases = [
+    // Quotes spelled \u0022 inside an escaped record.
+    String.raw`{"content":"{\u0022password\u0022:\u0022UNIQUESECRET\u0022}"}`,
+    // A name spelled with an escape, plain and escaped inside a record.
+    String.raw`{"\u0070assword":"UNIQUESECRET"}`,
+    JSON.stringify({ content: String.raw`{"\u0070assword":"UNIQUESECRET"}` }),
+    // An escaped quote spelled \u0022 inside the value.
+    JSON.stringify({ content: String.raw`{"password":"first\u0022UNIQUESECRET"}` }),
+    // A mis-escaped quote inside a nested value.
+    String.raw`{"content":"{\"password\":\"first\\"UNIQUESECRET\"}"}`,
+    // Key line breaks spelled \u000a, with and without the BEGIN line.
+    String.raw`{"content":"-----BEGIN PRIVATE KEY-----\u000aUNIQUESECRET\u000a-----END PRIVATE KEY-----"}`,
+    String.raw`{"content":"UNIQUESECRET\u000a-----END PRIVATE KEY-----"}`,
+  ];
+  for (const input of cases) expect(redactLogSecrets(input), input).not.toContain("UNIQUESECRET");
+  expect(JSON.parse(redactLogSecrets(cases[0]!))).toEqual({ content: `{"password":"${R}"}` });
+});
+
+it("redacts the whole JSON value after a secret-bearing name", () => {
+  const cases: [string, string][] = [
+    ['{"password":123456789}', `{"password":"${R}"}`],
+    ['{"credentials":["UNIQUESECRET"],"next":"keep"}', `{"credentials":"${R}","next":"keep"}`],
+    ['{"auth":{"user":"a","pass":"UNIQUESECRET"},"n":1}', `{"auth":"${R}","n":1}`],
+    ['{"password":\r\n"UNIQUESECRET"}', `{"password":\r\n"${R}"}`],
+    ['{"password" \t:\n 12}', `{"password" \t:\n "${R}"}`],
+    // Names normalize case, camelCase, and `-`, `_`, `.` separators.
+    ['{"api.key":"UNIQUESECRET"}', `{"api.key":"${R}"}`],
+    ['{"API-Key":"UNIQUESECRET","Client.Secret":"x"}', `{"API-Key":"${R}","Client.Secret":"${R}"}`],
+    [
+      '{"GH_TOKEN_SCOPE":"repo","accessToken":true}',
+      `{"GH_TOKEN_SCOPE":"${R}","accessToken":"${R}"}`,
+    ],
+  ];
+  for (const [input, output] of cases) {
+    expect(redactLogSecrets(input), input).toBe(output);
+    for (const depth of [1, 2, 3])
+      expect(unnest(redactLogSecrets(nest(input, depth)), depth), `${input} ${depth}`).toBe(output);
+  }
+  // A value spanning lines keeps the line count.
+  const pretty = JSON.stringify({ credentials: ["UNIQUESECRET", "OTHER"], n: 1 }, null, 2);
+  const redacted = redactLogSecrets(pretty);
+  expect(redacted).not.toMatch(/UNIQUESECRET|OTHER/);
+  expect(redacted.split("\n").length).toBe(pretty.split("\n").length);
+  expect(redacted).toContain('"n": 1');
+  // Lookalike names keep their values.
+  const plain = '{"input_tokens":5,"inputTokens":6,"author":"Ada","tokenizer":"bpe"}';
+  expect(redactLogSecrets(plain)).toBe(plain);
+});
+
+it("redacts tab-indented key tails at every depth, with LF or CRLF", () => {
+  for (const lineBreak of ["\n", "\r\n"])
+    for (const depth of [0, 1, 2, 3]) {
+      const tail = `MIIEvQIBADAN${lineBreak}\t-----END RSA PRIVATE KEY-----${lineBreak}`;
+      const redacted = unnest(redactLogSecrets(nest(tail, depth)), depth);
+      expect(redacted, `${JSON.stringify(lineBreak)} depth ${depth}`).not.toContain("MIIEvQ");
+    }
+});
+
+it("keeps a literal backslash-n after a BEGIN mention in prose", () => {
+  const prose = String.raw`The -----BEGIN PRIVATE KEY-----\nBuild passed\nLater ordinary content.`;
+  for (const depth of [1, 2, 3]) {
+    const nested = nest(prose, depth);
+    expect(redactLogSecrets(nested), `depth ${depth}`).toBe(nested);
+  }
+});
+
+it("bounds scanning work linearly in the input length", () => {
+  // Every loop of the scanner counts its character visits; regex passes count
+  // one visit per character scanned. A pattern that rescans suffixes grows
+  // quadratically and blows through the bound at the larger sizes.
+  const shapes: ((size: number) => string)[] = [
+    (n) => "A".repeat(n),
+    (n) => "AAAA\n".repeat(n / 5),
+    (n) => "-----BEGIN PRIVATE KEY-----\nAAAA".repeat(n / 32),
+    (n) => "x-----END PRIVATE KEY-----".repeat(n / 26),
+    (n) => "a.".repeat(n / 2),
+    (n) => `-----BEGIN PRIVATE KEY-----\n${"A ".repeat(n / 2)}.`,
+    (n) => `${"A \t".repeat(n / 3)}-----END PRIVATE KEY-----`,
+    (n) => `"token":"${"\\".repeat(n)}`,
+    (n) => `-----BEGIN PRIVATE KEY-----\\n${"A\\".repeat(n / 2)}`,
+    (n) => `${`${"\\".repeat(63)}n`.repeat(n / 64)}-----END PRIVATE KEY-----`,
+    // Quote and escape soup: flips, mis-escapes, and unterminated strings.
+    (n) => '\\"a"b"'.repeat(n / 7),
+    (n) => '"password":['.repeat(n / 13),
+    (n) => '{"auth":{"auth":{"auth":'.repeat(n / 24),
+    (n) => nest("A".repeat(n), 6),
+    // Deeper than the scanner decodes: the innermost string is redacted whole.
+    (n) => nest("A".repeat(n), 14),
+    (n) => nest(`{"password":"${"\\".repeat(n / 4)}"}`, 4),
+  ];
+  for (const shape of shapes)
+    for (const size of [1024, 4096, 16384, 65536]) {
+      const input = shape(size);
+      const { visits } = measureLogRedaction(input);
+      expect(visits, `${input.slice(0, 24)} ${size}`).toBeLessThanOrEqual(
+        160 * input.length + 4096,
+      );
+    }
 });

@@ -281,6 +281,44 @@ it("redacts a transcript record whose key is cut off before its closing quote", 
   });
 });
 
+it("redacts key material when the read cuts both ends of a key", () => {
+  // Deterministic base64 key lines, 64 wide as PEM writes them.
+  let seed = 7;
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const keyLine = () =>
+    Array.from({ length: 64 }, () => {
+      seed = (seed * 1103515245 + 12345) % 2 ** 31;
+      return alphabet[seed % 64];
+    }).join("");
+  const body = Array.from({ length: 282 }, keyLine);
+  const leaks = (contents: string) =>
+    body.some((line) =>
+      Array.from({ length: 8 }, (_, i) => line.slice(i * 8, i * 8 + 8)).some((part) =>
+        contents.includes(part),
+      ),
+    );
+  for (const lineBreak of ["\n", "\r\n"]) {
+    const begin = `-----BEGIN PRIVATE KEY-----${lineBreak}`;
+    const end = `-----END PRIVATE KEY-----${lineBreak}after${lineBreak}`;
+    // Unfinished (the writer is mid-key), and finished with END in the read.
+    for (const source of [
+      begin + body.join(lineBreak),
+      begin + body.join(lineBreak) + lineBreak + end,
+    ]) {
+      const encoded = new TextEncoder().encode(source);
+      for (const maxBytes of [8192, 4000, 100]) {
+        // The bounded read: the delivered window plus its redaction context.
+        const from = encoded.length - Math.min(encoded.length, maxBytes + 8192);
+        expect(from).toBeGreaterThan(begin.length);
+        const shaped = shapeLogTail(encoded.subarray(from), from, { maxBytes, maxLines: 1000 });
+        expect(leaks(shaped.contents), `${JSON.stringify(lineBreak)} ${maxBytes}`).toBe(false);
+        expect(shaped.truncated).toBe(true);
+        if (source.endsWith(end)) expect(shaped.contents.endsWith(`after${lineBreak}`)).toBe(true);
+      }
+    }
+  }
+});
+
 it("withholds a leading line whose secret name fell before the read", async () => {
   const f = await fixture();
   const file = await f.write(
