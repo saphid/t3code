@@ -15976,6 +15976,12 @@ ${ind(d)}}`;
     const source = pendingSize !== null && validFreeformSize(pendingSize.width, pendingSize.height) && (pendingSize.width !== setting.width || pendingSize.height !== setting.height) ? { _tag: "freeform", width: pendingSize.width, height: pendingSize.height } : setting;
     return { ...source, width: source.height, height: source.width };
   }
+  var ViewportTargetChangedError = class extends Error {
+    name = "ViewportTargetChangedError";
+    constructor() {
+      super("The browser session changed before the resize ran");
+    }
+  };
   var ViewportCommitTimeoutError = class extends Error {
     name = "ViewportCommitTimeoutError";
     constructor() {
@@ -15984,13 +15990,13 @@ ${ind(d)}}`;
   };
   function createViewportCommitter(resize, timeoutMs = VIEWPORT_COMMIT_TIMEOUT_MS) {
     let tail = Promise.resolve();
-    const commit2 = (viewport, signal) => {
+    const commit2 = (viewport, signal, target) => {
       const run2 = tail.then(() => {
         let timeoutId;
         const timeout2 = new Promise((_resolve, reject) => {
           timeoutId = setTimeout(() => reject(new ViewportCommitTimeoutError()), timeoutMs);
         });
-        return Promise.race([resize(viewport, signal), timeout2]).finally(() => {
+        return Promise.race([resize(viewport, signal, target), timeout2]).finally(() => {
           if (timeoutId !== void 0) clearTimeout(timeoutId);
         });
       });
@@ -16002,20 +16008,220 @@ ${ind(d)}}`;
     };
     return { commit: commit2 };
   }
-  function deviceViewportLayout(slot, setting) {
-    const slotWidth = Math.max(1, Math.round(slot.width));
-    const slotHeight = Math.max(1, Math.round(slot.height));
-    const areaWidth = Math.max(1, slotWidth - DEVICE_VIEWPORT_RAIL * 2);
-    const areaHeight = Math.max(1, slotHeight - DEVICE_TOOLBAR_HEIGHT - DEVICE_VIEWPORT_RAIL);
-    const scale = Math.min(1, areaWidth / setting.width, areaHeight / setting.height);
-    const width = setting.width * scale;
-    const height = setting.height * scale;
+  function deviceViewportArea(slot) {
     return {
-      x: DEVICE_VIEWPORT_RAIL + Math.round((areaWidth - width) / 2),
-      y: DEVICE_TOOLBAR_HEIGHT + Math.round((areaHeight - height) / 2),
+      width: Math.max(1, slot.width - DEVICE_VIEWPORT_RAIL * 2),
+      height: Math.max(1, slot.height - DEVICE_TOOLBAR_HEIGHT - DEVICE_VIEWPORT_RAIL)
+    };
+  }
+  var normalizeZoomFactor = (zoomFactor) => Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
+  function deviceViewportLayout(slot, setting, zoomFactor = 1) {
+    const unrounded = deviceViewportArea(slot);
+    const area = {
+      width: Math.max(1, Math.round(unrounded.width)),
+      height: Math.max(1, Math.round(unrounded.height))
+    };
+    const zoom = normalizeZoomFactor(zoomFactor);
+    const renderedWidth = setting.width * zoom;
+    const renderedHeight = setting.height * zoom;
+    const scale = Math.min(1, area.width / renderedWidth, area.height / renderedHeight);
+    const width = renderedWidth * scale;
+    const height = renderedHeight * scale;
+    return {
+      x: DEVICE_VIEWPORT_RAIL + Math.max(0, Math.round((area.width - width) / 2)),
+      y: DEVICE_TOOLBAR_HEIGHT + Math.max(0, Math.round((area.height - height) / 2)),
       width,
       height,
       scale
+    };
+  }
+  var VIEWPORT_RAIL_KEY_COMMIT_DELAY_MS = 150;
+  var controlsWidth = (direction) => direction.includes("east") || direction.includes("west");
+  var controlsHeight = (direction) => direction.includes("south");
+  function resizeViewportBy(start, delta, direction) {
+    const horizontal = direction.includes("east") ? delta.x : direction.includes("west") ? -delta.x : 0;
+    const vertical = direction.includes("south") ? delta.y : 0;
+    let width = clampDimension(Math.round(start.width + horizontal));
+    let height = clampDimension(Math.round(start.height + vertical));
+    if (width * height <= PREVIEW_VIEWPORT_MAX_AREA) return { width, height };
+    if (Math.abs(horizontal) >= Math.abs(vertical)) {
+      width = Math.max(
+        PREVIEW_VIEWPORT_MIN_DIMENSION,
+        Math.floor(PREVIEW_VIEWPORT_MAX_AREA / height)
+      );
+    } else {
+      height = Math.max(
+        PREVIEW_VIEWPORT_MIN_DIMENSION,
+        Math.floor(PREVIEW_VIEWPORT_MAX_AREA / width)
+      );
+    }
+    return { width, height };
+  }
+  var resizeFromEndRail = (start, pointerDelta, available) => {
+    const startEdge = start < available ? (available + start) / 2 : start;
+    const targetEdge = startEdge + pointerDelta;
+    return targetEdge <= available ? targetEdge * 2 - available : targetEdge;
+  };
+  var resizeFromStartRail = (start, pointerDelta, available) => {
+    if (start > available) {
+      const distanceToFit = start - available;
+      return pointerDelta <= distanceToFit ? start - pointerDelta : available - (pointerDelta - distanceToFit) * 2;
+    }
+    const targetEdge = (available - start) / 2 + pointerDelta;
+    return targetEdge >= 0 ? available - targetEdge * 2 : available - targetEdge;
+  };
+  function resizeViewportFromRail(start, pointerDelta, available, renderScale, direction) {
+    const scale = normalizeZoomFactor(renderScale);
+    const startWidth = start.width * scale;
+    const startHeight = start.height * scale;
+    const desiredWidth = direction.includes("east") ? resizeFromEndRail(startWidth, pointerDelta.x, available.width) : direction.includes("west") ? resizeFromStartRail(startWidth, pointerDelta.x, available.width) : startWidth;
+    const desiredHeight = direction.includes("south") ? resizeFromEndRail(startHeight, pointerDelta.y, available.height) : startHeight;
+    const widthDelta = (desiredWidth - startWidth) / scale;
+    const heightDelta = (desiredHeight - startHeight) / scale;
+    return resizeViewportBy(
+      start,
+      { x: direction.includes("west") ? -widthDelta : widthDelta, y: heightDelta },
+      direction
+    );
+  }
+  function railKeyDelta(direction, key, shiftKey) {
+    const step = shiftKey ? 50 : 10;
+    if (key === "ArrowLeft" && controlsWidth(direction)) return { x: -step, y: 0 };
+    if (key === "ArrowRight" && controlsWidth(direction)) return { x: step, y: 0 };
+    if (key === "ArrowUp" && controlsHeight(direction)) return { x: 0, y: -step };
+    if (key === "ArrowDown" && controlsHeight(direction)) return { x: 0, y: step };
+    return null;
+  }
+  function createViewportDragCoalescer(dispatch) {
+    let inFlightKey = null;
+    let waiting = null;
+    let idleWaiters = [];
+    const keyOf = (viewport, target) => `${target ?? ""}|${viewportSettingKey(viewport)}`;
+    const send = (viewport, target) => {
+      inFlightKey = keyOf(viewport, target);
+      const next = () => {
+        inFlightKey = null;
+        const queued = waiting;
+        waiting = null;
+        if (queued) {
+          send(queued.viewport, queued.target);
+          return;
+        }
+        const resolvers = idleWaiters;
+        idleWaiters = [];
+        for (const resolve2 of resolvers) resolve2();
+      };
+      void Promise.resolve().then(() => dispatch(viewport, target)).then(next, next);
+    };
+    return {
+      push: (viewport, target) => {
+        if (inFlightKey === null) {
+          send(viewport, target);
+          return;
+        }
+        waiting = keyOf(viewport, target) === inFlightKey ? null : { viewport, target };
+      },
+      drop: () => {
+        waiting = null;
+      },
+      whenIdle: () => inFlightKey === null ? Promise.resolve() : new Promise((resolve2) => {
+        idleWaiters.push(resolve2);
+      })
+    };
+  }
+  function createRailGestures(setPreview) {
+    let commit2 = () => Promise.resolve(false);
+    let gesture = null;
+    const coalescer = createViewportDragCoalescer((viewport, target) => {
+      const owner = gesture && gesture.target === target ? gesture : null;
+      const entry = { key: viewportSettingKey(viewport) };
+      owner?.expected.push(entry);
+      return commit2(viewport, target ?? "").then((applied) => {
+        if (applied || gesture === null) return;
+        const index = gesture.expected.indexOf(entry);
+        if (index >= 0) gesture.expected.splice(index, 1);
+      });
+    });
+    let version2 = 0;
+    const release = () => {
+      if (!gesture) return;
+      gesture.cleanup?.();
+      gesture.cleanup = null;
+      if (gesture.keyTimer !== null) clearTimeout(gesture.keyTimer);
+      gesture.keyTimer = null;
+    };
+    const abort = () => {
+      release();
+      version2 += 1;
+      coalescer.drop();
+      gesture = null;
+      setPreview(null);
+    };
+    return {
+      /** `next` resolves true when the server accepted the resize. */
+      bindCommit: (next) => {
+        commit2 = next;
+      },
+      /**
+       * Start a gesture at `start`, or with `continueLive` extend the live one
+       * (a burst of arrow keys). A new gesture inherits the settling one's
+       * keys so its still-landing commits are not mistaken for foreign ones.
+       */
+      begin: (target, start, continueLive) => {
+        release();
+        version2 += 1;
+        const previous = gesture;
+        if (continueLive && previous && previous.target === target) return previous;
+        gesture = {
+          target,
+          start,
+          expected: previous && previous.target === target ? [...previous.expected] : [{ key: viewportSettingKey(start) }],
+          cleanup: null,
+          keyTimer: null
+        };
+        return gesture;
+      },
+      input: (target, next) => {
+        if (gesture !== target) return;
+        version2 += 1;
+        setPreview(next);
+      },
+      push: (target, viewport) => {
+        if (gesture !== target) return;
+        coalescer.push(viewport, target.target);
+      },
+      /**
+       * Clear the preview once every commit the gesture made has settled —
+       * unless newer input arrived meanwhile.
+       */
+      settle: () => {
+        const settling = ++version2;
+        void coalescer.whenIdle().then(() => {
+          if (version2 !== settling) return;
+          gesture = null;
+          setPreview(null);
+        });
+      },
+      /**
+       * A setting from anywhere else (another client, the events stream, the
+       * toolbar) retires the gesture, like native's source-key check.
+       */
+      observe: (target, key) => {
+        if (!gesture) return;
+        const landed = key === null ? -1 : gesture.expected.findIndex((entry) => entry.key === key);
+        if (target !== gesture.target || landed < 0) {
+          abort();
+          return;
+        }
+        gesture.expected.splice(0, landed);
+      },
+      abort,
+      dispose: () => {
+        release();
+        version2 += 1;
+        coalescer.drop();
+        gesture = null;
+      }
     };
   }
   function viewportFailureMessage(error) {
@@ -16059,12 +16265,11 @@ ${ind(d)}}`;
     background: "transparent",
     color: "inherit"
   };
-  function useElementSize(ref) {
+  function useElementSize(element) {
     const [size, setSize] = (0, import_react6.useState)(
       null
     );
     (0, import_react6.useEffect)(() => {
-      const element = ref.current;
       if (!element) return;
       const observer = new ResizeObserver((entries) => {
         const box = entries[0]?.contentRect;
@@ -16075,7 +16280,7 @@ ${ind(d)}}`;
       });
       observer.observe(element);
       return () => observer.disconnect();
-    }, [ref]);
+    }, [element]);
     return size;
   }
   function BrowserViewportToolbar(props) {
@@ -16247,8 +16452,12 @@ ${ind(d)}}`;
     );
   }
   function ViewportDeviceFrame(props) {
-    const { slot, setting, fallbackSlot } = props;
-    const layout = deviceViewportLayout(slot ?? fallbackSlot, setting);
+    const { slot, setting, fallbackSlot, zoomFactor } = props;
+    const layout = deviceViewportLayout(
+      slot ?? fallbackSlot,
+      setting,
+      zoomFactor
+    );
     const percent = Math.round(layout.scale * 100);
     return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(import_jsx_runtime5.Fragment, { children: [
       /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
@@ -16291,6 +16500,189 @@ ${ind(d)}}`;
           children: [
             percent,
             "%"
+          ]
+        }
+      ) : null
+    ] });
+  }
+  function useViewportRails(options) {
+    const { setting, target, slot, zoomFactor, commit: commit2 } = options;
+    const [preview, setPreview] = (0, import_react6.useState)(null);
+    const [gestures] = (0, import_react6.useState)(() => createRailGestures(setPreview));
+    (0, import_react6.useEffect)(() => gestures.bindCommit(commit2), [gestures, commit2]);
+    const committedKey = setting === null ? null : viewportSettingKey(setting);
+    (0, import_react6.useEffect)(() => gestures.observe(target, committedKey), [gestures, target, committedKey]);
+    (0, import_react6.useEffect)(() => () => gestures.dispose(), [gestures]);
+    const displayed = setting === null ? null : preview === null ? setting : { _tag: "freeform", width: preview.width, height: preview.height };
+    const onPointerDown = (direction, event) => {
+      if (displayed === null || setting === null || target === null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const gesture = gestures.begin(target, displayed, false);
+      const pointerId = event.pointerId;
+      const handle = event.currentTarget;
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const start = { width: displayed.width, height: displayed.height };
+      const area = deviceViewportArea(slot);
+      const renderScale = zoomFactor * deviceViewportLayout(slot, start, zoomFactor).scale;
+      let latest = start;
+      let moved = false;
+      gestures.input(gesture, { ...start, direction });
+      try {
+        handle.setPointerCapture(pointerId);
+      } catch {
+      }
+      const move = (moveEvent) => {
+        if (moveEvent.pointerId !== pointerId) return;
+        moveEvent.preventDefault();
+        const next = resizeViewportFromRail(
+          start,
+          { x: moveEvent.clientX - startX, y: moveEvent.clientY - startY },
+          area,
+          renderScale,
+          direction
+        );
+        if (next.width === latest.width && next.height === latest.height) return;
+        latest = next;
+        moved = true;
+        gestures.input(gesture, { ...next, direction });
+        gestures.push(gesture, { _tag: "freeform", ...next });
+      };
+      const cleanup = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", finish);
+        window.removeEventListener("pointercancel", cancel);
+        gesture.cleanup = null;
+        try {
+          handle.releasePointerCapture(pointerId);
+        } catch {
+        }
+      };
+      function finish(upEvent) {
+        if (upEvent.pointerId !== pointerId) return;
+        cleanup();
+        if (moved && latest.width === start.width && latest.height === start.height) {
+          gestures.push(gesture, gesture.start);
+        }
+        gestures.settle();
+      }
+      function cancel(cancelEvent) {
+        if (cancelEvent.pointerId !== pointerId) return;
+        cleanup();
+        if (moved) gestures.push(gesture, gesture.start);
+        gestures.settle();
+      }
+      gesture.cleanup = cleanup;
+      window.addEventListener("pointermove", move, { passive: false });
+      window.addEventListener("pointerup", finish);
+      window.addEventListener("pointercancel", cancel);
+    };
+    const onKeyDown = (direction, event) => {
+      if (displayed === null || setting === null || target === null) return;
+      const delta = railKeyDelta(direction, event.key, event.shiftKey);
+      if (!delta) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const next = resizeViewportBy(displayed, delta, direction);
+      if (next.width === displayed.width && next.height === displayed.height) return;
+      const gesture = gestures.begin(target, displayed, true);
+      gestures.input(gesture, { ...next, direction });
+      gesture.keyTimer = setTimeout(() => {
+        gesture.keyTimer = null;
+        gestures.push(gesture, { _tag: "freeform", ...next });
+        gestures.settle();
+      }, VIEWPORT_RAIL_KEY_COMMIT_DELAY_MS);
+    };
+    return { displayed, preview, onPointerDown, onKeyDown, cancel: gestures.abort };
+  }
+  var RAILS = [
+    { direction: "west", label: "left edge", kind: "vertical", cursor: "ew-resize" },
+    { direction: "east", label: "right edge", kind: "vertical", cursor: "ew-resize" },
+    { direction: "south", label: "bottom edge", kind: "horizontal", cursor: "ns-resize" },
+    { direction: "southwest", label: "bottom-left corner", kind: "corner", cursor: "nesw-resize" },
+    { direction: "southeast", label: "bottom-right corner", kind: "corner", cursor: "nwse-resize" }
+  ];
+  var railBox = (direction, layout) => {
+    const rail = DEVICE_VIEWPORT_RAIL;
+    const right = layout.x + layout.width;
+    const bottom = layout.y + layout.height;
+    switch (direction) {
+      case "west":
+        return { left: layout.x - rail, top: layout.y, width: rail, height: layout.height };
+      case "east":
+        return { left: right, top: layout.y, width: rail, height: layout.height };
+      case "south":
+        return { left: layout.x, top: bottom, width: layout.width, height: rail };
+      case "southwest":
+        return { left: layout.x - rail, top: bottom, width: rail, height: rail };
+      case "southeast":
+        return { left: right, top: bottom, width: rail, height: rail };
+    }
+  };
+  var grip = (kind, active) => ({
+    position: "absolute",
+    left: "50%",
+    top: "50%",
+    transform: kind === "corner" ? "translate(-50%, -50%) rotate(-45deg)" : "translate(-50%, -50%)",
+    width: kind === "vertical" ? 3 : kind === "horizontal" ? 24 : 10,
+    height: kind === "vertical" ? 24 : kind === "horizontal" ? 3 : 1,
+    borderLeft: kind === "vertical" ? "1px solid currentColor" : void 0,
+    borderRight: kind === "vertical" ? "1px solid currentColor" : void 0,
+    borderTop: kind === "horizontal" || kind === "corner" ? "1px solid currentColor" : void 0,
+    borderBottom: kind === "horizontal" ? "1px solid currentColor" : void 0,
+    boxSizing: "border-box",
+    color: active ? "var(--t3-browser-foreground, var(--foreground, #101828))" : muted5,
+    pointerEvents: "none"
+  });
+  function ViewportResizeRails(props) {
+    const { layout, preview, onPointerDown, onKeyDown } = props;
+    return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(import_jsx_runtime5.Fragment, { children: [
+      RAILS.map((rail) => /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+        "button",
+        {
+          type: "button",
+          "aria-label": `Resize browser viewport from ${rail.label}. Use arrow keys to resize.`,
+          onPointerDown: (event) => onPointerDown(rail.direction, event),
+          onKeyDown: (event) => onKeyDown(rail.direction, event),
+          style: {
+            position: "absolute",
+            ...railBox(rail.direction, layout),
+            zIndex: rail.kind === "corner" ? 42 : 41,
+            padding: 0,
+            border: 0,
+            background: "transparent",
+            cursor: rail.cursor,
+            touchAction: "none"
+          },
+          children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { "aria-hidden": true, style: grip(rail.kind, preview?.direction === rail.direction) })
+        },
+        rail.direction
+      )),
+      preview ? /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
+        "div",
+        {
+          "aria-hidden": true,
+          style: {
+            position: "absolute",
+            left: layout.x + layout.width / 2,
+            top: layout.y + 10,
+            transform: "translateX(-50%)",
+            padding: "2px 8px",
+            fontSize: 11,
+            fontWeight: 500,
+            fontVariantNumeric: "tabular-nums",
+            border: border3,
+            borderRadius: 6,
+            background: "var(--t3-browser-canvas, var(--background, #fff))",
+            boxShadow: "0 1px 4px rgba(15, 23, 42, 0.18)",
+            pointerEvents: "none",
+            zIndex: 43
+          },
+          children: [
+            preview.width,
+            " \xD7 ",
+            preview.height
           ]
         }
       ) : null
@@ -16530,9 +16922,10 @@ ${ind(d)}}`;
     const heldRef = (0, import_react7.useRef)(held);
     const historyRef = (0, import_react7.useRef)(history);
     const lastRevision = (0, import_react7.useRef)(-1);
+    const heldRevision = (0, import_react7.useRef)(-1);
     const addressRef = (0, import_react7.useRef)(null);
-    const contentRef = (0, import_react7.useRef)(null);
-    const contentSize = useElementSize(contentRef);
+    const [contentElement, setContentElement] = (0, import_react7.useState)(null);
+    const contentSize = useElementSize(contentElement);
     const [viewportPending, setViewportPending] = (0, import_react7.useState)(false);
     const viewportCommitter = (0, import_react7.useRef)(null);
     const themeVars = useThemeVars(host, session, visible);
@@ -16593,6 +16986,7 @@ ${ind(d)}}`;
                   } else {
                     setLive(found);
                     lastRevision.current = value.revision;
+                    heldRevision.current = value.revision;
                   }
                 }
                 pending = null;
@@ -16605,7 +16999,8 @@ ${ind(d)}}`;
                     (item, itemIndex) => itemIndex === index ? value.session : item
                   );
                 });
-                if (current && value.session.tabId === current.tabId) {
+                if (current && value.session.tabId === current.tabId && value.revision >= heldRevision.current) {
+                  heldRevision.current = value.revision;
                   setLive(value.session);
                   lastRevision.current = Math.max(lastRevision.current, value.revision);
                   setHeld(
@@ -16676,9 +17071,12 @@ ${ind(d)}}`;
     });
     (0, import_react7.useEffect)(() => {
       const api = bindApi(browserSessionsApi, host, session.context);
-      viewportCommitter.current = createViewportCommitter((viewport, signal) => {
+      viewportCommitter.current = createViewportCommitter((viewport, signal, target) => {
         const current = heldRef.current;
         if (!current) return Promise.reject(new Error("No browser session to resize"));
+        if (target !== void 0 && current.tabId !== target) {
+          return Promise.reject(new ViewportTargetChangedError());
+        }
         return api.invoke(
           "resize",
           {
@@ -16694,18 +17092,21 @@ ${ind(d)}}`;
         viewportCommitter.current = null;
       };
     }, [host, session]);
-    const commitViewport = (next) => {
+    const commitViewport = (next, target) => {
       const committer = viewportCommitter.current;
-      if (!committer) return;
+      if (!committer) return Promise.resolve(false);
       setViewportPending(true);
-      void committer.commit(next, session.signal).then(
+      return committer.commit(next, session.signal, target).then(
         (receipt2) => {
           setViewportPending(false);
-          if (session.signal.aborted || receipt2.revision < lastRevision.current) return;
+          if (session.signal.aborted) return false;
+          if (receipt2.revision < lastRevision.current) return receipt2.outcome === "accepted";
+          if (heldRef.current?.tabId !== receipt2.session.tabId) return false;
           lastRevision.current = receipt2.revision;
+          heldRevision.current = Math.max(heldRevision.current, receipt2.revision);
           if (receipt2.outcome !== "accepted") {
             setFault(`Browser command ${receipt2.outcome}`);
-            return;
+            return false;
           }
           const heldNext = {
             tabId: receipt2.session.tabId,
@@ -16716,10 +17117,11 @@ ${ind(d)}}`;
           setHeld(heldNext);
           setLive(receipt2.session);
           setFault(null);
+          return true;
         },
         (error) => {
           setViewportPending(false);
-          if (session.signal.aborted) return;
+          if (session.signal.aborted || error instanceof ViewportTargetChangedError) return false;
           const message = viewportFailureMessage(error);
           setFault(message);
           void notifyViewportResizeFailure(
@@ -16729,11 +17131,25 @@ ${ind(d)}}`;
             AbortSignal.timeout(5e3)
           ).catch(() => {
           });
+          return false;
         }
       );
     };
     const viewportSetting = live?.viewport ?? null;
     const deviceMode = viewportSetting !== null && viewportSetting._tag !== "fill";
+    const viewportSlot = contentSize ?? FALLBACK_RESPONSIVE_VIEWPORT_SIZE;
+    const pageZoom = live?.zoomFactor ?? 1;
+    const rails = useViewportRails({
+      setting: viewportSetting !== null && viewportSetting._tag !== "fill" ? viewportSetting : null,
+      target: held?.tabId ?? null,
+      slot: viewportSlot,
+      zoomFactor: pageZoom,
+      commit: commitViewport
+    });
+    const commitViewportChange = (next) => {
+      rails.cancel();
+      void commitViewport(next);
+    };
     const persist = (entries, url, heldSession) => {
       const base = {
         ...restoreTarget(fileSourceRef.current, url),
@@ -16762,6 +17178,7 @@ ${ind(d)}}`;
       refuse: (outcome) => setFault(`Browser command ${outcome}`),
       fail: (error) => setFault(error instanceof Error ? error.message : "Browser command failed"),
       adopt: (receipt2) => {
+        heldRevision.current = receipt2.revision;
         const next = {
           tabId: receipt2.session.tabId,
           serverEpoch: receipt2.serverEpoch,
@@ -16832,6 +17249,7 @@ ${ind(d)}}`;
         fileRun.current?.abort();
         const next = { tabId: tab.tabId, serverEpoch, engineGeneration: tab.engine.generation };
         heldRef.current = next;
+        heldRevision.current = -1;
         setHeld(next);
         setLive(tab);
         setFault(null);
@@ -16909,6 +17327,7 @@ ${ind(d)}}`;
         if (!current || receipt2.session.tabId !== current.tabId) return;
         if (receipt2.revision < lastRevision.current) return;
         lastRevision.current = receipt2.revision;
+        heldRevision.current = Math.max(heldRevision.current, receipt2.revision);
         const next = { ...current, engineGeneration: receipt2.session.engine.generation };
         heldRef.current = next;
         setHeld(next);
@@ -17071,7 +17490,7 @@ ${titledTitle}`;
                     disabled: !held || viewportPending,
                     onClick: () => {
                       if (!viewportSetting) return;
-                      commitViewport(
+                      commitViewportChange(
                         viewportSetting._tag !== "fill" ? { _tag: "fill" } : responsiveViewportForToggle(contentSize)
                       );
                     },
@@ -17251,7 +17670,7 @@ ${titledTitle}`;
               children: fault ?? captureStatus ?? profileNote ?? (held && live ? `${live.navigation.title || live.navigation.url || "session"} \u2014 ${engineStatusLabel(live)}` : describeStatus(state2))
             }
           ),
-          held ? /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { ref: contentRef, style: { position: "relative", flex: 1, minHeight: 0 }, children: [
+          held ? /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { ref: setContentElement, style: { position: "relative", flex: 1, minHeight: 0 }, children: [
             /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
               "div",
               {
@@ -17269,21 +17688,31 @@ ${titledTitle}`;
               }
             ),
             /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(ZoomIndicator, { zoomFactor: live?.zoomFactor ?? null }, held.tabId),
-            deviceMode && viewportSetting && /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(import_jsx_runtime6.Fragment, { children: [
+            rails.displayed && /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(import_jsx_runtime6.Fragment, { children: [
               /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                 BrowserViewportToolbar,
                 {
-                  setting: viewportSetting,
+                  setting: rails.displayed,
                   pending: viewportPending,
-                  onCommit: commitViewport
+                  onCommit: commitViewportChange
                 }
               ),
               /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
                 ViewportDeviceFrame,
                 {
                   slot: contentSize,
-                  setting: viewportSetting,
-                  fallbackSlot: FALLBACK_RESPONSIVE_VIEWPORT_SIZE
+                  setting: rails.displayed,
+                  fallbackSlot: FALLBACK_RESPONSIVE_VIEWPORT_SIZE,
+                  zoomFactor: pageZoom
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+                ViewportResizeRails,
+                {
+                  layout: deviceViewportLayout(viewportSlot, rails.displayed, pageZoom),
+                  preview: rails.preview,
+                  onPointerDown: rails.onPointerDown,
+                  onKeyDown: rails.onKeyDown
                 }
               )
             ] }),
