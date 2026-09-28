@@ -313,6 +313,19 @@ export function normalizeTerminalGroups(
   return nextGroups;
 }
 
+/**
+ * A live pane whose host stream lost its transport and is waiting for the
+ * next session: say so, as native connection status does, until the resumed
+ * snapshot re-proves the stream. Anything but live keeps its own status.
+ */
+export function suspendedOutputStatus<
+  T extends { readonly status: OutputBuffer["status"]; readonly statusText: string },
+>(state: T): T {
+  return state.status === "live"
+    ? { ...state, status: "connecting", statusText: "Reconnecting…" }
+    : state;
+}
+
 export const EMPTY_OUTPUT_BUFFER: OutputBuffer = {
   contents: "",
   retainedBytes: 0,

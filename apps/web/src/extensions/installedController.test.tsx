@@ -838,6 +838,57 @@ it("rebinds open and newly activated tabs to an updated pack without a reload", 
   }
 });
 
+it("reports a resumable stream's suspensions to the plugin, never into the host", async () => {
+  const suspend: Array<() => void> = [];
+  const subscribeResumableApi = vi.fn(
+    (
+      _id: string,
+      _hash: string,
+      _request: unknown,
+      _signal: AbortSignal,
+      onSuspended?: () => void,
+    ) => ({
+      async *[Symbol.asyncIterator]() {
+        if (onSuspended) suspend.push(onSuspended);
+        yield { type: "snapshot", streamId: "s", sequence: 1, value: {} } as ApiStreamFrame;
+      },
+    }),
+  );
+  const h = harness("env-a", { subscribeResumableApi });
+  h.options.list.mockImplementation(async () => ({
+    installations: [installation],
+    supportsApiStreams: true,
+    supportedPackageFormats: [1, 2, 3],
+  }));
+  try {
+    await h.controller.refresh();
+    const resumable = resolveResumableStreams(h.getHost())!;
+    const request = {
+      id: "t3.terminal/output-events",
+      versionRange: "^1.0.0",
+      name: "subscribe",
+      input: { terminalId: "term-1" },
+      context,
+    };
+    const seen: string[] = [];
+    const controller = new AbortController();
+    const frames = resumable.subscribeApi(request, controller.signal, {
+      onSuspended: () => {
+        seen.push("suspended");
+        throw new Error("plugin bug");
+      },
+    });
+    await frames[Symbol.asyncIterator]().next();
+    expect(() => suspend[0]!()).not.toThrow();
+    controller.abort();
+    suspend[0]!();
+
+    expect(seen).toEqual(["suspended"]);
+  } finally {
+    h.controller.dispose();
+  }
+});
+
 it("offers host stream resumption only where the host has it, and only for resumable streams", async () => {
   const bare = harness();
   await bare.controller.refresh();

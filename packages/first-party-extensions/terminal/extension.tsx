@@ -69,6 +69,7 @@ import {
   plainTerminalText,
   registerPanelCommands,
   terminalChordAction,
+  suspendedOutputStatus,
   terminalActionLabel,
   terminalCloseLabel,
   watchTerminalAppearanceVars,
@@ -739,9 +740,15 @@ function TerminalPane(props: {
         }
         let refused = false;
         void pumpTerminalOutput({
-          subscribe: (subscribeSignal) => {
+          subscribe: (subscribeSignal, onSuspended) => {
             reattach.subscribed();
-            const source = subscribeOutput(host, session.context, terminalId, subscribeSignal);
+            const source = subscribeOutput(
+              host,
+              session.context,
+              terminalId,
+              subscribeSignal,
+              onSuspended,
+            );
             return (async function* () {
               for await (const frame of source) {
                 const value = frame.value as TerminalOutputEventsValue;
@@ -1075,12 +1082,13 @@ function subscribeOutput(
   context: ViewSession["context"],
   terminalId: string,
   signal: AbortSignal,
+  onSuspended: () => void,
 ) {
   return bindStreamApi(terminalOutputEventsApi, host, context).subscribe(
     "subscribe",
     { terminalId },
     signal,
-    resolveResumableStreams(host) ? { resume: "fresh-snapshot" } : undefined,
+    resolveResumableStreams(host) ? { resume: "fresh-snapshot", onSuspended } : undefined,
   );
 }
 
@@ -1134,7 +1142,12 @@ function useTerminalOutput(
         let resurrect = false;
         try {
           reattach.subscribed();
-          const stream = subscribeOutput(host, session.context, terminalId, signal);
+          const stream = subscribeOutput(host, session.context, terminalId, signal, () => {
+            const suspended = suspendedOutputStatus(stateRef.current);
+            if (suspended === stateRef.current) return;
+            stateRef.current = suspended;
+            setState({ terminalId, buffer: suspended });
+          });
           for await (const frame of stream) {
             if (signal.aborted) return;
             // A host-resumed subscription restarts at sequence 1 with a fresh

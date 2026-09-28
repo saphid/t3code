@@ -399,11 +399,12 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
             signal,
           ),
         ),
-      subscribeResumableApi: (installationId, expectedContentHash, request, signal) =>
+      subscribeResumableApi: (installationId, expectedContentHash, request, signal, onSuspended) =>
         resumableApiFrames(
           environmentId,
           decodeApiSubscribe({ installationId, expectedContentHash, request }),
           signal,
+          onSuspended,
         ),
       discoverApis: async (installationId, expectedContentHash, context, signal) => {
         const payload = decodeApiDiscover({

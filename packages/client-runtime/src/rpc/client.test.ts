@@ -38,6 +38,7 @@ import {
   runStream,
   subscribe,
   subscribeDynamicUntilComplete,
+  subscribeDynamicUntilCompleteWithSuspensions,
   subscribeDynamicWithSession,
 } from "./client.ts";
 
@@ -580,6 +581,55 @@ describe("environment RPC", () => {
         expect(fiber.pollUnsafe()).toBeUndefined();
         yield* Fiber.interrupt(fiber);
         expect(yield* Ref.get(retryCount)).toBe(0);
+      }),
+    );
+
+    it.effect("reports each suspension in order with the frames delivered before it", () =>
+      Effect.gen(function* () {
+        const { activeSession, supervisor } = yield* makeHarness();
+        const received = yield* Ref.make<ReadonlyArray<string>>([]);
+        const fiber = yield* subscribeDynamicUntilCompleteWithSuspensions(
+          WS_METHODS.subscribeExtensionApi,
+          () => Effect.succeed({}) as never,
+          { streamBufferSize: 1 },
+        ).pipe(
+          Stream.runForEach((value) =>
+            Ref.update(received, (values) => [
+              ...values,
+              Option.match(value, {
+                onNone: () => "suspended",
+                onSome: (frame) => frame as unknown as string,
+              }),
+            ]),
+          ),
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.forkChild,
+        );
+        const opens = (frames: Stream.Stream<string, unknown>) =>
+          Option.some(session(extensionClient(() => frames)));
+        yield* SubscriptionRef.set(
+          activeSession,
+          opens(Stream.concat(Stream.make("first", "buffered"), Stream.fail(transportFailure()))),
+        );
+        yield* awaitCount(received, 3);
+        yield* SubscriptionRef.set(activeSession, Option.none());
+        yield* awaitCount(received, 4);
+        yield* SubscriptionRef.set(
+          activeSession,
+          opens(Stream.concat(Stream.succeed("second"), Stream.never)),
+        );
+        yield* awaitCount(received, 5);
+        yield* Fiber.interrupt(fiber);
+
+        // The dropped transport, then the ended session; each after the
+        // frames that were already on their way.
+        expect(yield* Ref.get(received)).toEqual([
+          "first",
+          "buffered",
+          "suspended",
+          "suspended",
+          "second",
+        ]);
       }),
     );
 

@@ -198,6 +198,11 @@ interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
   readonly streamBufferSize?: number;
 }
 
+/**
+ * `suspended`, when given, is emitted in order with the values each time the
+ * subscription is left without a session (its transport failed, or the
+ * session ended) and starts waiting for the next one.
+ */
 function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
   tag: TTag,
   makeInput: (session: RpcSession) => Effect.Effect<EnvironmentRpcInput<TTag>>,
@@ -206,7 +211,12 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
     stream: Stream.Stream<EnvironmentRpcStreamValue<TTag>, EnvironmentRpcStreamFailure<TTag>>,
   ) => Stream.Stream<A, EnvironmentRpcStreamFailure<TTag>>,
   options?: SubscriptionOptions<TTag>,
+  suspended?: Option.Option<A>,
 ): Stream.Stream<A, EnvironmentRpcStreamFailure<TTag>, EnvironmentSupervisor> {
+  const suspension: Stream.Stream<A> =
+    suspended === undefined || Option.isNone(suspended)
+      ? Stream.empty
+      : Stream.succeed(suspended.value);
   return Stream.unwrap(
     Effect.gen(function* () {
       const supervisor = yield* EnvironmentSupervisor;
@@ -224,7 +234,7 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
       return sessions.pipe(
         Stream.switchMap(
           Option.match({
-            onNone: () => Stream.empty,
+            onNone: () => suspension,
             onSome: (session) => {
               const method = (
                 tag === WS_METHODS.subscribeServerConfig
@@ -294,7 +304,7 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                               environmentId: supervisor.target.environmentId,
                             },
                           ),
-                        ).pipe(Stream.drain);
+                        ).pipe(Stream.drain, Stream.concat(suspension));
                       }
                       if (hasOnlyExpectedFailures && options?.onExpectedFailure !== undefined) {
                         const handled = Stream.fromEffect(options.onExpectedFailure(cause)).pipe(
@@ -377,6 +387,32 @@ export function subscribeDynamicUntilComplete<TTag extends EnvironmentSubscripti
   EnvironmentRpcStreamFailure<TTag>,
   EnvironmentSupervisor
 > {
+  return subscribeDynamicUntilCompleteWithSuspensions(tag, makeInput, options).pipe(
+    Stream.filter(Option.isSome),
+    Stream.map((value) => value.value),
+  );
+}
+
+/**
+ * `subscribeDynamicUntilComplete` that also reports, in order with its
+ * values, each wait for a new session as `Option.none()` — so a consumer
+ * sees every frame delivered before the drop, then the suspension.
+ */
+export function subscribeDynamicUntilCompleteWithSuspensions<
+  TTag extends EnvironmentSubscriptionRpcTag,
+>(
+  tag: TTag,
+  makeInput: (session: RpcSession) => Effect.Effect<EnvironmentRpcInput<TTag>>,
+  options?: SubscriptionOptions<TTag>,
+): Stream.Stream<
+  Option.Option<EnvironmentRpcStreamValue<TTag>>,
+  EnvironmentRpcStreamFailure<TTag>,
+  EnvironmentSupervisor
+> {
+  type Element =
+    | { readonly _tag: "value"; readonly value: EnvironmentRpcStreamValue<TTag> }
+    | { readonly _tag: "suspended" }
+    | { readonly _tag: "end" };
   return subscribeDynamicMapped(
     tag,
     makeInput,
@@ -384,13 +420,16 @@ export function subscribeDynamicUntilComplete<TTag extends EnvironmentSubscripti
     // is drained before it and waits for the next session instead.
     (_session, stream) =>
       stream.pipe(
-        Stream.map(Option.some),
-        Stream.concat(Stream.succeed(Option.none<EnvironmentRpcStreamValue<TTag>>())),
+        Stream.map((value): Element => ({ _tag: "value", value })),
+        Stream.concat(Stream.succeed<Element>({ _tag: "end" })),
       ),
     options,
+    Option.some<Element>({ _tag: "suspended" }),
   ).pipe(
-    Stream.takeWhile(Option.isSome),
-    Stream.map((value) => value.value),
+    Stream.takeWhile((element) => element._tag !== "end"),
+    Stream.map((element) =>
+      element._tag === "value" ? Option.some(element.value) : Option.none(),
+    ),
   );
 }
 

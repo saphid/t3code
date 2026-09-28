@@ -173,13 +173,15 @@ export function createInstalledExtensionController(options: {
   ) => AsyncIterable<ApiStreamFrame>;
   /**
    * Backs `ClientHost.resumableStreams` version 1: the same request, but the
-   * iterable follows transport sessions (see `ResumableApiStreams`).
+   * iterable follows transport sessions (see `ResumableApiStreams`), calling
+   * `onSuspended` each time it starts waiting for one.
    */
   readonly subscribeResumableApi?: (
     id: string,
     hash: string,
     request: ApiStreamInvocation,
     signal: AbortSignal,
+    onSuspended?: () => void,
   ) => AsyncIterable<ApiStreamFrame>;
   readonly discoverApis?: (
     id: string,
@@ -390,9 +392,10 @@ export function createInstalledExtensionController(options: {
               lifetime: lifetime.signal,
             });
             const subscribe = (
-              source: typeof options.subscribeApi,
+              source: typeof options.subscribeResumableApi,
               request: ApiStreamInvocation,
               callerSignal: AbortSignal,
+              onSuspended?: () => void,
             ) => {
               const signal = AbortSignal.any([callerSignal, lifetime.signal]);
               const context = validateContext(request.context);
@@ -412,12 +415,15 @@ export function createInstalledExtensionController(options: {
               return installedStream(
                 (streamSignal) => {
                   validate();
-                  return source!(
-                    item.id,
-                    item.contentHash,
-                    { ...request, input: copyJson(request.input), context },
-                    streamSignal,
-                  );
+                  const scoped = { ...request, input: copyJson(request.input), context };
+                  if (!onSuspended) return source!(item.id, item.contentHash, scoped, streamSignal);
+                  return source!(item.id, item.contentHash, scoped, streamSignal, () => {
+                    // Plugin code: never after the stream ends, never into the host.
+                    if (streamSignal.aborted) return;
+                    try {
+                      onSuspended();
+                    } catch {}
+                  });
                 },
                 signal,
                 validate,
@@ -564,10 +570,16 @@ export function createInstalledExtensionController(options: {
                 ? {
                     resumableStreams: {
                       version: 1,
-                      subscribeApi(request, callerSignal) {
+                      subscribeApi(request, callerSignal, streamOptions) {
                         if (!RESUMABLE_API_STREAMS.includes(`${request.id}#${request.name}`))
                           throw new Error(`${request.id}#${request.name} is not resumable`);
-                        return subscribe(subscribeResumableApi, request, callerSignal);
+                        const onSuspended = streamOptions?.onSuspended;
+                        return subscribe(
+                          subscribeResumableApi,
+                          request,
+                          callerSignal,
+                          typeof onSuspended === "function" ? onSuspended : undefined,
+                        );
                       },
                     },
                   }

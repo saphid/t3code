@@ -278,7 +278,8 @@ var __t3Client = (() => {
               [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(error) })
             };
           }
-          subscribeApi = resumable.subscribeApi.bind(resumable);
+          const onSuspended = options.onSuspended;
+          subscribeApi = onSuspended ? (request, signal2) => resumable.subscribeApi(request, signal2, { onSuspended }) : resumable.subscribeApi.bind(resumable);
         }
         return subscribeApi({
           id: api.definition.id,
@@ -11808,6 +11809,9 @@ var __t3Client = (() => {
     }
     return nextGroups;
   }
+  function suspendedOutputStatus(state2) {
+    return state2.status === "live" ? { ...state2, status: "connecting", statusText: "Reconnecting\u2026" } : state2;
+  }
   var EMPTY_OUTPUT_BUFFER = {
     contents: "",
     retainedBytes: 0,
@@ -14122,6 +14126,11 @@ var __t3Client = (() => {
         ended: false
       });
     }
+    /** The host is waiting to resume a dropped transport (`onSuspended`). */
+    noteSuspended() {
+      const state2 = suspendedOutputStatus(this.#state);
+      if (state2 !== this.#state) this.#emit(state2);
+    }
     /** The stream itself failed (network/authority), not the terminal. */
     applyTransportError(message) {
       this.#pending = null;
@@ -14414,7 +14423,7 @@ var __t3Client = (() => {
       let overflowClose = false;
       let started = false;
       try {
-        for await (const frame of options.subscribe(signal)) {
+        for await (const frame of options.subscribe(signal, () => attachment.noteSuspended())) {
           if (signal.aborted) return;
           if (frame.sequence === 1 && started) attachment.beginStream();
           started = true;
@@ -14840,9 +14849,15 @@ var __t3Client = (() => {
           }
           let refused = false;
           void pumpTerminalOutput({
-            subscribe: (subscribeSignal) => {
+            subscribe: (subscribeSignal, onSuspended) => {
               reattach.subscribed();
-              const source = subscribeOutput(host, session.context, terminalId, subscribeSignal);
+              const source = subscribeOutput(
+                host,
+                session.context,
+                terminalId,
+                subscribeSignal,
+                onSuspended
+              );
               return (async function* () {
                 for await (const frame of source) {
                   const value = frame.value;
@@ -15104,12 +15119,12 @@ var __t3Client = (() => {
       }
     );
   }
-  function subscribeOutput(host, context, terminalId, signal) {
+  function subscribeOutput(host, context, terminalId, signal, onSuspended) {
     return bindStreamApi(terminalOutputEventsApi, host, context).subscribe(
       "subscribe",
       { terminalId },
       signal,
-      resolveResumableStreams(host) ? { resume: "fresh-snapshot" } : void 0
+      resolveResumableStreams(host) ? { resume: "fresh-snapshot", onSuspended } : void 0
     );
   }
   function useTerminalOutput(host, session, panel, terminalId, visible, running) {
@@ -15149,7 +15164,12 @@ var __t3Client = (() => {
           let resurrect = false;
           try {
             reattach.subscribed();
-            const stream = subscribeOutput(host, session.context, terminalId, signal);
+            const stream = subscribeOutput(host, session.context, terminalId, signal, () => {
+              const suspended = suspendedOutputStatus(stateRef.current);
+              if (suspended === stateRef.current) return;
+              stateRef.current = suspended;
+              setState({ terminalId, buffer: suspended });
+            });
             for await (const frame of stream) {
               if (signal.aborted) return;
               if (frame.sequence === 1 && stateRef.current.sequence > 0) {

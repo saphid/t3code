@@ -1470,13 +1470,16 @@ NodeTest.describe("exit UX (Terminal 29)", () => {
         ? {
             resumableStreams: {
               version: 1,
-              subscribeApi: (request, signal) => ({
+              subscribeApi: (request, signal, options) => ({
                 async *[Symbol.asyncIterator]() {
                   NodeAssert.equal(request.id, "t3.terminal/output-events");
                   session: for (;;) {
                     const script = scripts[outputSubscriptions++] ?? { frames: [], ends: false };
                     for (const next of script.frames) {
-                      if (next === TRANSPORT_DROP) continue session;
+                      if (next === TRANSPORT_DROP) {
+                        options?.onSuspended?.();
+                        continue session;
+                      }
                       if (typeof next === "function") await next();
                       else yield next;
                     }
@@ -1866,6 +1869,59 @@ NodeTest.describe("exit UX (Terminal 29)", () => {
           }
         },
       );
+
+  for (const textFallback of [false, true])
+    NodeTest.test(
+      `host resumption (${textFallback ? "fallback" : "VT"}): a dropped transport reads Reconnecting… until the resumed snapshot`,
+      async () => {
+        const id = `reconnect${textFallback ? "f" : "v"}`;
+        const drop = gate();
+        const resume = gate();
+        const failed = { frames: [outputSnapshot(id, "epoch-1", "error", "")], ends: true };
+        const view = await renderSession({
+          terminalId: id,
+          listed: { ...sessionMetadata(id), status: "error" },
+          textFallback,
+          resumable: true,
+          invoke: startSucceeds,
+          scripts: [
+            ...(textFallback ? [failed] : []),
+            failed,
+            {
+              frames: [outputSnapshot(id, "epoch-2", "running", "$ "), drop.wait, TRANSPORT_DROP],
+              ends: true,
+            },
+            {
+              frames: [resume.wait, outputSnapshot(id, "epoch-2", "running", "$ back")],
+              ends: false,
+            },
+          ],
+        });
+        const status = () =>
+          view.renderer.root
+            .findAll(
+              (node) => node.type === "output" && node.props["aria-label"] === "Output status",
+            )
+            .map((node) => node.children.join(""))
+            .join(" | ");
+        try {
+          await clickStart(view, id);
+          NodeAssert.match(status(), /Watching live output/);
+          drop.open();
+          await view.settle();
+          NodeAssert.equal(status(), `${id}: Reconnecting…`);
+          resume.open();
+          await view.settle();
+          await view.settle();
+          NodeAssert.match(status(), /Watching live output/);
+          NodeAssert.ok(paneOutput(view, textFallback).includes("$ back"));
+        } finally {
+          drop.open();
+          resume.open();
+          await view.unmount();
+        }
+      },
+    );
 });
 
 NodeTest.describe("toolbar hover help", () => {

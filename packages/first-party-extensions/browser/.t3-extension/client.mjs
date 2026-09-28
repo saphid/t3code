@@ -295,7 +295,8 @@ var __t3Client = (() => {
               [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(error) })
             };
           }
-          subscribeApi = resumable.subscribeApi.bind(resumable);
+          const onSuspended = options.onSuspended;
+          subscribeApi = onSuspended ? (request, signal2) => resumable.subscribeApi(request, signal2, { onSuspended }) : resumable.subscribeApi.bind(resumable);
         }
         return subscribeApi({
           id: api.definition.id,
