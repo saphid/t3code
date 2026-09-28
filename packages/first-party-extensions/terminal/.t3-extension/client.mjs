@@ -15186,7 +15186,11 @@ var __t3Client = (() => {
                 const stream = bindStreamApi(terminalSessionsApi, host, session.context).subscribe(
                   "list",
                   {},
-                  signal
+                  signal,
+                  resolveResumableStreams(host) ? {
+                    resume: "fresh-snapshot",
+                    onSuspended: () => sink.status("connecting", null)
+                  } : void 0
                 );
                 for await (const frame of stream) {
                   if (signal.aborted) return;

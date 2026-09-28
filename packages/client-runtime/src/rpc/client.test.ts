@@ -633,6 +633,55 @@ describe("environment RPC", () => {
       }),
     );
 
+    it.effect("suspends when the closing session interrupts the stream, then resumes", () =>
+      Effect.gen(function* () {
+        const { activeSession, supervisor } = yield* makeHarness();
+        const received = yield* Ref.make<ReadonlyArray<string>>([]);
+        const fiber = yield* subscribeDynamicUntilCompleteWithSuspensions(
+          WS_METHODS.subscribeExtensionApi,
+          () => Effect.succeed({}) as never,
+          { streamBufferSize: 1 },
+        ).pipe(
+          Stream.runForEach((value) =>
+            Ref.update(received, (values) => [
+              ...values,
+              Option.match(value, {
+                onNone: () => "suspended",
+                onSome: (frame) => frame as unknown as string,
+              }),
+            ]),
+          ),
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.forkChild,
+        );
+        const opens = (frames: Stream.Stream<string, unknown>) =>
+          Option.some(session(extensionClient(() => frames)));
+        // The RPC client fails its open streams with an interrupt when the
+        // dropped session's scope closes, before the supervisor clears it.
+        yield* SubscriptionRef.set(
+          activeSession,
+          opens(Stream.concat(Stream.succeed("first"), Stream.failCause(Cause.interrupt(1)))),
+        );
+        yield* awaitCount(received, 2);
+        yield* SubscriptionRef.set(activeSession, Option.none());
+        yield* SubscriptionRef.set(
+          activeSession,
+          opens(Stream.concat(Stream.succeed("second"), Stream.never)),
+        );
+        for (let attempt = 0; (yield* Ref.get(received)).at(-1) !== "second"; attempt += 1) {
+          if (attempt === 100) return yield* Effect.die(new Error("Expected a resumed frame."));
+          yield* Effect.yieldNow;
+        }
+
+        expect(fiber.pollUnsafe()).toBeUndefined();
+        yield* Fiber.interrupt(fiber);
+        // One suspension per outage signal; the ended session may add a second.
+        expect(
+          (yield* Ref.get(received)).filter((value, index, all) => value !== all[index - 1]),
+        ).toEqual(["first", "suspended", "second"]);
+      }),
+    );
+
     it.effect("switches to exactly one fresh subscription when the session is replaced", () =>
       Effect.gen(function* () {
         const events: string[] = [];

@@ -290,10 +290,18 @@ function useSessionsStream(
             sink.status("connecting", null);
             let closed = false;
             try {
+              // On a resuming host a transport drop suspends the list and the
+              // next session's snapshot makes it live again, as native does.
               const stream = bindStreamApi(terminalSessionsApi, host, session.context).subscribe(
                 "list",
                 {},
                 signal,
+                resolveResumableStreams(host)
+                  ? {
+                      resume: "fresh-snapshot",
+                      onSuspended: () => sink.status("connecting", null),
+                    }
+                  : undefined,
               );
               for await (const frame of stream) {
                 if (signal.aborted) return;

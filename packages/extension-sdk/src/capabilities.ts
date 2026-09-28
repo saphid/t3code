@@ -123,7 +123,10 @@ export interface ResumableStreamOptions {
   readonly onSuspended?: () => void;
 }
 /** `id#stream` pairs a version 1 host resumes; it refuses every other stream. */
-export const RESUMABLE_API_STREAMS: readonly string[] = ["t3.terminal/output-events#subscribe"];
+export const RESUMABLE_API_STREAMS: readonly string[] = [
+  "t3.terminal/output-events#subscribe",
+  "t3.terminal/sessions#list",
+];
 /** The host's stream resumption when it offers version 1 or later, else null (keep your own recovery). */
 export function resolveResumableStreams(host: {
   readonly resumableStreams?: unknown;
