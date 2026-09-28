@@ -9844,8 +9844,8 @@ ${ref.number}`;
     if (!outcome.value.isOnPullRequestHead)
       return {
         tone: "warning",
-        title: "Checked out, but not on the latest commits",
-        description: "The checkout could not be moved onto the pull request's latest commits, so the code there is older than the pull request. Uncommitted work or local commits keep it where it is."
+        title: "Checked out, but the latest commits are unconfirmed",
+        description: "The pull request's latest commits could not be confirmed or applied here, so this checkout may be behind the pull request."
       };
     return mode === "local" || outcome.value.worktreePath === null ? {
       tone: "success",

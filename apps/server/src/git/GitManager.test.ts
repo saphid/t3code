@@ -4884,6 +4884,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     readonly visibleRemotes: boolean;
     readonly originSecondaryUrl?: string;
     readonly reportedUrl?: string;
+    // Like gh: a lookup that does not name the pull request's host answers for this URL instead.
+    readonly unqualifiedLookupUrl?: string;
   }) =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -4955,14 +4957,14 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
             headRepositoryOwnerLogin: input.repository.split("/")[0] ?? null,
             updatedAt: Option.none(),
           }),
-        getRepositoryCloneUrls: (lookup) =>
-          lookup.repository === input.repository
-            ? Effect.succeed({
-                nameWithOwner: input.repository,
-                url: reportedUrl,
-                sshUrl: reportedUrl,
-              })
-            : base.getRepositoryCloneUrls(lookup),
+        getRepositoryCloneUrls: (lookup) => {
+          if (lookup.repository !== input.repository) return base.getRepositoryCloneUrls(lookup);
+          const url =
+            input.unqualifiedLookupUrl !== undefined && lookup.host !== new URL(pullRequestUrl).host
+              ? input.unqualifiedLookupUrl
+              : reportedUrl;
+          return Effect.succeed({ nameWithOwner: input.repository, url, sshUrl: url });
+        },
         checkoutChangeRequest: (checkout) =>
           Effect.sync(() => runGitSyncForFakeGh(checkout.cwd, ["checkout", "feature/right-pr"])),
       };
@@ -5015,6 +5017,36 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       expect(head).toBe(wanted);
       expect(result.isOnPullRequestHead).toBe(true);
+    }),
+  );
+
+  it.effect("local PR checkout looks the repository up on the pull request's own host", () =>
+    Effect.gen(function* () {
+      const { result, head, wanted } = yield* setUpCollidingPullRequestNumbers({
+        repository: "team/repo",
+        originUrl: "https://github.com/team/repo.git",
+        upstreamUrl: "https://forge.example/team/repo.git",
+        visibleRemotes: true,
+        unqualifiedLookupUrl: "https://github.com/team/repo.git",
+      });
+
+      expect(head).toBe(wanted);
+      expect(result.isOnPullRequestHead).toBe(true);
+    }),
+  );
+
+  it.effect("local PR checkout does not trust clone URLs on another host", () =>
+    Effect.gen(function* () {
+      const { result, head, wanted } = yield* setUpCollidingPullRequestNumbers({
+        repository: "team/repo",
+        originUrl: "https://github.com/team/repo.git",
+        upstreamUrl: "https://forge.example/team/repo.git",
+        visibleRemotes: true,
+        reportedUrl: "https://github.com/team/repo.git",
+      });
+
+      expect(head).toBe(wanted);
+      expect(result.isOnPullRequestHead).toBe(false);
     }),
   );
 
@@ -5594,6 +5626,77 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       );
       expect(result.branch).toBe("feature/pr-reused-stale");
       expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(updatedHead);
+    }),
+  );
+
+  it.effect("warns without Git's output when a reused PR worktree cannot be refreshed", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* servePullRequestRepository(repoDir, remoteDir);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-reused-locked"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "stale.txt"), "stale\n");
+      yield* runGit(repoDir, ["add", "stale.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Reused stale PR branch"]);
+      const staleHead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-reused-locked"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      const worktreePath = NodePath.join(
+        repoDir,
+        "..",
+        `pr-reused-locked-${NodePath.basename(repoDir)}`,
+      );
+      yield* runGit(repoDir, ["worktree", "add", worktreePath, "feature/pr-reused-locked"]);
+      yield* runGit(repoDir, ["checkout", "-b", "author-push", "origin/feature/pr-reused-locked"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "authored.txt"), "authored\n");
+      yield* runGit(repoDir, ["add", "authored.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "New PR head commit"]);
+      yield* runGit(repoDir, ["push", "origin", "author-push:feature/pr-reused-locked"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      // A stale ref lock, as a crashed Git leaves behind: the fast-forward itself fails.
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, ".git", "refs", "heads", "feature", "pr-reused-locked.lock"),
+        "",
+      );
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 85,
+            title: "Reused locked PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/85",
+            baseRefName: "main",
+            headRefName: "feature/pr-reused-locked",
+            state: "open",
+          },
+          repositoryCloneUrls: pullRequestRepositoryCloneUrls,
+        },
+      });
+      const logs: Array<ReadonlyArray<unknown>> = [];
+      const logger = Logger.make<unknown, void>(({ message }) => {
+        logs.push(Array.isArray(message) ? message : [message]);
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "85",
+        mode: "worktree",
+      }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+
+      expect(result.isOnPullRequestHead).toBe(false);
+      expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(staleHead);
+      const warning = logs.find((parts) =>
+        String(parts[0]).includes("reused worktree refresh failed"),
+      );
+      expect(warning?.[1]).toMatchObject({
+        localBranch: "feature/pr-reused-locked",
+        operation: "GitVcsDriver.refreshCheckedOutBranch.move",
+      });
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.stringify(warning)).not.toContain(".lock");
     }),
   );
 

@@ -246,14 +246,23 @@ export function pullRequestRepositoryKey(value: string): string | null {
 }
 
 // The repository a pull request URL names, as the provider looks it up: `owner/repo`, a nested
-// GitLab group path, or an Azure DevOps repository name.
-function parsePullRequestRepository(value: string): string | null {
+// GitLab group path, or an Azure DevOps repository name, plus the host (with any port) serving it.
+function parsePullRequestRepository(value: string): { host: string; repository: string } | null {
   try {
+    const url = new URL(value);
     const match =
       /^\/(?:.*\/_git\/)?(.+?)\/(?:-\/merge_requests|pulls?|pull-requests|pullrequest)\/\d+(?:\/|$)/iu.exec(
-        new URL(value).pathname,
+        url.pathname,
       );
-    return match?.[1] ?? null;
+    return match?.[1] === undefined ? null : { host: url.host, repository: match[1] };
+  } catch {
+    return null;
+  }
+}
+
+function urlHost(value: string): string | null {
+  try {
+    return new URL(value).host;
   } catch {
     return null;
   }
@@ -911,17 +920,28 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  // `ref` read straight from the URL the provider reports for `repository`. Never through a
-  // configured remote: neither its name nor its URLs prove which repository Git fetches from.
+  // `ref` read straight from the URL the provider reports for `repository` on `host`. Never through
+  // a configured remote: neither its name nor its URLs prove which repository Git fetches from.
+  // A provider that answers for another host (gh without an explicit host means github.com) has
+  // named some other repository, so its URLs are not used.
   const fetchRepositoryCommit = Effect.fn("fetchRepositoryCommit")(function* (
     cwd: string,
+    host: string,
     repository: string | null,
     ref: string,
   ) {
     const cloneUrls = yield* (yield* sourceControlProvider(cwd)).getRepositoryCloneUrls({
       cwd,
+      host,
       repository: yield* Effect.fromNullishOr(repository),
     });
+    if (urlHost(cloneUrls.url) !== host) {
+      return yield* new GitManagerError({
+        operation: "fetchRepositoryCommit",
+        cwd,
+        detail: "The provider's clone URL is not on the pull request's host.",
+      });
+    }
     const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
     const url = shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url;
     return (yield* gitCore.fetchCommit({ cwd, url, ref })).commitSha;
@@ -935,17 +955,24 @@ export const make = Effect.gen(function* () {
     cwd: string,
     pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
   ) {
-    const baseRepository = parsePullRequestRepository(pullRequest.url);
+    const base = parsePullRequestRepository(pullRequest.url);
+    if (base === null) return null;
     const headRepository =
       resolveHeadRepositoryNameWithOwner(pullRequest) ??
-      (pullRequest.isCrossRepository === true ? null : baseRepository);
+      (pullRequest.isCrossRepository === true ? null : base.repository);
     return yield* fetchRepositoryCommit(
       cwd,
-      baseRepository,
+      base.host,
+      base.repository,
       `refs/pull/${pullRequest.number}/head`,
     ).pipe(
       Effect.catch(() =>
-        fetchRepositoryCommit(cwd, headRepository, `refs/heads/${pullRequest.headBranch}`),
+        fetchRepositoryCommit(
+          cwd,
+          base.host,
+          headRepository,
+          `refs/heads/${pullRequest.headBranch}`,
+        ),
       ),
       Effect.orElseSucceed(() => null),
     );
@@ -2635,7 +2662,21 @@ export const make = Effect.gen(function* () {
                   targetCommit: pullHead,
                   resetWhenHeadCommit: upstreamCommitBeforeFetch,
                 })
-                .pipe(Effect.orElseSucceed(() => ({ moved: false, onTarget: false })));
+                .pipe(
+                  // Dirty or divergent checkouts are refused without failing; this is a Git or
+                  // I/O failure. Git's detail is left out: it can carry remote URLs and stderr.
+                  Effect.catch((error) =>
+                    Effect.logWarning(
+                      "GitManager.preparePullRequestThread reused worktree refresh failed",
+                      {
+                        worktreePath,
+                        localBranch: localPullRequestBranch,
+                        operation: error.operation,
+                        exitCode: error.exitCode,
+                      },
+                    ).pipe(Effect.as({ moved: false, onTarget: false })),
+                  ),
+                );
 
         // Only when the checkout actually moved: another thread may be running in this worktree,
         // and re-running the setup script under it buys nothing when the code did not change.

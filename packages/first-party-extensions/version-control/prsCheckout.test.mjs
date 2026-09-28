@@ -53,13 +53,20 @@ NodeTest.describe("checkout pull request", () => {
     );
   });
 
-  NodeTest.it("warns when the checkout could not reach the latest commits", () => {
-    const receipt = prsCheckoutReceipt("worktree", {
-      ok: true,
-      value: prepared({ isOnPullRequestHead: false }),
-    });
-    NodeAssert.equal(receipt.tone, "warning");
-    NodeAssert.equal(receipt.title, "Checked out, but not on the latest commits");
+  // An unverified head is not proof of older code or of local work, so neither is claimed.
+  NodeTest.it("warns when the latest commits could not be confirmed", () => {
+    NodeAssert.deepEqual(
+      prsCheckoutReceipt("worktree", {
+        ok: true,
+        value: prepared({ isOnPullRequestHead: false }),
+      }),
+      {
+        tone: "warning",
+        title: "Checked out, but the latest commits are unconfirmed",
+        description:
+          "The pull request's latest commits could not be confirmed or applied here, so this checkout may be behind the pull request.",
+      },
+    );
   });
 
   NodeTest.it("passes the host's own sentence through on failure", () => {

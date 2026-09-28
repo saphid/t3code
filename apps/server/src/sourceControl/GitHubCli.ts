@@ -308,6 +308,7 @@ export class GitHubCli extends Context.Service<
 
     readonly getRepositoryCloneUrls: (input: {
       readonly cwd: string;
+      readonly host?: string;
       readonly repository: string;
     }) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubCliError>;
 
@@ -595,7 +596,14 @@ export const make = Effect.gen(function* () {
     getRepositoryCloneUrls: (input) =>
       execute({
         cwd: input.cwd,
-        args: ["repo", "view", input.repository, "--json", "nameWithOwner,url,sshUrl"],
+        args: [
+          "repo",
+          "view",
+          // Without a host gh looks the repository up on github.com (or GH_HOST).
+          input.host === undefined ? input.repository : `${input.host}/${input.repository}`,
+          "--json",
+          "nameWithOwner,url,sshUrl",
+        ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>

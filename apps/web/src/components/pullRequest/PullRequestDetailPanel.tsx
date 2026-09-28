@@ -1265,14 +1265,14 @@ export function PullRequestDetailPanel({
     // Released here whatever happened next: a loading toast never expires on its own, so leaving
     // this set would spin forever and lock every handoff behind it until a reload.
     setHandoff(null);
-    // A worktree that was already there and had been worked in keeps whatever it holds, so the
-    // thread opens on older code than the pull request carries. Said once, in place of the
-    // success, because everything else about the handoff did happen.
+    // The host could not confirm or apply the pull request's latest commits (unreadable head,
+    // local work, divergence), so the thread may open behind the pull request. Said once, in
+    // place of the success, because everything else about the handoff did happen.
     const staleCheckoutToast = {
       type: "warning",
-      title: "Checked out, but not on the latest commits",
+      title: "Checked out, but the latest commits are unconfirmed",
       description:
-        "The checkout could not be moved onto the pull request's latest commits, so the code there is older than the pull request. Uncommitted work or local commits keep it where it is.",
+        "The pull request's latest commits could not be confirmed or applied here, so this checkout may be behind the pull request.",
     } as const;
     if (task === null) {
       toastManager.update(
