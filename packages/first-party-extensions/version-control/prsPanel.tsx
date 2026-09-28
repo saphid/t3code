@@ -51,6 +51,8 @@ import {
   mergePrsEntries,
   prsActorLabel,
   prsAuthoredByViewer,
+  prsBranchChips,
+  prsStackedOnBase,
   prsChecksIcon,
   prsChecksStateFromChecks,
   prsChecksSummary,
@@ -750,6 +752,40 @@ export function ChecksIcon(props: {
   );
 }
 
+const chipStyle = {
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  fontFamily: "var(--font-mono, ui-monospace, monospace)",
+  fontSize: 11,
+} as const;
+
+/** Native's `base ← head` chips; the base keeps up to 45% so a long head cannot squeeze it out. */
+function BranchChips(props: {
+  host: ClientHost;
+  detail: { readonly baseBranch: string; readonly headBranch: string };
+  stacked: boolean;
+}) {
+  const chips = prsBranchChips(props.detail, props.stacked);
+  return (
+    <span style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0, color: muted }}>
+      <Tooltip host={props.host} side="top" label={chips.base.tooltip}>
+        <code style={{ ...chipStyle, maxWidth: "45%", flexShrink: 0 }}>
+          {chips.base.stacked && <span aria-label="Stacked pull request">⧉ </span>}
+          {chips.base.text}
+        </code>
+      </Tooltip>
+      <span role="img" aria-label={chips.arrowLabel} style={{ flexShrink: 0 }}>
+        ←
+      </span>
+      <Tooltip host={props.host} side="top" label={chips.head.tooltip}>
+        <code style={{ ...chipStyle, flex: 1 }}>{chips.head.text}</code>
+      </Tooltip>
+    </span>
+  );
+}
+
 export function PrListRow(props: {
   host: ClientHost;
   entry: PrsListEntry;
@@ -829,6 +865,13 @@ export function PrListRow(props: {
               {badge(stack, "merged")}
             </Tooltip>
           )}
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0, marginTop: 2 }}>
+          <code style={{ ...chipStyle, color: muted }}>{entry.headBranch}</code>
+          <span style={{ flexShrink: 0, color: muted, fontSize: 11 }}>→</span>
+          <code style={{ ...chipStyle, color: muted, maxWidth: "45%", flexShrink: 0 }}>
+            {entry.baseBranch}
+          </code>
         </span>
         {entry.labels.length > 0 && (
           <span
@@ -1991,18 +2034,11 @@ export function PullRequestsPanel(props: {
                       )}
                       {metaRow(
                         "Branches",
-                        <>
-                          <Tooltip host={host} side="top" label={detail.headBranch}>
-                            <span>
-                              {detail.headRepositoryNameWithOwner ?? detail.headBranch}:
-                              {detail.headBranch}
-                            </span>
-                          </Tooltip>
-                          {" → "}
-                          <Tooltip host={host} side="top" label={detail.baseBranch}>
-                            <span>{detail.baseBranch}</span>
-                          </Tooltip>
-                        </>,
+                        <BranchChips
+                          host={host}
+                          detail={detail}
+                          stacked={prsStackedOnBase(sections.stack, detail.number)}
+                        />,
                       )}
                       {metaRow(
                         "Changes",

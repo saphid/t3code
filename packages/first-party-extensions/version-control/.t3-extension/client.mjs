@@ -9475,6 +9475,20 @@ ${ref.number}`;
     ];
     return parts.filter((part) => part !== null).join(" \xB7 ");
   }
+  function prsBranchChips(detail, stacked) {
+    return {
+      base: {
+        text: detail.baseBranch,
+        tooltip: stacked ? `Stacked on ${detail.baseBranch}` : detail.baseBranch,
+        stacked
+      },
+      head: { text: detail.headBranch, tooltip: detail.headBranch },
+      arrowLabel: "receives changes from"
+    };
+  }
+  function prsStackedOnBase(stack, number) {
+    return (stack?.layers.findIndex((layer) => layer.number === number) ?? -1) > 0;
+  }
   function prsMergeabilityLabel(mergeability) {
     switch (mergeability) {
       case "mergeable":
@@ -10474,6 +10488,25 @@ ${writeKey}`;
       }
     ) });
   }
+  var chipStyle = {
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    fontFamily: "var(--font-mono, ui-monospace, monospace)",
+    fontSize: 11
+  };
+  function BranchChips(props) {
+    const chips = prsBranchChips(props.detail, props.stacked);
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { display: "flex", alignItems: "center", gap: 4, minWidth: 0, color: muted }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host: props.host, side: "top", label: chips.base.tooltip, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("code", { style: { ...chipStyle, maxWidth: "45%", flexShrink: 0 }, children: [
+        chips.base.stacked && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { "aria-label": "Stacked pull request", children: "\u29C9 " }),
+        chips.base.text
+      ] }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { role: "img", "aria-label": chips.arrowLabel, style: { flexShrink: 0 }, children: "\u2190" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host: props.host, side: "top", label: chips.head.tooltip, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { style: { ...chipStyle, flex: 1 }, children: chips.head.text }) })
+    ] });
+  }
   function PrListRow(props) {
     const { host, entry, viewers, onSelect } = props;
     const review = prsReviewLabel(entry.reviewDecision);
@@ -10548,6 +10581,17 @@ ${writeKey}`;
                 ),
                 review !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsReviewTooltip(entry.reviewDecision), children: badge(review, review === "Approved" ? "open" : "closed") }),
                 stack !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsStackTooltip(entry.stack), children: badge(stack, "merged") })
+              ]
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "span",
+            {
+              style: { display: "flex", alignItems: "center", gap: 4, minWidth: 0, marginTop: 2 },
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { style: { ...chipStyle, color: muted }, children: entry.headBranch }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flexShrink: 0, color: muted, fontSize: 11 }, children: "\u2192" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { style: { ...chipStyle, color: muted, maxWidth: "45%", flexShrink: 0 }, children: entry.baseBranch })
               ]
             }
           ),
@@ -11386,15 +11430,14 @@ ${thread.id}`;
                     ),
                     metaRow(
                       "Branches",
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: detail.headBranch, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-                          detail.headRepositoryNameWithOwner ?? detail.headBranch,
-                          ":",
-                          detail.headBranch
-                        ] }) }),
-                        " \u2192 ",
-                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: detail.baseBranch, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: detail.baseBranch }) })
-                      ] })
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                        BranchChips,
+                        {
+                          host,
+                          detail,
+                          stacked: prsStackedOnBase(sections.stack, detail.number)
+                        }
+                      )
                     ),
                     metaRow(
                       "Changes",

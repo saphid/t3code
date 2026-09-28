@@ -33,6 +33,7 @@ import type {
   PrsOmittedFileStat,
   PrsProviderSummary,
   PrsReviewThread,
+  PrsStack,
   PrsStackMembership,
   PrsWriteActionKind,
   PrsWriteCapabilitiesResult,
@@ -294,6 +295,34 @@ export function prsRowMeta(entry: PrsListEntry, now?: number): string {
 }
 
 /* ---------------- detail projections ---------------- */
+
+/**
+ * Native's header branch chips: `base ← head` in mono, each name on hover,
+ * the arrow named for screen readers. A stacked base says so on hover.
+ */
+export function prsBranchChips(
+  detail: { readonly baseBranch: string; readonly headBranch: string },
+  stacked: boolean,
+) {
+  return {
+    base: {
+      text: detail.baseBranch,
+      tooltip: stacked ? `Stacked on ${detail.baseBranch}` : detail.baseBranch,
+      stacked,
+    },
+    head: { text: detail.headBranch, tooltip: detail.headBranch },
+    arrowLabel: "receives changes from",
+  };
+}
+
+/**
+ * Whether this change request's base is another layer's head: a layer sits
+ * below it in the host's stack. Native asks the local refs instead; the
+ * host's stack graph is what this panel has.
+ */
+export function prsStackedOnBase(stack: PrsStack | null, number: number): boolean {
+  return (stack?.layers.findIndex((layer) => layer.number === number) ?? -1) > 0;
+}
 
 export function prsMergeabilityLabel(
   mergeability: "mergeable" | "conflicting" | "unknown" | undefined,
