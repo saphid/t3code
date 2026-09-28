@@ -9475,6 +9475,80 @@ ${ref.number}`;
     ];
     return parts.filter((part) => part !== null).join(" \xB7 ");
   }
+  var OPEN_ON_HOST_LABELS = {
+    github: "Open on GitHub",
+    gitlab: "Open on GitLab",
+    forgejo: "Open on Forgejo",
+    bitbucket: "Open on Bitbucket",
+    "azure-devops": "Open on Azure DevOps"
+  };
+  function prsOpenOnHostLabel(provider) {
+    return OPEN_ON_HOST_LABELS[provider] ?? "Open on host";
+  }
+  function prsRepositoryUrl(changeRequestUrl) {
+    let url;
+    try {
+      url = new URL(changeRequestUrl);
+    } catch {
+      return null;
+    }
+    const path3 = /^(.*?)\/-\/merge_requests\/\d+(?:\/|$)/iu.exec(url.pathname)?.[1] ?? /^(.*?)(?:\/pulls?\/\d+|\/pull-requests\/\d+|\/pullrequest\/\d+)(?:\/|$)/iu.exec(
+      url.pathname
+    )?.[1];
+    if (!path3) return null;
+    url.pathname = path3;
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  }
+  var branchPath = (branch) => branch.split("/").map(encodeURIComponent).join("/");
+  function prsHeadRepositoryUrl(repositoryUrl, repository, headRepository) {
+    if (repositoryUrl === null || !headRepository || headRepository === repository)
+      return repositoryUrl;
+    return repositoryUrl.endsWith(`/${repository}`) ? `${repositoryUrl.slice(0, -repository.length)}${headRepository}` : null;
+  }
+  function prsBranchUrl(provider, repositoryUrl, branch) {
+    if (repositoryUrl === null) return null;
+    switch (provider) {
+      case "github":
+        return `${repositoryUrl}/tree/${branchPath(branch)}`;
+      case "forgejo":
+        return `${repositoryUrl}/src/branch/${branchPath(branch)}`;
+      case "gitlab":
+        return `${repositoryUrl}/-/tree/${branchPath(branch)}`;
+      case "bitbucket":
+        return `${repositoryUrl}/branch/${branchPath(branch)}`;
+      case "azure-devops":
+        return `${repositoryUrl}?version=GB${encodeURIComponent(branch)}`;
+      default:
+        return null;
+    }
+  }
+  function prsCommitUrl(provider, repositoryUrl, oid) {
+    if (repositoryUrl === null) return null;
+    switch (provider) {
+      case "github":
+      case "forgejo":
+      case "azure-devops":
+        return `${repositoryUrl}/commit/${encodeURIComponent(oid)}`;
+      case "gitlab":
+        return `${repositoryUrl}/-/commit/${encodeURIComponent(oid)}`;
+      case "bitbucket":
+        return `${repositoryUrl}/commits/${encodeURIComponent(oid)}`;
+      default:
+        return null;
+    }
+  }
+  function prsOpenRefusedLabel(reason) {
+    switch (reason) {
+      case "invalid-url":
+        return "Could not open the link \u2014 the host sent an invalid address.";
+      case "scheme-not-allowed":
+        return "Could not open the link \u2014 only http and https links open.";
+      case "opener-refused":
+        return "Could not open the link \u2014 the system refused it.";
+    }
+  }
   function prsBranchChips(detail, stacked) {
     return {
       base: {
@@ -10052,6 +10126,21 @@ ${writeKey}`;
     background: "transparent",
     color: "inherit"
   };
+  var linkButton = {
+    padding: 0,
+    border: "none",
+    background: "transparent",
+    color: "inherit",
+    font: "inherit",
+    cursor: "pointer",
+    textDecoration: "underline",
+    textUnderlineOffset: 2
+  };
+  var oidStyle = {
+    fontFamily: "var(--font-mono, ui-monospace, monospace)",
+    color: muted,
+    fontSize: 11
+  };
   var noteStyle = {
     margin: 0,
     padding: "4px 10px",
@@ -10498,13 +10587,23 @@ ${writeKey}`;
   };
   function BranchChips(props) {
     const chips = prsBranchChips(props.detail, props.stacked);
+    const chip = (text, url) => url === null ? text : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "button",
+      {
+        type: "button",
+        "aria-label": `Open branch ${text} on host`,
+        onClick: () => props.onOpen(url),
+        style: { ...linkButton, textDecoration: "none" },
+        children: text
+      }
+    );
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { display: "flex", alignItems: "center", gap: 4, minWidth: 0, color: muted }, children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host: props.host, side: "top", label: chips.base.tooltip, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("code", { style: { ...chipStyle, maxWidth: "45%", flexShrink: 0 }, children: [
         chips.base.stacked && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { "aria-label": "Stacked pull request", children: "\u29C9 " }),
-        chips.base.text
+        chip(chips.base.text, props.baseUrl)
       ] }) }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { role: "img", "aria-label": chips.arrowLabel, style: { flexShrink: 0 }, children: "\u2190" }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host: props.host, side: "top", label: chips.head.tooltip, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { style: { ...chipStyle, flex: 1 }, children: chips.head.text }) })
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host: props.host, side: "top", label: chips.head.tooltip, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { style: { ...chipStyle, flex: 1 }, children: chip(chips.head.text, props.headUrl) }) })
     ] });
   }
   function PrListRow(props) {
@@ -10584,17 +10683,11 @@ ${writeKey}`;
               ]
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-            "span",
-            {
-              style: { display: "flex", alignItems: "center", gap: 4, minWidth: 0, marginTop: 2 },
-              children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { style: { ...chipStyle, color: muted }, children: entry.headBranch }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flexShrink: 0, color: muted, fontSize: 11 }, children: "\u2192" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { style: { ...chipStyle, color: muted, maxWidth: "45%", flexShrink: 0 }, children: entry.baseBranch })
-              ]
-            }
-          ),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { display: "flex", alignItems: "center", gap: 4, minWidth: 0, marginTop: 2 }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { style: { ...chipStyle, color: muted }, children: entry.headBranch }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flexShrink: 0, color: muted, fontSize: 11 }, children: "\u2192" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { style: { ...chipStyle, color: muted, maxWidth: "45%", flexShrink: 0 }, children: entry.baseBranch })
+          ] }),
           entry.labels.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
             "span",
             {
@@ -11060,6 +11153,19 @@ ${writeKey}`;
     const writeOps = write.kind === "ready" ? write.operations : null;
     const [drafts, setDrafts] = (0, import_react.useState)({});
     const [writeState, setWriteState] = (0, import_react.useState)(null);
+    const [openError, setOpenError] = (0, import_react.useState)(null);
+    const openOnHost = (url) => {
+      setOpenError(null);
+      void bindApi(uiExternalApi, host, session.context).invoke("open", { url }, session.signal).then(
+        (receipt2) => {
+          if (!session.signal.aborted && receipt2.status === "refused")
+            setOpenError(prsOpenRefusedLabel(receipt2.reason));
+        },
+        (error) => {
+          if (!session.signal.aborted) setOpenError(message(error, "Could not open the link"));
+        }
+      );
+    };
     const refreshes = usePrsRefreshes(
       host,
       session,
@@ -11254,6 +11360,8 @@ ${thread.id}`;
     };
     const detail = sections.detail;
     const activity = sections.activity;
+    const repositoryUrl = detail === null ? null : prsRepositoryUrl(detail.url);
+    const commitUrl = (oid) => detail === null ? null : prsCommitUrl(detail.provider, repositoryUrl, oid);
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "div",
       {
@@ -11412,16 +11520,43 @@ ${thread.id}`;
                         children: [
                           stateBadge(host, detail),
                           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: detail.title, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { style: { fontSize: 14, overflowWrap: "anywhere" }, children: detail.title }) }),
-                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: detail.repository, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted, fontSize: 12 }, children: [
-                            detail.repository,
-                            "#",
-                            detail.number
-                          ] }) }),
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                            Tooltip,
+                            {
+                              host,
+                              side: "top",
+                              label: repositoryUrl !== null ? `Open ${detail.repository} repository` : detail.repository,
+                              children: repositoryUrl !== null ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                                "button",
+                                {
+                                  type: "button",
+                                  onClick: () => openOnHost(repositoryUrl),
+                                  style: { ...linkButton, color: muted, fontSize: 12 },
+                                  children: detail.repository
+                                }
+                              ) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, fontSize: 12 }, children: detail.repository })
+                            }
+                          ),
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsOpenOnHostLabel(detail.provider), children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                            "button",
+                            {
+                              type: "button",
+                              "aria-label": `Open pull request #${detail.number} on host`,
+                              onClick: () => openOnHost(detail.url),
+                              style: { ...linkButton, fontSize: 12 },
+                              children: [
+                                "#",
+                                detail.number,
+                                " \u2197"
+                              ]
+                            }
+                          ) }),
                           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChecksIcon, { host, state: prsChecksStateFromChecks(detail.checks) })
                         ]
                       }
                     ),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { color: muted, fontSize: 12, marginTop: 2 }, children: detail.url })
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { color: muted, fontSize: 12, marginTop: 2 }, children: detail.url }),
+                    openError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, padding: "2px 0", fontSize: 12 }, children: openError })
                   ] }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { padding: "4px 10px" }, children: [
                     metaRow(
@@ -11435,7 +11570,18 @@ ${thread.id}`;
                         {
                           host,
                           detail,
-                          stacked: prsStackedOnBase(sections.stack, detail.number)
+                          stacked: prsStackedOnBase(sections.stack, detail.number),
+                          baseUrl: prsBranchUrl(detail.provider, repositoryUrl, detail.baseBranch),
+                          headUrl: prsBranchUrl(
+                            detail.provider,
+                            prsHeadRepositoryUrl(
+                              repositoryUrl,
+                              detail.repository,
+                              detail.headRepositoryNameWithOwner
+                            ),
+                            detail.headBranch
+                          ),
+                          onOpen: openOnHost
                         }
                       )
                     ),
@@ -11681,26 +11827,37 @@ ${thread.id}`) === activity,
                       activity.commits.length,
                       ")"
                     ] }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: activity.commits.map((commit) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: { padding: "2px 10px", fontSize: 12 }, children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                        "span",
-                        {
-                          style: {
-                            fontFamily: "var(--font-mono, ui-monospace, monospace)",
-                            color: muted,
-                            fontSize: 11
-                          },
-                          children: commit.oid.slice(0, 8)
-                        }
-                      ),
-                      " ",
-                      commit.messageHeadline,
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted, fontSize: 11 }, children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: activity.commits.map((commit) => {
+                      const url = commitUrl(commit.oid);
+                      const short = commit.oid.slice(0, 8);
+                      return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: { padding: "2px 10px", fontSize: 12 }, children: [
+                        url === null ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: oidStyle, children: short }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                          Tooltip,
+                          {
+                            host,
+                            side: "top",
+                            label: prsOpenOnHostLabel(detail?.provider ?? "unknown"),
+                            children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                              "button",
+                              {
+                                type: "button",
+                                "aria-label": `Open commit ${short} on host`,
+                                onClick: () => openOnHost(url),
+                                style: { ...linkButton, ...oidStyle },
+                                children: short
+                              }
+                            )
+                          }
+                        ),
                         " ",
-                        "\xB7 ",
-                        formatRelativeTime(commit.committedDate)
-                      ] })
-                    ] }, commit.oid)) })
+                        commit.messageHeadline,
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted, fontSize: 11 }, children: [
+                          " ",
+                          "\xB7 ",
+                          formatRelativeTime(commit.committedDate)
+                        ] })
+                      ] }, commit.oid);
+                    }) })
                   ] }),
                   activity.truncated && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Activity truncated \u2014 some comments, threads, or commits were not delivered." })
                 ] }),
@@ -13717,7 +13874,9 @@ ${thread.id}`) === activity,
       requireApi(vcsRefsApi),
       requireApi(vcsRepositoryApi, REPOSITORY_API_RANGE),
       requireApi(uiThemeApi),
-      requireApi(uiNotificationsApi)
+      requireApi(uiNotificationsApi),
+      // Open-on-host links hand URLs to the reader's own client.
+      requireApi(uiExternalApi)
     ],
     surfaces: [
       {

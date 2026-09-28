@@ -60,6 +60,10 @@
     {
       "id": "t3.ui/notifications",
       "versionRange": "^1.0.0"
+    },
+    {
+      "id": "t3.ui/external",
+      "versionRange": "^1.0.0"
     }
   ],
   "dependencies": []

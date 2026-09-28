@@ -1,6 +1,7 @@
 import {
   prsReadApi,
   prsWriteApi,
+  uiExternalApi,
   uiNotificationsApi,
   uiThemeApi,
   vcsActionsApi,
@@ -2455,6 +2456,8 @@ export default defineExtension({
     requireApi(vcsRepositoryApi, REPOSITORY_API_RANGE),
     requireApi(uiThemeApi),
     requireApi(uiNotificationsApi),
+    // Open-on-host links hand URLs to the reader's own client.
+    requireApi(uiExternalApi),
   ],
   surfaces: [
     {

@@ -294,6 +294,117 @@ export function prsRowMeta(entry: PrsListEntry, now?: number): string {
   return parts.filter((part) => part !== null).join(" · ");
 }
 
+/* ---------------- open on host ---------------- */
+
+const OPEN_ON_HOST_LABELS: Readonly<Record<string, string>> = {
+  github: "Open on GitHub",
+  gitlab: "Open on GitLab",
+  forgejo: "Open on Forgejo",
+  bitbucket: "Open on Bitbucket",
+  "azure-devops": "Open on Azure DevOps",
+};
+
+/** Named for the host rather than "externally": the point is where you will land. */
+export function prsOpenOnHostLabel(provider: string): string {
+  return OPEN_ON_HOST_LABELS[provider] ?? "Open on host";
+}
+
+/** The repository root behind a change-request URL (native `changeRequestRepositoryUrl`). */
+export function prsRepositoryUrl(changeRequestUrl: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(changeRequestUrl);
+  } catch {
+    return null;
+  }
+  const path =
+    /^(.*?)\/-\/merge_requests\/\d+(?:\/|$)/iu.exec(url.pathname)?.[1] ??
+    /^(.*?)(?:\/pulls?\/\d+|\/pull-requests\/\d+|\/pullrequest\/\d+)(?:\/|$)/iu.exec(
+      url.pathname,
+    )?.[1];
+  if (!path) return null;
+  url.pathname = path;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+const branchPath = (branch: string) => branch.split("/").map(encodeURIComponent).join("/");
+
+/**
+ * Where a head branch lives: the fork's repository when the change request
+ * comes from one, the base repository otherwise.
+ */
+export function prsHeadRepositoryUrl(
+  repositoryUrl: string | null,
+  repository: string,
+  headRepository: string | null | undefined,
+): string | null {
+  if (repositoryUrl === null || !headRepository || headRepository === repository)
+    return repositoryUrl;
+  return repositoryUrl.endsWith(`/${repository}`)
+    ? `${repositoryUrl.slice(0, -repository.length)}${headRepository}`
+    : null;
+}
+
+/** A branch's page on its host; null where the host's layout is not known. */
+export function prsBranchUrl(
+  provider: string,
+  repositoryUrl: string | null,
+  branch: string,
+): string | null {
+  if (repositoryUrl === null) return null;
+  switch (provider) {
+    case "github":
+      return `${repositoryUrl}/tree/${branchPath(branch)}`;
+    case "forgejo":
+      return `${repositoryUrl}/src/branch/${branchPath(branch)}`;
+    case "gitlab":
+      return `${repositoryUrl}/-/tree/${branchPath(branch)}`;
+    case "bitbucket":
+      return `${repositoryUrl}/branch/${branchPath(branch)}`;
+    case "azure-devops":
+      return `${repositoryUrl}?version=GB${encodeURIComponent(branch)}`;
+    default:
+      return null;
+  }
+}
+
+/** A commit's page on its host; null where the host's layout is not known. */
+export function prsCommitUrl(
+  provider: string,
+  repositoryUrl: string | null,
+  oid: string,
+): string | null {
+  if (repositoryUrl === null) return null;
+  switch (provider) {
+    case "github":
+    case "forgejo":
+    case "azure-devops":
+      return `${repositoryUrl}/commit/${encodeURIComponent(oid)}`;
+    case "gitlab":
+      return `${repositoryUrl}/-/commit/${encodeURIComponent(oid)}`;
+    case "bitbucket":
+      return `${repositoryUrl}/commits/${encodeURIComponent(oid)}`;
+    default:
+      return null;
+  }
+}
+
+/** A `t3.ui/external` refusal, said by its closed reason. */
+export function prsOpenRefusedLabel(
+  reason: "invalid-url" | "scheme-not-allowed" | "opener-refused",
+): string {
+  switch (reason) {
+    case "invalid-url":
+      return "Could not open the link — the host sent an invalid address.";
+    case "scheme-not-allowed":
+      return "Could not open the link — only http and https links open.";
+    case "opener-refused":
+      return "Could not open the link — the system refused it.";
+  }
+}
+
 /* ---------------- detail projections ---------------- */
 
 /**

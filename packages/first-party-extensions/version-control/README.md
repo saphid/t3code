@@ -27,6 +27,10 @@ The PR browser consumes the `t3.prs/read` grant:
   and layers when the host supports it;
 - `prs.reviewerCandidates`/`prs.labelCandidates`/`prs.listStats` remain
   unwired — nothing in the panel needs them yet;
+- open-on-host links for the repository, the PR number, both branch chips
+  and each commit, handed to the reader's own client through
+  `t3.ui/external` (`t3.ui/external.open` grant); a refusal or a denied
+  grant is named under the header rather than swallowed;
 - PR writes via `t3.prs/write`: comments, review-thread replies, and
   thread resolve/unresolve, each gated on the write capability probe's
   per-operation flags.

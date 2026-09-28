@@ -14,6 +14,7 @@
 import {
   prsReadApi,
   prsWriteApi,
+  uiExternalApi,
   type PrsActivity,
   type PrsCapabilitiesResult,
   type PrsCheck,
@@ -51,6 +52,12 @@ import {
   mergePrsEntries,
   prsActorLabel,
   prsAuthoredByViewer,
+  prsBranchUrl,
+  prsCommitUrl,
+  prsHeadRepositoryUrl,
+  prsOpenOnHostLabel,
+  prsOpenRefusedLabel,
+  prsRepositoryUrl,
   prsBranchChips,
   prsStackedOnBase,
   prsChecksIcon,
@@ -125,6 +132,24 @@ const inputStyle = {
   borderRadius: 5,
   background: "transparent",
   color: "inherit",
+} as const;
+
+/** An inline link that opens on the host: text-coloured until hovered, like native's. */
+const linkButton = {
+  padding: 0,
+  border: "none",
+  background: "transparent",
+  color: "inherit",
+  font: "inherit",
+  cursor: "pointer",
+  textDecoration: "underline",
+  textUnderlineOffset: 2,
+} as const;
+
+const oidStyle = {
+  fontFamily: "var(--font-mono, ui-monospace, monospace)",
+  color: muted,
+  fontSize: 11,
 } as const;
 
 const noteStyle = {
@@ -761,26 +786,45 @@ const chipStyle = {
   fontSize: 11,
 } as const;
 
-/** Native's `base ← head` chips; the base keeps up to 45% so a long head cannot squeeze it out. */
+/**
+ * Native's `base ← head` chips; the base keeps up to 45% so a long head
+ * cannot squeeze it out. A branch the host can show opens there.
+ */
 function BranchChips(props: {
   host: ClientHost;
   detail: { readonly baseBranch: string; readonly headBranch: string };
   stacked: boolean;
+  baseUrl: string | null;
+  headUrl: string | null;
+  onOpen: (url: string) => void;
 }) {
   const chips = prsBranchChips(props.detail, props.stacked);
+  const chip = (text: string, url: string | null) =>
+    url === null ? (
+      text
+    ) : (
+      <button
+        type="button"
+        aria-label={`Open branch ${text} on host`}
+        onClick={() => props.onOpen(url)}
+        style={{ ...linkButton, textDecoration: "none" }}
+      >
+        {text}
+      </button>
+    );
   return (
     <span style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0, color: muted }}>
       <Tooltip host={props.host} side="top" label={chips.base.tooltip}>
         <code style={{ ...chipStyle, maxWidth: "45%", flexShrink: 0 }}>
           {chips.base.stacked && <span aria-label="Stacked pull request">⧉ </span>}
-          {chips.base.text}
+          {chip(chips.base.text, props.baseUrl)}
         </code>
       </Tooltip>
       <span role="img" aria-label={chips.arrowLabel} style={{ flexShrink: 0 }}>
         ←
       </span>
       <Tooltip host={props.host} side="top" label={chips.head.tooltip}>
-        <code style={{ ...chipStyle, flex: 1 }}>{chips.head.text}</code>
+        <code style={{ ...chipStyle, flex: 1 }}>{chip(chips.head.text, props.headUrl)}</code>
       </Tooltip>
     </span>
   );
@@ -1531,6 +1575,23 @@ export function PullRequestsPanel(props: {
    */
   const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>({});
   const [writeState, setWriteState] = useState<PrsWriteState | null>(null);
+  const [openError, setOpenError] = useState<string | null>(null);
+
+  /** Hands a host URL to the reader's own client (`t3.ui/external`); a refusal is said by name. */
+  const openOnHost = (url: string) => {
+    setOpenError(null);
+    void bindApi(uiExternalApi, host, session.context)
+      .invoke("open", { url }, session.signal)
+      .then(
+        (receipt) => {
+          if (!session.signal.aborted && receipt.status === "refused")
+            setOpenError(prsOpenRefusedLabel(receipt.reason));
+        },
+        (error) => {
+          if (!session.signal.aborted) setOpenError(message(error, "Could not open the link"));
+        },
+      );
+  };
 
   const refreshes = usePrsRefreshes(
     host,
@@ -1790,6 +1851,9 @@ export function PullRequestsPanel(props: {
 
   const detail = sections.detail;
   const activity = sections.activity;
+  const repositoryUrl = detail === null ? null : prsRepositoryUrl(detail.url);
+  const commitUrl = (oid: string) =>
+    detail === null ? null : prsCommitUrl(detail.provider, repositoryUrl, oid);
 
   return (
     <div
@@ -2016,14 +2080,45 @@ export function PullRequestsPanel(props: {
                             {detail.title}
                           </strong>
                         </Tooltip>
-                        <Tooltip host={host} side="top" label={detail.repository}>
-                          <span style={{ color: muted, fontSize: 12 }}>
-                            {detail.repository}#{detail.number}
-                          </span>
+                        <Tooltip
+                          host={host}
+                          side="top"
+                          label={
+                            repositoryUrl !== null
+                              ? `Open ${detail.repository} repository`
+                              : detail.repository
+                          }
+                        >
+                          {repositoryUrl !== null ? (
+                            <button
+                              type="button"
+                              onClick={() => openOnHost(repositoryUrl)}
+                              style={{ ...linkButton, color: muted, fontSize: 12 }}
+                            >
+                              {detail.repository}
+                            </button>
+                          ) : (
+                            <span style={{ color: muted, fontSize: 12 }}>{detail.repository}</span>
+                          )}
+                        </Tooltip>
+                        <Tooltip host={host} side="top" label={prsOpenOnHostLabel(detail.provider)}>
+                          <button
+                            type="button"
+                            aria-label={`Open pull request #${detail.number} on host`}
+                            onClick={() => openOnHost(detail.url)}
+                            style={{ ...linkButton, fontSize: 12 }}
+                          >
+                            #{detail.number} ↗
+                          </button>
                         </Tooltip>
                         <ChecksIcon host={host} state={prsChecksStateFromChecks(detail.checks)} />
                       </div>
                       <div style={{ color: muted, fontSize: 12, marginTop: 2 }}>{detail.url}</div>
+                      {openError !== null && (
+                        <p role="alert" style={{ ...noteStyle, padding: "2px 0", fontSize: 12 }}>
+                          {openError}
+                        </p>
+                      )}
                     </div>
                     <div style={{ padding: "4px 10px" }}>
                       {metaRow(
@@ -2038,6 +2133,17 @@ export function PullRequestsPanel(props: {
                           host={host}
                           detail={detail}
                           stacked={prsStackedOnBase(sections.stack, detail.number)}
+                          baseUrl={prsBranchUrl(detail.provider, repositoryUrl, detail.baseBranch)}
+                          headUrl={prsBranchUrl(
+                            detail.provider,
+                            prsHeadRepositoryUrl(
+                              repositoryUrl,
+                              detail.repository,
+                              detail.headRepositoryNameWithOwner,
+                            ),
+                            detail.headBranch,
+                          )}
+                          onOpen={openOnHost}
                         />,
                       )}
                       {metaRow(
@@ -2385,24 +2491,37 @@ export function PullRequestsPanel(props: {
                       <section aria-label="Commits" style={{ paddingBottom: 4 }}>
                         <h3 style={headingStyle}>Commits ({activity.commits.length})</h3>
                         <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-                          {activity.commits.map((commit) => (
-                            <li key={commit.oid} style={{ padding: "2px 10px", fontSize: 12 }}>
-                              <span
-                                style={{
-                                  fontFamily: "var(--font-mono, ui-monospace, monospace)",
-                                  color: muted,
-                                  fontSize: 11,
-                                }}
-                              >
-                                {commit.oid.slice(0, 8)}
-                              </span>{" "}
-                              {commit.messageHeadline}
-                              <span style={{ color: muted, fontSize: 11 }}>
-                                {" "}
-                                · {formatRelativeTime(commit.committedDate)}
-                              </span>
-                            </li>
-                          ))}
+                          {activity.commits.map((commit) => {
+                            const url = commitUrl(commit.oid);
+                            const short = commit.oid.slice(0, 8);
+                            return (
+                              <li key={commit.oid} style={{ padding: "2px 10px", fontSize: 12 }}>
+                                {url === null ? (
+                                  <span style={oidStyle}>{short}</span>
+                                ) : (
+                                  <Tooltip
+                                    host={host}
+                                    side="top"
+                                    label={prsOpenOnHostLabel(detail?.provider ?? "unknown")}
+                                  >
+                                    <button
+                                      type="button"
+                                      aria-label={`Open commit ${short} on host`}
+                                      onClick={() => openOnHost(url)}
+                                      style={{ ...linkButton, ...oidStyle }}
+                                    >
+                                      {short}
+                                    </button>
+                                  </Tooltip>
+                                )}{" "}
+                                {commit.messageHeadline}
+                                <span style={{ color: muted, fontSize: 11 }}>
+                                  {" "}
+                                  · {formatRelativeTime(commit.committedDate)}
+                                </span>
+                              </li>
+                            );
+                          })}
                         </ul>
                       </section>
                     )}
