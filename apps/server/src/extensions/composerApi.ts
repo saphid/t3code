@@ -473,7 +473,9 @@ export function createComposerApiProviders(
       // Text is a 1.3.0 client answer; an older client is not asked, so the
       // listing comes back without it rather than failing.
       const version =
-        safe.include === undefined ? undefined : yield* composerVersionOf(connectionId);
+        safe.include?.includes("text") === true
+          ? yield* composerVersionOf(connectionId)
+          : undefined;
       const withText =
         version !== undefined && satisfiesSemverRange(version, CLIENT_COMPOSER_V13_RANGE);
       return yield* Effect.tryPromise({

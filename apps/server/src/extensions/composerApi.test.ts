@@ -423,10 +423,14 @@ it.effect("asks only a 1.3.0 composer for listed comment text", () =>
       rangeLabel: "L1 to L2",
       sectionTitle: "File comment",
     };
-    const list = (connectionId: string, frames: AsyncIterator<ClientProviderServerFrame>) =>
+    const list = (
+      connectionId: string,
+      frames: AsyncIterator<ClientProviderServerFrame>,
+      input: Json = { include: ["text"] },
+    ) =>
       Effect.gen(function* () {
         const listing = yield* Effect.promise(() =>
-          dispatch(messages, "listAnnotations", { include: ["text"] } as Json, connectionId),
+          dispatch(messages, "listAnnotations", input, connectionId),
         ).pipe(Effect.forkChild);
         // A listing refused before dispatch settles first instead of hanging.
         const frame = yield* Effect.raceFirst(
@@ -454,6 +458,12 @@ it.effect("asks only a 1.3.0 composer for listed comment text", () =>
       asked: ["text"],
       listed: { annotations: [{ ...entry, text: "why?" }] },
     });
+    // Review repro (gaps-files-2 P3): asking for no optional field asks for no text.
+    for (const input of [{}, { include: [] }] as Json[])
+      expect(yield* list("conn-22", currentFrames, input)).toEqual({
+        asked: undefined,
+        listed: { annotations: [entry] },
+      });
   }).pipe(Effect.provide(brokerLayer)),
 );
 
