@@ -2,11 +2,13 @@
 
 First-party Files panel as an installable extension package. It renders the
 workspace tree, name and file-contents search, text editing with revisioned
-autosave, media previews through the workspace resource lease, and a
+autosave, media, PDF and sandboxed HTML previews through the workspace
+resource lease (HTML toggles to source, as in the native panel), and a
 package-owned rendered-markdown preview — all through public contracts only
 (`t3.workspace/tree`, `t3.workspace/files`, `t3.workspace/search`,
 `t3.workspace/text-edits`, `t3.resources/lease`). It also provides
-`t3.file/presentation` so the ordinary Files open path can select it, and
+`t3.file/presentation`, the only first-party provider of it, so the
+ordinary Files open path resolves here with no selection, and
 exposes an "Open in…" file action that resolves through whichever provider
 the host selected for that API (grant `t3.file/open`). Breadcrumbs over the
 tree snapshot, workspace link resolution in rendered markdown, centered line
@@ -34,7 +36,7 @@ without its grant or provider):
   losing it — renders the pre-contract appearance unchanged.
 - `t3.ui/keybindings@^1.0.0` — under `t3.ui/keybindings`: the panel's actions
   register as a `surface`-scope command set (Refresh files `mod+r`, Focus
-  file search `mod+f`, Open file in…, Toggle rendered markdown) bound through
+  file search `mod+f`, Open file in…, Toggle rendered preview) bound through
   the view session, so the host's arbitration decides dispatch — user rules
   and native defaults outrank the plugin `defaultKey`s, which fire only while
   the panel is focused. Element-local keys (Escape) stay element-local.

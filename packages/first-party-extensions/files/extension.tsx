@@ -63,6 +63,7 @@ import {
   describeResourcePreview,
   describeSaveState,
   describeSearch,
+  documentFrameSandbox,
   editorSavePending,
   fileOpenFailed,
   FILES_VIEW_COMMANDS,
@@ -80,10 +81,11 @@ import {
   selectMediaLease,
   parentPath,
   presentationPath,
-  previewKind,
+  presentedPreviewKind,
   filesViewState,
   isFilesViewState,
   restoredExpanded,
+  restoredRenderHtml,
   restoredRenderMarkdown,
   restoredSelection,
   watchThemeVars,
@@ -294,7 +296,7 @@ function useMediaLease(
           signal,
         );
         if (signal.aborted) return;
-        if (leasePreviewMode(path) === "document") {
+        if (leasePreviewMode(path) !== "image") {
           // An iframe does not reliably fire onerror for failed documents —
           // preflight the lease so a 404 lands in the named state. The frame
           // gets the minted URL itself: a blob: URL would be refused by
@@ -1238,7 +1240,12 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const readOnlyRef = useRef<HTMLPreElement | null>(null);
   const treeListRef = useRef<HTMLUListElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
-  const selectedKind: PreviewKind = selected ? previewKind(selected) : "text";
+  // HTML renders by default and persists a source preference, like the
+  // native panel; a pending line reveal shows the source it scrolls.
+  const [renderHtml, setRenderHtml] = useState(() => restoredRenderHtml(session.restoreState));
+  const selectedKind: PreviewKind = selected
+    ? presentedPreviewKind(selected, { renderHtml, revealPath: revealRequest?.path ?? null })
+    : "text";
   const editor = useFileEditor(host, session, selected, selectedKind, revision, visible);
   const media = useMediaLease(host, session, selected, selectedKind, revision, visible);
   const packageAsset = usePackageAsset(
@@ -1273,7 +1280,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   // `session.save`; the ref skips re-saving a state that is already stored.
   const savedViewStateRef = useRef<string | null>(null);
   useEffect(() => {
-    const state = filesViewState(selected, expanded, renderMarkdown);
+    const state = filesViewState(selected, expanded, renderMarkdown, renderHtml);
     const serialized = JSON.stringify(state);
     // The first run only records the restored state — nothing changed yet.
     if (savedViewStateRef.current === null) {
@@ -1282,7 +1289,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     }
     if (serialized === savedViewStateRef.current) return;
     if (session.save(state)) savedViewStateRef.current = serialized;
-  }, [session, selected, expanded, renderMarkdown]);
+  }, [session, selected, expanded, renderMarkdown, renderHtml]);
 
   // Row 14: review comments on file lines. The textarea's character selection
   // expands to full lines; submit lands a real composer draft review comment
@@ -1451,6 +1458,16 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       ? search
       : null;
 
+  // Choosing the rendered page also settles a reveal that forced the source.
+  const toggleHtml = () => {
+    if (selectedKind === "html") {
+      setRenderHtml(false);
+      return;
+    }
+    setRenderHtml(true);
+    setRevealRequest(null);
+  };
+
   const select = (path: string, line?: number) => {
     setSelected(path);
     // Selecting is navigating: any held selection and any open draft die
@@ -1561,6 +1578,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     toggleMarkdown: () => {
       if (selected !== null && isMarkdownPath(selected) && selectedKind === "text")
         setRenderMarkdown((value) => !value);
+      else if (selected !== null && leasePreviewMode(selected) === "html") toggleHtml();
     },
   });
 
@@ -2049,6 +2067,11 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               {renderMarkdown ? "Show markdown source" : "Show rendered markdown"}
             </button>
           )}
+          {leasePreviewMode(selected) === "html" && (
+            <button type="button" aria-pressed={selectedKind === "html"} onClick={toggleHtml}>
+              {selectedKind === "html" ? "Show HTML source" : "Show rendered page"}
+            </button>
+          )}
           {selectedKind === "text" && markdownBlocks === null && wordWrap.value !== null && (
             <button type="button" aria-pressed={wordWrap.value} onClick={wordWrap.toggle}>
               {wordWrap.value ? "Disable word wrap" : "Enable word wrap"}
@@ -2368,13 +2391,14 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               style={{ maxWidth: "100%", objectFit: "contain", alignSelf: "flex-start" }}
             />
           ) : null}
-          {media.mode === "document" && media.url !== null ? (
-            // The built-in PDF viewer needs an unsandboxed frame — parity with
-            // the native FilePreviewPanel; the lease only serves workspace-owned bytes.
-            // oxlint-disable-next-line react/iframe-missing-sandbox
+          {(media.mode === "document" || media.mode === "html") && media.url !== null ? (
+            // HTML is sandboxed to an opaque origin; the built-in PDF viewer
+            // needs an unsandboxed frame — parity with the native FilePreviewPanel.
             <iframe
+              key={media.url}
               src={media.url}
               title={selected.split("/").at(-1)}
+              sandbox={documentFrameSandbox(media.mode)}
               style={{ flex: 1, minHeight: 0, width: "100%", border: 0, background: "#fff" }}
             />
           ) : null}

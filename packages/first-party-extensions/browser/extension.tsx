@@ -771,11 +771,11 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     );
   };
   useEffect(() => {
-    // A presentation open (or a restore whose session is gone) arrives as a
-    // bare path: mint once on mount. A restored live session keeps its page.
+    // A restored workspace path (or a restore whose session is gone) arrives
+    // as a bare path: mint once on mount. A restored live session keeps its page.
     if (fileSourceRef.current && !heldRef.current) openFile(fileSourceRef.current);
     return () => fileRun.current?.abort();
-    // Mount-only: later opens are explicit (Reload, a new presentation).
+    // Mount-only: later opens are explicit (Reload, the address bar).
     // oxlint-disable-next-line react/exhaustive-effect-dependencies
   }, []);
 

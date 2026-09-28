@@ -1,4 +1,7 @@
-import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import {
+  isWorkspaceBrowserPreviewPath,
+  isWorkspaceImagePreviewPath,
+} from "@t3tools/shared/filePreview";
 import {
   uiPreferencesApi,
   uiThemeApi,
@@ -111,7 +114,8 @@ export function visibleRows(
 }
 
 /** How the preview pane treats a selected path. */
-export type PreviewKind = "text" | "image" | "video" | "audio" | "font" | "binary";
+/** `html` is never classified from a path; see `presentedPreviewKind`. */
+export type PreviewKind = "text" | "html" | "image" | "video" | "audio" | "font" | "binary";
 
 const PREVIEW_KIND_BY_EXTENSION: Readonly<Record<string, PreviewKind>> = {
   png: "image",
@@ -154,6 +158,23 @@ export function previewKind(relativePath: string): PreviewKind {
   const dot = name.lastIndexOf(".");
   if (dot <= 0 || dot === name.length - 1) return "text";
   return PREVIEW_KIND_BY_EXTENSION[name.slice(dot + 1).toLowerCase()] ?? "text";
+}
+
+const isHtmlPath = (path: string): boolean =>
+  isWorkspaceBrowserPreviewPath(path) && !path.toLowerCase().endsWith(".pdf");
+
+/**
+ * How the view presents the selected file. HTML renders in place unless the
+ * source preference is set or a line reveal targets it — the line only exists
+ * in the source. Same rule as the native Files panel.
+ */
+export function presentedPreviewKind(
+  relativePath: string,
+  options: { readonly renderHtml: boolean; readonly revealPath: string | null },
+): PreviewKind {
+  if (isHtmlPath(relativePath))
+    return options.renderHtml && options.revealPath !== relativePath ? "html" : "text";
+  return previewKind(relativePath);
 }
 
 /** The public text-read contract result, minus the path the caller already knows. */
@@ -210,22 +231,32 @@ export function mediaPreviewNotice(kind: PreviewKind): string {
  * injected clock.
  * --------------------------------------------------------------------- */
 
-/** What the view renders for a minted lease: `<img>` or the document viewer. */
-export type MediaLeasePreviewMode = "image" | "document";
+/** What the view renders for a minted lease: `<img>`, the PDF viewer, or a page. */
+export type MediaLeasePreviewMode = "image" | "document" | "html";
 
 /**
  * What a `workspace-file` lease can render for a path — the SAME predicate
  * the host enforces at mint (`isWorkspacePreviewEntryPath`): image-preview
- * extensions mint `workspace-file-exact` claims for `<img>`; `.pdf` mints a
- * `workspace-file` claim served as application/pdf for the built-in document
- * viewer. `.htm`/`.html` stay on the text path (`previewKind` classifies them
- * as source) — browser-document preview is t3.browser's lane. `null` is a
- * named gap; minting it would fail `AssetPreviewTypeValidationError` anyway.
+ * extensions mint `workspace-file-exact` claims for `<img>`; `.pdf` and
+ * `.htm`/`.html` mint a `workspace-file` claim scoped to the file's folder, so
+ * a page loads its sibling assets by relative URL. `null` is a named gap;
+ * minting it would fail `AssetPreviewTypeValidationError` anyway.
  */
 export function leasePreviewMode(relativePath: string): MediaLeasePreviewMode | null {
   if (isWorkspaceImagePreviewPath(relativePath)) return "image";
   if (relativePath.toLowerCase().endsWith(".pdf")) return "document";
+  if (isHtmlPath(relativePath)) return "html";
   return null;
+}
+
+/**
+ * The frame sandbox for a document lease. HTML runs scripts in an opaque
+ * origin, so a page cannot reach the app's session or storage; the built-in
+ * PDF viewer needs an unsandboxed frame and runs no page scripts. Matches the
+ * native `BrowserDocumentFrame`.
+ */
+export function documentFrameSandbox(mode: "document" | "html"): string | undefined {
+  return mode === "html" ? "allow-scripts allow-forms allow-popups allow-modals" : undefined;
 }
 
 /** Mint-time denials the adapter names in ExtensionOperationError detail. */
@@ -1049,6 +1080,8 @@ export type FilesViewState = {
   readonly relativePath: string;
   readonly expanded?: readonly string[];
   readonly renderMarkdown?: boolean;
+  /** Absent means rendered, the native default; only a source preference is saved. */
+  readonly renderHtml?: boolean;
 };
 
 /** validateRestore for the Files view: null or a well-formed FilesViewState. */
@@ -1057,7 +1090,13 @@ export function isFilesViewState(value: unknown): value is FilesViewState | null
   if (typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   for (const key of Object.keys(record))
-    if (key !== "relativePath" && key !== "expanded" && key !== "renderMarkdown") return false;
+    if (
+      key !== "relativePath" &&
+      key !== "expanded" &&
+      key !== "renderMarkdown" &&
+      key !== "renderHtml"
+    )
+      return false;
   if (typeof record.relativePath !== "string") return false;
   if (
     record.expanded !== undefined &&
@@ -1068,7 +1107,10 @@ export function isFilesViewState(value: unknown): value is FilesViewState | null
     )
   )
     return false;
-  return record.renderMarkdown === undefined || typeof record.renderMarkdown === "boolean";
+  return (
+    (record.renderMarkdown === undefined || typeof record.renderMarkdown === "boolean") &&
+    (record.renderHtml === undefined || typeof record.renderHtml === "boolean")
+  );
 }
 
 /** Expanded directories a restored view reopens; empty for anything malformed. */
@@ -1082,6 +1124,11 @@ export function restoredRenderMarkdown(restoreState: unknown): boolean {
   return isFilesViewState(restoreState) && restoreState?.renderMarkdown === true;
 }
 
+/** Whether a restored view renders HTML; rendered unless source was chosen. */
+export function restoredRenderHtml(restoreState: unknown): boolean {
+  return !(isFilesViewState(restoreState) && restoreState?.renderHtml === false);
+}
+
 /**
  * The record `session.save` persists. Expansion is sorted so equal view
  * states serialize identically, and bounded by count and bytes so a
@@ -1092,6 +1139,7 @@ export function filesViewState(
   selected: string | null,
   expanded: ReadonlySet<string>,
   renderMarkdown: boolean,
+  renderHtml = true,
 ): FilesViewState {
   const kept: string[] = [];
   let bytes = 0;
@@ -1102,7 +1150,12 @@ export function filesViewState(
     if (bytes > MAX_PERSISTED_EXPANDED_BYTES) break;
     kept.push(path);
   }
-  return { relativePath: selected ?? "", expanded: kept, renderMarkdown };
+  return {
+    relativePath: selected ?? "",
+    expanded: kept,
+    renderMarkdown,
+    ...(renderHtml ? {} : { renderHtml: false }),
+  };
 }
 
 /**
@@ -1399,7 +1452,7 @@ export const FILES_VIEW_COMMANDS: readonly {
     scope: "surface",
   },
   { id: "openIn", title: "Open file in…", scope: "surface" },
-  { id: "toggleMarkdown", title: "Toggle rendered markdown", scope: "surface" },
+  { id: "toggleMarkdown", title: "Toggle rendered preview", scope: "surface" },
 ];
 
 // ---------------------------------------------------------------------------
