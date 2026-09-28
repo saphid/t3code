@@ -31,7 +31,7 @@ import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AddressInput, committedAddress } from "./addressInput.js";
-import { AnnotateButton } from "./annotateButton.js";
+import { AnnotateButton, ScreenshotButton } from "./annotateButton.js";
 import { capturePageView, useBrowserCapture } from "./capture.js";
 import { mintWorkspaceFileUrl } from "./fileOpen.js";
 import {
@@ -1079,20 +1079,14 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         >
           ⛶
         </button>
-        {/* Native says "Screenshot · Shift-click to record"; this pack has no
-            recording, so it keeps only the part that is true here. */}
-        <Tooltip host={host} label="Screenshot">
-          <button
-            type="button"
-            aria-label="Capture screenshot"
-            aria-description={capture.blockReason ?? undefined}
-            disabled={capture.blockReason !== null || capture.state.kind === "capturing"}
-            onClick={() => capture.capture("page")}
-            style={buttonStyle}
-          >
-            ▣
-          </button>
-        </Tooltip>
+        <ScreenshotButton
+          host={host}
+          blockReason={capture.blockReason}
+          capturing={capture.state.kind === "capturing" ? capture.state.target : null}
+          pageFailed={capturePage === "failed"}
+          onCapture={() => capture.capture("page")}
+          style={buttonStyle}
+        />
         <AnnotateButton
           host={host}
           blockReason={capture.blockReason}

@@ -8894,6 +8894,21 @@ var __t3Client = (() => {
       }
     ) });
   }
+  function ScreenshotButton(props) {
+    const { host, blockReason, capturing, pageFailed, onCapture, style } = props;
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: "Screenshot", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+      "button",
+      {
+        type: "button",
+        "aria-label": "Capture screenshot",
+        "aria-description": pageFailed ? void 0 : blockReason ?? void 0,
+        disabled: blockReason !== null || capturing !== null,
+        onClick: onCapture,
+        style,
+        children: "\u25A3"
+      }
+    ) });
+  }
 
   // node_modules/effect/dist/Pipeable.js
   var pipeArguments = (self, args2) => {
@@ -17965,18 +17980,17 @@ ${titledTitle}`;
                     children: "\u26F6"
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(Tooltip, { host, label: "Screenshot", children: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
-                  "button",
+                /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+                  ScreenshotButton,
                   {
-                    type: "button",
-                    "aria-label": "Capture screenshot",
-                    "aria-description": capture.blockReason ?? void 0,
-                    disabled: capture.blockReason !== null || capture.state.kind === "capturing",
-                    onClick: () => capture.capture("page"),
-                    style: buttonStyle,
-                    children: "\u25A3"
+                    host,
+                    blockReason: capture.blockReason,
+                    capturing: capture.state.kind === "capturing" ? capture.state.target : null,
+                    pageFailed: capturePage === "failed",
+                    onCapture: () => capture.capture("page"),
+                    style: buttonStyle
                   }
-                ) }),
+                ),
                 /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
                   AnnotateButton,
                   {

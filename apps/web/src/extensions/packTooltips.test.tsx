@@ -49,11 +49,22 @@ let AnnotateButton: ComponentType<{
   style: CSSProperties;
 }>;
 
+let ScreenshotButton: ComponentType<{
+  host: ClientHost;
+  blockReason: string | null;
+  capturing: BrowserCaptureTarget | null;
+  pageFailed: boolean;
+  onCapture: () => void;
+  style: CSSProperties;
+}>;
+
 beforeAll(async () => {
   ({ PrsActionButton, PrListRow } = await import(
     /* @vite-ignore */ `${PACKS}/version-control/prsPanel.tsx`
   ));
-  ({ AnnotateButton } = await import(/* @vite-ignore */ `${PACKS}/browser/annotateButton.tsx`));
+  ({ AnnotateButton, ScreenshotButton } = await import(
+    /* @vite-ignore */ `${PACKS}/browser/annotateButton.tsx`
+  ));
 });
 
 const host = { React, tooltip: hostTooltip } as unknown as ClientHost;
@@ -265,5 +276,35 @@ describe("browser annotate button", () => {
     expect(button().disabled).toBe(true);
     await hoverControl();
     expect(popupText()).toBeNull();
+  });
+});
+
+describe("browser screenshot button", () => {
+  const failed = "Page didn't load — pick unavailable until the page renders";
+
+  async function renderScreenshot(state: { blockReason: string | null; pageFailed: boolean }) {
+    await render(
+      <ScreenshotButton host={host} capturing={null} onCapture={() => {}} style={{}} {...state} />,
+    );
+  }
+
+  it("disables a failed page without borrowing the pick control's reason, as native does", async () => {
+    await renderScreenshot({ blockReason: failed, pageFailed: true });
+    expect(button().disabled).toBe(true);
+    expect(button().getAttribute("aria-label")).toBe("Capture screenshot");
+    expect(button().hasAttribute("aria-description")).toBe(false);
+  });
+
+  it("still names why capture is unavailable for other blocks", async () => {
+    await renderScreenshot({ blockReason: "Open a page to capture it.", pageFailed: false });
+    expect(button().disabled).toBe(true);
+    expect(button().getAttribute("aria-description")).toBe("Open a page to capture it.");
+  });
+
+  it("offers a screenshot on a rendered page", async () => {
+    await renderScreenshot({ blockReason: null, pageFailed: false });
+    expect(button().disabled).toBe(false);
+    await hoverControl();
+    expect(popupText()).toBe("Screenshot");
   });
 });
