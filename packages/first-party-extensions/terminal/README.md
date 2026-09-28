@@ -42,9 +42,12 @@ Interactive terminal plugin driven entirely by public contracts:
 - `t3.ui/panels@^1.0.0` — the dispatched `toggle` closes the hosting surface
   via `closeSurface`; failures surface on the panel status row.
 - `t3.ui/external@^1.0.0` (`t3.ui/external.open` grant) — activating a
-  detected `http:`/`https:` link opens it on the user's own client (the OS
-  opener on desktop, a new tab on web); a refusal or denied grant is written
-  on the pane.
+  detected `http:`/`https:` link opens it on the user's own client where its
+  "Open links in" setting says, through 1.1.0 `openLink`: the thread's
+  in-app browser, or the OS opener on desktop and a new tab on web.
+  Cmd/Ctrl-click forces the system browser, as in the native drawer. A
+  1.0.0 host has no `openLink`, so links go to the system browser there. A
+  refusal or denied grant is written on the pane.
 - `t3.ui/editor@^1.0.0` (`t3.ui/editor.open` grant) — activating a path link
   sends the link text and the launch cwd to `openPath`, which resolves it
   like the native drawer (`~/`, relative, `:line:column`) and opens the

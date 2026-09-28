@@ -4,6 +4,7 @@ import {
   terminalOutputApi,
   terminalOutputEventsApi,
   terminalSessionsApi,
+  openExternalLink,
   uiEditorApi,
   uiExternalApi,
   uiKeybindingsApi,
@@ -877,11 +878,12 @@ function TerminalPane(props: {
         onContextMenu: selectionMenu.onContextMenu,
         beforeKey: (event) =>
           handleBeforeKey(event, panel, terminalId, host.keybindings, editingBinding.current),
-        onLinkActivate: (text) => {
+        onLinkActivate: (text, event) => {
           // Terminal 22: a detected URL opens through t3.ui/external on the
-          // user's own client; a path link opens in the user's preferred
-          // editor through t3.ui/editor, like the native drawer. Both report
-          // failures on the surface.
+          // user's own client, where its "Open links in" setting says
+          // (Cmd/Ctrl-click forces the system browser); a path link opens in
+          // the user's preferred editor through t3.ui/editor, like the native
+          // drawer. Both report failures on the surface.
           if (surface === null) return;
           const paneSurface = surface;
           const signal = session.signal;
@@ -890,9 +892,11 @@ function TerminalPane(props: {
               writeSystemMessage(paneSurface, failure);
           };
           if (isTerminalUrl(text)) {
-            void openTerminalUrl(bindApi(uiExternalApi, host, session.context), text, signal).then(
-              report,
-            );
+            const forceSystem = event.metaKey || event.ctrlKey;
+            void openTerminalUrl(
+              (url) => openExternalLink(host, session.context, url, { forceSystem, signal }),
+              text,
+            ).then(report);
             return;
           }
           const workspace = workspaceLaunchFromRevision(session.context.workspaceRevision);

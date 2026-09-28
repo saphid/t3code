@@ -18,7 +18,7 @@ import {
   type UiKeybindingChord,
   type UiKeybindingsHost,
   type UiEditorOpenReceipt,
-  type UiExternalOpenReceipt,
+  type UiExternalLinkReceipt,
   type UiTerminalAppearance,
 } from "@t3tools/extension-sdk/catalogue";
 import { bindApi, bindStreamApi, type ApiClient } from "@t3tools/extension-sdk/capabilities";
@@ -660,23 +660,17 @@ export async function openTerminalPath(
 
 /**
  * Terminal 22, URL half: hands a detected URL to the user's own client
- * through `t3.ui/external` (the native drawer's system-browser fallback).
- * Resolves null once opened — native opens silently — or the surface line
- * naming the refusal or the failed invoke.
+ * through `t3.ui/external` (`openExternalLink`), which lands it where the
+ * user's "Open links in" setting says, like the native drawer. Resolves null
+ * once opened — native opens silently — or the surface line naming the
+ * refusal or the failed invoke.
  */
 export async function openTerminalUrl(
-  external: {
-    invoke(
-      method: "open",
-      input: { url: string },
-      signal: AbortSignal,
-    ): Promise<UiExternalOpenReceipt>;
-  },
+  openLink: (url: string) => Promise<UiExternalLinkReceipt>,
   url: string,
-  signal: AbortSignal,
 ): Promise<string | null> {
   try {
-    const receipt = await external.invoke("open", { url }, signal);
+    const receipt = await openLink(url);
     return receipt.status === "opened" ? null : `${url} was not opened (${receipt.reason}).`;
   } catch (error) {
     return `${url} could not be opened — ${error instanceof Error ? error.message : "unavailable"}`;

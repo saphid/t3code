@@ -13,6 +13,7 @@ import {
   UI_EXTERNAL_OPEN,
   UI_NAVIGATION_OPEN,
   UI_NAVIGATION_OPEN_SESSION,
+  type UiExternalLinkReceipt,
   type UiNavigationFileReceipt,
   type UiNavigationFileRefusalReason,
   type UiNavigationReceipt,
@@ -95,6 +96,8 @@ import { randomUUID } from "../lib/utils";
 import { readLocalApi } from "../localApi";
 import { isBrowserPreviewFile, openWorkspaceFileInPreview } from "../browser/openFileInPreview";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
+import { openTerminalLinkInPreview } from "../components/preview/openTerminalLinkInPreview";
+import { previewEnvironment } from "../state/preview";
 import {
   isAtomCommandInterrupted,
   runAtomCommand,
@@ -1490,29 +1493,77 @@ function localExternalOpener(): ExternalOpener | undefined {
   };
 }
 
+/**
+ * Opens a link where the "Open links in" setting says, calling
+ * `fallbackToBrowser` when it belongs in the system browser; injected so tests
+ * need no preview runtime. The default is the native terminal drawer's own.
+ */
+export type LinkRouter = (input: {
+  readonly url: string;
+  readonly threadRef: ScopedThreadRef;
+  readonly forceBrowser: boolean;
+  readonly fallbackToBrowser: () => void;
+}) => Promise<void>;
+
+const nativeLinkRouter: LinkRouter = (input) =>
+  openTerminalLinkInPreview({
+    ...input,
+    openPreview: (value) =>
+      runAtomCommand(appAtomRegistry, previewEnvironment.open, value, { reportFailure: false }),
+  });
+
 export function createExternalClientProvider(
   deps: ClientProviderAuthDeps,
   opener: () => ExternalOpener | undefined = localExternalOpener,
+  routeLink: LinkRouter = nativeLinkRouter,
 ): ClientLocalProvider {
   return {
-    async invoke(call) {
-      authorizeCaller(deps, call.caller, call.context, [UI_EXTERNAL_OPEN]);
-      if (call.method !== "open")
+    async invoke(call): Promise<UiExternalLinkReceipt> {
+      const installation = authorizeCaller(deps, call.caller, call.context, [UI_EXTERNAL_OPEN]);
+      if (call.method !== "open" && call.method !== "openLink")
         throw new ClientProviderOpError(
           "client-provider-unavailable",
           `Unknown external op ${call.method}`,
         );
       // The server adapter already checked; the client owns the final say.
-      const checked = checkExternalUrl(readInputString(readInputObject(call.input), "url")!);
+      const input = readInputObject(call.input);
+      const checked = checkExternalUrl(readInputString(input, "url")!);
       if (!checked.ok) return { status: "refused", reason: checked.reason };
-      const target = opener();
-      if (!target) return { status: "refused", reason: "opener-refused" };
-      try {
-        await target.open(checked.url);
-      } catch {
-        return { status: "refused", reason: "opener-refused" };
-      }
-      return { status: "opened", url: checked.url, opener: target.kind };
+      const openSystem = async (): Promise<UiExternalLinkReceipt> => {
+        const target = opener();
+        if (!target) return { status: "refused", reason: "opener-refused" };
+        try {
+          await target.open(checked.url);
+        } catch {
+          return { status: "refused", reason: "opener-refused" };
+        }
+        return { status: "opened", url: checked.url, opener: target.kind };
+      };
+      // `openLink` lands like a native terminal link: the setting may send it
+      // to the preview browser of the caller's own thread, when that thread
+      // is in a granted project; anything else goes to the OS opener.
+      const threadId = call.context.resource.threadId;
+      const ref = threadId
+        ? scopeThreadRef(EnvironmentId.make(deps.environmentId), ThreadId.make(threadId))
+        : null;
+      const projectId = ref ? readThreadShell(ref)?.projectId : undefined;
+      if (
+        call.method === "open" ||
+        !ref ||
+        !projectId ||
+        !installation.grants.projectIds.some((id) => id === projectId)
+      )
+        return openSystem();
+      let system: Promise<UiExternalLinkReceipt> | null = null;
+      await routeLink({
+        url: checked.url,
+        threadRef: ref,
+        forceBrowser: input.forceSystem === true,
+        fallbackToBrowser: () => {
+          system = openSystem();
+        },
+      });
+      return system ?? { status: "opened", url: checked.url, opener: "in-app-browser" };
     },
   };
 }
@@ -1798,7 +1849,7 @@ export const CLIENT_PROVIDER_DESCRIPTORS = [
   { id: "t3.client/composer", version: "1.3.0" },
   { id: "t3.client/terminal-appearance", version: "1.0.0" },
   { id: "t3.client/preferences", version: "1.2.0" },
-  { id: "t3.client/external", version: "1.0.0" },
+  { id: "t3.client/external", version: "1.1.0" },
   { id: "t3.client/editor", version: "1.0.0" },
   { id: "t3.client/browser-history", version: "1.1.0" },
   { id: "t3.client/navigation", version: "1.2.0" },

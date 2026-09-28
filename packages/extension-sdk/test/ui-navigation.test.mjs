@@ -259,6 +259,7 @@ NodeTest.test(
       "t3.ui/navigation": true,
       "t3.ui/preferences": true,
       "t3.file/presentation": true,
+      "t3.ui/external": true,
     });
   },
 );

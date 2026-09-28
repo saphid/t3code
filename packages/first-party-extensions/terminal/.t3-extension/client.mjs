@@ -2073,9 +2073,25 @@ var __t3Client = (() => {
       }
     ]
   };
+  var uiExternalLinkReceiptSchema = {
+    oneOf: [
+      {
+        ...uiExternalOpenReceiptSchema.oneOf[0],
+        properties: {
+          ...uiExternalOpenReceiptSchema.oneOf[0].properties,
+          opener: { enum: ["desktop-shell", "browser-window", "in-app-browser"] }
+        }
+      },
+      uiExternalOpenReceiptSchema.oneOf[1]
+    ]
+  };
+  var uiExternalLinkInputProperties = {
+    url: { type: "string", minLength: 1, maxLength: 2048 },
+    forceSystem: { type: "boolean" }
+  };
   var CLIENT_EXTERNAL_API = validateApiDefinition({
     id: "t3.client/external",
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
       {
         name: "open",
@@ -2083,6 +2099,13 @@ var __t3Client = (() => {
         requiredGrants: [],
         inputSchema: withTarget({ url: { type: "string", minLength: 1, maxLength: 4096 } }, ["url"]),
         outputSchema: uiExternalOpenReceiptSchema
+      },
+      {
+        name: "openLink",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget(uiExternalLinkInputProperties, ["url"]),
+        outputSchema: uiExternalLinkReceiptSchema
       }
     ]
   });
@@ -8031,31 +8054,67 @@ var __t3Client = (() => {
   var UI_KEYBINDINGS_API = uiKeybindingsApi.definition;
   var UI_EXTERNAL = "t3.ui/external";
   var UI_EXTERNAL_OPEN = "t3.ui/external.open";
-  var uiExternalApi = defineApi({
+  var uiExternalGetCapabilitiesMethod = {
+    name: "getCapabilities",
+    effect: "read",
+    requiredGrants: [],
+    inputSchema: composerEmptyInputSchema,
+    outputSchema: uiCapabilitiesOutput(["open"])
+  };
+  var uiExternalOpenMethod = {
+    name: "open",
+    effect: "write",
+    requiredGrants: [UI_EXTERNAL_OPEN],
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["url"],
+      properties: { url: { type: "string", minLength: 1, maxLength: 2048 } }
+    },
+    outputSchema: uiExternalOpenReceiptSchema
+  };
+  var uiExternalApi = defineApi(
+    {
+      id: UI_EXTERNAL,
+      version: "1.1.0",
+      methods: [
+        {
+          ...uiExternalGetCapabilitiesMethod,
+          outputSchema: uiCapabilitiesOutput(["open", "openLink"])
+        },
+        uiExternalOpenMethod,
+        {
+          name: "openLink",
+          effect: "write",
+          requiredGrants: [UI_EXTERNAL_OPEN],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["url"],
+            properties: uiExternalLinkInputProperties
+          },
+          outputSchema: uiExternalLinkReceiptSchema
+        }
+      ]
+    },
+    // Consumers keep loading on a 1.0.0 host; probe before calling openLink.
+    { baseline: "1.0.0", additions: [{ version: "1.1.0", method: "openLink" }] }
+  );
+  var uiExternalApiV1 = defineApi({
     id: UI_EXTERNAL,
     version: "1.0.0",
-    methods: [
-      {
-        name: "getCapabilities",
-        effect: "read",
-        requiredGrants: [],
-        inputSchema: composerEmptyInputSchema,
-        outputSchema: uiCapabilitiesOutput(["open"])
-      },
-      {
-        name: "open",
-        effect: "write",
-        requiredGrants: [UI_EXTERNAL_OPEN],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["url"],
-          properties: { url: { type: "string", minLength: 1, maxLength: 2048 } }
-        },
-        outputSchema: uiExternalOpenReceiptSchema
-      }
-    ]
+    methods: [uiExternalGetCapabilitiesMethod, uiExternalOpenMethod]
   });
+  async function openExternalLink(client, context, url, options) {
+    const discovered = await client.discoverApis(context, options.signal);
+    const routesLinks = discovered.some((api) => {
+      const version = api.id === UI_EXTERNAL ? parseVersion(api.version) : null;
+      return version !== null && version[0] === 1 && compareVersions(version, [1, 1, 0]) >= 0;
+    });
+    if (!routesLinks)
+      return bindApi(uiExternalApi, client, context).invoke("open", { url }, options.signal);
+    return bindApi(uiExternalApi, client, context, "^1.1.0").invoke("openLink", { url, ...options.forceSystem === true ? { forceSystem: true } : {} }, options.signal);
+  }
   var UI_EDITOR = "t3.ui/editor";
   var UI_EDITOR_OPEN = "t3.ui/editor.open";
   var uiEditorApi = defineApi({
@@ -8262,6 +8321,7 @@ var __t3Client = (() => {
     uiPreferencesApiV1_1.definition,
     uiPreferencesApiV1.definition,
     uiExternalApi.definition,
+    uiExternalApiV1.definition,
     uiEditorApi.definition,
     uiNavigationApi.definition,
     uiNavigationApiV1_1.definition,
@@ -12440,9 +12500,9 @@ var __t3Client = (() => {
       return `${path3} could not be opened \u2014 ${error instanceof Error ? error.message : "unavailable"}`;
     }
   }
-  async function openTerminalUrl(external, url, signal) {
+  async function openTerminalUrl(openLink, url) {
     try {
-      const receipt2 = await external.invoke("open", { url }, signal);
+      const receipt2 = await openLink(url);
       return receipt2.status === "opened" ? null : `${url} was not opened (${receipt2.reason}).`;
     } catch (error) {
       return `${url} could not be opened \u2014 ${error instanceof Error ? error.message : "unavailable"}`;
@@ -15381,7 +15441,7 @@ var __t3Client = (() => {
           onSelectionChange: selectionMenu.onSelectionChange,
           onContextMenu: selectionMenu.onContextMenu,
           beforeKey: (event) => handleBeforeKey(event, panel, terminalId, host.keybindings, editingBinding.current),
-          onLinkActivate: (text) => {
+          onLinkActivate: (text, event) => {
             if (surface === null) return;
             const paneSurface = surface;
             const signal = session.signal;
@@ -15390,9 +15450,11 @@ var __t3Client = (() => {
                 writeSystemMessage(paneSurface, failure);
             };
             if (isTerminalUrl(text)) {
-              void openTerminalUrl(bindApi(uiExternalApi, host, session.context), text, signal).then(
-                report
-              );
+              const forceSystem = event.metaKey || event.ctrlKey;
+              void openTerminalUrl(
+                (url) => openExternalLink(host, session.context, url, { forceSystem, signal }),
+                text
+              ).then(report);
               return;
             }
             const workspace = workspaceLaunchFromRevision(session.context.workspaceRevision);

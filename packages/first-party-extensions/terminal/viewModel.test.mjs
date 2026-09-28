@@ -1670,39 +1670,39 @@ NodeTest.describe("package requirements — t3.ui/* adoption policy", () => {
 });
 
 NodeTest.describe("terminal URL links (Terminal 22 URL half)", () => {
-  const signal = new AbortController().signal;
-  const external = (answer, calls = []) => ({
-    invoke: async (method, input) => {
-      calls.push({ method, input });
+  const openLink =
+    (answer, calls = []) =>
+    async (url) => {
+      calls.push(url);
       if (answer instanceof Error) throw answer;
       return answer;
-    },
-  });
+    };
 
-  NodeTest.it("opens silently through t3.ui/external", async () => {
+  NodeTest.it("opens silently wherever the host sent the link", async () => {
     const calls = [];
-    const opened = external(
-      { status: "opened", url: "https://t3.codes/", opener: "desktop-shell" },
-      calls,
-    );
-    NodeAssert.equal(await openTerminalUrl(opened, "https://t3.codes", signal), null);
-    NodeAssert.deepEqual(calls, [{ method: "open", input: { url: "https://t3.codes" } }]);
+    for (const opener of ["desktop-shell", "in-app-browser"])
+      NodeAssert.equal(
+        await openTerminalUrl(
+          openLink({ status: "opened", url: "https://t3.codes/", opener }, calls),
+          "https://t3.codes",
+        ),
+        null,
+      );
+    NodeAssert.deepEqual(calls, ["https://t3.codes", "https://t3.codes"]);
   });
 
   NodeTest.it("names a refusal and a denied invoke", async () => {
     NodeAssert.equal(
       await openTerminalUrl(
-        external({ status: "refused", reason: "scheme-not-allowed" }),
+        openLink({ status: "refused", reason: "scheme-not-allowed" }),
         "ftp://x",
-        signal,
       ),
       "ftp://x was not opened (scheme-not-allowed).",
     );
     NodeAssert.equal(
       await openTerminalUrl(
-        external(new Error("API capability denied: t3.ui/external.open")),
+        openLink(new Error("API capability denied: t3.ui/external.open")),
         "https://t3.codes",
-        signal,
       ),
       "https://t3.codes could not be opened — API capability denied: t3.ui/external.open",
     );

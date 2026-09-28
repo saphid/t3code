@@ -1067,10 +1067,12 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
           return openPath(request.input);
         if (request.id === "t3.ui/theme" && request.method === "getTokens")
           return { tokens: {}, cssVars: {} };
-        if (request.id === "t3.ui/external" && request.method === "open")
+        if (request.id === "t3.ui/external" && request.method === "openLink")
           return { status: "refused", reason: "opener-refused" };
         return { commandSetToken: "token", results: [] };
       },
+      // A current host: t3.ui/external routes links by the user's setting.
+      discoverApis: async () => [{ id: "t3.ui/external", version: "1.1.0" }],
       subscribeApi: (request, signal) => ({
         async *[Symbol.asyncIterator]() {
           if (request.id === "t3.terminal/sessions" && request.name === "list") {
@@ -1117,10 +1119,10 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
     }
     const surface = stubSurfaces()[0];
     NodeAssert.ok(surface, "terminal surface never mounted");
-    const activate = async (text) => {
+    const activate = async (text, event = { metaKey: true, ctrlKey: false }) => {
       surface.writes.length = 0;
       await act(async () => {
-        surface.options.onLinkActivate(text, { metaKey: true });
+        surface.options.onLinkActivate(text, event);
         await drain();
       });
       return surface.writes.filter((data) => data.includes("[terminal]"));
@@ -1133,7 +1135,7 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
   }
 
   NodeTest.test(
-    "path links open the preferred editor at the link position, URLs open through t3.ui/external",
+    "path links open the preferred editor at the link position, URLs open through t3.ui/external's setting-aware openLink",
     async () => {
       const { host, invokes } = linkHost((input) => ({
         status: "opened",
@@ -1171,11 +1173,27 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
           "\r\n[terminal] https://t3.codes/docs was not opened (opener-refused).\r\n",
         ]);
         NodeAssert.equal(editorInvokes(invokes).length, editorCount);
+        // fix-d9: a plain click leaves the destination to the host's "Open
+        // links in" setting; only Cmd/Ctrl-click forces the system browser.
+        await pane.activate("https://t3.codes/app", { metaKey: false, ctrlKey: false });
+        await pane.activate("https://t3.codes/ctrl", { metaKey: false, ctrlKey: true });
         NodeAssert.deepEqual(
           invokes
             .filter((entry) => entry.id === "t3.ui/external")
             .map(({ id, method, input }) => ({ id, method, input })),
-          [{ id: "t3.ui/external", method: "open", input: { url: "https://t3.codes/docs" } }],
+          [
+            {
+              id: "t3.ui/external",
+              method: "openLink",
+              input: { url: "https://t3.codes/docs", forceSystem: true },
+            },
+            { id: "t3.ui/external", method: "openLink", input: { url: "https://t3.codes/app" } },
+            {
+              id: "t3.ui/external",
+              method: "openLink",
+              input: { url: "https://t3.codes/ctrl", forceSystem: true },
+            },
+          ],
         );
       } finally {
         await pane.unmount();
