@@ -851,15 +851,24 @@ function composerQuotedContents(excerpt: string, startLine: number, endLine: num
   return "\n".repeat(firstLine - 1) + excerpt;
 }
 
-/** A review comment's text as `listAnnotations` lists it: trimmed, and cut with "…" past the bound. */
-function listedAnnotationText(text: string): string {
+/** `text` trimmed, and cut with "…" to at most `max` units past it. */
+function boundedAnnotationText(text: string, max: number): { text: string; truncated: boolean } {
   const trimmed = text.trim();
-  if (trimmed.length <= LISTED_ANNOTATION_TEXT_MAX) return trimmed;
-  let cut = trimmed.slice(0, LISTED_ANNOTATION_TEXT_MAX - 1);
+  if (trimmed.length <= max) return { text: trimmed, truncated: false };
+  let cut = trimmed.slice(0, max - 1);
   // Never leave half a surrogate pair at the cut.
   if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
-  return `${cut}…`;
+  return { text: `${cut}…`, truncated: true };
 }
+
+/** A review comment's text as `listAnnotations` lists it: a marked preview when cut. */
+function listedAnnotationText(text: string): { text: string; textTruncated?: true } {
+  const listed = boundedAnnotationText(text, LISTED_ANNOTATION_TEXT_MAX);
+  return listed.truncated ? { text: listed.text, textTruncated: true } : { text: listed.text };
+}
+
+/** Bound on `getAnnotation`'s text: the longest body `attachAnnotation` takes. */
+const ANNOTATION_TEXT_MAX = 4096;
 
 function composerThread(call: ClientProviderInvokeCall, threadId: string): ScopedThreadRef {
   const scoped = call.context.resource.threadId;
@@ -1159,9 +1168,30 @@ export function createComposerClientProvider(
               rangeLabel: entry.rangeLabel,
               sectionTitle: entry.sectionTitle,
               // The words the composer chip shows, cut to fit the frame.
-              ...(withText ? { text: listedAnnotationText(entry.text) } : {}),
+              ...(withText ? listedAnnotationText(entry.text) : {}),
             }));
           return { annotations } as unknown as Json;
+        }
+        case "getAnnotation": {
+          // One own comment's whole text: what a listing's preview cut off.
+          authorizeCaller(deps, call.caller, call.context, ["t3.messages/write"]);
+          const threadId = readInputString(input, "threadId")!;
+          const ref = composerThread(call, threadId);
+          const annotationId = readInputString(input, "annotationId")!;
+          if (!annotationId.startsWith(`annotation:${call.caller.installationId}:`))
+            throw new ClientProviderOpError(
+              "client-target-denied",
+              "Annotation belongs to another installation",
+            );
+          const entry = (
+            useComposerDraftStore.getState().getComposerDraft(ref)?.reviewComments ?? []
+          ).find((comment) => comment.id === annotationId);
+          return (entry === undefined
+            ? { found: false }
+            : {
+                found: true,
+                text: boundedAnnotationText(entry.text, ANNOTATION_TEXT_MAX).text,
+              }) as unknown as Json;
         }
         case "removeAnnotation": {
           authorizeCaller(deps, call.caller, call.context, ["t3.messages/write"]);

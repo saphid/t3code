@@ -70,10 +70,13 @@ NodeTest.test("grants split write authority across the two contracts", () => {
   const enrichment = methodsOf(MESSAGES_ENRICHMENT_API);
   NodeAssert.deepEqual(Object.keys(enrichment).sort(), [
     "attachAnnotation",
+    "getAnnotation",
     "getCapabilities",
     "listAnnotations",
     "removeAnnotation",
   ]);
+  NodeAssert.deepEqual(enrichment.getAnnotation.requiredGrants, [MESSAGES_WRITE]);
+  NodeAssert.equal(enrichment.getAnnotation.effect, "read");
   NodeAssert.deepEqual(enrichment.getCapabilities.requiredGrants, []);
   NodeAssert.deepEqual(enrichment.attachAnnotation.requiredGrants, [MESSAGES_WRITE]);
   NodeAssert.equal(enrichment.attachAnnotation.effect, "write");
@@ -211,6 +214,7 @@ NodeTest.test("the private client-provider seam carries every public op", () => 
     "insertImage",
     "listAnnotations",
     "removeAnnotation",
+    "getAnnotation",
   ]) {
     NodeAssert.ok(seam[name], name);
     // Every frame carries the adapter-set target; plugin envelopes never do.
@@ -463,3 +467,54 @@ NodeTest.test(
     }
   },
 );
+
+// Review repro (gaps-files-2 P2): a listed preview says when it was cut, and
+// one own comment's whole text is read on its own at 1.2.0.
+NodeTest.test("readOwnAnnotationText reads one comment's whole text on a 1.2.0 host", async () => {
+  const definition = messagesEnrichmentApi.definition;
+  const method = definition.methods.find((m) => m.name === "getAnnotation");
+  NodeAssert.ok(method, "getAnnotation is declared");
+  NodeAssert.deepEqual(method.requiredGrants, ["t3.messages/write"]);
+  NodeAssert.equal(method.outputSchema.oneOf[0].properties.text.maxLength, 4096);
+  const listing = definition.methods.find((m) => m.name === "listAnnotations");
+  NodeAssert.deepEqual(listing.outputSchema.properties.annotations.items.properties.textTruncated, {
+    type: "boolean",
+  });
+  NodeAssert.ok(
+    !Catalogue.messagesEnrichmentApiV1_1.definition.methods.some((m) => m.name === "getAnnotation"),
+  );
+  const context = { client: "web", resource: { namespace: "ext", id: "ext.a", threadId: "t" } };
+  const signal = new AbortController().signal;
+  const answers = [];
+  for (const [version, reply] of [
+    ["1.2.0", { found: true, text: "whole" }],
+    ["1.2.0", { found: false }],
+    ["1.1.0", { found: true, text: "never asked" }],
+  ]) {
+    const requests = [];
+    const client = {
+      discoverApis: async () => [{ id: "t3.messages/enrichment", version }],
+      invokeApi: async (request) => {
+        requests.push([request.method, request.versionRange, request.input]);
+        return reply;
+      },
+    };
+    answers.push([
+      await Catalogue.readOwnAnnotationText?.(
+        client,
+        context,
+        { threadId: "t", annotationId: "annotation:ext.a:1" },
+        signal,
+      ),
+      requests,
+    ]);
+  }
+  const asked = [
+    ["getAnnotation", "^1.2.0", { threadId: "t", annotationId: "annotation:ext.a:1" }],
+  ];
+  NodeAssert.deepEqual(answers, [
+    ["whole", asked],
+    [null, asked],
+    [null, []],
+  ]);
+});

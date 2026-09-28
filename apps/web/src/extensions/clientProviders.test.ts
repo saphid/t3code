@@ -1620,6 +1620,39 @@ describe("composer provider", () => {
     expect(preview).toBe(`${long.trim().slice(0, 159)}…`);
   });
 
+  // Review repro (gaps-files-2 P2): a listing's preview is marked cut, and
+  // one own comment's whole text is readable on its own, within the frame.
+  it("getAnnotation returns one own comment's whole text within the frame budget", () => {
+    const provider = createComposerClientProvider(makeDeps(["t3.messages/write"]));
+    // Every unit of the longest body JSON-escapes to six bytes.
+    const body = "\u0001".repeat(4096);
+    const { annotationId } = provider.invoke(
+      invokeCall("attachAnnotation", {
+        threadId: "thread-a",
+        annotation: { filePath: "src/f.ts", startLine: 1, endLine: 1, body },
+      }),
+    ) as { annotationId: string };
+    const listed = provider.invoke(
+      invokeCall("listAnnotations", { threadId: "thread-a", include: ["text"] }),
+    ) as { annotations: { text?: string; textTruncated?: boolean }[] };
+    expect(listed.annotations[0]).toMatchObject({ textTruncated: true });
+    expect(listed.annotations[0]!.text).toHaveLength(160);
+    const read = (id: string, threadId = "thread-a") =>
+      provider.invoke(invokeCall("getAnnotation", { threadId, annotationId: id }));
+    const answer = read(annotationId);
+    expect(answer).toEqual({ found: true, text: body });
+    expect(new TextEncoder().encode(JSON.stringify(answer)).length).toBeLessThan(24_576 + 64);
+    expect(read("annotation:ext.a:gone")).toEqual({ found: false });
+    // Another installation's comment, another thread and no grant are refused.
+    expectDenied(() => read("annotation:ext.b:x"));
+    expectDenied(() => read(annotationId, "thread-b"));
+    expectDenied(() =>
+      createComposerClientProvider(makeDeps([])).invoke(
+        invokeCall("getAnnotation", { threadId: "thread-a", annotationId }),
+      ),
+    );
+  });
+
   it("removeAnnotation removes only the caller's own annotation and its reference", () => {
     const provider = createComposerClientProvider(makeDeps(["t3.messages/write"]));
     const ref = scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a"));

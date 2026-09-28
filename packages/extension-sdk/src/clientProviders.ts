@@ -613,6 +613,28 @@ const BROWSER_CAPTURE_ARTIFACT_REF_PATTERN =
  */
 export const LISTED_ANNOTATION_TEXT_MAX = 160;
 
+/**
+ * `getAnnotation`'s answer: one own comment's whole text. Attached bodies
+ * are at most 4,096 units, so even a body that JSON-escapes every unit to six
+ * bytes (~24 KiB) fits the 64 KiB frame envelope.
+ */
+export const annotationTextSchema = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["found", "text"],
+      properties: { found: { const: true }, text: { type: "string", maxLength: 4096 } },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["found"],
+      properties: { found: { const: false } },
+    },
+  ],
+} as const;
+
 /** `listAnnotations` `include`: the optional members a caller asks for. */
 export const listAnnotationsIncludeSchema = {
   type: "array",
@@ -795,6 +817,7 @@ export const CLIENT_COMPOSER_API = validateApiDefinition({
                 sectionTitle: { type: "string", maxLength: 256 },
                 // 1.3.0, only when `include` asks for it.
                 text: { type: "string", maxLength: LISTED_ANNOTATION_TEXT_MAX },
+                textTruncated: { type: "boolean" },
               },
             },
           },
@@ -818,6 +841,20 @@ export const CLIENT_COMPOSER_API = validateApiDefinition({
         required: ["removed"],
         properties: { removed: { type: "boolean" } },
       },
+    },
+    {
+      // 1.3.0: one own comment's whole text.
+      name: "getAnnotation",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: withTarget(
+        {
+          ...composerThreadIdInput,
+          annotationId: { type: "string", minLength: 1, maxLength: 256 },
+        },
+        ["threadId", "annotationId"],
+      ),
+      outputSchema: annotationTextSchema,
     },
   ],
 });

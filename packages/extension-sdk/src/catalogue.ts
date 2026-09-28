@@ -38,6 +38,7 @@ import {
   uiNavigationFileInputPropertiesV1_1,
   uiNavigationFileReceiptSchema,
   uiNavigationFileReceiptSchemaV1_1,
+  annotationTextSchema,
   listAnnotationsIncludeSchema,
   LISTED_ANNOTATION_TEXT_MAX,
   uiNavigationReceiptSchema,
@@ -7690,10 +7691,20 @@ export type MessagesListedAnnotation = {
    * cut). Absent from an older host or client.
    */
   readonly text?: string;
+  /** 1.2.0: `text` was cut; `getAnnotation` (`readOwnAnnotationText`) reads it whole. */
+  readonly textTruncated?: boolean;
 };
 export type MessagesListAnnotationsResult = {
   readonly annotations: readonly MessagesListedAnnotation[];
 };
+export type MessagesGetAnnotationInput = {
+  readonly threadId?: string;
+  readonly annotationId: string;
+};
+/** One own comment's whole text; `found: false` once the draft no longer holds it. */
+export type MessagesGetAnnotationResult =
+  | { readonly found: true; readonly text: string }
+  | { readonly found: false };
 export type MessagesRemoveAnnotationInput = {
   readonly threadId?: string;
   readonly annotationId: string;
@@ -8023,6 +8034,10 @@ type MessagesEnrichmentMethods = {
     input: MessagesRemoveAnnotationInput;
     output: MessagesRemoveAnnotationResult;
   };
+  getAnnotation: {
+    input: MessagesGetAnnotationInput;
+    output: MessagesGetAnnotationResult;
+  };
 };
 
 /** The contract at 1.2.0 (`withText`) or as frozen at 1.1.0. */
@@ -8116,7 +8131,10 @@ const messagesEnrichmentDefinition = (withText: boolean): ApiDefinition => ({
                 rangeLabel: { type: "string", minLength: 1, maxLength: 128 },
                 sectionTitle: { type: "string", minLength: 1, maxLength: 256 },
                 ...(withText
-                  ? { text: { type: "string", maxLength: LISTED_ANNOTATION_TEXT_MAX } }
+                  ? {
+                      text: { type: "string", maxLength: LISTED_ANNOTATION_TEXT_MAX },
+                      textTruncated: { type: "boolean" },
+                    }
                   : {}),
               },
             },
@@ -8144,6 +8162,26 @@ const messagesEnrichmentDefinition = (withText: boolean): ApiDefinition => ({
         properties: { removed: { type: "boolean" } },
       },
     },
+    ...(withText
+      ? [
+          {
+            name: "getAnnotation",
+            effect: "read" as const,
+            // The user's unsent words, like listAnnotations.
+            requiredGrants: [MESSAGES_WRITE],
+            inputSchema: {
+              type: "object",
+              additionalProperties: false,
+              required: ["annotationId"],
+              properties: {
+                threadId: composerThreadIdInput,
+                annotationId: { type: "string", minLength: 1, maxLength: 256 },
+              },
+            },
+            outputSchema: annotationTextSchema,
+          },
+        ]
+      : []),
   ],
 });
 
@@ -8158,7 +8196,9 @@ const messagesEnrichmentDefinition = (withText: boolean): ApiDefinition => ({
  * records, `fenceLanguage: "diff"`), plus own-ids-only list/remove so an
  * installation can enumerate and retract what it attached. 1.2.0 lets
  * `listAnnotations` return each comment's text when asked (`include`), as the
- * composer chip shows it; `listOwnAnnotations` probes for it.
+ * composer chip shows it; `listOwnAnnotations` probes for it. A listed text is
+ * a bounded preview (`textTruncated` when cut); `getAnnotation` reads one own
+ * comment's whole text, and `readOwnAnnotationText` probes for it.
  */
 export const messagesEnrichmentApi = defineApi<MessagesEnrichmentMethods>(
   messagesEnrichmentDefinition(true),
@@ -8197,6 +8237,32 @@ export async function listOwnAnnotations(
         signal,
       )
     : bindApi(messagesEnrichmentApi, client, context).invoke("listAnnotations", input, signal);
+}
+
+/**
+ * One of the caller's own unsent comments, whole, through
+ * `t3.messages/enrichment.getAnnotation` (1.2.0, grant `t3.messages/write`):
+ * what a listing's cut preview (`textTruncated`) leaves out. Null when the
+ * draft no longer holds it, or on a host that predates the read.
+ */
+export async function readOwnAnnotationText(
+  client: Pick<ApiClient, "invokeApi" | "discoverApis">,
+  context: ViewContext,
+  input: { readonly threadId?: string; readonly annotationId: string },
+  signal: AbortSignal,
+): Promise<string | null> {
+  const discovered = await client.discoverApis(context, signal);
+  const reads = discovered.some((api) => {
+    const version = api.id === MESSAGES_ENRICHMENT ? parseVersion(api.version) : null;
+    return version !== null && version[0] === 1 && compareVersions(version, [1, 2, 0]) >= 0;
+  });
+  if (!reads) return null;
+  const answer = await bindApi(messagesEnrichmentApi, client, context, "^1.2.0").invoke(
+    "getAnnotation",
+    input,
+    signal,
+  );
+  return answer.found ? answer.text : null;
 }
 
 export const COMPOSER_CONTEXT_API = composerContextApi.definition;

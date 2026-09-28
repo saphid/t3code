@@ -467,6 +467,54 @@ it.effect("asks only a 1.3.0 composer for listed comment text", () =>
   }).pipe(Effect.provide(brokerLayer)),
 );
 
+// Review repro (gaps-files-2 P2): one comment's whole text is read on its
+// own, and only from a composer client that has the read.
+it.effect("reads one comment's text only from a 1.3.0 composer", () =>
+  Effect.gen(function* () {
+    const broker = yield* ClientApiProviders;
+    const connect = (connectionId: string, version: string) =>
+      Effect.map(
+        broker.connect(
+          { connectionId, sessionId: "session", announcedOrigin: { surface: "web" } },
+          { providers: [{ id: "t3.client/composer", version }] },
+        ),
+        frameIterator,
+      );
+    const olderFrames = yield* connect("conn-31", "1.2.0");
+    yield* nextFrame(olderFrames); // registered
+    const currentFrames = yield* connect("conn-32", "1.3.0");
+    yield* nextFrame(currentFrames); // registered
+    const messages = createComposerApiProviders(resolverDeps, {
+      environmentId: "env",
+      clientApiProviders: broker,
+    }).find((p) => p.providerId === "host.messages")!;
+    const input = { annotationId: "annotation:ext.a:1" } as Json;
+    yield* Effect.promise(() =>
+      expectNamedError(
+        dispatch(messages, "getAnnotation", input, "conn-31"),
+        "messages.enrichment.getAnnotation",
+        /client-provider-unsupported-version.*\^1\.3\.0/,
+      ),
+    );
+    const reading = yield* Effect.promise(() =>
+      dispatch(messages, "getAnnotation", input, "conn-32"),
+    ).pipe(Effect.forkChild);
+    const frame = yield* nextFrame(currentFrames);
+    expect(frame?.type).toBe("invoke");
+    if (frame?.type !== "invoke") return;
+    expect([frame.method, (frame.input as { annotationId?: unknown }).annotationId]).toEqual([
+      "getAnnotation",
+      "annotation:ext.a:1",
+    ]);
+    yield* broker.respond("conn-32", {
+      requestId: frame.requestId,
+      ok: true,
+      value: { found: true, text: "the whole comment" },
+    });
+    expect(yield* Fiber.join(reading)).toEqual({ found: true, text: "the whole comment" });
+  }).pipe(Effect.provide(brokerLayer)),
+);
+
 it.effect("rejects insertImage payloads that are not a capture artifactRef", () =>
   Effect.promise(async () => {
     for (const input of [

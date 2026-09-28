@@ -588,10 +588,22 @@ NodeTest.describe("usePostedComments", () => {
               .filter((entry) => entry.thread === request.input.threadId)
               .map(({ thread: _t, text, ...entry }) =>
                 request.input.include?.includes("text") && text !== undefined
-                  ? { ...entry, text }
+                  ? text.length > 160
+                    ? { ...entry, text: `${text.slice(0, 159)}…`, textTruncated: true }
+                    : { ...entry, text }
                   : entry,
               ),
           });
+        if (request.method === "getAnnotation") {
+          const entry = draft.find(
+            (candidate) =>
+              candidate.thread === request.input.threadId &&
+              candidate.annotationId === request.input.annotationId,
+          );
+          return Promise.resolve(
+            entry?.text === undefined ? { found: false } : { found: true, text: entry.text },
+          );
+        }
         if (request.method === "removeAnnotation") {
           const index = draft.findIndex(
             (entry) => entry.annotationId === request.input.annotationId,
@@ -689,6 +701,56 @@ NodeTest.describe("usePostedComments", () => {
       } finally {
         if (root) await act(async () => root.unmount());
       }
+    }
+  });
+
+  // Review repro (gaps-files-2 P2): a long comment's listed preview is marked
+  // cut after a reload, and opening it reads the whole comment back.
+  NodeTest.it("after a reload opens a long comment's whole text", async () => {
+    const long = "why this? ".repeat(40).trim();
+    const draft = [];
+    const host = draftHost(draft, "1.2.0");
+    let root;
+    try {
+      const mount = async () => {
+        await act(async () => {
+          root = create(e(Probe, { host, threadId: "thread-a", capabilities: v11 }));
+        });
+        await flush();
+      };
+      await mount();
+      // Attached here: the view holds the whole comment.
+      draft.push({ thread: "thread-a", ...listed("a1", "src/a.ts", "L1 to L2"), text: long });
+      await act(async () =>
+        latest.recordAttached({
+          annotationId: "a1",
+          path: "src/a.ts",
+          rangeLabel: "L1 to L2",
+          text: long,
+        }),
+      );
+      await flush();
+      NodeAssert.deepEqual(summary(), [["a1", "src/a.ts", "L1 to L2", long]]);
+      // A reload keeps only what the draft lists.
+      await act(async () => root.unmount());
+      root = undefined;
+      await mount();
+      NodeAssert.deepEqual(
+        latest.comments.map((c) => [c.text?.length, c.truncated]),
+        [[160, true]],
+      );
+      await act(async () => latest.readFull("a1"));
+      await flush();
+      NodeAssert.deepEqual(
+        latest.comments.map((c) => [c.text, c.truncated]),
+        [[long, false]],
+      );
+      NodeAssert.deepEqual(
+        host.calls.filter(([method]) => method === "getAnnotation"),
+        [["getAnnotation", { threadId: "thread-a", annotationId: "a1" }]],
+      );
+    } finally {
+      if (root) await act(async () => root.unmount());
     }
   });
 

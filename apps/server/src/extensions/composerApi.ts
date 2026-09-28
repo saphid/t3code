@@ -139,7 +139,8 @@ const annotationInput = Schema.decodeUnknownSync(
   }),
   { onExcessProperty: "error" },
 );
-const removeAnnotationInput = Schema.decodeUnknownSync(
+/** `removeAnnotation` and `getAnnotation`: one own annotation by id. */
+const annotationIdInput = Schema.decodeUnknownSync(
   Schema.Struct({ ...threadIdField, annotationId: boundedString(256) }),
   { onExcessProperty: "error" },
 );
@@ -493,7 +494,7 @@ export function createComposerApiProviders(
     }
     if (method === "removeAnnotation") {
       const safe = yield* Effect.try({
-        try: () => removeAnnotationInput(input),
+        try: () => annotationIdInput(input),
         catch: invalid(operation),
       });
       const threadId = yield* scopedThread(operation, safe.threadId, scope.context);
@@ -503,6 +504,28 @@ export function createComposerApiProviders(
         try: () =>
           forward(
             "removeAnnotation",
+            { threadId, annotationId: safe.annotationId } as Json,
+            scope.context,
+            signal,
+            metadata,
+            connectionId,
+          ),
+        catch: clientFailure(operation),
+      });
+    }
+    if (method === "getAnnotation") {
+      const safe = yield* Effect.try({
+        try: () => annotationIdInput(input),
+        catch: invalid(operation),
+      });
+      const threadId = yield* scopedThread(operation, safe.threadId, scope.context);
+      yield* resolve(scope.context);
+      // The whole-text read is a 1.3.0 client op.
+      const connectionId = yield* requireComposer(operation, metadata, CLIENT_COMPOSER_V13_RANGE);
+      return yield* Effect.tryPromise({
+        try: () =>
+          forward(
+            "getAnnotation",
             { threadId, annotationId: safe.annotationId } as Json,
             scope.context,
             signal,

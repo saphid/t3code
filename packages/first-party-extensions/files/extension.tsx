@@ -2585,6 +2585,15 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                       {comment.rangeLabel}
                       {comment.text !== null ? ` — ${comment.text}` : ""}
                     </span>
+                    {comment.truncated === true && (
+                      <button
+                        type="button"
+                        aria-label={`Show the whole comment on ${comment.rangeLabel}`}
+                        onClick={() => posted.readFull(comment.annotationId)}
+                      >
+                        Show all
+                      </button>
+                    )}
                     {posted.removable && (
                       <button
                         type="button"
