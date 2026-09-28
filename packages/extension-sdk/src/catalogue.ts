@@ -6529,9 +6529,9 @@ export const BROWSER_SESSIONS_API_V1 = browserSessionsApiV1.definition;
  * prompt) and the effect cannot be proven either way.
  *
  * 1.1.0 adds the `changes` stream (`t3.browser/profiles` grant): the current
- * list as a `snapshot` once the desktop has reported it, then a `data` event
- * each time a profile is added, renamed or removed or the default changes.
- * An unchanged list is never re-sent. The baseline stays 1.0.0, so a pack
+ * state as a `snapshot`, then a `data` event each time a profile is added,
+ * renamed or removed, the default changes, or the desktop connects or
+ * leaves. An unchanged state is never re-sent. The baseline stays 1.0.0, so a pack
  * probes the host version before binding the stream at `^1.1.0`.
  * --------------------------------------------------------------------- */
 export const BROWSER_PROFILES = "t3.browser/profiles";
@@ -6634,11 +6634,15 @@ type BrowserProfilesMethods = {
   importCookies: { input: BrowserImportCookiesInput; output: BrowserImportCookiesResult };
 };
 /**
- * One `changes` event: the environment's profile list, or null while no
- * desktop app is connected to own profiles (desktop-required). An available
- * list with no profiles is `{ list: { profiles: [], … } }`, never null.
+ * One `changes` event: the environment's profile list; `{ list: null,
+ * pending: true }` while a desktop is connected but has not reported its list
+ * yet (loading); or `{ list: null }` while no desktop app is connected to own
+ * profiles (desktop-required). An available list with no profiles is
+ * `{ list: { profiles: [], … } }`, never null.
  */
-export type BrowserProfileChange = { readonly list: BrowserProfileList | null };
+export type BrowserProfileChange =
+  | { readonly list: BrowserProfileList }
+  | { readonly list: null; readonly pending?: true };
 type BrowserProfilesStreams = {
   changes: { input: Record<string, never>; event: BrowserProfileChange };
 };
@@ -6814,10 +6818,20 @@ export const browserProfilesApi: TypedApi<BrowserProfilesMethods> &
         requiredGrants: [BROWSER_PROFILES],
         inputSchema: browserSessionEmptyInput,
         eventSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["list"],
-          properties: { list: { ...browserProfileListSchema, type: ["object", "null"] } },
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["list"],
+              properties: { list: browserProfileListSchema },
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["list"],
+              properties: { list: { type: "null" }, pending: { const: true } },
+            },
+          ],
         },
       },
     ],

@@ -241,8 +241,8 @@ export interface ProfileListStore {
  * an older host is read when the view calls `refresh` (on show, per held
  * profile, per menu open). An unchanged list keeps its snapshot, so nothing
  * re-renders for it. With no desktop connected, or a stream that failed,
- * there is no list and `error` says why; an old list is never kept as if it
- * were current.
+ * there is no list and `error` says why; with neither a list nor an error
+ * the list is loading. An old list is never kept as if it were current.
  */
 export function createProfileListStore(
   source: ProfileListSource,
@@ -281,8 +281,13 @@ export function createProfileListStore(
     }
     mode = "live";
     try {
-      for await (const { list } of changes) {
-        set(list === null ? { list: null, error: DESKTOP_REQUIRED } : { list, error: null });
+      for await (const change of changes) {
+        // A desktop that has not reported its list yet is loading, not absent.
+        set(
+          change.list !== null
+            ? { list: change.list, error: null }
+            : { list: null, error: change.pending ? null : DESKTOP_REQUIRED },
+        );
       }
     } catch (error) {
       // Resubscribed on the next refresh; until then the menu names the failure.

@@ -163,7 +163,12 @@ export function ProfileSection(props: {
   const { session, api, profiles, signal, onOpenInProfile, report } = props;
   const profileId = sessionProfileId(session);
   const { list, error } = useProfileList(profiles);
-  const listNote = list === null && error !== null ? profileFailureMessage("list", error) : null;
+  const listNote =
+    list !== null
+      ? null
+      : error === null
+        ? "Loading profiles…"
+        : profileFailureMessage("list", error);
   const [busy, setBusy] = useState<ProfileAction | null>(null);
   const [importer, setImporter] = useState<Importer>({ kind: "closed" });
 

@@ -6664,10 +6664,20 @@ var __t3Client = (() => {
           requiredGrants: [BROWSER_PROFILES],
           inputSchema: browserSessionEmptyInput,
           eventSchema: {
-            type: "object",
-            additionalProperties: false,
-            required: ["list"],
-            properties: { list: { ...browserProfileListSchema, type: ["object", "null"] } }
+            oneOf: [
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["list"],
+                properties: { list: browserProfileListSchema }
+              },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["list"],
+                properties: { list: { type: "null" }, pending: { const: true } }
+              }
+            ]
           }
         }
       ]
@@ -16318,8 +16328,10 @@ ${ind(d)}}`;
       }
       mode = "live";
       try {
-        for await (const { list } of changes) {
-          set(list === null ? { list: null, error: DESKTOP_REQUIRED } : { list, error: null });
+        for await (const change of changes) {
+          set(
+            change.list !== null ? { list: change.list, error: null } : { list: null, error: change.pending ? null : DESKTOP_REQUIRED }
+          );
         }
       } catch (error) {
         if (!signal.aborted) set({ list: null, error });
@@ -16416,7 +16428,7 @@ ${ind(d)}}`;
     const { session, api, profiles, signal, onOpenInProfile, report } = props;
     const profileId = sessionProfileId(session);
     const { list, error } = useProfileList(profiles);
-    const listNote = list === null && error !== null ? profileFailureMessage("list", error) : null;
+    const listNote = list !== null ? null : error === null ? "Loading profiles\u2026" : profileFailureMessage("list", error);
     const [busy, setBusy] = (0, import_react6.useState)(null);
     const [importer, setImporter] = (0, import_react6.useState)({ kind: "closed" });
     (0, import_react6.useEffect)(() => profiles.refresh(), [profiles]);

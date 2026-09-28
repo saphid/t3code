@@ -989,6 +989,8 @@ describe("browser profiles changes stream (1.1.0)", () => {
   };
   const DELETED = { ...LIST, profiles: [LIST.profiles[0]!] };
   const NEW_DEFAULT = { ...RENAMED, defaultProfileId: "work" };
+  /** A desktop is connected but has not published its list yet. */
+  const LOADING = { type: "data", value: { list: null, pending: true } };
 
   /** Opens `changes` as the broker would; `next` pulls one event. */
   const openChanges = (provider: HostApiProvider, metadata = meta(provider)) =>
@@ -1046,18 +1048,23 @@ describe("browser profiles changes stream (1.1.0)", () => {
     }),
   );
 
-  it.effect("an event is a list or null, as strict validation reads the schema", () =>
-    Effect.sync(() => {
-      const validate = new Ajv({ strict: true, addUsedSchema: false }).compile(
-        browserProfilesApi.definition.streams![0]!.eventSchema,
-      );
-      expect(validate({ list: LIST })).toBe(true);
-      expect(validate({ list: null })).toBe(true);
-      expect(validate({ list: { profiles: [], defaultProfileId: "default" } })).toBe(true);
-      expect(validate(LIST)).toBe(false);
-      expect(validate({})).toBe(false);
-      expect(validate({ list: { profiles: [] } })).toBe(false);
-    }),
+  it.effect(
+    "an event is a list, null, or null and pending, as strict validation reads the schema",
+    () =>
+      Effect.sync(() => {
+        const validate = new Ajv({ strict: true, addUsedSchema: false }).compile(
+          browserProfilesApi.definition.streams![0]!.eventSchema,
+        );
+        expect(validate({ list: LIST })).toBe(true);
+        expect(validate({ list: null })).toBe(true);
+        expect(validate({ list: null, pending: true })).toBe(true);
+        expect(validate({ list: LIST, pending: true })).toBe(false);
+        expect(validate({ list: null, pending: false })).toBe(false);
+        expect(validate({ list: { profiles: [], defaultProfileId: "default" } })).toBe(true);
+        expect(validate(LIST)).toBe(false);
+        expect(validate({})).toBe(false);
+        expect(validate({ list: { profiles: [] } })).toBe(false);
+      }),
   );
 
   it.effect("starts from the published list, then sends each change and no repeats", () =>
@@ -1117,6 +1124,7 @@ describe("browser profiles changes stream (1.1.0)", () => {
       yield* Fiber.interrupt(windowB.fiber);
       expect((yield* changes.next).value).toEqual({ type: "data", value: { list: null } });
       const windowC = yield* attachWindow(engineHosts);
+      expect((yield* changes.next).value).toEqual(LOADING);
       yield* windowC.publish(RENAMED);
       expect((yield* changes.next).value).toEqual({ type: "data", value: { list: RENAMED } });
       expect(yield* listed(profiles)).toEqual(RENAMED);
@@ -1156,11 +1164,13 @@ describe("browser profiles changes stream (1.1.0)", () => {
           value: { type: "snapshot", value: { list: null } },
         });
         const first = yield* attachWindow(engineHosts);
+        expect((yield* changes.next).value).toEqual(LOADING);
         yield* first.publish(LIST);
         expect((yield* changes.next).value).toEqual({ type: "data", value: { list: LIST } });
         yield* Fiber.interrupt(first.fiber);
         expect((yield* changes.next).value).toEqual({ type: "data", value: { list: null } });
         const second = yield* attachWindow(engineHosts);
+        expect((yield* changes.next).value).toEqual(LOADING);
         yield* second.publish(LIST);
         expect((yield* changes.next).value).toEqual({ type: "data", value: { list: LIST } });
         // An available list with no profiles is not the same as none at all.
@@ -1179,23 +1189,40 @@ describe("browser profiles changes stream (1.1.0)", () => {
       expect(yield* state).toBeNull();
       const host = yield* attachWindow(engineHosts);
       expect(yield* state).toBe("pending");
-      // The view hears nothing until it publishes: its first event is the list.
+      // A new view starts loading, and its next event is the list.
       const changes = yield* openChanges(profiles);
-      const first = yield* Effect.forkChild(changes.next);
-      yield* host.publish(LIST);
-      expect(yield* Fiber.join(first)).toEqual({
+      expect(yield* changes.next).toEqual({
         done: false,
-        value: { type: "snapshot", value: { list: LIST } },
+        value: { type: "snapshot", value: { list: null, pending: true } },
       });
+      yield* host.publish(LIST);
+      expect((yield* changes.next).value).toEqual({ type: "data", value: { list: LIST } });
       // A reload: the new window registers before the old one leaves, and has
-      // not read its settings yet. That is still loading, not "no desktop".
+      // not read its settings yet. That is loading, not "no desktop", and the
+      // old list is not passed off as current.
       const reloaded = yield* attachWindow(engineHosts);
       yield* Fiber.interrupt(host.fiber);
       expect(yield* state).toBe("pending");
+      expect((yield* changes.next).value).toEqual(LOADING);
       yield* reloaded.publish(RENAMED);
       expect((yield* changes.next).value).toEqual({ type: "data", value: { list: RENAMED } });
       yield* Fiber.interrupt(reloaded.fiber);
       expect(yield* state).toBeNull();
+      expect((yield* changes.next).value).toEqual({ type: "data", value: { list: null } });
+      yield* changes.close;
+    }),
+  );
+
+  it.effect("an existing view told no desktop hears loading when one connects, then its list", () =>
+    Effect.gen(function* () {
+      const { profiles, engineHosts } = yield* harness;
+      const changes = yield* openChanges(profiles);
+      expect((yield* changes.next).value).toEqual({ type: "snapshot", value: { list: null } });
+      const host = yield* attachWindow(engineHosts);
+      expect((yield* changes.next).value).toEqual(LOADING);
+      yield* host.publish(LIST);
+      expect((yield* changes.next).value).toEqual({ type: "data", value: { list: LIST } });
+      yield* Fiber.interrupt(host.fiber);
       expect((yield* changes.next).value).toEqual({ type: "data", value: { list: null } });
       yield* changes.close;
     }),
@@ -1207,6 +1234,7 @@ describe("browser profiles changes stream (1.1.0)", () => {
       const early = yield* openChanges(profiles);
       expect((yield* early.next).value).toEqual({ type: "snapshot", value: { list: null } });
       const windowA = yield* attachWindow(engineHosts);
+      expect((yield* early.next).value).toEqual(LOADING);
       const windowB = yield* attachWindow(engineHosts);
       yield* windowA.publish(LIST);
       expect((yield* early.next).value).toEqual({ type: "data", value: { list: LIST } });
@@ -1228,6 +1256,9 @@ describe("browser profiles changes stream (1.1.0)", () => {
       // B's older list leaves first, so no older list resurfaces.
       yield* Fiber.interrupt(windowB.fiber);
       yield* Fiber.interrupt(windowA.fiber);
+      for (const changes of [early, late]) {
+        expect((yield* changes.next).value).toEqual(LOADING);
+      }
       yield* windowC.publish(NEW_DEFAULT);
       yield* everyone(NEW_DEFAULT);
       yield* early.close;

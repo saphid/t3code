@@ -71,7 +71,6 @@ import {
   terminalChordAction,
   suspendedOutputStatus,
   terminalActionLabel,
-  terminalCloseLabel,
   watchTerminalAppearanceVars,
   watchThemeVars,
   workspaceLaunchFromRevision,
@@ -1539,8 +1538,8 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
   // on the active session, so rows stay single-line labels at any width.
   const iconControl = { ...control, padding: "0 6px", fontSize: 13, lineHeight: "22px" };
   const activeStatus = activeTab === null ? null : sessionStatusText(activeTab);
-  const activeCloseLabel =
-    activeTab === null ? "" : terminalCloseLabel(activeTab.label, true, closeShortcutLabel);
+  // Native's toolbar close names the action, not the tab it acts on.
+  const closeLabel = terminalActionLabel("Close Terminal", closeShortcutLabel);
   const sessionActions = activeTab !== null && (
     <div
       role="toolbar"
@@ -1609,10 +1608,10 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
               ↻
             </button>
           </Tooltip>
-          <Tooltip host={host} label={activeCloseLabel} side="bottom">
+          <Tooltip host={host} label={closeLabel} side="bottom">
             <button
               type="button"
-              aria-label={activeCloseLabel}
+              aria-label={closeLabel}
               onClick={() => panel.requestAction(activeTab.terminalId, "close")}
               style={iconControl}
             >

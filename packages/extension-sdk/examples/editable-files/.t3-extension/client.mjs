@@ -6609,10 +6609,20 @@ var __t3Client = (() => {
           requiredGrants: [BROWSER_PROFILES],
           inputSchema: browserSessionEmptyInput,
           eventSchema: {
-            type: "object",
-            additionalProperties: false,
-            required: ["list"],
-            properties: { list: { ...browserProfileListSchema, type: ["object", "null"] } }
+            oneOf: [
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["list"],
+                properties: { list: browserProfileListSchema }
+              },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["list"],
+                properties: { list: { type: "null" }, pending: { const: true } }
+              }
+            ]
           }
         }
       ]

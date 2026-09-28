@@ -1497,18 +1497,6 @@ export function terminalActionLabel(
 }
 
 /**
- * A tab's close-button tooltip and accessible name, as native's terminal
- * drawer words it: the host's close shortcut is named only on the active tab.
- */
-export function terminalCloseLabel(
-  terminalLabel: string,
-  active: boolean,
-  closeShortcutLabel: string | null,
-): string {
-  return `Close ${terminalLabel}${active && closeShortcutLabel ? ` (${closeShortcutLabel})` : ""}`;
-}
-
-/**
  * Native focused-terminal commands the panel can honor chord-for-chord:
  * dispatching these through the panel's own actions reproduces exactly
  * what the native terminal would have done.
