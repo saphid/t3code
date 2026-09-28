@@ -16,6 +16,7 @@ import {
   prsWriteApi,
   uiExternalApi,
   vcsActionsApi,
+  vcsRefsApi,
   type PrsActivity,
   type PrsCapabilitiesResult,
   type PrsCheck,
@@ -33,6 +34,7 @@ import {
   type PrsWriteMergeMethod,
   type PrsWriteUpdateMethod,
   type PrsWriteVerdict,
+  type VcsRefEntry,
 } from "@t3tools/extension-sdk/catalogue";
 import { Tooltip } from "@t3tools/extension-sdk/authoring";
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
@@ -72,7 +74,7 @@ import {
   prsOpenRefusedLabel,
   prsRepositoryUrl,
   prsBranchChips,
-  prsStackedOnBase,
+  prsStackedOnDefault,
   prsChecksIcon,
   prsReconcileChecks,
   prsChecksSummary,
@@ -313,6 +315,38 @@ function useCheckoutSupport(host: ClientHost, session: ViewSession, enabled: boo
     return () => controller.abort();
   }, [host, session, enabled]);
   return enabled && supported;
+}
+
+/**
+ * The workspace's current and default refs (`t3.vcs/refs`), which native
+ * reads to tell a stacked base from the default branch. A failed read shows
+ * no badge rather than a guess.
+ */
+function useDefaultRefs(
+  host: ClientHost,
+  session: ViewSession,
+  enabled: boolean,
+  revision: string,
+) {
+  const [refs, setRefs] = useState<readonly VcsRefEntry[] | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    // listRefs keeps the current ref first and a known default second.
+    void bindApi(vcsRefsApi, host, session.context)
+      .invoke("list", { includeMatchingRemoteRefs: true, limit: 2 }, signal)
+      .then(
+        (result) => {
+          if (!signal.aborted) setRefs(result.refs);
+        },
+        () => {
+          if (!signal.aborted) setRefs(null);
+        },
+      );
+    return () => controller.abort();
+  }, [host, session, enabled, revision]);
+  return enabled ? refs : null;
 }
 
 /**
@@ -2210,6 +2244,12 @@ export function PullRequestsPanel(props: {
 
   const selectedKey = selected === null ? null : prsRefKey(selected);
   const canCheckout = useCheckoutSupport(host, session, visible && ready && selected !== null);
+  const defaultRefs = useDefaultRefs(
+    host,
+    session,
+    visible && ready && selected !== null,
+    revision,
+  );
   const toasts = useMutationToasts(host, session, visible && ready);
   /**
    * Starts one outcome's report: native's toast when the host delivers
@@ -2892,7 +2932,7 @@ export function PullRequestsPanel(props: {
                         <BranchChips
                           host={host}
                           detail={detail}
-                          stacked={prsStackedOnBase(sections.stack, detail.number)}
+                          stacked={prsStackedOnDefault(detail.baseBranch, defaultRefs ?? [])}
                           baseUrl={prsBranchUrl(detail.provider, repositoryUrl, detail.baseBranch)}
                           headUrl={prsBranchUrl(
                             detail.provider,

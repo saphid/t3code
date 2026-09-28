@@ -1,6 +1,7 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
-import { prsBranchChips, prsStackedOnBase } from "./prsViewModel.ts";
+import { prsBranchChips } from "./prsViewModel.ts";
+import * as PrsViewModel from "./prsViewModel.ts";
 
 const stack = (numbers) => ({
   id: "s",
@@ -24,10 +25,27 @@ NodeTest.describe("branch chips", () => {
     NodeAssert.deepEqual(chips.base, { text: "b1", tooltip: "Stacked on b1", stacked: true });
   });
 
-  NodeTest.it("is stacked only when a layer sits below it in the host's stack", () => {
-    NodeAssert.equal(prsStackedOnBase(null, 3), false);
-    NodeAssert.equal(prsStackedOnBase(stack([3, 4]), 3), false);
-    NodeAssert.equal(prsStackedOnBase(stack([3, 4]), 4), true);
-    NodeAssert.equal(prsStackedOnBase(stack([3, 4]), 7), false);
-  });
+  NodeTest.it(
+    "is stacked when the base is not the repository's default ref, as native asks",
+    () => {
+      const stacked = PrsViewModel.prsStackedOnDefault ?? (() => null);
+      const local = [{ name: "main", isDefault: true, current: false, worktreePath: null }];
+      NodeAssert.equal(stacked("main", local), false);
+      NodeAssert.equal(stacked("b2", local), true);
+      const remote = [
+        {
+          name: "origin/main",
+          isRemote: true,
+          remoteName: "origin",
+          isDefault: true,
+          current: false,
+          worktreePath: null,
+        },
+      ];
+      NodeAssert.equal(stacked("main", remote), false);
+      NodeAssert.equal(stacked("release", remote), true);
+      // No known default, no badge.
+      NodeAssert.equal(stacked("b2", []), false);
+    },
+  );
 });

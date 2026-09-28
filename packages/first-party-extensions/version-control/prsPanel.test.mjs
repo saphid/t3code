@@ -660,3 +660,34 @@ NodeTest.describe("head branch chip", () => {
     }
   });
 });
+
+NodeTest.describe("stacked-on badge", () => {
+  const refs = (defaultName) => () => ({
+    refs: [{ name: defaultName, current: false, isDefault: true, worktreePath: null }],
+    isRepo: true,
+    hasPrimaryRemote: true,
+    nextCursor: null,
+    totalCount: 1,
+  });
+
+  NodeTest.it("marks a base that is not the default branch, stack or no stack", async () => {
+    const view = mountPanel(
+      defaultHandlers({ "t3.prs/read#stack": () => null, "t3.vcs/refs#list": refs("main") }),
+    );
+    await flush();
+    NodeAssert.equal(view.has("Stacked pull request"), true);
+    view.unmount();
+  });
+
+  NodeTest.it("leaves a base on the default branch unmarked", async () => {
+    const view = mountPanel(
+      defaultHandlers({
+        "t3.prs/read#detail": () => detailOf({ baseBranch: "main" }),
+        "t3.vcs/refs#list": refs("main"),
+      }),
+    );
+    await flush();
+    NodeAssert.equal(view.has("Stacked pull request"), false);
+    view.unmount();
+  });
+});

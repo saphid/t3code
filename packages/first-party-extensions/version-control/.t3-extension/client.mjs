@@ -9756,8 +9756,13 @@ ${ref.number}`;
       arrowLabel: "receives changes from"
     };
   }
-  function prsStackedOnBase(stack, number) {
-    return (stack?.layers.findIndex((layer) => layer.number === number) ?? -1) > 0;
+  function prsStackedOnDefault(baseBranch, refs) {
+    const defaultRef = refs.find((ref) => ref.isDefault);
+    if (defaultRef === void 0) return false;
+    if (defaultRef.isRemote !== true) return defaultRef.name !== baseBranch;
+    const remotePrefix = `${defaultRef.remoteName ?? defaultRef.name.split("/")[0]}/`;
+    const defaultBranch = defaultRef.name.startsWith(remotePrefix) ? defaultRef.name.slice(remotePrefix.length) : defaultRef.name;
+    return defaultBranch !== baseBranch;
   }
   function prsMergeabilityLabel(mergeability) {
     switch (mergeability) {
@@ -10516,6 +10521,24 @@ ${writeKey}`;
       return () => controller.abort();
     }, [host, session, enabled]);
     return enabled && supported;
+  }
+  function useDefaultRefs(host, session, enabled, revision2) {
+    const [refs, setRefs] = (0, import_react2.useState)(null);
+    (0, import_react2.useEffect)(() => {
+      if (!enabled) return;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      void bindApi(vcsRefsApi, host, session.context).invoke("list", { includeMatchingRemoteRefs: true, limit: 2 }, signal).then(
+        (result) => {
+          if (!signal.aborted) setRefs(result.refs);
+        },
+        () => {
+          if (!signal.aborted) setRefs(null);
+        }
+      );
+      return () => controller.abort();
+    }, [host, session, enabled, revision2]);
+    return enabled ? refs : null;
   }
   function usePrsRefreshes(host, session, enabled) {
     const [state2, setState] = (0, import_react2.useState)({
@@ -11919,6 +11942,12 @@ ${writeKey}`;
     };
     const selectedKey = selected === null ? null : prsRefKey(selected);
     const canCheckout = useCheckoutSupport(host, session, visible && ready && selected !== null);
+    const defaultRefs = useDefaultRefs(
+      host,
+      session,
+      visible && ready && selected !== null,
+      revision2
+    );
     const toasts = useMutationToasts(host, session, visible && ready);
     const beginReport = (label, startTitle, showInline) => {
       let settled = null;
@@ -12413,7 +12442,7 @@ ${thread.id}`;
                         {
                           host,
                           detail,
-                          stacked: prsStackedOnBase(sections.stack, detail.number),
+                          stacked: prsStackedOnDefault(detail.baseBranch, defaultRefs ?? []),
                           baseUrl: prsBranchUrl(detail.provider, repositoryUrl, detail.baseBranch),
                           headUrl: prsBranchUrl(
                             detail.provider,

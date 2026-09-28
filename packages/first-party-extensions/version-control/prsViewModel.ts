@@ -43,6 +43,7 @@ import type {
   PrsWriteUpdateMethod,
   PrsWriteVerdict,
   VcsActionPrepareThreadResult,
+  VcsRefEntry,
 } from "@t3tools/extension-sdk/catalogue";
 
 /* ---------------- capability gate ---------------- */
@@ -498,12 +499,22 @@ export function prsBranchChips(
 }
 
 /**
- * Whether this change request's base is another layer's head: a layer sits
- * below it in the host's stack. Native asks the local refs instead; the
- * host's stack graph is what this panel has.
+ * Native's `isStackedPullRequestBase`: the base is stacked when it is not the
+ * repository's default branch (a remote default drops its remote prefix).
+ * No known default ref, no badge. Host stack membership is shown apart.
  */
-export function prsStackedOnBase(stack: PrsStack | null, number: number): boolean {
-  return (stack?.layers.findIndex((layer) => layer.number === number) ?? -1) > 0;
+export function prsStackedOnDefault(
+  baseBranch: string,
+  refs: readonly Pick<VcsRefEntry, "name" | "isDefault" | "isRemote" | "remoteName">[],
+): boolean {
+  const defaultRef = refs.find((ref) => ref.isDefault);
+  if (defaultRef === undefined) return false;
+  if (defaultRef.isRemote !== true) return defaultRef.name !== baseBranch;
+  const remotePrefix = `${defaultRef.remoteName ?? defaultRef.name.split("/")[0]}/`;
+  const defaultBranch = defaultRef.name.startsWith(remotePrefix)
+    ? defaultRef.name.slice(remotePrefix.length)
+    : defaultRef.name;
+  return defaultBranch !== baseBranch;
 }
 
 export function prsMergeabilityLabel(
