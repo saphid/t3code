@@ -42,6 +42,7 @@ import {
   prsChecksTooltip,
   prsConflictTooltip,
   prsReviewTooltip,
+  prsStackTooltip,
   prsWriteActionLabel,
   prsWriteActionOffers,
   prsWriteGate,
@@ -783,6 +784,12 @@ NodeTest.test("native hover help for status, checks, authors and armed auto-merg
   NodeAssert.equal(prsChecksTooltip("failing"), "Some checks were not successful");
   NodeAssert.equal(prsChecksTooltip("pending"), "Some checks haven't completed yet");
   NodeAssert.equal(prsChecksTooltip(undefined), null);
+
+  NodeAssert.equal(
+    prsStackTooltip({ number: 7, position: 2, size: 4, base: "main" }),
+    "GitHub stack of 4: merging a layer lands the ones below it.",
+  );
+  NodeAssert.equal(prsStackTooltip(undefined), null);
 
   NodeAssert.equal(prsReviewTooltip("approved"), "Approved");
   NodeAssert.equal(prsReviewTooltip("changes-requested"), "Changes requested");

@@ -79,6 +79,7 @@ import {
   prsChecksTooltip,
   prsConflictTooltip,
   prsReviewTooltip,
+  prsStackTooltip,
   prsWriteActionOffers,
   prsWriteGate,
   prsWriteUnavailableNote,
@@ -723,7 +724,7 @@ function stateBadge(
   );
 }
 
-function PrListRow(props: {
+export function PrListRow(props: {
   host: ClientHost;
   entry: PrsListEntry;
   viewers: Readonly<Record<string, string>>;
@@ -809,7 +810,11 @@ function PrListRow(props: {
               )}
             </Tooltip>
           )}
-          {stack !== null && badge(stack, "merged")}
+          {stack !== null && (
+            <Tooltip host={host} side="top" label={prsStackTooltip(entry.stack)}>
+              {badge(stack, "merged")}
+            </Tooltip>
+          )}
         </span>
         {entry.labels.length > 0 && (
           <span

@@ -958,6 +958,16 @@ export function prsChecksTooltip(
   }
 }
 
+/**
+ * Native's stack-membership help. List membership only ever comes from the
+ * host's own stack graph (GitHub stacks), never a base-branch chain, so this
+ * is native's `kind === "native"` wording.
+ */
+export function prsStackTooltip(stack: PrsStackMembership | undefined): string | null {
+  if (stack === undefined) return null;
+  return `GitHub stack of ${stack.size}: merging a layer lands the ones below it.`;
+}
+
 /** Native's review-decision help. */
 export function prsReviewTooltip(
   decision: "approved" | "changes-requested" | "review-required" | null | undefined,

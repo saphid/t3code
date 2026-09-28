@@ -2,6 +2,7 @@
 
 import type {
   BrowserCaptureTarget,
+  PrsListEntry,
   PrsWriteActionKind,
   PrsWriteMergeMethod,
 } from "@t3tools/extension-sdk/catalogue";
@@ -33,6 +34,12 @@ let PrsActionButton: ComponentType<{
   onMethodChange: (value: string) => void;
   onRun: () => void;
 }>;
+let PrListRow: ComponentType<{
+  host: ClientHost;
+  entry: PrsListEntry;
+  viewers: Readonly<Record<string, string>>;
+  onSelect: () => void;
+}>;
 let AnnotateButton: ComponentType<{
   host: ClientHost;
   blockReason: string | null;
@@ -43,7 +50,9 @@ let AnnotateButton: ComponentType<{
 }>;
 
 beforeAll(async () => {
-  ({ PrsActionButton } = await import(/* @vite-ignore */ `${PACKS}/version-control/prsPanel.tsx`));
+  ({ PrsActionButton, PrListRow } = await import(
+    /* @vite-ignore */ `${PACKS}/version-control/prsPanel.tsx`
+  ));
   ({ AnnotateButton } = await import(/* @vite-ignore */ `${PACKS}/browser/annotateButton.tsx`));
 });
 
@@ -161,6 +170,49 @@ describe("version-control header actions", () => {
     expect(button().textContent).toBe("Close");
     await hoverControl();
     expect(popupText()).toBeNull();
+  });
+});
+
+describe("version-control list row", () => {
+  const entry = {
+    provider: "github",
+    host: "github.com",
+    projectId: "project",
+    projectTitle: "App",
+    repository: "acme/app",
+    number: 123,
+    title: "Stack layer",
+    state: "open",
+    isDraft: false,
+    author: { login: "alex" },
+    additions: 1,
+    deletions: 0,
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    labels: [],
+    checksState: "passing",
+    stack: { number: 120, position: 2, size: 3, base: "main" },
+  } as unknown as PrsListEntry;
+
+  function badge(text: string) {
+    const element = [...container.querySelectorAll("span")].find((e) => e.textContent === text);
+    if (!element) throw new Error(`${text} badge was not rendered`);
+    return element;
+  }
+
+  async function hoverBadge(text: string) {
+    const target = badge(text);
+    await act(async () => {
+      target.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+      target.dispatchEvent(new MouseEvent("mouseenter"));
+      target.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+    });
+    await act(async () => {});
+  }
+
+  it("explains a GitHub stack membership on hover, as native does", async () => {
+    await render(<PrListRow host={host} entry={entry} viewers={{}} onSelect={() => {}} />);
+    await hoverBadge("Stack 2/3 · main");
+    expect(popupText()).toBe("GitHub stack of 3: merging a layer lands the ones below it.");
   });
 });
 

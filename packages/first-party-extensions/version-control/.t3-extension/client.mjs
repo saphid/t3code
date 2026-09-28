@@ -9787,6 +9787,10 @@ ${ref.number}`;
         return null;
     }
   }
+  function prsStackTooltip(stack) {
+    if (stack === void 0) return null;
+    return `GitHub stack of ${stack.size}: merging a layer lands the ones below it.`;
+  }
   function prsReviewTooltip(decision2) {
     switch (decision2) {
       case "approved":
@@ -10410,7 +10414,7 @@ ${writeKey}`;
                   checks,
                   entry.checksState === "passing" ? "open" : entry.checksState === "failing" ? "closed" : "muted"
                 ) }),
-                stack !== null && badge(stack, "merged")
+                stack !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsStackTooltip(entry.stack), children: badge(stack, "merged") })
               ]
             }
           ),
