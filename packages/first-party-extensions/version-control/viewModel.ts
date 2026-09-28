@@ -1195,6 +1195,15 @@ export function repositoryState(
   return { kind: "ready", capabilities };
 }
 
+/**
+ * The header's status line. The status stream subscribes only for a ready
+ * repository; every other gate state explains itself in the panel body, so
+ * the header stays empty rather than showing a loading label forever.
+ */
+export function repositoryHeaderStatus(repo: RepositoryState, status: StatusModel): string | null {
+  return repo.kind === "ready" ? describeStatus(status) : null;
+}
+
 // ---------------------------------------------------------------------------
 // t3.ui/theme consumption
 // ---------------------------------------------------------------------------

@@ -44,6 +44,7 @@ import {
   refSwitchState,
   refSwitchTarget,
   remoteRows,
+  repositoryHeaderStatus,
   repositoryState,
   retainSelection,
   settleMutation,
@@ -707,6 +708,22 @@ NodeTest.describe("vcs view model — refs", () => {
 });
 
 NodeTest.describe("vcs view model — repository gate", () => {
+  NodeTest.it("shows a header status only for a repository whose stream runs", () => {
+    // The status stream subscribes only when the gate is ready; every other
+    // state explains itself in the body and must not keep a loading label.
+    const noRepo = repositoryState(caps({ detected: false, kind: null, detail: null }), null);
+    NodeAssert.equal(repositoryHeaderStatus(noRepo, CONNECTING_STATUS), null);
+    NodeAssert.equal(repositoryHeaderStatus({ kind: "loading" }, CONNECTING_STATUS), null);
+    NodeAssert.equal(
+      repositoryHeaderStatus({ kind: "unavailable", detail: "grant denied" }, CONNECTING_STATUS),
+      null,
+    );
+    NodeAssert.equal(
+      repositoryHeaderStatus(repositoryState(caps(), null), CONNECTING_STATUS),
+      "Reading repository status…",
+    );
+  });
+
   NodeTest.it("gates loading, error, no-repo, unsupported and ready", () => {
     NodeAssert.deepEqual(repositoryState(null, null), { kind: "loading" });
     NodeAssert.deepEqual(repositoryState(null, "grant denied"), {

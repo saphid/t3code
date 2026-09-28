@@ -40,7 +40,6 @@ import {
   describeRef,
   describeStackedProgress,
   describeStackedResult,
-  describeStatus,
   discardAction,
   discardReceipt,
   dismissReceiptAfterSeen,
@@ -70,6 +69,7 @@ import {
   refSwitchTarget,
   releaseMutationReceipt,
   remoteRows,
+  repositoryHeaderStatus,
   repositoryState,
   retainSelection,
   settleMutation,
@@ -779,6 +779,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   );
   const repo = repositoryState(capabilities, capsError);
   const status = useStatusStream(host, session, repositoryVisible && repo.kind === "ready", tick);
+  const headerStatus = repositoryHeaderStatus(repo, status);
   const actionCaps = useVcsActionsCapabilities(
     host,
     session,
@@ -1314,10 +1315,8 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
               Refresh
             </button>
           )}
-        {view === "repository" && (
-          <span style={{ color: muted, fontSize: 12 }}>
-            {refreshError ?? describeStatus(status)}
-          </span>
+        {view === "repository" && headerStatus !== null && (
+          <span style={{ color: muted, fontSize: 12 }}>{refreshError ?? headerStatus}</span>
         )}
       </header>
 
