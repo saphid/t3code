@@ -327,6 +327,15 @@ var __t3Client = (() => {
       }
     };
   }
+  function grantDenialMessage(grant) {
+    return `Needs permission ${grant}. Grant it in Settings \u2192 Extensions.`;
+  }
+  var CAPABILITY_DENIED = /capability denied: ([\w.\-/]*[\w\-/])/;
+  function describeGrantDenial(error) {
+    const text = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+    const grant = CAPABILITY_DENIED.exec(text)?.[1];
+    return grant ? { grant, message: grantDenialMessage(grant) } : null;
+  }
   function validateRangeText(value) {
     if (typeof value !== "string" || !value.trim() || value.length > 200)
       throw new Error("Invalid API or dependency version range");
@@ -9252,11 +9261,10 @@ var __t3Client = (() => {
     if (signal.aborted) return { kind: "cancelled" };
     if (!captured.ok) {
       if (captured.failure.reason === "cancelled") return { kind: "cancelled" };
-      const grant = captured.failure.grant ? ` (missing grant: ${captured.failure.grant})` : "";
       return {
         kind: "failed",
         stage: IMAGE_LOST_REASONS.has(captured.failure.reason) ? "image" : "request",
-        message: `Capture failed \u2014 ${captured.failure.reason}${grant}: ${captured.failure.detail}`
+        message: captured.failure.grant ? `Capture failed \u2014 ${grantDenialMessage(captured.failure.grant)}` : `Capture failed \u2014 ${captured.failure.reason}: ${captured.failure.detail}`
       };
     }
     try {
@@ -15244,7 +15252,7 @@ ${ind(d)}}`;
     {
       name: "ResourceLeaseGrantDeniedError",
       reason: "grant-denied",
-      message: `Cannot open workspace files \u2014 this installation is missing the ${WORKSPACE_RESOURCES} grant.`
+      message: `Cannot open workspace files \u2014 ${grantDenialMessage(WORKSPACE_RESOURCES)}`
     },
     {
       name: "ResourceLeaseKindDeniedError",
@@ -15894,11 +15902,12 @@ ${ind(d)}}`;
   }
   function localServersErrorState(error) {
     const text = error instanceof Error ? error.message : String(error);
-    if (text.includes("capability denied"))
+    const denial = describeGrantDenial(error);
+    if (denial)
       return {
         kind: "denied",
-        grant: BROWSER_READ_LOCAL_SERVERS,
-        message: `Local servers are hidden \u2014 this installation is missing the ${BROWSER_READ_LOCAL_SERVERS} grant.`
+        grant: denial.grant,
+        message: `Local servers are hidden \u2014 ${denial.message}`
       };
     return {
       kind: "unavailable",
@@ -16009,11 +16018,10 @@ ${ind(d)}}`;
   function projectHistoryErrorState(op, error) {
     const text = error instanceof Error ? error.message : String(error);
     if (text.includes("capability denied")) {
-      const named = /capability denied: (\S+)/.exec(text)?.[1];
-      const grant = named ?? (op === "list" ? BROWSER_READ_HISTORY : BROWSER_RECORD_HISTORY);
+      const grant = describeGrantDenial(error)?.grant ?? (op === "list" ? BROWSER_READ_HISTORY : BROWSER_RECORD_HISTORY);
       return {
         kind: "unavailable",
-        message: `Showing this view's history only \u2014 this installation is missing the ${grant} grant.`
+        message: `Showing this view's history only \u2014 ${grantDenialMessage(grant)}`
       };
     }
     return {
@@ -16136,9 +16144,8 @@ ${ind(d)}}`;
   function pageCommandErrorMessage(method, error) {
     const label = VERB_LABELS[method];
     const text = error instanceof Error ? error.message : typeof error === "string" ? error : "";
-    const denied = /capability denied: (\S+)/.exec(text);
-    if (denied)
-      return `${label} needs the ${denied[1]} grant, which this installation does not hold (grant-denied).`;
+    const denial = describeGrantDenial(error);
+    if (denial) return `${label} \u2014 ${denial.message}`;
     if (text.includes("BrowserSessionNotOwned"))
       return `${label} is only available on pages this panel opened (not-owned).`;
     if (text.includes("(engine-unsupported)"))
@@ -16540,10 +16547,8 @@ ${ind(d)}}`;
   function profileFailureMessage(action, error) {
     const text = error instanceof Error ? error.message : String(error);
     const label = ACTION_LABEL[action];
-    const denied = /capability denied: (\S+)/.exec(text);
-    if (denied) {
-      return `${label} needs the ${denied[1]} grant \u2014 this installation is missing it.`;
-    }
+    const denial = describeGrantDenial(error);
+    if (denial) return `${label} \u2014 ${denial.message}`;
     if (text.includes("(desktop-required)")) {
       return `${label} needs the T3 Code desktop app \u2014 no desktop browser engine is connected (desktop-required).`;
     }
@@ -18190,8 +18195,11 @@ ${ind(d)}}`;
             }
           }
         } catch (error) {
-          if (!signal.aborted)
-            setNotice(error instanceof Error ? error.message : "Sessions stream unavailable");
+          if (signal.aborted) return;
+          const denial = describeGrantDenial(error);
+          setNotice(
+            denial ? `Browser sessions are unavailable \u2014 ${denial.message}` : error instanceof Error ? error.message : "Sessions stream unavailable"
+          );
         }
       })();
       return () => controller.abort();
@@ -18598,7 +18606,7 @@ ${titledTitle}`;
     const capturePage = capturePageView(surfaceLease, surfaceShown, live?.navigation.kind);
     const capture = useBrowserCapture(host, session, held, capturePage, setNotice);
     const pageLoading = held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
-    const surfaceNotice = leaseState?.kind === "ended" ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.` : remoteEligible ? remoteNotice : surfaceDenial ? `Native presentation is unavailable \u2014 ${surfaceDenial.reason}${surfaceDenial.grant ? ` (missing grant: ${surfaceDenial.grant})` : ""}: ${surfaceDenial.detail}` : null;
+    const surfaceNotice = leaseState?.kind === "ended" ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.` : remoteEligible ? remoteNotice : surfaceDenial ? surfaceDenial.grant ? `Native presentation is unavailable \u2014 ${grantDenialMessage(surfaceDenial.grant)}` : `Native presentation is unavailable \u2014 ${surfaceDenial.reason}: ${surfaceDenial.detail}` : null;
     return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
       "section",
       {
