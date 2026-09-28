@@ -12589,6 +12589,10 @@ var __t3Client = (() => {
     ["mod+n", "new"],
     ["mod+w", "close"]
   ]);
+  function terminalActionLabel(action, shortcutLabel, limitNote = null) {
+    const note = limitNote ?? shortcutLabel;
+    return note ? `${action} (${note})` : action;
+  }
   function terminalCloseLabel(terminalLabel, active, closeShortcutLabel) {
     return `Close ${terminalLabel}${active && closeShortcutLabel ? ` (${closeShortcutLabel})` : ""}`;
   }
@@ -15335,7 +15339,8 @@ var __t3Client = (() => {
     const snapshot = panel.snapshot;
     const activeId = snapshot.activeTerminalId;
     const activeTab = snapshot.tabs.find((tab) => tab.terminalId === activeId) ?? null;
-    const closeShortcutLabel = host.keybindings?.terminalFocusShortcutLabel?.("terminal.close") ?? null;
+    const shortcutLabel = (command) => host.keybindings?.terminalFocusShortcutLabel?.(command) ?? null;
+    const closeShortcutLabel = shortcutLabel("terminal.close");
     const activeGroup = snapshot.groups.find((group) => group.id === snapshot.activeGroupId) ?? null;
     const visibleTerminalIds = activeGroup?.terminalIds ?? (activeId !== null ? [activeId] : []);
     const visibleSet = new Set(visibleTerminalIds);
@@ -15346,6 +15351,18 @@ var __t3Client = (() => {
     ];
     const tabById = new Map(snapshot.tabs.map((tab) => [tab.terminalId, tab]));
     const hasReachedSplitLimit = visibleTerminalIds.length >= MAX_TERMINALS_PER_GROUP;
+    const splitLimitNote = hasReachedSplitLimit ? `max ${MAX_TERMINALS_PER_GROUP} per group` : null;
+    const newTerminalLabel = terminalActionLabel("New Terminal", shortcutLabel("terminal.new"));
+    const splitHorizontalLabel = terminalActionLabel(
+      "Split Terminal Horizontally",
+      shortcutLabel("terminal.split"),
+      splitLimitNote
+    );
+    const splitVerticalLabel = terminalActionLabel(
+      "Split Terminal Vertically",
+      shortcutLabel("terminal.splitVertical"),
+      splitLimitNote
+    );
     const showGroupHeaders = snapshot.groups.length > 1 || snapshot.groups.some((group) => group.terminalIds.length > 1);
     const textFallback = assets.kind === "unavailable";
     const output = useTerminalOutput(
@@ -15494,40 +15511,37 @@ var __t3Client = (() => {
               children: activeStatus
             }
           ),
-          (activeTab.status === "exited" || activeTab.status === "error" || activeTab.status === "closed") && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+          (activeTab.status === "exited" || activeTab.status === "error" || activeTab.status === "closed") && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: "Start", side: "bottom", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "button",
             {
               type: "button",
               "aria-label": `Start ${activeTab.terminalId}`,
-              title: "Start",
               onClick: () => void panel.startSession(activeTab.terminalId),
               style: iconControl,
               children: "\u25B6"
             }
-          ),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+          ) }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: "Clear history", side: "bottom", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "button",
             {
               type: "button",
               "aria-label": `Clear ${activeTab.terminalId}`,
-              title: "Clear history",
               onClick: () => panel.requestAction(activeTab.terminalId, "clear"),
               style: iconControl,
               children: "\u232B"
             }
-          ),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+          ) }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: "Restart", side: "bottom", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "button",
             {
               type: "button",
               "aria-label": `Restart ${activeTab.terminalId}`,
-              title: "Restart",
               onClick: () => panel.requestAction(activeTab.terminalId, "restart"),
               style: iconControl,
               children: "\u21BB"
             }
-          ),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: activeCloseLabel, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+          ) }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: activeCloseLabel, side: "bottom", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "button",
             {
               type: "button",
@@ -15612,7 +15626,7 @@ var __t3Client = (() => {
                 flexWrap: "wrap"
               },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: newTerminalLabel, side: "bottom", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                   "button",
                   {
                     type: "button",
@@ -15621,8 +15635,8 @@ var __t3Client = (() => {
                     style: control,
                     children: "New terminal"
                   }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                ) }),
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: splitHorizontalLabel, side: "bottom", showWhenDisabled: true, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                   "button",
                   {
                     type: "button",
@@ -15631,11 +15645,11 @@ var __t3Client = (() => {
                     style: control,
                     children: [
                       "Split horizontally",
-                      hasReachedSplitLimit ? ` (max ${MAX_TERMINALS_PER_GROUP} per group)` : ""
+                      splitLimitNote === null ? "" : ` (${splitLimitNote})`
                     ]
                   }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                ) }),
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: splitVerticalLabel, side: "bottom", showWhenDisabled: true, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                   "button",
                   {
                     type: "button",
@@ -15644,10 +15658,10 @@ var __t3Client = (() => {
                     style: control,
                     children: [
                       "Split vertically",
-                      hasReachedSplitLimit ? ` (max ${MAX_TERMINALS_PER_GROUP} per group)` : ""
+                      splitLimitNote === null ? "" : ` (${splitLimitNote})`
                     ]
                   }
-                ),
+                ) }),
                 /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted, fontSize: 12 }, children: snapshot.stream === "closed" ? "Session list disconnected" : snapshot.stream === "connecting" ? "Connecting\u2026" : "" })
               ]
             }

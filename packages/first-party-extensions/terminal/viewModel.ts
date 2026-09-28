@@ -1471,6 +1471,19 @@ export const TERMINAL_DEFAULT_CHORDS: ReadonlyMap<string, TerminalChordAction> =
 ]);
 
 /**
+ * A toolbar action's hover help, as native's terminal drawer words it: the
+ * split limit when one applies, else the host's shortcut when one is bound.
+ */
+export function terminalActionLabel(
+  action: string,
+  shortcutLabel: string | null,
+  limitNote: string | null = null,
+): string {
+  const note = limitNote ?? shortcutLabel;
+  return note ? `${action} (${note})` : action;
+}
+
+/**
  * A tab's close-button tooltip and accessible name, as native's terminal
  * drawer words it: the host's close shortcut is named only on the active tab.
  */

@@ -69,6 +69,7 @@ import {
   plainTerminalText,
   registerPanelCommands,
   terminalChordAction,
+  terminalActionLabel,
   terminalCloseLabel,
   watchTerminalAppearanceVars,
   watchThemeVars,
@@ -1359,8 +1360,9 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
   const activeId = snapshot.activeTerminalId;
   const activeTab = snapshot.tabs.find((tab) => tab.terminalId === activeId) ?? null;
   // Feature-detected: older hosts have no label resolver, and native then names no shortcut.
-  const closeShortcutLabel =
-    host.keybindings?.terminalFocusShortcutLabel?.("terminal.close") ?? null;
+  const shortcutLabel = (command: string) =>
+    host.keybindings?.terminalFocusShortcutLabel?.(command) ?? null;
+  const closeShortcutLabel = shortcutLabel("terminal.close");
   // The active group's members render side-by-side; every other session
   // keeps its pane mounted offscreen — offscreen panes hold optional stream
   // slots (streamHub) so the VT parser keeps consuming output and answering
@@ -1377,6 +1379,18 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
   ];
   const tabById = new Map(snapshot.tabs.map((tab) => [tab.terminalId, tab]));
   const hasReachedSplitLimit = visibleTerminalIds.length >= MAX_TERMINALS_PER_GROUP;
+  const splitLimitNote = hasReachedSplitLimit ? `max ${MAX_TERMINALS_PER_GROUP} per group` : null;
+  const newTerminalLabel = terminalActionLabel("New Terminal", shortcutLabel("terminal.new"));
+  const splitHorizontalLabel = terminalActionLabel(
+    "Split Terminal Horizontally",
+    shortcutLabel("terminal.split"),
+    splitLimitNote,
+  );
+  const splitVerticalLabel = terminalActionLabel(
+    "Split Terminal Vertically",
+    shortcutLabel("terminal.splitVertical"),
+    splitLimitNote,
+  );
   const showGroupHeaders =
     snapshot.groups.length > 1 || snapshot.groups.some((group) => group.terminalIds.length > 1);
   const textFallback = assets.kind === "unavailable";
@@ -1551,35 +1565,38 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
           {(activeTab.status === "exited" ||
             activeTab.status === "error" ||
             activeTab.status === "closed") && (
+            <Tooltip host={host} label="Start" side="bottom">
+              <button
+                type="button"
+                aria-label={`Start ${activeTab.terminalId}`}
+                onClick={() => void panel.startSession(activeTab.terminalId)}
+                style={iconControl}
+              >
+                ▶
+              </button>
+            </Tooltip>
+          )}
+          <Tooltip host={host} label="Clear history" side="bottom">
             <button
               type="button"
-              aria-label={`Start ${activeTab.terminalId}`}
-              title="Start"
-              onClick={() => void panel.startSession(activeTab.terminalId)}
+              aria-label={`Clear ${activeTab.terminalId}`}
+              onClick={() => panel.requestAction(activeTab.terminalId, "clear")}
               style={iconControl}
             >
-              ▶
+              ⌫
             </button>
-          )}
-          <button
-            type="button"
-            aria-label={`Clear ${activeTab.terminalId}`}
-            title="Clear history"
-            onClick={() => panel.requestAction(activeTab.terminalId, "clear")}
-            style={iconControl}
-          >
-            ⌫
-          </button>
-          <button
-            type="button"
-            aria-label={`Restart ${activeTab.terminalId}`}
-            title="Restart"
-            onClick={() => panel.requestAction(activeTab.terminalId, "restart")}
-            style={iconControl}
-          >
-            ↻
-          </button>
-          <Tooltip host={host} label={activeCloseLabel}>
+          </Tooltip>
+          <Tooltip host={host} label="Restart" side="bottom">
+            <button
+              type="button"
+              aria-label={`Restart ${activeTab.terminalId}`}
+              onClick={() => panel.requestAction(activeTab.terminalId, "restart")}
+              style={iconControl}
+            >
+              ↻
+            </button>
+          </Tooltip>
+          <Tooltip host={host} label={activeCloseLabel} side="bottom">
             <button
               type="button"
               aria-label={activeCloseLabel}
@@ -1677,32 +1694,40 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
           flexWrap: "wrap",
         }}
       >
-        <button
-          type="button"
-          onClick={() => void panel.openTerminal()}
-          disabled={snapshot.stream !== "live"}
-          style={control}
-        >
-          New terminal
-        </button>
-        <button
-          type="button"
-          onClick={() => void panel.splitTerminal("horizontal")}
-          disabled={snapshot.stream !== "live" || hasReachedSplitLimit}
-          style={control}
-        >
-          Split horizontally
-          {hasReachedSplitLimit ? ` (max ${MAX_TERMINALS_PER_GROUP} per group)` : ""}
-        </button>
-        <button
-          type="button"
-          onClick={() => void panel.splitTerminal("vertical")}
-          disabled={snapshot.stream !== "live" || hasReachedSplitLimit}
-          style={control}
-        >
-          Split vertically
-          {hasReachedSplitLimit ? ` (max ${MAX_TERMINALS_PER_GROUP} per group)` : ""}
-        </button>
+        {/* Native's drawer names each action and its shortcut on hover, and
+            keeps the splits hoverable at the group limit to say why. */}
+        <Tooltip host={host} label={newTerminalLabel} side="bottom">
+          <button
+            type="button"
+            onClick={() => void panel.openTerminal()}
+            disabled={snapshot.stream !== "live"}
+            style={control}
+          >
+            New terminal
+          </button>
+        </Tooltip>
+        <Tooltip host={host} label={splitHorizontalLabel} side="bottom" showWhenDisabled>
+          <button
+            type="button"
+            onClick={() => void panel.splitTerminal("horizontal")}
+            disabled={snapshot.stream !== "live" || hasReachedSplitLimit}
+            style={control}
+          >
+            Split horizontally
+            {splitLimitNote === null ? "" : ` (${splitLimitNote})`}
+          </button>
+        </Tooltip>
+        <Tooltip host={host} label={splitVerticalLabel} side="bottom" showWhenDisabled>
+          <button
+            type="button"
+            onClick={() => void panel.splitTerminal("vertical")}
+            disabled={snapshot.stream !== "live" || hasReachedSplitLimit}
+            style={control}
+          >
+            Split vertically
+            {splitLimitNote === null ? "" : ` (${splitLimitNote})`}
+          </button>
+        </Tooltip>
         <span style={{ color: muted, fontSize: 12 }}>
           {snapshot.stream === "closed"
             ? "Session list disconnected"
