@@ -436,6 +436,30 @@ NodeTest.describe("terminal panel — reconciliation + tabs", () => {
   );
 
   NodeTest.it(
+    "a live pane the restarted server no longer has starts again once, like a restored one",
+    async () => {
+      const control = fakeControl();
+      const panel = new TerminalPanel({ control, launch });
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+      NodeAssert.equal(panel.snapshot.tabs[0]?.status, "running");
+      // The backend died and restarted: the resumed list has no term-1.
+      panel.beginListStream();
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [] });
+      NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
+      NodeAssert.equal(panel.snapshot.tabs[0]?.status, "closed");
+      panel.startMissingSessions(["term-1"]);
+      panel.startMissingSessions(["term-1"]);
+      await new Promise(setImmediate);
+      NodeAssert.deepEqual(
+        control.calls.map(([op, input]) => [op, input.terminalId, input.restartIfNotRunning]),
+        [["attach", "term-1", undefined]],
+      );
+      NodeAssert.equal(panel.snapshot.tabs[0]?.status, "running");
+      panel.dispose();
+    },
+  );
+
+  NodeTest.it(
     "racing restores never relaunch a session another restore just failed (fix-d9 r2)",
     async () => {
       // One server, two clients. The fake mirrors Manager.openOrAttach: an

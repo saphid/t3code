@@ -1041,8 +1041,11 @@ export class TerminalPanel {
         const serverIds = terminals.map((terminal) => terminal.terminalId);
         this.#ids = reconcileTerminalIds(this.#ids, serverIds);
         for (const terminal of terminals) this.#observeMeta(terminal);
-        for (const id of this.#tabs.keys()) {
+        for (const [id, tab] of this.#tabs) {
           if (!this.#ids.includes(id)) this.#tabs.delete(id);
+          // A kept tab the server has no session for (a restarted backend)
+          // reads as closed, so a shown pane starts again like a restored one.
+          else if (!serverIds.includes(id)) tab.meta = null;
         }
         this.#active = resolveActiveTerminalId(this.#ids, this.#active);
         // Native reconcileThreadTerminalSessionIds: the visible group

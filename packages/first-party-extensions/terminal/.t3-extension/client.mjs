@@ -12848,8 +12848,9 @@ var __t3Client = (() => {
           const serverIds = terminals.map((terminal) => terminal.terminalId);
           this.#ids = reconcileTerminalIds(this.#ids, serverIds);
           for (const terminal of terminals) this.#observeMeta(terminal);
-          for (const id2 of this.#tabs.keys()) {
+          for (const [id2, tab] of this.#tabs) {
             if (!this.#ids.includes(id2)) this.#tabs.delete(id2);
+            else if (!serverIds.includes(id2)) tab.meta = null;
           }
           this.#active = resolveActiveTerminalId(this.#ids, this.#active);
           this.#syncGroupsFollowingActive();
