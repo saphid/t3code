@@ -426,3 +426,48 @@ it("grants exactly the missing required permissions and never removes a held one
     await act(async () => root?.unmount());
   }
 });
+
+it("does not offer new grants that would exceed the per-installation cap", async () => {
+  fixture.manage = true;
+  fixture.update.mockClear();
+  const projectIds = ["project-a" as InstalledPackage["grants"]["projectIds"][number]];
+  const held = Array.from({ length: 31 }, (_, index) => `example.held/grant-${index}`);
+  fixture.installations = [
+    installed({ capabilities: held, projectIds }, [AGENT_SESSIONS_SCAN, AGENT_SESSIONS_IMPORT]),
+  ];
+  let root!: ReactTestRenderer;
+  try {
+    await act(async () => {
+      root = create(<InstalledExtensionsSettings />);
+    });
+    const text = (node: ReactTestInstance | string): string =>
+      typeof node === "string" ? node : node.children.map(text).join("");
+    // The missing grants stay listed, but the action the server would reject is not offered.
+    expect(text(root.root)).toContain("This version can use 2 permissions it does not have:");
+    expect(buttonIn(root, "Grant 2 new permissions")).toBeUndefined();
+    const status = root.root
+      .findAllByProps({ role: "status" })
+      .find((node) => node.children.join("").includes("at most 32"));
+    expect(status?.children.join("")).toBe(
+      "An installation can hold at most 32 permissions and this one has 31. Use Edit permissions to remove ones it does not need, then grant these.",
+    );
+    // The editor cannot apply more than the cap either.
+    await act(async () => buttonIn(root, "Edit permissions").props.onClick());
+    expect(buttonIn(root, "Apply selected permissions").props.disabled).toBe(false);
+    await act(async () =>
+      checkboxIn(root, `Allow ${AGENT_SESSIONS_SCAN} in selected projects`).props.onChange({
+        target: { checked: true },
+      }),
+    );
+    await act(async () =>
+      checkboxIn(root, `Allow ${AGENT_SESSIONS_IMPORT} in selected projects`).props.onChange({
+        target: { checked: true },
+      }),
+    );
+    expect(buttonIn(root, "Apply selected permissions").props.disabled).toBe(true);
+    expect(fixture.update).not.toHaveBeenCalled();
+  } finally {
+    fixture.installations = [];
+    await act(async () => root?.unmount());
+  }
+});

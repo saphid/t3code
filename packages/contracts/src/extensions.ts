@@ -5,9 +5,14 @@ import { EnvironmentId, ProjectId, ThreadId } from "./baseSchemas.ts";
 
 const Identity = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(160));
 export const ExtensionContentHash = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
+/**
+ * Most capabilities one installation may hold. A sanity bound, mirrored by the
+ * extension runtime's grants validator; the largest first-party pack's
+ * declared APIs check 19. Raised 16 -> 32 by operator decision for the browser pack.
+ */
+export const EXTENSION_GRANT_CAPABILITIES_MAX = 32;
 export const ExtensionGrants = Schema.Struct({
-  // raised 16 -> 32: first-party browser pack reached the cap with legitimately distinct grants; operator decision, no grant consolidation
-  capabilities: Schema.Array(Identity).check(Schema.isMaxLength(32)),
+  capabilities: Schema.Array(Identity).check(Schema.isMaxLength(EXTENSION_GRANT_CAPABILITIES_MAX)),
   projectIds: Schema.Array(ProjectId).check(Schema.isMaxLength(64)),
 });
 /** Portable package metadata is validated against the public SDK at the host boundary. */
