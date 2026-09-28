@@ -208,7 +208,7 @@ describe("preferences adapter", () => {
       target: { kind: "connection", connectionId: "conn-1" },
       writer: "ext.a",
       patch: { wordWrap: false },
-      include: ["renderBrowserFile"],
+      include: ["renderBrowserFile", "fileExplorerOpen"],
     });
   });
 
@@ -230,7 +230,7 @@ describe("preferences adapter", () => {
         name: "watchPreferences",
         input: {
           target: { kind: "connection", connectionId: "conn-1" },
-          include: ["renderBrowserFile"],
+          include: ["renderBrowserFile", "fileExplorerOpen"],
         },
         coalesce: true,
       },
@@ -630,6 +630,66 @@ describe("1.1.0 client seam additions", () => {
     expect(
       bridge.invoked.map(({ method, input }) => [method, (input as { include?: unknown }).include]),
     ).toEqual([["getPreferences", undefined]]);
+  });
+});
+
+// Review repro (gaps-files-2 P2): the file explorer choice is a 1.2.0
+// preference; a 1.1.0 client is asked only for what it knows.
+describe("1.2.0 file explorer preference", () => {
+  const seam = (preferences: string) =>
+    fakeBridge({
+      targets: [
+        {
+          connectionId: "conn-1",
+          providers: [{ id: "t3.client/preferences", version: preferences }],
+        },
+      ],
+    });
+
+  it("asks only a 1.2.0 client for fileExplorerOpen", async () => {
+    const includes = async (version: string) => {
+      const bridge = seam(version);
+      const { preferences } = makeProviders(bridge);
+      await preferences.invoke("getPreferences", {} as Json, context, signal, metadata());
+      await Promise.resolve(
+        preferences.invoke(
+          "setPreferences",
+          { fileExplorerOpen: false } as Json,
+          context,
+          signal,
+          metadata(),
+        ),
+      ).catch(() => {});
+      for await (const _event of preferences.subscribe!(
+        "subscribePreferences",
+        {},
+        context,
+        signal,
+        metadata(),
+      ));
+      return [
+        ...bridge.invoked.map(({ input }) => (input as { include?: unknown }).include),
+        ...bridge.subscribed.map(({ input }) => (input as { include?: unknown }).include),
+      ];
+    };
+    const both = ["renderBrowserFile", "fileExplorerOpen"];
+    expect(await includes("1.2.0")).toEqual([both, both, both]);
+    // The write never reaches a client that predates the key.
+    expect(await includes("1.1.0")).toEqual([["renderBrowserFile"], ["renderBrowserFile"]]);
+  });
+
+  it("refuses a fileExplorerOpen write to a client that predates it", async () => {
+    const bridge = seam("1.1.0");
+    await expect(
+      makeProviders(bridge).preferences.invoke(
+        "setPreferences",
+        { fileExplorerOpen: false } as Json,
+        context,
+        signal,
+        metadata(),
+      ),
+    ).rejects.toMatchObject({ code: "provider-rejected" });
+    expect(bridge.invoked).toHaveLength(0);
   });
 });
 

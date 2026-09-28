@@ -117,6 +117,7 @@ import {
   visibleRows,
   watchPreferences,
   writeRenderHtml,
+  writeFileExplorerOpen,
   writeWordWrap,
   type ContentSearchResults,
   type FileOpenState,
@@ -404,6 +405,9 @@ function useThemeVars(
 function useFilePreferences(host: ClientHost, session: ViewSession, visible: boolean) {
   const [value, setValue] = useState<boolean | null>(null);
   const [renderHtml, setRenderHtml] = useState<boolean | undefined>(undefined);
+  // The explorer choice as the view opened: native reads it once, on mount,
+  // so a later change elsewhere does not move an open view's explorer.
+  const [fileExplorerOpen, setFileExplorerOpen] = useState<boolean | undefined>(undefined);
   // False until the feed first answers — with a value, or with "none" from a
   // host without the preference. Until then the saved HTML choice is unknown.
   const [answered, setAnswered] = useState(false);
@@ -419,6 +423,12 @@ function useFilePreferences(host: ClientHost, session: ViewSession, visible: boo
     const current = () => htmlChoices.current === begunAt;
     let subscribed = false;
     let streamAnswered = false;
+    let explorerRead = false;
+    const readExplorer = (open: boolean | undefined) => {
+      if (open === undefined || explorerRead) return;
+      explorerRead = true;
+      setFileExplorerOpen(open);
+    };
     void watchPreferences({
       client: host,
       context: session.context,
@@ -427,6 +437,7 @@ function useFilePreferences(host: ClientHost, session: ViewSession, visible: boo
         setValue(preferences?.wordWrap ?? null);
         if (preferences?.renderBrowserFile !== undefined && (streamAnswered || current()))
           setRenderHtml(preferences.renderBrowserFile);
+        readExplorer(preferences?.fileExplorerOpen);
         // The clear watchPreferences makes synchronously as it subscribes is
         // not an answer; every later call is.
         if (subscribed) {
@@ -446,6 +457,7 @@ function useFilePreferences(host: ClientHost, session: ViewSession, visible: boo
           if (signal.aborted || streamAnswered) return;
           if (preferences.renderBrowserFile !== undefined && current())
             setRenderHtml(preferences.renderBrowserFile);
+          readExplorer(preferences.fileExplorerOpen);
           setAnswered(true);
         },
         () => {
@@ -469,7 +481,13 @@ function useFilePreferences(host: ClientHost, session: ViewSession, visible: boo
   const chooseHtml = () => {
     htmlChoices.current++;
   };
-  return { wordWrap: { value, writeError, toggle }, renderHtml, answered, chooseHtml };
+  return {
+    wordWrap: { value, writeError, toggle },
+    renderHtml,
+    answered,
+    chooseHtml,
+    fileExplorerOpen,
+  };
 }
 
 /**
@@ -1430,10 +1448,31 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     if (!markdownRendered) setRenderedOverReveal(revealRequest);
   };
   // Native parity (FilePreviewPanel): the explorer beside an open file can be
-  // hidden; the choice persists with the view, as the rendered-markdown one does.
+  // hidden. The choice is the client's shared one, the native panel's own,
+  // read as the view opens and written on each toggle; the view record keeps
+  // it for hosts that predate the preference. A toggle before the read
+  // answers wins.
   const [explorerOpen, setExplorerOpen] = useState(() =>
     restoredExplorerOpen(session.restoreState),
   );
+  const [explorerChosen, setExplorerChosen] = useState(false);
+  const [readExplorerOpen, setReadExplorerOpen] = useState(preferences.fileExplorerOpen);
+  if (preferences.fileExplorerOpen !== readExplorerOpen) {
+    setReadExplorerOpen(preferences.fileExplorerOpen);
+    if (preferences.fileExplorerOpen !== undefined && !explorerChosen)
+      setExplorerOpen(preferences.fileExplorerOpen);
+  }
+  const toggleExplorer = () => {
+    const next = !explorerOpen;
+    setExplorerOpen(next);
+    setExplorerChosen(true);
+    void writeFileExplorerOpen({
+      client: host,
+      context: session.context,
+      signal: session.signal,
+      fileExplorerOpen: next,
+    });
+  };
   const showExplorer = showsFileExplorer(selected, explorerOpen);
   // The latest reveal of the selected file persists with it, so a reload
   // reveals that line rather than the one the view first opened at.
@@ -2357,11 +2396,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           )}
           {presentationPath(selected) !== null && (
             <Tooltip host={host} label={explorerOpen ? "Hide file explorer" : "Show file explorer"}>
-              <button
-                type="button"
-                aria-pressed={explorerOpen}
-                onClick={() => setExplorerOpen((open) => !open)}
-              >
+              <button type="button" aria-pressed={explorerOpen} onClick={toggleExplorer}>
                 {explorerOpen ? "Hide file explorer" : "Show file explorer"}
               </button>
             </Tooltip>

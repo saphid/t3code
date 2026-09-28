@@ -38,6 +38,8 @@ const READ = "t3.ui/preferences.read";
 const WRITE = "t3.ui/preferences.write";
 /** The native file preview's own key: both panels share one HTML preference. */
 const RENDER_BROWSER_FILE_KEY = "t3code.renderBrowserFile";
+/** The native file preview's explorer key: both panels share one explorer choice. */
+const FILE_EXPLORER_KEY = "t3code.fileExplorerOpen";
 
 const caller: ClientProviderCaller = {
   installationId: INSTALL,
@@ -86,6 +88,7 @@ beforeEach(() => {
     .mockResolvedValue({ ...DEFAULT_CLIENT_SETTINGS, wordWrap: false });
   persistenceMocks.setClientSettings.mockReset().mockResolvedValue(undefined);
   removeLocalStorageItem(RENDER_BROWSER_FILE_KEY);
+  removeLocalStorageItem(FILE_EXPLORER_KEY);
 });
 
 describe("preferences client provider", () => {
@@ -194,6 +197,53 @@ describe("preferences client provider", () => {
     close();
     await persistClientSettingsPatch({ wordWrap: false }, async () => {});
     expect(events).toHaveLength(2);
+  });
+
+  // Review repro (gaps-files-2 P2): the Files pack's explorer choice is the
+  // native file preview's own stored one, in both directions.
+  describe("file explorer preference", () => {
+    /** A 1.2.0 server asks for the key; an older one never does. */
+    const INCLUDE = { include: ["renderBrowserFile", "fileExplorerOpen"] };
+
+    it("reads the native panel's stored choice, shown when never chosen", async () => {
+      const provider = createPreferencesClientProvider(makeDeps([READ]));
+      await expect(provider.invoke(invokeCall("getPreferences", INCLUDE))).resolves.toEqual({
+        wordWrap: false,
+        renderBrowserFile: true,
+        fileExplorerOpen: true,
+      });
+      setLocalStorageItem(FILE_EXPLORER_KEY, false, Schema.Boolean);
+      await expect(provider.invoke(invokeCall("getPreferences", INCLUDE))).resolves.toMatchObject({
+        fileExplorerOpen: false,
+      });
+      // A 1.1.0 server is answered without it.
+      await expect(
+        provider.invoke(invokeCall("getPreferences", { include: ["renderBrowserFile"] })),
+      ).resolves.toEqual({ wordWrap: false, renderBrowserFile: true });
+    });
+
+    it("persists a pack's choice where the native panel reads it, and shows it again", async () => {
+      const writer = createPreferencesClientProvider(makeDeps([READ, WRITE]));
+      const write = (fileExplorerOpen: unknown) =>
+        writer.invoke(
+          invokeCall("applyPreferences", {
+            writer: INSTALL,
+            patch: { fileExplorerOpen },
+            ...INCLUDE,
+          } as Json),
+        );
+      await expect(write(false)).resolves.toMatchObject({
+        applied: true,
+        preferences: { fileExplorerOpen: false },
+      });
+      expect(getLocalStorageItem(FILE_EXPLORER_KEY, Schema.Boolean)).toBe(false);
+      await expect(write(true)).resolves.toMatchObject({
+        preferences: { fileExplorerOpen: true },
+      });
+      expect(getLocalStorageItem(FILE_EXPLORER_KEY, Schema.Boolean)).toBe(true);
+      await expect(write("no")).rejects.toMatchObject({ code: "provider-rejected" });
+      expect(persistenceMocks.setClientSettings).not.toHaveBeenCalled();
+    });
   });
 
   describe("HTML render preference", () => {

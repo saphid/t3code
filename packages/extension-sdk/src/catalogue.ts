@@ -9014,67 +9014,107 @@ export type UiPreferences = {
    * file preview's own choice. Absent on hosts that predate it.
    */
   readonly renderBrowserFile?: boolean;
+  /**
+   * 1.2.0: the file explorer shows beside an open file (true) or is hidden
+   * (false) — the native file preview's own choice. Absent on older hosts.
+   */
+  readonly fileExplorerOpen?: boolean;
 };
+
+type UiPreferencesMethods<P> = {
+  getCapabilities: { input: Record<string, never>; output: UiCapabilities };
+  getPreferences: { input: Record<string, never>; output: P };
+  setPreferences: {
+    input: Partial<P>;
+    output: { applied: boolean; reason?: string; preferences: P };
+  };
+};
+
+/** The `t3.ui/preferences` definition at `version` over one preference shape. */
+const uiPreferencesDefinition = (
+  version: string,
+  preferences: JsonObject,
+  patch: JsonObject,
+): ApiDefinition => ({
+  id: UI_PREFERENCES,
+  version,
+  methods: [
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: composerEmptyInputSchema,
+      outputSchema: uiCapabilitiesOutput([
+        "getPreferences",
+        "setPreferences",
+        "subscribePreferences",
+      ]),
+    },
+    {
+      name: "getPreferences",
+      effect: "read",
+      requiredGrants: [UI_PREFERENCES_READ],
+      inputSchema: composerEmptyInputSchema,
+      outputSchema: preferences,
+    },
+    {
+      name: "setPreferences",
+      effect: "write",
+      requiredGrants: [UI_PREFERENCES_WRITE],
+      inputSchema: patch,
+      outputSchema: {
+        ...clientPreferencesReceiptSchema,
+        properties: { ...clientPreferencesReceiptSchema.properties, preferences },
+      },
+    },
+  ],
+  streams: [
+    {
+      name: "subscribePreferences",
+      inputSchema: composerEmptyInputSchema,
+      eventSchema: preferences,
+      requiredGrants: [UI_PREFERENCES_READ],
+    },
+  ],
+});
 
 /**
  * `t3.ui/preferences` — typed read, change stream and write receipt for a
  * named subset of the target client's persisted settings. The stream emits a
  * snapshot, then one frame per actual change; it never polls. 1.1.0 adds
- * `renderBrowserFile`; a 1.0.0 host omits it from reads and rejects it in a
- * write, so bind `setPreferences` at ^1.1.0 to send it.
+ * `renderBrowserFile` and 1.2.0 `fileExplorerOpen`; an older host omits a
+ * later key from reads and rejects it in a write, so bind `setPreferences` at
+ * the key's version to send it.
  */
-export const uiPreferencesApi = defineApi<{
-  getCapabilities: { input: Record<string, never>; output: UiCapabilities };
-  getPreferences: { input: Record<string, never>; output: UiPreferences };
-  setPreferences: {
-    input: Partial<UiPreferences>;
-    output: { applied: boolean; reason?: string; preferences: UiPreferences };
-  };
-}>(
-  {
-    id: UI_PREFERENCES,
-    version: "1.1.0",
-    methods: [
-      {
-        name: "getCapabilities",
-        effect: "read",
-        requiredGrants: [],
-        inputSchema: composerEmptyInputSchema,
-        outputSchema: uiCapabilitiesOutput([
-          "getPreferences",
-          "setPreferences",
-          "subscribePreferences",
-        ]),
-      },
-      {
-        name: "getPreferences",
-        effect: "read",
-        requiredGrants: [UI_PREFERENCES_READ],
-        inputSchema: composerEmptyInputSchema,
-        outputSchema: clientPreferencesSchema,
-      },
-      {
-        name: "setPreferences",
-        effect: "write",
-        requiredGrants: [UI_PREFERENCES_WRITE],
-        inputSchema: clientPreferencesPatchSchema,
-        outputSchema: clientPreferencesReceiptSchema,
-      },
-    ],
-    streams: [
-      {
-        name: "subscribePreferences",
-        inputSchema: composerEmptyInputSchema,
-        eventSchema: clientPreferencesSchema,
-        requiredGrants: [UI_PREFERENCES_READ],
-      },
-    ],
-  },
-  // Consumers keep loading on a 1.0.0 host; probe before writing the 1.1.0 key.
+export const uiPreferencesApi = defineApi<UiPreferencesMethods<UiPreferences>>(
+  uiPreferencesDefinition("1.2.0", clientPreferencesSchema, clientPreferencesPatchSchema),
+  // Consumers keep loading on a 1.0.0 host; probe before writing a later key.
   {
     baseline: "1.0.0",
-    additions: [{ version: "1.1.0", method: "setPreferences", input: "renderBrowserFile" }],
+    additions: [
+      { version: "1.1.0", method: "setPreferences", input: "renderBrowserFile" },
+      { version: "1.2.0", method: "setPreferences", input: "fileExplorerOpen" },
+    ],
   },
+);
+
+/** 1.1.0's closed preference shape, before `fileExplorerOpen`. */
+const uiPreferencesV1_1Schema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["wordWrap"],
+  properties: { wordWrap: { type: "boolean" }, renderBrowserFile: { type: "boolean" } },
+} as const;
+
+/** Frozen published 1.1.0 definition, before `fileExplorerOpen`; providers may still declare it. */
+export const uiPreferencesApiV1_1 = defineApi<
+  UiPreferencesMethods<Omit<UiPreferences, "fileExplorerOpen">>
+>(
+  uiPreferencesDefinition("1.1.0", uiPreferencesV1_1Schema, {
+    type: "object",
+    additionalProperties: false,
+    properties: uiPreferencesV1_1Schema.properties,
+  }),
 );
 
 /** 1.0.0's closed preference shape, before `renderBrowserFile`. */
@@ -9646,6 +9686,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   uiNotificationsApi.definition,
   uiPanelsApi.definition,
   uiPreferencesApi.definition,
+  uiPreferencesApiV1_1.definition,
   uiPreferencesApiV1.definition,
   uiExternalApi.definition,
   uiEditorApi.definition,

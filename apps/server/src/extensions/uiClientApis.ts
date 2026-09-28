@@ -25,6 +25,7 @@ import {
   CLIENT_NAVIGATION_V12_RANGE,
   CLIENT_NOTIFICATIONS_V11_RANGE,
   CLIENT_PREFERENCES_V11_RANGE,
+  CLIENT_PREFERENCES_V12_RANGE,
 } from "@t3tools/extension-sdk/clientProviders";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import type { HostApiInvocationMetadata, HostApiProvider } from "@t3tools/extension-runtime";
@@ -456,19 +457,24 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
    * older one would reject the frame. A client that lists no version for the
    * area has none of its additions.
    */
+  /** The version of `apiId` the client on `connectionId` lists, if any. */
+  const clientVersion = async (connectionId: string, apiId: string, signal: AbortSignal) => {
+    const targets = await Effect.runPromise(
+      deps.clientApiProviders.listTargets(deps.environmentId),
+      { signal },
+    );
+    return targets
+      .find((target) => target.connectionId === connectionId)
+      ?.providers.find((provider) => provider.id === apiId)?.version;
+  };
+
   const clientSupports = async (
     connectionId: string,
     apiId: string,
     range: string,
     signal: AbortSignal,
   ) => {
-    const targets = await Effect.runPromise(
-      deps.clientApiProviders.listTargets(deps.environmentId),
-      { signal },
-    );
-    const version = targets
-      .find((target) => target.connectionId === connectionId)
-      ?.providers.find((provider) => provider.id === apiId)?.version;
+    const version = await clientVersion(connectionId, apiId, signal);
     // An unlisted area is not a current one: the client is refused, never guessed.
     return { ok: version !== undefined && satisfiesSemverRange(version, range), version };
   };
@@ -499,19 +505,19 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
     );
 
   /**
-   * The preferences target plus the 1.1.0 keys it may answer with. A 1.0.0
-   * client is never asked, and a 1.0.0 server never asks, so neither side
-   * sees a field its closed shapes reject.
+   * The preferences target plus the later keys it may answer with. A client
+   * is asked only for keys its area has, and an older server never asks, so
+   * neither side sees a field its closed shapes reject.
    */
   const preferencesTarget = async (metadata: HostApiInvocationMetadata, signal: AbortSignal) => {
     const connectionId = await Effect.runPromise(resolveConnectionId(deps, metadata), { signal });
-    const { ok } = await clientSupports(
-      connectionId,
-      CLIENT_PREFERENCES,
-      CLIENT_PREFERENCES_V11_RANGE,
-      signal,
-    );
-    return { connectionId, include: ok ? { include: ["renderBrowserFile"] } : {} };
+    const version = await clientVersion(connectionId, CLIENT_PREFERENCES, signal);
+    const has = (range: string) => version !== undefined && satisfiesSemverRange(version, range);
+    const include = [
+      ...(has(CLIENT_PREFERENCES_V11_RANGE) ? ["renderBrowserFile"] : []),
+      ...(has(CLIENT_PREFERENCES_V12_RANGE) ? ["fileExplorerOpen"] : []),
+    ];
+    return { connectionId, include: include.length > 0 ? { include } : {} };
   };
 
   const themeProvider: HostApiProvider = {
@@ -984,12 +990,21 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
           return (async () => {
             const { connectionId, include } = await preferencesTarget(metadata, signal);
             const write = method === "setPreferences";
-            if (write && (input as { renderBrowserFile?: unknown }).renderBrowserFile !== undefined)
+            const patch = input as { renderBrowserFile?: unknown; fileExplorerOpen?: unknown };
+            if (write && patch.renderBrowserFile !== undefined)
               await requireClient(
                 connectionId,
                 CLIENT_PREFERENCES,
                 CLIENT_PREFERENCES_V11_RANGE,
                 "renderBrowserFile",
+                signal,
+              );
+            if (write && patch.fileExplorerOpen !== undefined)
+              await requireClient(
+                connectionId,
+                CLIENT_PREFERENCES,
+                CLIENT_PREFERENCES_V12_RANGE,
+                "fileExplorerOpen",
                 signal,
               );
             return Effect.runPromise(

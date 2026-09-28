@@ -855,27 +855,33 @@ export const clientPreferencesSchema = {
   required: ["wordWrap"],
   properties: {
     wordWrap: { type: "boolean" },
-    // 1.1.0, and only when the server asks for it (`include`).
+    // 1.1.0 and 1.2.0 respectively, and only when the server asks (`include`).
     renderBrowserFile: { type: "boolean" },
+    fileExplorerOpen: { type: "boolean" },
   },
 } as const;
 
 /**
- * 1.1.0 keys a server asks for. A 1.0.0 server validates answers against its
- * closed shapes, so a client includes a 1.1.0 key only when asked; a server
- * asks only a client whose area satisfies `CLIENT_PREFERENCES_V11_RANGE`.
+ * Later keys a server asks for. An older server validates answers against its
+ * closed shapes, so a client includes a key only when asked; a server asks
+ * for `renderBrowserFile` only a client satisfying
+ * `CLIENT_PREFERENCES_V11_RANGE`, and for `fileExplorerOpen` only one
+ * satisfying `CLIENT_PREFERENCES_V12_RANGE`.
  */
 const preferencesIncludeProperty = {
   include: {
     type: "array",
-    maxItems: 1,
+    maxItems: 2,
     uniqueItems: true,
-    items: { enum: ["renderBrowserFile"] },
+    items: { enum: ["renderBrowserFile", "fileExplorerOpen"] },
   },
 } as const;
 
 /** The range that carries `renderBrowserFile` and `include`. */
 export const CLIENT_PREFERENCES_V11_RANGE = "^1.1.0";
+
+/** The range that carries `fileExplorerOpen`. */
+export const CLIENT_PREFERENCES_V12_RANGE = "^1.2.0";
 
 /** The writable subset of `clientPreferencesSchema`. */
 export const clientPreferencesPatchSchema = {
@@ -884,6 +890,7 @@ export const clientPreferencesPatchSchema = {
   properties: {
     wordWrap: { type: "boolean" },
     renderBrowserFile: { type: "boolean" },
+    fileExplorerOpen: { type: "boolean" },
   },
 } as const;
 
@@ -901,7 +908,7 @@ export const clientPreferencesReceiptSchema = {
 
 export const CLIENT_PREFERENCES_API = validateApiDefinition({
   id: "t3.client/preferences",
-  version: "1.1.0",
+  version: "1.2.0",
   methods: [
     {
       name: "getPreferences",

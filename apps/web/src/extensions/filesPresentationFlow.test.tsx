@@ -132,8 +132,15 @@ type Calls = {
   saves: number;
   log: string[][];
   presentations: ApiInvocation[];
+  preferenceWrites: unknown[];
 };
-const newCalls = (): Calls => ({ reads: 0, saves: 0, log: [], presentations: [] });
+const newCalls = (): Calls => ({
+  reads: 0,
+  saves: 0,
+  log: [],
+  presentations: [],
+  preferenceWrites: [],
+});
 
 const preferenceFrame = (disk: Disk) =>
   disk.preferences ??
@@ -176,12 +183,10 @@ function packHost(disk: Disk, calls: Calls) {
       if (request.id === "t3.file/presentation")
         return filesServer.apis[0]!.methods[0]!.invoke(request.input, { signal });
       if (request.id === "t3.ui/navigation") return navigation.invoke(request, signal);
-      if (
-        request.id === "t3.ui/preferences" &&
-        request.method === "setPreferences" &&
-        disk.preferenceWrite
-      )
-        return disk.preferenceWrite;
+      if (request.id === "t3.ui/preferences" && request.method === "setPreferences") {
+        calls.preferenceWrites.push(request.input);
+        if (disk.preferenceWrite) return disk.preferenceWrite;
+      }
       if (request.id === "t3.ui/preferences" && request.method === "getPreferences") {
         const frame = await (disk.preferencesRead ?? preferenceFrame(disk));
         if (frame instanceof Error) throw frame;
@@ -1102,6 +1107,48 @@ describe("hiding the file explorer", () => {
       expect(explorer(panel)).toEqual({ tree: false, search: false, hide: undefined, show: false });
       await act(async () => panel.button("Show file explorer")!.props.onClick());
       expect(explorer(panel)).toEqual({ tree: true, search: true, hide: true, show: undefined });
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
+
+// Review repro (gaps-files-2 P2): the explorer choice is the native file
+// preview's shared one, read when a view opens and written when toggled.
+describe("the shared file explorer choice", () => {
+  const shownWith = (fileExplorerOpen: boolean): Promise<Frame> =>
+    Promise.resolve({
+      type: "snapshot",
+      value: { wordWrap: false, renderBrowserFile: true, fileExplorerOpen },
+    });
+
+  it("starts hidden in a new view when the native panel hid it", async () => {
+    const panel = await mountPanel({ files: { "a.txt": "a" }, preferences: shownWith(false) });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "a.txt"));
+      expect(panel.labelled("Workspace files")).toBeUndefined();
+      expect(panel.button("Show file explorer")).toBeDefined();
+    } finally {
+      await panel.unmount();
+    }
+  });
+
+  it("writes each choice where the native panel and new views read it", async () => {
+    const panel = await mountPanel({
+      files: { "a.txt": "a" },
+      preferences: shownWith(true),
+      preferenceWrite: Promise.resolve({ applied: true, preferences: { wordWrap: false } }),
+    });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "a.txt"));
+      expect(panel.labelled("Workspace files")).toBeDefined();
+      await act(async () => panel.button("Hide file explorer")!.props.onClick());
+      await act(async () => panel.button("Show file explorer")!.props.onClick());
+      expect(panel.calls.preferenceWrites).toEqual([
+        { fileExplorerOpen: false },
+        { fileExplorerOpen: true },
+      ]);
+      expect(panel.labelled("Workspace files")).toBeDefined();
     } finally {
       await panel.unmount();
     }

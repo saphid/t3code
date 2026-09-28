@@ -59,7 +59,10 @@ without its grant or provider):
   before. The HTML rendered/source choice rides the same preference
   (`renderBrowserFile`, 1.1.0, the native preview's own), so it carries across
   files, presentations and reloads; an HTML file loads nothing until the
-  preference first answers. Hosts without it keep the choice per view.
+  preference first answers. Hiding the file explorer does too
+  (`fileExplorerOpen`, 1.2.0): a view reads it as it opens, as the native
+  panel does, and each toggle writes it. Hosts without a key keep that choice
+  per view.
 
 Files the editor cannot open (past the edit bound, binary-adjacent,
 non-UTF-8) show read-only. Where the host offers `ClientHost.codeView`, that

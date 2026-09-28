@@ -1458,7 +1458,7 @@ export function watchPreferences(options: {
         if (frame.type === "closed") break;
         if (frame.type === "snapshot" || frame.type === "data") {
           const value = frame.value;
-          const { wordWrap, renderBrowserFile } = (
+          const { wordWrap, renderBrowserFile, fileExplorerOpen } = (
             typeof value === "object" && value !== null ? value : {}
           ) as Partial<Record<keyof UiPreferences, unknown>>;
           options.apply(
@@ -1466,6 +1466,7 @@ export function watchPreferences(options: {
               ? {
                   wordWrap,
                   ...(typeof renderBrowserFile === "boolean" ? { renderBrowserFile } : {}),
+                  ...(typeof fileExplorerOpen === "boolean" ? { fileExplorerOpen } : {}),
                 }
               : null,
           );
@@ -1532,6 +1533,26 @@ export function writeRenderHtml(options: {
     { renderBrowserFile: options.renderHtml },
     "HTML preview choice",
     "^1.1.0",
+  );
+}
+
+/**
+ * Writes whether the file explorer shows, to the client preference the native
+ * file preview reads when it opens; see `writePreference`. The key is
+ * `t3.ui/preferences` 1.2.0: an older host refuses the write and the view
+ * keeps its own choice.
+ */
+export function writeFileExplorerOpen(options: {
+  readonly client: Pick<ApiClient, "invokeApi">;
+  readonly context: ViewContext;
+  readonly signal: AbortSignal;
+  readonly fileExplorerOpen: boolean;
+}): Promise<string | null> {
+  return writePreference(
+    options,
+    { fileExplorerOpen: options.fileExplorerOpen },
+    "File explorer choice",
+    "^1.2.0",
   );
 }
 
