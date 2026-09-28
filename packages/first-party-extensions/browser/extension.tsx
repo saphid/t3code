@@ -1192,6 +1192,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             zoomFactor={live?.zoomFactor ?? null}
             anchor={contentElement}
             floating={floating}
+            visible={visible}
           />
           {deviceMode && viewportSetting && (
             <>

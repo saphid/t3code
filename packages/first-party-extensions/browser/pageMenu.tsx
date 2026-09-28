@@ -48,8 +48,14 @@ export function ZoomIndicator(props: {
   /** The page area; the pill sits inside its top-right corner. */
   anchor: HTMLElement | null;
   floating: PanelFloating;
+  /**
+   * Whether the panel is shown. The pill portals out of the panel, so it
+   * renders only while shown; its timer runs on while hidden, as native's
+   * in-panel pill does.
+   */
+  visible: boolean;
 }) {
-  const { zoomFactor, anchor, floating } = props;
+  const { zoomFactor, anchor, floating, visible } = props;
   const [shown, setShown] = useState<number | null>(null);
   const last = useRef(zoomFactor);
   useEffect(() => {
@@ -64,7 +70,7 @@ export function ZoomIndicator(props: {
     const timer = setTimeout(() => setShown(null), ZOOM_INDICATOR_MS);
     return () => clearTimeout(timer);
   }, [zoomFactor]);
-  if (shown === null) return null;
+  if (shown === null || !visible) return null;
   const { Popover } = floating;
   return (
     <Popover

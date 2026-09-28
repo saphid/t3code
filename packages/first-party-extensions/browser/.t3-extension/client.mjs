@@ -15086,7 +15086,7 @@ ${ind(d)}}`;
   ];
   var ZOOM_INDICATOR_MS = 1500;
   function ZoomIndicator(props) {
-    const { zoomFactor, anchor, floating } = props;
+    const { zoomFactor, anchor, floating, visible } = props;
     const [shown, setShown] = (0, import_react4.useState)(null);
     const last = (0, import_react4.useRef)(zoomFactor);
     (0, import_react4.useEffect)(() => {
@@ -15101,7 +15101,7 @@ ${ind(d)}}`;
       const timer = setTimeout(() => setShown(null), ZOOM_INDICATOR_MS);
       return () => clearTimeout(timer);
     }, [zoomFactor]);
-    if (shown === null) return null;
+    if (shown === null || !visible) return null;
     const { Popover } = floating;
     return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
       Popover,
@@ -17061,7 +17061,8 @@ ${titledTitle}`;
               {
                 zoomFactor: live?.zoomFactor ?? null,
                 anchor: contentElement,
-                floating
+                floating,
+                visible
               },
               held.tabId
             ),

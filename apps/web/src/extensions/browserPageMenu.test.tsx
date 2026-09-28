@@ -5,9 +5,15 @@ import type { FloatingPopoverProps } from "@t3tools/extension-sdk/environment";
 
 // The pack is not a web dependency, so this project cannot type-check its
 // source; the menu is loaded by path and typed by the props used here.
-const { PageMenu } = (await import(
+const { PageMenu, ZoomIndicator } = (await import(
   "../../../../packages/first-party-extensions/browser/pageMenu.tsx" as string
 )) as {
+  ZoomIndicator: ComponentType<{
+    zoomFactor: number | null;
+    anchor: HTMLElement | null;
+    floating: { Popover: ComponentType<FloatingPopoverProps>; style: object };
+    visible: boolean;
+  }>;
   PageMenu: ComponentType<{
     session: object | null;
     blockReason: string | null;
@@ -80,6 +86,48 @@ describe("Browser page menu", () => {
 
     toggle(renderer);
     expect(openMenus(renderer)).toHaveLength(1);
+    act(() => renderer.unmount());
+  });
+});
+
+describe("Browser zoom indicator", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const pill = (zoomFactor: number, visible: boolean) =>
+    createElement(ZoomIndicator, {
+      zoomFactor,
+      anchor: null,
+      floating: { Popover, style: {} },
+      visible,
+    });
+  const pills = (renderer: ReactTestRenderer) =>
+    renderer.root.findAll((node) => node.type === "div" && node.props.role === "status");
+
+  // Native keeps its pill inside the panel, so hiding hides it and its timer runs on.
+  it("never shows while the retained panel is hidden", () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(pill(1, true));
+    });
+    act(() => renderer.update(pill(1.25, true)));
+    expect(pills(renderer)).toHaveLength(1);
+
+    act(() => renderer.update(pill(1.25, false)));
+    expect(pills(renderer)).toHaveLength(0);
+
+    act(() => renderer.update(pill(1.5, false)));
+    expect(pills(renderer)).toHaveLength(0);
+
+    act(() => {
+      vi.advanceTimersByTime(1500);
+    });
+    act(() => renderer.update(pill(1.5, true)));
+    expect(pills(renderer)).toHaveLength(0);
     act(() => renderer.unmount());
   });
 });
