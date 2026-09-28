@@ -29,7 +29,7 @@ import {
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
+import { isProviderRepositoryUrlAllowed } from "@t3tools/shared/sourceControl";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
@@ -326,6 +326,22 @@ function sanitizeRemoteName(value: string): string {
     .replace(/[^A-Za-z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return sanitized.length > 0 ? sanitized : "fork";
+}
+
+// The repository a remote URL names. SSH on its default port and HTTPS on its default port are
+// one forge's two doors to a repository, so they share a key. Plain HTTP and any other port can be
+// a different server serving the same path, so the scheme and port stay in the key.
+function remoteRepositoryKey(url: string): string {
+  const key = normalizeGitRemoteUrl(url);
+  if (!/^(?:ssh|https?):\/\//iu.test(url.trim())) return key;
+  try {
+    const { protocol, port } = new URL(url.trim());
+    const isDefaultDoor =
+      protocol === "https:" ? port === "" : protocol === "ssh:" && (port === "" || port === "22");
+    return isDefaultDoor ? key : `${protocol}${port}/${key}`;
+  } catch {
+    return key;
+  }
 }
 
 function parseRemoteFetchUrls(stdout: string): Map<string, string> {
@@ -1489,7 +1505,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     "ensureRemote",
   )(function* (input) {
     const preferredName = sanitizeRemoteName(input.preferredName);
-    const normalizedTargetUrl = normalizeGitRemoteUrl(input.url);
+    const targetKey = remoteRepositoryKey(input.url);
     const remoteFetchUrls = yield* runGitStdout(
       "GitVcsDriver.ensureRemote.listRemoteUrls",
       input.cwd,
@@ -1497,11 +1513,27 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ).pipe(Effect.map((stdout) => parseRemoteFetchUrls(stdout)));
 
     for (const [remoteName, remoteUrl] of remoteFetchUrls.entries()) {
-      if (normalizeGitRemoteUrl(remoteUrl) === normalizedTargetUrl) {
+      if (remoteRepositoryKey(remoteUrl) === targetKey) {
         return remoteName;
       }
     }
 
+    // A remote the user configured is theirs to trust; one added here takes its URL from the
+    // provider, so it must be a hosting service's, or origin's own plain-HTTP server.
+    const originUrl = yield* runGitStdout(
+      "GitVcsDriver.ensureRemote.readOriginUrl",
+      input.cwd,
+      ["config", "--get", "remote.origin.url"],
+      true,
+    );
+    if (!isProviderRepositoryUrlAllowed(input.url, originUrl)) {
+      return yield* new GitCommandError({
+        operation: "GitVcsDriver.ensureRemote",
+        command: "git remote add",
+        cwd: input.cwd,
+        detail: "Refusing to add a remote whose URL is not HTTPS, SSH or origin's HTTP server.",
+      });
+    }
     let remoteName = preferredName;
     let suffix = 1;
     while (remoteFetchUrls.has(remoteName)) {
@@ -3221,11 +3253,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const fetchCommit: GitVcsDriver.GitVcsDriver["Service"]["fetchCommit"] = Effect.fn("fetchCommit")(
     function* (input) {
-      // Only transports that reach a hosting service: a `file://`, `ext::` or bare-path URL from a
-      // provider would read the local disk or run a command. A leading `-` would be an option.
       const url = input.url;
-      const fetchable = !/^-|\s/u.test(url) && (/^https:\/\//iu.test(url) || isSshRemoteUrl(url));
-      if (!fetchable || !input.ref.startsWith("refs/") || input.ref.includes(":")) {
+      if (
+        !isProviderRepositoryUrlAllowed(url) ||
+        !input.ref.startsWith("refs/") ||
+        input.ref.includes(":")
+      ) {
         return yield* new GitCommandError({
           operation: "GitVcsDriver.fetchCommit",
           command: "git fetch",

@@ -84,7 +84,12 @@ function installation(
 type Prepared =
   | {
       readonly ok: true;
-      readonly value: { branch: string; worktreePath: string | null; isOnPullRequestHead: boolean };
+      readonly value: {
+        branch: string;
+        worktreePath: string | null;
+        isOnPullRequestHead: boolean;
+        isTrackingPullRequestHead?: boolean;
+      };
     }
   | { readonly ok: false; readonly detail: string | null };
 
@@ -438,6 +443,27 @@ describe("pull-request handoff provider", () => {
         input: { task: "checkout" },
         options: { prepared: readyAt(WORKTREE, false) },
         settled: stale,
+      },
+      {
+        name: "a checkout whose branch could not track the pull request",
+        input: { task: "checkout" },
+        options: {
+          prepared: {
+            ok: true,
+            value: {
+              branch: "feat/x",
+              worktreePath: WORKTREE,
+              isOnPullRequestHead: true,
+              isTrackingPullRequestHead: false,
+            },
+          },
+        },
+        settled: {
+          type: "warning",
+          title: "Checked out, but its upstream is unconfirmed",
+          description:
+            "Setting the branch to track the pull request's branch failed, so it keeps any upstream it had. Pull and push may not reach the pull request.",
+        },
       },
       {
         name: "a stale checkout in this repository",

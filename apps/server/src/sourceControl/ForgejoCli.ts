@@ -536,12 +536,8 @@ export const make = Effect.gen(function* () {
       }
       remote = remoteUrl ? parseForgejoRemote(remoteUrl) : null;
     }
-    if (
-      input.host &&
-      !remote?.ssh &&
-      remote?.host !== input.host.toLowerCase() &&
-      remote?.hostname !== input.host.toLowerCase()
-    )
+    // `host` carries its port, so a remote on the same hostname but another port is another server.
+    if (input.host && !remote?.ssh && remote?.host !== input.host.toLowerCase())
       remote = {
         host: input.host.toLowerCase(),
         hostname: input.host.split(":")[0] ?? input.host,

@@ -3,6 +3,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import { SourceControlProviderError } from "@t3tools/contracts";
+import { isProviderRepositoryUrlAllowed } from "@t3tools/shared/sourceControl";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
@@ -330,16 +331,19 @@ export const make = Effect.gen(function* () {
           );
           const remote = input.context?.remoteUrl;
           const useSsh = remote && ForgejoCli.parseForgejoRemote(remote)?.ssh;
+          const url = useSsh ? urls.ssh_url : urls.clone_url;
+          if (!isProviderRepositoryUrlAllowed(url, remote))
+            return yield* new ForgejoCli.ForgejoCliError({
+              command: "fj",
+              cwd: input.cwd,
+              detail:
+                "Refusing to fetch a repository URL that is not HTTPS, SSH or origin's HTTP server.",
+            });
           yield* process.run({
             operation: "ForgejoSourceControlProvider.checkoutChangeRequest",
             command: "git",
             cwd: input.cwd,
-            args: [
-              "fetch",
-              "--",
-              useSsh ? urls.ssh_url : urls.clone_url,
-              `refs/pull/${pull.number}/head`,
-            ],
+            args: ["fetch", "--", url, `refs/pull/${pull.number}/head`],
           });
           const branch = `pulls/${pull.number}`;
           const existing = yield* process.run({

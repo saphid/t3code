@@ -13,6 +13,8 @@ export type PullRequestHandoffOutcome =
       /** Whether a task was written into the new thread's composer. */
       readonly withTask: boolean;
       readonly isOnPullRequestHead: boolean;
+      /** False when setting the branch to track the pull request's branch failed; absent when unknown. */
+      readonly isTrackingPullRequestHead?: boolean | undefined;
     };
 
 /** A task written straight into the composer of a thread that is already open. */
@@ -87,6 +89,15 @@ function pullRequestHandoffToast(outcome: PullRequestHandoffOutcome) {
           title: "Checked out, but the latest commits are unconfirmed",
           description:
             "The pull request's latest commits could not be confirmed or applied here, so this checkout may be behind the pull request.",
+        } as const;
+      // Only a failed attempt is known. The branch keeps whatever upstream it had, which may
+      // already be right, and the remote holding the head may never have been added.
+      if (outcome.isTrackingPullRequestHead === false)
+        return {
+          type: "warning",
+          title: "Checked out, but its upstream is unconfirmed",
+          description:
+            "Setting the branch to track the pull request's branch failed, so it keeps any upstream it had. Pull and push may not reach the pull request.",
         } as const;
       if (outcome.withTask)
         return {
