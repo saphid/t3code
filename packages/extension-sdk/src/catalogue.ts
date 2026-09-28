@@ -18,7 +18,7 @@ import type { JsonObject } from "./environment.js";
 import type { GlobalCommandDescriptor } from "./environment.js";
 import { MAX_PAYLOAD_BYTES, type ViewContext } from "./contracts.js";
 import type { WorkspaceReadTextInput, WorkspaceReadTextResult } from "./workspace.js";
-import { compareVersions, parseVersion } from "./semver.js";
+import { compareVersions, parseVersion, type Version } from "./semver.js";
 import { textEditsApi, textEditsApiV1, validateEditableRelativePath } from "./textEdits.js";
 import { workspaceResourcesApi, WORKSPACE_RESOURCES } from "./workspaceResources.js";
 import { agentSessionsApi } from "./agentSessions.js";
@@ -35,7 +35,12 @@ import {
   uiEditorOpenReceiptSchema,
   browserHistoryEntriesSchema,
   uiNavigationFileInputProperties,
+  uiNavigationFileInputPropertiesV1_1,
   uiNavigationFileReceiptSchema,
+  uiNavigationFileReceiptSchemaV1_1,
+  annotationTextSchema,
+  listAnnotationsIncludeSchema,
+  LISTED_ANNOTATION_TEXT_MAX,
   uiNavigationReceiptSchema,
   uiNavigationSessionReceiptSchema,
 } from "./clientProviders.js";
@@ -7794,6 +7799,8 @@ export type MessagesAttachAnnotationResult = {
 };
 export type MessagesListAnnotationsInput = {
   readonly threadId?: string;
+  /** 1.2.0: `["text"]` asks for each comment's text. */
+  readonly include?: readonly "text"[];
 };
 export type MessagesListedAnnotation = {
   readonly annotationId: string;
@@ -7801,10 +7808,26 @@ export type MessagesListedAnnotation = {
   readonly filePath: string;
   readonly rangeLabel: string;
   readonly sectionTitle: string;
+  /**
+   * 1.2.0, when asked with `include: ["text"]`: the comment's words, trimmed
+   * and cut to `LISTED_ANNOTATION_TEXT_MAX` characters (ending in "…" when
+   * cut). Absent from an older host or client.
+   */
+  readonly text?: string;
+  /** 1.2.0: `text` was cut; `getAnnotation` (`readOwnAnnotationText`) reads it whole. */
+  readonly textTruncated?: boolean;
 };
 export type MessagesListAnnotationsResult = {
   readonly annotations: readonly MessagesListedAnnotation[];
 };
+export type MessagesGetAnnotationInput = {
+  readonly threadId?: string;
+  readonly annotationId: string;
+};
+/** One own comment's whole text; `found: false` once the draft no longer holds it. */
+export type MessagesGetAnnotationResult =
+  | { readonly found: true; readonly text: string }
+  | { readonly found: false };
 export type MessagesRemoveAnnotationInput = {
   readonly threadId?: string;
   readonly annotationId: string;
@@ -8120,18 +8143,7 @@ export const composerContextApi = defineApi<{
   ],
 });
 
-/**
- * Review-style draft annotation. The native path is composer-insert only —
- * `buildFileReviewComment` + `addReviewComment` on the client draft store —
- * and annotations serialize into the next sent message. There is no
- * message-level annotation entity, so turn/sent-message enrichment is not
- * expressible and stays deferred.
- *
- * 1.1.0 adds the diff kind the diff viewer inserts (`buildDiffReviewComment`
- * records, `fenceLanguage: "diff"`), plus own-ids-only list/remove so an
- * installation can enumerate and retract what it attached.
- */
-export const messagesEnrichmentApi = defineApi<{
+type MessagesEnrichmentMethods = {
   getCapabilities: { input: Record<string, never>; output: MessagesEnrichmentCapabilities };
   attachAnnotation: {
     input: MessagesAttachAnnotationInput;
@@ -8145,9 +8157,16 @@ export const messagesEnrichmentApi = defineApi<{
     input: MessagesRemoveAnnotationInput;
     output: MessagesRemoveAnnotationResult;
   };
-}>({
+  getAnnotation: {
+    input: MessagesGetAnnotationInput;
+    output: MessagesGetAnnotationResult;
+  };
+};
+
+/** The contract at 1.2.0 (`withText`) or as frozen at 1.1.0. */
+const messagesEnrichmentDefinition = (withText: boolean): ApiDefinition => ({
   id: MESSAGES_ENRICHMENT,
-  version: "1.1.0",
+  version: withText ? "1.2.0" : "1.1.0",
   methods: [
     {
       name: "getCapabilities",
@@ -8210,7 +8229,10 @@ export const messagesEnrichmentApi = defineApi<{
       inputSchema: {
         type: "object",
         additionalProperties: false,
-        properties: { threadId: composerThreadIdInput },
+        properties: {
+          threadId: composerThreadIdInput,
+          ...(withText ? { include: listAnnotationsIncludeSchema } : {}),
+        },
       },
       outputSchema: {
         type: "object",
@@ -8231,6 +8253,12 @@ export const messagesEnrichmentApi = defineApi<{
                 filePath: { type: "string", minLength: 1, maxLength: 512 },
                 rangeLabel: { type: "string", minLength: 1, maxLength: 128 },
                 sectionTitle: { type: "string", minLength: 1, maxLength: 256 },
+                ...(withText
+                  ? {
+                      text: { type: "string", maxLength: LISTED_ANNOTATION_TEXT_MAX },
+                      textTruncated: { type: "boolean" },
+                    }
+                  : {}),
               },
             },
           },
@@ -8257,8 +8285,112 @@ export const messagesEnrichmentApi = defineApi<{
         properties: { removed: { type: "boolean" } },
       },
     },
+    ...(withText
+      ? [
+          {
+            name: "getAnnotation",
+            effect: "read" as const,
+            // The user's unsent words, like listAnnotations.
+            requiredGrants: [MESSAGES_WRITE],
+            inputSchema: {
+              type: "object",
+              additionalProperties: false,
+              required: ["annotationId"],
+              properties: {
+                threadId: composerThreadIdInput,
+                annotationId: { type: "string", minLength: 1, maxLength: 256 },
+              },
+            },
+            outputSchema: annotationTextSchema,
+          },
+        ]
+      : []),
   ],
 });
+
+/**
+ * Review-style draft annotation. The native path is composer-insert only —
+ * `buildFileReviewComment` + `addReviewComment` on the client draft store —
+ * and annotations serialize into the next sent message. There is no
+ * message-level annotation entity, so turn/sent-message enrichment is not
+ * expressible and stays deferred.
+ *
+ * 1.1.0 adds the diff kind the diff viewer inserts (`buildDiffReviewComment`
+ * records, `fenceLanguage: "diff"`), plus own-ids-only list/remove so an
+ * installation can enumerate and retract what it attached. 1.2.0 lets
+ * `listAnnotations` return each comment's text when asked (`include`), as the
+ * composer chip shows it; `listOwnAnnotations` probes for it. A listed text is
+ * a bounded preview (`textTruncated` when cut); `getAnnotation` reads one own
+ * comment's whole text, and `readOwnAnnotationText` probes for it.
+ */
+export const messagesEnrichmentApi = defineApi<MessagesEnrichmentMethods>(
+  messagesEnrichmentDefinition(true),
+  // Consumers keep loading on a 1.1.0 host; probe before asking for text.
+  {
+    baseline: "1.1.0",
+    additions: [
+      { version: "1.2.0", method: "listAnnotations", input: "include" },
+      { version: "1.2.0", method: "getAnnotation" },
+    ],
+  },
+);
+/** Frozen published 1.1.0 definition, before listed text; providers may still declare it. */
+export const messagesEnrichmentApiV1_1 = defineApi<
+  Omit<MessagesEnrichmentMethods, "getAnnotation">
+>(messagesEnrichmentDefinition(false));
+
+/**
+ * Lists the caller's own unsent annotations through
+ * `t3.messages/enrichment.listAnnotations` (grant `t3.messages/write`), with
+ * each comment's text where the host has it (1.2.0). The host is probed
+ * first, so an older one answers without text instead of failing.
+ */
+export async function listOwnAnnotations(
+  client: Pick<ApiClient, "invokeApi" | "discoverApis">,
+  context: ViewContext,
+  input: { readonly threadId?: string },
+  signal: AbortSignal,
+): Promise<MessagesListAnnotationsResult> {
+  const discovered = await client.discoverApis(context, signal);
+  const withText = discovered.some((api) => {
+    const version = api.id === MESSAGES_ENRICHMENT ? parseVersion(api.version) : null;
+    return version !== null && version[0] === 1 && compareVersions(version, [1, 2, 0]) >= 0;
+  });
+  return withText
+    ? bindApi(messagesEnrichmentApi, client, context, "^1.2.0").invoke(
+        "listAnnotations",
+        { ...input, include: ["text"] },
+        signal,
+      )
+    : bindApi(messagesEnrichmentApi, client, context).invoke("listAnnotations", input, signal);
+}
+
+/**
+ * One of the caller's own unsent comments, whole, through
+ * `t3.messages/enrichment.getAnnotation` (1.2.0, grant `t3.messages/write`):
+ * what a listing's cut preview (`textTruncated`) leaves out. Null when the
+ * draft no longer holds it, or on a host that predates the read.
+ */
+export async function readOwnAnnotationText(
+  client: Pick<ApiClient, "invokeApi" | "discoverApis">,
+  context: ViewContext,
+  input: { readonly threadId?: string; readonly annotationId: string },
+  signal: AbortSignal,
+): Promise<string | null> {
+  const discovered = await client.discoverApis(context, signal);
+  const reads = discovered.some((api) => {
+    const version = api.id === MESSAGES_ENRICHMENT ? parseVersion(api.version) : null;
+    return version !== null && version[0] === 1 && compareVersions(version, [1, 2, 0]) >= 0;
+  });
+  if (!reads) return null;
+  const answer = await bindApi(messagesEnrichmentApi, client, context, "^1.2.0").invoke(
+    "getAnnotation",
+    input,
+    signal,
+  );
+  return answer.found ? answer.text : null;
+}
+
 export const COMPOSER_CONTEXT_API = composerContextApi.definition;
 export const MESSAGES_ENRICHMENT_API = messagesEnrichmentApi.definition;
 
@@ -9074,63 +9206,108 @@ export type UiPreferences = {
    * file preview's own choice. Absent on hosts that predate it.
    */
   readonly renderBrowserFile?: boolean;
+  /**
+   * 1.2.0: the file explorer shows beside an open file (true) or is hidden
+   * (false) — the native file preview's own choice. Absent on older hosts.
+   */
+  readonly fileExplorerOpen?: boolean;
 };
+
+type UiPreferencesMethods<P> = {
+  getCapabilities: { input: Record<string, never>; output: UiCapabilities };
+  getPreferences: { input: Record<string, never>; output: P };
+  setPreferences: {
+    input: Partial<P>;
+    output: { applied: boolean; reason?: string; preferences: P };
+  };
+};
+
+/** The `t3.ui/preferences` definition at `version` over one preference shape. */
+const uiPreferencesDefinition = (
+  version: string,
+  preferences: JsonObject,
+  patch: JsonObject,
+): ApiDefinition => ({
+  id: UI_PREFERENCES,
+  version,
+  methods: [
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: composerEmptyInputSchema,
+      outputSchema: uiCapabilitiesOutput([
+        "getPreferences",
+        "setPreferences",
+        "subscribePreferences",
+      ]),
+    },
+    {
+      name: "getPreferences",
+      effect: "read",
+      requiredGrants: [UI_PREFERENCES_READ],
+      inputSchema: composerEmptyInputSchema,
+      outputSchema: preferences,
+    },
+    {
+      name: "setPreferences",
+      effect: "write",
+      requiredGrants: [UI_PREFERENCES_WRITE],
+      inputSchema: patch,
+      outputSchema: {
+        ...clientPreferencesReceiptSchema,
+        properties: { ...clientPreferencesReceiptSchema.properties, preferences },
+      },
+    },
+  ],
+  streams: [
+    {
+      name: "subscribePreferences",
+      inputSchema: composerEmptyInputSchema,
+      eventSchema: preferences,
+      requiredGrants: [UI_PREFERENCES_READ],
+    },
+  ],
+});
 
 /**
  * `t3.ui/preferences` — typed read, change stream and write receipt for a
  * named subset of the target client's persisted settings. The stream emits a
  * snapshot, then one frame per actual change; it never polls. 1.1.0 adds
- * `renderBrowserFile`; a 1.0.0 host omits it from reads and rejects it in a
- * write, so bind `setPreferences` at ^1.1.0 to send it.
+ * `renderBrowserFile` and 1.2.0 `fileExplorerOpen`; an older host omits a
+ * later key from reads and rejects it in a write, so bind `setPreferences` at
+ * the key's version to send it.
  */
-export const uiPreferencesApi = defineApi<{
-  getCapabilities: { input: Record<string, never>; output: UiCapabilities };
-  getPreferences: { input: Record<string, never>; output: UiPreferences };
-  setPreferences: {
-    input: Partial<UiPreferences>;
-    output: { applied: boolean; reason?: string; preferences: UiPreferences };
-  };
-}>(
+export const uiPreferencesApi = defineApi<UiPreferencesMethods<UiPreferences>>(
+  uiPreferencesDefinition("1.2.0", clientPreferencesSchema, clientPreferencesPatchSchema),
+  // Consumers keep loading on a 1.0.0 host; probe before writing a later key.
   {
-    id: UI_PREFERENCES,
-    version: "1.1.0",
-    methods: [
-      {
-        name: "getCapabilities",
-        effect: "read",
-        requiredGrants: [],
-        inputSchema: composerEmptyInputSchema,
-        outputSchema: uiCapabilitiesOutput([
-          "getPreferences",
-          "setPreferences",
-          "subscribePreferences",
-        ]),
-      },
-      {
-        name: "getPreferences",
-        effect: "read",
-        requiredGrants: [UI_PREFERENCES_READ],
-        inputSchema: composerEmptyInputSchema,
-        outputSchema: clientPreferencesSchema,
-      },
-      {
-        name: "setPreferences",
-        effect: "write",
-        requiredGrants: [UI_PREFERENCES_WRITE],
-        inputSchema: clientPreferencesPatchSchema,
-        outputSchema: clientPreferencesReceiptSchema,
-      },
-    ],
-    streams: [
-      {
-        name: "subscribePreferences",
-        inputSchema: composerEmptyInputSchema,
-        eventSchema: clientPreferencesSchema,
-        requiredGrants: [UI_PREFERENCES_READ],
-      },
+    baseline: "1.0.0",
+    additions: [
+      { version: "1.1.0", method: "setPreferences", input: "renderBrowserFile" },
+      { version: "1.2.0", method: "setPreferences", input: "fileExplorerOpen" },
     ],
   },
-  // Consumers keep loading on a 1.0.0 host; probe before writing the 1.1.0 key.
+);
+
+/** 1.1.0's closed preference shape, before `fileExplorerOpen`. */
+const uiPreferencesV1_1Schema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["wordWrap"],
+  properties: { wordWrap: { type: "boolean" }, renderBrowserFile: { type: "boolean" } },
+} as const;
+
+/** Frozen published 1.1.0 definition, before `fileExplorerOpen`; providers may still declare it. */
+export const uiPreferencesApiV1_1 = defineApi<
+  UiPreferencesMethods<Omit<UiPreferences, "fileExplorerOpen">>
+>(
+  uiPreferencesDefinition("1.1.0", uiPreferencesV1_1Schema, {
+    type: "object",
+    additionalProperties: false,
+    properties: uiPreferencesV1_1Schema.properties,
+  }),
+  // As published: consumers keep loading on a 1.0.0 host.
   {
     baseline: "1.0.0",
     additions: [{ version: "1.1.0", method: "setPreferences", input: "renderBrowserFile" }],
@@ -9377,9 +9554,18 @@ export type UiNavigationSessionReceipt =
 /**
  * Closed refusal set for `openFile`: `unknown-thread` (the caller's context
  * names no live thread), `out-of-scope` (that thread is outside the caller's
- * project), `invalid-path` (not a safe workspace-relative path).
+ * project), `invalid-path` (not a safe workspace-relative path). 1.2.0 adds
+ * three for `openIn: "browser"` only: `not-previewable` (not an `.html`,
+ * `.htm` or `.pdf` file), `browser-unavailable` (this client has no preview
+ * browser) and `open-failed` (the browser could not open the file).
  */
-export type UiNavigationFileRefusalReason = "unknown-thread" | "out-of-scope" | "invalid-path";
+export type UiNavigationFileRefusalReason =
+  | "unknown-thread"
+  | "out-of-scope"
+  | "invalid-path"
+  | "not-previewable"
+  | "browser-unavailable"
+  | "open-failed";
 
 export type UiNavigationFileReceipt =
   | { readonly status: "opened"; readonly relativePath: string }
@@ -9429,9 +9615,72 @@ const uiNavigationOpenAgentSessionMethod = {
  * where the host's native file links land: the host's file panel, presented by
  * the selected `t3.file/presentation` provider (or the native preview). The
  * pack names a path, never a surface or provider. `openWorkspaceFile` probes
- * for it, so a pack keeps its 1.0.0 requirement.
+ * for it, so a pack keeps its 1.0.0 requirement. 1.2.0 adds `openIn:
+ * "browser"`, which opens an `.html`, `.htm` or `.pdf` file in the thread's
+ * preview browser instead, as native's "Open file in preview browser" does,
+ * and `getCapabilities` answers `openFileInBrowser` for the invoking client
+ * (`canOpenFilesInBrowser`), since only some clients have a preview browser.
  */
 export const uiNavigationApi = defineApi<{
+  getCapabilities: { input: Record<string, never>; output: UiCapabilities };
+  openThread: {
+    input: { threadId: string; surfaceId?: string };
+    output: UiNavigationReceipt;
+  };
+  openAgentSession: {
+    input: { agentId: string };
+    output: UiNavigationSessionReceipt;
+  };
+  openFile: {
+    input: { relativePath: string; line?: number; openIn?: "panel" | "browser" };
+    output: UiNavigationFileReceipt;
+  };
+}>(
+  {
+    id: UI_NAVIGATION,
+    version: "1.2.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        // `openFileInBrowser` (1.2.0) is the invoking client's own answer:
+        // whether it has a preview browser for `openIn: "browser"`.
+        outputSchema: uiCapabilitiesOutput([
+          "openThread",
+          "openAgentSession",
+          "openFile",
+          "openFileInBrowser",
+        ]),
+      },
+      uiNavigationOpenThreadMethod,
+      uiNavigationOpenAgentSessionMethod,
+      {
+        name: "openFile",
+        effect: "write",
+        requiredGrants: [UI_NAVIGATION_OPEN],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["relativePath"],
+          properties: uiNavigationFileInputProperties,
+        },
+        outputSchema: uiNavigationFileReceiptSchema,
+      },
+    ],
+  },
+  // Consumers keep loading on a 1.0.0 host; probe before calling openFile.
+  {
+    baseline: "1.0.0",
+    additions: [
+      { version: "1.1.0", method: "openFile" },
+      { version: "1.2.0", method: "openFile", input: "openIn" },
+    ],
+  },
+);
+/** Frozen published 1.1.0 definition, before `openIn`; providers may still declare it. */
+export const uiNavigationApiV1_1 = defineApi<{
   getCapabilities: { input: Record<string, never>; output: UiCapabilities };
   openThread: {
     input: { threadId: string; surfaceId?: string };
@@ -9467,13 +9716,12 @@ export const uiNavigationApi = defineApi<{
           type: "object",
           additionalProperties: false,
           required: ["relativePath"],
-          properties: uiNavigationFileInputProperties,
+          properties: uiNavigationFileInputPropertiesV1_1,
         },
-        outputSchema: uiNavigationFileReceiptSchema,
+        outputSchema: uiNavigationFileReceiptSchemaV1_1,
       },
     ],
   },
-  // Consumers keep loading on a 1.0.0 host; probe before calling openFile.
   { baseline: "1.0.0", additions: [{ version: "1.1.0", method: "openFile" }] },
 );
 /** Frozen published 1.0.0 definition, before `openFile`; providers may still declare it. */
@@ -9515,7 +9763,8 @@ export function isWorkspaceFilePath(path: string): boolean {
 
 /**
  * `openWorkspaceFile`'s outcome: the host's receipt, or `host-unsupported`
- * when the host's `t3.ui/navigation` predates `openFile` (1.1.0).
+ * when the host's `t3.ui/navigation` predates `openFile` (1.1.0), or `openIn`
+ * (1.2.0) for an open in the preview browser.
  */
 export type OpenWorkspaceFileReceipt =
   | UiNavigationFileReceipt
@@ -9526,26 +9775,67 @@ export type OpenWorkspaceFileReceipt =
  * `t3.ui/navigation.openFile` (grant `t3.ui/navigation.open`). An unsafe path
  * is refused here without a host round trip; the host checks again. The host
  * is probed first, so an older one answers `host-unsupported` instead of
- * failing. Rejects only when discovery or the invoke itself fails.
+ * failing. `openIn: "browser"` opens the file in the thread's preview browser
+ * (1.2.0). Rejects only when discovery or the invoke itself fails.
  */
 export async function openWorkspaceFile(
   client: Pick<ApiClient, "invokeApi" | "discoverApis">,
   context: ViewContext,
   relativePath: string,
-  options: { readonly line?: number; readonly signal: AbortSignal },
+  options: {
+    readonly line?: number;
+    readonly openIn?: "panel" | "browser";
+    readonly signal: AbortSignal;
+  },
 ): Promise<OpenWorkspaceFileReceipt> {
   if (!isWorkspaceFilePath(relativePath)) return { status: "refused", reason: "invalid-path" };
+  const browser = options.openIn === "browser";
+  const floor: Version = browser ? [1, 2, 0] : [1, 1, 0];
   const discovered = await client.discoverApis(context, options.signal);
   const opensFiles = discovered.some((api) => {
     const version = api.id === UI_NAVIGATION ? parseVersion(api.version) : null;
-    return version !== null && version[0] === 1 && compareVersions(version, [1, 1, 0]) >= 0;
+    return version !== null && version[0] === 1 && compareVersions(version, floor) >= 0;
   });
   if (!opensFiles) return { status: "refused", reason: "host-unsupported" };
-  return bindApi(uiNavigationApi, client, context, "^1.1.0").invoke(
+  return bindApi(uiNavigationApi, client, context, browser ? "^1.2.0" : "^1.1.0").invoke(
     "openFile",
-    { relativePath, ...(options.line === undefined ? {} : { line: options.line }) },
+    {
+      relativePath,
+      ...(options.line === undefined ? {} : { line: options.line }),
+      ...(browser ? { openIn: "browser" as const } : {}),
+    },
     options.signal,
   );
+}
+
+/**
+ * Whether the invoking client can open a file in its preview browser
+ * (`openWorkspaceFile` with `openIn: "browser"`), as native decides whether to
+ * offer "Open file in preview browser". False on a host whose
+ * `t3.ui/navigation` predates the question (1.2.0), and when it cannot say.
+ * The open itself can still be refused if the client changes in between.
+ */
+export async function canOpenFilesInBrowser(
+  client: Pick<ApiClient, "invokeApi" | "discoverApis">,
+  context: ViewContext,
+  signal: AbortSignal,
+): Promise<boolean> {
+  try {
+    const discovered = await client.discoverApis(context, signal);
+    const asks = discovered.some((api) => {
+      const version = api.id === UI_NAVIGATION ? parseVersion(api.version) : null;
+      return version !== null && version[0] === 1 && compareVersions(version, [1, 2, 0]) >= 0;
+    });
+    if (!asks) return false;
+    const answer = await bindApi(uiNavigationApi, client, context, "^1.2.0").invoke(
+      "getCapabilities",
+      {},
+      signal,
+    );
+    return answer.operations.openFileInBrowser === true;
+  } catch {
+    return false;
+  }
 }
 
 /** One user-facing sentence per `openWorkspaceFile` refusal. */
@@ -9559,6 +9849,12 @@ export function describeOpenFileRefusal(
       return "The thread is outside this extension's project";
     case "invalid-path":
       return "Not a workspace-relative path";
+    case "not-previewable":
+      return "The preview browser opens .html, .htm and .pdf files only";
+    case "browser-unavailable":
+      return "The preview browser is unavailable in this client";
+    case "open-failed":
+      return "The preview browser could not open the file";
     case "host-unsupported":
       return "This version of T3 Code cannot open files for extensions";
   }
@@ -9622,15 +9918,18 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   prsWriteApi.definition,
   composerContextApi.definition,
   messagesEnrichmentApi.definition,
+  messagesEnrichmentApiV1_1.definition,
   uiThemeApi.definition,
   uiKeybindingsApi.definition,
   uiNotificationsApi.definition,
   uiPanelsApi.definition,
   uiPreferencesApi.definition,
+  uiPreferencesApiV1_1.definition,
   uiPreferencesApiV1.definition,
   uiExternalApi.definition,
   uiEditorApi.definition,
   uiNavigationApi.definition,
+  uiNavigationApiV1_1.definition,
   uiNavigationApiV1.definition,
   agentSessionsApi.definition,
 ];

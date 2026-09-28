@@ -64,6 +64,7 @@ function fakeBridge(options?: {
           agentId: (request.input as { agentId: string }).agentId,
           opener: "desktop-shell",
         });
+      if (request.method === "getCapabilities") return Effect.succeed({ openFileInBrowser: true });
       if (request.method === "openFile")
         return Effect.succeed({
           status: "opened",
@@ -208,7 +209,7 @@ describe("preferences adapter", () => {
       target: { kind: "connection", connectionId: "conn-1" },
       writer: "ext.a",
       patch: { wordWrap: false },
-      include: ["renderBrowserFile"],
+      include: ["renderBrowserFile", "fileExplorerOpen"],
     });
   });
 
@@ -230,7 +231,7 @@ describe("preferences adapter", () => {
         name: "watchPreferences",
         input: {
           target: { kind: "connection", connectionId: "conn-1" },
-          include: ["renderBrowserFile"],
+          include: ["renderBrowserFile", "fileExplorerOpen"],
         },
         coalesce: true,
       },
@@ -630,6 +631,139 @@ describe("1.1.0 client seam additions", () => {
     expect(
       bridge.invoked.map(({ method, input }) => [method, (input as { include?: unknown }).include]),
     ).toEqual([["getPreferences", undefined]]);
+  });
+});
+
+// Review repro (gaps-files-2 P2): the file explorer choice is a 1.2.0
+// preference; a 1.1.0 client is asked only for what it knows.
+describe("1.2.0 file explorer preference", () => {
+  const seam = (preferences: string) =>
+    fakeBridge({
+      targets: [
+        {
+          connectionId: "conn-1",
+          providers: [{ id: "t3.client/preferences", version: preferences }],
+        },
+      ],
+    });
+
+  it("asks only a 1.2.0 client for fileExplorerOpen", async () => {
+    const includes = async (version: string) => {
+      const bridge = seam(version);
+      const { preferences } = makeProviders(bridge);
+      await preferences.invoke("getPreferences", {} as Json, context, signal, metadata());
+      await Promise.resolve(
+        preferences.invoke(
+          "setPreferences",
+          { fileExplorerOpen: false } as Json,
+          context,
+          signal,
+          metadata(),
+        ),
+      ).catch(() => {});
+      for await (const _event of preferences.subscribe!(
+        "subscribePreferences",
+        {},
+        context,
+        signal,
+        metadata(),
+      ));
+      return [
+        ...bridge.invoked.map(({ input }) => (input as { include?: unknown }).include),
+        ...bridge.subscribed.map(({ input }) => (input as { include?: unknown }).include),
+      ];
+    };
+    const both = ["renderBrowserFile", "fileExplorerOpen"];
+    expect(await includes("1.2.0")).toEqual([both, both, both]);
+    // The write never reaches a client that predates the key.
+    expect(await includes("1.1.0")).toEqual([["renderBrowserFile"], ["renderBrowserFile"]]);
+  });
+
+  it("refuses a fileExplorerOpen write to a client that predates it", async () => {
+    const bridge = seam("1.1.0");
+    await expect(
+      makeProviders(bridge).preferences.invoke(
+        "setPreferences",
+        { fileExplorerOpen: false } as Json,
+        context,
+        signal,
+        metadata(),
+      ),
+    ).rejects.toMatchObject({ code: "provider-rejected" });
+    expect(bridge.invoked).toHaveLength(0);
+  });
+});
+
+// Review repro (gaps-files-2 P2): whether the invoking client has a preview
+// browser is its own answer, asked only of a 1.2.0 navigation client.
+describe("1.2.0 preview-browser capability", () => {
+  const seam = (navigation: string) =>
+    fakeBridge({
+      targets: [
+        {
+          connectionId: "conn-1",
+          providers: [{ id: "t3.client/navigation", version: navigation }],
+        },
+      ],
+    });
+
+  it("reports the invoking client's answer, and false for an older client", async () => {
+    const operations = async (version: string) => {
+      const bridge = seam(version);
+      const answer = (await makeProviders(bridge).navigation.invoke(
+        "getCapabilities",
+        {} as Json,
+        context,
+        signal,
+        metadata(),
+      )) as { operations: Record<string, boolean> };
+      return {
+        openFileInBrowser: answer.operations.openFileInBrowser,
+        asked: bridge.invoked.map(({ method }) => method),
+      };
+    };
+    expect(await operations("1.2.0")).toEqual({
+      openFileInBrowser: true,
+      asked: ["getCapabilities"],
+    });
+    expect(await operations("1.1.0")).toEqual({ openFileInBrowser: false, asked: [] });
+  });
+});
+
+// Native parity ("Open file in preview browser"): openIn is a 1.2.0 addition
+// to the client seam; a 1.1.0 client still opens files in the panel.
+describe("1.2.0 openFile in the preview browser", () => {
+  const seam = (navigation: string) =>
+    fakeBridge({
+      targets: [
+        {
+          connectionId: "conn-1",
+          providers: [{ id: "t3.client/navigation", version: navigation }],
+        },
+      ],
+    });
+  const open = (bridge: ReturnType<typeof fakeBridge>, input: Record<string, unknown>) =>
+    makeProviders(bridge).navigation.invoke("openFile", input as Json, context, signal, metadata());
+
+  it("forwards openIn only to a client that has it", async () => {
+    const current = seam("1.2.0");
+    await open(current, { relativePath: "site/index.html", openIn: "browser" });
+    expect(current.invoked.map(({ input }) => input)).toEqual([
+      {
+        target: { kind: "connection", connectionId: "conn-1" },
+        relativePath: "site/index.html",
+        openIn: "browser",
+      },
+    ]);
+    const older = seam("1.1.0");
+    await expect(
+      open(older, { relativePath: "site/index.html", openIn: "browser" }),
+    ).rejects.toMatchObject({ code: "provider-rejected" });
+    expect(older.invoked).toHaveLength(0);
+    await open(older, { relativePath: "a.ts", openIn: "panel" });
+    expect(older.invoked.map(({ input }) => input)).toEqual([
+      { target: { kind: "connection", connectionId: "conn-1" }, relativePath: "a.ts" },
+    ]);
   });
 });
 

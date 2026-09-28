@@ -38,6 +38,7 @@ vi.mock("../components/pullRequest/PullRequestsUnavailableState", () => ({
 vi.mock("../state/entities", () => ({
   useThreadShell: () => null,
   readThreadShell: () => ({ projectId: "p", worktreePath: null }),
+  readProject: () => ({ workspaceRoot: "/fixture" }),
 }));
 vi.mock("../composerDraftStore", () => ({ useComposerDraftStore: () => null }));
 
@@ -104,8 +105,16 @@ class FakeTextArea {
   }
 }
 
+/** The tree's scrolling element, `height` tall; a fresh one each time it mounts. */
+class FakeViewport {
+  scrollTop = 0;
+  constructor(readonly clientHeight: number) {}
+}
+
 interface Disk {
   readonly files: Record<string, string>;
+  /** Directory entries the tree snapshot lists next to the files. */
+  readonly directories?: readonly string[];
   /** The selected presentation provider's version; the pack's own by default. */
   readonly presentationVersion?: string;
   /** Rejects the presentation provider's `open` while it returns an error. */
@@ -120,6 +129,14 @@ interface Disk {
   readonly preferenceChange?: Promise<Frame>;
   /** The preference write's receipt; unavailable unless given. */
   readonly preferenceWrite?: Promise<unknown>;
+  /** The host's preview-browser open; records its calls and says how it went. */
+  readonly previewFile?: (...args: unknown[]) => Promise<string>;
+  /** Whether this client has a preview browser; it does unless given. */
+  readonly previewSupported?: boolean;
+  /** The host's `t3.ui/navigation` version; the SDK's own unless given. */
+  readonly navigationVersion?: string;
+  /** Gives the tree a scrolling element this tall; it has none unless given. */
+  readonly viewportHeight?: number;
 }
 
 type Calls = {
@@ -127,8 +144,15 @@ type Calls = {
   saves: number;
   log: string[][];
   presentations: ApiInvocation[];
+  preferenceWrites: unknown[];
 };
-const newCalls = (): Calls => ({ reads: 0, saves: 0, log: [], presentations: [] });
+const newCalls = (): Calls => ({
+  reads: 0,
+  saves: 0,
+  log: [],
+  presentations: [],
+  preferenceWrites: [],
+});
 
 const preferenceFrame = (disk: Disk) =>
   disk.preferences ??
@@ -138,7 +162,7 @@ const preferenceFrame = (disk: Disk) =>
   });
 
 function packHost(disk: Disk, calls: Calls) {
-  const navigationVersion = uiNavigationApi.definition.version;
+  const navigationVersion = disk.navigationVersion ?? uiNavigationApi.definition.version;
   const host: PackHost = {
     React,
     async discoverApis() {
@@ -171,12 +195,10 @@ function packHost(disk: Disk, calls: Calls) {
       if (request.id === "t3.file/presentation")
         return filesServer.apis[0]!.methods[0]!.invoke(request.input, { signal });
       if (request.id === "t3.ui/navigation") return navigation.invoke(request, signal);
-      if (
-        request.id === "t3.ui/preferences" &&
-        request.method === "setPreferences" &&
-        disk.preferenceWrite
-      )
-        return disk.preferenceWrite;
+      if (request.id === "t3.ui/preferences" && request.method === "setPreferences") {
+        calls.preferenceWrites.push(request.input);
+        if (disk.preferenceWrite) return disk.preferenceWrite;
+      }
       if (request.id === "t3.ui/preferences" && request.method === "getPreferences") {
         const frame = await (disk.preferencesRead ?? preferenceFrame(disk));
         if (frame instanceof Error) throw frame;
@@ -206,8 +228,20 @@ function packHost(disk: Disk, calls: Calls) {
           if (disk.preferenceChange) yield await disk.preferenceChange;
           await pending(signal);
         } else if (request.id === "t3.workspace/tree") {
-          const entries = Object.keys(disk.files).map((path) => ({ path, kind: "file" }));
-          yield { type: "data", value: { kind: "chunk", entries, truncated: false } };
+          const entries = [
+            ...(disk.directories ?? []).map((path) => ({ path, kind: "directory" })),
+            ...Object.keys(disk.files).map((path) => ({ path, kind: "file" })),
+          ];
+          // The contract's chunks carry at most 200 entries.
+          for (let start = 0; start < entries.length; start += 200)
+            yield {
+              type: "data",
+              value: {
+                kind: "chunk",
+                entries: entries.slice(start, start + 200),
+                truncated: false,
+              },
+            };
           yield {
             type: "data",
             value: { kind: "complete", entryCount: entries.length, truncated: false },
@@ -264,16 +298,27 @@ async function mountPanel(disk: Disk) {
       installations: () => [installed],
     } as unknown as Parameters<typeof createNavigationClientProvider>[0],
     async () => {},
+    undefined,
+    (disk.previewFile ?? (async () => "opened")) as never,
+    () => disk.previewSupported ?? true,
   );
-  useNavigation(async (request, signal) =>
-    navigation.invoke({
+  useNavigation(async (request, signal) => {
+    const answer = await navigation.invoke({
       method: request.method,
       input: request.input,
       context: request.context,
       caller,
       signal,
-    } as unknown as Parameters<typeof navigation.invoke>[0]),
-  );
+    } as unknown as Parameters<typeof navigation.invoke>[0]);
+    if (request.method !== "getCapabilities") return answer;
+    // The server adapter's part: the invoking client's answer, as an operation.
+    const { openFileInBrowser } = answer as { openFileInBrowser: boolean };
+    return {
+      adapter: "host.ui.navigation",
+      operations: { openThread: true, openAgentSession: true, openFile: true, openFileInBrowser },
+      clients: [],
+    };
+  });
   const cleanups = [
     registerWorkspaceExtension(files.client(host) as never, undefined, {
       environmentId: ref.environmentId,
@@ -303,16 +348,36 @@ async function mountPanel(disk: Disk) {
     ) : null;
   }
   const textarea = new FakeTextArea();
+  const viewports: FakeViewport[] = [];
+  /** Tree rows that were given DOM focus, by name. */
+  const focused: string[] = [];
   let root: ReactTestRenderer | undefined;
   await act(async () => {
     root = create(<App />, {
-      createNodeMock: (element) => (element.type === "textarea" ? textarea : null),
+      createNodeMock: (element) => {
+        if (element.type === "textarea") return textarea;
+        if (disk.viewportHeight === undefined) return null;
+        const props = element.props as { "aria-label"?: string; children?: unknown };
+        if (element.type === "ul" && props["aria-label"] === "Workspace files") {
+          const viewport = new FakeViewport(disk.viewportHeight);
+          viewports.push(viewport);
+          return viewport;
+        }
+        if (element.type === "button") {
+          const name = [props.children].flat().join("");
+          return { focus: () => focused.push(name) };
+        }
+        return null;
+      },
     });
   });
   const tree = root!;
   return {
     calls,
     textarea,
+    focused,
+    /** The tree's current scrolling element. */
+    viewport: () => viewports.at(-1)!,
     /** Remounts the panel from its persisted state, as a reload does. */
     async reload() {
       await act(async () => tree.update(<></>));
@@ -334,6 +399,14 @@ async function mountPanel(disk: Disk) {
     editors: () => tree.root.findAllByProps({ "aria-label": "File editor" }).length,
     button: (label: string) =>
       tree.root.findAllByType("button").find((button) => button.children.includes(label)),
+    /** The first control whose accessible name is `label`. */
+    labelled: (label: string) => tree.root.findAllByProps({ "aria-label": label }).at(0),
+    /** Visible rows of the workspace tree, as rendered text. */
+    rows: () =>
+      tree.root
+        .findByProps({ "aria-label": "Workspace files" })
+        .findAllByType("button")
+        .map((row) => row.children.join("")),
     async unmount() {
       await act(async () => {
         tree.unmount();
@@ -913,6 +986,477 @@ describe("the Diff panel", () => {
         stop.abort();
         root?.unmount();
       });
+    }
+  });
+});
+
+// Native parity (FileBrowserPanel): one toolbar control expands every folder
+// in the tree, then collapses them all again.
+describe("expanding and collapsing every folder", () => {
+  it("toggles every folder from one control, as the native tree does", async () => {
+    const panel = await mountPanel({
+      directories: ["src", "src/lib", "docs"],
+      files: { "src/lib/deep.ts": "x", "src/top.ts": "y", "docs/guide.md": "z", "root.txt": "r" },
+    });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "root.txt"));
+      expect(panel.rows()).toEqual(["▸ docs/", "▸ src/", "root.txt"]);
+      expect(panel.labelled("Expand all folders")).toBeDefined();
+      await act(async () => panel.labelled("Expand all folders")!.props.onClick());
+      expect(panel.rows()).toEqual([
+        "▾ docs/",
+        "guide.md",
+        "▾ src/",
+        "▾ lib/",
+        "deep.ts",
+        "top.ts",
+        "root.txt",
+      ]);
+      expect(panel.labelled("Expand all folders")).toBeUndefined();
+      await act(async () => panel.labelled("Collapse all folders")!.props.onClick());
+      expect(panel.rows()).toEqual(["▸ docs/", "▸ src/", "root.txt"]);
+      expect(panel.labelled("Expand all folders")).toBeDefined();
+    } finally {
+      await panel.unmount();
+    }
+  });
+
+  it("names the collapse once every folder is open by hand", async () => {
+    const panel = await mountPanel({
+      directories: ["src"],
+      files: { "src/a.ts": "a", "b.ts": "b" },
+    });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "b.ts"));
+      expect(panel.labelled("Expand all folders")).toBeDefined();
+      const folder = panel.labelled("Workspace files")!.findAllByType("button")[0]!;
+      await act(async () => folder.props.onClick());
+      expect(panel.labelled("Collapse all folders")).toBeDefined();
+      await act(async () => folder.props.onClick());
+      expect(panel.labelled("Expand all folders")).toBeDefined();
+    } finally {
+      await panel.unmount();
+    }
+  });
+
+  // Review repro (gaps-files-2 P3): expand-all past the saved-folder bound
+  // still stands after a reload.
+  it("keeps every folder open across a reload, past the saved-folder bound", async () => {
+    const names = Array.from({ length: 600 }, (_, i) => `d${String(i).padStart(3, "0")}`);
+    const panel = await mountPanel({
+      directories: names,
+      files: Object.fromEntries(names.map((name) => [`${name}/f.txt`, "f"])),
+    });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "d000/f.txt"));
+      await act(async () => panel.labelled("Expand all folders")!.props.onClick());
+      const folder = panel.labelled("Workspace files")!.findAllByType("button")[0]!;
+      // One folder closed by hand stays closed; every other one stays open.
+      await act(async () => folder.props.onClick());
+      await panel.reload();
+      expect(panel.rows().slice(0, 3)).toEqual(["▸ d000/", "▾ d001/", "f.txt"]);
+      await act(async () =>
+        panel.labelled("Workspace files")!.findAllByType("button")[0]!.props.onClick(),
+      );
+      expect(panel.labelled("Collapse all folders")).toBeDefined();
+    } finally {
+      await panel.unmount();
+    }
+  });
+
+  // Review repro (gaps-files-2 P1): expand-all over a 25,000-entry tree
+  // mounts only the rows around the viewport, as native's virtualized tree does.
+  it("mounts a bounded window of a 25,000-entry tree and still reaches every row", async () => {
+    const names = Array.from({ length: 1000 }, (_, i) => `d${String(i).padStart(3, "0")}`);
+    const files: Record<string, string> = {};
+    for (const name of names)
+      for (let file = 0; file < 24; file++)
+        files[`${name}/f${String(file).padStart(2, "0")}.txt`] = "f";
+    const panel = await mountPanel({ directories: names, files });
+    const list = () => panel.labelled("Workspace files")!;
+    const key = (name: string) =>
+      act(async () => list().props.onKeyDown({ key: name, preventDefault() {} }));
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "d000/f00.txt"));
+      expect(panel.text()).toContain("25000 entries");
+      await act(async () => panel.labelled("Expand all folders")!.props.onClick());
+      expect(panel.rows().length).toBeLessThan(100);
+      expect(panel.rows().slice(0, 2)).toEqual(["▾ d000/", "f00.txt"]);
+      // Scrolling moves the window.
+      await act(async () => list().props.onScroll({ currentTarget: { scrollTop: 300_000 } }));
+      expect(panel.rows().length).toBeLessThan(100);
+      expect(panel.rows()).not.toContain("▾ d000/");
+      // A row in the scrolled window selects its file.
+      const far = list()
+        .findAllByType("button")
+        .filter((row) => !row.children.join("").startsWith("▾"))[10]!;
+      const farName = far.children.join("");
+      await act(async () => far.props.onClick());
+      const selectedRows = () =>
+        list()
+          .findAllByType("button")
+          .filter((row) => row.props["aria-current"] === "true")
+          .map((row) => row.children.join(""));
+      expect(selectedRows()).toEqual([farName]);
+      expect(panel.rows().length).toBeLessThan(100);
+      // Keys move through rows that were never mounted.
+      await act(async () =>
+        panel.labelled("Workspace files")!.findAllByType("button")[0]!.props.onFocus(),
+      );
+      await key("End");
+      expect(panel.rows().at(-1)).toBe("f23.txt");
+      await key("Home");
+      expect(panel.rows()[0]).toBe("▾ d000/");
+      await key("ArrowDown");
+      await key("ArrowLeft");
+      await key("ArrowLeft");
+      expect(panel.rows().slice(0, 2)).toEqual(["▸ d000/", "▾ d001/"]);
+      await key("ArrowRight");
+      expect(panel.rows().slice(0, 2)).toEqual(["▾ d000/", "f00.txt"]);
+      // A file opened far away is revealed in the tree.
+      await act(async () => panel.labelled("Collapse all folders")!.props.onClick());
+      expect(panel.rows().length).toBeLessThan(100);
+      await act(async () => panel.navigation({ relativePath: "d987/f12.txt" }));
+      expect(selectedRows()).toEqual(["f12.txt"]);
+      expect(panel.rows().length).toBeLessThan(100);
+    } finally {
+      await panel.unmount();
+    }
+  }, 30_000);
+
+  it("offers no control when the tree has no folders", async () => {
+    const panel = await mountPanel({ files: { "only.txt": "o" } });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "only.txt"));
+      expect(panel.labelled("Expand all folders")).toBeUndefined();
+      expect(panel.labelled("Collapse all folders")).toBeUndefined();
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
+
+// Native parity (FilePreviewPanel): the file explorer beside an open file
+// can be hidden and shown again, and the choice survives a reload.
+describe("hiding the file explorer", () => {
+  const explorer = (panel: Panel) => ({
+    tree: panel.labelled("Workspace files") !== undefined,
+    search: panel.labelled("Search workspace files") !== undefined,
+    hide: panel.button("Hide file explorer")?.props["aria-pressed"],
+    show: panel.button("Show file explorer")?.props["aria-pressed"],
+  });
+
+  it("hides the tree and its search, then shows them again", async () => {
+    const panel = await mountPanel({ files: { "a.txt": "a", "b.txt": "b" } });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "a.txt"));
+      expect(explorer(panel)).toEqual({ tree: true, search: true, hide: true, show: undefined });
+      await act(async () => panel.button("Hide file explorer")!.props.onClick());
+      expect(explorer(panel)).toEqual({ tree: false, search: false, hide: undefined, show: false });
+      expect(panel.editors()).toBe(1);
+      await panel.reload();
+      expect(explorer(panel)).toEqual({ tree: false, search: false, hide: undefined, show: false });
+      await act(async () => panel.button("Show file explorer")!.props.onClick());
+      expect(explorer(panel)).toEqual({ tree: true, search: true, hide: true, show: undefined });
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
+
+// Review repro (gaps-files-2 P2): the explorer choice is the native file
+// preview's shared one, read when a view opens and written when toggled.
+describe("the shared file explorer choice", () => {
+  const shownWith = (fileExplorerOpen: boolean): Promise<Frame> =>
+    Promise.resolve({
+      type: "snapshot",
+      value: { wordWrap: false, renderBrowserFile: true, fileExplorerOpen },
+    });
+
+  it("starts hidden in a new view when the native panel hid it", async () => {
+    const panel = await mountPanel({ files: { "a.txt": "a" }, preferences: shownWith(false) });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "a.txt"));
+      expect(panel.labelled("Workspace files")).toBeUndefined();
+      expect(panel.button("Show file explorer")).toBeDefined();
+    } finally {
+      await panel.unmount();
+    }
+  });
+
+  it("writes each choice where the native panel and new views read it", async () => {
+    const panel = await mountPanel({
+      files: { "a.txt": "a" },
+      preferences: shownWith(true),
+      preferenceWrite: Promise.resolve({ applied: true, preferences: { wordWrap: false } }),
+    });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "a.txt"));
+      expect(panel.labelled("Workspace files")).toBeDefined();
+      await act(async () => panel.button("Hide file explorer")!.props.onClick());
+      await act(async () => panel.button("Show file explorer")!.props.onClick());
+      expect(panel.calls.preferenceWrites).toEqual([
+        { fileExplorerOpen: false },
+        { fileExplorerOpen: true },
+      ]);
+      expect(panel.labelled("Workspace files")).toBeDefined();
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
+
+// Native parity (FilePreviewPanel "Open file in preview browser"): a page
+// opens in the thread's preview browser through t3.ui/navigation.
+describe("opening a file in the preview browser", () => {
+  const stubFetch = () =>
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(0) })),
+    );
+
+  it("offers it for pages only and opens the page from the workspace root", async () => {
+    stubFetch();
+    const previews: unknown[][] = [];
+    const panel = await mountPanel({
+      files: { "site/page.html": "<p>page</p>", "notes.txt": "n" },
+      previewFile: async (...args) => {
+        previews.push(args);
+        return "opened";
+      },
+    });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "notes.txt"));
+      expect(panel.button("Open file in preview browser")).toBeUndefined();
+      await act(async () => useRightPanelStore.getState().openFile(ref, "site/page.html"));
+      expect(panel.button("Open file in preview browser")).toBeDefined();
+      await act(async () => panel.button("Open file in preview browser")!.props.onClick());
+      expect(previews).toEqual([[ref, "/fixture/site/page.html", "/fixture"]]);
+      expect(panel.text()).not.toContain("cannot be opened");
+    } finally {
+      await panel.unmount();
+    }
+  });
+
+  // A client that loses its preview browser after saying it had one still
+  // refuses, and the refusal is named.
+  it("names a browser that cannot open the page", async () => {
+    stubFetch();
+    const panel = await mountPanel({
+      files: { "page.html": "<p>page</p>" },
+      previewFile: async () => "browser-unavailable",
+    });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "page.html"));
+      expect(panel.button("Open file in preview browser")).toBeDefined();
+      await act(async () => panel.button("Open file in preview browser")!.props.onClick());
+      expect(panel.text()).toContain(
+        "page.html cannot be opened — The preview browser is unavailable in this client",
+      );
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
+
+// Review repro (gaps-files-2 P2): as native, the action shows only on a client
+// with a preview browser, and only where the host can say so.
+describe("a client without a preview browser", () => {
+  it.each([
+    ["a web client", { previewSupported: false }],
+    ["a host whose navigation predates the question", { navigationVersion: "1.1.0" }],
+  ])("offers no preview-browser open on %s", async (_name, client) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(0) })),
+    );
+    const panel = await mountPanel({ files: { "page.html": "<p>page</p>" }, ...client });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "page.html"));
+      expect(panel.button("Open in panel")).toBeDefined();
+      expect(panel.button("Open file in preview browser")).toBeUndefined();
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
+
+// Review backlog (proof-host-12 P3): a reload restores the latest line a link
+// revealed, as native's persisted `revealLine` does, not the view's first one.
+describe("a line revealed after the view opened", () => {
+  it("is the line a reload reveals", async () => {
+    vi.stubGlobal("HTMLTextAreaElement", FakeTextArea);
+    vi.stubGlobal("getComputedStyle", () => ({ paddingTop: "0px", lineHeight: "16px" }));
+    const panel = await mountPanel({ files: { "reveal.txt": "one\ntwo\nthree" } });
+    try {
+      await act(async () => panel.navigation({ relativePath: "reveal.txt", line: 2 }));
+      expect(panel.textarea.carets.at(-1)).toBe(4);
+      await act(async () => panel.navigation({ relativePath: "reveal.txt", line: 3 }));
+      expect(panel.textarea.carets.at(-1)).toBe(8);
+      await panel.reload();
+      expect(panel.textarea.carets.at(-1)).toBe(8);
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
+
+// Review repro (gaps-files-2 P2): a restored line reveal outranks a restored
+// rendered-markdown preference, as native's reveal does, until the user
+// chooses the rendered view again.
+describe("a markdown file reopened at a revealed line", () => {
+  it("shows the source at that line, then renders when asked", async () => {
+    vi.stubGlobal("HTMLTextAreaElement", FakeTextArea);
+    vi.stubGlobal("getComputedStyle", () => ({ paddingTop: "0px", lineHeight: "16px" }));
+    const panel = await mountPanel({ files: { "notes.md": "# one\ntwo\nthree" } });
+    const mode = () => ({
+      rendered: !!panel.button("Show markdown source"),
+      editor: panel.editors(),
+    });
+    try {
+      await act(async () => panel.navigation({ relativePath: "notes.md", line: 3 }));
+      expect(panel.textarea.carets.at(-1)).toBe(10);
+      await act(async () => panel.button("Show rendered markdown")!.props.onClick());
+      expect(mode()).toEqual({ rendered: true, editor: 0 });
+      panel.textarea.carets.length = 0;
+      await panel.reload();
+      expect(mode()).toEqual({ rendered: false, editor: 1 });
+      expect(panel.textarea.carets).toEqual([10]);
+      await act(async () => panel.button("Show rendered markdown")!.props.onClick());
+      expect(mode()).toEqual({ rendered: true, editor: 0 });
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
+
+// Review repro (gaps-files-3 P2): the tree's window follows its scrolling
+// element when the element comes back, and a row revealed while it was gone
+// is scrolled to once it shows.
+describe("a long tree whose explorer is hidden and shown", () => {
+  const disk = () => {
+    const files: Record<string, string> = {};
+    for (let file = 0; file < 1000; file++) files[`f${String(file).padStart(3, "0")}.txt`] = "f";
+    return { files, viewportHeight: 240 };
+  };
+  const list = (panel: Panel) => panel.labelled("Workspace files")!;
+  /** Tops of the mounted rows that fall inside the viewport. */
+  const visibleTops = (panel: Panel) => {
+    const { scrollTop, clientHeight } = panel.viewport();
+    return list(panel)
+      .findAllByType("li")
+      .map((row) => (row.props.style as { top?: number } | undefined)?.top)
+      .filter((top): top is number => top !== undefined)
+      .filter((top) => top + 24 > scrollTop && top < scrollTop + clientHeight);
+  };
+  const toggle = (panel: Panel, label: string) =>
+    act(async () => panel.button(label)!.props.onClick());
+
+  it("shows the rows at its scroll position again", async () => {
+    const panel = await mountPanel(disk());
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "f000.txt"));
+      const viewport = panel.viewport();
+      viewport.scrollTop = 12_000;
+      await act(async () => list(panel).props.onScroll({ currentTarget: viewport }));
+      expect(visibleTops(panel)).toHaveLength(10);
+      await toggle(panel, "Hide file explorer");
+      await toggle(panel, "Show file explorer");
+      expect(panel.viewport()).not.toBe(viewport);
+      expect(panel.viewport().scrollTop).toBe(12_000);
+      expect(visibleTops(panel)).toHaveLength(10);
+    } finally {
+      await panel.unmount();
+    }
+  });
+
+  it("scrolls to a file opened while it was hidden", async () => {
+    const panel = await mountPanel(disk());
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "f000.txt"));
+      await toggle(panel, "Hide file explorer");
+      await act(async () => panel.navigation({ relativePath: "f999.txt" }));
+      await toggle(panel, "Show file explorer");
+      expect(visibleTops(panel)).toContain(999 * 24);
+      expect(panel.viewport().scrollTop).toBe(1000 * 24 - 240);
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
+
+// Review repro (gaps-files-3 P2): the focused row going away moves keyboard
+// focus to the nearest row that remains, as native's tree does.
+describe("a tree whose focused row goes away", () => {
+  const rowNamed = (panel: Panel, name: string) =>
+    panel
+      .labelled("Workspace files")!
+      .findAllByType("button")
+      .find((row) => row.children.join("") === name)!;
+  const focus = (panel: Panel, name: string) =>
+    act(async () => rowNamed(panel, name).props.onFocus());
+  const arrowDown = async (panel: Panel) => {
+    let handled = false;
+    await act(async () =>
+      panel.labelled("Workspace files")!.props.onKeyDown({
+        key: "ArrowDown",
+        preventDefault: () => {
+          handled = true;
+        },
+      }),
+    );
+    return handled;
+  };
+  const refresh = (panel: Panel) =>
+    act(async () => panel.labelled("Refresh workspace files")!.props.onClick());
+
+  it("focuses the row now in its place when it is deleted or renamed", async () => {
+    const disk = { files: { "a.txt": "a", "b.txt": "b", "c.txt": "c" } as Record<string, string> };
+    const panel = await mountPanel({ ...disk, viewportHeight: 240 });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "a.txt"));
+      await focus(panel, "b.txt");
+      delete disk.files["b.txt"];
+      await refresh(panel);
+      expect(panel.rows()).toEqual(["a.txt", "c.txt"]);
+      expect(panel.focused.at(-1)).toBe("c.txt");
+      // The keys carry on from there.
+      await focus(panel, "a.txt");
+      expect(await arrowDown(panel)).toBe(true);
+      expect(panel.focused.at(-1)).toBe("c.txt");
+      // A rename takes the same place when it sorts there.
+      delete disk.files["c.txt"];
+      disk.files["d.txt"] = "d";
+      await refresh(panel);
+      expect(panel.rows()).toEqual(["a.txt", "d.txt"]);
+      expect(panel.focused.at(-1)).toBe("d.txt");
+      // The last row going leaves focus on the one before it.
+      delete disk.files["d.txt"];
+      await refresh(panel);
+      expect(panel.focused.at(-1)).toBe("a.txt");
+      expect(await arrowDown(panel)).toBe(true);
+    } finally {
+      await panel.unmount();
+    }
+  });
+
+  it("focuses its folder when the folder closes over it", async () => {
+    const panel = await mountPanel({
+      directories: ["src"],
+      files: { "src/a.txt": "a", "src/b.txt": "b", "z.txt": "z" },
+      viewportHeight: 240,
+    });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "z.txt"));
+      await act(async () => panel.labelled("Expand all folders")!.props.onClick());
+      await focus(panel, "b.txt");
+      await act(async () => panel.labelled("Collapse all folders")!.props.onClick());
+      expect(panel.rows()).toEqual(["▸ src/", "z.txt"]);
+      expect(panel.focused.at(-1)).toBe("▸ src/");
+      expect(await arrowDown(panel)).toBe(true);
+      expect(panel.focused.at(-1)).toBe("z.txt");
+    } finally {
+      await panel.unmount();
     }
   });
 });

@@ -571,19 +571,39 @@ NodeTest.describe("usePostedComments", () => {
     sectionTitle: filePath,
   });
 
-  /** A fake composer draft: list/remove answer from `draft` synchronously-resolved. */
-  function draftHost(draft) {
+  /**
+   * A fake composer draft: list/remove answer from `draft` synchronously-resolved.
+   * `version` is the host's t3.messages/enrichment; entry text is listed only when asked.
+   */
+  function draftHost(draft, version = "1.1.0") {
     const calls = [];
     return {
       calls,
+      discoverApis: async () => [{ id: "t3.messages/enrichment", version }],
       invokeApi(request) {
         calls.push([request.method, request.input]);
         if (request.method === "listAnnotations")
           return Promise.resolve({
             annotations: draft
               .filter((entry) => entry.thread === request.input.threadId)
-              .map(({ thread: _t, ...entry }) => entry),
+              .map(({ thread: _t, text, ...entry }) =>
+                request.input.include?.includes("text") && text !== undefined
+                  ? text.length > 160
+                    ? { ...entry, text: `${text.slice(0, 159)}…`, textTruncated: true }
+                    : { ...entry, text }
+                  : entry,
+              ),
           });
+        if (request.method === "getAnnotation") {
+          const entry = draft.find(
+            (candidate) =>
+              candidate.thread === request.input.threadId &&
+              candidate.annotationId === request.input.annotationId,
+          );
+          return Promise.resolve(
+            entry?.text === undefined ? { found: false } : { found: true, text: entry.text },
+          );
+        }
         if (request.method === "removeAnnotation") {
           const index = draft.findIndex(
             (entry) => entry.annotationId === request.input.annotationId,
@@ -660,6 +680,80 @@ NodeTest.describe("usePostedComments", () => {
     },
   );
 
+  // Native parity: the composer chip shows a comment's words after a reload,
+  // so the list here does too wherever the host can say them.
+  NodeTest.it("after a reload lists what each comment says, where the host can", async () => {
+    for (const [version, text] of [
+      ["1.2.0", "why this?"],
+      ["1.1.0", null],
+    ]) {
+      const draft = [
+        { thread: "thread-a", ...listed("a1", "src/a.ts", "L1 to L2"), text: "why this?" },
+      ];
+      const host = draftHost(draft, version);
+      let root;
+      try {
+        await act(async () => {
+          root = create(e(Probe, { host, threadId: "thread-a", capabilities: v11 }));
+        });
+        await flush();
+        NodeAssert.deepEqual(summary(), [["a1", "src/a.ts", "L1 to L2", text]], version);
+      } finally {
+        if (root) await act(async () => root.unmount());
+      }
+    }
+  });
+
+  // Review repro (gaps-files-2 P2): a long comment's listed preview is marked
+  // cut after a reload, and opening it reads the whole comment back.
+  NodeTest.it("after a reload opens a long comment's whole text", async () => {
+    const long = "why this? ".repeat(40).trim();
+    const draft = [];
+    const host = draftHost(draft, "1.2.0");
+    let root;
+    try {
+      const mount = async () => {
+        await act(async () => {
+          root = create(e(Probe, { host, threadId: "thread-a", capabilities: v11 }));
+        });
+        await flush();
+      };
+      await mount();
+      // Attached here: the view holds the whole comment.
+      draft.push({ thread: "thread-a", ...listed("a1", "src/a.ts", "L1 to L2"), text: long });
+      await act(async () =>
+        latest.recordAttached({
+          annotationId: "a1",
+          path: "src/a.ts",
+          rangeLabel: "L1 to L2",
+          text: long,
+        }),
+      );
+      await flush();
+      NodeAssert.deepEqual(summary(), [["a1", "src/a.ts", "L1 to L2", long]]);
+      // A reload keeps only what the draft lists.
+      await act(async () => root.unmount());
+      root = undefined;
+      await mount();
+      NodeAssert.deepEqual(
+        latest.comments.map((c) => [c.text?.length, c.truncated]),
+        [[160, true]],
+      );
+      await act(async () => latest.readFull("a1"));
+      await flush();
+      NodeAssert.deepEqual(
+        latest.comments.map((c) => [c.text, c.truncated]),
+        [[long, false]],
+      );
+      NodeAssert.deepEqual(
+        host.calls.filter(([method]) => method === "getAnnotation"),
+        [["getAnnotation", { threadId: "thread-a", annotationId: "a1" }]],
+      );
+    } finally {
+      if (root) await act(async () => root.unmount());
+    }
+  });
+
   NodeTest.it("a chip removed in the composer drops out when the view is shown again", async () => {
     const draft = [{ thread: "thread-a", ...listed("a1", "src/a.ts", "L1") }];
     const host = draftHost(draft);
@@ -725,6 +819,7 @@ NodeTest.describe("usePostedComments", () => {
     const base = draftHost(draft);
     const host = {
       calls: base.calls,
+      discoverApis: base.discoverApis,
       invokeApi(request) {
         if (request.method === "removeAnnotation")
           return Promise.reject(new Error("API capability denied: t3.messages/write"));

@@ -606,9 +606,46 @@ const composerThreadIdInput = {
 const BROWSER_CAPTURE_ARTIFACT_REF_PATTERN =
   "^pending-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
 
+/**
+ * Bound on the comment text `listAnnotations` returns when asked (1.2.0 public,
+ * 1.3.0 seam): a preview, so eight entries at every field maximum still fit
+ * the 64 KiB frame envelope. The composer chip holds the whole comment.
+ */
+export const LISTED_ANNOTATION_TEXT_MAX = 160;
+
+/**
+ * `getAnnotation`'s answer: one own comment's whole text. Attached bodies
+ * are at most 4,096 units, so even a body that JSON-escapes every unit to six
+ * bytes (~24 KiB) fits the 64 KiB frame envelope.
+ */
+export const annotationTextSchema = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["found", "text"],
+      properties: { found: { const: true }, text: { type: "string", maxLength: 4096 } },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["found"],
+      properties: { found: { const: false } },
+    },
+  ],
+} as const;
+
+/** `listAnnotations` `include`: the optional members a caller asks for. */
+export const listAnnotationsIncludeSchema = {
+  type: "array",
+  maxItems: 1,
+  uniqueItems: true,
+  items: { enum: ["text"] },
+} as const;
+
 export const CLIENT_COMPOSER_API = validateApiDefinition({
   id: "t3.client/composer",
-  version: "1.2.0",
+  version: "1.3.0",
   methods: [
     {
       name: "insertContext",
@@ -756,7 +793,9 @@ export const CLIENT_COMPOSER_API = validateApiDefinition({
       name: "listAnnotations",
       effect: "read",
       requiredGrants: [],
-      inputSchema: withTarget({ ...composerThreadIdInput }, ["threadId"]),
+      inputSchema: withTarget({ ...composerThreadIdInput, include: listAnnotationsIncludeSchema }, [
+        "threadId",
+      ]),
       outputSchema: {
         type: "object",
         additionalProperties: false,
@@ -776,6 +815,9 @@ export const CLIENT_COMPOSER_API = validateApiDefinition({
                 filePath: { type: "string", minLength: 1, maxLength: 512 },
                 rangeLabel: { type: "string", maxLength: 128 },
                 sectionTitle: { type: "string", maxLength: 256 },
+                // 1.3.0, only when `include` asks for it.
+                text: { type: "string", maxLength: LISTED_ANNOTATION_TEXT_MAX },
+                textTruncated: { type: "boolean" },
               },
             },
           },
@@ -799,6 +841,20 @@ export const CLIENT_COMPOSER_API = validateApiDefinition({
         required: ["removed"],
         properties: { removed: { type: "boolean" } },
       },
+    },
+    {
+      // 1.3.0: one own comment's whole text.
+      name: "getAnnotation",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: withTarget(
+        {
+          ...composerThreadIdInput,
+          annotationId: { type: "string", minLength: 1, maxLength: 256 },
+        },
+        ["threadId", "annotationId"],
+      ),
+      outputSchema: annotationTextSchema,
     },
   ],
 });
@@ -836,27 +892,33 @@ export const clientPreferencesSchema = {
   required: ["wordWrap"],
   properties: {
     wordWrap: { type: "boolean" },
-    // 1.1.0, and only when the server asks for it (`include`).
+    // 1.1.0 and 1.2.0 respectively, and only when the server asks (`include`).
     renderBrowserFile: { type: "boolean" },
+    fileExplorerOpen: { type: "boolean" },
   },
 } as const;
 
 /**
- * 1.1.0 keys a server asks for. A 1.0.0 server validates answers against its
- * closed shapes, so a client includes a 1.1.0 key only when asked; a server
- * asks only a client whose area satisfies `CLIENT_PREFERENCES_V11_RANGE`.
+ * Later keys a server asks for. An older server validates answers against its
+ * closed shapes, so a client includes a key only when asked; a server asks
+ * for `renderBrowserFile` only a client satisfying
+ * `CLIENT_PREFERENCES_V11_RANGE`, and for `fileExplorerOpen` only one
+ * satisfying `CLIENT_PREFERENCES_V12_RANGE`.
  */
 const preferencesIncludeProperty = {
   include: {
     type: "array",
-    maxItems: 1,
+    maxItems: 2,
     uniqueItems: true,
-    items: { enum: ["renderBrowserFile"] },
+    items: { enum: ["renderBrowserFile", "fileExplorerOpen"] },
   },
 } as const;
 
 /** The range that carries `renderBrowserFile` and `include`. */
 export const CLIENT_PREFERENCES_V11_RANGE = "^1.1.0";
+
+/** The range that carries `fileExplorerOpen`. */
+export const CLIENT_PREFERENCES_V12_RANGE = "^1.2.0";
 
 /** The writable subset of `clientPreferencesSchema`. */
 export const clientPreferencesPatchSchema = {
@@ -865,6 +927,7 @@ export const clientPreferencesPatchSchema = {
   properties: {
     wordWrap: { type: "boolean" },
     renderBrowserFile: { type: "boolean" },
+    fileExplorerOpen: { type: "boolean" },
   },
 } as const;
 
@@ -882,7 +945,7 @@ export const clientPreferencesReceiptSchema = {
 
 export const CLIENT_PREFERENCES_API = validateApiDefinition({
   id: "t3.client/preferences",
-  version: "1.1.0",
+  version: "1.2.0",
   methods: [
     {
       name: "getPreferences",
@@ -1104,34 +1167,62 @@ export const uiNavigationReceiptSchema = {
   ],
 } as const;
 
-/** The `t3.ui/navigation` file-open receipt, shared by the public and private areas. */
-export const uiNavigationFileReceiptSchema = {
-  oneOf: [
-    {
-      type: "object",
-      additionalProperties: false,
-      required: ["status", "relativePath"],
-      properties: {
-        status: { const: "opened" },
-        relativePath: { type: "string", minLength: 1, maxLength: 512 },
+const uiNavigationFileReceipt = (reasons: readonly string[]) =>
+  ({
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "relativePath"],
+        properties: {
+          status: { const: "opened" },
+          relativePath: { type: "string", minLength: 1, maxLength: 512 },
+        },
       },
-    },
-    {
-      type: "object",
-      additionalProperties: false,
-      required: ["status", "reason"],
-      properties: {
-        status: { const: "refused" },
-        reason: { enum: ["unknown-thread", "out-of-scope", "invalid-path"] },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "reason"],
+        properties: {
+          status: { const: "refused" },
+          reason: { enum: reasons },
+        },
       },
-    },
-  ],
-} as const;
+    ],
+  }) as const;
 
-/** `openFile` input: a workspace-relative path and an optional 1-based line. */
-export const uiNavigationFileInputProperties = {
+/** 1.1.0's file-open receipt, before the preview-browser refusals. */
+export const uiNavigationFileReceiptSchemaV1_1 = uiNavigationFileReceipt([
+  "unknown-thread",
+  "out-of-scope",
+  "invalid-path",
+]);
+
+/** The `t3.ui/navigation` file-open receipt, shared by the public and private areas. */
+export const uiNavigationFileReceiptSchema = uiNavigationFileReceipt([
+  "unknown-thread",
+  "out-of-scope",
+  "invalid-path",
+  // 1.2.0, only for `openIn: "browser"`.
+  "not-previewable",
+  "browser-unavailable",
+  "open-failed",
+]);
+
+/** 1.1.0's `openFile` input: a workspace-relative path and an optional 1-based line. */
+export const uiNavigationFileInputPropertiesV1_1 = {
   relativePath: { type: "string", minLength: 1, maxLength: 512 },
   line: { type: "integer", minimum: 1, maximum: 10_000_000 },
+} as const;
+
+/**
+ * `openFile` input. 1.2.0 adds `openIn`: `"browser"` opens an `.html`,
+ * `.htm` or `.pdf` file in the thread's preview browser instead of the file
+ * panel, where `line` does not apply.
+ */
+export const uiNavigationFileInputProperties = {
+  ...uiNavigationFileInputPropertiesV1_1,
+  openIn: { enum: ["panel", "browser"] },
 } as const;
 
 /** The `t3.ui/navigation` agent-session receipt, shared by the public and private areas. */
@@ -1165,11 +1256,13 @@ export const uiNavigationSessionReceiptSchema = {
  * own thread roster, and only safe workspace paths for the caller's own
  * thread; the client re-checks before routing or opening. `openFile` is
  * 1.1.0: the adapter sends it only to a client satisfying
- * `CLIENT_NAVIGATION_V11_RANGE`.
+ * `CLIENT_NAVIGATION_V11_RANGE`, and `openIn` (1.2.0) only to one satisfying
+ * `CLIENT_NAVIGATION_V12_RANGE`. `getCapabilities` (1.2.0) says whether this
+ * client has a preview browser for `openIn: "browser"`.
  */
 export const CLIENT_NAVIGATION_API = validateApiDefinition({
   id: "t3.client/navigation",
-  version: "1.1.0",
+  version: "1.2.0",
   methods: [
     {
       name: "openThread",
@@ -1204,11 +1297,26 @@ export const CLIENT_NAVIGATION_API = validateApiDefinition({
       inputSchema: withTarget(uiNavigationFileInputProperties, ["relativePath"]),
       outputSchema: uiNavigationFileReceiptSchema,
     },
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: withTarget({}),
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["openFileInBrowser"],
+        properties: { openFileInBrowser: { type: "boolean" } },
+      },
+    },
   ],
 });
 
 /** The navigation range that carries `openFile`. */
 export const CLIENT_NAVIGATION_V11_RANGE = "^1.1.0";
+
+/** The navigation range that carries `openFile`'s `openIn`. */
+export const CLIENT_NAVIGATION_V12_RANGE = "^1.2.0";
 
 /** Host-owned client-provider definitions, keyed by area id. */
 export const CLIENT_PROVIDER_APIS: ReadonlyMap<string, ApiDefinition> = new Map(
@@ -1245,3 +1353,6 @@ export const CLIENT_COMPOSER_V11_RANGE = "^1.1.0";
 
 /** The composer range that carries `insertImage`; gated per connection like the 1.1.0 ops. */
 export const CLIENT_COMPOSER_V12_RANGE = "^1.2.0";
+
+/** The composer range that answers `listAnnotations` `include: ["text"]`. */
+export const CLIENT_COMPOSER_V13_RANGE = "^1.3.0";

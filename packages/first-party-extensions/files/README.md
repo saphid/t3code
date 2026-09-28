@@ -13,9 +13,13 @@ line opens the source at that line. It exposes an "Open in panel" file
 action: `t3.ui/navigation` `openFile` (1.1.0, grant `t3.ui/navigation.open`)
 opens the file in this view's thread where the host's own file links land,
 presented by whichever provider the host selected for `t3.file/presentation`.
-Reopening the file already shown there only focuses it. The pack probes for
-`openFile`, so it still loads on a 1.0.0 host, which answers that it cannot
-open files. Breadcrumbs over the
+Reopening the file already shown there only focuses it. For `.html`, `.htm`
+and `.pdf` files, "Open file in preview browser" sends `openFile` with
+`openIn: "browser"` (1.2.0), which opens the file in the thread's preview
+browser, as native does. As there, the action shows only on a client with a
+preview browser, which `getCapabilities` answers (`openFileInBrowser`, 1.2.0).
+The pack probes for `openFile`, so it still loads on
+a 1.0.0 host, which answers that it cannot open files. Breadcrumbs over the
 tree snapshot, workspace link resolution in rendered markdown, centered line
 reveals for search hits and `#L…`/`path:line` targets, and composer-mention
 drags are package-owned; the drag payload uses the MIME the host
@@ -57,7 +61,10 @@ without its grant or provider):
   before. The HTML rendered/source choice rides the same preference
   (`renderBrowserFile`, 1.1.0, the native preview's own), so it carries across
   files, presentations and reloads; an HTML file loads nothing until the
-  preference first answers. Hosts without it keep the choice per view.
+  preference first answers. Hiding the file explorer does too
+  (`fileExplorerOpen`, 1.2.0): a view reads it as it opens, as the native
+  panel does, and each toggle writes it. Hosts without a key keep that choice
+  per view.
 
 Files the editor cannot open (past the edit bound, binary-adjacent,
 non-UTF-8) show read-only. Where the host offers `ClientHost.codeView`, that

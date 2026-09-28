@@ -395,6 +395,126 @@ it.effect("forwards insertImage as an artifactRef only to a 1.2.0 composer", () 
   }).pipe(Effect.provide(brokerLayer)),
 );
 
+// Native parity (the review-comment chip shows the comment's words): a
+// listing asks for text only from a composer client that has it.
+it.effect("asks only a 1.3.0 composer for listed comment text", () =>
+  Effect.gen(function* () {
+    const broker = yield* ClientApiProviders;
+    const connect = (connectionId: string, version: string) =>
+      Effect.map(
+        broker.connect(
+          { connectionId, sessionId: "session", announcedOrigin: { surface: "web" } },
+          { providers: [{ id: "t3.client/composer", version }] },
+        ),
+        frameIterator,
+      );
+    const olderFrames = yield* connect("conn-21", "1.2.0");
+    yield* nextFrame(olderFrames); // registered
+    const currentFrames = yield* connect("conn-22", "1.3.0");
+    yield* nextFrame(currentFrames); // registered
+    const messages = createComposerApiProviders(resolverDeps, {
+      environmentId: "env",
+      clientApiProviders: broker,
+    }).find((p) => p.providerId === "host.messages")!;
+    const entry = {
+      annotationId: "annotation:ext.a:1",
+      kind: "file",
+      filePath: "src/a.ts",
+      rangeLabel: "L1 to L2",
+      sectionTitle: "File comment",
+    };
+    const list = (
+      connectionId: string,
+      frames: AsyncIterator<ClientProviderServerFrame>,
+      input: Json = { include: ["text"] },
+    ) =>
+      Effect.gen(function* () {
+        const listing = yield* Effect.promise(() =>
+          dispatch(messages, "listAnnotations", input, connectionId),
+        ).pipe(Effect.forkChild);
+        // A listing refused before dispatch settles first instead of hanging.
+        const frame = yield* Effect.raceFirst(
+          nextFrame(frames),
+          Effect.map(Effect.exit(Fiber.join(listing)), (exit) => ({
+            type: "settled" as const,
+            exit,
+          })),
+        );
+        expect(frame?.type).toBe("invoke");
+        if (frame?.type !== "invoke") return { asked: undefined, listed: undefined };
+        const asked = (frame.input as { include?: unknown }).include;
+        yield* broker.respond(connectionId, {
+          requestId: frame.requestId,
+          ok: true,
+          value: { annotations: [asked === undefined ? entry : { ...entry, text: "why?" }] },
+        });
+        return { asked, listed: yield* Fiber.join(listing) };
+      });
+    expect(yield* list("conn-21", olderFrames)).toEqual({
+      asked: undefined,
+      listed: { annotations: [entry] },
+    });
+    expect(yield* list("conn-22", currentFrames)).toEqual({
+      asked: ["text"],
+      listed: { annotations: [{ ...entry, text: "why?" }] },
+    });
+    // Review repro (gaps-files-2 P3): asking for no optional field asks for no text.
+    for (const input of [{}, { include: [] }] as Json[])
+      expect(yield* list("conn-22", currentFrames, input)).toEqual({
+        asked: undefined,
+        listed: { annotations: [entry] },
+      });
+  }).pipe(Effect.provide(brokerLayer)),
+);
+
+// Review repro (gaps-files-2 P2): one comment's whole text is read on its
+// own, and only from a composer client that has the read.
+it.effect("reads one comment's text only from a 1.3.0 composer", () =>
+  Effect.gen(function* () {
+    const broker = yield* ClientApiProviders;
+    const connect = (connectionId: string, version: string) =>
+      Effect.map(
+        broker.connect(
+          { connectionId, sessionId: "session", announcedOrigin: { surface: "web" } },
+          { providers: [{ id: "t3.client/composer", version }] },
+        ),
+        frameIterator,
+      );
+    const olderFrames = yield* connect("conn-31", "1.2.0");
+    yield* nextFrame(olderFrames); // registered
+    const currentFrames = yield* connect("conn-32", "1.3.0");
+    yield* nextFrame(currentFrames); // registered
+    const messages = createComposerApiProviders(resolverDeps, {
+      environmentId: "env",
+      clientApiProviders: broker,
+    }).find((p) => p.providerId === "host.messages")!;
+    const input = { annotationId: "annotation:ext.a:1" } as Json;
+    yield* Effect.promise(() =>
+      expectNamedError(
+        dispatch(messages, "getAnnotation", input, "conn-31"),
+        "messages.enrichment.getAnnotation",
+        /client-provider-unsupported-version.*\^1\.3\.0/,
+      ),
+    );
+    const reading = yield* Effect.promise(() =>
+      dispatch(messages, "getAnnotation", input, "conn-32"),
+    ).pipe(Effect.forkChild);
+    const frame = yield* nextFrame(currentFrames);
+    expect(frame?.type).toBe("invoke");
+    if (frame?.type !== "invoke") return;
+    expect([frame.method, (frame.input as { annotationId?: unknown }).annotationId]).toEqual([
+      "getAnnotation",
+      "annotation:ext.a:1",
+    ]);
+    yield* broker.respond("conn-32", {
+      requestId: frame.requestId,
+      ok: true,
+      value: { found: true, text: "the whole comment" },
+    });
+    expect(yield* Fiber.join(reading)).toEqual({ found: true, text: "the whole comment" });
+  }).pipe(Effect.provide(brokerLayer)),
+);
+
 it.effect("rejects insertImage payloads that are not a capture artifactRef", () =>
   Effect.promise(async () => {
     for (const input of [

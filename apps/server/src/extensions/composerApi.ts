@@ -7,6 +7,7 @@ import {
 import {
   CLIENT_COMPOSER_V11_RANGE,
   CLIENT_COMPOSER_V12_RANGE,
+  CLIENT_COMPOSER_V13_RANGE,
 } from "@t3tools/extension-sdk/clientProviders";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { HostApiInvocationMetadata, HostApiProvider } from "@t3tools/extension-runtime";
@@ -96,6 +97,13 @@ const imageInput = Schema.decodeUnknownSync(
 const draftInput = Schema.decodeUnknownSync(Schema.Struct({ ...threadIdField }), {
   onExcessProperty: "error",
 });
+const listAnnotationsInput = Schema.decodeUnknownSync(
+  Schema.Struct({
+    ...threadIdField,
+    include: Schema.optional(Schema.Array(Schema.Literal("text")).check(Schema.isMaxLength(1))),
+  }),
+  { onExcessProperty: "error" },
+);
 const annotationSelection = Schema.Struct({
   start: lineSchema,
   side: Schema.Literals(["additions", "deletions"]),
@@ -131,7 +139,8 @@ const annotationInput = Schema.decodeUnknownSync(
   }),
   { onExcessProperty: "error" },
 );
-const removeAnnotationInput = Schema.decodeUnknownSync(
+/** `removeAnnotation` and `getAnnotation`: one own annotation by id. */
+const annotationIdInput = Schema.decodeUnknownSync(
   Schema.Struct({ ...threadIdField, annotationId: boundedString(256) }),
   { onExcessProperty: "error" },
 );
@@ -456,17 +465,25 @@ export function createComposerApiProviders(
     }
     if (method === "listAnnotations") {
       const safe = yield* Effect.try({
-        try: () => draftInput(input),
+        try: () => listAnnotationsInput(input),
         catch: invalid(operation),
       });
       const threadId = yield* scopedThread(operation, safe.threadId, scope.context);
       yield* resolve(scope.context);
       const connectionId = yield* requireComposer(operation, metadata);
+      // Text is a 1.3.0 client answer; an older client is not asked, so the
+      // listing comes back without it rather than failing.
+      const version =
+        safe.include?.includes("text") === true
+          ? yield* composerVersionOf(connectionId)
+          : undefined;
+      const withText =
+        version !== undefined && satisfiesSemverRange(version, CLIENT_COMPOSER_V13_RANGE);
       return yield* Effect.tryPromise({
         try: () =>
           forward(
             "listAnnotations",
-            { threadId } as Json,
+            (withText ? { threadId, include: ["text"] } : { threadId }) as Json,
             scope.context,
             signal,
             metadata,
@@ -477,7 +494,7 @@ export function createComposerApiProviders(
     }
     if (method === "removeAnnotation") {
       const safe = yield* Effect.try({
-        try: () => removeAnnotationInput(input),
+        try: () => annotationIdInput(input),
         catch: invalid(operation),
       });
       const threadId = yield* scopedThread(operation, safe.threadId, scope.context);
@@ -487,6 +504,28 @@ export function createComposerApiProviders(
         try: () =>
           forward(
             "removeAnnotation",
+            { threadId, annotationId: safe.annotationId } as Json,
+            scope.context,
+            signal,
+            metadata,
+            connectionId,
+          ),
+        catch: clientFailure(operation),
+      });
+    }
+    if (method === "getAnnotation") {
+      const safe = yield* Effect.try({
+        try: () => annotationIdInput(input),
+        catch: invalid(operation),
+      });
+      const threadId = yield* scopedThread(operation, safe.threadId, scope.context);
+      yield* resolve(scope.context);
+      // The whole-text read is a 1.3.0 client op.
+      const connectionId = yield* requireComposer(operation, metadata, CLIENT_COMPOSER_V13_RANGE);
+      return yield* Effect.tryPromise({
+        try: () =>
+          forward(
+            "getAnnotation",
             { threadId, annotationId: safe.annotationId } as Json,
             scope.context,
             signal,

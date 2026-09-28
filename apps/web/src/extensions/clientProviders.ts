@@ -14,10 +14,12 @@ import {
   UI_NAVIGATION_OPEN,
   UI_NAVIGATION_OPEN_SESSION,
   type UiNavigationFileReceipt,
+  type UiNavigationFileRefusalReason,
   type UiNavigationReceipt,
   type UiNavigationSessionReceipt,
   type UiNavigationRefusalReason,
 } from "@t3tools/extension-sdk/catalogue";
+import { LISTED_ANNOTATION_TEXT_MAX } from "@t3tools/extension-sdk/clientProviders";
 import type { Json } from "@t3tools/extension-sdk/contracts";
 import {
   applyThemeColorPreview,
@@ -50,7 +52,10 @@ import {
   setLocalStorageItem,
   subscribeLocalStorageKey,
 } from "../hooks/useLocalStorage";
-import { RENDER_BROWSER_FILE_STORAGE_KEY } from "../components/files/filePreviewMode";
+import {
+  FILE_EXPLORER_STORAGE_KEY,
+  RENDER_BROWSER_FILE_STORAGE_KEY,
+} from "../components/files/filePreviewMode";
 import { createElement } from "react";
 import { toastManager, type ThreadToastData } from "../components/ui/toast";
 import { Spinner } from "../components/ui/spinner";
@@ -88,6 +93,8 @@ import { createKeybindingsClientProvider } from "./extensionCommandRegistry";
 import { isElectron } from "../env";
 import { randomUUID } from "../lib/utils";
 import { readLocalApi } from "../localApi";
+import { isBrowserPreviewFile, openWorkspaceFileInPreview } from "../browser/openFileInPreview";
+import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import {
   isAtomCommandInterrupted,
   runAtomCommand,
@@ -844,6 +851,25 @@ function composerQuotedContents(excerpt: string, startLine: number, endLine: num
   return "\n".repeat(firstLine - 1) + excerpt;
 }
 
+/** `text` trimmed, and cut with "…" to at most `max` units past it. */
+function boundedAnnotationText(text: string, max: number): { text: string; truncated: boolean } {
+  const trimmed = text.trim();
+  if (trimmed.length <= max) return { text: trimmed, truncated: false };
+  let cut = trimmed.slice(0, max - 1);
+  // Never leave half a surrogate pair at the cut.
+  if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
+  return { text: `${cut}…`, truncated: true };
+}
+
+/** A review comment's text as `listAnnotations` lists it: a marked preview when cut. */
+function listedAnnotationText(text: string): { text: string; textTruncated?: true } {
+  const listed = boundedAnnotationText(text, LISTED_ANNOTATION_TEXT_MAX);
+  return listed.truncated ? { text: listed.text, textTruncated: true } : { text: listed.text };
+}
+
+/** Bound on `getAnnotation`'s text: the longest body `attachAnnotation` takes. */
+const ANNOTATION_TEXT_MAX = 4096;
+
 function composerThread(call: ClientProviderInvokeCall, threadId: string): ScopedThreadRef {
   const scoped = call.context.resource.threadId;
   if (threadId !== scoped)
@@ -1127,6 +1153,8 @@ export function createComposerClientProvider(
           // Own ids only: the prefix minted by attachAnnotation above. Native
           // comments and other installations' annotations stay unlisted.
           const prefix = `annotation:${call.caller.installationId}:`;
+          const include = readInputObject(input).include;
+          const withText = Array.isArray(include) && include.includes("text");
           const comments =
             useComposerDraftStore.getState().getComposerDraft(ref)?.reviewComments ?? [];
           const annotations = comments
@@ -1139,8 +1167,31 @@ export function createComposerClientProvider(
               filePath: entry.filePath,
               rangeLabel: entry.rangeLabel,
               sectionTitle: entry.sectionTitle,
+              // The words the composer chip shows, cut to fit the frame.
+              ...(withText ? listedAnnotationText(entry.text) : {}),
             }));
           return { annotations } as unknown as Json;
+        }
+        case "getAnnotation": {
+          // One own comment's whole text: what a listing's preview cut off.
+          authorizeCaller(deps, call.caller, call.context, ["t3.messages/write"]);
+          const threadId = readInputString(input, "threadId")!;
+          const ref = composerThread(call, threadId);
+          const annotationId = readInputString(input, "annotationId")!;
+          if (!annotationId.startsWith(`annotation:${call.caller.installationId}:`))
+            throw new ClientProviderOpError(
+              "client-target-denied",
+              "Annotation belongs to another installation",
+            );
+          const entry = (
+            useComposerDraftStore.getState().getComposerDraft(ref)?.reviewComments ?? []
+          ).find((comment) => comment.id === annotationId);
+          return (entry === undefined
+            ? { found: false }
+            : {
+                found: true,
+                text: boundedAnnotationText(entry.text, ANNOTATION_TEXT_MAX).text,
+              }) as unknown as Json;
         }
         case "removeAnnotation": {
           authorizeCaller(deps, call.caller, call.context, ["t3.messages/write"]);
@@ -1273,44 +1324,57 @@ export function createTerminalAppearanceClientProvider(
 // ---------------------------------------------------------------------------
 // Preferences — a named subset of the persisted client settings.
 
-/** The native file preview's own choice; unset means rendered, as there. */
-function renderBrowserFile(): boolean {
+/** A native file preview choice stored under `key`; `fallback` when never chosen. */
+function storedChoice(key: string, fallback: boolean): boolean {
   try {
-    return getLocalStorageItem(RENDER_BROWSER_FILE_STORAGE_KEY, Schema.Boolean) ?? true;
+    return getLocalStorageItem(key, Schema.Boolean) ?? fallback;
   } catch {
-    return true;
+    return fallback;
   }
 }
 
+/** The keys a server may ask for, each stored where the native file preview keeps it. */
+const STORED_PREFERENCES = [
+  { name: "renderBrowserFile", key: RENDER_BROWSER_FILE_STORAGE_KEY },
+  { name: "fileExplorerOpen", key: FILE_EXPLORER_STORAGE_KEY },
+] as const;
+type StoredPreference = (typeof STORED_PREFERENCES)[number]["name"];
+
 /**
- * The preferences this client holds. `renderBrowserFile` (1.1.0) goes only to
- * a server that asked for it: an older server rejects an unknown key, which
- * would break word wrap too.
+ * The preferences this client holds. `renderBrowserFile` (1.1.0) and
+ * `fileExplorerOpen` (1.2.0) go only to a server that asked for them: an older
+ * server rejects an unknown key, which would break word wrap too. Both default
+ * to true when never chosen, as in the native file preview.
  */
-function preferencesSnapshot(withRenderBrowserFile: boolean): Json {
+function preferencesSnapshot(asked: ReadonlySet<StoredPreference>): Json {
   const { wordWrap } = getClientSettings();
-  return withRenderBrowserFile
-    ? { wordWrap, renderBrowserFile: renderBrowserFile() }
-    : { wordWrap };
+  const snapshot: Record<string, boolean> = { wordWrap };
+  for (const { name, key } of STORED_PREFERENCES)
+    if (asked.has(name)) snapshot[name] = storedChoice(key, true);
+  return snapshot;
 }
 
-/** Whether the server's call asked for the 1.1.0 `renderBrowserFile` key. */
-function asksRenderBrowserFile(input: Json): boolean {
+/** The later keys the server's call asked for. */
+function askedPreferences(input: Json): ReadonlySet<StoredPreference> {
   const include = readInputObject(input ?? {}).include;
-  return Array.isArray(include) && include.includes("renderBrowserFile");
+  return new Set(
+    STORED_PREFERENCES.map(({ name }) => name).filter(
+      (name) => Array.isArray(include) && include.includes(name),
+    ),
+  );
 }
 
 /**
  * Reads wait for hydration: the pre-hydration snapshot is schema defaults,
  * and a pack must not render (or persist over) a value the user never chose.
  */
-async function hydratedPreferences(withRenderBrowserFile: boolean): Promise<Json> {
+async function hydratedPreferences(asked: ReadonlySet<StoredPreference>): Promise<Json> {
   try {
     await ensureClientSettingsHydrated();
   } catch {
     throw new ClientProviderOpError("client-provider-unavailable", "Client settings did not load");
   }
-  return preferencesSnapshot(withRenderBrowserFile);
+  return preferencesSnapshot(asked);
 }
 
 export function createPreferencesClientProvider(deps: ClientProviderDeps): ClientLocalProvider {
@@ -1323,23 +1387,25 @@ export function createPreferencesClientProvider(deps: ClientProviderDeps): Clien
       switch (call.method) {
         case "getPreferences":
           read(call);
-          return hydratedPreferences(asksRenderBrowserFile(call.input));
+          return hydratedPreferences(askedPreferences(call.input));
         case "applyPreferences": {
           write(call);
           const input = readInputObject(call.input);
-          const asked = asksRenderBrowserFile(call.input);
+          const asked = askedPreferences(call.input);
           if (readInputString(input, "writer") !== call.caller.installationId)
             throw new ClientProviderOpError(
               "client-target-denied",
               "Writer must be the calling installation",
             );
           const patch = readInputObject(input.patch ?? null);
-          const { wordWrap, renderBrowserFile: renderHtml } = patch;
+          const { wordWrap } = patch;
           if (wordWrap !== undefined && typeof wordWrap !== "boolean")
             throw new ClientProviderOpError("provider-rejected", "Invalid wordWrap");
-          if (renderHtml !== undefined && typeof renderHtml !== "boolean")
-            throw new ClientProviderOpError("provider-rejected", "Invalid renderBrowserFile");
-          if (wordWrap === undefined && renderHtml === undefined)
+          const stored = STORED_PREFERENCES.filter(({ name }) => patch[name] !== undefined);
+          for (const { name } of stored)
+            if (typeof patch[name] !== "boolean")
+              throw new ClientProviderOpError("provider-rejected", `Invalid ${name}`);
+          if (wordWrap === undefined && stored.length === 0)
             return {
               applied: false,
               reason: "empty-patch",
@@ -1351,9 +1417,9 @@ export function createPreferencesClientProvider(deps: ClientProviderDeps): Clien
             await ensureClientSettingsHydrated();
             if (wordWrap !== undefined)
               await persistClientSettingsUpdate((current) => ({ ...current, wordWrap }));
-            if (renderHtml !== undefined) {
-              setLocalStorageItem(RENDER_BROWSER_FILE_STORAGE_KEY, renderHtml, Schema.Boolean);
-              dispatchLocalStorageChange(RENDER_BROWSER_FILE_STORAGE_KEY);
+            for (const { name, key } of stored) {
+              setLocalStorageItem(key, patch[name] as boolean, Schema.Boolean);
+              dispatchLocalStorageChange(key);
             }
             return { applied: true, preferences: preferencesSnapshot(asked) } as unknown as Json;
           } catch {
@@ -1380,7 +1446,7 @@ export function createPreferencesClientProvider(deps: ClientProviderDeps): Clien
           "client-provider-unavailable",
           `Unknown preferences stream ${call.name}`,
         );
-      const asked = asksRenderBrowserFile(call.input);
+      const asked = askedPreferences(call.input);
       const snapshot = await hydratedPreferences(asked);
       call.emit({ type: "snapshot", value: snapshot });
       let last = JSON.stringify(snapshot);
@@ -1393,7 +1459,7 @@ export function createPreferencesClientProvider(deps: ClientProviderDeps): Clien
       };
       const unsubs = [
         subscribeClientSettings(push),
-        subscribeLocalStorageKey(RENDER_BROWSER_FILE_STORAGE_KEY, push),
+        ...STORED_PREFERENCES.map(({ key }) => subscribeLocalStorageKey(key, push)),
       ];
       return () => {
         for (const unsub of unsubs) unsub();
@@ -1573,15 +1639,37 @@ const refused = (reason: UiNavigationRefusalReason): UiNavigationReceipt => ({
   reason,
 });
 
+const refusedFile = (reason: UiNavigationFileRefusalReason): UiNavigationFileReceipt => ({
+  status: "refused",
+  reason,
+});
+
+/** Opens a workspace file in the thread's preview browser; injected like the navigator. */
+export type FilePreviewOpener = (
+  ref: ScopedThreadRef,
+  filePath: string,
+  workspaceRoot: string,
+) => Promise<"opened" | "browser-unavailable" | "open-failed">;
+
 export function createNavigationClientProvider(
   deps: ClientProviderDeps,
   navigate: ThreadNavigator,
   opener: () => ExternalOpener | undefined = localExternalOpener,
+  previewFile: FilePreviewOpener = openWorkspaceFileInPreview,
+  previewSupported: () => boolean = isPreviewSupportedInRuntime,
 ): ClientLocalProvider {
   return {
     async invoke(
       call,
-    ): Promise<UiNavigationReceipt | UiNavigationSessionReceipt | UiNavigationFileReceipt> {
+    ): Promise<
+      | UiNavigationReceipt
+      | UiNavigationSessionReceipt
+      | UiNavigationFileReceipt
+      | { readonly openFileInBrowser: boolean }
+    > {
+      // Native shows "Open file in preview browser" only where this client
+      // has one; asking needs no grant, as the public getCapabilities does not.
+      if (call.method === "getCapabilities") return { openFileInBrowser: previewSupported() };
       if (call.method === "openSession") {
         authorizeCaller(deps, call.caller, call.context, [UI_NAVIGATION_OPEN_SESSION]);
         // The adapter resolved this URL from the caller's own thread roster;
@@ -1615,6 +1703,18 @@ export function createNavigationClientProvider(
           !installation.grants.projectIds.some((id) => id === shell.projectId)
         )
           return refused("out-of-scope");
+        if (input.openIn === "browser") {
+          // Native's "Open file in preview browser": pages and PDFs only,
+          // resolved against the thread's own checkout.
+          if (!isBrowserPreviewFile(relativePath)) return refusedFile("not-previewable");
+          const project = readProject(scopeProjectRef(deps.environmentId, shell.projectId));
+          const root = shell.worktreePath ?? project?.workspaceRoot;
+          if (!root) return refused("unknown-thread");
+          const outcome = await previewFile(ref, resolvePathLinkTarget(relativePath, root), root);
+          return outcome === "opened"
+            ? ({ status: "opened", relativePath } as UiNavigationFileReceipt)
+            : refusedFile(outcome);
+        }
         // The native file-link path: the file surface resolves the selected
         // t3.file/presentation provider (SelectedApiPresentation) or native.
         useRightPanelStore.getState().openFile(ref, relativePath, line);
@@ -1695,13 +1795,13 @@ export const CLIENT_PROVIDER_DESCRIPTORS = [
   { id: "t3.client/notifications", version: "1.1.0" },
   { id: "t3.client/keybindings", version: "1.0.0" },
   { id: "t3.client/panels", version: "1.0.0" },
-  { id: "t3.client/composer", version: "1.2.0" },
+  { id: "t3.client/composer", version: "1.3.0" },
   { id: "t3.client/terminal-appearance", version: "1.0.0" },
-  { id: "t3.client/preferences", version: "1.1.0" },
+  { id: "t3.client/preferences", version: "1.2.0" },
   { id: "t3.client/external", version: "1.0.0" },
   { id: "t3.client/editor", version: "1.0.0" },
   { id: "t3.client/browser-history", version: "1.1.0" },
-  { id: "t3.client/navigation", version: "1.1.0" },
+  { id: "t3.client/navigation", version: "1.2.0" },
 ] as const;
 
 export const CLIENT_PROVIDER_CLIENT_TAG = isElectron ? "desktop" : "web";

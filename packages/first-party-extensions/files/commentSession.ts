@@ -4,7 +4,9 @@
  */
 
 import {
+  listOwnAnnotations,
   messagesEnrichmentApi,
+  readOwnAnnotationText,
   type MessagesEnrichmentCapabilities,
   type MessagesListedAnnotation,
 } from "@t3tools/extension-sdk/catalogue";
@@ -205,8 +207,13 @@ export interface PostedComment {
   readonly annotationId: string;
   readonly path: string;
   readonly rangeLabel: string;
-  /** The body, when this view attached it — `listAnnotations` does not return bodies. */
+  /**
+   * The body: the whole of it when this view attached it, else the preview a
+   * 1.2.0 host lists (what survives a reload); null from an older host.
+   */
   readonly text: string | null;
+  /** `text` is the host's cut preview; `readFull` reads the whole comment. */
+  readonly truncated?: boolean;
 }
 
 /** `listAnnotations` returns at most this many of the caller's annotations. */
@@ -218,7 +225,8 @@ export const LISTED_ANNOTATIONS_CAP = 8;
  * On a 1.1 composer (`operations.listAnnotations`) the draft is the source of
  * truth: the list is read on thread change and whenever the view becomes
  * visible, so a chip removed in the composer drops out here, and a comment
- * attached from another view shows up. `remove` goes through
+ * attached from another view shows up; a 1.2.0 host lists each comment's
+ * words too, so they survive a reload as the composer chip's do. `remove` goes through
  * `removeAnnotation` when the host offers it. A 1.0 composer has neither op;
  * the view then shows what it attached this session, per thread, and removal
  * stays with the composer chip.
@@ -239,6 +247,8 @@ export function usePostedComments(
   readonly error: string | null;
   readonly recordAttached: (comment: PostedComment) => void;
   readonly remove: (annotationId: string) => void;
+  /** Reads a comment whose listed text was cut, whole (a 1.2.0 host). */
+  readonly readFull: (annotationId: string) => void;
 } {
   const ready = capabilities?.transport === "client" && threadId !== undefined;
   const canList = ready && capabilities.operations.listAnnotations === true;
@@ -255,6 +265,11 @@ export function usePostedComments(
     readonly annotations: readonly MessagesListedAnnotation[];
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Whole texts read back for cut previews, kept for the thread they belong to.
+  const [fullTexts, setFullTexts] = useState<{
+    readonly threadId: string;
+    readonly texts: ReadonlyMap<string, string>;
+  } | null>(null);
   const [refreshSeq, setRefreshSeq] = useState(0);
   // Callbacks resolve after later renders; the ref hands out fresh values.
   const seqRef = useRef(0);
@@ -268,19 +283,17 @@ export function usePostedComments(
     if (!canList || threadId === undefined || !visible) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
-    void bindApi(messagesEnrichmentApi, host, session.context)
-      .invoke("listAnnotations", { threadId }, signal)
-      .then(
-        (result) => {
-          if (signal.aborted) return;
-          setListing({ threadId, seq: refreshSeq, annotations: result.annotations });
-          setError(null);
-        },
-        (cause) => {
-          if (!signal.aborted)
-            setError(cause instanceof Error ? cause.message : "Comments could not be listed");
-        },
-      );
+    void listOwnAnnotations(host, session.context, { threadId }, signal).then(
+      (result) => {
+        if (signal.aborted) return;
+        setListing({ threadId, seq: refreshSeq, annotations: result.annotations });
+        setError(null);
+      },
+      (cause) => {
+        if (!signal.aborted)
+          setError(cause instanceof Error ? cause.message : "Comments could not be listed");
+      },
+    );
     return () => controller.abort();
   }, [host, session, canList, threadId, visible, refreshSeq]);
 
@@ -326,6 +339,34 @@ export function usePostedComments(
     [host, session, removable, threadId, bumpRefresh],
   );
 
+  const readFull = useCallback(
+    (annotationId: string) => {
+      if (threadId === undefined) return;
+      void readOwnAnnotationText(
+        host,
+        session.context,
+        { threadId, annotationId },
+        session.signal,
+      ).then(
+        (text) => {
+          if (text === null || session.signal.aborted) return;
+          setFullTexts((current) => ({
+            threadId,
+            texts: new Map([
+              ...(current?.threadId === threadId ? current.texts : []),
+              [annotationId, text],
+            ]),
+          }));
+        },
+        (cause) => {
+          if (!session.signal.aborted)
+            setError(cause instanceof Error ? cause.message : "Comment could not be read");
+        },
+      );
+    },
+    [host, session, threadId],
+  );
+
   const comments = useMemo(() => {
     const own = attached
       .filter((comment) => comment.threadId === threadId)
@@ -333,14 +374,19 @@ export function usePostedComments(
     const strip = ({ seq: _seq, ...comment }: PostedComment & { readonly seq: number }) => comment;
     if (!canList || listing === null || listing.threadId !== threadId) return own.map(strip);
     const bodies = new Map(own.map((comment) => [comment.annotationId, comment.text]));
+    const whole = fullTexts?.threadId === threadId ? fullTexts.texts : new Map<string, string>();
     const listedComments = listing.annotations
       .filter((entry) => entry.kind === "file")
-      .map((entry) => ({
-        annotationId: entry.annotationId,
-        path: entry.filePath,
-        rangeLabel: entry.rangeLabel,
-        text: bodies.get(entry.annotationId) ?? null,
-      }));
+      .map((entry) => {
+        const known = bodies.get(entry.annotationId) ?? whole.get(entry.annotationId);
+        return {
+          annotationId: entry.annotationId,
+          path: entry.filePath,
+          rangeLabel: entry.rangeLabel,
+          text: known ?? entry.text ?? null,
+          truncated: known === undefined && entry.textTruncated === true,
+        };
+      });
     // An attach lands before the re-list that includes it returns; past the
     // op's cap an absent own attach may simply be unlisted, not removed.
     const listedIds = new Set(listing.annotations.map((entry) => entry.annotationId));
@@ -351,7 +397,7 @@ export function usePostedComments(
       )
       .map(strip);
     return [...listedComments, ...pending];
-  }, [attached, canList, listing, threadId]);
+  }, [attached, canList, listing, threadId, fullTexts]);
 
   return {
     comments,
@@ -364,5 +410,6 @@ export function usePostedComments(
     error,
     recordAttached,
     remove,
+    readFull,
   };
 }

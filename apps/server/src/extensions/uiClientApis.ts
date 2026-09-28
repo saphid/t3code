@@ -22,8 +22,10 @@ import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
 import {
   CLIENT_NAVIGATION_V11_RANGE,
+  CLIENT_NAVIGATION_V12_RANGE,
   CLIENT_NOTIFICATIONS_V11_RANGE,
   CLIENT_PREFERENCES_V11_RANGE,
+  CLIENT_PREFERENCES_V12_RANGE,
 } from "@t3tools/extension-sdk/clientProviders";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import type { HostApiInvocationMetadata, HostApiProvider } from "@t3tools/extension-runtime";
@@ -455,19 +457,24 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
    * older one would reject the frame. A client that lists no version for the
    * area has none of its additions.
    */
+  /** The version of `apiId` the client on `connectionId` lists, if any. */
+  const clientVersion = async (connectionId: string, apiId: string, signal: AbortSignal) => {
+    const targets = await Effect.runPromise(
+      deps.clientApiProviders.listTargets(deps.environmentId),
+      { signal },
+    );
+    return targets
+      .find((target) => target.connectionId === connectionId)
+      ?.providers.find((provider) => provider.id === apiId)?.version;
+  };
+
   const clientSupports = async (
     connectionId: string,
     apiId: string,
     range: string,
     signal: AbortSignal,
   ) => {
-    const targets = await Effect.runPromise(
-      deps.clientApiProviders.listTargets(deps.environmentId),
-      { signal },
-    );
-    const version = targets
-      .find((target) => target.connectionId === connectionId)
-      ?.providers.find((provider) => provider.id === apiId)?.version;
+    const version = await clientVersion(connectionId, apiId, signal);
     // An unlisted area is not a current one: the client is refused, never guessed.
     return { ok: version !== undefined && satisfiesSemverRange(version, range), version };
   };
@@ -498,19 +505,58 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
     );
 
   /**
-   * The preferences target plus the 1.1.0 keys it may answer with. A 1.0.0
-   * client is never asked, and a 1.0.0 server never asks, so neither side
-   * sees a field its closed shapes reject.
+   * The preferences target plus the later keys it may answer with. A client
+   * is asked only for keys its area has, and an older server never asks, so
+   * neither side sees a field its closed shapes reject.
    */
   const preferencesTarget = async (metadata: HostApiInvocationMetadata, signal: AbortSignal) => {
     const connectionId = await Effect.runPromise(resolveConnectionId(deps, metadata), { signal });
-    const { ok } = await clientSupports(
-      connectionId,
-      CLIENT_PREFERENCES,
-      CLIENT_PREFERENCES_V11_RANGE,
-      signal,
-    );
-    return { connectionId, include: ok ? { include: ["renderBrowserFile"] } : {} };
+    const version = await clientVersion(connectionId, CLIENT_PREFERENCES, signal);
+    const has = (range: string) => version !== undefined && satisfiesSemverRange(version, range);
+    const include = [
+      ...(has(CLIENT_PREFERENCES_V11_RANGE) ? ["renderBrowserFile"] : []),
+      ...(has(CLIENT_PREFERENCES_V12_RANGE) ? ["fileExplorerOpen"] : []),
+    ];
+    return { connectionId, include: include.length > 0 ? { include } : {} };
+  };
+
+  /**
+   * Whether the invoking client has a preview browser: its own 1.2.0
+   * navigation answer. An older client, or one that cannot be reached, has none.
+   */
+  const opensFilesInBrowser = async (
+    context: ViewContext,
+    signal: AbortSignal,
+    metadata: HostApiInvocationMetadata,
+  ): Promise<boolean> => {
+    if (metadata.principal?.kind === "provider-session") return false;
+    try {
+      const connectionId = await Effect.runPromise(resolveConnectionId(deps, metadata), {
+        signal,
+      });
+      const { ok } = await clientSupports(
+        connectionId,
+        CLIENT_NAVIGATION,
+        CLIENT_NAVIGATION_V12_RANGE,
+        signal,
+      );
+      if (!ok) return false;
+      const answer = await Effect.runPromise(
+        invokeClient(deps, {
+          apiId: CLIENT_NAVIGATION,
+          method: "getCapabilities",
+          input: {},
+          context,
+          metadata,
+          signal,
+          connectionId,
+        }),
+        { signal },
+      );
+      return (answer as { openFileInBrowser?: unknown }).openFileInBrowser === true;
+    } catch {
+      return false;
+    }
   };
 
   const themeProvider: HostApiProvider = {
@@ -983,12 +1029,21 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
           return (async () => {
             const { connectionId, include } = await preferencesTarget(metadata, signal);
             const write = method === "setPreferences";
-            if (write && (input as { renderBrowserFile?: unknown }).renderBrowserFile !== undefined)
+            const patch = input as { renderBrowserFile?: unknown; fileExplorerOpen?: unknown };
+            if (write && patch.renderBrowserFile !== undefined)
               await requireClient(
                 connectionId,
                 CLIENT_PREFERENCES,
                 CLIENT_PREFERENCES_V11_RANGE,
                 "renderBrowserFile",
+                signal,
+              );
+            if (write && patch.fileExplorerOpen !== undefined)
+              await requireClient(
+                connectionId,
+                CLIENT_PREFERENCES,
+                CLIENT_PREFERENCES_V12_RANGE,
+                "fileExplorerOpen",
                 signal,
               );
             return Effect.runPromise(
@@ -1109,16 +1164,25 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
     availability: ambient(deps, CLIENT_NAVIGATION),
     invoke(method, input, context, signal, metadata): Promise<Json> {
       if (method === "getCapabilities")
-        return capabilities(
-          deps,
-          "host.ui.navigation",
-          {
-            openThread: CLIENT_NAVIGATION,
-            openAgentSession: CLIENT_NAVIGATION,
-            openFile: CLIENT_NAVIGATION,
-          },
-          metadata,
-        );
+        return (async () => {
+          const answer = (await capabilities(
+            deps,
+            "host.ui.navigation",
+            {
+              openThread: CLIENT_NAVIGATION,
+              openAgentSession: CLIENT_NAVIGATION,
+              openFile: CLIENT_NAVIGATION,
+            },
+            metadata,
+          )) as { readonly operations: Record<string, boolean> };
+          return {
+            ...answer,
+            operations: {
+              ...answer.operations,
+              openFileInBrowser: await opensFilesInBrowser(context, signal, metadata),
+            },
+          } as unknown as Json;
+        })();
       if (method === "openAgentSession")
         return (async () => {
           const { agentId } = input as { agentId: string };
@@ -1141,7 +1205,12 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
         })();
       if (method === "openFile")
         return (async () => {
-          const { relativePath, line } = input as { relativePath: string; line?: number };
+          const { relativePath, line, openIn } = input as {
+            relativePath: string;
+            line?: number;
+            openIn?: "panel" | "browser";
+          };
+          const browser = openIn === "browser";
           if (!isWorkspaceFilePath(relativePath))
             return { status: "refused", reason: "invalid-path" } satisfies Json;
           // Only the caller's own (broker-scoped) thread; the input cannot name another.
@@ -1154,18 +1223,24 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
           const connectionId = await Effect.runPromise(resolveConnectionId(deps, metadata), {
             signal,
           });
+          // `openIn` is 1.2.0; the file panel is the 1.1.0 default, so only
+          // a browser open needs the newer client.
           await requireClient(
             connectionId,
             CLIENT_NAVIGATION,
-            CLIENT_NAVIGATION_V11_RANGE,
-            "openFile",
+            browser ? CLIENT_NAVIGATION_V12_RANGE : CLIENT_NAVIGATION_V11_RANGE,
+            browser ? "openFile openIn" : "openFile",
             signal,
           );
           return Effect.runPromise(
             invokeClient(deps, {
               apiId: CLIENT_NAVIGATION,
               method: "openFile",
-              input: { relativePath, ...(line === undefined ? {} : { line }) },
+              input: {
+                relativePath,
+                ...(line === undefined ? {} : { line }),
+                ...(browser ? { openIn } : {}),
+              },
               context,
               metadata,
               signal,

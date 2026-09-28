@@ -66,6 +66,54 @@ export function toggleExpanded(expanded: ReadonlySet<string>, directoryPath: str
   return next;
 }
 
+/** Every directory in the tree snapshot: what "Expand all folders" opens. */
+export function treeDirectories(entries: readonly TreeEntry[]): string[] {
+  return entries.filter((entry) => entry.kind === "directory").map((entry) => entry.path);
+}
+
+/** Whether every directory is open, so the control offers to collapse them. */
+export function allDirectoriesExpanded(
+  directories: readonly string[],
+  expanded: ReadonlySet<string>,
+): boolean {
+  return directories.length > 0 && directories.every((path) => expanded.has(path));
+}
+
+/**
+ * Which folders are open. Normally `paths` lists the open ones; once
+ * "Expand all folders" stands (`all`), it lists the ones closed by hand
+ * instead, so folders that appear later open too and the state stays small
+ * however many folders the tree holds.
+ */
+export type FolderExpansion = { readonly all: boolean; readonly paths: ReadonlySet<string> };
+
+export const noFoldersOpen: FolderExpansion = { all: false, paths: new Set() };
+
+/** Opens or closes one folder. */
+export function toggleFolder(expansion: FolderExpansion, path: string): FolderExpansion {
+  return { all: expansion.all, paths: toggleExpanded(expansion.paths, path) };
+}
+
+/** Opens `paths` (a revealed file's ancestors, a linked folder). */
+export function openFolders(expansion: FolderExpansion, paths: Iterable<string>): FolderExpansion {
+  const next = new Set(expansion.paths);
+  for (const path of paths) {
+    if (expansion.all) next.delete(path);
+    else next.add(path);
+  }
+  return { all: expansion.all, paths: next };
+}
+
+/** The open folders among `directories`. */
+export function expandedFolders(
+  expansion: FolderExpansion,
+  directories: readonly string[],
+): ReadonlySet<string> {
+  return expansion.all
+    ? new Set(directories.filter((path) => !expansion.paths.has(path)))
+    : expansion.paths;
+}
+
 /**
  * Entries matching a case-insensitive substring of the path, plus every
  * ancestor directory needed to render them as a tree.
@@ -159,6 +207,10 @@ export function previewKind(relativePath: string): PreviewKind {
   if (dot <= 0 || dot === name.length - 1) return "text";
   return PREVIEW_KIND_BY_EXTENSION[name.slice(dot + 1).toLowerCase()] ?? "text";
 }
+
+/** Paths native offers "Open file in preview browser" for: pages and PDFs in the workspace. */
+export const opensInPreviewBrowser = (path: string): boolean =>
+  isWorkspaceBrowserPreviewPath(path) && presentationPath(path) !== null;
 
 const isHtmlPath = (path: string): boolean =>
   isWorkspaceBrowserPreviewPath(path) && !path.toLowerCase().endsWith(".pdf");
@@ -1080,7 +1132,16 @@ export type FilesViewState = {
   readonly renderMarkdown?: boolean;
   /** Absent means rendered, the native default; only a source preference is saved. */
   readonly renderHtml?: boolean;
-  /** A file link's line, from `t3.file/presentation.open`; never saved back. */
+  /** Absent means shown, the native default; only a hidden explorer is saved. */
+  readonly explorer?: boolean;
+  /** "Expand all folders" stands; `collapsed` lists the folders closed since. */
+  readonly expandAll?: boolean;
+  readonly collapsed?: readonly string[];
+  /**
+   * The line the selected file last revealed: a file link's line from
+   * `t3.file/presentation.open`, then each later reveal of that file, so a
+   * reload reveals the latest one as native's persisted `revealLine` does.
+   */
   readonly line?: number;
 };
 
@@ -1095,22 +1156,24 @@ export function isFilesViewState(value: unknown): value is FilesViewState | null
       key !== "expanded" &&
       key !== "renderMarkdown" &&
       key !== "renderHtml" &&
+      key !== "explorer" &&
+      key !== "expandAll" &&
+      key !== "collapsed" &&
       key !== "line"
     )
       return false;
   if (typeof record.relativePath !== "string") return false;
-  if (
-    record.expanded !== undefined &&
-    !(
-      Array.isArray(record.expanded) &&
-      record.expanded.length <= MAX_PERSISTED_EXPANDED &&
-      record.expanded.every((path) => typeof path === "string")
-    )
-  )
-    return false;
+  const isPathList = (value: unknown) =>
+    value === undefined ||
+    (Array.isArray(value) &&
+      value.length <= MAX_PERSISTED_EXPANDED &&
+      value.every((path) => typeof path === "string"));
+  if (!isPathList(record.expanded) || !isPathList(record.collapsed)) return false;
   return (
+    (record.expandAll === undefined || typeof record.expandAll === "boolean") &&
     (record.renderMarkdown === undefined || typeof record.renderMarkdown === "boolean") &&
     (record.renderHtml === undefined || typeof record.renderHtml === "boolean") &&
+    (record.explorer === undefined || typeof record.explorer === "boolean") &&
     (record.line === undefined || (Number.isInteger(record.line) && (record.line as number) >= 1))
   );
 }
@@ -1123,10 +1186,12 @@ export function restoredRevealLine(restoreState: unknown): number | null {
     : null;
 }
 
-/** Expanded directories a restored view reopens; empty for anything malformed. */
-export function restoredExpanded(restoreState: unknown): Set<string> {
-  if (!isFilesViewState(restoreState) || restoreState === null) return new Set();
-  return new Set(restoreState.expanded ?? []);
+/** The folders a restored view reopens; none for anything malformed. */
+export function restoredFolders(restoreState: unknown): FolderExpansion {
+  if (!isFilesViewState(restoreState) || restoreState === null) return noFoldersOpen;
+  return restoreState.expandAll === true
+    ? { all: true, paths: new Set(restoreState.collapsed ?? []) }
+    : { all: false, paths: new Set(restoreState.expanded ?? []) };
 }
 
 /** Whether a restored view resumes in the rendered-markdown preview. */
@@ -1139,21 +1204,39 @@ export function restoredRenderHtml(restoreState: unknown): boolean {
   return !(isFilesViewState(restoreState) && restoreState?.renderHtml === false);
 }
 
+/** Whether a restored view shows the file explorer; shown unless it was hidden. */
+export function restoredExplorerOpen(restoreState: unknown): boolean {
+  return !(isFilesViewState(restoreState) && restoreState?.explorer === false);
+}
+
 /**
- * The record `session.save` persists. Expansion is sorted so equal view
+ * Whether the tree shows beside the selected file, as native's
+ * `shouldShowFileExplorer` decides: always with no file selected, never for a
+ * path outside the workspace (the tree cannot reveal it), else the user's
+ * choice.
+ */
+export function showsFileExplorer(selected: string | null, explorerOpen: boolean): boolean {
+  if (selected === null) return true;
+  return explorerOpen && presentationPath(selected) !== null;
+}
+
+/**
+ * The record `session.save` persists. Folder paths are sorted so equal view
  * states serialize identically, and bounded by count and bytes so a
  * sprawling tree can neither grow the record without limit nor push it past
  * the host's payload cap (an oversized `session.save` throws).
  */
 export function filesViewState(
   selected: string | null,
-  expanded: ReadonlySet<string>,
+  folders: FolderExpansion,
   renderMarkdown: boolean,
   renderHtml = true,
+  explorer = true,
+  line: number | null = null,
 ): FilesViewState {
   const kept: string[] = [];
   let bytes = 0;
-  for (const path of [...expanded].sort()) {
+  for (const path of [...folders.paths].sort()) {
     if (kept.length >= MAX_PERSISTED_EXPANDED) break;
     // JSON quotes plus the separating comma.
     bytes += textEncoder.encode(path).length + 3;
@@ -1162,9 +1245,12 @@ export function filesViewState(
   }
   return {
     relativePath: selected ?? "",
-    expanded: kept,
+    // Past the bound, a folder closed under expand-all reopens after a reload.
+    ...(folders.all ? { expandAll: true, collapsed: kept } : { expanded: kept }),
     renderMarkdown,
     ...(renderHtml ? {} : { renderHtml: false }),
+    ...(explorer ? {} : { explorer: false }),
+    ...(selected !== null && line !== null ? { line } : {}),
   };
 }
 
@@ -1372,7 +1458,7 @@ export function watchPreferences(options: {
         if (frame.type === "closed") break;
         if (frame.type === "snapshot" || frame.type === "data") {
           const value = frame.value;
-          const { wordWrap, renderBrowserFile } = (
+          const { wordWrap, renderBrowserFile, fileExplorerOpen } = (
             typeof value === "object" && value !== null ? value : {}
           ) as Partial<Record<keyof UiPreferences, unknown>>;
           options.apply(
@@ -1380,6 +1466,7 @@ export function watchPreferences(options: {
               ? {
                   wordWrap,
                   ...(typeof renderBrowserFile === "boolean" ? { renderBrowserFile } : {}),
+                  ...(typeof fileExplorerOpen === "boolean" ? { fileExplorerOpen } : {}),
                 }
               : null,
           );
@@ -1449,6 +1536,26 @@ export function writeRenderHtml(options: {
   );
 }
 
+/**
+ * Writes whether the file explorer shows, to the client preference the native
+ * file preview reads when it opens; see `writePreference`. The key is
+ * `t3.ui/preferences` 1.2.0: an older host refuses the write and the view
+ * keeps its own choice.
+ */
+export function writeFileExplorerOpen(options: {
+  readonly client: Pick<ApiClient, "invokeApi">;
+  readonly context: ViewContext;
+  readonly signal: AbortSignal;
+  readonly fileExplorerOpen: boolean;
+}): Promise<string | null> {
+  return writePreference(
+    options,
+    { fileExplorerOpen: options.fileExplorerOpen },
+    "File explorer choice",
+    "^1.2.0",
+  );
+}
+
 // ---------------------------------------------------------------------------
 // t3.ui/keybindings consumption
 // ---------------------------------------------------------------------------
@@ -1512,6 +1619,7 @@ export const FILES_VIEW_COMMANDS: readonly {
 export function fileOpenNotification(
   state: FileOpenState,
   threadId: string | undefined,
+  title = "Unable to open file",
 ): {
   readonly severity: "error";
   readonly title: string;
@@ -1523,7 +1631,7 @@ export function fileOpenNotification(
   if (state.status !== "denied" && state.status !== "unavailable") return null;
   return {
     severity: "error",
-    title: "Unable to open file",
+    title,
     body: describeFileOpen(state),
     durationMs: 5_000,
     ...(threadId !== undefined && threadId.length > 0

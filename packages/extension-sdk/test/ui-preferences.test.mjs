@@ -9,6 +9,7 @@ import {
   assertProvidedApiOwner,
 } from "../dist/catalogue.js";
 import { ApiVersionError, bindApi, validateApiDefinition } from "../dist/capabilities.js";
+import * as Catalogue from "../dist/catalogue.js";
 import { uiPreferencesApi } from "../dist/catalogue.js";
 import { CLIENT_PREFERENCES_API, CLIENT_PROVIDER_APIS } from "../dist/clientProviders.js";
 
@@ -70,9 +71,7 @@ NodeTest.test("renderBrowserFile is an optional boolean so older hosts stay vali
 // immutable 1.0.0. It is a 1.1.0 addition over a 1.0.0 baseline, and the
 // client seam moves with it.
 NodeTest.test("renderBrowserFile is a 1.1.0 addition over the 1.0.0 baseline", async () => {
-  NodeAssert.equal(UI_PREFERENCES_API.version, "1.1.0");
   NodeAssert.equal(uiPreferencesApi.baseline, "1.0.0");
-  NodeAssert.equal(CLIENT_PREFERENCES_API.version, "1.1.0");
   const requests = [];
   const client = {
     invokeApi: (request) => {
@@ -99,5 +98,49 @@ NodeTest.test("renderBrowserFile is a 1.1.0 addition over the 1.0.0 baseline", a
       { versionRange: "^1.0.0", input: { wordWrap: true } },
       { versionRange: "^1.1.0", input: { renderBrowserFile: false } },
     ],
+  );
+});
+
+// Review repro (gaps-files-2 P2): the Files explorer choice is the native
+// panel's shared one — a 1.2.0 key over the published 1.1.0, which stays frozen.
+NodeTest.test("fileExplorerOpen is a 1.2.0 addition; 1.1.0 stays frozen", async () => {
+  NodeAssert.equal(UI_PREFERENCES_API.version, "1.2.0");
+  NodeAssert.equal(CLIENT_PREFERENCES_API.version, "1.2.0");
+  const read = UI_PREFERENCES_API.methods.find((m) => m.name === "getPreferences").outputSchema;
+  NodeAssert.deepEqual(read.properties.fileExplorerOpen, { type: "boolean" });
+  NodeAssert.deepEqual(read.required, ["wordWrap"]);
+  const frozen = Catalogue.uiPreferencesApiV1_1?.definition;
+  NodeAssert.equal(frozen?.version, "1.1.0");
+  NodeAssert.ok(GENERIC_API_CATALOGUE.includes(frozen));
+  for (const method of frozen.methods.filter((m) => m.name !== "getCapabilities")) {
+    const schema = method.name === "setPreferences" ? method.inputSchema : method.outputSchema;
+    const properties = schema.properties.preferences?.properties ?? schema.properties;
+    NodeAssert.deepEqual(Object.keys(properties).sort(), ["renderBrowserFile", "wordWrap"]);
+  }
+  const requests = [];
+  const client = {
+    invokeApi: (request) => {
+      requests.push(request);
+      return Promise.resolve({ applied: true, preferences: { wordWrap: true } });
+    },
+  };
+  const context = { client: "web", resource: { namespace: "ext", id: "ext.a" } };
+  const signal = new AbortController().signal;
+  await NodeAssert.rejects(
+    bindApi(uiPreferencesApi, client, context, "^1.1.0").invoke(
+      "setPreferences",
+      { fileExplorerOpen: false },
+      signal,
+    ),
+    (error) => error instanceof ApiVersionError,
+  );
+  await bindApi(uiPreferencesApi, client, context, "^1.2.0").invoke(
+    "setPreferences",
+    { fileExplorerOpen: false },
+    signal,
+  );
+  NodeAssert.deepEqual(
+    requests.map(({ versionRange, input }) => ({ versionRange, input })),
+    [{ versionRange: "^1.2.0", input: { fileExplorerOpen: false } }],
   );
 });

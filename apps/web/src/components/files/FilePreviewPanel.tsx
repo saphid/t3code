@@ -81,6 +81,7 @@ import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { projectFileCacheKey, projectFileEditorCacheKey } from "./fileContentRevision";
 import {
   isMarkdownPreviewFile,
+  FILE_EXPLORER_STORAGE_KEY,
   RENDER_BROWSER_FILE_STORAGE_KEY,
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
@@ -110,7 +111,6 @@ interface FilePreviewPanelProps {
   workspaceMutationId: string | null;
 }
 
-const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
 const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
 const RENDER_TABLE_STORAGE_KEY = "t3code.renderTable";
 

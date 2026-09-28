@@ -1750,9 +1750,32 @@ var __t3Client = (() => {
     threadId: { type: "string", minLength: 1, maxLength: 128 }
   };
   var BROWSER_CAPTURE_ARTIFACT_REF_PATTERN = "^pending-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
+  var LISTED_ANNOTATION_TEXT_MAX = 160;
+  var annotationTextSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["found", "text"],
+        properties: { found: { const: true }, text: { type: "string", maxLength: 4096 } }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["found"],
+        properties: { found: { const: false } }
+      }
+    ]
+  };
+  var listAnnotationsIncludeSchema = {
+    type: "array",
+    maxItems: 1,
+    uniqueItems: true,
+    items: { enum: ["text"] }
+  };
   var CLIENT_COMPOSER_API = validateApiDefinition({
     id: "t3.client/composer",
-    version: "1.2.0",
+    version: "1.3.0",
     methods: [
       {
         name: "insertContext",
@@ -1885,7 +1908,9 @@ var __t3Client = (() => {
         name: "listAnnotations",
         effect: "read",
         requiredGrants: [],
-        inputSchema: withTarget({ ...composerThreadIdInput }, ["threadId"]),
+        inputSchema: withTarget({ ...composerThreadIdInput, include: listAnnotationsIncludeSchema }, [
+          "threadId"
+        ]),
         outputSchema: {
           type: "object",
           additionalProperties: false,
@@ -1904,7 +1929,10 @@ var __t3Client = (() => {
                   kind: { enum: ["file", "diff"] },
                   filePath: { type: "string", minLength: 1, maxLength: 512 },
                   rangeLabel: { type: "string", maxLength: 128 },
-                  sectionTitle: { type: "string", maxLength: 256 }
+                  sectionTitle: { type: "string", maxLength: 256 },
+                  // 1.3.0, only when `include` asks for it.
+                  text: { type: "string", maxLength: LISTED_ANNOTATION_TEXT_MAX },
+                  textTruncated: { type: "boolean" }
                 }
               }
             }
@@ -1925,6 +1953,17 @@ var __t3Client = (() => {
           required: ["removed"],
           properties: { removed: { type: "boolean" } }
         }
+      },
+      {
+        // 1.3.0: one own comment's whole text.
+        name: "getAnnotation",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          ...composerThreadIdInput,
+          annotationId: { type: "string", minLength: 1, maxLength: 256 }
+        }, ["threadId", "annotationId"]),
+        outputSchema: annotationTextSchema
       }
     ]
   });
@@ -1955,16 +1994,17 @@ var __t3Client = (() => {
     required: ["wordWrap"],
     properties: {
       wordWrap: { type: "boolean" },
-      // 1.1.0, and only when the server asks for it (`include`).
-      renderBrowserFile: { type: "boolean" }
+      // 1.1.0 and 1.2.0 respectively, and only when the server asks (`include`).
+      renderBrowserFile: { type: "boolean" },
+      fileExplorerOpen: { type: "boolean" }
     }
   };
   var preferencesIncludeProperty = {
     include: {
       type: "array",
-      maxItems: 1,
+      maxItems: 2,
       uniqueItems: true,
-      items: { enum: ["renderBrowserFile"] }
+      items: { enum: ["renderBrowserFile", "fileExplorerOpen"] }
     }
   };
   var clientPreferencesPatchSchema = {
@@ -1972,7 +2012,8 @@ var __t3Client = (() => {
     additionalProperties: false,
     properties: {
       wordWrap: { type: "boolean" },
-      renderBrowserFile: { type: "boolean" }
+      renderBrowserFile: { type: "boolean" },
+      fileExplorerOpen: { type: "boolean" }
     }
   };
   var clientPreferencesReceiptSchema = {
@@ -1987,7 +2028,7 @@ var __t3Client = (() => {
   };
   var CLIENT_PREFERENCES_API = validateApiDefinition({
     id: "t3.client/preferences",
-    version: "1.1.0",
+    version: "1.2.0",
     methods: [
       {
         name: "getPreferences",
@@ -2174,7 +2215,7 @@ var __t3Client = (() => {
       }
     ]
   };
-  var uiNavigationFileReceiptSchema = {
+  var uiNavigationFileReceipt = (reasons) => ({
     oneOf: [
       {
         type: "object",
@@ -2191,14 +2232,32 @@ var __t3Client = (() => {
         required: ["status", "reason"],
         properties: {
           status: { const: "refused" },
-          reason: { enum: ["unknown-thread", "out-of-scope", "invalid-path"] }
+          reason: { enum: reasons }
         }
       }
     ]
-  };
-  var uiNavigationFileInputProperties = {
+  });
+  var uiNavigationFileReceiptSchemaV1_1 = uiNavigationFileReceipt([
+    "unknown-thread",
+    "out-of-scope",
+    "invalid-path"
+  ]);
+  var uiNavigationFileReceiptSchema = uiNavigationFileReceipt([
+    "unknown-thread",
+    "out-of-scope",
+    "invalid-path",
+    // 1.2.0, only for `openIn: "browser"`.
+    "not-previewable",
+    "browser-unavailable",
+    "open-failed"
+  ]);
+  var uiNavigationFileInputPropertiesV1_1 = {
     relativePath: { type: "string", minLength: 1, maxLength: 512 },
     line: { type: "integer", minimum: 1, maximum: 1e7 }
+  };
+  var uiNavigationFileInputProperties = {
+    ...uiNavigationFileInputPropertiesV1_1,
+    openIn: { enum: ["panel", "browser"] }
   };
   var uiNavigationSessionReceiptSchema = {
     oneOf: [
@@ -2225,7 +2284,7 @@ var __t3Client = (() => {
   };
   var CLIENT_NAVIGATION_API = validateApiDefinition({
     id: "t3.client/navigation",
-    version: "1.1.0",
+    version: "1.2.0",
     methods: [
       {
         name: "openThread",
@@ -2253,6 +2312,18 @@ var __t3Client = (() => {
         requiredGrants: [],
         inputSchema: withTarget(uiNavigationFileInputProperties, ["relativePath"]),
         outputSchema: uiNavigationFileReceiptSchema
+      },
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({}),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["openFileInBrowser"],
+          properties: { openFileInBrowser: { type: "boolean" } }
+        }
       }
     ]
   });
@@ -7145,9 +7216,9 @@ var __t3Client = (() => {
       }
     ]
   });
-  var messagesEnrichmentApi = defineApi({
+  var messagesEnrichmentDefinition = (withText) => ({
     id: MESSAGES_ENRICHMENT,
-    version: "1.1.0",
+    version: withText ? "1.2.0" : "1.1.0",
     methods: [
       {
         name: "getCapabilities",
@@ -7210,7 +7281,10 @@ var __t3Client = (() => {
         inputSchema: {
           type: "object",
           additionalProperties: false,
-          properties: { threadId: composerThreadIdInput2 }
+          properties: {
+            threadId: composerThreadIdInput2,
+            ...withText ? { include: listAnnotationsIncludeSchema } : {}
+          }
         },
         outputSchema: {
           type: "object",
@@ -7230,7 +7304,11 @@ var __t3Client = (() => {
                   kind: { enum: ["file", "diff"] },
                   filePath: { type: "string", minLength: 1, maxLength: 512 },
                   rangeLabel: { type: "string", minLength: 1, maxLength: 128 },
-                  sectionTitle: { type: "string", minLength: 1, maxLength: 256 }
+                  sectionTitle: { type: "string", minLength: 1, maxLength: 256 },
+                  ...withText ? {
+                    text: { type: "string", maxLength: LISTED_ANNOTATION_TEXT_MAX },
+                    textTruncated: { type: "boolean" }
+                  } : {}
                 }
               }
             }
@@ -7256,9 +7334,39 @@ var __t3Client = (() => {
           required: ["removed"],
           properties: { removed: { type: "boolean" } }
         }
-      }
+      },
+      ...withText ? [
+        {
+          name: "getAnnotation",
+          effect: "read",
+          // The user's unsent words, like listAnnotations.
+          requiredGrants: [MESSAGES_WRITE],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["annotationId"],
+            properties: {
+              threadId: composerThreadIdInput2,
+              annotationId: { type: "string", minLength: 1, maxLength: 256 }
+            }
+          },
+          outputSchema: annotationTextSchema
+        }
+      ] : []
     ]
   });
+  var messagesEnrichmentApi = defineApi(
+    messagesEnrichmentDefinition(true),
+    // Consumers keep loading on a 1.1.0 host; probe before asking for text.
+    {
+      baseline: "1.1.0",
+      additions: [
+        { version: "1.2.0", method: "listAnnotations", input: "include" },
+        { version: "1.2.0", method: "getAnnotation" }
+      ]
+    }
+  );
+  var messagesEnrichmentApiV1_1 = defineApi(messagesEnrichmentDefinition(false));
   var COMPOSER_CONTEXT_API = composerContextApi.definition;
   var MESSAGES_ENRICHMENT_API = messagesEnrichmentApi.definition;
   var UI_THEME = "t3.ui/theme";
@@ -7802,47 +7910,72 @@ var __t3Client = (() => {
       }
     ]
   });
+  var uiPreferencesDefinition = (version, preferences, patch) => ({
+    id: UI_PREFERENCES,
+    version,
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput([
+          "getPreferences",
+          "setPreferences",
+          "subscribePreferences"
+        ])
+      },
+      {
+        name: "getPreferences",
+        effect: "read",
+        requiredGrants: [UI_PREFERENCES_READ],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: preferences
+      },
+      {
+        name: "setPreferences",
+        effect: "write",
+        requiredGrants: [UI_PREFERENCES_WRITE],
+        inputSchema: patch,
+        outputSchema: {
+          ...clientPreferencesReceiptSchema,
+          properties: { ...clientPreferencesReceiptSchema.properties, preferences }
+        }
+      }
+    ],
+    streams: [
+      {
+        name: "subscribePreferences",
+        inputSchema: composerEmptyInputSchema,
+        eventSchema: preferences,
+        requiredGrants: [UI_PREFERENCES_READ]
+      }
+    ]
+  });
   var uiPreferencesApi = defineApi(
+    uiPreferencesDefinition("1.2.0", clientPreferencesSchema, clientPreferencesPatchSchema),
+    // Consumers keep loading on a 1.0.0 host; probe before writing a later key.
     {
-      id: UI_PREFERENCES,
-      version: "1.1.0",
-      methods: [
-        {
-          name: "getCapabilities",
-          effect: "read",
-          requiredGrants: [],
-          inputSchema: composerEmptyInputSchema,
-          outputSchema: uiCapabilitiesOutput([
-            "getPreferences",
-            "setPreferences",
-            "subscribePreferences"
-          ])
-        },
-        {
-          name: "getPreferences",
-          effect: "read",
-          requiredGrants: [UI_PREFERENCES_READ],
-          inputSchema: composerEmptyInputSchema,
-          outputSchema: clientPreferencesSchema
-        },
-        {
-          name: "setPreferences",
-          effect: "write",
-          requiredGrants: [UI_PREFERENCES_WRITE],
-          inputSchema: clientPreferencesPatchSchema,
-          outputSchema: clientPreferencesReceiptSchema
-        }
-      ],
-      streams: [
-        {
-          name: "subscribePreferences",
-          inputSchema: composerEmptyInputSchema,
-          eventSchema: clientPreferencesSchema,
-          requiredGrants: [UI_PREFERENCES_READ]
-        }
+      baseline: "1.0.0",
+      additions: [
+        { version: "1.1.0", method: "setPreferences", input: "renderBrowserFile" },
+        { version: "1.2.0", method: "setPreferences", input: "fileExplorerOpen" }
       ]
-    },
-    // Consumers keep loading on a 1.0.0 host; probe before writing the 1.1.0 key.
+    }
+  );
+  var uiPreferencesV1_1Schema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["wordWrap"],
+    properties: { wordWrap: { type: "boolean" }, renderBrowserFile: { type: "boolean" } }
+  };
+  var uiPreferencesApiV1_1 = defineApi(
+    uiPreferencesDefinition("1.1.0", uiPreferencesV1_1Schema, {
+      type: "object",
+      additionalProperties: false,
+      properties: uiPreferencesV1_1Schema.properties
+    }),
+    // As published: consumers keep loading on a 1.0.0 host.
     {
       baseline: "1.0.0",
       additions: [{ version: "1.1.0", method: "setPreferences", input: "renderBrowserFile" }]
@@ -7994,14 +8127,21 @@ var __t3Client = (() => {
   var uiNavigationApi = defineApi(
     {
       id: UI_NAVIGATION,
-      version: "1.1.0",
+      version: "1.2.0",
       methods: [
         {
           name: "getCapabilities",
           effect: "read",
           requiredGrants: [],
           inputSchema: composerEmptyInputSchema,
-          outputSchema: uiCapabilitiesOutput(["openThread", "openAgentSession", "openFile"])
+          // `openFileInBrowser` (1.2.0) is the invoking client's own answer:
+          // whether it has a preview browser for `openIn: "browser"`.
+          outputSchema: uiCapabilitiesOutput([
+            "openThread",
+            "openAgentSession",
+            "openFile",
+            "openFileInBrowser"
+          ])
         },
         uiNavigationOpenThreadMethod,
         uiNavigationOpenAgentSessionMethod,
@@ -8020,8 +8160,41 @@ var __t3Client = (() => {
       ]
     },
     // Consumers keep loading on a 1.0.0 host; probe before calling openFile.
-    { baseline: "1.0.0", additions: [{ version: "1.1.0", method: "openFile" }] }
+    {
+      baseline: "1.0.0",
+      additions: [
+        { version: "1.1.0", method: "openFile" },
+        { version: "1.2.0", method: "openFile", input: "openIn" }
+      ]
+    }
   );
+  var uiNavigationApiV1_1 = defineApi({
+    id: UI_NAVIGATION,
+    version: "1.1.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput(["openThread", "openAgentSession", "openFile"])
+      },
+      uiNavigationOpenThreadMethod,
+      uiNavigationOpenAgentSessionMethod,
+      {
+        name: "openFile",
+        effect: "write",
+        requiredGrants: [UI_NAVIGATION_OPEN],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["relativePath"],
+          properties: uiNavigationFileInputPropertiesV1_1
+        },
+        outputSchema: uiNavigationFileReceiptSchemaV1_1
+      }
+    ]
+  }, { baseline: "1.0.0", additions: [{ version: "1.1.0", method: "openFile" }] });
   var uiNavigationApiV1 = defineApi({
     id: UI_NAVIGATION,
     version: "1.0.0",
@@ -8048,14 +8221,20 @@ var __t3Client = (() => {
   async function openWorkspaceFile(client, context, relativePath, options) {
     if (!isWorkspaceFilePath(relativePath))
       return { status: "refused", reason: "invalid-path" };
+    const browser = options.openIn === "browser";
+    const floor = browser ? [1, 2, 0] : [1, 1, 0];
     const discovered = await client.discoverApis(context, options.signal);
     const opensFiles = discovered.some((api) => {
       const version = api.id === UI_NAVIGATION ? parseVersion(api.version) : null;
-      return version !== null && version[0] === 1 && compareVersions(version, [1, 1, 0]) >= 0;
+      return version !== null && version[0] === 1 && compareVersions(version, floor) >= 0;
     });
     if (!opensFiles)
       return { status: "refused", reason: "host-unsupported" };
-    return bindApi(uiNavigationApi, client, context, "^1.1.0").invoke("openFile", { relativePath, ...options.line === void 0 ? {} : { line: options.line } }, options.signal);
+    return bindApi(uiNavigationApi, client, context, browser ? "^1.2.0" : "^1.1.0").invoke("openFile", {
+      relativePath,
+      ...options.line === void 0 ? {} : { line: options.line },
+      ...browser ? { openIn: "browser" } : {}
+    }, options.signal);
   }
   function describeOpenFileRefusal(reason) {
     switch (reason) {
@@ -8065,6 +8244,12 @@ var __t3Client = (() => {
         return "The thread is outside this extension's project";
       case "invalid-path":
         return "Not a workspace-relative path";
+      case "not-previewable":
+        return "The preview browser opens .html, .htm and .pdf files only";
+      case "browser-unavailable":
+        return "The preview browser is unavailable in this client";
+      case "open-failed":
+        return "The preview browser could not open the file";
       case "host-unsupported":
         return "This version of T3 Code cannot open files for extensions";
     }
@@ -8120,15 +8305,18 @@ var __t3Client = (() => {
     prsWriteApi.definition,
     composerContextApi.definition,
     messagesEnrichmentApi.definition,
+    messagesEnrichmentApiV1_1.definition,
     uiThemeApi.definition,
     uiKeybindingsApi.definition,
     uiNotificationsApi.definition,
     uiPanelsApi.definition,
     uiPreferencesApi.definition,
+    uiPreferencesApiV1_1.definition,
     uiPreferencesApiV1.definition,
     uiExternalApi.definition,
     uiEditorApi.definition,
     uiNavigationApi.definition,
+    uiNavigationApiV1_1.definition,
     uiNavigationApiV1.definition,
     agentSessionsApi.definition
   ];

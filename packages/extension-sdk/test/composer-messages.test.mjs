@@ -15,6 +15,12 @@ import {
 } from "../dist/catalogue.js";
 import { validateApiDefinition } from "../dist/capabilities.js";
 import { CLIENT_COMPOSER_API, CLIENT_COMPOSER_V12_RANGE } from "../dist/clientProviders.js";
+import * as ClientProviders from "../dist/clientProviders.js";
+import * as Catalogue from "../dist/catalogue.js";
+import { ApiVersionError, bindApi } from "../dist/capabilities.js";
+
+/** listAnnotations' 1.2.0 text preview bound, pinned by the envelope test. */
+const LISTED_TEXT_MAX = 160;
 
 const methodsOf = (definition) =>
   Object.fromEntries((definition.methods ?? []).map((m) => [m.name, m]));
@@ -26,7 +32,7 @@ NodeTest.test("both contracts are registered with stable ids", () => {
   NodeAssert.equal(composerContextApi.definition, COMPOSER_CONTEXT_API);
   NodeAssert.equal(MESSAGES_ENRICHMENT_API.id, "t3.messages/enrichment");
   NodeAssert.equal(MESSAGES_ENRICHMENT_API.id, MESSAGES_ENRICHMENT);
-  NodeAssert.equal(MESSAGES_ENRICHMENT_API.version, "1.1.0");
+  NodeAssert.equal(MESSAGES_ENRICHMENT_API.version, "1.2.0");
   NodeAssert.equal(messagesEnrichmentApi.definition, MESSAGES_ENRICHMENT_API);
   NodeAssert.ok(GENERIC_API_CATALOGUE.includes(COMPOSER_CONTEXT_API));
   NodeAssert.ok(GENERIC_API_CATALOGUE.includes(MESSAGES_ENRICHMENT_API));
@@ -64,10 +70,13 @@ NodeTest.test("grants split write authority across the two contracts", () => {
   const enrichment = methodsOf(MESSAGES_ENRICHMENT_API);
   NodeAssert.deepEqual(Object.keys(enrichment).sort(), [
     "attachAnnotation",
+    "getAnnotation",
     "getCapabilities",
     "listAnnotations",
     "removeAnnotation",
   ]);
+  NodeAssert.deepEqual(enrichment.getAnnotation.requiredGrants, [MESSAGES_WRITE]);
+  NodeAssert.equal(enrichment.getAnnotation.effect, "read");
   NodeAssert.deepEqual(enrichment.getCapabilities.requiredGrants, []);
   NodeAssert.deepEqual(enrichment.attachAnnotation.requiredGrants, [MESSAGES_WRITE]);
   NodeAssert.equal(enrichment.attachAnnotation.effect, "write");
@@ -189,7 +198,7 @@ NodeTest.test("the private client-provider seam carries every public op", () => 
   // missing here can never cross to the client, whatever the public contract
   // or web provider support.
   NodeAssert.equal(CLIENT_COMPOSER_API.id, "t3.client/composer");
-  NodeAssert.equal(CLIENT_COMPOSER_API.version, "1.2.0");
+  NodeAssert.equal(CLIENT_COMPOSER_API.version, "1.3.0");
   NodeAssert.deepEqual(methodsOf(CLIENT_COMPOSER_API).insertMention.inputSchema.required, [
     "target",
     "threadId",
@@ -205,6 +214,7 @@ NodeTest.test("the private client-provider seam carries every public op", () => 
     "insertImage",
     "listAnnotations",
     "removeAnnotation",
+    "getAnnotation",
   ]) {
     NodeAssert.ok(seam[name], name);
     // Every frame carries the adapter-set target; plugin envelopes never do.
@@ -321,8 +331,8 @@ NodeTest.test("schema-maximum inputs always fit the 64 KiB invoke envelope", () 
     utf8Bytes(mention) < MAX_PAYLOAD_BYTES,
     `insertMention worst case ${utf8Bytes(mention)} >= ${MAX_PAYLOAD_BYTES}`,
   );
-  // listAnnotations output: 8 entries at their field maxima (8 × 6,912 B ≈
-  // 54 KB worst-case, inside the 64 KiB frame envelope).
+  // listAnnotations output: 8 entries at their field maxima, the 1.2.0 text
+  // preview included (≈ 64 KB worst-case, inside the 64 KiB frame envelope).
   const listed = {
     annotations: Array.from({ length: 8 }, () => ({
       annotationId: worst(256),
@@ -330,6 +340,7 @@ NodeTest.test("schema-maximum inputs always fit the 64 KiB invoke envelope", () 
       filePath: worst(512),
       rangeLabel: worst(128),
       sectionTitle: worst(256),
+      text: worst(LISTED_TEXT_MAX),
     })),
   };
   NodeAssert.ok(
@@ -386,4 +397,165 @@ NodeTest.test("unicode and escaped boundaries stay inside the envelope", () => {
     },
   };
   NodeAssert.ok(utf8Bytes(annotation) < MAX_PAYLOAD_BYTES);
+});
+
+// Native parity (the composer's review-comment chip shows the comment's
+// words): after a reload a pack can list what its own comments say. `text`
+// is a 1.2.0 output addition the caller asks for with `include`, bounded so
+// eight entries still fit the frame envelope.
+NodeTest.test("listAnnotations text is a 1.2.0 addition over a frozen 1.1.0", async () => {
+  NodeAssert.equal(messagesEnrichmentApi.baseline, "1.1.0");
+  NodeAssert.deepEqual(
+    messagesEnrichmentApi.additions.map(({ version, method, input }) => [version, method, input]),
+    [
+      ["1.2.0", "listAnnotations", "include"],
+      ["1.2.0", "getAnnotation", undefined],
+    ],
+  );
+  for (const definition of [MESSAGES_ENRICHMENT_API, CLIENT_COMPOSER_API]) {
+    const list = methodsOf(definition).listAnnotations;
+    NodeAssert.deepEqual(list.inputSchema.properties.include.items.enum, ["text"]);
+    NodeAssert.deepEqual(list.outputSchema.properties.annotations.items.properties.text, {
+      type: "string",
+      maxLength: LISTED_TEXT_MAX,
+    });
+    NodeAssert.ok(!list.outputSchema.properties.annotations.items.required.includes("text"));
+  }
+  NodeAssert.equal(ClientProviders.CLIENT_COMPOSER_V13_RANGE, "^1.3.0");
+  const frozen = Catalogue.messagesEnrichmentApiV1_1.definition;
+  NodeAssert.equal(frozen.version, "1.1.0");
+  NodeAssert.ok(GENERIC_API_CATALOGUE.includes(frozen));
+  const frozenList = methodsOf(frozen).listAnnotations;
+  NodeAssert.deepEqual(Object.keys(frozenList.inputSchema.properties), ["threadId"]);
+  NodeAssert.equal(frozenList.outputSchema.properties.annotations.items.properties.text, undefined);
+  // An unprobed binding cannot ask for text.
+  const context = { client: "web", resource: { namespace: "ext", id: "ext.a" } };
+  await NodeAssert.rejects(
+    bindApi(
+      messagesEnrichmentApi,
+      { invokeApi: async () => ({ annotations: [] }) },
+      context,
+    ).invoke("listAnnotations", { threadId: "t", include: ["text"] }, new AbortController().signal),
+    (error) => error instanceof ApiVersionError,
+  );
+});
+
+NodeTest.test(
+  "listOwnAnnotations asks a 1.2.0 host for text and an older one without",
+  async () => {
+    NodeAssert.equal(typeof Catalogue.listOwnAnnotations, "function");
+    const context = { client: "web", resource: { namespace: "ext", id: "ext.a" } };
+    const signal = new AbortController().signal;
+    const host = (version) => {
+      const requests = [];
+      return {
+        requests,
+        discoverApis: async () => [{ id: "t3.messages/enrichment", version }],
+        invokeApi: async (request) => {
+          requests.push({ versionRange: request.versionRange, input: request.input });
+          return { annotations: [] };
+        },
+      };
+    };
+    for (const [version, expected] of [
+      ["1.2.0", { versionRange: "^1.2.0", input: { threadId: "t", include: ["text"] } }],
+      ["1.1.0", { versionRange: "^1.1.0", input: { threadId: "t" } }],
+    ]) {
+      const client = host(version);
+      NodeAssert.deepEqual(
+        await Catalogue.listOwnAnnotations(client, context, { threadId: "t" }, signal),
+        { annotations: [] },
+      );
+      NodeAssert.deepEqual(client.requests, [expected]);
+    }
+  },
+);
+
+// Review repro (gaps-files-2 P2): a listed preview says when it was cut, and
+// one own comment's whole text is read on its own at 1.2.0.
+NodeTest.test("readOwnAnnotationText reads one comment's whole text on a 1.2.0 host", async () => {
+  const definition = messagesEnrichmentApi.definition;
+  const method = definition.methods.find((m) => m.name === "getAnnotation");
+  NodeAssert.ok(method, "getAnnotation is declared");
+  NodeAssert.deepEqual(method.requiredGrants, ["t3.messages/write"]);
+  NodeAssert.equal(method.outputSchema.oneOf[0].properties.text.maxLength, 4096);
+  const listing = definition.methods.find((m) => m.name === "listAnnotations");
+  NodeAssert.deepEqual(listing.outputSchema.properties.annotations.items.properties.textTruncated, {
+    type: "boolean",
+  });
+  NodeAssert.ok(
+    !Catalogue.messagesEnrichmentApiV1_1.definition.methods.some((m) => m.name === "getAnnotation"),
+  );
+  const context = { client: "web", resource: { namespace: "ext", id: "ext.a", threadId: "t" } };
+  const signal = new AbortController().signal;
+  const answers = [];
+  for (const [version, reply] of [
+    ["1.2.0", { found: true, text: "whole" }],
+    ["1.2.0", { found: false }],
+    ["1.1.0", { found: true, text: "never asked" }],
+  ]) {
+    const requests = [];
+    const client = {
+      discoverApis: async () => [{ id: "t3.messages/enrichment", version }],
+      invokeApi: async (request) => {
+        requests.push([request.method, request.versionRange, request.input]);
+        return reply;
+      },
+    };
+    answers.push([
+      await Catalogue.readOwnAnnotationText?.(
+        client,
+        context,
+        { threadId: "t", annotationId: "annotation:ext.a:1" },
+        signal,
+      ),
+      requests,
+    ]);
+  }
+  const asked = [
+    ["getAnnotation", "^1.2.0", { threadId: "t", annotationId: "annotation:ext.a:1" }],
+  ];
+  NodeAssert.deepEqual(answers, [
+    ["whole", asked],
+    [null, asked],
+    [null, []],
+  ]);
+});
+
+// Review repro (gaps-files-3 P2): getAnnotation is a 1.2.0 addition, so a
+// binding at the ^1.1.0 baseline refuses it before transport.
+NodeTest.test("getAnnotation is refused below ^1.2.0 and dispatched at it", async () => {
+  const context = { client: "web", resource: { namespace: "ext", id: "ext.a" } };
+  const signal = new AbortController().signal;
+  const input = { threadId: "t", annotationId: "annotation:ext.a:1" };
+  for (const range of [undefined, "^1.1.0"]) {
+    const dispatched = [];
+    const client = {
+      invokeApi: async (request) => {
+        dispatched.push(request.versionRange);
+        return { found: false };
+      },
+    };
+    await NodeAssert.rejects(
+      bindApi(messagesEnrichmentApi, client, context, range).invoke("getAnnotation", input, signal),
+      (error) => error instanceof ApiVersionError && error.code === "api-version-not-negotiated",
+    );
+    NodeAssert.deepEqual(dispatched, []);
+  }
+  const dispatched = [];
+  const client = {
+    invokeApi: async (request) => {
+      dispatched.push([request.method, request.versionRange]);
+      return { found: false };
+    },
+  };
+  NodeAssert.deepEqual(
+    await bindApi(messagesEnrichmentApi, client, context, "^1.2.0").invoke(
+      "getAnnotation",
+      input,
+      signal,
+    ),
+    { found: false },
+  );
+  NodeAssert.deepEqual(dispatched, [["getAnnotation", "^1.2.0"]]);
 });

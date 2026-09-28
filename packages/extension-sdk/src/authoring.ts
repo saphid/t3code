@@ -305,6 +305,150 @@ export function Tooltip(
   return tooltip === null ? rest.children : host.React.createElement(tooltip.Tooltip, rest);
 }
 
+/** Height assumed for a viewport that has not been (or cannot be) measured. */
+const UNMEASURED_VIEWPORT_HEIGHT = 800;
+
+/**
+ * The rows to mount for a viewport at `scrollTop`: the visible ones plus
+ * `overscan` either side, and `keep` (a focused row) wherever it is.
+ * Ascending.
+ */
+export function windowedRowIndexes(input: {
+  readonly count: number;
+  readonly rowHeight: number;
+  readonly scrollTop: number;
+  readonly viewportHeight: number;
+  readonly overscan: number;
+  readonly keep?: number;
+}): number[] {
+  const { count, rowHeight, scrollTop, viewportHeight, overscan, keep } = input;
+  const first = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan);
+  const end = Math.min(count, Math.ceil((scrollTop + viewportHeight) / rowHeight) + overscan);
+  const indexes: number[] = [];
+  if (keep !== undefined && keep >= 0 && keep < first) indexes.push(keep);
+  for (let index = first; index < end; index++) indexes.push(index);
+  if (keep !== undefined && keep >= end && keep < count) indexes.push(keep);
+  return indexes;
+}
+
+export interface WindowedRows {
+  /**
+   * Attach to the scrolling element. It is measured for its height, and
+   * whenever it (re)appears or resizes it is scrolled to the window's place.
+   */
+  readonly ref: (element: HTMLElement | null) => void;
+  /** The element's `onScroll`. */
+  readonly onScroll: (event: { readonly currentTarget: { readonly scrollTop: number } }) => void;
+  /** Row indexes to mount, ascending. Place each at `index * rowHeight`. */
+  readonly indexes: readonly number[];
+  /** Height of every row together: the scroll range to give the element. */
+  readonly height: number;
+  /**
+   * Scrolls the least distance that shows row `index` whole. Asked while the
+   * element is detached or hidden, it is applied once the element shows.
+   */
+  readonly reveal: (index: number) => void;
+}
+
+/**
+ * Mounts only the rows of a long list that are near its scrolling element,
+ * so a list of any length renders a bounded number of nodes. Every row has
+ * the same `rowHeight`. `keep` holds one more row mounted wherever it is —
+ * the focused one, so keyboard focus survives scrolling it out of view.
+ */
+/* oxlint-disable react/hooks -- React is injected once per host/view lifetime, avoiding a bundled second React. */
+export function useWindowedRows(
+  host: Pick<ClientHost, "React">,
+  options: {
+    readonly count: number;
+    readonly rowHeight: number;
+    /** Rows mounted past each edge of the viewport. Defaults to 8. */
+    readonly overscan?: number;
+    readonly keep?: number;
+  },
+): WindowedRows {
+  const { useCallback, useLayoutEffect, useMemo, useRef, useState } = host.React;
+  const { count, rowHeight, overscan = 8, keep } = options;
+  const [element, setElement] = useState<HTMLElement | null>(null);
+  const [measured, setMeasured] = useState(0);
+  const [scrolled, setScrolled] = useState(0);
+  // The window's place, for an element that has lost its own (remounted, or
+  // shown again after `display: none`), and a reveal waiting for a viewport.
+  const place = useRef({ scrolled: 0, reveal: null as number | null });
+  const scrollTo = useCallback((next: number) => {
+    place.current.scrolled = next;
+    setScrolled(next);
+  }, []);
+  const revealTop = useCallback(
+    (index: number, current: number, viewport: number) => {
+      const top = index * rowHeight;
+      if (top < current) return top;
+      return top + rowHeight > current + viewport ? top + rowHeight - viewport : current;
+    },
+    [rowHeight],
+  );
+  useLayoutEffect(() => {
+    if (element === null) return;
+    const sync = () => {
+      const viewport = element.clientHeight;
+      setMeasured(viewport);
+      if (viewport <= 0) return;
+      const { scrolled: wanted, reveal } = place.current;
+      place.current.reveal = null;
+      const target = reveal === null ? wanted : revealTop(reveal, wanted, viewport);
+      if (element.scrollTop !== target) element.scrollTop = target;
+      // The element clamps to its scroll range; the window follows it.
+      scrollTo(element.scrollTop);
+    };
+    sync();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(sync);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [element, revealTop, scrollTo]);
+  const viewportHeight = measured > 0 ? measured : UNMEASURED_VIEWPORT_HEIGHT;
+  const height = count * rowHeight;
+  // A list that shrank under the viewport scrolls back to its end.
+  const scrollTop = Math.max(0, Math.min(scrolled, height - viewportHeight));
+  const indexes = useMemo(
+    () =>
+      windowedRowIndexes({
+        count,
+        rowHeight,
+        scrollTop,
+        viewportHeight,
+        overscan,
+        ...(keep === undefined ? {} : { keep }),
+      }),
+    [count, rowHeight, scrollTop, viewportHeight, overscan, keep],
+  );
+  const onScroll = useCallback(
+    (event: { readonly currentTarget: { readonly scrollTop: number } }) =>
+      scrollTo(event.currentTarget.scrollTop),
+    [scrollTo],
+  );
+  const reveal = useCallback(
+    (index: number) => {
+      const viewport = element?.clientHeight ?? 0;
+      if (element === null || viewport <= 0) {
+        // No viewport to scroll: move the window now, and scroll the element
+        // to the row once it shows and is measured.
+        place.current.reveal = index;
+        scrollTo(revealTop(index, scrollTop, viewportHeight));
+        return;
+      }
+      const current = element.scrollTop;
+      const next = revealTop(index, current, viewport);
+      if (next === current) return;
+      element.scrollTop = next;
+      scrollTo(next);
+    },
+    [element, revealTop, scrollTo, scrollTop, viewportHeight],
+  );
+  return { ref: setElement, onScroll, indexes, height, reveal };
+}
+/* oxlint-enable react/hooks */
+
 export type ApiReadState<T> =
   | { readonly status: "loading" }
   | { readonly status: "ready"; readonly value: T }
