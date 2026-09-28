@@ -259,6 +259,29 @@ export function createApiBroker(options: {
       throw new Error("Resource scope changed");
     eligible(record);
   }
+  /**
+   * Every grant a method or stream of the installation's declared APIs checks,
+   * read from the provider each resolves to now. A ceiling, not what the
+   * package calls: Settings offers it for explicit consent, never auto-grants.
+   * Grants a provider asks for dynamically and host services are not included.
+   */
+  function requiredGrants(record: Installation): string[] {
+    const apis = resolution().apis;
+    const available = providers();
+    const found = new Set<string>();
+    const add = (id: string, providerId: string | undefined) => {
+      const definition = available.find(
+        (item) => item.providerId === providerId && item.definition.id === id,
+      )?.definition;
+      for (const operation of [...(definition?.methods ?? []), ...(definition?.streams ?? [])])
+        for (const grant of operation.requiredGrants) found.add(grant);
+    };
+    for (const api of record.package.requires ?? [])
+      add(api.id, apis.find((item) => item.id === api.id)?.providerId);
+    for (const dependency of record.package.dependencies ?? [])
+      for (const api of dependency.apis) add(api.id, dependency.pluginId);
+    return [...found].sort();
+  }
   function declared(record: Installation, request: ApiInvocation, providerVersion: string) {
     const requirements = [
       ...(record.package.requires ?? []),
@@ -920,6 +943,7 @@ export function createApiBroker(options: {
     invoke,
     validatePackage,
     resolution,
+    requiredGrants,
     invalidate(affectedPluginIds?: readonly string[]) {
       const liveKeys = new Set(
         providers().map((provider) =>

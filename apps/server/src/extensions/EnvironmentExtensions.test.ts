@@ -151,6 +151,7 @@ function fixture() {
   let disposed = false;
   const runtime: Awaited<ReturnType<typeof createExtensionRuntime>> = {
     list: () => [entry],
+    requiredGrants: () => [WORKSPACE_READ_TEXT, "fixture.reader/extra"],
     catalogue: () => ({ apiSelections: [], apiResolution: [], pluginResolution: [] }),
     rollback: async () => entry,
     selectApi: async () => {},
@@ -683,6 +684,18 @@ it.effect(
     );
   },
 );
+
+it.effect("list reports the grants each installation's APIs require beside its own", () => {
+  const f = fixture();
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const service = yield* make(f.factory);
+      const [listed] = yield* service.list;
+      expect(listed?.requiredGrants).toEqual([WORKSPACE_READ_TEXT, "fixture.reader/extra"]);
+      expect(listed?.grants.capabilities).toEqual([WORKSPACE_READ_TEXT]);
+    }).pipe(Effect.provide(f.services)),
+  );
+});
 
 it.effect("stream suppresses a frame from a changed workspace and releases its lifetime", () => {
   const f = fixture();

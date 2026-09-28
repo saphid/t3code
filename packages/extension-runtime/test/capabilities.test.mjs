@@ -885,3 +885,52 @@ NodeTest.test(
     NodeAssert.equal((await invoke(await discover())).surfaceId, b.id + "/files");
   },
 );
+
+NodeTest.test(
+  "required grants are derived from declared APIs' resolved providers, whatever is granted",
+  async (t) => {
+    const hostApi = {
+      id: "test.host/read",
+      version: "1.0.0",
+      methods: [{ ...definition("x").methods[0], requiredGrants: ["test.host/read-grant"] }],
+      streams: [
+        {
+          name: "events",
+          inputSchema: { type: "object" },
+          eventSchema: { type: "object" },
+          requiredGrants: ["test.host/stream-grant"],
+        },
+      ],
+    };
+    const f = await fixture(t, {
+      apiProviders: [{ providerId: "host.read", definition: hostApi, invoke: () => "value" }],
+    });
+    const provider = await f.install(metadata("test.provider"));
+    const consumer = await f.install(
+      metadata("test.consumer", {
+        provides: [],
+        requires: [{ id: hostApi.id, versionRange: "^1" }],
+        dependencies: [
+          {
+            pluginId: provider.id,
+            versionRange: "^1",
+            apis: [{ id: "test.provider/api", versionRange: "^1" }],
+          },
+        ],
+      }),
+      "export default {tools:[],apis:[]};",
+      { capabilities: [], projectIds: [] },
+    );
+    NodeAssert.deepEqual(f.runtime.requiredGrants(consumer.id), [
+      grant,
+      "test.host/read-grant",
+      "test.host/stream-grant",
+    ]);
+    // Deriving never grants: the installation still holds exactly what it was given.
+    NodeAssert.deepEqual(
+      f.runtime.list().find((item) => item.id === consumer.id).grants.capabilities,
+      [],
+    );
+    NodeAssert.deepEqual(f.runtime.requiredGrants(provider.id), []);
+  },
+);

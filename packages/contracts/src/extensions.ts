@@ -17,6 +17,12 @@ export const ExtensionInstallation = Schema.Struct({
   package: Schema.JsonObject,
   enabled: Schema.Boolean,
   grants: ExtensionGrants,
+  /**
+   * Grants the installed version's declared APIs check at call time, derived
+   * by the server. Settings offers the missing ones for explicit consent;
+   * absent from older servers.
+   */
+  requiredGrants: Schema.optional(Schema.Array(Identity).check(Schema.isMaxLength(256))),
 });
 export type ExtensionInstallation = typeof ExtensionInstallation.Type;
 export const ExtensionViewContext = Schema.Struct({

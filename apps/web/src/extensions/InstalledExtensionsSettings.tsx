@@ -17,6 +17,197 @@ import {
   refreshInstalledExtensions,
   useInstalledExtensions,
 } from "./installedEnvironment";
+import type { InstalledPackage } from "./installedController";
+
+interface Grants {
+  readonly capabilities: readonly string[];
+  readonly projectIds: readonly ProjectId[];
+}
+interface Project {
+  readonly id: ProjectId;
+  readonly title: string;
+  readonly workspaceRoot: string;
+}
+const NO_GRANTS: Grants = { capabilities: [], projectIds: [] };
+const operationsOf = (api: (typeof GENERIC_API_CATALOGUE)[number]) => [
+  ...(api.methods ?? []),
+  ...(api.streams ?? []),
+];
+/** Every grant a catalogue API checks, plus host-service grants; read-text has its own choice. */
+const GRANT_CHOICES = [
+  ...new Set([
+    ...GENERIC_API_CATALOGUE.flatMap((api) =>
+      operationsOf(api).flatMap((operation) => operation.requiredGrants),
+    ),
+    ...HOST_CAPABILITY_GRANTS,
+  ]),
+].filter((grant) => grant !== WORKSPACE_READ_TEXT);
+
+/** What a grant allows: the catalogue API calls that check it, or null when this client cannot tell. */
+function grantUses(grant: string): string | null {
+  if (HOST_CAPABILITY_GRANTS.includes(grant)) return "Host service " + grant;
+  const uses = GENERIC_API_CATALOGUE.flatMap((api) => {
+    const names = operationsOf(api)
+      .filter((operation) => operation.requiredGrants.includes(grant))
+      .map((operation) => operation.name);
+    return names.length ? [api.id + ": " + names.join(", ")] : [];
+  });
+  // The catalogue can list one API at several versions.
+  return uses.length ? "Allows " + [...new Set(uses)].join("; ") : null;
+}
+
+const toggled = <T,>(list: readonly T[], item: T, on: boolean) =>
+  on ? (list.includes(item) ? list : [...list, item]) : list.filter((value) => value !== item);
+
+/** Project and grant checkboxes over one grant set; held grants outside the catalogue stay listed. */
+function PermissionChoices(props: {
+  projects: readonly Project[];
+  value: Grants;
+  onChange: (update: (current: Grants) => Grants) => void;
+  legend: string;
+}) {
+  const { projects, value, onChange } = props;
+  const choices = [
+    ...GRANT_CHOICES,
+    ...value.capabilities.filter(
+      (grant) => grant !== WORKSPACE_READ_TEXT && !GRANT_CHOICES.includes(grant),
+    ),
+  ];
+  const setGrant = (grant: string, on: boolean) =>
+    onChange((current) => ({ ...current, capabilities: toggled(current.capabilities, grant, on) }));
+  return (
+    <>
+      <fieldset className="space-y-2">
+        <legend className="text-sm font-medium">{props.legend}</legend>
+        {projects.map((project) => (
+          <label key={project.id} className="flex items-center gap-2 text-sm">
+            <Checkbox
+              checked={value.projectIds.includes(project.id)}
+              onCheckedChange={(checked) =>
+                onChange((current) => ({
+                  ...current,
+                  projectIds: toggled(current.projectIds, project.id, checked === true),
+                }))
+              }
+            />
+            {project.title} · {project.workspaceRoot}
+          </label>
+        ))}
+      </fieldset>
+      <label className="flex items-center gap-2 text-sm">
+        <Checkbox
+          checked={value.capabilities.includes(WORKSPACE_READ_TEXT)}
+          onCheckedChange={(checked) => setGrant(WORKSPACE_READ_TEXT, checked === true)}
+        />
+        Allow workspace text reads in selected projects
+      </label>
+      {choices.map((grant) => (
+        <label key={grant} className="flex items-center gap-2 text-sm">
+          <Checkbox
+            checked={value.capabilities.includes(grant)}
+            onCheckedChange={(checked) => setGrant(grant, checked === true)}
+          />
+          Allow {grant} in selected projects
+        </label>
+      ))}
+    </>
+  );
+}
+
+function GrantList({ grants }: { grants: readonly string[] }) {
+  return (
+    <ul className="text-sm">
+      {grants.map((grant) => (
+        <li key={grant}>
+          {grant}
+          {grantUses(grant) ? (
+            <span className="text-muted-foreground"> — {grantUses(grant)}</span>
+          ) : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * An installation's permissions. Only explicit clicks here add grants: the
+ * editor starts from the current set so applying it never silently revokes,
+ * and "Grant new permissions" adds exactly the missing required grants.
+ */
+function InstallationPermissions(props: {
+  environmentId: EnvironmentId;
+  item: InstalledPackage;
+  projects: readonly Project[];
+  disabled: boolean;
+  act: (action: () => Promise<unknown>) => Promise<boolean>;
+}) {
+  const { environmentId, item, projects, disabled, act } = props;
+  const current = item.grants;
+  // Older servers do not report requiredGrants; then nothing is offered.
+  const missing = (item.requiredGrants ?? []).filter(
+    (grant) => !current.capabilities.includes(grant),
+  );
+  const [draft, setDraft] = useState<Grants | null>(null);
+  const apply = (grants: Grants) =>
+    act(() => manageInstalledExtension(environmentId, { id: item.id, action: "grants", grants }));
+  return (
+    <div className="space-y-2">
+      <p className="text-sm font-medium">Permissions</p>
+      {current.capabilities.length ? (
+        <GrantList grants={current.capabilities} />
+      ) : (
+        <p className="text-sm text-muted-foreground">No permissions granted.</p>
+      )}
+      {missing.length ? (
+        <>
+          <p role="status" className="text-sm">
+            This version can use {missing.length} permission{missing.length === 1 ? "" : "s"} it
+            does not have:
+          </p>
+          <GrantList grants={missing} />
+          <Button
+            variant="outline"
+            disabled={disabled}
+            onClick={() =>
+              void apply({ ...current, capabilities: [...current.capabilities, ...missing] })
+            }
+          >
+            Grant {missing.length} new permission{missing.length === 1 ? "" : "s"}
+          </Button>
+        </>
+      ) : null}
+      {draft ? (
+        <div className="space-y-2">
+          <PermissionChoices
+            projects={projects}
+            value={draft}
+            onChange={(update) => setDraft((open) => open && update(open))}
+            legend="Allowed projects"
+          />
+          <p className="text-sm text-muted-foreground">
+            Apply replaces this installation's permissions and allowed projects with the selection.
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              disabled={disabled}
+              onClick={() => void apply(draft).then((applied) => applied && setDraft(null))}
+            >
+              Apply selected permissions
+            </Button>
+            <Button variant="outline" onClick={() => setDraft(null)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <Button variant="outline" disabled={disabled} onClick={() => setDraft(current)}>
+          Edit permissions
+        </Button>
+      )}
+    </div>
+  );
+}
 
 function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }) {
   const snapshot = useInstalledExtensions(environmentId);
@@ -29,9 +220,7 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
   );
   const [path, setPath] = useState("");
   const [trusted, setTrusted] = useState(false);
-  const [readText, setReadText] = useState(false);
-  const [apiGrants, setApiGrants] = useState<readonly string[]>([]);
-  const [projectIds, setProjectIds] = useState<readonly ProjectId[]>([]);
+  const [grants, setGrants] = useState<Grants>(NO_GRANTS);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function act(action: () => Promise<unknown>) {
@@ -40,8 +229,10 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
     try {
       await action();
       setTrusted(false);
+      return true;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Extension operation failed");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -69,58 +260,19 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
           }}
         />
       </label>
-      <fieldset className="space-y-2">
-        <legend className="text-sm font-medium">Allowed projects for installation</legend>
-        {projects.map((project) => (
-          <label key={project.id} className="flex items-center gap-2 text-sm">
-            <Checkbox
-              checked={projectIds.includes(project.id)}
-              onCheckedChange={(checked) =>
-                setProjectIds((current) =>
-                  checked ? [...current, project.id] : current.filter((id) => id !== project.id),
-                )
-              }
-            />
-            {project.title} · {project.workspaceRoot}
-          </label>
-        ))}
-      </fieldset>
-      <label className="flex items-center gap-2 text-sm">
-        <Checkbox checked={readText} onCheckedChange={(checked) => setReadText(checked === true)} />
-        Allow workspace text reads in selected projects
-      </label>
-      {[
-        ...new Set([
-          ...GENERIC_API_CATALOGUE.flatMap((api) =>
-            [...(api.methods ?? []), ...(api.streams ?? [])].flatMap(
-              (operation) => operation.requiredGrants,
-            ),
-          ),
-          ...HOST_CAPABILITY_GRANTS,
-        ]),
-      ]
-        .filter((grant) => grant !== WORKSPACE_READ_TEXT)
-        .map((grant) => (
-          <label key={grant} className="flex items-center gap-2 text-sm">
-            <Checkbox
-              checked={apiGrants.includes(grant)}
-              onCheckedChange={(checked) =>
-                setApiGrants((current) =>
-                  checked ? [...current, grant] : current.filter((value) => value !== grant),
-                )
-              }
-            />
-            Allow {grant} in selected projects
-          </label>
-        ))}
+      <PermissionChoices
+        projects={projects}
+        value={grants}
+        onChange={setGrants}
+        legend="Allowed projects for installation"
+      />
       <label className="flex items-start gap-2 text-sm">
         <Checkbox checked={trusted} onCheckedChange={(checked) => setTrusted(checked === true)} />I
         trust this package to run code in this environment and client
       </label>
       <p className="text-sm text-muted-foreground">
-        The permission form applies to new installations. Apply selected permissions replaces all
-        permissions and allowed projects for that package; empty selections revoke all grants.
-        Updates and rollback keep existing grants.
+        These permissions apply to a new installation. Updates and rollback keep an installation's
+        existing permissions; new ones are added only from its permissions below.
       </p>
       <div className="flex gap-2">
         <Button
@@ -129,8 +281,7 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
             void act(() =>
               installEnvironmentExtension(environmentId, {
                 sourceDir: path,
-                projectIds,
-                capabilities: [...(readText ? [WORKSPACE_READ_TEXT] : []), ...apiGrants],
+                ...grants,
                 trusted: true,
               }),
             )
@@ -197,6 +348,15 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
               );
             })}
           </ul>
+          <InstallationPermissions
+            // A grant change elsewhere discards an open edit rather than applying over it.
+            key={JSON.stringify(item.grants)}
+            environmentId={environmentId}
+            item={item}
+            projects={projects}
+            disabled={!canManage || busy}
+            act={act}
+          />
           {item.package.format !== 1
             ? item.package.provides.map((api) => (
                 <Button
@@ -218,24 +378,6 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
               ))
             : null}
           <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              disabled={!canManage || busy}
-              onClick={() =>
-                void act(() =>
-                  manageInstalledExtension(environmentId, {
-                    id: item.id,
-                    action: "grants",
-                    grants: {
-                      projectIds,
-                      capabilities: [...(readText ? [WORKSPACE_READ_TEXT] : []), ...apiGrants],
-                    },
-                  }),
-                )
-              }
-            >
-              Apply selected permissions
-            </Button>
             <Button
               variant="outline"
               disabled={!canManage || busy}

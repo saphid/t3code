@@ -92,6 +92,8 @@ export interface ExtensionRuntime {
     pluginResolution: ReturnType<typeof resolveCapabilities>["plugins"];
   };
   updateGrants(id: string, grants: InstallationGrants): Promise<Installation>;
+  /** Grants the installation's declared APIs check at call time; see the broker. */
+  requiredGrants(id: string): readonly string[];
   enable(id: string): Promise<Installation>;
   disable(id: string): Promise<Installation>;
   remove(id: string): Promise<void>;
@@ -1196,6 +1198,10 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
     list() {
       live();
       return [...installations.values()].map(clone);
+    },
+    requiredGrants(id) {
+      live();
+      return broker.requiredGrants(required(id));
     },
     enable(id) {
       return mutate(async () => {

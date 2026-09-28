@@ -328,7 +328,12 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   const promise = <A>(operation: string, run: (signal: AbortSignal) => Promise<A>) =>
     Effect.tryPromise({ try: run, catch: (cause) => operationError(operation, cause) });
   const list = Effect.try({
-    try: () => runtime.list().map((entry) => installation(entry)),
+    try: () =>
+      runtime
+        .list()
+        .map((entry) =>
+          installation({ ...entry, requiredGrants: runtime.requiredGrants(entry.id) }),
+        ),
     catch: (cause) => operationError("list", cause),
   });
   const verifyClient = (id: string, expectedContentHash: string) => {
