@@ -1103,6 +1103,8 @@ export type FilesViewState = {
   readonly renderMarkdown?: boolean;
   /** Absent means rendered, the native default; only a source preference is saved. */
   readonly renderHtml?: boolean;
+  /** Absent means shown, the native default; only a hidden explorer is saved. */
+  readonly explorer?: boolean;
   /** A file link's line, from `t3.file/presentation.open`; never saved back. */
   readonly line?: number;
 };
@@ -1118,6 +1120,7 @@ export function isFilesViewState(value: unknown): value is FilesViewState | null
       key !== "expanded" &&
       key !== "renderMarkdown" &&
       key !== "renderHtml" &&
+      key !== "explorer" &&
       key !== "line"
     )
       return false;
@@ -1134,6 +1137,7 @@ export function isFilesViewState(value: unknown): value is FilesViewState | null
   return (
     (record.renderMarkdown === undefined || typeof record.renderMarkdown === "boolean") &&
     (record.renderHtml === undefined || typeof record.renderHtml === "boolean") &&
+    (record.explorer === undefined || typeof record.explorer === "boolean") &&
     (record.line === undefined || (Number.isInteger(record.line) && (record.line as number) >= 1))
   );
 }
@@ -1162,6 +1166,22 @@ export function restoredRenderHtml(restoreState: unknown): boolean {
   return !(isFilesViewState(restoreState) && restoreState?.renderHtml === false);
 }
 
+/** Whether a restored view shows the file explorer; shown unless it was hidden. */
+export function restoredExplorerOpen(restoreState: unknown): boolean {
+  return !(isFilesViewState(restoreState) && restoreState?.explorer === false);
+}
+
+/**
+ * Whether the tree shows beside the selected file, as native's
+ * `shouldShowFileExplorer` decides: always with no file selected, never for a
+ * path outside the workspace (the tree cannot reveal it), else the user's
+ * choice.
+ */
+export function showsFileExplorer(selected: string | null, explorerOpen: boolean): boolean {
+  if (selected === null) return true;
+  return explorerOpen && presentationPath(selected) !== null;
+}
+
 /**
  * The record `session.save` persists. Expansion is sorted so equal view
  * states serialize identically, and bounded by count and bytes so a
@@ -1173,6 +1193,7 @@ export function filesViewState(
   expanded: ReadonlySet<string>,
   renderMarkdown: boolean,
   renderHtml = true,
+  explorer = true,
 ): FilesViewState {
   const kept: string[] = [];
   let bytes = 0;
@@ -1188,6 +1209,7 @@ export function filesViewState(
     expanded: kept,
     renderMarkdown,
     ...(renderHtml ? {} : { renderHtml: false }),
+    ...(explorer ? {} : { explorer: false }),
   };
 }
 

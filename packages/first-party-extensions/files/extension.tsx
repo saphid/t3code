@@ -88,6 +88,8 @@ import {
   filesViewState,
   isFilesViewState,
   restoredExpanded,
+  restoredExplorerOpen,
+  showsFileExplorer,
   restoredRenderHtml,
   restoredRevealLine,
   restoredRenderMarkdown,
@@ -1342,11 +1344,17 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const [renderMarkdown, setRenderMarkdown] = useState(() =>
     restoredRenderMarkdown(session.restoreState),
   );
+  // Native parity (FilePreviewPanel): the explorer beside an open file can be
+  // hidden; the choice persists with the view, as the rendered-markdown one does.
+  const [explorerOpen, setExplorerOpen] = useState(() =>
+    restoredExplorerOpen(session.restoreState),
+  );
+  const showExplorer = showsFileExplorer(selected, explorerOpen);
   // Row 12: selection, expansion and preview mode persist through one
   // `session.save`; the ref skips re-saving a state that is already stored.
   const savedViewStateRef = useRef<string | null>(null);
   useEffect(() => {
-    const state = filesViewState(selected, expanded, renderMarkdown, renderHtml);
+    const state = filesViewState(selected, expanded, renderMarkdown, renderHtml, explorerOpen);
     const serialized = JSON.stringify(state);
     // The first run only records the restored state — nothing changed yet.
     if (savedViewStateRef.current === null) {
@@ -1355,7 +1363,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     }
     if (serialized === savedViewStateRef.current) return;
     if (session.save(state)) savedViewStateRef.current = serialized;
-  }, [session, selected, expanded, renderMarkdown, renderHtml]);
+  }, [session, selected, expanded, renderMarkdown, renderHtml, explorerOpen]);
 
   // Row 14: review comments on file lines. The textarea's character selection
   // expands to full lines; submit lands a real composer draft review comment
@@ -1830,187 +1838,234 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       <style>
         {`[data-t3-files-panel] :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-files-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}`}
       </style>
-      <header
-        style={{
-          display: "flex",
-          gap: 6,
-          padding: 8,
-          borderBottom: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
-          flexShrink: 0,
-          alignItems: "center",
-        }}
-      >
-        <Tooltip host={host} label={pending ? "Refreshing…" : "Refresh files"}>
-          <button
-            type="button"
-            aria-label="Refresh workspace files"
-            onClick={refresh}
-            style={toolbarControl}
-          >
-            Refresh files
-          </button>
-        </Tooltip>
-        <select
-          aria-label="Search mode"
-          value={searchMode}
-          onChange={(event) => setSearchMode(event.target.value as "names" | "contents")}
-          style={toolbarControl}
-        >
-          <option value="names">File names</option>
-          <option value="contents">File contents</option>
-        </select>
-        <input
-          ref={searchRef}
-          type="search"
-          aria-label="Search workspace files"
-          placeholder={searchMode === "contents" ? "Search file contents" : "Search files"}
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              setQuery("");
-              event.currentTarget.blur();
-            }
+      {showExplorer && (
+        <header
+          style={{
+            display: "flex",
+            gap: 6,
+            padding: 8,
+            borderBottom: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
+            flexShrink: 0,
+            alignItems: "center",
           }}
-          style={{ ...toolbarControl, cursor: "auto", flex: 1, minWidth: 0 }}
-        />
-        <select
-          aria-label={
-            searchMode === "contents" ? "Search kind — not used for contents search" : "Search kind"
-          }
-          value={kindFilter}
-          disabled={searchMode === "contents"}
-          onChange={(event) => setKindFilter(event.target.value as SearchKindFilter)}
-          style={toolbarControl}
         >
-          <option value="all">All</option>
-          <option value="file">Files</option>
-          <option value="directory">Directories</option>
-        </select>
-        {directories.length > 0 && (
-          <Tooltip host={host} label={expandAllLabel}>
+          <Tooltip host={host} label={pending ? "Refreshing…" : "Refresh files"}>
             <button
               type="button"
-              aria-label={expandAllLabel}
-              onClick={toggleAllDirectories}
+              aria-label="Refresh workspace files"
+              onClick={refresh}
               style={toolbarControl}
             >
-              {expandAllLabel}
+              Refresh files
             </button>
           </Tooltip>
-        )}
-      </header>
-      <ul
-        ref={treeListRef}
-        aria-label="Workspace files"
-        style={{
-          listStyle: "none",
-          margin: 0,
-          padding: 6,
-          overflow: "auto",
-          flex: 1,
-          minHeight: 0,
-        }}
-      >
-        {searching
-          ? activeSearch?.outcome.mode === "contents"
-            ? keyed(
-                activeSearch.outcome.results?.matches ?? [],
-                (match) => `${match.path}:${match.lineNumber}`,
-              ).map(({ item: match, key }) => (
-                <li key={key}>
-                  <button
-                    type="button"
-                    aria-current={match.path === selected ? "true" : undefined}
-                    draggable
-                    onDragStart={(event) => startMentionDrag(event, match.path)}
-                    onClick={() => select(match.path, match.lineNumber)}
-                    style={{
-                      display: "block",
-                      width: "100%",
-                      textAlign: "left",
-                      font: "inherit",
-                      fontSize: 12,
-                      padding: "4px 6px",
-                      border: "1px solid transparent",
-                      borderRadius: 5,
-                      cursor: "pointer",
-                      color: "var(--t3-files-text, var(--foreground, #20252d))",
-                      background:
-                        match.path === selected
-                          ? "var(--t3-files-accent-surface, var(--accent, #e8eef7))"
-                          : "transparent",
-                    }}
-                  >
-                    <span
+          <select
+            aria-label="Search mode"
+            value={searchMode}
+            onChange={(event) => setSearchMode(event.target.value as "names" | "contents")}
+            style={toolbarControl}
+          >
+            <option value="names">File names</option>
+            <option value="contents">File contents</option>
+          </select>
+          <input
+            ref={searchRef}
+            type="search"
+            aria-label="Search workspace files"
+            placeholder={searchMode === "contents" ? "Search file contents" : "Search files"}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                setQuery("");
+                event.currentTarget.blur();
+              }
+            }}
+            style={{ ...toolbarControl, cursor: "auto", flex: 1, minWidth: 0 }}
+          />
+          <select
+            aria-label={
+              searchMode === "contents"
+                ? "Search kind — not used for contents search"
+                : "Search kind"
+            }
+            value={kindFilter}
+            disabled={searchMode === "contents"}
+            onChange={(event) => setKindFilter(event.target.value as SearchKindFilter)}
+            style={toolbarControl}
+          >
+            <option value="all">All</option>
+            <option value="file">Files</option>
+            <option value="directory">Directories</option>
+          </select>
+          {directories.length > 0 && (
+            <Tooltip host={host} label={expandAllLabel}>
+              <button
+                type="button"
+                aria-label={expandAllLabel}
+                onClick={toggleAllDirectories}
+                style={toolbarControl}
+              >
+                {expandAllLabel}
+              </button>
+            </Tooltip>
+          )}
+        </header>
+      )}
+      {showExplorer && (
+        <ul
+          ref={treeListRef}
+          aria-label="Workspace files"
+          style={{
+            listStyle: "none",
+            margin: 0,
+            padding: 6,
+            overflow: "auto",
+            flex: 1,
+            minHeight: 0,
+          }}
+        >
+          {searching
+            ? activeSearch?.outcome.mode === "contents"
+              ? keyed(
+                  activeSearch.outcome.results?.matches ?? [],
+                  (match) => `${match.path}:${match.lineNumber}`,
+                ).map(({ item: match, key }) => (
+                  <li key={key}>
+                    <button
+                      type="button"
+                      aria-current={match.path === selected ? "true" : undefined}
+                      draggable
+                      onDragStart={(event) => startMentionDrag(event, match.path)}
+                      onClick={() => select(match.path, match.lineNumber)}
                       style={{
                         display: "block",
-                        color: muted,
+                        width: "100%",
+                        textAlign: "left",
+                        font: "inherit",
                         fontSize: 12,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
+                        padding: "4px 6px",
+                        border: "1px solid transparent",
+                        borderRadius: 5,
+                        cursor: "pointer",
+                        color: "var(--t3-files-text, var(--foreground, #20252d))",
+                        background:
+                          match.path === selected
+                            ? "var(--t3-files-accent-surface, var(--accent, #e8eef7))"
+                            : "transparent",
                       }}
                     >
-                      {match.path}:{match.lineNumber}
-                    </span>
-                    <span
+                      <span
+                        style={{
+                          display: "block",
+                          color: muted,
+                          fontSize: 12,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {match.path}:{match.lineNumber}
+                      </span>
+                      <span
+                        style={{
+                          display: "block",
+                          fontFamily:
+                            "var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace)",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {keyed(
+                          contentMatchSegments(match.lineContent, match.matchRanges),
+                          (segment) => `s:${segment.match}:${nodeDigest(segment.text)}`,
+                        ).map(({ item: segment, key: segmentKey }) =>
+                          segment.match ? (
+                            <mark
+                              key={segmentKey}
+                              style={{
+                                background:
+                                  "var(--t3-files-accent-surface, var(--accent, #e8eef7))",
+                                color: "inherit",
+                              }}
+                            >
+                              {segment.text}
+                            </mark>
+                          ) : (
+                            <span key={segmentKey}>{segment.text}</span>
+                          ),
+                        )}
+                      </span>
+                    </button>
+                  </li>
+                ))
+              : (activeSearch?.outcome.mode === "names"
+                  ? (activeSearch.outcome.results?.entries ?? [])
+                  : []
+                ).map((entry) => (
+                  <li key={entry.path}>
+                    <button
+                      type="button"
+                      aria-current={entry.path === selected ? "true" : undefined}
+                      draggable
+                      onDragStart={(event) => startMentionDrag(event, entry.path)}
+                      onClick={() =>
+                        entry.kind === "directory"
+                          ? (setQuery(""),
+                            setExpanded((previous) => {
+                              const next = new Set(previous);
+                              for (
+                                let ancestor: string | null = entry.path;
+                                ancestor !== null;
+                                ancestor = parentPath(ancestor)
+                              )
+                                next.add(ancestor);
+                              return next;
+                            }))
+                          : select(entry.path)
+                      }
                       style={{
                         display: "block",
-                        fontFamily:
-                          "var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace)",
+                        width: "100%",
+                        textAlign: "left",
+                        font: "inherit",
+                        fontSize: 12,
+                        padding: "4px 6px",
+                        border: "1px solid transparent",
+                        borderRadius: 5,
+                        cursor: "pointer",
+                        color: "var(--t3-files-text, var(--foreground, #20252d))",
+                        background:
+                          entry.path === selected
+                            ? "var(--t3-files-accent-surface, var(--accent, #e8eef7))"
+                            : "transparent",
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
                       }}
                     >
-                      {keyed(
-                        contentMatchSegments(match.lineContent, match.matchRanges),
-                        (segment) => `s:${segment.match}:${nodeDigest(segment.text)}`,
-                      ).map(({ item: segment, key: segmentKey }) =>
-                        segment.match ? (
-                          <mark
-                            key={segmentKey}
-                            style={{
-                              background: "var(--t3-files-accent-surface, var(--accent, #e8eef7))",
-                              color: "inherit",
-                            }}
-                          >
-                            {segment.text}
-                          </mark>
-                        ) : (
-                          <span key={segmentKey}>{segment.text}</span>
-                        ),
-                      )}
-                    </span>
-                  </button>
-                </li>
-              ))
-            : (activeSearch?.outcome.mode === "names"
-                ? (activeSearch.outcome.results?.entries ?? [])
-                : []
-              ).map((entry) => (
-                <li key={entry.path}>
+                      {entry.kind === "directory" ? "▸ " : ""}
+                      {entry.path}
+                    </button>
+                  </li>
+                ))
+            : rows.map((row) => (
+                <li key={row.entry.path}>
                   <button
                     type="button"
-                    aria-current={entry.path === selected ? "true" : undefined}
+                    aria-expanded={row.expandable ? expanded.has(row.entry.path) : undefined}
+                    aria-current={row.entry.path === selected ? "true" : undefined}
                     draggable
-                    onDragStart={(event) => startMentionDrag(event, entry.path)}
-                    onClick={() =>
-                      entry.kind === "directory"
-                        ? (setQuery(""),
-                          setExpanded((previous) => {
-                            const next = new Set(previous);
-                            for (
-                              let ancestor: string | null = entry.path;
-                              ancestor !== null;
-                              ancestor = parentPath(ancestor)
-                            )
-                              next.add(ancestor);
-                            return next;
-                          }))
-                        : select(entry.path)
-                    }
+                    onDragStart={(event) => startMentionDrag(event, row.entry.path)}
+                    onClick={() => {
+                      if (!row.expandable) {
+                        select(row.entry.path);
+                        return;
+                      }
+                      if (expanded.has(row.entry.path)) setExpandAll(false);
+                      setExpanded(toggleExpanded(expanded, row.entry.path));
+                    }}
                     style={{
                       display: "block",
                       width: "100%",
@@ -2018,12 +2073,13 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                       font: "inherit",
                       fontSize: 12,
                       padding: "4px 6px",
+                      paddingLeft: 6 + row.depth * 14,
                       border: "1px solid transparent",
                       borderRadius: 5,
                       cursor: "pointer",
                       color: "var(--t3-files-text, var(--foreground, #20252d))",
                       background:
-                        entry.path === selected
+                        row.entry.path === selected
                           ? "var(--t3-files-accent-surface, var(--accent, #e8eef7))"
                           : "transparent",
                       overflow: "hidden",
@@ -2031,72 +2087,38 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {entry.kind === "directory" ? "▸ " : ""}
-                    {entry.path}
+                    {row.expandable ? (expanded.has(row.entry.path) ? "▾ " : "▸ ") : ""}
+                    {row.entry.path.split("/").at(-1)}
+                    {row.expandable ? "/" : ""}
                   </button>
                 </li>
-              ))
-          : rows.map((row) => (
-              <li key={row.entry.path}>
-                <button
-                  type="button"
-                  aria-expanded={row.expandable ? expanded.has(row.entry.path) : undefined}
-                  aria-current={row.entry.path === selected ? "true" : undefined}
-                  draggable
-                  onDragStart={(event) => startMentionDrag(event, row.entry.path)}
-                  onClick={() => {
-                    if (!row.expandable) {
-                      select(row.entry.path);
-                      return;
-                    }
-                    if (expanded.has(row.entry.path)) setExpandAll(false);
-                    setExpanded(toggleExpanded(expanded, row.entry.path));
-                  }}
-                  style={{
-                    display: "block",
-                    width: "100%",
-                    textAlign: "left",
-                    font: "inherit",
-                    fontSize: 12,
-                    padding: "4px 6px",
-                    paddingLeft: 6 + row.depth * 14,
-                    border: "1px solid transparent",
-                    borderRadius: 5,
-                    cursor: "pointer",
-                    color: "var(--t3-files-text, var(--foreground, #20252d))",
-                    background:
-                      row.entry.path === selected
-                        ? "var(--t3-files-accent-surface, var(--accent, #e8eef7))"
-                        : "transparent",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {row.expandable ? (expanded.has(row.entry.path) ? "▾ " : "▸ ") : ""}
-                  {row.entry.path.split("/").at(-1)}
-                  {row.expandable ? "/" : ""}
-                </button>
-              </li>
-            ))}
-      </ul>
-      <output aria-label="Tree status" style={{ padding: "6px 10px", color: muted, fontSize: 12 }}>
-        {(searching
-          ? (activeSearch?.outcome.error ??
-            (searchMode === "contents"
-              ? describeContentSearch(
-                  activeSearch?.outcome.mode === "contents" ? activeSearch.outcome.results : null,
-                  query,
-                  SEARCH_LIMIT,
-                )
-              : describeSearch(
-                  activeSearch?.outcome.mode === "names" ? activeSearch.outcome.results : null,
-                  query,
-                  SEARCH_LIMIT,
-                )))
-          : status + (kindByPath.size > 0 ? ` — ${entries.length} entries` : "")) +
-          (changes.status === "degraded" ? " · agent updates unavailable — use Refresh files" : "")}
-      </output>
+              ))}
+        </ul>
+      )}
+      {showExplorer && (
+        <output
+          aria-label="Tree status"
+          style={{ padding: "6px 10px", color: muted, fontSize: 12 }}
+        >
+          {(searching
+            ? (activeSearch?.outcome.error ??
+              (searchMode === "contents"
+                ? describeContentSearch(
+                    activeSearch?.outcome.mode === "contents" ? activeSearch.outcome.results : null,
+                    query,
+                    SEARCH_LIMIT,
+                  )
+                : describeSearch(
+                    activeSearch?.outcome.mode === "names" ? activeSearch.outcome.results : null,
+                    query,
+                    SEARCH_LIMIT,
+                  )))
+            : status + (kindByPath.size > 0 ? ` — ${entries.length} entries` : "")) +
+            (changes.status === "degraded"
+              ? " · agent updates unavailable — use Refresh files"
+              : "")}
+        </output>
+      )}
       {selected !== null && (
         <FileBreadcrumbBar
           host={host}
@@ -2198,6 +2220,17 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
             <span role="alert" style={{ color: "#b42318", fontSize: 11 }}>
               {wordWrap.writeError}
             </span>
+          )}
+          {presentationPath(selected) !== null && (
+            <Tooltip host={host} label={explorerOpen ? "Hide file explorer" : "Show file explorer"}>
+              <button
+                type="button"
+                aria-pressed={explorerOpen}
+                onClick={() => setExplorerOpen((open) => !open)}
+              >
+                {explorerOpen ? "Hide file explorer" : "Show file explorer"}
+              </button>
+            </Tooltip>
           )}
           {fileOpen !== null && fileOpen.path === selected && fileOpen.state.status !== "idle" && (
             <span style={{ color: muted, fontSize: 12 }}>{describeFileOpen(fileOpen.state)}</span>

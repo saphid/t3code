@@ -990,3 +990,31 @@ describe("expanding and collapsing every folder", () => {
     }
   });
 });
+
+// Native parity (FilePreviewPanel): the file explorer beside an open file
+// can be hidden and shown again, and the choice survives a reload.
+describe("hiding the file explorer", () => {
+  const explorer = (panel: Panel) => ({
+    tree: panel.labelled("Workspace files") !== undefined,
+    search: panel.labelled("Search workspace files") !== undefined,
+    hide: panel.button("Hide file explorer")?.props["aria-pressed"],
+    show: panel.button("Show file explorer")?.props["aria-pressed"],
+  });
+
+  it("hides the tree and its search, then shows them again", async () => {
+    const panel = await mountPanel({ files: { "a.txt": "a", "b.txt": "b" } });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "a.txt"));
+      expect(explorer(panel)).toEqual({ tree: true, search: true, hide: true, show: undefined });
+      await act(async () => panel.button("Hide file explorer")!.props.onClick());
+      expect(explorer(panel)).toEqual({ tree: false, search: false, hide: undefined, show: false });
+      expect(panel.editors()).toBe(1);
+      await panel.reload();
+      expect(explorer(panel)).toEqual({ tree: false, search: false, hide: undefined, show: false });
+      await act(async () => panel.button("Show file explorer")!.props.onClick());
+      expect(explorer(panel)).toEqual({ tree: true, search: true, hide: true, show: undefined });
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
