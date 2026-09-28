@@ -82,6 +82,7 @@ import {
   selectThreadExtensionDock,
   selectThreadRightPanelState,
   useRightPanelStore,
+  normalizeRevealLine,
 } from "../rightPanelStore";
 import { openInstalledSurface } from "./installedSurfaceOpen";
 import { readProject, readThreadShell } from "../state/entities";
@@ -120,6 +121,8 @@ import { isElectron } from "../env";
 import { randomUUID } from "../lib/utils";
 import { readLocalApi } from "../localApi";
 import { isBrowserPreviewFile, openWorkspaceFileInPreview } from "../browser/openFileInPreview";
+import { filePresentationRequest, presentBeforeOpen } from "./SelectedApiPresentation";
+import { rightPanelViewContext } from "./installedContext";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import { openTerminalLinkInPreview } from "../components/preview/openTerminalLinkInPreview";
 import { previewEnvironment } from "../state/preview";
@@ -1791,9 +1794,27 @@ export function createNavigationClientProvider(
             ? ({ status: "opened", relativePath } as UiNavigationFileReceipt)
             : refusedFile(outcome);
         }
-        // The native file-link path: the file surface resolves the selected
-        // t3.file/presentation provider (SelectedApiPresentation) or native.
-        useRightPanelStore.getState().openFile(ref, relativePath, line);
+        // The native file-link path: the selected t3.file/presentation
+        // provider presents the file once, with the panel's context, and the
+        // file surface (SelectedApiPresentation) takes that view. A provider
+        // that cannot present it fails the open here, for the caller to
+        // report, rather than as a tab showing only the failure.
+        const navigationId = randomUUID();
+        await presentBeforeOpen(
+          filePresentationRequest(relativePath, normalizeRevealLine(line), navigationId),
+          rightPanelViewContext({
+            environmentId: deps.environmentId,
+            projectId: shell.projectId,
+            threadId: ref.threadId,
+            projectWorkspaceRoot:
+              readProject(scopeProjectRef(deps.environmentId, shell.projectId))?.workspaceRoot ??
+              null,
+            threadWorktreePath: shell.worktreePath ?? null,
+            client: deps.client,
+          }),
+          call.signal,
+        );
+        useRightPanelStore.getState().openFile(ref, relativePath, line, navigationId);
         return { status: "opened", relativePath } as UiNavigationFileReceipt;
       }
       if (call.method !== "openThread")

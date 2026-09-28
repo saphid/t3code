@@ -7,7 +7,7 @@
 import * as React from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { filePresentationApi, uiNavigationApi } from "@t3tools/extension-sdk/catalogue";
 import type { ApiInvocation, ApiStreamInvocation } from "@t3tools/extension-sdk/capabilities";
@@ -17,6 +17,7 @@ import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { selectSelectedRightPanelSurface, useRightPanelStore } from "../rightPanelStore";
 import { createNavigationClientProvider } from "./clientProviders";
 import { registerInstalledApiClient, setInstalledApiPolicy } from "./installedApiClients";
+import { installedWorkspaceContext } from "./installedContext";
 import { NativeRightPanel } from "./nativePanels";
 import { registerWorkspaceExtension } from "./workspaceRegistry";
 
@@ -145,6 +146,7 @@ type Calls = {
   log: string[][];
   presentations: ApiInvocation[];
   preferenceWrites: unknown[];
+  notifications: unknown[];
 };
 const newCalls = (): Calls => ({
   reads: 0,
@@ -152,6 +154,7 @@ const newCalls = (): Calls => ({
   log: [],
   presentations: [],
   preferenceWrites: [],
+  notifications: [],
 });
 
 const preferenceFrame = (disk: Disk) =>
@@ -195,6 +198,10 @@ function packHost(disk: Disk, calls: Calls) {
       if (request.id === "t3.file/presentation")
         return filesServer.apis[0]!.methods[0]!.invoke(request.input, { signal });
       if (request.id === "t3.ui/navigation") return navigation.invoke(request, signal);
+      if (request.id === "t3.ui/notifications" && request.method === "notify") {
+        calls.notifications.push(request.input);
+        return { id: "toast" };
+      }
       if (request.id === "t3.ui/preferences" && request.method === "setPreferences") {
         calls.preferenceWrites.push(request.input);
         if (disk.preferenceWrite) return disk.preferenceWrite;
@@ -276,6 +283,15 @@ const context: ViewContext = {
   },
 };
 const ref = scopeThreadRef(EnvironmentId.make("files-flow"), ThreadId.make("t"));
+/** ChatView's right panel context for the mocked thread and project. */
+const panelContext = installedWorkspaceContext({
+  environmentId: "files-flow",
+  projectId: "p",
+  threadId: "t",
+  projectWorkspaceRoot: "/fixture",
+  threadWorktreePath: null,
+  client: "web",
+});
 
 /** Mounts the right panel with Files selected for `t3.file/presentation`. */
 async function mountPanel(disk: Disk) {
@@ -341,7 +357,7 @@ async function mountPanel(disk: Disk) {
       <NativeRightPanel
         surface={surface as Parameters<typeof NativeRightPanel>[0]["surface"]}
         threadRef={ref}
-        context={context}
+        context={panelContext}
         visible
         bindings={{ files: { surface, hasProject: true, cwd: "/fixture" } } as never}
       />
@@ -614,21 +630,25 @@ describe("a file link the presentation provider rejects", () => {
       },
     };
   };
+  // A host file link (chat, timeline) opens the panel directly; an extension's
+  // openFile learns of the failure itself (see "opening a file in the panel").
+  const link = (relativePath: string, line?: number) =>
+    act(async () => useRightPanelStore.getState().openFile(ref, relativePath, line));
 
   it("reports a failed change of file and clears it once an open succeeds", async () => {
     vi.useFakeTimers();
     const { outage, disk } = failing({ "a.txt": "file A", "b.txt": "file B" });
     const panel = await mountPanel(disk);
     try {
-      await act(async () => panel.navigation({ relativePath: "a.txt" }));
+      await link("a.txt");
       await act(async () => panel.button("b.txt")!.props.onClick());
       await act(async () => panel.editor().props.onChange({ target: { value: "unsaved B" } }));
       outage.on = true;
-      await act(async () => panel.navigation({ relativePath: "a.txt", line: 2 }));
+      await link("a.txt", 2);
       expect(panel.editor().props.value).toBe("unsaved B");
       expect(panel.text()).toContain("provider offline");
       outage.on = false;
-      await act(async () => panel.navigation({ relativePath: "b.txt" }));
+      await link("b.txt");
       expect(panel.editor().props.value).toBe("unsaved B");
       expect(panel.text()).not.toContain("provider offline");
     } finally {
@@ -643,10 +663,10 @@ describe("a file link the presentation provider rejects", () => {
     const { outage, disk } = failing({ "lines.txt": "one\ntwo\nthree" });
     const panel = await mountPanel(disk);
     try {
-      await act(async () => panel.navigation({ relativePath: "lines.txt", line: 2 }));
+      await link("lines.txt", 2);
       await act(async () => panel.editor().props.onChange({ target: { value: "one\ntwo!" } }));
       outage.on = true;
-      await act(async () => panel.navigation({ relativePath: "lines.txt", line: 2 }));
+      await link("lines.txt", 2);
       expect(editorState(panel)).toEqual({ contents: "one\ntwo!", conflict: false, saves: 0 });
       expect(panel.text()).toContain("provider offline");
     } finally {
@@ -1164,6 +1184,64 @@ describe("hiding the file explorer", () => {
   });
 });
 
+// Review repro (fix-w-files20 P2): the host presents a file once, before
+// opening its view, and the view takes that presentation rather than asking
+// the provider (server discovery and package verification) again.
+describe("opening a file in the panel", () => {
+  it("asks the presentation provider once per open", async () => {
+    const panel = await mountPanel({ files: { "a.txt": "file A", "app.ts": "app" } });
+    try {
+      await act(async () => panel.navigation({ relativePath: "a.txt" }));
+      expect(panel.calls.presentations).toHaveLength(1);
+      expect(panel.editor().props.value).toBe("file A");
+      await act(async () => useRightPanelStore.getState().open(ref, "files"));
+      await act(async () => panel.button("app.ts")!.props.onClick());
+      const before = panel.calls.presentations.length;
+      // The Files pack's own open, with its own view context.
+      await act(async () => panel.button("Open in panel")!.props.onClick());
+      expect(panel.calls.presentations).toHaveLength(before + 1);
+      expect(panel.editor().props.value).toBe("app");
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
+
+// Web re-proof (Files 20): "Open in panel" that the presentation cannot serve
+// toasts the failure, as native does, and opens no tab showing the error.
+describe("opening a file in the panel when the presentation refuses", () => {
+  it("toasts the failure and opens no tab", async () => {
+    const denied = { on: false };
+    const panel = await mountPanel({
+      files: { "app.ts": "app" },
+      presentationError: () =>
+        denied.on ? new Error("API capability denied: t3.file/open") : undefined,
+    });
+    try {
+      await act(async () => useRightPanelStore.getState().open(ref, "files"));
+      await act(async () => panel.button("app.ts")!.props.onClick());
+      denied.on = true;
+      await act(async () => panel.button("Open in panel")!.props.onClick());
+      expect(panel.calls.notifications).toEqual([
+        {
+          severity: "error",
+          title: "Unable to open file",
+          body: "Open is denied — this installation is missing the t3.file/open grant",
+          durationMs: 5_000,
+          anchor: "thread",
+          threadId: "t",
+        },
+      ]);
+      const surfaces =
+        useRightPanelStore.getState().byThreadKey[scopedThreadKey(ref)]?.surfaces ?? [];
+      expect(surfaces.map((surface) => surface.id)).toEqual(["files"]);
+      expect(panel.text()).not.toContain("capability denied");
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
+
 // Review repro (gaps-files-2 P2): the explorer choice is the native file
 // preview's shared one, read when a view opens and written when toggled.
 describe("the shared file explorer choice", () => {
@@ -1250,9 +1328,12 @@ describe("opening a file in the preview browser", () => {
       await act(async () => useRightPanelStore.getState().openFile(ref, "page.html"));
       expect(panel.button("Open file in preview browser")).toBeDefined();
       await act(async () => panel.button("Open file in preview browser")!.props.onClick());
-      expect(panel.text()).toContain(
-        "page.html cannot be opened — The preview browser is unavailable in this client",
-      );
+      expect(panel.calls.notifications).toMatchObject([
+        {
+          title: "Unable to open file in browser",
+          body: "page.html cannot be opened — The preview browser is unavailable in this client",
+        },
+      ]);
     } finally {
       await panel.unmount();
     }

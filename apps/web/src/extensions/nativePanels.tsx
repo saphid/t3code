@@ -1,4 +1,8 @@
-import { SelectedApiPresentation, type PresentationRequest } from "./SelectedApiPresentation";
+import {
+  filePresentationRequest,
+  SelectedApiPresentation,
+  type PresentationRequest,
+} from "./SelectedApiPresentation";
 import type { ReactNode } from "react";
 import type { ViewContext, ViewRecord } from "@t3tools/extension-sdk/contracts";
 import { useRightPanelStore, type RightPanelSurface } from "../rightPanelStore";
@@ -91,32 +95,13 @@ const filesEntry = entry(
   (bindings) =>
     bindings.surface.kind === "file" && bindings.surface.attachment
       ? null
-      : {
-          apiId: "t3.file/presentation",
-          method: "open",
-          ...(bindings.surface.kind === "file"
-            ? {
-                navigationId:
-                  bindings.surface.presentationRequestId ??
-                  "legacy:" + bindings.surface.revealRequestId,
-              }
-            : {}),
-          input: {
-            relativePath: bindings.surface.kind === "file" ? bindings.surface.relativePath : "",
-          },
-          // A file link's line reaches a provider that takes it (1.1.0).
-          ...(bindings.surface.kind === "file" && bindings.surface.revealLine !== null
-            ? {
-                newerInput: {
-                  version: "1.1.0",
-                  input: {
-                    relativePath: bindings.surface.relativePath,
-                    line: bindings.surface.revealLine,
-                  },
-                },
-              }
-            : {}),
-        },
+      : bindings.surface.kind === "file"
+        ? filePresentationRequest(
+            bindings.surface.relativePath,
+            bindings.surface.revealLine,
+            bindings.surface.presentationRequestId ?? "legacy:" + bindings.surface.revealRequestId,
+          )
+        : filePresentationRequest("", null),
 );
 /** Legacy resource records remain domain-owned; the shell resolves registered presentations. */
 const nativePanelRegistry = {

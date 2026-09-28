@@ -25,6 +25,28 @@ export function installedWorkspaceContext(input: {
     ),
   };
 }
+/** The right panel's context for a thread; file opens resolve with it before its view opens. */
+export function rightPanelViewContext(input: {
+  environmentId: string;
+  projectId: string;
+  threadId: string;
+  projectWorkspaceRoot: string | null;
+  threadWorktreePath: string | null;
+  client: string;
+}): ViewContext {
+  return input.projectWorkspaceRoot
+    ? installedWorkspaceContext({ ...input, projectWorkspaceRoot: input.projectWorkspaceRoot })
+    : {
+        client: input.client,
+        resource: {
+          namespace: "t3.workspace",
+          id: "right-panel",
+          environmentId: input.environmentId,
+          projectId: input.projectId,
+          threadId: input.threadId,
+        },
+      };
+}
 export function installedSurfaceRecord(
   extensionId: string,
   surface: SurfaceDescriptor,
