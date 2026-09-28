@@ -13,6 +13,7 @@
  * session, and on Reload) instead of reopening a dead URL.
  */
 import type { ResourceLeaseRef } from "@t3tools/extension-sdk/catalogue";
+import { grantDenialMessage } from "@t3tools/extension-sdk/capabilities";
 import { WORKSPACE_RESOURCES } from "@t3tools/extension-sdk/catalogue";
 
 import { isBrowserPreviewFile } from "./viewModel.ts";
@@ -126,7 +127,7 @@ const LEASE_DENIALS: ReadonlyArray<{
   {
     name: "ResourceLeaseGrantDeniedError",
     reason: "grant-denied",
-    message: `Cannot open workspace files — this installation is missing the ${WORKSPACE_RESOURCES} grant.`,
+    message: `Cannot open workspace files — ${grantDenialMessage(WORKSPACE_RESOURCES)}`,
   },
   {
     name: "ResourceLeaseKindDeniedError",

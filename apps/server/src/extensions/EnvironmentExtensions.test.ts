@@ -142,6 +142,7 @@ function fixture() {
   const calls: Array<{ cwd: string; relativePath: string }> = [];
   const forwardedRoots: unknown[] = [];
   const forwardedApiRequests: unknown[] = [];
+  const addedGrants: unknown[] = [];
   let afterRead = () => {};
   let afterInvoke = () => {};
   let afterClient = () => {};
@@ -151,6 +152,7 @@ function fixture() {
   let disposed = false;
   const runtime: Awaited<ReturnType<typeof createExtensionRuntime>> = {
     list: () => [entry],
+    requiredGrants: () => [WORKSPACE_READ_TEXT, "fixture.reader/extra"],
     catalogue: () => ({ apiSelections: [], apiResolution: [], pluginResolution: [] }),
     rollback: async () => entry,
     selectApi: async () => {},
@@ -192,6 +194,20 @@ function fixture() {
       entry = {
         ...entry,
         grants: { capabilities: [...grants.capabilities], projectIds: [...grants.projectIds] },
+      };
+      return entry;
+    },
+    addGrants: async (_id, additions) => {
+      addedGrants.push(additions);
+      const union = (held: readonly string[], added: readonly string[]) => [
+        ...new Set([...held, ...added]),
+      ];
+      entry = {
+        ...entry,
+        grants: {
+          capabilities: union(entry.grants.capabilities, additions.capabilities),
+          projectIds: union(entry.grants.projectIds, additions.projectIds),
+        },
       };
       return entry;
     },
@@ -321,6 +337,7 @@ function fixture() {
     calls,
     forwardedRoots,
     forwardedApiRequests,
+    addedGrants,
     getOptions: () => {
       if (!options) throw new Error("Runtime not constructed");
       return options;
@@ -683,6 +700,38 @@ it.effect(
     );
   },
 );
+
+it.effect("adding grants forwards only the additions and requires them", () => {
+  const f = fixture();
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const service = yield* make(f.factory);
+      const changed = yield* service.manage({
+        id: "fixture.reader",
+        action: "addGrants",
+        grants: { capabilities: ["fixture.reader/extra"], projectIds: [] },
+      });
+      expect(f.addedGrants).toEqual([{ capabilities: ["fixture.reader/extra"], projectIds: [] }]);
+      expect(changed?.grants.capabilities).toEqual([WORKSPACE_READ_TEXT, "fixture.reader/extra"]);
+      const error = yield* Effect.flip(
+        service.manage({ id: "fixture.reader", action: "addGrants" }),
+      );
+      expect(error.detail).toContain("permissions to add");
+    }).pipe(Effect.provide(f.services)),
+  );
+});
+
+it.effect("list reports the grants each installation's APIs require beside its own", () => {
+  const f = fixture();
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const service = yield* make(f.factory);
+      const [listed] = yield* service.list;
+      expect(listed?.requiredGrants).toEqual([WORKSPACE_READ_TEXT, "fixture.reader/extra"]);
+      expect(listed?.grants.capabilities).toEqual([WORKSPACE_READ_TEXT]);
+    }).pipe(Effect.provide(f.services)),
+  );
+});
 
 it.effect("stream suppresses a frame from a changed workspace and releases its lifetime", () => {
   const f = fixture();

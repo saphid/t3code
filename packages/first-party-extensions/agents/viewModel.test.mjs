@@ -1248,11 +1248,11 @@ NodeTest.describe("session import", () => {
   NodeTest.it("names the missing grant instead of a generic failure", () => {
     NodeAssert.equal(
       describeSessionsError(new Error("API capability denied: t3.agents/import-sessions")),
-      "This installation is missing the t3.agents/import-sessions grant.",
+      "Needs permission t3.agents/import-sessions. Grant it in Settings → Extensions.",
     );
     NodeAssert.equal(
       describeSessionsError(new Error("API capability denied: t3.agents/scan-sessions")),
-      "This installation is missing the t3.agents/scan-sessions grant.",
+      "Needs permission t3.agents/scan-sessions. Grant it in Settings → Extensions.",
     );
     NodeAssert.match(
       describeSessionsError(new Error("AgentSessionsAuthorityDenied: orchestration:operate")),

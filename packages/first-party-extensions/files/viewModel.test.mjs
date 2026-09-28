@@ -407,7 +407,10 @@ NodeTest.describe("media lease preview", () => {
     const next = mediaLeaseFailed(new Error("ResourceLeaseGrantDeniedError: revoked"), renewing);
     NodeAssert.equal(next.status, "ready");
     NodeAssert.equal(next.url, minted.url);
-    NodeAssert.match(next.renewalError ?? "", /t3\.workspace\/resources grant/);
+    NodeAssert.match(
+      next.renewalError ?? "",
+      /Needs permission t3\.workspace\/resources\. Grant it in Settings → Extensions\./,
+    );
     // An initial mint has no lease to fall back to — the denial is the state.
     const initial = mediaLeaseFailed(new Error("ResourceLeaseGrantDeniedError: missing"), {
       status: "minting",
@@ -727,7 +730,10 @@ NodeTest.describe("open in presentation", () => {
   NodeTest.it("fileOpenFailed names the t3.ui/navigation.open grant denial", () => {
     const state = fileOpenFailed(new Error("API capability denied: t3.ui/navigation.open"));
     NodeAssert.equal(state.status, "denied");
-    NodeAssert.match(state.message, /t3\.ui\/navigation\.open grant/);
+    NodeAssert.match(
+      state.message,
+      /Needs permission t3\.ui\/navigation\.open\. Grant it in Settings → Extensions\./,
+    );
   });
 
   NodeTest.it("fileOpenFailed names the presentation's t3.file/open denial", () => {
@@ -739,7 +745,7 @@ NodeTest.describe("open in presentation", () => {
     NodeAssert.equal(state.status, "denied");
     NodeAssert.equal(
       state.message,
-      "Open is denied — this installation is missing the t3.file/open grant",
+      "Open is denied — Needs permission t3.file/open. Grant it in Settings → Extensions.",
     );
   });
 

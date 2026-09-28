@@ -17,6 +17,7 @@
  * installation's `t3.browser/devtools` grant and only acts on sessions this
  * installation opened; each refusal is shown by name.
  */
+import { describeGrantDenial } from "@t3tools/extension-sdk/capabilities";
 import {
   BROWSER_SESSION_ZOOM_LEVELS,
   type BrowserSession,
@@ -149,9 +150,8 @@ const VERB_LABELS: Record<PageVerb["method"], string> = {
 export function pageCommandErrorMessage(method: PageVerb["method"], error: unknown): string {
   const label = VERB_LABELS[method];
   const text = error instanceof Error ? error.message : typeof error === "string" ? error : "";
-  const denied = /capability denied: (\S+)/.exec(text);
-  if (denied)
-    return `${label} needs the ${denied[1]} grant, which this installation does not hold (grant-denied).`;
+  const denial = describeGrantDenial(error);
+  if (denial) return `${label} — ${denial.message}`;
   if (text.includes("BrowserSessionNotOwned"))
     return `${label} is only available on pages this panel opened (not-owned).`;
   if (text.includes("(engine-unsupported)"))

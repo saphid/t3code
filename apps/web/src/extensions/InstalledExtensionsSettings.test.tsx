@@ -1,4 +1,4 @@
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { describe, it, expect, vi } from "vite-plus/test";
 import { AuthAccessWriteScope } from "@t3tools/contracts";
 import type { InstalledPackage } from "./installedController";
@@ -7,7 +7,10 @@ import {
   AGENT_SESSIONS_SCAN,
   filePresentationApi,
 } from "@t3tools/extension-sdk/catalogue";
-import { InstalledExtensionsSettings } from "./InstalledExtensionsSettings";
+import {
+  InstalledExtensionsSettings,
+  PERMISSION_SUGGESTION_NOTE,
+} from "./InstalledExtensionsSettings";
 const fixture = vi.hoisted(() => ({
   manage: true,
   connected: true,
@@ -77,6 +80,36 @@ vi.mock("../components/ui/menu", () => ({
   MenuItem: (props: React.ComponentProps<"button">) => <button {...props} />,
 }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+const buttonIn = (root: ReactTestRenderer, label: string) =>
+  root.root.findAllByType("button").find((node) => node.children.join("") === label)!;
+/** The last checkbox with this label: an open permission editor renders after the install form. */
+const checkboxIn = (root: ReactTestRenderer, label: string) =>
+  root.root
+    .findAllByType("label")
+    .filter((node) => node.children.filter((child) => typeof child === "string").join("") === label)
+    .at(-1)!
+    .findByType("input");
+function installed(
+  grants: InstalledPackage["grants"],
+  requiredGrants?: readonly string[],
+): InstalledPackage {
+  return {
+    id: "example.agents",
+    enabled: true,
+    contentHash: "b".repeat(64),
+    grants,
+    ...(requiredGrants ? { requiredGrants } : {}),
+    package: {
+      format: 2,
+      manifest: { id: "example.agents", version: "2.0.0", apiVersion: 1, surfaces: [] },
+      serverEntry: "server.mjs",
+      tools: [],
+      requires: [],
+      dependencies: [],
+      provides: [],
+    },
+  };
+}
 describe("installed package settings", () => {
   it("requires explicit trust and project selection, then resets consent on environment switch", async () => {
     fixture.manage = true;
@@ -271,23 +304,14 @@ it("selects a package-provided API explicitly without changing installation gran
       fallbackProviderIds: [],
     });
     expect(fixture.install).not.toHaveBeenCalled();
-    const permissions = () =>
-      root.root
-        .findAllByType("button")
-        .find((button) => button.children.join("") === "Apply selected permissions")!;
-    expect(permissions().props.disabled).toBe(false);
-    await act(async () => permissions().props.onClick());
-    expect(fixture.update).toHaveBeenLastCalledWith("env-a", {
-      id: "example.files",
-      action: "grants",
-      grants: { capabilities: [], projectIds: [] },
-    });
+    await act(async () => buttonIn(root, "Edit permissions").props.onClick());
     await act(async () => {
-      const inputs = root.root.findAllByType("input");
-      inputs[1]!.props.onChange({ target: { checked: true } });
-      inputs[2]!.props.onChange({ target: { checked: true } });
+      checkboxIn(root, "Workspace A · /fixture/a").props.onChange({ target: { checked: true } });
+      checkboxIn(root, "Allow workspace text reads in selected projects").props.onChange({
+        target: { checked: true },
+      });
     });
-    await act(async () => permissions().props.onClick());
+    await act(async () => buttonIn(root, "Apply selected permissions").props.onClick());
     expect(fixture.update).toHaveBeenLastCalledWith("env-a", {
       id: "example.files",
       action: "grants",
@@ -311,6 +335,92 @@ it("selects a package-provided API explicitly without changing installation gran
     expect(JSON.stringify(root.toJSON())).toContain(
       "No previous package is available for rollback",
     );
+  } finally {
+    fixture.installations = [];
+    await act(async () => root?.unmount());
+  }
+});
+
+it("edits an installation's permissions starting from its current grants", async () => {
+  fixture.manage = true;
+  fixture.update.mockClear();
+  const grants = {
+    capabilities: ["t3.workspace/read-text", AGENT_SESSIONS_SCAN],
+    projectIds: ["project-a" as InstalledPackage["grants"]["projectIds"][number]],
+  };
+  fixture.installations = [installed(grants)];
+  let root!: ReactTestRenderer;
+  try {
+    await act(async () => {
+      root = create(<InstalledExtensionsSettings />);
+    });
+    // The card shows what is held and what each grant allows.
+    const text = (node: ReactTestInstance | string): string =>
+      typeof node === "string" ? node : node.children.map(text).join("");
+    expect(root.root.findAllByType("li").map(text)).toContain(
+      `${AGENT_SESSIONS_SCAN} — Allows t3.agents/sessions: scan, import`,
+    );
+    await act(async () => buttonIn(root, "Edit permissions").props.onClick());
+    expect(checkboxIn(root, "Workspace A · /fixture/a").props.checked).toBe(true);
+    expect(checkboxIn(root, "Allow workspace text reads in selected projects").props.checked).toBe(
+      true,
+    );
+    expect(
+      checkboxIn(root, `Allow ${AGENT_SESSIONS_SCAN} in selected projects`).props.checked,
+    ).toBe(true);
+    expect(
+      checkboxIn(root, `Allow ${AGENT_SESSIONS_IMPORT} in selected projects`).props.checked,
+    ).toBe(false);
+    await act(async () => buttonIn(root, "Apply selected permissions").props.onClick());
+    expect(fixture.update).toHaveBeenLastCalledWith("env-a", {
+      id: "example.agents",
+      action: "grants",
+      grants,
+    });
+  } finally {
+    fixture.installations = [];
+    await act(async () => root?.unmount());
+  }
+});
+
+it("grants exactly the missing required permissions and never removes a held one", async () => {
+  fixture.manage = true;
+  fixture.update.mockClear();
+  const projectIds = ["project-a" as InstalledPackage["grants"]["projectIds"][number]];
+  fixture.installations = [
+    installed({ capabilities: ["t3.workspace/read-text", "example.custom/grant"], projectIds }, [
+      "t3.workspace/read-text",
+      AGENT_SESSIONS_SCAN,
+      AGENT_SESSIONS_IMPORT,
+    ]),
+  ];
+  let root!: ReactTestRenderer;
+  try {
+    await act(async () => {
+      root = create(<InstalledExtensionsSettings />);
+    });
+    const status = root.root
+      .findAllByProps({ role: "status" })
+      .find((node) => node.children.join("").includes("permissions it"));
+    expect(status?.children.join("")).toBe("This version can use 2 permissions it does not have:");
+    expect(JSON.stringify(root.toJSON())).toContain(PERMISSION_SUGGESTION_NOTE);
+    await act(async () => buttonIn(root, "Grant 2 new permissions").props.onClick());
+    expect(fixture.update).toHaveBeenCalledTimes(1);
+    expect(fixture.update).toHaveBeenLastCalledWith("env-a", {
+      id: "example.agents",
+      // Only the additions go over the wire; the server unions them with its current grants.
+      action: "addGrants",
+      grants: { capabilities: [AGENT_SESSIONS_SCAN, AGENT_SESSIONS_IMPORT], projectIds: [] },
+    });
+    // Nothing is offered once everything required is held, or by a server that does not say.
+    fixture.installations = [
+      installed({ capabilities: [AGENT_SESSIONS_SCAN], projectIds }, [AGENT_SESSIONS_SCAN]),
+    ];
+    await act(async () => root.update(<InstalledExtensionsSettings />));
+    expect(JSON.stringify(root.toJSON())).not.toContain("new permission");
+    fixture.installations = [installed({ capabilities: [], projectIds })];
+    await act(async () => root.update(<InstalledExtensionsSettings />));
+    expect(JSON.stringify(root.toJSON())).not.toContain("new permission");
   } finally {
     fixture.installations = [];
     await act(async () => root?.unmount());

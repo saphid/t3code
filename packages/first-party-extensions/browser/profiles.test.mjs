@@ -73,12 +73,12 @@ NodeTest.describe("profile grants", () => {
     NodeAssert.equal(isGrantDenial(denial), true);
     NodeAssert.equal(
       profileFailureMessage("clearCache", denial),
-      `Clearing the cache needs the ${BROWSER_CLEAR_CACHE} grant — this installation is missing it.`,
+      `Clearing the cache — Needs permission ${BROWSER_CLEAR_CACHE}. Grant it in Settings → Extensions.`,
     );
     // open needs sessions + operate + profiles; the message names whichever is missing.
     NodeAssert.match(
       profileFailureMessage("open", new Error("API capability denied: t3.browser/operate")),
-      /needs the t3\.browser\/operate grant/,
+      /Needs permission t3\.browser\/operate\./,
     );
   });
 

@@ -293,7 +293,7 @@ NodeTest.describe("runPageCommand", () => {
         "setPictureInPicture",
         new Error("API capability denied: t3.browser/picture-in-picture"),
       ),
-      "Picture in picture needs the t3.browser/picture-in-picture grant, which this installation does not hold (grant-denied).",
+      "Picture in picture — Needs permission t3.browser/picture-in-picture. Grant it in Settings → Extensions.",
     );
     // The server refuses a guest that went dead between the local check and dispatch.
     NodeAssert.equal(
@@ -357,7 +357,7 @@ NodeTest.describe("DevTools", () => {
       NodeAssert.deepEqual(await failWith("API capability denied: t3.browser/devtools"), {
         kind: "failed",
         message:
-          "Open DevTools needs the t3.browser/devtools grant, which this installation does not hold (grant-denied).",
+          "Open DevTools — Needs permission t3.browser/devtools. Grant it in Settings → Extensions.",
       });
       NodeAssert.match(
         (

@@ -310,6 +310,15 @@ var __t3Client = (() => {
       }
     };
   }
+  function grantDenialMessage(grant) {
+    return `Needs permission ${grant}. Grant it in Settings \u2192 Extensions.`;
+  }
+  var CAPABILITY_DENIED = /capability denied: ([\w.\-/]*[\w\-/])/;
+  function describeGrantDenial(error) {
+    const text = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+    const grant = CAPABILITY_DENIED.exec(text)?.[1];
+    return grant ? { grant, message: grantDenialMessage(grant) } : null;
+  }
   function validateRangeText(value) {
     if (typeof value !== "string" || !value.trim() || value.length > 200)
       throw new Error("Invalid API or dependency version range");
@@ -12594,12 +12603,16 @@ var __t3Client = (() => {
       return null;
     }
   }
+  function openFailedLine(target, error) {
+    const detail = describeGrantDenial(error)?.message ?? (error instanceof Error ? error.message : "unavailable");
+    return `${target} could not be opened \u2014 ${detail}`;
+  }
   async function openTerminalPath(editor, path3, cwd, signal) {
     try {
       const receipt2 = await editor.invoke("openPath", { path: path3, cwd }, signal);
       return receipt2.status === "opened" ? null : receipt2.message;
     } catch (error) {
-      return `${path3} could not be opened \u2014 ${error instanceof Error ? error.message : "unavailable"}`;
+      return openFailedLine(path3, error);
     }
   }
   async function openTerminalUrl(openLink, url) {
@@ -12607,7 +12620,7 @@ var __t3Client = (() => {
       const receipt2 = await openLink(url);
       return receipt2.status === "opened" ? null : `${url} was not opened (${receipt2.reason}).`;
     } catch (error) {
-      return `${url} could not be opened \u2014 ${error instanceof Error ? error.message : "unavailable"}`;
+      return openFailedLine(url, error);
     }
   }
   var clampDimension = (value, max) => Number.isSafeInteger(value) && value >= 1 && value <= max ? value : null;

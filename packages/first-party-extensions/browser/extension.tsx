@@ -5,7 +5,12 @@ import {
   useBrowserSurfaceSlot,
   useRemoteBrowserFrames,
 } from "@t3tools/extension-sdk/authoring";
-import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
+import {
+  bindApi,
+  bindStreamApi,
+  describeGrantDenial,
+  grantDenialMessage,
+} from "@t3tools/extension-sdk/capabilities";
 import {
   browserFramesApi,
   browserHistoryApi,
@@ -419,8 +424,17 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           }
         }
       } catch (error) {
-        if (!signal.aborted)
-          setNotice(error instanceof Error ? error.message : "Sessions stream unavailable");
+        if (signal.aborted) return;
+        // Without the sessions grant the panel cannot hold a page; say which
+        // permission fixes it rather than the broker's raw text.
+        const denial = describeGrantDenial(error);
+        setNotice(
+          denial
+            ? `Browser sessions are unavailable — ${denial.message}`
+            : error instanceof Error
+              ? error.message
+              : "Sessions stream unavailable",
+        );
       }
     })();
     return () => controller.abort();
@@ -979,9 +993,9 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       : remoteEligible
         ? remoteNotice
         : surfaceDenial
-          ? `Native presentation is unavailable — ${surfaceDenial.reason}${
-              surfaceDenial.grant ? ` (missing grant: ${surfaceDenial.grant})` : ""
-            }: ${surfaceDenial.detail}`
+          ? surfaceDenial.grant
+            ? `Native presentation is unavailable — ${grantDenialMessage(surfaceDenial.grant)}`
+            : `Native presentation is unavailable — ${surfaceDenial.reason}: ${surfaceDenial.detail}`
           : null;
 
   return (

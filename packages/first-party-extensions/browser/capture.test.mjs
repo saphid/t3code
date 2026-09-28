@@ -152,7 +152,7 @@ NodeTest.describe("captureToChat", () => {
     NodeAssert.equal(outcome.stage, "request");
     NodeAssert.equal(
       captureOutcomeMessage("page", outcome),
-      "Capture failed — grant-denied (missing grant: t3.browser/capture): needs grant",
+      "Capture failed — Needs permission t3.browser/capture. Grant it in Settings → Extensions.",
     );
     NodeAssert.equal(host.calls.invoke.length, 0);
   });
@@ -424,9 +424,16 @@ NodeTest.describe("runBrowserCapture", () => {
       );
       NodeAssert.equal(states.length, 2);
       NodeAssert.equal(states[1].kind, "done");
-      NodeAssert.match(states[1].message, new RegExp(`^Capture failed — ${reason}`));
-      NodeAssert.ok(states[1].message.endsWith(detail));
-      if (grant) NodeAssert.match(states[1].message, /missing grant: t3\.browser\/capture/);
+      // A named grant is the fix to show; otherwise the reason and the host's detail.
+      if (grant)
+        NodeAssert.equal(
+          states[1].message,
+          "Capture failed — Needs permission t3.browser/capture. Grant it in Settings → Extensions.",
+        );
+      else {
+        NodeAssert.match(states[1].message, new RegExp(`^Capture failed — ${reason}`));
+        NodeAssert.ok(states[1].message.endsWith(detail));
+      }
       // No toast (native raises none for a pick) and no insert: no host API was invoked.
       NodeAssert.equal(notify.calls.length, 0);
     });

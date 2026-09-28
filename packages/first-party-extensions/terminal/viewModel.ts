@@ -21,7 +21,12 @@ import {
   type UiExternalLinkReceipt,
   type UiTerminalAppearance,
 } from "@t3tools/extension-sdk/catalogue";
-import { bindApi, bindStreamApi, type ApiClient } from "@t3tools/extension-sdk/capabilities";
+import {
+  bindApi,
+  bindStreamApi,
+  describeGrantDenial,
+  type ApiClient,
+} from "@t3tools/extension-sdk/capabilities";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { GlobalCommandDescriptor } from "@t3tools/extension-sdk/environment";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
@@ -631,6 +636,13 @@ export function workspaceLaunchFromRevision(
 
 /* ---------------- path links (Terminal 22 path half) ---------------- */
 
+/** A thrown open → its surface line; a missing grant names the permission to grant. */
+function openFailedLine(target: string, error: unknown): string {
+  const detail =
+    describeGrantDenial(error)?.message ?? (error instanceof Error ? error.message : "unavailable");
+  return `${target} could not be opened — ${detail}`;
+}
+
 /**
  * Terminal 22, path half: hands the link text and the launch cwd to
  * `t3.ui/editor`, which resolves them the native way (`~/`, relative, and a
@@ -654,7 +666,7 @@ export async function openTerminalPath(
     const receipt = await editor.invoke("openPath", { path, cwd }, signal);
     return receipt.status === "opened" ? null : receipt.message;
   } catch (error) {
-    return `${path} could not be opened — ${error instanceof Error ? error.message : "unavailable"}`;
+    return openFailedLine(path, error);
   }
 }
 
@@ -673,7 +685,7 @@ export async function openTerminalUrl(
     const receipt = await openLink(url);
     return receipt.status === "opened" ? null : `${url} was not opened (${receipt.reason}).`;
   } catch (error) {
-    return `${url} could not be opened — ${error instanceof Error ? error.message : "unavailable"}`;
+    return openFailedLine(url, error);
   }
 }
 

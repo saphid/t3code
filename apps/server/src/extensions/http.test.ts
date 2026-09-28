@@ -155,7 +155,15 @@ it.effect("read credential can read but cannot install, update, enable or remove
         ),
       ))._tag,
     ).toBe("EnvironmentScopeRequiredError");
-    for (const action of ["enable", "disable", "remove", "update", "rollback", "grants"] as const)
+    for (const action of [
+      "enable",
+      "disable",
+      "remove",
+      "update",
+      "rollback",
+      "grants",
+      "addGrants",
+    ] as const)
       expect(
         (yield* f.provide(Effect.flip(f.operations.manage({ id: "fixture", action }))))._tag,
       ).toBe("EnvironmentScopeRequiredError");
@@ -444,7 +452,15 @@ it.live(
           read.access_token,
         )).status,
       ).toBe(403);
-      for (const action of ["enable", "disable", "remove", "update", "rollback", "grants"])
+      for (const action of [
+        "enable",
+        "disable",
+        "remove",
+        "update",
+        "rollback",
+        "grants",
+        "addGrants",
+      ])
         expect(
           (yield* request("manage", { id: "fixture", action }, read.access_token)).status,
         ).toBe(403);

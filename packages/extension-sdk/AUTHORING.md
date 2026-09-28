@@ -18,7 +18,7 @@ Prefer source references over copied contracts:
 
 The source and tests are included. Follow the named type/function first; read host internals only for an operation the public API cannot provide. defineExtension covers ordinary surfaces, API providers and declared assets; the CLI packs asset files and generates their integrity hashes, so byteLength/sha256 are never author inputs.
 
-A requirement selects an API/version; a named plugin dependency also declares the APIs used from it. Shared providers are explicitly selected in Settings. Installation grants and the authenticated session both constrain access. Discovery describes actual availability; a plausible API name or built-in panel does not prove an API exists. Missing/incompatible dependencies and revoked access must stay visibly unavailable.
+A requirement selects an API/version; a named plugin dependency also declares the APIs used from it. Shared providers are explicitly selected in Settings. Installation grants and the authenticated session both constrain access. Discovery describes actual availability; a plausible API name or built-in panel does not prove an API exists. Missing/incompatible dependencies and revoked access must stay visibly unavailable: at a call's catch, [describeGrantDenial](src/capabilities.ts) turns a missing grant into a line naming the permission and where the user grants it.
 
 A list that can grow with the workspace (a file tree, search results) should mount only the rows near its viewport: useWindowedRows in [authoring.ts](src/authoring.ts) does this for fixed-height rows and keeps a focused row mounted.
 

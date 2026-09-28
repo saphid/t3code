@@ -1777,7 +1777,7 @@ NodeTest.describe("terminal URL links (Terminal 22 URL half)", () => {
         openLink(new Error("API capability denied: t3.ui/external.open")),
         "https://t3.codes",
       ),
-      "https://t3.codes could not be opened — API capability denied: t3.ui/external.open",
+      "https://t3.codes could not be opened — Needs permission t3.ui/external.open. Grant it in Settings → Extensions.",
     );
   });
 });
@@ -1818,7 +1818,7 @@ NodeTest.describe("terminal path links (Terminal 22 path half)", () => {
         "/ws/root",
         signal,
       ),
-      "a.ts could not be opened — API capability denied: t3.ui/editor.open",
+      "a.ts could not be opened — Needs permission t3.ui/editor.open. Grant it in Settings → Extensions.",
     );
   });
 });

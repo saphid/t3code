@@ -885,3 +885,83 @@ NodeTest.test(
     NodeAssert.equal((await invoke(await discover())).surfaceId, b.id + "/files");
   },
 );
+
+NodeTest.test(
+  "required grants are derived from declared APIs' resolved providers, whatever is granted",
+  async (t) => {
+    const hostApi = {
+      id: "test.host/read",
+      version: "1.0.0",
+      methods: [{ ...definition("x").methods[0], requiredGrants: ["test.host/read-grant"] }],
+      streams: [
+        {
+          name: "events",
+          inputSchema: { type: "object" },
+          eventSchema: { type: "object" },
+          requiredGrants: ["test.host/stream-grant"],
+        },
+      ],
+    };
+    const f = await fixture(t, {
+      apiProviders: [{ providerId: "host.read", definition: hostApi, invoke: () => "value" }],
+    });
+    const provider = await f.install(metadata("test.provider"));
+    const consumer = await f.install(
+      metadata("test.consumer", {
+        provides: [],
+        requires: [{ id: hostApi.id, versionRange: "^1" }],
+        dependencies: [
+          {
+            pluginId: provider.id,
+            versionRange: "^1",
+            apis: [{ id: "test.provider/api", versionRange: "^1" }],
+          },
+        ],
+      }),
+      "export default {tools:[],apis:[]};",
+      { capabilities: [], projectIds: [] },
+    );
+    NodeAssert.deepEqual(f.runtime.requiredGrants(consumer.id), [
+      grant,
+      "test.host/read-grant",
+      "test.host/stream-grant",
+    ]);
+    // Deriving never grants: the installation still holds exactly what it was given.
+    NodeAssert.deepEqual(
+      f.runtime.list().find((item) => item.id === consumer.id).grants.capabilities,
+      [],
+    );
+    NodeAssert.deepEqual(f.runtime.requiredGrants(provider.id), []);
+  },
+);
+
+NodeTest.test(
+  "adding grants unions with the current stored grants, keeping another client's changes",
+  async (t) => {
+    const f = await fixture(t);
+    const record = await f.install(metadata("test.alpha"), undefined, {
+      capabilities: ["test.a/read"],
+      projectIds: ["project-a"],
+    });
+    // Another client changes the grants after this one rendered them.
+    await f.runtime.updateGrants(record.id, {
+      capabilities: ["test.a/read", "test.b/concurrent"],
+      projectIds: ["project-a", "project-b"],
+    });
+    const added = await f.runtime.addGrants(record.id, {
+      capabilities: ["test.c/new", "test.a/read"],
+      projectIds: [],
+    });
+    const expected = {
+      capabilities: ["test.a/read", "test.b/concurrent", "test.c/new"],
+      projectIds: ["project-a", "project-b"],
+    };
+    NodeAssert.deepEqual(added.grants, expected);
+    NodeAssert.deepEqual(f.runtime.list().find((item) => item.id === record.id).grants, expected);
+    await NodeAssert.rejects(
+      f.runtime.addGrants(record.id, { capabilities: [""], projectIds: [] }),
+      /grant|identity|id/i,
+    );
+    NodeAssert.deepEqual(f.runtime.list().find((item) => item.id === record.id).grants, expected);
+  },
+);

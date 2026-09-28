@@ -1287,7 +1287,7 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
       ]);
       answer = new Error("API capability denied: t3.ui/editor.open");
       NodeAssert.deepEqual(await pane.activate("src/view.tsx"), [
-        "\r\n[terminal] src/view.tsx could not be opened — API capability denied: t3.ui/editor.open\r\n",
+        "\r\n[terminal] src/view.tsx could not be opened — Needs permission t3.ui/editor.open. Grant it in Settings → Extensions.\r\n",
       ]);
     } finally {
       await pane.unmount();

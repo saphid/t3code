@@ -328,7 +328,12 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   const promise = <A>(operation: string, run: (signal: AbortSignal) => Promise<A>) =>
     Effect.tryPromise({ try: run, catch: (cause) => operationError(operation, cause) });
   const list = Effect.try({
-    try: () => runtime.list().map((entry) => installation(entry)),
+    try: () =>
+      runtime
+        .list()
+        .map((entry) =>
+          installation({ ...entry, requiredGrants: runtime.requiredGrants(entry.id) }),
+        ),
     catch: (cause) => operationError("list", cause),
   });
   const verifyClient = (id: string, expectedContentHash: string) => {
@@ -439,6 +444,10 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
         if (input.action === "grants") {
           if (!input.grants) throw new Error("Permission changes require the complete grant set.");
           return installation(await runtime.updateGrants(input.id, input.grants));
+        }
+        if (input.action === "addGrants") {
+          if (!input.grants) throw new Error("Adding permissions requires the permissions to add.");
+          return installation(await runtime.addGrants(input.id, input.grants));
         }
         if (input.action === "remove") {
           await runtime.remove(input.id);
