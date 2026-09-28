@@ -1058,6 +1058,19 @@ describe("expanding and collapsing every folder", () => {
       await act(async () => list().props.onScroll({ currentTarget: { scrollTop: 300_000 } }));
       expect(panel.rows().length).toBeLessThan(100);
       expect(panel.rows()).not.toContain("▾ d000/");
+      // A row in the scrolled window selects its file.
+      const far = list()
+        .findAllByType("button")
+        .filter((row) => !row.children.join("").startsWith("▾"))[10]!;
+      const farName = far.children.join("");
+      await act(async () => far.props.onClick());
+      const selectedRows = () =>
+        list()
+          .findAllByType("button")
+          .filter((row) => row.props["aria-current"] === "true")
+          .map((row) => row.children.join(""));
+      expect(selectedRows()).toEqual([farName]);
+      expect(panel.rows().length).toBeLessThan(100);
       // Keys move through rows that were never mounted.
       await act(async () =>
         panel.labelled("Workspace files")!.findAllByType("button")[0]!.props.onFocus(),
@@ -1076,10 +1089,7 @@ describe("expanding and collapsing every folder", () => {
       await act(async () => panel.labelled("Collapse all folders")!.props.onClick());
       expect(panel.rows().length).toBeLessThan(100);
       await act(async () => panel.navigation({ relativePath: "d987/f12.txt" }));
-      const current = list()
-        .findAllByType("button")
-        .filter((row) => row.props["aria-current"] === "true");
-      expect(current.map((row) => row.children.join(""))).toEqual(["f12.txt"]);
+      expect(selectedRows()).toEqual(["f12.txt"]);
       expect(panel.rows().length).toBeLessThan(100);
     } finally {
       await panel.unmount();
