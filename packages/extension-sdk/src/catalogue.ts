@@ -8987,6 +8987,71 @@ export const uiPreferencesApi = defineApi<{
   },
 );
 
+/** 1.0.0's closed preference shape, before `renderBrowserFile`. */
+const uiPreferencesV1Schema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["wordWrap"],
+  properties: { wordWrap: { type: "boolean" } },
+} as const;
+
+/** Frozen published 1.0.0 definition, before `renderBrowserFile`; providers may still declare it. */
+export const uiPreferencesApiV1 = defineApi<{
+  getCapabilities: { input: Record<string, never>; output: UiCapabilities };
+  getPreferences: { input: Record<string, never>; output: { readonly wordWrap: boolean } };
+  setPreferences: {
+    input: { readonly wordWrap?: boolean };
+    output: { applied: boolean; reason?: string; preferences: { readonly wordWrap: boolean } };
+  };
+}>({
+  id: UI_PREFERENCES,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: composerEmptyInputSchema,
+      outputSchema: uiCapabilitiesOutput([
+        "getPreferences",
+        "setPreferences",
+        "subscribePreferences",
+      ]),
+    },
+    {
+      name: "getPreferences",
+      effect: "read",
+      requiredGrants: [UI_PREFERENCES_READ],
+      inputSchema: composerEmptyInputSchema,
+      outputSchema: uiPreferencesV1Schema,
+    },
+    {
+      name: "setPreferences",
+      effect: "write",
+      requiredGrants: [UI_PREFERENCES_WRITE],
+      inputSchema: {
+        ...clientPreferencesPatchSchema,
+        properties: { wordWrap: { type: "boolean" } },
+      },
+      outputSchema: {
+        ...clientPreferencesReceiptSchema,
+        properties: {
+          ...clientPreferencesReceiptSchema.properties,
+          preferences: uiPreferencesV1Schema,
+        },
+      },
+    },
+  ],
+  streams: [
+    {
+      name: "subscribePreferences",
+      inputSchema: composerEmptyInputSchema,
+      eventSchema: uiPreferencesV1Schema,
+      requiredGrants: [UI_PREFERENCES_READ],
+    },
+  ],
+});
+
 export const UI_THEME_API = uiThemeApi.definition;
 export const UI_KEYBINDINGS_API = uiKeybindingsApi.definition;
 export const UI_EXTERNAL = "t3.ui/external";
@@ -9112,6 +9177,34 @@ export type UiNavigationFileReceipt =
   | { readonly status: "opened"; readonly relativePath: string }
   | { readonly status: "refused"; readonly reason: UiNavigationFileRefusalReason };
 
+const uiNavigationOpenThreadMethod = {
+  name: "openThread",
+  effect: "write",
+  requiredGrants: [UI_NAVIGATION_OPEN],
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["threadId"],
+    properties: {
+      threadId: { type: "string", minLength: 1, maxLength: 128 },
+      surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+    },
+  },
+  outputSchema: uiNavigationReceiptSchema,
+} as const;
+const uiNavigationOpenAgentSessionMethod = {
+  name: "openAgentSession",
+  effect: "write",
+  requiredGrants: [UI_NAVIGATION_OPEN_SESSION],
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["agentId"],
+    properties: { agentId: { type: "string", minLength: 1, maxLength: 256 } },
+  },
+  outputSchema: uiNavigationSessionReceiptSchema,
+} as const;
+
 /**
  * Moves the caller's own client to a thread in the caller's project, and
  * optionally opens one of the caller's own surfaces there. The pack names a
@@ -9156,33 +9249,8 @@ export const uiNavigationApi = defineApi<{
         inputSchema: composerEmptyInputSchema,
         outputSchema: uiCapabilitiesOutput(["openThread", "openAgentSession", "openFile"]),
       },
-      {
-        name: "openThread",
-        effect: "write",
-        requiredGrants: [UI_NAVIGATION_OPEN],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["threadId"],
-          properties: {
-            threadId: { type: "string", minLength: 1, maxLength: 128 },
-            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
-          },
-        },
-        outputSchema: uiNavigationReceiptSchema,
-      },
-      {
-        name: "openAgentSession",
-        effect: "write",
-        requiredGrants: [UI_NAVIGATION_OPEN_SESSION],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["agentId"],
-          properties: { agentId: { type: "string", minLength: 1, maxLength: 256 } },
-        },
-        outputSchema: uiNavigationSessionReceiptSchema,
-      },
+      uiNavigationOpenThreadMethod,
+      uiNavigationOpenAgentSessionMethod,
       {
         name: "openFile",
         effect: "write",
@@ -9200,6 +9268,32 @@ export const uiNavigationApi = defineApi<{
   // Consumers keep loading on a 1.0.0 host; probe before calling openFile.
   { baseline: "1.0.0", additions: [{ version: "1.1.0", method: "openFile" }] },
 );
+/** Frozen published 1.0.0 definition, before `openFile`; providers may still declare it. */
+export const uiNavigationApiV1 = defineApi<{
+  getCapabilities: { input: Record<string, never>; output: UiCapabilities };
+  openThread: {
+    input: { threadId: string; surfaceId?: string };
+    output: UiNavigationReceipt;
+  };
+  openAgentSession: {
+    input: { agentId: string };
+    output: UiNavigationSessionReceipt;
+  };
+}>({
+  id: UI_NAVIGATION,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: composerEmptyInputSchema,
+      outputSchema: uiCapabilitiesOutput(["openThread", "openAgentSession"]),
+    },
+    uiNavigationOpenThreadMethod,
+    uiNavigationOpenAgentSessionMethod,
+  ],
+});
 
 /** Whether `path` is a safe workspace-relative path `openFile` will accept. */
 export function isWorkspaceFilePath(path: string): boolean {
@@ -9322,8 +9416,10 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   uiNotificationsApi.definition,
   uiPanelsApi.definition,
   uiPreferencesApi.definition,
+  uiPreferencesApiV1.definition,
   uiExternalApi.definition,
   uiNavigationApi.definition,
+  uiNavigationApiV1.definition,
   agentSessionsApi.definition,
 ];
 function canonical(value: unknown): string {

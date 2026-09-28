@@ -110,6 +110,13 @@ export interface ViewSession {
   readonly visible: boolean;
   onVisibility(listener: (visible: boolean) => void): () => void;
   readonly restoreState: Json;
+  /**
+   * Receives a host navigation into this live view: the restore state a new
+   * open would have started from (a file link to the file already shown).
+   * Without a listener the host restarts the view from that state instead.
+   * Absent on hosts that predate it, which always restart.
+   */
+  onNavigate?(listener: (restoreState: Json) => void): () => void;
   /** Monotonic within this session; old/hidden/disposed publications return false. */
   publish(sequence: number, state: Json): boolean;
   save(state: Json): boolean;
@@ -204,6 +211,7 @@ interface Entry<R> {
   abort: AbortController;
   activity: AbortController;
   visibility: Set<(visible: boolean) => void>;
+  navigation: Set<(restoreState: Json) => void>;
   cleanup: Set<() => void>;
   sequence: number;
   pending: number;
@@ -270,6 +278,7 @@ export function createExtensionHost<Renderer>(options: HostOptions) {
     entry.abort.abort();
     entry.activity.abort();
     entry.visibility.clear();
+    entry.navigation.clear();
     const controller = entry.controller;
     entry.controller = undefined;
     try {
@@ -412,6 +421,12 @@ export function createExtensionHost<Renderer>(options: HostOptions) {
         };
       },
       restoreState: copyJson(entry.snapshot.record.restoreState),
+      onNavigate(listener) {
+        if (live()) entry.navigation.add(listener);
+        return () => {
+          entry.navigation.delete(listener);
+        };
+      },
       publish(sequence, state) {
         if (
           !live() ||
@@ -576,6 +591,7 @@ export function createExtensionHost<Renderer>(options: HostOptions) {
       abort: new AbortController(),
       activity: new AbortController(),
       visibility: new Set(),
+      navigation: new Set(),
       cleanup: new Set(),
       sequence: -1,
       pending: 0,
@@ -837,6 +853,33 @@ export function createExtensionHost<Renderer>(options: HostOptions) {
         }
       } else if (entry.snapshot.status !== "ready" && entry.snapshot.status !== "loading")
         await start(entry, true);
+    },
+    /**
+     * Navigates a live view in place: its listeners receive `restoreState`
+     * and it keeps its session. A view without one restarts from it.
+     */
+    async navigate(id: string, restoreState: Json) {
+      const entry = required(id);
+      const record = validateRecord({ ...entry.snapshot.record, restoreState });
+      entry.snapshot = { ...entry.snapshot, record };
+      const contribution = entry.registration?.contributions.get(record.surfaceId);
+      if (
+        !entry.controller ||
+        entry.navigation.size === 0 ||
+        !contribution?.validateRestore(copyJson(record.restoreState))
+      ) {
+        await start(entry, false);
+        return;
+      }
+      emit(entry, id);
+      for (const listener of entry.navigation) {
+        try {
+          listener(copyJson(record.restoreState));
+        } catch (error) {
+          fail(id, error);
+          break;
+        }
+      }
     },
     move(id: string, placement: Placement) {
       const entry = required(id);

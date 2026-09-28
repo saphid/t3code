@@ -387,21 +387,42 @@ function useFilePreferences(host: ClientHost, session: ViewSession, visible: boo
   useEffect(() => {
     if (!visible) return;
     const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
     let subscribed = false;
+    let streamAnswered = false;
     void watchPreferences({
       client: host,
       context: session.context,
-      signal: AbortSignal.any([controller.signal, session.signal]),
+      signal,
       apply: (preferences) => {
         setValue(preferences?.wordWrap ?? null);
         if (preferences?.renderBrowserFile !== undefined)
           setRenderHtml(preferences.renderBrowserFile);
         // The clear watchPreferences makes synchronously as it subscribes is
         // not an answer; every later call is.
-        if (subscribed) setAnswered(true);
+        if (subscribed) {
+          streamAnswered = true;
+          setAnswered(true);
+        }
       },
     });
     subscribed = true;
+    // The stream has no first-frame deadline; this read has the request's. A
+    // silent stream still settles the HTML choice: the saved one, or, when
+    // the read fails too, the view's own.
+    bindApi(uiPreferencesApi, host, session.context)
+      .invoke("getPreferences", {}, signal)
+      .then(
+        (preferences) => {
+          if (signal.aborted || streamAnswered) return;
+          if (preferences.renderBrowserFile !== undefined)
+            setRenderHtml(preferences.renderBrowserFile);
+          setAnswered(true);
+        },
+        () => {
+          if (!signal.aborted && !streamAnswered) setAnswered(true);
+        },
+      );
     return () => controller.abort();
   }, [host, session, visible]);
   const toggle = () => {
@@ -1232,6 +1253,9 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   // panel's own — so it carries across files, presentations and reloads; the
   // view record keeps it too for hosts that predate the preference.
   const [renderHtml, setRenderHtml] = useState(() => restoredRenderHtml(session.restoreState));
+  // The user's own toggle settles the choice without waiting for the preference.
+  const [htmlChosen, setHtmlChosen] = useState(false);
+  const htmlUnsettled = !preferences.answered && !htmlChosen;
   const [reportedRenderHtml, setReportedRenderHtml] = useState(preferences.renderHtml);
   if (preferences.renderHtml !== reportedRenderHtml) {
     setReportedRenderHtml(preferences.renderHtml);
@@ -1241,11 +1265,11 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     ? presentedPreviewKind(selected, {
         // Until the preference answers, an HTML file is held on the page side
         // with nothing loaded, so neither the page nor its source flashes.
-        renderHtml: renderHtml || !preferences.answered,
+        renderHtml: renderHtml || htmlUnsettled,
         revealPath: revealRequest?.path ?? null,
       })
     : "text";
-  const awaitingHtmlChoice = selectedKind === "html" && !preferences.answered;
+  const awaitingHtmlChoice = selectedKind === "html" && htmlUnsettled;
   const editor = useFileEditor(host, session, selected, selectedKind, revision, visible);
   const media = useMediaLease(
     host,
@@ -1465,6 +1489,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const toggleHtml = () => {
     const next = selectedKind !== "html";
     setRenderHtml(next);
+    setHtmlChosen(true);
     if (next) setRevealRequest(null);
     void writeRenderHtml({
       client: host,
@@ -1494,6 +1519,21 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       ancestors.push(ancestor);
     if (ancestors.length) setExpanded((previous) => new Set([...previous, ...ancestors]));
   };
+
+  // A later open of this view (a file link, "Open in panel") arrives in
+  // place: it selects the named file, and a line reveals in the editor that
+  // is already open, so pending edits and save state stay with it. A path
+  // already shown without a line only focuses the view.
+  const navigate = (state: unknown) => {
+    const path = restoredSelection(state);
+    const line = restoredRevealLine(state) ?? undefined;
+    if (path !== null && (line !== undefined || path !== selected)) select(path, line);
+  };
+  const navigateRef = useRef(navigate);
+  useLayoutEffect(() => {
+    navigateRef.current = navigate;
+  });
+  useEffect(() => session.onNavigate?.((state) => navigateRef.current(state)), [session]);
 
   // Rows drag a serialized composer mention on the MIME the host
   // composer claims — the drop handler there does the insertion, so the

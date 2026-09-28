@@ -112,6 +112,8 @@ interface Disk {
   readonly save?: (count: number) => unknown;
   /** Preference frames; a promise holds the stream until it settles. */
   readonly preferences?: Promise<Frame | Error>;
+  /** The unary preference read; follows the stream unless given. */
+  readonly preferencesRead?: Promise<Frame | Error>;
 }
 
 type Calls = {
@@ -121,6 +123,13 @@ type Calls = {
   presentations: ApiInvocation[];
 };
 const newCalls = (): Calls => ({ reads: 0, saves: 0, log: [], presentations: [] });
+
+const preferenceFrame = (disk: Disk) =>
+  disk.preferences ??
+  Promise.resolve<Frame>({
+    type: "snapshot",
+    value: { wordWrap: false, renderBrowserFile: true },
+  });
 
 function packHost(disk: Disk, calls: Calls) {
   const navigationVersion = uiNavigationApi.definition.version;
@@ -153,6 +162,11 @@ function packHost(disk: Disk, calls: Calls) {
       if (request.id === "t3.file/presentation")
         return filesServer.apis[0]!.methods[0]!.invoke(request.input, { signal });
       if (request.id === "t3.ui/navigation") return navigation.invoke(request, signal);
+      if (request.id === "t3.ui/preferences" && request.method === "getPreferences") {
+        const frame = await (disk.preferencesRead ?? preferenceFrame(disk));
+        if (frame instanceof Error) throw frame;
+        return frame.value;
+      }
       if (request.id === "t3.resources/lease") {
         if (request.method === "getCapabilities") return { supportedKinds: ["workspace-file"] };
         return { url: "https://example.invalid/page.html", expiresAt: Date.now() + 3_600_000 };
@@ -171,16 +185,17 @@ function packHost(disk: Disk, calls: Calls) {
     subscribeApi(request, signal) {
       return (async function* () {
         if (request.id === "t3.ui/preferences") {
-          const frame = await (disk.preferences ??
-            Promise.resolve({
-              type: "snapshot",
-              value: { wordWrap: false, renderBrowserFile: true },
-            }));
+          const frame = await preferenceFrame(disk);
           if (frame instanceof Error) throw frame;
           yield frame;
           await pending(signal);
         } else if (request.id === "t3.workspace/tree") {
-          yield { type: "data", value: { kind: "complete", entryCount: 0, truncated: false } };
+          const entries = Object.keys(disk.files).map((path) => ({ path, kind: "file" }));
+          yield { type: "data", value: { kind: "chunk", entries, truncated: false } };
+          yield {
+            type: "data",
+            value: { kind: "complete", entryCount: entries.length, truncated: false },
+          };
         } else await pending(signal);
       })();
     },
@@ -336,8 +351,6 @@ afterEach(() => {
 describe("reopening a file that is already open", () => {
   const USER_EDIT = "one\ntwo\nthree";
 
-  // Each case edits its own file: a conflict left behind by one case would
-  // otherwise be handed to the next case's view of the same file.
   const open = async (path: string) => {
     vi.useFakeTimers();
     vi.stubGlobal("HTMLTextAreaElement", FakeTextArea);
@@ -392,6 +405,153 @@ describe("reopening a file that is already open", () => {
       await act(async () => panel.navigation({ relativePath: "line.txt" }));
       expect(editorState(panel)).toEqual({ contents: USER_EDIT, conflict: true, saves: 1 });
       expect(panel.calls.reads).toBe(reads);
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
+
+// Review repros (proof-host-8 P1, P2): an open aimed at the file view that is
+// already showing goes to that view in place. Its editor, and whatever it has
+// not saved yet, stays; a different file is selected in it.
+describe("a file link to the open file view", () => {
+  const lineReveal = () => {
+    vi.stubGlobal("HTMLTextAreaElement", FakeTextArea);
+    vi.stubGlobal("getComputedStyle", () => ({ paddingTop: "0px", lineHeight: "16px" }));
+  };
+
+  it.each([
+    { outcome: { kind: "conflict" }, conflict: true },
+    { outcome: { kind: "error", message: "disk full" }, conflict: false },
+  ])(
+    "keeps edits whose save is still pending, settling as $outcome.kind",
+    async ({ outcome, conflict }) => {
+      vi.useFakeTimers();
+      lineReveal();
+      let finishSave!: (outcome: unknown) => void;
+      const panel = await mountPanel({
+        files: { "pending.txt": "disk copy" },
+        save: () =>
+          new Promise((resolve) => {
+            finishSave = resolve;
+          }),
+      });
+      try {
+        await act(async () => panel.navigation({ relativePath: "pending.txt" }));
+        // Dirty: the autosave debounce has not fired yet.
+        await act(async () => panel.editor().props.onChange({ target: { value: "one\ntwo" } }));
+        await act(async () => panel.navigation({ relativePath: "pending.txt", line: 2 }));
+        expect(editorState(panel)).toEqual({ contents: "one\ntwo", conflict: false, saves: 0 });
+        // Saving: the flushed save is in flight when the next link lands.
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(500);
+        });
+        await act(async () => panel.editor().props.onChange({ target: { value: "one\ntwo\n3" } }));
+        await act(async () => panel.navigation({ relativePath: "pending.txt", line: 3 }));
+        await act(async () => finishSave(outcome));
+        expect(editorState(panel)).toEqual({ contents: "one\ntwo\n3", conflict, saves: 1 });
+        expect(panel.calls.reads).toBe(1);
+        expect(panel.calls.presentations).toHaveLength(3);
+      } finally {
+        await panel.unmount();
+      }
+    },
+  );
+
+  it("reveals each requested line, repeats included, in the same editor", async () => {
+    lineReveal();
+    const panel = await mountPanel({ files: { "lines.txt": "one\ntwo\nthree" } });
+    try {
+      await act(async () => panel.navigation({ relativePath: "lines.txt" }));
+      for (const line of [2, 3, 2, 2])
+        await act(async () => panel.navigation({ relativePath: "lines.txt", line }));
+      // Lines 2 and 3 start at offsets 4 and 8.
+      expect(panel.textarea.carets).toEqual([4, 8, 4, 4]);
+      expect(panel.calls.reads).toBe(1);
+    } finally {
+      await panel.unmount();
+    }
+  });
+
+  it("selects the linked file when the view has moved to another one", async () => {
+    const panel = await mountPanel({ files: { "a.txt": "file A", "b.txt": "file B" } });
+    try {
+      await act(async () => panel.navigation({ relativePath: "a.txt" }));
+      await act(async () => panel.button("b.txt")!.props.onClick());
+      expect(panel.editor().props.value).toBe("file B");
+      await act(async () => panel.navigation({ relativePath: "a.txt" }));
+      expect(panel.editor().props.value).toBe("file A");
+    } finally {
+      await panel.unmount();
+    }
+  });
+
+  // Native parity: closing the tab disposes its edits; reopening reads the disk.
+  it("starts from the disk after its tab was closed", async () => {
+    vi.useFakeTimers();
+    const panel = await mountPanel({
+      files: { "closed.txt": "disk copy" },
+      save: () => ({ kind: "conflict" }),
+    });
+    try {
+      await act(async () => panel.navigation({ relativePath: "closed.txt" }));
+      await conflictedEdit(panel, "abandoned edit");
+      await act(async () => {
+        useRightPanelStore.setState({ byThreadKey: {} });
+      });
+      await act(async () => panel.navigation({ relativePath: "closed.txt" }));
+      expect(editorState(panel)).toEqual({ contents: "disk copy", conflict: false, saves: 1 });
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
+
+// Review repro (proof-host-8 P2): a preference stream that never answers.
+describe("an HTML file whose preference stream stays silent", () => {
+  it("falls back to the view's own choice once the bounded read fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(0) })),
+    );
+    const panel = await mountPanel({
+      files: { "silent.html": "<p>source</p>" },
+      preferences: new Promise(() => {}),
+      preferencesRead: Promise.resolve(new Error("Client request timed out")),
+    });
+    try {
+      await act(async () => panel.navigation({ relativePath: "silent.html" }));
+      expect({ frames: panel.frames(), editors: panel.editors() }).toEqual({
+        frames: 1,
+        editors: 0,
+      });
+      await act(async () => panel.button("Show HTML source")!.props.onClick());
+      expect({ frames: panel.frames(), editors: panel.editors() }).toEqual({
+        frames: 0,
+        editors: 1,
+      });
+    } finally {
+      await panel.unmount();
+    }
+  });
+
+  it("shows the source at once when the user asks, even with no answer at all", async () => {
+    const panel = await mountPanel({
+      files: { "silent.html": "<p>source</p>" },
+      preferences: new Promise(() => {}),
+      preferencesRead: new Promise(() => {}),
+    });
+    try {
+      await act(async () => panel.navigation({ relativePath: "silent.html" }));
+      expect({ frames: panel.frames(), editors: panel.editors() }).toEqual({
+        frames: 0,
+        editors: 0,
+      });
+      await act(async () => panel.button("Show HTML source")!.props.onClick());
+      expect({ frames: panel.frames(), editors: panel.editors() }).toEqual({
+        frames: 0,
+        editors: 1,
+      });
     } finally {
       await panel.unmount();
     }

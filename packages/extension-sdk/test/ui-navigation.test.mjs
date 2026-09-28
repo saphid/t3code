@@ -1,5 +1,6 @@
 import * as NodeTest from "node:test";
 import * as NodeAssert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   GENERIC_API_CATALOGUE,
   UI_EXTERNAL_OPEN,
@@ -220,3 +221,38 @@ NodeTest.test("t3.file/presentation 1.1.0 adds open.line and keeps 1.0.0 frozen"
     (error) => error instanceof ApiVersionError,
   );
 });
+
+// Review repro (proof-host-8 P2): the 1.1.0 bumps must not un-publish 1.0.0.
+// The fixture is each definition as published at 1.0.0, dumped from that build.
+NodeTest.test(
+  "providers of the published 1.0.0 UI and presentation contracts stay valid",
+  async () => {
+    const { validateEnvironmentPackage } = await import("../dist/environment.js");
+    const published = JSON.parse(
+      readFileSync(new URL("./fixtures/published-1.0.0-apis.json", import.meta.url), "utf8"),
+    );
+    const accepted = {};
+    for (const [id, definition] of Object.entries(published)) {
+      NodeAssert.equal(definition.version, "1.0.0");
+      try {
+        validateEnvironmentPackage({
+          format: 3,
+          manifest: { id: "example.provider", version: "1.0.0", apiVersion: 1, surfaces: [] },
+          serverEntry: "server.mjs",
+          tools: [],
+          provides: [definition],
+          requires: [],
+          dependencies: [],
+        });
+        accepted[id] = true;
+      } catch (error) {
+        accepted[id] = error.message;
+      }
+    }
+    NodeAssert.deepEqual(accepted, {
+      "t3.ui/navigation": true,
+      "t3.ui/preferences": true,
+      "t3.file/presentation": true,
+    });
+  },
+);

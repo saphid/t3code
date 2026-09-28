@@ -72,6 +72,25 @@ function fixture(overrides = {}) {
   host.register(extension);
   return { host, extension, sessions, visibility, disposed, renderer };
 }
+NodeTest.test("navigate reaches a listening view in place and restarts one without", async () => {
+  const f = fixture();
+  const a = await f.host.open(record());
+  const received = [];
+  // `?.` keeps a host without navigation failing on the assertions below.
+  f.sessions[0].onNavigate?.((state) => received.push(state));
+  await f.host.navigate?.(a, { count: 2 });
+  await f.host.navigate?.(a, { count: 2 });
+  NodeAssert.deepEqual(received, [{ count: 2 }, { count: 2 }]);
+  NodeAssert.equal(f.sessions.length, 1);
+  NodeAssert.equal(f.sessions[0].signal.aborted, false);
+  NodeAssert.deepEqual(f.host.snapshot(a).record.restoreState, { count: 2 });
+  const b = await f.host.open(record());
+  await f.host.navigate?.(b, { count: 5 });
+  NodeAssert.equal(f.sessions.length, 3);
+  NodeAssert.deepEqual(f.sessions[2].restoreState, { count: 5 });
+  NodeAssert.equal(f.sessions[2].restoring, false);
+  f.host.dispose();
+});
 NodeTest.test(
   "public lifecycle preserves hidden renderer/session and independent shared viewers",
   async () => {

@@ -465,7 +465,8 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
     const version = targets
       .find((target) => target.connectionId === connectionId)
       ?.providers.find((provider) => provider.id === apiId)?.version;
-    return { ok: version === undefined || satisfiesSemverRange(version, range), version };
+    // An unlisted area is not a current one: the client is refused, never guessed.
+    return { ok: version !== undefined && satisfiesSemverRange(version, range), version };
   };
 
   /** Names the gap instead of sending a client a frame its area predates. */
@@ -480,7 +481,7 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
     if (!ok)
       throw providerError(
         "provider-rejected",
-        `${operation} needs ${apiId} ${range}; this client runs ${version}.`,
+        `${operation} needs ${apiId} ${range}; this client ${version === undefined ? "does not provide it" : "runs " + version}.`,
       );
   };
 

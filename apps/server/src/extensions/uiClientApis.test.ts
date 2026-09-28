@@ -1,4 +1,5 @@
 import { ClientProvidersError } from "@t3tools/contracts";
+import { CLIENT_PROVIDER_APIS } from "@t3tools/extension-sdk/clientProviders";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type {
   HostApiInvocationMetadata,
@@ -104,9 +105,18 @@ function fakeBridge(options?: {
       correlations.delete(correlationId);
       return Effect.void;
     },
+    // By default the one client runs every current area, as a real one lists them.
     listTargets: () =>
       Effect.succeed(
-        (options?.targets ?? []) as readonly import("@t3tools/contracts").ClientTargetInfo[],
+        (options?.targets ?? [
+          {
+            connectionId: "conn-1",
+            providers: [...CLIENT_PROVIDER_APIS.values()].map(({ id, version }) => ({
+              id,
+              version,
+            })),
+          },
+        ]) as readonly import("@t3tools/contracts").ClientTargetInfo[],
       ),
     resolveTarget: (_environmentId, _principal, hint) =>
       options?.resolveFailure
@@ -579,6 +589,20 @@ describe("1.1.0 client seam additions", () => {
       ),
     ).rejects.toMatchObject({ code: "provider-rejected" });
     expect(bridge.invoked).toHaveLength(0);
+  });
+
+  // Review finding (proof-host-8 P3): an unlisted version is not a current one.
+  it("treats a client that lists no version as predating the additions", async () => {
+    const bridge = fakeBridge({ targets: [{ connectionId: "conn-1", providers: [] }] });
+    const { navigation, preferences } = makeProviders(bridge);
+    await expect(
+      navigation.invoke("openFile", { relativePath: "a.ts" } as Json, context, signal, metadata()),
+    ).rejects.toMatchObject({ code: "provider-rejected" });
+    await preferences.invoke("getPreferences", {} as Json, context, signal, metadata());
+    // Only the read went out, and it asked for no 1.1.0 key.
+    expect(
+      bridge.invoked.map(({ method, input }) => [method, (input as { include?: unknown }).include]),
+    ).toEqual([["getPreferences", undefined]]);
   });
 });
 

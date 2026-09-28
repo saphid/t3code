@@ -7703,6 +7703,60 @@ var __t3Client = (() => {
       additions: [{ version: "1.1.0", method: "setPreferences", input: "renderBrowserFile" }]
     }
   );
+  var uiPreferencesV1Schema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["wordWrap"],
+    properties: { wordWrap: { type: "boolean" } }
+  };
+  var uiPreferencesApiV1 = defineApi({
+    id: UI_PREFERENCES,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput([
+          "getPreferences",
+          "setPreferences",
+          "subscribePreferences"
+        ])
+      },
+      {
+        name: "getPreferences",
+        effect: "read",
+        requiredGrants: [UI_PREFERENCES_READ],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiPreferencesV1Schema
+      },
+      {
+        name: "setPreferences",
+        effect: "write",
+        requiredGrants: [UI_PREFERENCES_WRITE],
+        inputSchema: {
+          ...clientPreferencesPatchSchema,
+          properties: { wordWrap: { type: "boolean" } }
+        },
+        outputSchema: {
+          ...clientPreferencesReceiptSchema,
+          properties: {
+            ...clientPreferencesReceiptSchema.properties,
+            preferences: uiPreferencesV1Schema
+          }
+        }
+      }
+    ],
+    streams: [
+      {
+        name: "subscribePreferences",
+        inputSchema: composerEmptyInputSchema,
+        eventSchema: uiPreferencesV1Schema,
+        requiredGrants: [UI_PREFERENCES_READ]
+      }
+    ]
+  });
   var UI_THEME_API = uiThemeApi.definition;
   var UI_KEYBINDINGS_API = uiKeybindingsApi.definition;
   var UI_EXTERNAL = "t3.ui/external";
@@ -7735,6 +7789,33 @@ var __t3Client = (() => {
   var UI_NAVIGATION = "t3.ui/navigation";
   var UI_NAVIGATION_OPEN = "t3.ui/navigation.open";
   var UI_NAVIGATION_OPEN_SESSION = "t3.ui/navigation.open-session";
+  var uiNavigationOpenThreadMethod = {
+    name: "openThread",
+    effect: "write",
+    requiredGrants: [UI_NAVIGATION_OPEN],
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["threadId"],
+      properties: {
+        threadId: { type: "string", minLength: 1, maxLength: 128 },
+        surfaceId: { type: "string", minLength: 1, maxLength: 160 }
+      }
+    },
+    outputSchema: uiNavigationReceiptSchema
+  };
+  var uiNavigationOpenAgentSessionMethod = {
+    name: "openAgentSession",
+    effect: "write",
+    requiredGrants: [UI_NAVIGATION_OPEN_SESSION],
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["agentId"],
+      properties: { agentId: { type: "string", minLength: 1, maxLength: 256 } }
+    },
+    outputSchema: uiNavigationSessionReceiptSchema
+  };
   var uiNavigationApi = defineApi(
     {
       id: UI_NAVIGATION,
@@ -7747,33 +7828,8 @@ var __t3Client = (() => {
           inputSchema: composerEmptyInputSchema,
           outputSchema: uiCapabilitiesOutput(["openThread", "openAgentSession", "openFile"])
         },
-        {
-          name: "openThread",
-          effect: "write",
-          requiredGrants: [UI_NAVIGATION_OPEN],
-          inputSchema: {
-            type: "object",
-            additionalProperties: false,
-            required: ["threadId"],
-            properties: {
-              threadId: { type: "string", minLength: 1, maxLength: 128 },
-              surfaceId: { type: "string", minLength: 1, maxLength: 160 }
-            }
-          },
-          outputSchema: uiNavigationReceiptSchema
-        },
-        {
-          name: "openAgentSession",
-          effect: "write",
-          requiredGrants: [UI_NAVIGATION_OPEN_SESSION],
-          inputSchema: {
-            type: "object",
-            additionalProperties: false,
-            required: ["agentId"],
-            properties: { agentId: { type: "string", minLength: 1, maxLength: 256 } }
-          },
-          outputSchema: uiNavigationSessionReceiptSchema
-        },
+        uiNavigationOpenThreadMethod,
+        uiNavigationOpenAgentSessionMethod,
         {
           name: "openFile",
           effect: "write",
@@ -7791,6 +7847,21 @@ var __t3Client = (() => {
     // Consumers keep loading on a 1.0.0 host; probe before calling openFile.
     { baseline: "1.0.0", additions: [{ version: "1.1.0", method: "openFile" }] }
   );
+  var uiNavigationApiV1 = defineApi({
+    id: UI_NAVIGATION,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput(["openThread", "openAgentSession"])
+      },
+      uiNavigationOpenThreadMethod,
+      uiNavigationOpenAgentSessionMethod
+    ]
+  });
   function isWorkspaceFilePath(path3) {
     try {
       validateEditableRelativePath(path3);
@@ -7876,8 +7947,10 @@ var __t3Client = (() => {
     uiNotificationsApi.definition,
     uiPanelsApi.definition,
     uiPreferencesApi.definition,
+    uiPreferencesApiV1.definition,
     uiExternalApi.definition,
     uiNavigationApi.definition,
+    uiNavigationApiV1.definition,
     agentSessionsApi.definition
   ];
   function canonical(value) {

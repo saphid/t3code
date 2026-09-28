@@ -25,13 +25,15 @@ export interface PresentationRequest {
   readonly apiId: string;
   readonly method: string;
   readonly input: Json;
-  /** Host-local explicit navigation identity; never forwarded as API input. */
+  /**
+   * Host-local explicit navigation identity; never forwarded as API input. A
+   * new one reopens through the provider and reaches the mounted view in
+   * place when the provider answers with the same surface.
+   */
   readonly navigationId?: string;
   /**
    * Sent instead of `input` when the selected provider is at `version` or a
-   * later minor (a minor-release addition such as a file link's line). It is
-   * part of the navigation, read when one starts: a change alone never
-   * reopens the presentation, a new `navigationId` does.
+   * later minor (a minor-release addition such as a file link's line).
    */
   readonly newerInput?: { readonly version: string; readonly input: Json };
 }
@@ -48,23 +50,28 @@ export function SelectedApiPresentation(props: {
     [props.context.resource.environmentId, props.request.apiId],
   );
   const revision = useSyncExternalStore(subscribeInstalledApiClients, getRevision, getRevision);
-  const { newerInput, ...identity } = props.request;
-  const newerInputRef = useRef(newerInput);
-  useLayoutEffect(() => {
-    newerInputRef.current = newerInput;
-  });
-  const requestKey = JSON.stringify([identity, props.context]);
-  const key = JSON.stringify([identity, props.context, revision]);
+  // The view lives as long as its API, context and provider; a new request
+  // only navigates it.
+  const key = JSON.stringify([props.request.apiId, props.request.method, props.context, revision]);
+  const requestKey = JSON.stringify(props.request);
   const [state, setState] = useState<{
     key: string;
     record?: ViewRecord;
     storageKey?: string;
+    navigation?: { readonly id: string; readonly restoreState: Json };
     error?: string;
     legacy?: boolean;
   }>();
+  // The mounted surface keeps the record handler it was created with, so the
+  // handler reads the current state rather than that render's.
+  const latest = useRef(state);
+  useLayoutEffect(() => {
+    latest.current = state;
+  });
   useEffect(() => {
     const controller = new AbortController();
-    const [request, context] = JSON.parse(key) as [PresentationRequest, ViewContext, string];
+    const request = JSON.parse(requestKey) as PresentationRequest;
+    const context = JSON.parse(key)[2] as ViewContext;
     void (async () => {
       try {
         const selected = await resolveInstalledApiProvider(
@@ -76,7 +83,7 @@ export function SelectedApiPresentation(props: {
           setState({ key, legacy: true });
           return;
         }
-        const newer = newerInputRef.current;
+        const newer = request.newerInput;
         const upgrade =
           newer !== undefined &&
           satisfiesSemverRange(selected.discovery.version, "^" + newer.version);
@@ -124,17 +131,33 @@ export function SelectedApiPresentation(props: {
           fallback: "Selected presentation unavailable",
         };
         const storageKey = presentationStateKey(JSON.stringify([request, context]), record);
-        setState({ key, storageKey, record: restorePresentationState(storageKey, record) });
+        // The same surface is navigated in place, keeping its session and
+        // edits; only a first or different view restores saved state.
+        setState((previous) => ({
+          key,
+          storageKey,
+          navigation: { id: requestKey, restoreState: record.restoreState },
+          record:
+            previous?.key === key && previous.record?.surfaceId === record.surfaceId
+              ? record
+              : restorePresentationState(storageKey, record),
+        }));
       } catch (error) {
+        // A failed navigation leaves the mounted view as it was.
         if (!controller.signal.aborted)
-          setState({
-            key,
-            error: error instanceof Error ? error.message : "Selected presentation unavailable",
-          });
+          setState((previous) =>
+            previous?.key === key && previous.record
+              ? previous
+              : {
+                  key,
+                  error:
+                    error instanceof Error ? error.message : "Selected presentation unavailable",
+                },
+          );
       }
     })();
     return () => controller.abort();
-  }, [key]);
+  }, [key, requestKey]);
   if (state?.key !== key) return <div role="status">Resolving presentation…</div>;
   if (state.error) return <div role="status">{state.error}</div>;
   if (state.legacy) return props.fallback;
@@ -142,15 +165,17 @@ export function SelectedApiPresentation(props: {
     <WorkspaceExtensionSurface
       record={state.record}
       visible={props.visible}
+      {...(state.navigation ? { navigation: state.navigation } : {})}
       onRecordChange={(record) => {
-        const storageKey = state.storageKey ?? presentationStateKey(requestKey, record);
+        const current = latest.current;
+        if (current?.key !== key || current.storageKey === undefined) return;
         try {
-          savePresentationState(storageKey, record);
+          savePresentationState(current.storageKey, record);
         } catch {
           setState({ key, error: "Could not save presentation state" });
           return;
         }
-        setState({ key, storageKey, record });
+        setState({ ...current, record });
       }}
     />
   ) : null;

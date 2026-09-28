@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { ViewRecord } from "@t3tools/extension-sdk/contracts";
+import type { Json, ViewRecord } from "@t3tools/extension-sdk/contracts";
 import {
   createExtensionHost,
   type Extension,
@@ -48,8 +48,13 @@ export function createNativeSurfaceBridge<Bindings>(
     readonly visible: boolean;
     readonly retainHiddenPresentation?: boolean;
     readonly onRecordChange?: (record: ViewRecord) => void;
+    /**
+     * An open aimed at the live view. A new `id` reaches the mounted view in
+     * place (`ExtensionHost.navigate`); the one it mounted with is skipped.
+     */
+    readonly navigation?: { readonly id: string; readonly restoreState: Json };
   }) {
-    const { bindings, visible } = props;
+    const { bindings, visible, navigation } = props;
     const recordKey = JSON.stringify({ ...props.record, restoreState: null });
     const currentRecord = useRef(props.record);
     const onRecordChange = useRef(props.onRecordChange);
@@ -123,6 +128,18 @@ export function createNativeSurfaceBridge<Bindings>(
       if (visible) void view.host.show(view.viewId);
       else view.host.hide(view.viewId);
     }, [recordKey, visible]);
+    // A record mounts with its own restore state; later navigations go in place.
+    const navigated = useRef({ recordKey, id: navigation?.id });
+    useEffect(() => {
+      if (navigated.current.recordKey !== recordKey) {
+        navigated.current = { recordKey, id: navigation?.id };
+        return;
+      }
+      if (!navigation || navigated.current.id === navigation.id) return;
+      if (mounted?.recordKey !== recordKey || activeHost.current !== mounted.host) return;
+      navigated.current = { recordKey, id: navigation.id };
+      mounted.host.navigate(mounted.viewId, navigation.restoreState).catch(() => {});
+    }, [mounted, recordKey, navigation]);
     const rendered =
       mounted?.recordKey === recordKey ? (
         <ExtensionSurface
