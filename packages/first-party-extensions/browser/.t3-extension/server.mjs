@@ -7429,7 +7429,10 @@ var uiPanelsApi = defineApi(
     ]
   },
   // Consumers keep loading on a 1.0.0 host; bind at ^1.1.0 to call openFile.
-  { baseline: "1.0.0", additions: [{ version: "1.1.0", method: "openFile", input: "relativePath" }] }
+  {
+    baseline: "1.0.0",
+    additions: [{ version: "1.1.0", method: "openFile", input: "relativePath" }]
+  }
 );
 var uiPreferencesApi = defineApi({
   id: UI_PREFERENCES,
