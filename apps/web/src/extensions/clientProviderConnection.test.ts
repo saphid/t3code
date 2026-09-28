@@ -6,6 +6,8 @@ import type { ClientProviderServerFrame } from "@t3tools/contracts";
 import {
   currentClientConnectionId,
   startClientProviderConnection,
+  withClientConnectionId,
+  withClientConnectionIdFrames,
   type ClientProviderConnection,
 } from "./clientProviderConnection";
 import { ClientProviderOpError, type ClientLocalProvider } from "./clientProviderTypes";
@@ -470,5 +472,77 @@ describe("connection replacement and clean EOF", () => {
     await vi.waitFor(() => expect(mocks.providersStream.mock.calls.length).toBeGreaterThan(1), {
       timeout: 1500,
     });
+  });
+});
+
+describe("client connection hint on early calls", () => {
+  // The shape the web client sees when the server rejects an unhinted
+  // client-targeted call: a request error wrapping the operation error.
+  const targetRequired = () =>
+    Object.assign(
+      new Error(
+        "Failed to fetch remote environment endpoint /api/extensions/api/invoke (ExtensionOperationError: client-target-required: The call needs the client's own connection hint.)",
+      ),
+      {
+        cause: {
+          _tag: "ExtensionOperationError",
+          detail: "client-target-required: The call needs the client's own connection hint.",
+        },
+      },
+    );
+  const registered = {
+    type: "registered",
+    connectionId: "conn-early",
+    accepted: [{ id: "t3.client/theme", version: "1.0.0" }],
+    rejected: [],
+  } as ClientProviderServerFrame;
+
+  it("resends a call made before the seam registered once it has the hint", async () => {
+    const queue = new Mailbox();
+    start({ stream: queue.stream });
+    const hints: (string | undefined)[] = [];
+    const result = withClientConnectionId(ENV, new AbortController().signal, async (hint) => {
+      hints.push(hint);
+      if (hint === undefined) throw targetRequired();
+      return { theme: "dark" };
+    });
+    await vi.waitFor(() => expect(hints).toEqual([undefined]));
+    queue.offer(registered);
+    await expect(result).resolves.toEqual({ theme: "dark" });
+    expect(hints).toEqual([undefined, "conn-early"]);
+  });
+
+  it("does not resend other failures", async () => {
+    const queue = new Mailbox();
+    start({ stream: queue.stream });
+    const send = vi.fn(async () => {
+      throw new Error("client-target-denied: Missing grant t3.ui/read");
+    });
+    await expect(withClientConnectionId(ENV, new AbortController().signal, send)).rejects.toThrow(
+      "client-target-denied",
+    );
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it("reopens a stream rejected before its first frame once the seam registers", async () => {
+    const queue = new Mailbox();
+    start({ stream: queue.stream });
+    const hints: (string | undefined)[] = [];
+    const frames = withClientConnectionIdFrames(ENV, new AbortController().signal, (hint) => {
+      hints.push(hint);
+      return (async function* () {
+        if (hint === undefined) throw targetRequired();
+        yield { type: "snapshot", value: { wordWrap: false } };
+      })();
+    });
+    const first = frames.next();
+    await vi.waitFor(() => expect(hints).toEqual([undefined]));
+    queue.offer(registered);
+    await expect(first).resolves.toEqual({
+      done: false,
+      value: { type: "snapshot", value: { wordWrap: false } },
+    });
+    expect(hints).toEqual([undefined, "conn-early"]);
+    await frames.return();
   });
 });
