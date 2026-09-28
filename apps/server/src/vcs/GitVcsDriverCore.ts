@@ -29,6 +29,7 @@ import {
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
@@ -3218,40 +3219,32 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return { commitSha };
   });
 
-  const fetchPullRequestHeadCommit: GitVcsDriver.GitVcsDriver["Service"]["fetchPullRequestHeadCommit"] =
-    Effect.fn("fetchPullRequestHeadCommit")(function* (input) {
-      // No refspec destination: the pull head lands in FETCH_HEAD (per worktree) instead of a
-      // branch, which is the only way to read it while that branch is checked out somewhere.
-      yield* executeGit(
-        "GitVcsDriver.fetchPullRequestHeadCommit",
-        input.cwd,
-        ["fetch", "--quiet", "--no-tags", input.remoteName, `refs/pull/${input.prNumber}/head`],
-        {
-          fallbackErrorDetail: "git fetch pull request head failed",
-        },
-      );
-
-      return yield* resolveCommit({ cwd: input.cwd, revision: "FETCH_HEAD" });
-    });
-
-  const resolveRepositoryRemoteName: GitVcsDriver.GitVcsDriver["Service"]["resolveRepositoryRemoteName"] =
-    Effect.fn("resolveRepositoryRemoteName")(function* (input) {
-      // The configured URLs, not `git remote -v`'s: those have `insteadOf` rewrites applied, and
-      // the configured URL is the one that names the repository.
-      const stdout = yield* runGitStdout(
-        "GitVcsDriver.resolveRepositoryRemoteName",
-        input.cwd,
-        ["config", "--get-regexp", "^remote\\..*\\.url$"],
-        true,
-      );
-      for (const line of stdout.split("\n")) {
-        const match = /^remote\.(.+)\.url\s+(\S+)$/.exec(line.trim());
-        if (match?.[1] && match[2] && normalizeGitRemoteUrl(match[2]) === input.repositoryKey) {
-          return match[1];
-        }
+  const fetchCommit: GitVcsDriver.GitVcsDriver["Service"]["fetchCommit"] = Effect.fn("fetchCommit")(
+    function* (input) {
+      // Only transports that reach a hosting service: a `file://`, `ext::` or bare-path URL from a
+      // provider would read the local disk or run a command. A leading `-` would be an option.
+      const url = input.url;
+      const fetchable = !/^-|\s/u.test(url) && (/^https:\/\//iu.test(url) || isSshRemoteUrl(url));
+      if (!fetchable || !input.ref.startsWith("refs/") || input.ref.includes(":")) {
+        return yield* new GitCommandError({
+          operation: "GitVcsDriver.fetchCommit",
+          command: "git fetch",
+          cwd: input.cwd,
+          detail: "Refusing to fetch from a repository URL that is not HTTPS or SSH.",
+        });
       }
-      return null;
-    });
+      // A URL rather than a remote, and no refspec destination: the commit lands only in FETCH_HEAD
+      // (per worktree), so no remote-tracking ref moves and a branch checked out elsewhere can
+      // still be read.
+      yield* executeGit(
+        "GitVcsDriver.fetchCommit",
+        input.cwd,
+        ["fetch", "--quiet", "--no-tags", "--no-recurse-submodules", url, input.ref],
+        { fallbackErrorDetail: "git fetch failed" },
+      );
+      return yield* resolveCommit({ cwd: input.cwd, revision: "FETCH_HEAD" });
+    },
+  );
 
   const refreshCheckedOutBranch: GitVcsDriver.GitVcsDriver["Service"]["refreshCheckedOutBranch"] =
     Effect.fn("refreshCheckedOutBranch")(function* (input) {
@@ -3694,8 +3687,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       withListRefsInvalidation(input.cwd, createWorktree(input, options)),
     fetchPullRequestBranch: (input) =>
       withListRefsInvalidation(input.cwd, fetchPullRequestBranch(input)),
-    fetchPullRequestHeadCommit,
-    resolveRepositoryRemoteName,
+    fetchCommit,
     resolveCommit,
     refreshCheckedOutBranch: (input) =>
       withListRefsInvalidation(input.cwd, refreshCheckedOutBranch(input)),

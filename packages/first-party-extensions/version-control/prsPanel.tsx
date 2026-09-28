@@ -882,7 +882,8 @@ const FOCUSABLE = 'a[href],button,input:not([type="hidden"]),select,textarea,[ta
 /**
  * The controls Tab visits inside `root`, in document order: focusable ones
  * whose tabIndex keeps them in the Tab order, and that no disabled state,
- * `hidden` or `inert` ancestor takes out of it.
+ * `hidden` or `inert` ancestor, or computed `display: none` or
+ * `visibility: hidden`, takes out of it.
  */
 function tabbablesIn(root: Element | Document): HTMLElement[] {
   if (typeof root.querySelectorAll !== "function") return [];
@@ -890,8 +891,19 @@ function tabbablesIn(root: Element | Document): HTMLElement[] {
     (element) =>
       element.tabIndex >= 0 &&
       !element.matches(":disabled") &&
-      element.closest("[hidden],[inert]") === null,
+      element.closest("[hidden],[inert]") === null &&
+      isRendered(element),
   );
+}
+
+function isRendered(element: HTMLElement): boolean {
+  const view = element.ownerDocument.defaultView;
+  if (view === null) return true;
+  if (view.getComputedStyle(element).visibility !== "visible") return false;
+  for (let node: Element | null = element; node !== null; node = node.parentElement) {
+    if (view.getComputedStyle(node).display === "none") return false;
+  }
+  return true;
 }
 
 /**

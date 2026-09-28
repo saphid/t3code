@@ -444,6 +444,27 @@ describe("checks popover", () => {
     expect(document.activeElement?.textContent).toBe("After");
   });
 
+  it("tabs past controls that CSS hides", async () => {
+    await renderChecks(
+      <>
+        <button type="button" style={{ display: "none" }}>
+          Not displayed
+        </button>
+        <button type="button" style={{ visibility: "hidden" }}>
+          Invisible
+        </button>
+        <div style={{ display: "none" }}>
+          <button type="button">Inside a hidden container</button>
+        </div>
+      </>,
+    );
+    await press("Enter");
+    await press("Tab");
+    await press("Tab");
+    expect(popover()).toBeNull();
+    expect(document.activeElement?.textContent).toBe("After");
+  });
+
   it("Shift-Tab and Escape close it back onto the trigger", async () => {
     const trigger = await renderChecks();
     await press("Enter");

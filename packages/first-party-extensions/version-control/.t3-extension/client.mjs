@@ -11029,8 +11029,17 @@ ${writeKey}`;
   function tabbablesIn(root) {
     if (typeof root.querySelectorAll !== "function") return [];
     return [...root.querySelectorAll(FOCUSABLE)].filter(
-      (element) => element.tabIndex >= 0 && !element.matches(":disabled") && element.closest("[hidden],[inert]") === null
+      (element) => element.tabIndex >= 0 && !element.matches(":disabled") && element.closest("[hidden],[inert]") === null && isRendered(element)
     );
+  }
+  function isRendered(element) {
+    const view = element.ownerDocument.defaultView;
+    if (view === null) return true;
+    if (view.getComputedStyle(element).visibility !== "visible") return false;
+    for (let node = element; node !== null; node = node.parentElement) {
+      if (view.getComputedStyle(node).display === "none") return false;
+    }
+    return true;
   }
   function tabbableAfter(from, popup) {
     const order = tabbablesIn(from.ownerDocument).filter(
