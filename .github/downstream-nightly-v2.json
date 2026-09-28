@@ -100,6 +100,12 @@
       "repository": "saphid/t3code",
       "sha": "6f6ae98244eb5ad3260ecf9e0261cde0ce3d221d",
       "name": "fix(web): detect Fork Nightly servers that are behind the client"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "0eca7a70b426321775e14fd82dbf77c1a10e0694",
+      "name": "fix(server): prevent concurrent runtimes from cancelling live runs"
     }
   ]
 }
