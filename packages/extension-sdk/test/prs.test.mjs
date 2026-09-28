@@ -1,17 +1,128 @@
 import * as NodeTest from "node:test";
 import * as NodeAssert from "node:assert/strict";
-import { GENERIC_API_CATALOGUE, PRS_READ, PRS_READ_API, prsReadApi } from "../dist/catalogue.js";
+import * as NodeCrypto from "node:crypto";
+import { bindApi, bindStreamApi, defineApi } from "../dist/capabilities.js";
+import { requireApi } from "../dist/authoring.js";
+import * as Catalogue from "../dist/catalogue.js";
+
+// Read through the namespace: a catalogue without the 1.0.0 freeze fails the
+// assertions below rather than the import.
+const {
+  assertProvidedApiOwner,
+  GENERIC_API_CATALOGUE,
+  PRS_READ,
+  PRS_READ_API,
+  PRS_READ_API_V1,
+  prsReadApi,
+  prsReadApiV1,
+} = Catalogue;
 
 const methods = Object.fromEntries(PRS_READ_API.methods.map((m) => [m.name, m]));
 const streams = Object.fromEntries((PRS_READ_API.streams ?? []).map((s) => [s.name, s]));
 
-NodeTest.test("t3.prs/read is a frozen 1.0.0 catalogue entry registered once", () => {
+const canonical = (value) =>
+  Array.isArray(value)
+    ? "[" + value.map(canonical).join(",") + "]"
+    : value && typeof value === "object"
+      ? "{" +
+        Object.entries(value)
+          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+          .map(([key, child]) => JSON.stringify(key) + ":" + canonical(child))
+          .join(",") +
+        "}"
+      : JSON.stringify(value);
+
+NodeTest.test("t3.prs/read 1.1.0 is registered beside its frozen 1.0.0 definition", () => {
   NodeAssert.equal(PRS_READ_API.id, PRS_READ);
-  NodeAssert.equal(PRS_READ_API.version, "1.0.0");
+  NodeAssert.equal(PRS_READ_API.version, "1.1.0");
   NodeAssert.equal(prsReadApi.definition, PRS_READ_API);
+  NodeAssert.equal(PRS_READ_API_V1.version, "1.0.0");
+  NodeAssert.equal(prsReadApiV1.definition, PRS_READ_API_V1);
   NodeAssert.deepEqual(
     GENERIC_API_CATALOGUE.filter((d) => d.id === PRS_READ),
-    [PRS_READ_API],
+    [PRS_READ_API, PRS_READ_API_V1],
+  );
+  // The published 1.0.0 contract, byte for byte (canonical form).
+  NodeAssert.equal(
+    NodeCrypto.createHash("sha256").update(canonical(PRS_READ_API_V1)).digest("hex"),
+    "623bee3fe260c832aa7fd77d7ba570122d13f347b0f89d2b701d769955bce6d3",
+  );
+});
+
+NodeTest.test("a provider still registering the published 1.0.0 descriptor is accepted", () => {
+  const published = structuredClone(PRS_READ_API);
+  published.version = "1.0.0";
+  const detail = published.methods.find((method) => method.name === "detail");
+  delete detail.outputSchema.properties.preferredMergeMethod;
+  delete detail.outputSchema.properties.observedAt;
+  const list = published.methods.find((method) => method.name === "list");
+  delete list.outputSchema.properties.entries.items.properties.observedAt;
+  NodeAssert.doesNotThrow(() => assertProvidedApiOwner("host.prs", published));
+  NodeAssert.doesNotThrow(() => assertProvidedApiOwner("host.prs", PRS_READ_API));
+});
+
+NodeTest.test("1.1.0 only adds optional outputs, so default consumers stay on ^1.0.0", async () => {
+  for (const [method, member] of [
+    ["detail", "preferredMergeMethod"],
+    ["detail", "observedAt"],
+  ]) {
+    const schema = methods[method].outputSchema;
+    NodeAssert.ok(member in schema.properties, member);
+    NodeAssert.equal(schema.required.includes(member), false, member);
+  }
+  const entry = methods.list.outputSchema.properties.entries.items;
+  NodeAssert.ok("observedAt" in entry.properties);
+  NodeAssert.equal(entry.required.includes("observedAt"), false);
+
+  NodeAssert.deepEqual(requireApi(prsReadApi), { id: PRS_READ, versionRange: "^1.0.0" });
+  const context = {
+    client: "web",
+    resource: { namespace: "t3.extensions", id: "ext.a", environmentId: "env", projectId: "p" },
+  };
+  const requests = [];
+  const client = {
+    invokeApi: async (request) => {
+      requests.push(request);
+      // A 1.0.0 host answers without the 1.1.0 members.
+      return { number: 3 };
+    },
+    subscribeApi: (request) => {
+      requests.push(request);
+      return (async function* () {})();
+    },
+  };
+  const detail = await bindApi(prsReadApi, client, context).invoke(
+    "detail",
+    { repository: "o/r", number: 3 },
+    new AbortController().signal,
+  );
+  NodeAssert.equal(detail.preferredMergeMethod, undefined);
+  bindStreamApi(prsReadApi, client, context).subscribe(
+    "subscribeRefreshes",
+    {},
+    new AbortController().signal,
+  );
+  NodeAssert.deepEqual(
+    requests.map((request) => request.versionRange),
+    ["^1.0.0", "^1.0.0"],
+  );
+});
+
+NodeTest.test("an output addition must name a method or stream of the API", () => {
+  const definition = { ...PRS_READ_API, version: "1.2.0" };
+  NodeAssert.throws(
+    () =>
+      defineApi(definition, {
+        baseline: "1.0.0",
+        additions: [{ version: "1.2.0", method: "missing", output: "x" }],
+      }),
+    /Invalid API addition/,
+  );
+  NodeAssert.doesNotThrow(() =>
+    defineApi(definition, {
+      baseline: "1.0.0",
+      additions: [{ version: "1.2.0", method: "subscribeRefreshes", output: "kind" }],
+    }),
   );
 });
 

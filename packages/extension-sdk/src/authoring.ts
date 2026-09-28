@@ -253,6 +253,46 @@ export function requireApi(
 }
 
 /**
+ * Puts `text` on the system clipboard as the native client does: through the
+ * Clipboard API where the page has it, else by copying a selected off-screen
+ * textarea, which is the only way a remote client served over plain HTTP can
+ * copy. Focus returns to where it was. Rejects when nothing was copied.
+ */
+export async function copyText(text: string): Promise<void> {
+  const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
+  if (typeof clipboard?.writeText === "function") return clipboard.writeText(text);
+  if (!copyWithSelection(text)) throw new Error("Clipboard unavailable");
+}
+
+function copyWithSelection(text: string): boolean {
+  if (typeof document === "undefined" || typeof document.execCommand !== "function") return false;
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.setAttribute("aria-hidden", "true");
+  Object.assign(textarea.style, {
+    position: "fixed",
+    top: "0",
+    left: "0",
+    opacity: "0",
+    fontSize: "16px",
+  });
+  const previouslyFocused = document.activeElement as { focus?: unknown } | null;
+  document.body.appendChild(textarea);
+  try {
+    textarea.focus({ preventScroll: true });
+    textarea.select();
+    textarea.setSelectionRange(0, text.length);
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    textarea.remove();
+    if (typeof previouslyFocused?.focus === "function") previouslyFocused.focus();
+  }
+}
+
+/**
  * The host's native tooltip around one trigger (`ClientHost.tooltip`); hosts
  * without one render the trigger alone. A disabled trigger stays silent unless
  * `showWhenDisabled` is set — see `TooltipProps`.

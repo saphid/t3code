@@ -8,6 +8,7 @@ import * as NodeTest from "node:test";
 import {
   React,
   REF,
+  act,
   defaultHandlers,
   deferred,
   dispatch,
@@ -25,7 +26,7 @@ NodeTest.before(async () => {
   panel = await loadPrsPanel();
 });
 
-function mountPanel(handlers) {
+function mountPanel(handlers, members) {
   return mount(
     (host, session) =>
       React.createElement(panel.PullRequestsPanel, {
@@ -36,6 +37,7 @@ function mountPanel(handlers) {
         onSelect: () => {},
       }),
     handlers,
+    members,
   );
 }
 
@@ -219,6 +221,33 @@ NodeTest.describe("stack confirmation is a modal dialog", () => {
     view.unmount();
   });
 
+  NodeTest.it("stays open while running even when a refresh leaves the stack stale", async () => {
+    const running = deferred();
+    let refreshed = false;
+    const view = await openConfirmation(
+      defaultHandlers({
+        "t3.prs/write#runAction": () => running.promise,
+        "t3.prs/read#stack": () =>
+          refreshed ? deferred().promise : stackOf([layer(2), layer(3), layer(4)]),
+      }),
+    );
+    dispatch(
+      dialog(view)
+        .findAll((node) => node.type === "button")
+        .find((node) => nodeName(node) === "Merge stack"),
+      "onClick",
+    );
+    await flush();
+    refreshed = true;
+    await view.refresh();
+    NodeAssert.notEqual(dialog(view), null);
+    NodeAssert.equal(view.has("Working…"), true);
+    running.resolve({});
+    await flush();
+    NodeAssert.equal(dialog(view), null);
+    view.unmount();
+  });
+
   NodeTest.it("renders through the host floating layer, anchored at its opener", async () => {
     const anchors = [];
     const view = await openConfirmation(defaultHandlers(), (host) => {
@@ -366,6 +395,91 @@ NodeTest.describe("stack merge uses native's merge-method preference", () => {
   });
 });
 
+NodeTest.describe("the remembered merge method lives in the client's own preferences", () => {
+  // The client's store, as the web host backs it with the native panel's UI state: one value
+  // per client, outliving any one panel.
+  const clientPreferences = (initial = "merge", legacy = null) => {
+    let last = initial;
+    const listeners = new Set();
+    const legacyAsks = [];
+    return {
+      legacyAsks,
+      get last() {
+        return last;
+      },
+      members: {
+        pullRequestPreferences: {
+          version: 1,
+          lastMergeMethod: () => last,
+          setLastMergeMethod(method) {
+            last = method;
+            for (const listener of listeners) listener();
+          },
+          legacyProjectMergeMethod(project) {
+            legacyAsks.push(project);
+            return legacy;
+          },
+          subscribe(listener) {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+          },
+        },
+      },
+      /** Another surface (the native panel) picks a method. */
+      pickElsewhere(method) {
+        last = method;
+        for (const listener of listeners) listener();
+      },
+    };
+  };
+  const chooserValue = (view) => view.find("Merge stack method").props.value;
+
+  NodeTest.it("keeps a pick across the panel unmounting, as a view switch does", async () => {
+    const store = clientPreferences();
+    const first = mountPanel(defaultHandlers(), store.members);
+    await flush();
+    NodeAssert.equal(chooserValue(first), "merge");
+    dispatch(first.find("Merge stack method"), "onChange", { target: { value: "squash" } });
+    NodeAssert.equal(store.last, "squash");
+    first.unmount();
+
+    const second = mountPanel(defaultHandlers(), store.members);
+    await flush();
+    NodeAssert.equal(chooserValue(second), "squash");
+    second.unmount();
+  });
+
+  NodeTest.it("starts from a pick restored by the client, and follows its changes", async () => {
+    const store = clientPreferences("rebase");
+    const view = mountPanel(defaultHandlers(), store.members);
+    await flush();
+    NodeAssert.equal(chooserValue(view), "rebase");
+    act(() => store.pickElsewhere("squash"));
+    NodeAssert.equal(chooserValue(view), "squash");
+    view.unmount();
+  });
+
+  NodeTest.it("puts the project setting, then the legacy override, over the pick", async () => {
+    const store = clientPreferences("squash", "rebase");
+    const legacy = mountPanel(defaultHandlers(), store.members);
+    await flush();
+    NodeAssert.equal(chooserValue(legacy), "rebase");
+    NodeAssert.equal(store.legacyAsks.at(-1)?.projectId, "p1");
+    legacy.unmount();
+
+    const detail = detailOf();
+    const project = mountPanel(
+      defaultHandlers({
+        "t3.prs/read#detail": () => ({ ...detail, preferredMergeMethod: "merge" }),
+      }),
+      store.members,
+    );
+    await flush();
+    NodeAssert.equal(chooserValue(project), "merge");
+    project.unmount();
+  });
+});
+
 NodeTest.describe("PR outcomes report through toasts, inline without them", () => {
   const withToasts = (overrides = {}) => {
     const notices = [];
@@ -450,18 +564,44 @@ NodeTest.describe("PR outcomes report through toasts, inline without them", () =
     view.unmount();
   });
 
-  NodeTest.it("a stack merge reports through a toast", async () => {
-    const { handlers, notices } = withToasts();
+  NodeTest.it("a stack merge shows only its result, as one toast once it lands", async () => {
+    const running = deferred();
+    const { handlers, notices } = withToasts({
+      "t3.prs/write#runAction": () => running.promise,
+    });
     const view = mountPanel(handlers);
     await flush();
     await mergeTheStack(view);
-    NodeAssert.deepEqual(notices.at(-1), {
-      op: "update",
-      notificationId: "n1",
-      severity: "success",
-      title: "Stack merge request completed",
-      body: "GitHub merged the stack or added it to its merge queue.",
+    NodeAssert.deepEqual(notices, []);
+    running.resolve({});
+    await flush();
+    NodeAssert.deepEqual(notices, [
+      {
+        op: "notify",
+        severity: "success",
+        title: "Stack merge request completed",
+        body: "GitHub merged the stack or added it to its merge queue.",
+        projectId: "p1",
+      },
+    ]);
+    view.unmount();
+  });
+
+  NodeTest.it("a failed stack merge shows one error toast and nothing before it", async () => {
+    const running = deferred();
+    const { handlers, notices } = withToasts({
+      "t3.prs/write#runAction": () => running.promise,
     });
+    const view = mountPanel(handlers);
+    await flush();
+    await mergeTheStack(view);
+    NodeAssert.deepEqual(notices, []);
+    running.reject(new Error("Base branch moved"));
+    await flush();
+    NodeAssert.deepEqual(
+      notices.map((notice) => [notice.op, notice.severity]),
+      [["notify", "error"]],
+    );
     view.unmount();
   });
 
@@ -605,7 +745,9 @@ NodeTest.describe("checks control", () => {
   NodeTest.it("the header shows a newer failing rollup over older passing detail", async () => {
     const view = mountPanel(
       defaultHandlers({
-        "t3.prs/read#list": listOf([entry({ number: 3, checksState: "failing" })]),
+        "t3.prs/read#list": listOf([
+          entry({ number: 3, checksState: "failing", updatedAt: "2026-09-02T00:00:00Z" }),
+        ]),
         "t3.prs/read#detail": () =>
           detailOf({
             checks: [{ name: "ci", status: "success", description: null, url: null }],
@@ -620,6 +762,61 @@ NodeTest.describe("checks control", () => {
     NodeAssert.equal(view.has("Checks: All checks have passed"), false);
     view.unmount();
   });
+
+  const passingRow = entry({ number: 3, checksState: "passing" });
+  const failingDetail = () =>
+    detailOf({
+      updatedAt: "2026-09-02T00:00:00Z",
+      checks: [{ name: "ci", status: "failure", description: null, url: null }],
+    });
+  const headerSaysFailing = async (view) => {
+    NodeAssert.equal(view.has("Checks: All checks have passed"), false);
+    dispatch(view.find("Checks: Some checks were not successful"), "onClick");
+    await flush();
+    NodeAssert.doesNotMatch(view.text(), /Check details are out of date/);
+  };
+
+  NodeTest.it("an older passing row never overrides newer failing details", async () => {
+    const view = mountPanel(
+      defaultHandlers({
+        "t3.prs/read#list": listOf([passingRow]),
+        "t3.prs/read#detail": failingDetail,
+      }),
+    );
+    await flush();
+    await headerSaysFailing(view);
+    view.unmount();
+  });
+
+  for (const [name, reread] of [
+    [
+      "failed",
+      () => {
+        throw new Error("list unavailable");
+      },
+    ],
+    ["deferred", () => deferred().promise],
+  ])
+    NodeTest.it(`a ${name} list refresh keeps its old row below the newer detail`, async () => {
+      let refreshed = false;
+      const view = mountPanel(
+        defaultHandlers({
+          "t3.prs/read#list": () => (refreshed ? reread() : listOf([passingRow])()),
+          "t3.prs/read#detail": () =>
+            refreshed
+              ? failingDetail()
+              : detailOf({
+                  checks: [{ name: "ci", status: "success", description: null, url: null }],
+                }),
+        }),
+      );
+      await flush();
+      NodeAssert.equal(view.has("Checks: All checks have passed"), true);
+      refreshed = true;
+      await view.refresh();
+      await headerSaysFailing(view);
+      view.unmount();
+    });
 });
 
 NodeTest.describe("head branch chip", () => {
@@ -658,6 +855,65 @@ NodeTest.describe("head branch chip", () => {
     } finally {
       delete globalThis.navigator.clipboard;
     }
+  });
+});
+
+NodeTest.describe("head branch chip over plain HTTP", () => {
+  // A remote client served over plain HTTP has no Clipboard API; native copies a
+  // selected off-screen textarea instead.
+  const selectionCopy = (succeeds) => {
+    const copies = [];
+    const appended = new Set();
+    Object.assign(globalThis.document, {
+      body: {
+        appendChild: (node) => appended.add(node),
+      },
+      createElement: () => {
+        const node = {
+          value: "",
+          style: {},
+          selected: false,
+          setAttribute() {},
+          focus() {},
+          select() {
+            node.selected = true;
+          },
+          setSelectionRange() {},
+          remove: () => appended.delete(node),
+        };
+        return node;
+      },
+      execCommand: (command) => {
+        const selected = [...appended].find((node) => node.selected);
+        if (command === "copy" && succeeds && selected) copies.push(selected.value);
+        return succeeds;
+      },
+    });
+    return { copies, appended };
+  };
+
+  NodeTest.it("copies through the selection when the Clipboard API is missing", async () => {
+    NodeAssert.equal(globalThis.navigator.clipboard, undefined);
+    const view = mountPanel(defaultHandlers());
+    const { copies, appended } = selectionCopy(true);
+    await flush();
+    dispatch(view.find("Copy pull request branch"), "onClick");
+    await flush();
+    NodeAssert.deepEqual(copies, ["b3"]);
+    NodeAssert.equal(appended.size, 0);
+    NodeAssert.equal(view.has("Branch name copied"), true);
+    view.unmount();
+  });
+
+  NodeTest.it("says so when neither way can copy", async () => {
+    const view = mountPanel(defaultHandlers());
+    selectionCopy(false);
+    await flush();
+    dispatch(view.find("Copy pull request branch"), "onClick");
+    await flush();
+    NodeAssert.equal(view.has("Branch name copied"), false);
+    NodeAssert.match(view.text(), /Clipboard unavailable/);
+    view.unmount();
   });
 });
 

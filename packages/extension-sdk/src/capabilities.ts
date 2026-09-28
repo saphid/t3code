@@ -91,14 +91,27 @@ export interface ApiClient {
   discoverApis(context: ViewContext, signal: AbortSignal): Promise<readonly ApiDiscovery[]>;
 }
 export type ApiMethodTypes = Record<string, { input: Json; output: Json }>;
-/** An optional method input member a minor release added after `baseline`. */
-export interface ApiAddition {
-  /** The release that added the member. */
-  readonly version: string;
-  readonly method: string;
-  /** Dotted input path; `[]` steps into array items, as in `"actions[].keepOpen"`. */
-  readonly input: string;
-}
+/**
+ * An optional member a minor release added after `baseline`: a method input
+ * (`input`), or a method output or stream event (`output`). Inputs are guarded
+ * by `bindApi`; outputs need no guard, because a consumer on the baseline
+ * already has to treat the member as possibly absent.
+ */
+export type ApiAddition =
+  | {
+      /** The release that added the member. */
+      readonly version: string;
+      readonly method: string;
+      /** Dotted input path; `[]` steps into array items, as in `"actions[].keepOpen"`. */
+      readonly input: string;
+    }
+  | {
+      readonly version: string;
+      /** A method, or a stream whose event carries the member. */
+      readonly method: string;
+      /** Dotted output (or event) path, in the same form as `input`. */
+      readonly output: string;
+    };
 /** Phantom method types accompany an immutable, serializable runtime descriptor. */
 export interface TypedApi<T extends ApiMethodTypes> {
   readonly definition: ApiDefinition;
@@ -126,30 +139,19 @@ function hasInput(value: unknown, path: readonly string[]): boolean {
   if (!head.endsWith("[]")) return hasInput(child, rest);
   return Array.isArray(child) && child.some((item) => hasInput(item, rest));
 }
-/**
- * `baseline` is the oldest version of this major that `requireApi` and
- * `bindApi` ask for by default. Set it when a minor release only adds
- * optional members, so existing consumers keep loading on older hosts, and
- * list every such member in `additions`: a binding whose range admits a
- * version before an addition refuses calls that use it with
- * `ApiVersionError`, so a pack cannot declare the baseline and ship the new
- * member unprobed. The version, baseline and additions are plain `X.Y.Z`, and
- * only `X.Y.Z`, `^X.Y.Z`, `~X.Y.Z`, `>=X.Y.Z` and `>=X.Y.Z <A.B.C` bindings
- * can use additions; any other range refuses them.
- */
-export function defineApi<T extends ApiMethodTypes>(
-  definition: ApiDefinition,
-  options: { readonly baseline?: string; readonly additions?: readonly ApiAddition[] } = {},
-): TypedApi<T> {
-  const validated = validateApiDefinition(definition);
+interface ApiNegotiation {
+  readonly baseline?: string;
+  readonly additions?: readonly ApiAddition[];
+}
+function negotiated(definition: ApiDefinition, options: ApiNegotiation): ApiNegotiation {
   if (options.baseline === undefined) {
     if (options.additions?.length) throw new Error("API additions need a baseline");
-    return { definition: validated };
+    return {};
   }
   // The guard only orders plain X.Y.Z versions; see semver.ts.
-  const version = parseVersion(validated.version);
+  const version = parseVersion(definition.version);
   if (!version)
-    throw new Error("An API with a baseline needs a plain X.Y.Z version: " + validated.version);
+    throw new Error("An API with a baseline needs a plain X.Y.Z version: " + definition.version);
   const baseline = parseVersion(options.baseline);
   if (!baseline || baseline[0] !== version[0] || compareVersions(baseline, version) > 0)
     throw new Error("API baseline must be an earlier plain X.Y.Z version of the same major");
@@ -160,15 +162,39 @@ export function defineApi<T extends ApiMethodTypes>(
     const added = parseVersion(addition.version);
     if (!added)
       throw new Error("An API addition needs a plain X.Y.Z version: " + JSON.stringify(addition));
+    const path = "input" in addition ? addition.input : addition.output;
+    const owners = [
+      ...(definition.methods ?? []),
+      ...("output" in addition ? (definition.streams ?? []) : []),
+    ];
     if (
       compareVersions(added, baseline) <= 0 ||
       compareVersions(added, version) > 0 ||
-      !validated.methods?.some((method) => method.name === addition.method) ||
-      !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(addition.input)
+      !owners.some((owner) => owner.name === addition.method) ||
+      typeof path !== "string" ||
+      !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(path)
     )
       throw new Error("Invalid API addition: " + JSON.stringify(addition));
   }
-  return { definition: validated, baseline: options.baseline, additions };
+  return { baseline: options.baseline, additions };
+}
+/**
+ * `baseline` is the oldest version of this major that `requireApi` and
+ * `bindApi` ask for by default. Set it when a minor release only adds
+ * optional members, so existing consumers keep loading on older hosts, and
+ * list every such member in `additions`: a binding whose range admits a
+ * version before an input addition refuses calls that use it with
+ * `ApiVersionError`, so a pack cannot declare the baseline and ship the new
+ * member unprobed. The version, baseline and additions are plain `X.Y.Z`, and
+ * only `X.Y.Z`, `^X.Y.Z`, `~X.Y.Z`, `>=X.Y.Z` and `>=X.Y.Z <A.B.C` bindings
+ * can use additions; any other range refuses them.
+ */
+export function defineApi<T extends ApiMethodTypes>(
+  definition: ApiDefinition,
+  options: ApiNegotiation = {},
+): TypedApi<T> {
+  const validated = validateApiDefinition(definition);
+  return { definition: validated, ...negotiated(validated, options) };
 }
 /** The range a consumer asks for when it names none: `^baseline`, else `^version`. */
 export function defaultVersionRange(api: {
@@ -185,9 +211,10 @@ export function bindApi<T extends ApiMethodTypes>(
 ) {
   // Additions this range does not guarantee; see `defineApi`.
   const floor = rangeFloor(versionRange);
-  const unnegotiated = (api.additions ?? []).filter((addition) => {
+  const unnegotiated = (api.additions ?? []).flatMap((addition) => {
+    if (!("input" in addition)) return [];
     const added = parseVersion(addition.version);
-    return !floor || !added || compareVersions(floor, added) < 0;
+    return !floor || !added || compareVersions(floor, added) < 0 ? [addition] : [];
   });
   return {
     invoke<K extends keyof T & string>(
@@ -216,17 +243,22 @@ export type ApiStreamTypes = Record<string, { input: Json; event: Json }>;
 /** Public stream types accompany the descriptor validated by the host at delivery. */
 export interface TypedStreamApi<T extends ApiStreamTypes> {
   readonly definition: ApiDefinition;
+  /** See `defineApi`. */
+  readonly baseline?: string;
+  readonly additions?: readonly ApiAddition[];
   readonly streamTypes?: T;
 }
 export type TypedApiStreamFrame<T extends Json> = Omit<ApiStreamFrame, "value"> & {
   readonly value: T;
 };
+/** `baseline` and `additions` work as they do for `defineApi`. */
 export function defineStreamApi<T extends ApiStreamTypes>(
   definition: ApiDefinition,
+  options: ApiNegotiation = {},
 ): TypedStreamApi<T> {
   const validated = validateApiDefinition(definition);
   if (!validated.streams?.length) throw new Error("Expected API stream definitions");
-  return { definition: validated };
+  return { definition: validated, ...negotiated(validated, options) };
 }
 /** Retain the host iterable so return(), cancellation and backpressure keep their ownership. */
 export function bindStreamApi<T extends ApiStreamTypes>(

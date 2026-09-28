@@ -36,11 +36,16 @@ import {
   type PrsWriteVerdict,
   type VcsRefEntry,
 } from "@t3tools/extension-sdk/catalogue";
-import { Tooltip } from "@t3tools/extension-sdk/authoring";
+import { copyText, Tooltip } from "@t3tools/extension-sdk/authoring";
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
-import { resolveFloatingLayer, type ClientHost } from "@t3tools/extension-sdk/environment";
+import {
+  resolveFloatingDialog,
+  resolveFloatingLayer,
+  resolvePullRequestPreferences,
+  type ClientHost,
+} from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useMutationToasts, type MutationToastPatch } from "./mutationToasts.js";
 import {
@@ -422,10 +427,19 @@ interface PrsListModel {
   /** Query identity without the refresh tick — same question, newer ask. */
   readonly inputKey: string;
   readonly entries: readonly PrsListEntry[];
+  /** Client arrival time of the successful read each row came from, by `prsRefKey`. */
+  readonly receivedAt: Readonly<Record<string, number>>;
   readonly result: PrsListResult | null;
   readonly error: string | null;
   readonly pending: boolean;
   readonly loadingMore: boolean;
+}
+
+function stampEntries(
+  entries: readonly PrsListEntry[],
+  receivedAt: number,
+): Readonly<Record<string, number>> {
+  return Object.fromEntries(entries.map((entry) => [prsRefKey(entry), receivedAt]));
 }
 
 /**
@@ -468,6 +482,7 @@ function usePrsList(
               // search hit) must leave the list rather than linger stale.
               // Continuation pages merge on their own path in loadMore.
               entries: result.entries,
+              receivedAt: stampEntries(result.entries, Date.now()),
               result,
               error: null,
               pending: false,
@@ -480,6 +495,8 @@ function usePrsList(
               key,
               inputKey,
               entries: prev?.inputKey === inputKey ? prev.entries : [],
+              // A failed re-read keeps rows only as old as the read they came from.
+              receivedAt: prev?.inputKey === inputKey ? prev.receivedAt : {},
               result: prev?.inputKey === inputKey ? prev.result : null,
               error: message(error, "Pull requests unavailable"),
               pending: false,
@@ -521,6 +538,7 @@ function usePrsList(
                 : {
                     ...prev,
                     entries: mergePrsEntries(prev.entries, page.entries),
+                    receivedAt: { ...prev.receivedAt, ...stampEntries(page.entries, Date.now()) },
                     result: page,
                     loadingMore: false,
                   },
@@ -544,6 +562,7 @@ function usePrsList(
   const sameQuestion = state !== null && state.inputKey === inputKey;
   return {
     entries: sameQuestion ? state.entries : [],
+    receivedAt: sameQuestion ? state.receivedAt : {},
     result: sameQuestion ? state.result : null,
     error: state?.key === key ? state.error : null,
     pending: state?.key !== key || state.pending,
@@ -557,6 +576,8 @@ interface PrsDetailSections {
   /** PR identity — retention and display never cross this boundary. */
   refKey: string;
   detail: PrsDetail | null;
+  /** Client arrival time of the detail read that answered `detail`. */
+  detailReceivedAt: number;
   detailError: string | null;
   activity: PrsActivity | null;
   activityError: string | null;
@@ -574,6 +595,7 @@ interface PrsDetailSections {
 
 const EMPTY_SECTIONS: Omit<PrsDetailSections, "key" | "refKey"> = {
   detail: null,
+  detailReceivedAt: 0,
   detailError: null,
   activity: null,
   activityError: null,
@@ -626,6 +648,7 @@ function usePrsDetail(
               [field]: value,
               [errorField]: null,
               ...(field === "stack" ? { stackKey: key } : {}),
+              ...(field === "detail" ? { detailReceivedAt: Date.now() } : {}),
             }));
         },
         (error: unknown) => {
@@ -854,12 +877,36 @@ type LazyChecks =
   | { readonly status: "ready"; readonly checks: readonly PrsCheck[] }
   | { readonly status: "error"; readonly detail: string };
 
+const TABBABLE =
+  'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
+/** The controls Tab visits inside `root`, in document order. */
+function tabbablesIn(root: Element | Document): HTMLElement[] {
+  if (typeof root.querySelectorAll !== "function") return [];
+  return [...root.querySelectorAll<HTMLElement>(TABBABLE)];
+}
+
+/**
+ * Where Tab goes after `from` once the popover it opened closes: the popover
+ * is portaled to the end of the page, so the next control is the one after
+ * its trigger, not after the popover.
+ */
+function tabbableAfter(from: HTMLElement, popup: HTMLElement | null): HTMLElement | null {
+  const order = tabbablesIn(from.ownerDocument).filter(
+    (element) => popup === null || !popup.contains(element),
+  );
+  return order[order.indexOf(from) + 1] ?? null;
+}
+
 /**
  * Native's checks indicator and the popover it opens, on a list row and in
  * the detail header. The header passes the checks it holds; a row passes
  * `loadChecks`, read only once the popover opens. The trigger is a
  * focusable span, not a button — a row is itself a button — and it stops
  * its click and Enter/Space so opening the checks never selects the row.
+ * Focus moves as native's popover moves it: into the popover once it is
+ * placed, Tab through its links and on past its trigger, Shift-Tab back to
+ * the trigger, and focus leaving it closes it.
  */
 export function ChecksControl(props: {
   host: ClientHost;
@@ -875,6 +922,19 @@ export function ChecksControl(props: {
   const [lazy, setLazy] = useState<LazyChecks>({ status: "loading" });
   const trigger = useRef<HTMLSpanElement | null>(null);
   const popup = useRef<HTMLDivElement | null>(null);
+  const [popupElement, setPopupElement] = useState<HTMLDivElement | null>(null);
+  const attachPopup = useCallback((element: HTMLDivElement | null) => {
+    popup.current = element;
+    setPopupElement(element);
+  }, []);
+  useEffect(() => {
+    if (!open || popupElement === null) return;
+    // After the host has placed it: an unplaced popover is hidden and cannot take focus.
+    const timer = setTimeout(() => {
+      (tabbablesIn(popupElement)[0] ?? popupElement).focus();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [open, popupElement]);
   useEffect(() => {
     if (!open || checks !== undefined || loadChecks === undefined) return;
     const controller = new AbortController();
@@ -901,9 +961,9 @@ export function ChecksControl(props: {
     return () => document.removeEventListener("mousedown", onPress);
   }, [open]);
   if (icon === null) return null;
-  const close = () => {
+  const close = (focus: HTMLElement | null = trigger.current) => {
     setOpen(false);
-    trigger.current?.focus();
+    focus?.focus();
   };
   const shown: LazyChecks | null =
     checks !== undefined ? { status: "ready", checks } : loadChecks !== undefined ? lazy : null;
@@ -916,6 +976,7 @@ export function ChecksControl(props: {
     onClick: (event: { stopPropagation: () => void }) => event.stopPropagation(),
     onKeyDown: (event: {
       key: string;
+      shiftKey: boolean;
       stopPropagation: () => void;
       preventDefault: () => void;
     }) => {
@@ -923,8 +984,32 @@ export function ChecksControl(props: {
       if (event.key === "Escape") {
         event.preventDefault();
         close();
+        return;
       }
+      if (event.key !== "Tab" || popup.current === null) return;
+      event.preventDefault();
+      const items = tabbablesIn(popup.current);
+      const at = items.findIndex((item) => item === popup.current?.ownerDocument.activeElement);
+      const next = event.shiftKey ? (at === -1 ? -1 : at - 1) : at + 1;
+      if (next >= 0 && next < items.length) items[next]?.focus();
+      else if (event.shiftKey || trigger.current === null) close();
+      else close(tabbableAfter(trigger.current, popup.current) ?? trigger.current);
     },
+    onBlur: (event: { relatedTarget: EventTarget | null }) => {
+      const inside = (node: unknown) =>
+        node != null &&
+        (popup.current?.contains(node as Node) === true ||
+          trigger.current?.contains(node as Node) === true);
+      if (event.relatedTarget !== null) {
+        if (!inside(event.relatedTarget)) setOpen(false);
+        return;
+      }
+      // No target: focus fell to the page, or the window lost it and will bring it back here.
+      setTimeout(() => {
+        if (!inside(popup.current?.ownerDocument.activeElement)) setOpen(false);
+      }, 0);
+    },
+    tabIndex: -1,
     style: {
       width: 320,
       maxWidth: "calc(100vw - 24px)",
@@ -1020,16 +1105,14 @@ export function ChecksControl(props: {
             anchor={trigger.current}
             side="bottom"
             align="start"
-            elementRef={(element) => {
-              popup.current = element;
-            }}
+            elementRef={attachPopup}
           >
             {body}
           </Popover>
         ) : (
           <div
             {...popupProps}
-            ref={popup}
+            ref={attachPopup}
             style={{ ...popupProps.style, position: "absolute", top: "100%", left: 0, zIndex: 10 }}
           >
             {body}
@@ -1067,12 +1150,7 @@ function CopyableCode(props: {
     return () => clearTimeout(timer);
   }, [copied]);
   const copy = () => {
-    const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
-    if (clipboard === undefined) {
-      onError("Clipboard unavailable");
-      return;
-    }
-    clipboard.writeText(value).then(
+    copyText(value).then(
       () => setCopied(true),
       (error: unknown) => onError(message(error, "Copy failed")),
     );
@@ -1857,9 +1935,10 @@ function CheckoutMenu(props: {
  * Native's confirmation Dialog: modal, labelled by its title and described by
  * its description, first focus on Cancel (never the destructive action), Tab
  * held inside, Escape or Cancel closing it and handing focus back to the
- * control that opened it. A running write cannot be dismissed. It paints on
- * the host's floating layer against its opener; hosts without one get it in
- * place. The caller makes the panel behind it inert.
+ * control that opened it. A running write cannot be dismissed. Hosts with a
+ * modal dialog (floating layer 2) show native's own, centred over an inert
+ * client; older hosts get it against its opener on their floating layer, or
+ * in place, where the caller makes the panel behind it inert.
  */
 function ConfirmDialog(props: {
   host: ClientHost;
@@ -1878,11 +1957,15 @@ function ConfirmDialog(props: {
   const cancel = useRef<HTMLButtonElement | null>(null);
   const confirm = useRef<HTMLButtonElement | null>(null);
   const opener = useRef(anchor);
+  const HostDialog = resolveFloatingDialog(host);
+  const hosted = HostDialog !== null;
   useEffect(() => {
+    // The host dialog places and returns focus itself.
+    if (hosted) return;
     cancel.current?.focus();
     const returnTo = opener.current;
     return () => returnTo?.focus();
-  }, []);
+  }, [hosted]);
   const onKeyDown = (event: { key: string; shiftKey: boolean; preventDefault: () => void }) => {
     if (event.key === "Escape") {
       event.preventDefault();
@@ -1916,6 +1999,41 @@ function ConfirmDialog(props: {
     background: "var(--t3-version-control-background, var(--popover, var(--background, #fff)))",
     boxShadow: "0 8px 28px rgba(0, 0, 0, 0.18)",
   } as const;
+  const actions = (
+    <>
+      <button
+        ref={cancel}
+        type="button"
+        disabled={pending}
+        onClick={onCancel}
+        style={{ ...control, fontSize: 12, border }}
+      >
+        Cancel
+      </button>
+      <button
+        ref={confirm}
+        type="button"
+        disabled={pending}
+        onClick={onConfirm}
+        style={{ ...control, fontSize: 12, border }}
+      >
+        {pending ? "Working…" : confirmLabel}
+      </button>
+    </>
+  );
+  if (HostDialog !== null)
+    return (
+      <HostDialog
+        title={title}
+        description={description}
+        dismissible={!pending}
+        onDismiss={onCancel}
+        initialFocus={cancel}
+        footer={actions}
+      >
+        {props.children}
+      </HostDialog>
+    );
   const body = (
     <>
       <strong id={titleId} style={{ fontSize: 13 }}>
@@ -1926,24 +2044,7 @@ function ConfirmDialog(props: {
       </p>
       {props.children}
       <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 6 }}>
-        <button
-          ref={cancel}
-          type="button"
-          disabled={pending}
-          onClick={onCancel}
-          style={{ ...control, fontSize: 12, border }}
-        >
-          Cancel
-        </button>
-        <button
-          ref={confirm}
-          type="button"
-          disabled={pending}
-          onClick={onConfirm}
-          style={{ ...control, fontSize: 12, border }}
-        >
-          {pending ? "Working…" : confirmLabel}
-        </button>
+        {actions}
       </div>
     </>
   );
@@ -2093,6 +2194,33 @@ function PrsReviewComposer(props: {
 
 /* ---------------- panel ---------------- */
 
+const MERGE_METHODS: readonly PrsWriteMergeMethod[] = ["merge", "squash", "rebase"];
+
+/**
+ * Native's last-selected merge method, for change requests with no pick of
+ * their own, and the per-project method older releases kept on this client.
+ * Both live in the host's client-local preferences, the native panel's own
+ * storage, so a pick survives remounts and reloads and is shared with the
+ * native panel. Hosts without them keep the pick for this panel's lifetime.
+ */
+function useRememberedMergeMethod(host: ClientHost) {
+  const preferences = resolvePullRequestPreferences(host);
+  const [local, setLocal] = useState<PrsWriteMergeMethod | null>(null);
+  const [, setChanged] = useState(0);
+  useEffect(() => preferences?.subscribe(() => setChanged((count) => count + 1)), [preferences]);
+  return {
+    last: preferences === null ? local : preferences.lastMergeMethod(),
+    legacy: (project: { readonly environmentId: string; readonly projectId: string }) =>
+      preferences?.legacyProjectMergeMethod(project) ?? undefined,
+    remember: (value: string) => {
+      const method = MERGE_METHODS.find((candidate) => candidate === value);
+      if (method === undefined) return;
+      if (preferences === null) setLocal(method);
+      else preferences.setLastMergeMethod(method);
+    },
+  };
+}
+
 export function PullRequestsPanel(props: {
   host: ClientHost;
   session: ViewSession;
@@ -2159,8 +2287,7 @@ export function PullRequestsPanel(props: {
    */
   const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>({});
   const [writeState, setWriteState] = useState<PrsWriteState | null>(null);
-  // Native's last-selected merge method, for change requests with no pick of their own.
-  const [lastMergeMethod, setLastMergeMethod] = useState<string | null>(null);
+  const rememberedMergeMethod = useRememberedMergeMethod(host);
   const [openError, setOpenError] = useState<string | null>(null);
   // The handoff in flight (native's `handoff` key: `checkout:<mode>`), and
   // the last one's receipt, bound to the PR it answered.
@@ -2169,6 +2296,8 @@ export function PullRequestsPanel(props: {
     readonly refKey: string;
     readonly action: "merge" | "rebase";
     readonly opener: HTMLElement | null;
+    /** The plan a running write was started with: native keeps its dialog until it settles. */
+    readonly running?: ReturnType<typeof prsStackMergePlan> | ReturnType<typeof prsStackRebasePlan>;
   } | null>(null);
   const stackMergeOpener = useRef<HTMLButtonElement | null>(null);
   const stackRebaseOpener = useRef<HTMLButtonElement | null>(null);
@@ -2285,6 +2414,11 @@ export function PullRequestsPanel(props: {
       if (toast === null || lost) showInline(receipt);
       else toast.settleWith(receiptToast(receipt));
     };
+  };
+
+  /** Native's stack actions show their result alone: one toast, or inline without them. */
+  const reportResult = (receipt: PrsReceipt, showInline: (receipt: PrsReceipt) => void) => {
+    if (!toasts.report(receiptToast(receipt), () => showInline(receipt))) showInline(receipt);
   };
 
   /** `t3.vcs/actions` prepares the checkout; the receipt names where it landed. */
@@ -2528,14 +2662,20 @@ export function PullRequestsPanel(props: {
     stackError: sections.stackError,
   });
   const repositoryUrl = detail === null ? null : prsRepositoryUrl(detail.url);
-  // The list row for this PR may carry a newer checks rollup than the detail.
+  // The list row for this PR may be a newer snapshot, with a newer checks rollup.
+  const selectedEntry =
+    selectedKey === null
+      ? undefined
+      : list.entries.find((entry) => prsRefKey(entry) === selectedKey);
   const checksRollup =
     detail === null
       ? null
       : prsReconcileChecks(
           detail.checks,
-          list.entries.find((entry) => selectedKey !== null && prsRefKey(entry) === selectedKey)
-            ?.checksState,
+          { ...detail, receivedAt: sections.detailReceivedAt },
+          selectedEntry === undefined || selectedKey === null
+            ? undefined
+            : { ...selectedEntry, receivedAt: list.receivedAt[selectedKey] ?? 0 },
         );
   const checksHeading =
     detail === null || checksRollup === null
@@ -2548,12 +2688,18 @@ export function PullRequestsPanel(props: {
   const mergeMethod = prsResolveMergeMethod(
     allowedMergeMethods,
     draft("method:merge") || null,
-    detail?.preferredMergeMethod,
-    lastMergeMethod,
+    detail === null
+      ? undefined
+      : (detail.preferredMergeMethod ??
+          rememberedMergeMethod.legacy({
+            environmentId: session.context.resource.environmentId,
+            projectId: detail.projectId,
+          })),
+    rememberedMergeMethod.last,
   );
   const pickMergeMethod = (value: string) => {
     setDraft("method:merge", value);
-    setLastMergeMethod(value);
+    rememberedMergeMethod.remember(value);
   };
   // Native requires a fresh stack read: a stack that failed to re-read, or whose
   // re-read is still in flight, offers no merge.
@@ -2586,9 +2732,7 @@ export function PullRequestsPanel(props: {
   const confirmPlan =
     stackConfirm === null || stackConfirm.refKey !== selectedKey
       ? null
-      : stackConfirm.action === "merge"
-        ? stackMerge
-        : stackRebase;
+      : (stackConfirm.running ?? (stackConfirm.action === "merge" ? stackMerge : stackRebase));
   const confirming = confirmPlan !== null ? stackConfirm : null;
   const stackActionPending = confirming !== null && writePending(`stack:${confirming.action}`);
   const runStackAction = () => {
@@ -2603,19 +2747,18 @@ export function PullRequestsPanel(props: {
     const ref = selected;
     const refKey = selectedKey;
     const { action } = confirming;
+    setStackConfirm({ ...confirming, running: confirmPlan });
     setStackReceipt(null);
-    const report = beginReport(
-      action === "merge" ? "Merge stack" : "Rebase stack",
-      undefined,
-      (receipt) => setStackReceipt({ refKey, receipt }),
-    );
     runWrite(
       `stack:${action}`,
       (signal) => writeApi().invoke("runAction", { ...ref, ...confirmPlan.input }, signal),
       undefined,
       (outcome) => {
         setStackConfirm(null);
-        report(action === "merge" ? prsStackMergeReceipt(outcome) : prsStackRebaseReceipt(outcome));
+        reportResult(
+          action === "merge" ? prsStackMergeReceipt(outcome) : prsStackRebaseReceipt(outcome),
+          (receipt) => setStackReceipt({ refKey, receipt }),
+        );
       },
     );
   };

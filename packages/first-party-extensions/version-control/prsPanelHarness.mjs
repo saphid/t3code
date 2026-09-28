@@ -237,9 +237,10 @@ export function nodeName(node) {
 
 /**
  * Mounts `element` against a scripted host. `refreshes` pushes one
- * `refreshed` frame down the host refresh stream.
+ * `refreshed` frame down the host refresh stream. `members` adds host
+ * members (preferences, floating layer) to the scripted host.
  */
-export function mount(render, handlers) {
+export function mount(render, handlers, members = {}) {
   const calls = [];
   const refreshListeners = new Set();
   const focus = { current: null };
@@ -279,6 +280,7 @@ export function mount(render, handlers) {
     },
     discoverApis: async () => [],
     invokeTool: async () => null,
+    ...members,
   };
   const controller = new AbortController();
   const session = {

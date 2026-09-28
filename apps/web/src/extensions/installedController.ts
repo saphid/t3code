@@ -13,6 +13,7 @@ import {
   type ClientCodeView,
   type ClientTooltip,
   type ClientFloatingLayer,
+  type ClientPullRequestPreferences,
   type ClientHost,
   type EnvironmentPackage,
   type GlobalCommandsHandle,
@@ -205,6 +206,8 @@ export function createInstalledExtensionController(options: {
   readonly tooltip?: ClientTooltip;
   /** Host floating layer handed to every installed client; absent on hosts without one. */
   readonly floatingLayer?: ClientFloatingLayer;
+  /** Client-local pull-request preferences handed to every installed client. */
+  readonly pullRequestPreferences?: ClientPullRequestPreferences;
 }) {
   const active = new Map<string, { signature: string; stop: () => void }>();
   // One epoch per live registration — a re-registered installation gets a new
@@ -541,6 +544,9 @@ export function createInstalledExtensionController(options: {
               ...(options.codeView ? { codeView: options.codeView } : {}),
               ...(options.tooltip ? { tooltip: options.tooltip } : {}),
               ...(options.floatingLayer ? { floatingLayer: options.floatingLayer } : {}),
+              ...(options.pullRequestPreferences
+                ? { pullRequestPreferences: options.pullRequestPreferences }
+                : {}),
             };
             const extension = (factory as ClientFactory)(clientHost);
             if (canonical(extension.manifest) !== canonical(item.package.manifest))

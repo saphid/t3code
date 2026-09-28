@@ -48,36 +48,102 @@ NodeTest.describe("checks rollup freshness", () => {
     const { prsReconcileChecks } = await import("./prsViewModel.ts");
     return prsReconcileChecks?.(...args) ?? null;
   };
+  const stamp = (updatedAt, extra = {}) => ({
+    state: "open",
+    updatedAt: `2026-09-0${updatedAt}T00:00:00Z`,
+    receivedAt: 1,
+    ...extra,
+  });
 
   NodeTest.it(
     "a newer failing list rollup beats an older passing detail, marked stale",
     async () => {
-      NodeAssert.deepEqual(await reconcile([check("success")], "failing"), {
-        state: "failing",
-        stale: true,
-      });
+      NodeAssert.deepEqual(
+        await reconcile([check("success")], stamp(1), stamp(2, { checksState: "failing" })),
+        { state: "failing", stale: true },
+      );
     },
   );
 
+  NodeTest.it("an older passing list row never overrides newer failing details", async () => {
+    NodeAssert.deepEqual(
+      await reconcile([check("failure")], stamp(2), stamp(1, { checksState: "passing" })),
+      { state: "failing", stale: false },
+    );
+  });
+
+  NodeTest.it("orders same-dated snapshots by the host's read time, then arrival", async () => {
+    // The host read the detail later: its checks stand.
+    NodeAssert.deepEqual(
+      await reconcile(
+        [check("failure")],
+        stamp(1, { observedAt: 20 }),
+        stamp(1, { observedAt: 10, checksState: "passing" }),
+      ),
+      { state: "failing", stale: false },
+    );
+    // A stamped read beats an unstamped one.
+    NodeAssert.deepEqual(
+      await reconcile(
+        [check("failure")],
+        stamp(1, { observedAt: 20 }),
+        stamp(1, { checksState: "passing" }),
+      ),
+      { state: "failing", stale: false },
+    );
+    // Neither stamped: the snapshot that arrived last.
+    NodeAssert.deepEqual(
+      await reconcile(
+        [check("failure")],
+        stamp(1, { receivedAt: 5 }),
+        stamp(1, { receivedAt: 3, checksState: "passing" }),
+      ),
+      { state: "failing", stale: false },
+    );
+    NodeAssert.deepEqual(
+      await reconcile(
+        [check("success")],
+        stamp(1, { receivedAt: 3 }),
+        stamp(1, { receivedAt: 5, checksState: "failing" }),
+      ),
+      { state: "failing", stale: true },
+    );
+  });
+
+  NodeTest.it("a merged snapshot is final whatever its dates", async () => {
+    NodeAssert.deepEqual(
+      await reconcile(
+        [check("pending")],
+        stamp(2),
+        stamp(1, { state: "merged", checksState: "passing" }),
+      ),
+      { state: "passing", stale: true },
+    );
+  });
+
   NodeTest.it("keeps the detail's own rollup when the list says the same or nothing", async () => {
-    NodeAssert.deepEqual(await reconcile([check("success")], "passing"), {
-      state: "passing",
+    NodeAssert.deepEqual(
+      await reconcile([check("success")], stamp(1), stamp(2, { checksState: "passing" })),
+      { state: "passing", stale: false },
+    );
+    NodeAssert.deepEqual(await reconcile([check("failure")], stamp(1), stamp(2)), {
+      state: "failing",
       stale: false,
     });
-    NodeAssert.deepEqual(await reconcile([check("failure")], undefined), {
+    NodeAssert.deepEqual(await reconcile([check("failure")], stamp(1), undefined), {
       state: "failing",
       stale: false,
     });
   });
 
   NodeTest.it("a run awaiting approval keeps it pending unless something failed", async () => {
-    NodeAssert.deepEqual(await reconcile([check("action-required")], "passing"), {
-      state: "pending",
-      stale: false,
-    });
-    NodeAssert.deepEqual(await reconcile([check("action-required")], "failing"), {
-      state: "failing",
-      stale: true,
-    });
+    NodeAssert.deepEqual(
+      await reconcile([check("action-required")], stamp(1), stamp(2, { checksState: "passing" })),
+      { state: "pending", stale: false },
+    );
+    NodeAssert.deepEqual(
+      await reconcile([check("action-required")], stamp(1), stamp(2, { checksState: "failing" })),
+      { state: "failing", stale: true },
+    );
   });
 });

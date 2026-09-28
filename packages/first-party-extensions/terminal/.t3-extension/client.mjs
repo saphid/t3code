@@ -210,16 +210,15 @@ var __t3Client = (() => {
       return hasInput(child, rest);
     return Array.isArray(child) && child.some((item) => hasInput(item, rest));
   }
-  function defineApi(definition, options = {}) {
-    const validated = validateApiDefinition(definition);
+  function negotiated(definition, options) {
     if (options.baseline === void 0) {
       if (options.additions?.length)
         throw new Error("API additions need a baseline");
-      return { definition: validated };
+      return {};
     }
-    const version = parseVersion(validated.version);
+    const version = parseVersion(definition.version);
     if (!version)
-      throw new Error("An API with a baseline needs a plain X.Y.Z version: " + validated.version);
+      throw new Error("An API with a baseline needs a plain X.Y.Z version: " + definition.version);
     const baseline = parseVersion(options.baseline);
     if (!baseline || baseline[0] !== version[0] || compareVersions(baseline, version) > 0)
       throw new Error("API baseline must be an earlier plain X.Y.Z version of the same major");
@@ -230,19 +229,30 @@ var __t3Client = (() => {
       const added = parseVersion(addition.version);
       if (!added)
         throw new Error("An API addition needs a plain X.Y.Z version: " + JSON.stringify(addition));
-      if (compareVersions(added, baseline) <= 0 || compareVersions(added, version) > 0 || !validated.methods?.some((method) => method.name === addition.method) || !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(addition.input))
+      const path3 = "input" in addition ? addition.input : addition.output;
+      const owners = [
+        ...definition.methods ?? [],
+        ..."output" in addition ? definition.streams ?? [] : []
+      ];
+      if (compareVersions(added, baseline) <= 0 || compareVersions(added, version) > 0 || !owners.some((owner) => owner.name === addition.method) || typeof path3 !== "string" || !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(path3))
         throw new Error("Invalid API addition: " + JSON.stringify(addition));
     }
-    return { definition: validated, baseline: options.baseline, additions };
+    return { baseline: options.baseline, additions };
+  }
+  function defineApi(definition, options = {}) {
+    const validated = validateApiDefinition(definition);
+    return { definition: validated, ...negotiated(validated, options) };
   }
   function defaultVersionRange(api) {
     return "^" + (api.baseline ?? api.definition.version);
   }
   function bindApi(api, client, context, versionRange = defaultVersionRange(api)) {
     const floor = rangeFloor(versionRange);
-    const unnegotiated = (api.additions ?? []).filter((addition) => {
+    const unnegotiated = (api.additions ?? []).flatMap((addition) => {
+      if (!("input" in addition))
+        return [];
       const added = parseVersion(addition.version);
-      return !floor || !added || compareVersions(floor, added) < 0;
+      return !floor || !added || compareVersions(floor, added) < 0 ? [addition] : [];
     });
     return {
       invoke(method, input, signal) {
@@ -253,11 +263,11 @@ var __t3Client = (() => {
       }
     };
   }
-  function defineStreamApi(definition) {
+  function defineStreamApi(definition, options = {}) {
     const validated = validateApiDefinition(definition);
     if (!validated.streams?.length)
       throw new Error("Expected API stream definitions");
-    return { definition: validated };
+    return { definition: validated, ...negotiated(validated, options) };
   }
   function bindStreamApi(api, client, context, versionRange = defaultVersionRange(api)) {
     return {
@@ -4265,7 +4275,7 @@ var __t3Client = (() => {
       detail: { type: ["string", "null"], maxLength: 1024 }
     }
   };
-  var prsListEntrySchema = {
+  var prsListEntrySchemaV1 = {
     type: "object",
     additionalProperties: false,
     required: [
@@ -4326,7 +4336,12 @@ var __t3Client = (() => {
       checksState: { enum: ["passing", "failing", "pending"] }
     }
   };
-  var prsListResultSchema = {
+  var prsObservedAtField = { type: "number", minimum: 0 };
+  var prsListEntrySchema = {
+    ...prsListEntrySchemaV1,
+    properties: { ...prsListEntrySchemaV1.properties, observedAt: prsObservedAtField }
+  };
+  var prsListResultSchemaV1 = {
     type: "object",
     additionalProperties: false,
     required: ["viewers", "providers", "entries", "errors", "truncated", "nextCursors"],
@@ -4337,7 +4352,7 @@ var __t3Client = (() => {
         maxProperties: 100
       },
       providers: { type: "array", maxItems: 100, items: prsProviderSummarySchema },
-      entries: { type: "array", maxItems: 100, items: prsListEntrySchema },
+      entries: { type: "array", maxItems: 100, items: prsListEntrySchemaV1 },
       errors: {
         type: "array",
         maxItems: 100,
@@ -4354,6 +4369,13 @@ var __t3Client = (() => {
       },
       truncated: { type: "boolean" },
       nextCursors: prsCursorsSchema
+    }
+  };
+  var prsListResultSchema = {
+    ...prsListResultSchemaV1,
+    properties: {
+      ...prsListResultSchemaV1.properties,
+      entries: { type: "array", maxItems: 100, items: prsListEntrySchema }
     }
   };
   var prsReviewVerdictsSchema = {
@@ -4450,7 +4472,7 @@ var __t3Client = (() => {
       labels: { type: "boolean" }
     }
   };
-  var prsDetailSchema = {
+  var prsDetailSchemaV1 = {
     type: "object",
     additionalProperties: false,
     required: [
@@ -4529,8 +4551,15 @@ var __t3Client = (() => {
       behindBy: { type: "integer", minimum: 0 },
       autoMergeEnabled: { type: "boolean" },
       autoMergeMethod: { enum: ["merge", "squash", "rebase"] },
-      workflowApprovalsRequired: { type: "integer", minimum: 0 },
-      preferredMergeMethod: { enum: ["merge", "squash", "rebase"] }
+      workflowApprovalsRequired: { type: "integer", minimum: 0 }
+    }
+  };
+  var prsDetailSchema = {
+    ...prsDetailSchemaV1,
+    properties: {
+      ...prsDetailSchemaV1.properties,
+      preferredMergeMethod: { enum: ["merge", "squash", "rebase"] },
+      observedAt: prsObservedAtField
     }
   };
   var prsCommentSchema = {
@@ -4933,174 +4962,186 @@ var __t3Client = (() => {
       newPath: { type: "string", minLength: 1, maxLength: 1024 }
     }
   };
-  var prsReadApi = defineStreamApi({
-    id: PRS_READ,
-    version: "1.0.0",
-    methods: [
-      {
-        name: "getCapabilities",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsEmptyInputSchema,
-        outputSchema: prsCapabilitiesResultSchema
-      },
-      {
-        name: "list",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["state"],
-          properties: {
-            state: { enum: ["all", "open", "closed", "merged"] },
-            involvement: { enum: ["all", "reviewing", "authored"] },
-            filters: prsListFiltersSchema,
-            host: prsHostField,
-            limit: { type: "integer", minimum: 1, maximum: 50 },
-            cursors: prsCursorsSchema,
-            query: { type: "string", minLength: 1, maxLength: 200 }
-          }
+  function prsReadDefinition(version, listResult, detail) {
+    return {
+      id: PRS_READ,
+      version,
+      methods: [
+        {
+          name: "getCapabilities",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsEmptyInputSchema,
+          outputSchema: prsCapabilitiesResultSchema
         },
-        outputSchema: prsListResultSchema
-      },
-      {
-        name: "listStats",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["refs"],
-          properties: {
-            refs: { type: "array", minItems: 1, maxItems: 100, items: prsRefInputSchema }
-          }
+        {
+          name: "list",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["state"],
+            properties: {
+              state: { enum: ["all", "open", "closed", "merged"] },
+              involvement: { enum: ["all", "reviewing", "authored"] },
+              filters: prsListFiltersSchema,
+              host: prsHostField,
+              limit: { type: "integer", minimum: 1, maximum: 50 },
+              cursors: prsCursorsSchema,
+              query: { type: "string", minLength: 1, maxLength: 200 }
+            }
+          },
+          outputSchema: listResult
         },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["stats"],
-          properties: {
-            stats: {
-              type: "array",
-              maxItems: 100,
-              items: {
-                type: "object",
-                additionalProperties: false,
-                required: ["projectId", "repository", "number", "additions", "deletions"],
-                properties: {
-                  projectId: { type: "string", minLength: 1, maxLength: 160 },
-                  repository: prsRepositoryField,
-                  number: { type: "integer", minimum: 1 },
-                  additions: { type: "integer", minimum: 0 },
-                  deletions: { type: "integer", minimum: 0 }
+        {
+          name: "listStats",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["refs"],
+            properties: {
+              refs: { type: "array", minItems: 1, maxItems: 100, items: prsRefInputSchema }
+            }
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["stats"],
+            properties: {
+              stats: {
+                type: "array",
+                maxItems: 100,
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["projectId", "repository", "number", "additions", "deletions"],
+                  properties: {
+                    projectId: { type: "string", minLength: 1, maxLength: 160 },
+                    repository: prsRepositoryField,
+                    number: { type: "integer", minimum: 1 },
+                    additions: { type: "integer", minimum: 0 },
+                    deletions: { type: "integer", minimum: 0 }
+                  }
                 }
               }
             }
           }
+        },
+        {
+          name: "summary",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsRefInputSchema,
+          outputSchema: prsSummarySchema
+        },
+        {
+          name: "detail",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsRefInputSchema,
+          outputSchema: detail
+        },
+        {
+          name: "activity",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsRefInputSchema,
+          outputSchema: prsActivitySchema
+        },
+        {
+          name: "threadComments",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["repository", "number", "threadId", "cursor"],
+            properties: {
+              host: prsHostField,
+              repository: prsRepositoryField,
+              number: { type: "integer", minimum: 1 },
+              threadId: { type: "string", minLength: 1, maxLength: 512 },
+              cursor: { type: "string", minLength: 1, maxLength: 4096 }
+            }
+          },
+          outputSchema: prsThreadCommentsResultSchema
+        },
+        {
+          name: "stack",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsRefInputSchema,
+          outputSchema: prsStackSchema
+        },
+        {
+          name: "linkedThreads",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsRefInputSchema,
+          outputSchema: prsLinkedThreadsSchema
+        },
+        {
+          name: "reviewerCandidates",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsRefInputSchema,
+          outputSchema: prsReviewerCandidateListSchema
+        },
+        {
+          name: "labelCandidates",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsRefInputSchema,
+          outputSchema: prsLabelCandidateListSchema
+        },
+        {
+          name: "invalidate",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            properties: { reference: prsRefInputSchema }
+          },
+          outputSchema: prsEmptyOutputSchema
         }
-      },
-      {
-        name: "summary",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsRefInputSchema,
-        outputSchema: prsSummarySchema
-      },
-      {
-        name: "detail",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsRefInputSchema,
-        outputSchema: prsDetailSchema
-      },
-      {
-        name: "activity",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsRefInputSchema,
-        outputSchema: prsActivitySchema
-      },
-      {
-        name: "threadComments",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["repository", "number", "threadId", "cursor"],
-          properties: {
-            host: prsHostField,
-            repository: prsRepositoryField,
-            number: { type: "integer", minimum: 1 },
-            threadId: { type: "string", minLength: 1, maxLength: 512 },
-            cursor: { type: "string", minLength: 1, maxLength: 4096 }
-          }
+      ],
+      streams: [
+        {
+          name: "streamDiff",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsDiffInputSchema,
+          eventSchema: prsDiffStreamEventSchema
         },
-        outputSchema: prsThreadCommentsResultSchema
-      },
-      {
-        name: "stack",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsRefInputSchema,
-        outputSchema: prsStackSchema
-      },
-      {
-        name: "linkedThreads",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsRefInputSchema,
-        outputSchema: prsLinkedThreadsSchema
-      },
-      {
-        name: "reviewerCandidates",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsRefInputSchema,
-        outputSchema: prsReviewerCandidateListSchema
-      },
-      {
-        name: "labelCandidates",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsRefInputSchema,
-        outputSchema: prsLabelCandidateListSchema
-      },
-      {
-        name: "invalidate",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          properties: { reference: prsRefInputSchema }
+        {
+          name: "streamDiffFileContents",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsDiffFileContentsInputSchema,
+          eventSchema: vcsDiffFileContentsStreamEventSchema
         },
-        outputSchema: prsEmptyOutputSchema
-      }
-    ],
-    streams: [
-      {
-        name: "streamDiff",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsDiffInputSchema,
-        eventSchema: prsDiffStreamEventSchema
-      },
-      {
-        name: "streamDiffFileContents",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsDiffFileContentsInputSchema,
-        eventSchema: vcsDiffFileContentsStreamEventSchema
-      },
-      {
-        name: "subscribeRefreshes",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsEmptyInputSchema,
-        eventSchema: prsRefreshedEventSchema
-      }
+        {
+          name: "subscribeRefreshes",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsEmptyInputSchema,
+          eventSchema: prsRefreshedEventSchema
+        }
+      ]
+    };
+  }
+  var prsReadApi = defineStreamApi(prsReadDefinition("1.1.0", prsListResultSchema, prsDetailSchema), {
+    baseline: "1.0.0",
+    additions: [
+      { version: "1.1.0", method: "detail", output: "preferredMergeMethod" },
+      { version: "1.1.0", method: "detail", output: "observedAt" },
+      { version: "1.1.0", method: "list", output: "entries[].observedAt" }
     ]
   });
+  var prsReadApiV1 = defineStreamApi(prsReadDefinition("1.0.0", prsListResultSchemaV1, prsDetailSchemaV1));
   var PRS_READ_API = prsReadApi.definition;
+  var PRS_READ_API_V1 = prsReadApiV1.definition;
   var VCS_ACTIONS = "t3.vcs/actions";
   var vcsActionKindSchema = {
     enum: ["commit", "push", "create_pr", "commit_push", "commit_push_pr"]
@@ -7738,6 +7779,7 @@ var __t3Client = (() => {
     resourcesLeaseApiV1.definition,
     workspaceResourcesApi.definition,
     prsReadApi.definition,
+    prsReadApiV1.definition,
     prsWriteApi.definition,
     composerContextApi.definition,
     messagesEnrichmentApi.definition,

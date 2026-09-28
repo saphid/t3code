@@ -1,7 +1,21 @@
 import { BROWSER_SURFACE_OVERLAY_ATTRIBUTE } from "@t3tools/extension-sdk/catalogue";
-import type { ClientFloatingLayer, FloatingPopoverProps } from "@t3tools/extension-sdk/environment";
+import type {
+  ClientFloatingLayer,
+  FloatingDialogProps,
+  FloatingPopoverProps,
+} from "@t3tools/extension-sdk/environment";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+
+import {
+  Dialog as DialogRoot,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "~/components/ui/dialog";
 
 import { FLOATING_VIEWPORT_MARGIN, placeFloating, type FloatingPlacement } from "./placement";
 
@@ -96,5 +110,46 @@ function Popover({
   );
 }
 
+/**
+ * Native's own modal Dialog: backdrop, focus held inside, the rest of the client inert, and the
+ * centred viewport (a bottom sheet on small screens). While a write runs it cannot be dismissed
+ * and hides its close button, as native's confirmations do.
+ */
+function Dialog({
+  title,
+  description,
+  onDismiss,
+  dismissible = true,
+  initialFocus,
+  children,
+  footer,
+  style,
+}: FloatingDialogProps) {
+  return (
+    <DialogRoot
+      open
+      disablePointerDismissal={!dismissible}
+      onOpenChange={(open) => {
+        if (!open && dismissible) onDismiss();
+      }}
+    >
+      <DialogPopup
+        className="max-w-md"
+        showCloseButton={dismissible}
+        {...(initialFocus ? { initialFocus: initialFocus as { current: HTMLElement | null } } : {})}
+        style={style}
+        {...{ [BROWSER_SURFACE_OVERLAY_ATTRIBUTE]: "" }}
+      >
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          {description !== undefined && <DialogDescription>{description}</DialogDescription>}
+        </DialogHeader>
+        {children !== undefined && <DialogPanel>{children}</DialogPanel>}
+        {footer !== undefined && <DialogFooter>{footer}</DialogFooter>}
+      </DialogPopup>
+    </DialogRoot>
+  );
+}
+
 /** The web and desktop `ClientHost.floatingLayer`, shared by every installed client. */
-export const hostFloatingLayer: ClientFloatingLayer = { version: 1, Popover };
+export const hostFloatingLayer: ClientFloatingLayer = { version: 2, Popover, Dialog };

@@ -59,6 +59,12 @@ export function useMutationToasts(
     onReceiptLost: () => void,
     startTitle?: string,
   ) => MutationToast | null;
+  /**
+   * Posts one settled toast with no loading toast before it — native's
+   * result-only receipts. False when toasts are unavailable (report inline);
+   * a later delivery loss hands the receipt back through `onReceiptLost`.
+   */
+  readonly report: (patch: MutationToastPatch, onReceiptLost: () => void) => boolean;
 } {
   const [toastsLive, setToastsLive] = useState(false);
   const [followUpsLive, setFollowUpsLive] = useState(false);
@@ -91,6 +97,73 @@ export function useMutationToasts(
     setToastsLive(false);
   };
 
+  // A thread-anchored toast paints only while its thread is active — the
+  // native threadToastData behavior. Targeting fields may only name this
+  // context's own scope.
+  const resource = session.context.resource;
+  const target = {
+    ...(resource.threadId !== undefined
+      ? { anchor: "thread" as const, threadId: resource.threadId }
+      : {}),
+    ...(resource.projectId !== undefined ? { projectId: resource.projectId } : {}),
+  };
+  // The contract's `update` carries no duration, so success receipts are
+  // dismissed on a timer — but an unseen receipt must not expire.
+  // dismissReceiptAfterSeen mirrors native's dismissAfterVisibleMs: the
+  // clock runs only while the receipt can be read — the view is shown
+  // and the document is visible and focused. DOM globals are absent only
+  // where nothing can paint, so the view's own visibility decides there.
+  const receiptSeen = {
+    signal: session.signal,
+    seen: () =>
+      session.visible &&
+      (typeof document === "undefined" ||
+        typeof window === "undefined" ||
+        (document.visibilityState === "visible" && document.hasFocus())),
+    onChange: (listener: () => void) => {
+      const offView = session.onVisibility(listener);
+      if (typeof document === "undefined" || typeof window === "undefined") return offView;
+      document.addEventListener("visibilitychange", listener);
+      window.addEventListener("focus", listener);
+      window.addEventListener("blur", listener);
+      return () => {
+        offView();
+        document.removeEventListener("visibilitychange", listener);
+        window.removeEventListener("focus", listener);
+        window.removeEventListener("blur", listener);
+      };
+    },
+  };
+  const dismiss = (notificationId: string) => {
+    void bindApi(uiNotificationsApi, host, session.context)
+      .invoke("dismiss", { notificationId }, session.signal)
+      .catch(() => {});
+  };
+
+  const report = (patch: MutationToastPatch, onReceiptLost: () => void): boolean => {
+    if (!toastsLive || dead.current) return false;
+    void bindApi(uiNotificationsApi, host, session.context)
+      .invoke("notify", { ...patch, ...target }, session.signal)
+      .then(
+        ({ notificationId }) => {
+          if (dead.current) {
+            dismiss(notificationId);
+            onReceiptLost();
+            return;
+          }
+          if (patch.severity === "success")
+            dismissReceiptAfterSeen(receiptSeen, MUTATION_TOAST_DISMISS_MS, () =>
+              dismiss(notificationId),
+            );
+        },
+        () => {
+          markDead();
+          onReceiptLost();
+        },
+      );
+    return true;
+  };
+
   const begin = (
     label: string,
     onReceiptLost: () => void,
@@ -98,24 +171,11 @@ export function useMutationToasts(
   ): MutationToast | null => {
     if (!toastsLive || dead.current) return null;
     const api = bindApi(uiNotificationsApi, host, session.context);
-    const resource = session.context.resource;
     // The follow-up receipt awaits its loading-toast retraction so a failed
     // dismiss falls back to the in-place update; everything else is
     // fire-and-forget.
     const dismissOrReject = (notificationId: string): Promise<void> =>
       api.invoke("dismiss", { notificationId }, session.signal).then(() => {});
-    const dismiss = (notificationId: string) => {
-      void dismissOrReject(notificationId).catch(() => {});
-    };
-    // A thread-anchored toast paints only while its thread is active — the
-    // native threadToastData behavior. Targeting fields may only name this
-    // context's own scope.
-    const target = {
-      ...(resource.threadId !== undefined
-        ? { anchor: "thread" as const, threadId: resource.threadId }
-        : {}),
-      ...(resource.projectId !== undefined ? { projectId: resource.projectId } : {}),
-    };
     const posted = api
       .invoke(
         "notify",
@@ -139,33 +199,6 @@ export function useMutationToasts(
           return null;
         },
       );
-    // The contract's `update` carries no duration, so success receipts are
-    // dismissed on a timer — but an unseen receipt must not expire.
-    // dismissReceiptAfterSeen mirrors native's dismissAfterVisibleMs: the
-    // clock runs only while the receipt can be read — the view is shown
-    // and the document is visible and focused. DOM globals are absent only
-    // where nothing can paint, so the view's own visibility decides there.
-    const receiptSeen = {
-      signal: session.signal,
-      seen: () =>
-        session.visible &&
-        (typeof document === "undefined" ||
-          typeof window === "undefined" ||
-          (document.visibilityState === "visible" && document.hasFocus())),
-      onChange: (listener: () => void) => {
-        const offView = session.onVisibility(listener);
-        if (typeof document === "undefined" || typeof window === "undefined") return offView;
-        document.addEventListener("visibilitychange", listener);
-        window.addEventListener("focus", listener);
-        window.addEventListener("blur", listener);
-        return () => {
-          offView();
-          document.removeEventListener("visibilitychange", listener);
-          window.removeEventListener("focus", listener);
-          window.removeEventListener("blur", listener);
-        };
-      },
-    };
     const settleInPlace = (notificationId: string, patch: MutationToastPatch) =>
       void api.invoke("update", { notificationId, ...patch }, session.signal).then(
         ({ applied }) => {
@@ -237,5 +270,5 @@ export function useMutationToasts(
       },
     };
   };
-  return { begin };
+  return { begin, report };
 }

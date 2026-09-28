@@ -4611,7 +4611,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
             updatedAt: Option.none(),
           }),
         checkoutChangeRequest: (checkout) =>
-          runGit(checkout.cwd, ["checkout", localBranch]).pipe(Effect.orDie, Effect.asVoid),
+          Effect.sync(() => runGitSyncForFakeGh(checkout.cwd, ["checkout", localBranch])),
       };
       const { manager } = yield* makeManager({ sourceControlProvider: provider });
       return { repoDir, manager, firstCommit, pullHead };
@@ -4652,13 +4652,18 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         const localCommit = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
         yield* runGit(repoDir, ["checkout", "main"]);
 
-        const error = yield* preparePullRequestThread(manager, {
+        const outcome = yield* preparePullRequestThread(manager, {
           cwd: repoDir,
           reference: "95",
           mode: "local",
-        }).pipe(Effect.flip);
+        }).pipe(
+          Effect.match({
+            onFailure: (error) => error.message,
+            onSuccess: () => "checked out",
+          }),
+        );
 
-        expect(error.message).toContain("commits that are not on pull request #95");
+        expect(outcome).toContain("commits that are not on pull request #95");
         expect(
           (yield* runGit(repoDir, [
             "rev-parse",

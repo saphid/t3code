@@ -336,17 +336,44 @@ export interface FloatingPopoverProps extends React.HTMLAttributes<HTMLDivElemen
 }
 
 /**
+ * A modal dialog centred in the client's viewport, as the native confirmations
+ * are: a backdrop covers the whole client, focus stays inside while it is
+ * open, everything outside it is inert, and focus returns to the control that
+ * opened it once it unmounts. The host renders the title and description as
+ * the dialog's accessible name and description. Mount it to open it and
+ * unmount it to close it.
+ */
+export interface FloatingDialogProps {
+  readonly title: string;
+  readonly description?: string;
+  /** Escape, an outside press or the close button; only while `dismissible`. */
+  readonly onDismiss: () => void;
+  /** False while a write it started is running: nothing but its own controls closes it. */
+  readonly dismissible?: boolean;
+  /** Focused when it opens (never the destructive action); default its first control. */
+  readonly initialFocus?: { readonly current: HTMLElement | null };
+  readonly children?: React.ReactNode;
+  /** The action row, laid out as the native dialog footer. */
+  readonly footer?: React.ReactNode;
+  /** Theme custom properties: portaled content inherits nothing from the view. */
+  readonly style?: React.CSSProperties;
+}
+
+/**
  * `ClientHost.floatingLayer` version 1: menus and pills that must escape the
  * view's clipping ancestors and paint over a composited browser surface. The
  * host portals the popover to its top layer (the native menus' layer, above
  * every presented surface), marks it with `BROWSER_SURFACE_OVERLAY_ATTRIBUTE`,
  * keeps it inside the viewport, and caps its height at the space available
  * on its side so taller content scrolls. Portaled content inherits nothing
- * from the view's DOM, so pass theme custom properties in `style`.
+ * from the view's DOM, so pass theme custom properties in `style`. Version 2
+ * adds the modal `Dialog`.
  */
 export interface ClientFloatingLayer {
-  readonly version: 1;
+  readonly version: number;
   readonly Popover: React.ComponentType<FloatingPopoverProps>;
+  /** Version 2. Read it through `resolveFloatingDialog`. */
+  readonly Dialog?: React.ComponentType<FloatingDialogProps>;
 }
 
 /** The host's floating layer at version 1 or later, else null (render in place). */
@@ -358,6 +385,56 @@ export function resolveFloatingLayer(
   const { version, Popover } = member as Record<string, unknown>;
   return typeof version === "number" && version >= 1 && isComponent(Popover)
     ? (member as ClientFloatingLayer)
+    : null;
+}
+
+/** The host's modal dialog (floating layer version 2 or later), else null. */
+export function resolveFloatingDialog(
+  host: Pick<ClientHost, "floatingLayer">,
+): React.ComponentType<FloatingDialogProps> | null {
+  const layer = resolveFloatingLayer(host);
+  return layer !== null && layer.version >= 2 && isComponent(layer.Dialog)
+    ? (layer.Dialog as React.ComponentType<FloatingDialogProps>)
+    : null;
+}
+
+export type PullRequestMergeMethodPreference = "merge" | "squash" | "rebase";
+
+/**
+ * `ClientHost.pullRequestPreferences` version 1: the pull-request choices this
+ * client remembers, in the same storage and scope as the native panel's, so a
+ * pick made in either follows the other and survives remounts and reloads.
+ */
+export interface ClientPullRequestPreferences {
+  readonly version: 1;
+  /** The merge method last picked on this client (native's default is merge). */
+  lastMergeMethod(): PullRequestMergeMethodPreference;
+  setLastMergeMethod(method: PullRequestMergeMethodPreference): void;
+  /**
+   * The per-project merge method older releases kept on this client, which
+   * native still honours below the server's project setting; null when none.
+   */
+  legacyProjectMergeMethod(project: {
+    readonly environmentId: string;
+    readonly projectId: string;
+  }): PullRequestMergeMethodPreference | null;
+  /** Called after either value may have changed. Returns the unsubscribe. */
+  subscribe(listener: () => void): () => void;
+}
+
+/** The host's pull-request preferences at version 1 or later, else null (keep them in memory). */
+export function resolvePullRequestPreferences(
+  host: Pick<ClientHost, "pullRequestPreferences">,
+): ClientPullRequestPreferences | null {
+  const member: unknown = host.pullRequestPreferences;
+  if (!member || typeof member !== "object") return null;
+  const value = member as Record<string, unknown>;
+  return typeof value.version === "number" &&
+    value.version >= 1 &&
+    ["lastMergeMethod", "setLastMergeMethod", "legacyProjectMergeMethod", "subscribe"].every(
+      (key) => typeof value[key] === "function",
+    )
+    ? (member as ClientPullRequestPreferences)
     : null;
 }
 
@@ -425,6 +502,11 @@ export interface ClientHost {
    * through `resolveFloatingLayer` and render in place as the fallback.
    */
   readonly floatingLayer?: ClientFloatingLayer;
+  /**
+   * Client-local pull-request preferences. Absent on hosts without them — read
+   * them through `resolvePullRequestPreferences` and keep choices in memory.
+   */
+  readonly pullRequestPreferences?: ClientPullRequestPreferences;
 }
 export type ClientFactory = (host: ClientHost) => Extension<SurfaceRenderer>;
 

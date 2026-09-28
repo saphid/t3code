@@ -3253,6 +3253,11 @@ export type PrsListEntry = {
   readonly labels: readonly PrsLabel[];
   readonly reviewDecision?: "approved" | "changes-requested" | "review-required";
   readonly checksState?: "passing" | "failing" | "pending";
+  /**
+   * 1.1.0: server epoch milliseconds when the host read started, kept on cache
+   * hits. Orders two snapshots that the host dated alike.
+   */
+  readonly observedAt?: number;
 };
 export type PrsProviderSummary = {
   readonly host: string;
@@ -3402,8 +3407,13 @@ export type PrsDetail = {
   readonly autoMergeEnabled?: boolean;
   readonly autoMergeMethod?: "merge" | "squash" | "rebase";
   readonly workflowApprovalsRequired?: number;
-  /** The project's merge-method setting, offered first when the repository allows it. */
+  /**
+   * 1.1.0: the project's merge-method setting, offered first when the
+   * repository allows it.
+   */
   readonly preferredMergeMethod?: "merge" | "squash" | "rebase";
+  /** 1.1.0: as `PrsListEntry.observedAt`. */
+  readonly observedAt?: number;
 };
 export type PrsComment = {
   readonly id: string;
@@ -3690,7 +3700,7 @@ const prsProviderSummarySchema = {
     detail: { type: ["string", "null"], maxLength: 1024 },
   },
 } as const;
-const prsListEntrySchema = {
+const prsListEntrySchemaV1 = {
   type: "object",
   additionalProperties: false,
   required: [
@@ -3751,7 +3761,13 @@ const prsListEntrySchema = {
     checksState: { enum: ["passing", "failing", "pending"] },
   },
 } as const;
-const prsListResultSchema = {
+const prsObservedAtField = { type: "number", minimum: 0 } as const;
+/** 1.1.0 adds `observedAt`. */
+const prsListEntrySchema = {
+  ...prsListEntrySchemaV1,
+  properties: { ...prsListEntrySchemaV1.properties, observedAt: prsObservedAtField },
+} as const;
+const prsListResultSchemaV1 = {
   type: "object",
   additionalProperties: false,
   required: ["viewers", "providers", "entries", "errors", "truncated", "nextCursors"],
@@ -3762,7 +3778,7 @@ const prsListResultSchema = {
       maxProperties: 100,
     },
     providers: { type: "array", maxItems: 100, items: prsProviderSummarySchema },
-    entries: { type: "array", maxItems: 100, items: prsListEntrySchema },
+    entries: { type: "array", maxItems: 100, items: prsListEntrySchemaV1 },
     errors: {
       type: "array",
       maxItems: 100,
@@ -3779,6 +3795,13 @@ const prsListResultSchema = {
     },
     truncated: { type: "boolean" },
     nextCursors: prsCursorsSchema,
+  },
+} as const;
+const prsListResultSchema = {
+  ...prsListResultSchemaV1,
+  properties: {
+    ...prsListResultSchemaV1.properties,
+    entries: { type: "array", maxItems: 100, items: prsListEntrySchema },
   },
 } as const;
 const prsReviewVerdictsSchema = {
@@ -3875,7 +3898,7 @@ const prsViewerPermissionsSchema = {
     labels: { type: "boolean" },
   },
 } as const;
-const prsDetailSchema = {
+const prsDetailSchemaV1 = {
   type: "object",
   additionalProperties: false,
   required: [
@@ -3955,7 +3978,15 @@ const prsDetailSchema = {
     autoMergeEnabled: { type: "boolean" },
     autoMergeMethod: { enum: ["merge", "squash", "rebase"] },
     workflowApprovalsRequired: { type: "integer", minimum: 0 },
+  },
+} as const;
+/** 1.1.0 adds `preferredMergeMethod` and `observedAt`. */
+const prsDetailSchema = {
+  ...prsDetailSchemaV1,
+  properties: {
+    ...prsDetailSchemaV1.properties,
     preferredMergeMethod: { enum: ["merge", "squash", "rebase"] },
+    observedAt: prsObservedAtField,
   },
 } as const;
 const prsCommentSchema = {
@@ -4358,16 +4389,7 @@ const prsDiffFileContentsInputSchema = {
     newPath: { type: "string", minLength: 1, maxLength: 1024 },
   },
 } as const;
-/**
- * The pull-request read surface. `list`/`detail`/`activity`/`threadComments`/
- * `stack`/`summary`/`linkedThreads`/`listStats`/`reviewerCandidates`/
- * `labelCandidates`/`invalidate` mirror the same-named `pullRequests.*`
- * reads; `streamDiff`/`streamDiffFileContents` cover the native diff
- * (HTTP-routed natively) as `t3.vcs/diff@1.1.0`-family frames so payload
- * size never matters; `subscribeRefreshes` mirrors the native refresh
- * counter so a plugin re-reads exactly when the native client would.
- */
-export const prsReadApi: TypedApi<{
+type PrsReadApi = TypedApi<{
   getCapabilities: { input: Record<string, never>; output: PrsCapabilitiesResult };
   list: { input: PrsListInput; output: PrsListResult };
   listStats: { input: PrsListStatsInput; output: PrsListStatsResult };
@@ -4388,181 +4410,218 @@ export const prsReadApi: TypedApi<{
       event: VcsDiffFileContentsStreamEvent;
     };
     subscribeRefreshes: { input: Record<string, never>; event: PrsRefreshedEvent };
-  }> = defineStreamApi<{
+  }>;
+type PrsReadStreams = {
   streamDiff: { input: PrsDiffInput; event: PrsDiffStreamEvent };
   streamDiffFileContents: {
     input: PrsDiffFileContentsInput;
     event: VcsDiffFileContentsStreamEvent;
   };
   subscribeRefreshes: { input: Record<string, never>; event: PrsRefreshedEvent };
-}>({
-  id: PRS_READ,
-  version: "1.0.0",
-  methods: [
-    {
-      name: "getCapabilities",
-      effect: "read",
-      requiredGrants: [PRS_READ],
-      inputSchema: prsEmptyInputSchema,
-      outputSchema: prsCapabilitiesResultSchema,
-    },
-    {
-      name: "list",
-      effect: "read",
-      requiredGrants: [PRS_READ],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["state"],
-        properties: {
-          state: { enum: ["all", "open", "closed", "merged"] },
-          involvement: { enum: ["all", "reviewing", "authored"] },
-          filters: prsListFiltersSchema,
-          host: prsHostField,
-          limit: { type: "integer", minimum: 1, maximum: 50 },
-          cursors: prsCursorsSchema,
-          query: { type: "string", minLength: 1, maxLength: 200 },
-        },
+};
+/** The `t3.prs/read` descriptor at one published version. */
+function prsReadDefinition(
+  version: string,
+  listResult: JsonObject,
+  detail: JsonObject,
+): ApiDefinition {
+  return {
+    id: PRS_READ,
+    version,
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: prsEmptyInputSchema,
+        outputSchema: prsCapabilitiesResultSchema,
       },
-      outputSchema: prsListResultSchema,
-    },
-    {
-      name: "listStats",
-      effect: "read",
-      requiredGrants: [PRS_READ],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["refs"],
-        properties: {
-          refs: { type: "array", minItems: 1, maxItems: 100, items: prsRefInputSchema },
+      {
+        name: "list",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["state"],
+          properties: {
+            state: { enum: ["all", "open", "closed", "merged"] },
+            involvement: { enum: ["all", "reviewing", "authored"] },
+            filters: prsListFiltersSchema,
+            host: prsHostField,
+            limit: { type: "integer", minimum: 1, maximum: 50 },
+            cursors: prsCursorsSchema,
+            query: { type: "string", minLength: 1, maxLength: 200 },
+          },
         },
+        outputSchema: listResult,
       },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["stats"],
-        properties: {
-          stats: {
-            type: "array",
-            maxItems: 100,
-            items: {
-              type: "object",
-              additionalProperties: false,
-              required: ["projectId", "repository", "number", "additions", "deletions"],
-              properties: {
-                projectId: { type: "string", minLength: 1, maxLength: 160 },
-                repository: prsRepositoryField,
-                number: { type: "integer", minimum: 1 },
-                additions: { type: "integer", minimum: 0 },
-                deletions: { type: "integer", minimum: 0 },
+      {
+        name: "listStats",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["refs"],
+          properties: {
+            refs: { type: "array", minItems: 1, maxItems: 100, items: prsRefInputSchema },
+          },
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["stats"],
+          properties: {
+            stats: {
+              type: "array",
+              maxItems: 100,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["projectId", "repository", "number", "additions", "deletions"],
+                properties: {
+                  projectId: { type: "string", minLength: 1, maxLength: 160 },
+                  repository: prsRepositoryField,
+                  number: { type: "integer", minimum: 1 },
+                  additions: { type: "integer", minimum: 0 },
+                  deletions: { type: "integer", minimum: 0 },
+                },
               },
             },
           },
         },
       },
-    },
-    {
-      name: "summary",
-      effect: "read",
-      requiredGrants: [PRS_READ],
-      inputSchema: prsRefInputSchema,
-      outputSchema: prsSummarySchema,
-    },
-    {
-      name: "detail",
-      effect: "read",
-      requiredGrants: [PRS_READ],
-      inputSchema: prsRefInputSchema,
-      outputSchema: prsDetailSchema,
-    },
-    {
-      name: "activity",
-      effect: "read",
-      requiredGrants: [PRS_READ],
-      inputSchema: prsRefInputSchema,
-      outputSchema: prsActivitySchema,
-    },
-    {
-      name: "threadComments",
-      effect: "read",
-      requiredGrants: [PRS_READ],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["repository", "number", "threadId", "cursor"],
-        properties: {
-          host: prsHostField,
-          repository: prsRepositoryField,
-          number: { type: "integer", minimum: 1 },
-          threadId: { type: "string", minLength: 1, maxLength: 512 },
-          cursor: { type: "string", minLength: 1, maxLength: 4096 },
+      {
+        name: "summary",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: prsRefInputSchema,
+        outputSchema: prsSummarySchema,
+      },
+      {
+        name: "detail",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: prsRefInputSchema,
+        outputSchema: detail,
+      },
+      {
+        name: "activity",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: prsRefInputSchema,
+        outputSchema: prsActivitySchema,
+      },
+      {
+        name: "threadComments",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "threadId", "cursor"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            threadId: { type: "string", minLength: 1, maxLength: 512 },
+            cursor: { type: "string", minLength: 1, maxLength: 4096 },
+          },
         },
+        outputSchema: prsThreadCommentsResultSchema,
       },
-      outputSchema: prsThreadCommentsResultSchema,
-    },
-    {
-      name: "stack",
-      effect: "read",
-      requiredGrants: [PRS_READ],
-      inputSchema: prsRefInputSchema,
-      outputSchema: prsStackSchema,
-    },
-    {
-      name: "linkedThreads",
-      effect: "read",
-      requiredGrants: [PRS_READ],
-      inputSchema: prsRefInputSchema,
-      outputSchema: prsLinkedThreadsSchema,
-    },
-    {
-      name: "reviewerCandidates",
-      effect: "read",
-      requiredGrants: [PRS_READ],
-      inputSchema: prsRefInputSchema,
-      outputSchema: prsReviewerCandidateListSchema,
-    },
-    {
-      name: "labelCandidates",
-      effect: "read",
-      requiredGrants: [PRS_READ],
-      inputSchema: prsRefInputSchema,
-      outputSchema: prsLabelCandidateListSchema,
-    },
-    {
-      name: "invalidate",
-      effect: "read",
-      requiredGrants: [PRS_READ],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        properties: { reference: prsRefInputSchema },
+      {
+        name: "stack",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: prsRefInputSchema,
+        outputSchema: prsStackSchema,
       },
-      outputSchema: prsEmptyOutputSchema,
-    },
-  ],
-  streams: [
-    {
-      name: "streamDiff",
-      requiredGrants: [PRS_READ],
-      inputSchema: prsDiffInputSchema,
-      eventSchema: prsDiffStreamEventSchema,
-    },
-    {
-      name: "streamDiffFileContents",
-      requiredGrants: [PRS_READ],
-      inputSchema: prsDiffFileContentsInputSchema,
-      eventSchema: vcsDiffFileContentsStreamEventSchema,
-    },
-    {
-      name: "subscribeRefreshes",
-      requiredGrants: [PRS_READ],
-      inputSchema: prsEmptyInputSchema,
-      eventSchema: prsRefreshedEventSchema,
-    },
-  ],
-});
+      {
+        name: "linkedThreads",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: prsRefInputSchema,
+        outputSchema: prsLinkedThreadsSchema,
+      },
+      {
+        name: "reviewerCandidates",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: prsRefInputSchema,
+        outputSchema: prsReviewerCandidateListSchema,
+      },
+      {
+        name: "labelCandidates",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: prsRefInputSchema,
+        outputSchema: prsLabelCandidateListSchema,
+      },
+      {
+        name: "invalidate",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: { reference: prsRefInputSchema },
+        },
+        outputSchema: prsEmptyOutputSchema,
+      },
+    ],
+    streams: [
+      {
+        name: "streamDiff",
+        requiredGrants: [PRS_READ],
+        inputSchema: prsDiffInputSchema,
+        eventSchema: prsDiffStreamEventSchema,
+      },
+      {
+        name: "streamDiffFileContents",
+        requiredGrants: [PRS_READ],
+        inputSchema: prsDiffFileContentsInputSchema,
+        eventSchema: vcsDiffFileContentsStreamEventSchema,
+      },
+      {
+        name: "subscribeRefreshes",
+        requiredGrants: [PRS_READ],
+        inputSchema: prsEmptyInputSchema,
+        eventSchema: prsRefreshedEventSchema,
+      },
+    ],
+  };
+}
+/**
+ * The pull-request read surface. `list`/`detail`/`activity`/`threadComments`/
+ * `stack`/`summary`/`linkedThreads`/`listStats`/`reviewerCandidates`/
+ * `labelCandidates`/`invalidate` mirror the same-named `pullRequests.*`
+ * reads; `streamDiff`/`streamDiffFileContents` cover the native diff
+ * (HTTP-routed natively) as `t3.vcs/diff@1.1.0`-family frames so payload
+ * size never matters; `subscribeRefreshes` mirrors the native refresh
+ * counter so a plugin re-reads exactly when the native client would.
+ * 1.1.0 only adds optional outputs (`detail.preferredMergeMethod`, and
+ * `observedAt` on list entries and the detail), so consumers still default to
+ * `^1.0.0` and must treat them as absent on a 1.0.0 host.
+ */
+export const prsReadApi: PrsReadApi = defineStreamApi<PrsReadStreams>(
+  prsReadDefinition("1.1.0", prsListResultSchema, prsDetailSchema),
+  {
+    baseline: "1.0.0",
+    additions: [
+      { version: "1.1.0", method: "detail", output: "preferredMergeMethod" },
+      { version: "1.1.0", method: "detail", output: "observedAt" },
+      { version: "1.1.0", method: "list", output: "entries[].observedAt" },
+    ],
+  },
+);
+/** Frozen published 1.0.0 definition; shared definitions are immutable per version. */
+export const prsReadApiV1: PrsReadApi = defineStreamApi<PrsReadStreams>(
+  prsReadDefinition("1.0.0", prsListResultSchemaV1, prsDetailSchemaV1),
+);
 export const PRS_READ_API = prsReadApi.definition;
+export const PRS_READ_API_V1 = prsReadApiV1.definition;
 
 /* ------------------------------------------------------------------------
  * t3.vcs/actions — repository mutation actions (the native stacked-action
@@ -9189,6 +9248,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   resourcesLeaseApiV1.definition,
   workspaceResourcesApi.definition,
   prsReadApi.definition,
+  prsReadApiV1.definition,
   prsWriteApi.definition,
   composerContextApi.definition,
   messagesEnrichmentApi.definition,

@@ -1216,17 +1216,50 @@ export function prsChecksStateFromChecks(
 }
 
 /**
- * The header's checks rollup, reconciled as native's is: a list rollup newer
- * than the detail wins, except that a run awaiting approval keeps it pending
+ * One dated read of a pull request: the detail, or its list row. `observedAt`
+ * is the host's read-start time (`t3.prs/read@1.1.0`), `receivedAt` the
+ * client's arrival time for that successful read.
+ */
+export interface PrsSnapshotStamp {
+  readonly state: "open" | "closed" | "merged";
+  readonly updatedAt: string;
+  readonly observedAt?: number;
+  readonly receivedAt: number;
+}
+
+/**
+ * Positive when `incoming` is newer than `current`, as native orders pull
+ * request snapshots: merged is final, then the host's update time, then its
+ * read-start time (a snapshot without one never beats a stamped read), and
+ * only when neither carries one, the client's arrival time.
+ */
+export function prsCompareSnapshots(current: PrsSnapshotStamp, incoming: PrsSnapshotStamp): number {
+  const merged = Number(incoming.state === "merged") - Number(current.state === "merged");
+  if (merged !== 0) return merged;
+  const updated = Date.parse(incoming.updatedAt) - Date.parse(current.updatedAt);
+  if (updated !== 0) return updated;
+  if (current.observedAt === undefined && incoming.observedAt === undefined)
+    return incoming.receivedAt - current.receivedAt;
+  return (incoming.observedAt ?? -Infinity) - (current.observedAt ?? -Infinity);
+}
+
+/**
+ * The header's checks rollup, reconciled as native's is: the list row's
+ * rollup wins only when that row is the newer snapshot (ties go to the row,
+ * as native's do), except that a run awaiting approval keeps it pending
  * unless something failed (list rollups can omit those runs). `stale` says
  * the detail's own checks no longer back the rollup.
  */
 export function prsReconcileChecks(
   checks: readonly Pick<PrsCheck, "status">[],
-  summaryState: PrsChecksState | undefined,
+  detail: PrsSnapshotStamp,
+  entry: (PrsSnapshotStamp & { readonly checksState?: PrsChecksState }) | undefined,
 ): { readonly state: PrsChecksState | null; readonly stale: boolean } {
   const detailState = prsChecksStateFromChecks(checks);
-  const latest = summaryState === undefined ? detailState : summaryState;
+  const latest =
+    entry?.checksState !== undefined && prsCompareSnapshots(detail, entry) >= 0
+      ? entry.checksState
+      : detailState;
   const state =
     latest !== "failing" && checks.some((check) => check.status === "action-required")
       ? "pending"

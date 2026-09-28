@@ -210,16 +210,15 @@ var __t3Client = (() => {
       return hasInput(child, rest);
     return Array.isArray(child) && child.some((item) => hasInput(item, rest));
   }
-  function defineApi(definition, options = {}) {
-    const validated = validateApiDefinition(definition);
+  function negotiated(definition, options) {
     if (options.baseline === void 0) {
       if (options.additions?.length)
         throw new Error("API additions need a baseline");
-      return { definition: validated };
+      return {};
     }
-    const version = parseVersion(validated.version);
+    const version = parseVersion(definition.version);
     if (!version)
-      throw new Error("An API with a baseline needs a plain X.Y.Z version: " + validated.version);
+      throw new Error("An API with a baseline needs a plain X.Y.Z version: " + definition.version);
     const baseline = parseVersion(options.baseline);
     if (!baseline || baseline[0] !== version[0] || compareVersions(baseline, version) > 0)
       throw new Error("API baseline must be an earlier plain X.Y.Z version of the same major");
@@ -230,19 +229,30 @@ var __t3Client = (() => {
       const added = parseVersion(addition.version);
       if (!added)
         throw new Error("An API addition needs a plain X.Y.Z version: " + JSON.stringify(addition));
-      if (compareVersions(added, baseline) <= 0 || compareVersions(added, version) > 0 || !validated.methods?.some((method) => method.name === addition.method) || !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(addition.input))
+      const path3 = "input" in addition ? addition.input : addition.output;
+      const owners = [
+        ...definition.methods ?? [],
+        ..."output" in addition ? definition.streams ?? [] : []
+      ];
+      if (compareVersions(added, baseline) <= 0 || compareVersions(added, version) > 0 || !owners.some((owner) => owner.name === addition.method) || typeof path3 !== "string" || !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(path3))
         throw new Error("Invalid API addition: " + JSON.stringify(addition));
     }
-    return { definition: validated, baseline: options.baseline, additions };
+    return { baseline: options.baseline, additions };
+  }
+  function defineApi(definition, options = {}) {
+    const validated = validateApiDefinition(definition);
+    return { definition: validated, ...negotiated(validated, options) };
   }
   function defaultVersionRange(api) {
     return "^" + (api.baseline ?? api.definition.version);
   }
   function bindApi(api, client, context, versionRange = defaultVersionRange(api)) {
     const floor = rangeFloor(versionRange);
-    const unnegotiated = (api.additions ?? []).filter((addition) => {
+    const unnegotiated = (api.additions ?? []).flatMap((addition) => {
+      if (!("input" in addition))
+        return [];
       const added = parseVersion(addition.version);
-      return !floor || !added || compareVersions(floor, added) < 0;
+      return !floor || !added || compareVersions(floor, added) < 0 ? [addition] : [];
     });
     return {
       invoke(method, input, signal) {
@@ -253,11 +263,11 @@ var __t3Client = (() => {
       }
     };
   }
-  function defineStreamApi(definition) {
+  function defineStreamApi(definition, options = {}) {
     const validated = validateApiDefinition(definition);
     if (!validated.streams?.length)
       throw new Error("Expected API stream definitions");
-    return { definition: validated };
+    return { definition: validated, ...negotiated(validated, options) };
   }
   function bindStreamApi(api, client, context, versionRange = defaultVersionRange(api)) {
     return {
@@ -4265,7 +4275,7 @@ var __t3Client = (() => {
       detail: { type: ["string", "null"], maxLength: 1024 }
     }
   };
-  var prsListEntrySchema = {
+  var prsListEntrySchemaV1 = {
     type: "object",
     additionalProperties: false,
     required: [
@@ -4326,7 +4336,12 @@ var __t3Client = (() => {
       checksState: { enum: ["passing", "failing", "pending"] }
     }
   };
-  var prsListResultSchema = {
+  var prsObservedAtField = { type: "number", minimum: 0 };
+  var prsListEntrySchema = {
+    ...prsListEntrySchemaV1,
+    properties: { ...prsListEntrySchemaV1.properties, observedAt: prsObservedAtField }
+  };
+  var prsListResultSchemaV1 = {
     type: "object",
     additionalProperties: false,
     required: ["viewers", "providers", "entries", "errors", "truncated", "nextCursors"],
@@ -4337,7 +4352,7 @@ var __t3Client = (() => {
         maxProperties: 100
       },
       providers: { type: "array", maxItems: 100, items: prsProviderSummarySchema },
-      entries: { type: "array", maxItems: 100, items: prsListEntrySchema },
+      entries: { type: "array", maxItems: 100, items: prsListEntrySchemaV1 },
       errors: {
         type: "array",
         maxItems: 100,
@@ -4354,6 +4369,13 @@ var __t3Client = (() => {
       },
       truncated: { type: "boolean" },
       nextCursors: prsCursorsSchema
+    }
+  };
+  var prsListResultSchema = {
+    ...prsListResultSchemaV1,
+    properties: {
+      ...prsListResultSchemaV1.properties,
+      entries: { type: "array", maxItems: 100, items: prsListEntrySchema }
     }
   };
   var prsReviewVerdictsSchema = {
@@ -4450,7 +4472,7 @@ var __t3Client = (() => {
       labels: { type: "boolean" }
     }
   };
-  var prsDetailSchema = {
+  var prsDetailSchemaV1 = {
     type: "object",
     additionalProperties: false,
     required: [
@@ -4529,8 +4551,15 @@ var __t3Client = (() => {
       behindBy: { type: "integer", minimum: 0 },
       autoMergeEnabled: { type: "boolean" },
       autoMergeMethod: { enum: ["merge", "squash", "rebase"] },
-      workflowApprovalsRequired: { type: "integer", minimum: 0 },
-      preferredMergeMethod: { enum: ["merge", "squash", "rebase"] }
+      workflowApprovalsRequired: { type: "integer", minimum: 0 }
+    }
+  };
+  var prsDetailSchema = {
+    ...prsDetailSchemaV1,
+    properties: {
+      ...prsDetailSchemaV1.properties,
+      preferredMergeMethod: { enum: ["merge", "squash", "rebase"] },
+      observedAt: prsObservedAtField
     }
   };
   var prsCommentSchema = {
@@ -4933,174 +4962,186 @@ var __t3Client = (() => {
       newPath: { type: "string", minLength: 1, maxLength: 1024 }
     }
   };
-  var prsReadApi = defineStreamApi({
-    id: PRS_READ,
-    version: "1.0.0",
-    methods: [
-      {
-        name: "getCapabilities",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsEmptyInputSchema,
-        outputSchema: prsCapabilitiesResultSchema
-      },
-      {
-        name: "list",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["state"],
-          properties: {
-            state: { enum: ["all", "open", "closed", "merged"] },
-            involvement: { enum: ["all", "reviewing", "authored"] },
-            filters: prsListFiltersSchema,
-            host: prsHostField,
-            limit: { type: "integer", minimum: 1, maximum: 50 },
-            cursors: prsCursorsSchema,
-            query: { type: "string", minLength: 1, maxLength: 200 }
-          }
+  function prsReadDefinition(version, listResult, detail) {
+    return {
+      id: PRS_READ,
+      version,
+      methods: [
+        {
+          name: "getCapabilities",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsEmptyInputSchema,
+          outputSchema: prsCapabilitiesResultSchema
         },
-        outputSchema: prsListResultSchema
-      },
-      {
-        name: "listStats",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["refs"],
-          properties: {
-            refs: { type: "array", minItems: 1, maxItems: 100, items: prsRefInputSchema }
-          }
+        {
+          name: "list",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["state"],
+            properties: {
+              state: { enum: ["all", "open", "closed", "merged"] },
+              involvement: { enum: ["all", "reviewing", "authored"] },
+              filters: prsListFiltersSchema,
+              host: prsHostField,
+              limit: { type: "integer", minimum: 1, maximum: 50 },
+              cursors: prsCursorsSchema,
+              query: { type: "string", minLength: 1, maxLength: 200 }
+            }
+          },
+          outputSchema: listResult
         },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["stats"],
-          properties: {
-            stats: {
-              type: "array",
-              maxItems: 100,
-              items: {
-                type: "object",
-                additionalProperties: false,
-                required: ["projectId", "repository", "number", "additions", "deletions"],
-                properties: {
-                  projectId: { type: "string", minLength: 1, maxLength: 160 },
-                  repository: prsRepositoryField,
-                  number: { type: "integer", minimum: 1 },
-                  additions: { type: "integer", minimum: 0 },
-                  deletions: { type: "integer", minimum: 0 }
+        {
+          name: "listStats",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["refs"],
+            properties: {
+              refs: { type: "array", minItems: 1, maxItems: 100, items: prsRefInputSchema }
+            }
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["stats"],
+            properties: {
+              stats: {
+                type: "array",
+                maxItems: 100,
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["projectId", "repository", "number", "additions", "deletions"],
+                  properties: {
+                    projectId: { type: "string", minLength: 1, maxLength: 160 },
+                    repository: prsRepositoryField,
+                    number: { type: "integer", minimum: 1 },
+                    additions: { type: "integer", minimum: 0 },
+                    deletions: { type: "integer", minimum: 0 }
+                  }
                 }
               }
             }
           }
+        },
+        {
+          name: "summary",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsRefInputSchema,
+          outputSchema: prsSummarySchema
+        },
+        {
+          name: "detail",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsRefInputSchema,
+          outputSchema: detail
+        },
+        {
+          name: "activity",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsRefInputSchema,
+          outputSchema: prsActivitySchema
+        },
+        {
+          name: "threadComments",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["repository", "number", "threadId", "cursor"],
+            properties: {
+              host: prsHostField,
+              repository: prsRepositoryField,
+              number: { type: "integer", minimum: 1 },
+              threadId: { type: "string", minLength: 1, maxLength: 512 },
+              cursor: { type: "string", minLength: 1, maxLength: 4096 }
+            }
+          },
+          outputSchema: prsThreadCommentsResultSchema
+        },
+        {
+          name: "stack",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsRefInputSchema,
+          outputSchema: prsStackSchema
+        },
+        {
+          name: "linkedThreads",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsRefInputSchema,
+          outputSchema: prsLinkedThreadsSchema
+        },
+        {
+          name: "reviewerCandidates",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsRefInputSchema,
+          outputSchema: prsReviewerCandidateListSchema
+        },
+        {
+          name: "labelCandidates",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsRefInputSchema,
+          outputSchema: prsLabelCandidateListSchema
+        },
+        {
+          name: "invalidate",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            properties: { reference: prsRefInputSchema }
+          },
+          outputSchema: prsEmptyOutputSchema
         }
-      },
-      {
-        name: "summary",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsRefInputSchema,
-        outputSchema: prsSummarySchema
-      },
-      {
-        name: "detail",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsRefInputSchema,
-        outputSchema: prsDetailSchema
-      },
-      {
-        name: "activity",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsRefInputSchema,
-        outputSchema: prsActivitySchema
-      },
-      {
-        name: "threadComments",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["repository", "number", "threadId", "cursor"],
-          properties: {
-            host: prsHostField,
-            repository: prsRepositoryField,
-            number: { type: "integer", minimum: 1 },
-            threadId: { type: "string", minLength: 1, maxLength: 512 },
-            cursor: { type: "string", minLength: 1, maxLength: 4096 }
-          }
+      ],
+      streams: [
+        {
+          name: "streamDiff",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsDiffInputSchema,
+          eventSchema: prsDiffStreamEventSchema
         },
-        outputSchema: prsThreadCommentsResultSchema
-      },
-      {
-        name: "stack",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsRefInputSchema,
-        outputSchema: prsStackSchema
-      },
-      {
-        name: "linkedThreads",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsRefInputSchema,
-        outputSchema: prsLinkedThreadsSchema
-      },
-      {
-        name: "reviewerCandidates",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsRefInputSchema,
-        outputSchema: prsReviewerCandidateListSchema
-      },
-      {
-        name: "labelCandidates",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsRefInputSchema,
-        outputSchema: prsLabelCandidateListSchema
-      },
-      {
-        name: "invalidate",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          properties: { reference: prsRefInputSchema }
+        {
+          name: "streamDiffFileContents",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsDiffFileContentsInputSchema,
+          eventSchema: vcsDiffFileContentsStreamEventSchema
         },
-        outputSchema: prsEmptyOutputSchema
-      }
-    ],
-    streams: [
-      {
-        name: "streamDiff",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsDiffInputSchema,
-        eventSchema: prsDiffStreamEventSchema
-      },
-      {
-        name: "streamDiffFileContents",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsDiffFileContentsInputSchema,
-        eventSchema: vcsDiffFileContentsStreamEventSchema
-      },
-      {
-        name: "subscribeRefreshes",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsEmptyInputSchema,
-        eventSchema: prsRefreshedEventSchema
-      }
+        {
+          name: "subscribeRefreshes",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsEmptyInputSchema,
+          eventSchema: prsRefreshedEventSchema
+        }
+      ]
+    };
+  }
+  var prsReadApi = defineStreamApi(prsReadDefinition("1.1.0", prsListResultSchema, prsDetailSchema), {
+    baseline: "1.0.0",
+    additions: [
+      { version: "1.1.0", method: "detail", output: "preferredMergeMethod" },
+      { version: "1.1.0", method: "detail", output: "observedAt" },
+      { version: "1.1.0", method: "list", output: "entries[].observedAt" }
     ]
   });
+  var prsReadApiV1 = defineStreamApi(prsReadDefinition("1.0.0", prsListResultSchemaV1, prsDetailSchemaV1));
   var PRS_READ_API = prsReadApi.definition;
+  var PRS_READ_API_V1 = prsReadApiV1.definition;
   var VCS_ACTIONS = "t3.vcs/actions";
   var vcsActionKindSchema = {
     enum: ["commit", "push", "create_pr", "commit_push", "commit_push_pr"]
@@ -7738,6 +7779,7 @@ var __t3Client = (() => {
     resourcesLeaseApiV1.definition,
     workspaceResourcesApi.definition,
     prsReadApi.definition,
+    prsReadApiV1.definition,
     prsWriteApi.definition,
     composerContextApi.definition,
     messagesEnrichmentApi.definition,
@@ -7811,6 +7853,17 @@ var __t3Client = (() => {
       return null;
     const { version, Popover } = member;
     return typeof version === "number" && version >= 1 && isComponent(Popover) ? member : null;
+  }
+  function resolveFloatingDialog(host) {
+    const layer = resolveFloatingLayer(host);
+    return layer !== null && layer.version >= 2 && isComponent(layer.Dialog) ? layer.Dialog : null;
+  }
+  function resolvePullRequestPreferences(host) {
+    const member = host.pullRequestPreferences;
+    if (!member || typeof member !== "object")
+      return null;
+    const value = member;
+    return typeof value.version === "number" && value.version >= 1 && ["lastMergeMethod", "setLastMergeMethod", "legacyProjectMergeMethod", "subscribe"].every((key) => typeof value[key] === "function") ? member : null;
   }
   function validateEntry(value) {
     if (typeof value !== "string" || value.length > 240 || !/\.(mjs|js)$/.test(value) || value.split("/").some((part) => !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(part) || part === "." || part === ".."))
@@ -8039,6 +8092,42 @@ var __t3Client = (() => {
   }
   function requireApi(api, versionRange = defaultVersionRange(api)) {
     return { id: api.definition.id, versionRange };
+  }
+  async function copyText(text) {
+    const clipboard = typeof navigator === "undefined" ? void 0 : navigator.clipboard;
+    if (typeof clipboard?.writeText === "function")
+      return clipboard.writeText(text);
+    if (!copyWithSelection(text))
+      throw new Error("Clipboard unavailable");
+  }
+  function copyWithSelection(text) {
+    if (typeof document === "undefined" || typeof document.execCommand !== "function")
+      return false;
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.setAttribute("aria-hidden", "true");
+    Object.assign(textarea.style, {
+      position: "fixed",
+      top: "0",
+      left: "0",
+      opacity: "0",
+      fontSize: "16px"
+    });
+    const previouslyFocused = document.activeElement;
+    document.body.appendChild(textarea);
+    try {
+      textarea.focus({ preventScroll: true });
+      textarea.select();
+      textarea.setSelectionRange(0, text.length);
+      return document.execCommand("copy");
+    } catch {
+      return false;
+    } finally {
+      textarea.remove();
+      if (typeof previouslyFocused?.focus === "function")
+        previouslyFocused.focus();
+    }
   }
   function Tooltip(props) {
     const { host, ...rest } = props;
@@ -8736,20 +8825,60 @@ var __t3Client = (() => {
       dead.current = true;
       setToastsLive(false);
     };
+    const resource = session.context.resource;
+    const target = {
+      ...resource.threadId !== void 0 ? { anchor: "thread", threadId: resource.threadId } : {},
+      ...resource.projectId !== void 0 ? { projectId: resource.projectId } : {}
+    };
+    const receiptSeen = {
+      signal: session.signal,
+      seen: () => session.visible && (typeof document === "undefined" || typeof window === "undefined" || document.visibilityState === "visible" && document.hasFocus()),
+      onChange: (listener) => {
+        const offView = session.onVisibility(listener);
+        if (typeof document === "undefined" || typeof window === "undefined") return offView;
+        document.addEventListener("visibilitychange", listener);
+        window.addEventListener("focus", listener);
+        window.addEventListener("blur", listener);
+        return () => {
+          offView();
+          document.removeEventListener("visibilitychange", listener);
+          window.removeEventListener("focus", listener);
+          window.removeEventListener("blur", listener);
+        };
+      }
+    };
+    const dismiss = (notificationId) => {
+      void bindApi(uiNotificationsApi, host, session.context).invoke("dismiss", { notificationId }, session.signal).catch(() => {
+      });
+    };
+    const report = (patch, onReceiptLost) => {
+      if (!toastsLive || dead.current) return false;
+      void bindApi(uiNotificationsApi, host, session.context).invoke("notify", { ...patch, ...target }, session.signal).then(
+        ({ notificationId }) => {
+          if (dead.current) {
+            dismiss(notificationId);
+            onReceiptLost();
+            return;
+          }
+          if (patch.severity === "success")
+            dismissReceiptAfterSeen(
+              receiptSeen,
+              MUTATION_TOAST_DISMISS_MS,
+              () => dismiss(notificationId)
+            );
+        },
+        () => {
+          markDead();
+          onReceiptLost();
+        }
+      );
+      return true;
+    };
     const begin = (label, onReceiptLost, startTitle) => {
       if (!toastsLive || dead.current) return null;
       const api = bindApi(uiNotificationsApi, host, session.context);
-      const resource = session.context.resource;
       const dismissOrReject = (notificationId) => api.invoke("dismiss", { notificationId }, session.signal).then(() => {
       });
-      const dismiss = (notificationId) => {
-        void dismissOrReject(notificationId).catch(() => {
-        });
-      };
-      const target = {
-        ...resource.threadId !== void 0 ? { anchor: "thread", threadId: resource.threadId } : {},
-        ...resource.projectId !== void 0 ? { projectId: resource.projectId } : {}
-      };
       const posted = api.invoke(
         "notify",
         {
@@ -8769,23 +8898,6 @@ var __t3Client = (() => {
           return null;
         }
       );
-      const receiptSeen = {
-        signal: session.signal,
-        seen: () => session.visible && (typeof document === "undefined" || typeof window === "undefined" || document.visibilityState === "visible" && document.hasFocus()),
-        onChange: (listener) => {
-          const offView = session.onVisibility(listener);
-          if (typeof document === "undefined" || typeof window === "undefined") return offView;
-          document.addEventListener("visibilitychange", listener);
-          window.addEventListener("focus", listener);
-          window.addEventListener("blur", listener);
-          return () => {
-            offView();
-            document.removeEventListener("visibilitychange", listener);
-            window.removeEventListener("focus", listener);
-            window.removeEventListener("blur", listener);
-          };
-        }
-      };
       const settleInPlace = (notificationId, patch) => void api.invoke("update", { notificationId, ...patch }, session.signal).then(
         ({ applied }) => {
           if (!applied) {
@@ -8850,7 +8962,7 @@ var __t3Client = (() => {
         }
       };
     };
-    return { begin };
+    return { begin, report };
   }
 
   // node_modules/@pierre/diffs/dist/constants.js
@@ -10195,9 +10307,18 @@ ${ref.number}`;
     if (statuses.has("pending") || statuses.has("action-required")) return "pending";
     return statuses.has("success") ? "passing" : null;
   }
-  function prsReconcileChecks(checks, summaryState) {
+  function prsCompareSnapshots(current, incoming) {
+    const merged = Number(incoming.state === "merged") - Number(current.state === "merged");
+    if (merged !== 0) return merged;
+    const updated = Date.parse(incoming.updatedAt) - Date.parse(current.updatedAt);
+    if (updated !== 0) return updated;
+    if (current.observedAt === void 0 && incoming.observedAt === void 0)
+      return incoming.receivedAt - current.receivedAt;
+    return (incoming.observedAt ?? -Infinity) - (current.observedAt ?? -Infinity);
+  }
+  function prsReconcileChecks(checks, detail, entry) {
     const detailState = prsChecksStateFromChecks(checks);
-    const latest = summaryState === void 0 ? detailState : summaryState;
+    const latest = entry?.checksState !== void 0 && prsCompareSnapshots(detail, entry) >= 0 ? entry.checksState : detailState;
     const state2 = latest !== "failing" && checks.some((check) => check.status === "action-required") ? "pending" : latest;
     return { state: state2, stale: state2 !== detailState };
   }
@@ -10601,6 +10722,9 @@ ${writeKey}`;
     }, [host, session, enabled]);
     return state2;
   }
+  function stampEntries(entries, receivedAt) {
+    return Object.fromEntries(entries.map((entry) => [prsRefKey(entry), receivedAt]));
+  }
   function usePrsList(host, session, enabled, input, revision2) {
     const inputKey = (0, import_react2.useMemo)(() => JSON.stringify(input), [input]);
     const key = `${revision2}|${inputKey}`;
@@ -10621,6 +10745,7 @@ ${writeKey}`;
               // search hit) must leave the list rather than linger stale.
               // Continuation pages merge on their own path in loadMore.
               entries: result.entries,
+              receivedAt: stampEntries(result.entries, Date.now()),
               result,
               error: null,
               pending: false,
@@ -10633,6 +10758,8 @@ ${writeKey}`;
               key,
               inputKey,
               entries: prev?.inputKey === inputKey ? prev.entries : [],
+              // A failed re-read keeps rows only as old as the read they came from.
+              receivedAt: prev?.inputKey === inputKey ? prev.receivedAt : {},
               result: prev?.inputKey === inputKey ? prev.result : null,
               error: message(error, "Pull requests unavailable"),
               pending: false,
@@ -10662,6 +10789,7 @@ ${writeKey}`;
               (prev) => prev === null || prev.key !== key ? prev : {
                 ...prev,
                 entries: mergePrsEntries(prev.entries, page.entries),
+                receivedAt: { ...prev.receivedAt, ...stampEntries(page.entries, Date.now()) },
                 result: page,
                 loadingMore: false
               }
@@ -10681,6 +10809,7 @@ ${writeKey}`;
     const sameQuestion = state2 !== null && state2.inputKey === inputKey;
     return {
       entries: sameQuestion ? state2.entries : [],
+      receivedAt: sameQuestion ? state2.receivedAt : {},
       result: sameQuestion ? state2.result : null,
       error: state2?.key === key ? state2.error : null,
       pending: state2?.key !== key || state2.pending,
@@ -10690,6 +10819,7 @@ ${writeKey}`;
   }
   var EMPTY_SECTIONS = {
     detail: null,
+    detailReceivedAt: 0,
     detailError: null,
     activity: null,
     activityError: null,
@@ -10719,7 +10849,8 @@ ${writeKey}`;
                 refKey,
                 [field]: value,
                 [errorField]: null,
-                ...field === "stack" ? { stackKey: key } : {}
+                ...field === "stack" ? { stackKey: key } : {},
+                ...field === "detail" ? { detailReceivedAt: Date.now() } : {}
               }));
           },
           (error) => {
@@ -10894,6 +11025,17 @@ ${writeKey}`;
     destructive: "var(--t3-version-control-error, var(--destructive, #b42318))",
     warning: "var(--warning, #b54708)"
   };
+  var TABBABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+  function tabbablesIn(root) {
+    if (typeof root.querySelectorAll !== "function") return [];
+    return [...root.querySelectorAll(TABBABLE)];
+  }
+  function tabbableAfter(from, popup) {
+    const order = tabbablesIn(from.ownerDocument).filter(
+      (element) => popup === null || !popup.contains(element)
+    );
+    return order[order.indexOf(from) + 1] ?? null;
+  }
   function ChecksControl(props) {
     const { host, state: state2, checks, stale = false, loadChecks, onOpenLink } = props;
     const icon = prsChecksIcon(state2);
@@ -10901,6 +11043,18 @@ ${writeKey}`;
     const [lazy, setLazy] = (0, import_react2.useState)({ status: "loading" });
     const trigger = (0, import_react2.useRef)(null);
     const popup = (0, import_react2.useRef)(null);
+    const [popupElement, setPopupElement] = (0, import_react2.useState)(null);
+    const attachPopup = (0, import_react2.useCallback)((element) => {
+      popup.current = element;
+      setPopupElement(element);
+    }, []);
+    (0, import_react2.useEffect)(() => {
+      if (!open || popupElement === null) return;
+      const timer = setTimeout(() => {
+        (tabbablesIn(popupElement)[0] ?? popupElement).focus();
+      }, 0);
+      return () => clearTimeout(timer);
+    }, [open, popupElement]);
     (0, import_react2.useEffect)(() => {
       if (!open || checks !== void 0 || loadChecks === void 0) return;
       const controller = new AbortController();
@@ -10926,9 +11080,9 @@ ${writeKey}`;
       return () => document.removeEventListener("mousedown", onPress);
     }, [open]);
     if (icon === null) return null;
-    const close = () => {
+    const close = (focus = trigger.current) => {
       setOpen(false);
-      trigger.current?.focus();
+      focus?.focus();
     };
     const shown = checks !== void 0 ? { status: "ready", checks } : loadChecks !== void 0 ? lazy : null;
     const summary = checks === void 0 || stale ? null : prsChecksSummary(checks);
@@ -10943,8 +11097,28 @@ ${writeKey}`;
         if (event.key === "Escape") {
           event.preventDefault();
           close();
+          return;
         }
+        if (event.key !== "Tab" || popup.current === null) return;
+        event.preventDefault();
+        const items = tabbablesIn(popup.current);
+        const at = items.findIndex((item) => item === popup.current?.ownerDocument.activeElement);
+        const next = event.shiftKey ? at === -1 ? -1 : at - 1 : at + 1;
+        if (next >= 0 && next < items.length) items[next]?.focus();
+        else if (event.shiftKey || trigger.current === null) close();
+        else close(tabbableAfter(trigger.current, popup.current) ?? trigger.current);
       },
+      onBlur: (event) => {
+        const inside = (node) => node != null && (popup.current?.contains(node) === true || trigger.current?.contains(node) === true);
+        if (event.relatedTarget !== null) {
+          if (!inside(event.relatedTarget)) setOpen(false);
+          return;
+        }
+        setTimeout(() => {
+          if (!inside(popup.current?.ownerDocument.activeElement)) setOpen(false);
+        }, 0);
+      },
+      tabIndex: -1,
       style: {
         width: 320,
         maxWidth: "calc(100vw - 24px)",
@@ -11025,16 +11199,14 @@ ${writeKey}`;
           anchor: trigger.current,
           side: "bottom",
           align: "start",
-          elementRef: (element) => {
-            popup.current = element;
-          },
+          elementRef: attachPopup,
           children: body
         }
       ) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
         "div",
         {
           ...popupProps,
-          ref: popup,
+          ref: attachPopup,
           style: { ...popupProps.style, position: "absolute", top: "100%", left: 0, zIndex: 10 },
           children: body
         }
@@ -11058,12 +11230,7 @@ ${writeKey}`;
       return () => clearTimeout(timer);
     }, [copied]);
     const copy = () => {
-      const clipboard = typeof navigator === "undefined" ? void 0 : navigator.clipboard;
-      if (clipboard === void 0) {
-        onError("Clipboard unavailable");
-        return;
-      }
-      clipboard.writeText(value).then(
+      copyText(value).then(
         () => setCopied(true),
         (error) => onError(message(error, "Copy failed"))
       );
@@ -11694,11 +11861,14 @@ ${writeKey}`;
     const cancel = (0, import_react2.useRef)(null);
     const confirm = (0, import_react2.useRef)(null);
     const opener = (0, import_react2.useRef)(anchor);
+    const HostDialog = resolveFloatingDialog(host);
+    const hosted = HostDialog !== null;
     (0, import_react2.useEffect)(() => {
+      if (hosted) return;
       cancel.current?.focus();
       const returnTo = opener.current;
       return () => returnTo?.focus();
-    }, []);
+    }, [hosted]);
     const onKeyDown = (event) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -11732,34 +11902,48 @@ ${writeKey}`;
       background: "var(--t3-version-control-background, var(--popover, var(--background, #fff)))",
       boxShadow: "0 8px 28px rgba(0, 0, 0, 0.18)"
     };
+    const actions = /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "button",
+        {
+          ref: cancel,
+          type: "button",
+          disabled: pending,
+          onClick: onCancel,
+          style: { ...control, fontSize: 12, border },
+          children: "Cancel"
+        }
+      ),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "button",
+        {
+          ref: confirm,
+          type: "button",
+          disabled: pending,
+          onClick: onConfirm,
+          style: { ...control, fontSize: 12, border },
+          children: pending ? "Working\u2026" : confirmLabel
+        }
+      )
+    ] });
+    if (HostDialog !== null)
+      return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        HostDialog,
+        {
+          title,
+          description,
+          dismissible: !pending,
+          onDismiss: onCancel,
+          initialFocus: cancel,
+          footer: actions,
+          children: props.children
+        }
+      );
     const body = /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { id: titleId, style: { fontSize: 13 }, children: title }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { id: descriptionId, style: { margin: "4px 0", color: muted }, children: description }),
       props.children,
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 6 }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          "button",
-          {
-            ref: cancel,
-            type: "button",
-            disabled: pending,
-            onClick: onCancel,
-            style: { ...control, fontSize: 12, border },
-            children: "Cancel"
-          }
-        ),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          "button",
-          {
-            ref: confirm,
-            type: "button",
-            disabled: pending,
-            onClick: onConfirm,
-            style: { ...control, fontSize: 12, border },
-            children: pending ? "Working\u2026" : confirmLabel
-          }
-        )
-      ] })
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 6 }, children: actions })
     ] });
     const Popover = resolveFloatingLayer(host)?.Popover;
     if (Popover !== void 0 && anchor !== null)
@@ -11861,6 +12045,23 @@ ${writeKey}`;
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PrsWriteErrorLine, { error })
     ] });
   }
+  var MERGE_METHODS = ["merge", "squash", "rebase"];
+  function useRememberedMergeMethod(host) {
+    const preferences = resolvePullRequestPreferences(host);
+    const [local, setLocal] = (0, import_react2.useState)(null);
+    const [, setChanged] = (0, import_react2.useState)(0);
+    (0, import_react2.useEffect)(() => preferences?.subscribe(() => setChanged((count) => count + 1)), [preferences]);
+    return {
+      last: preferences === null ? local : preferences.lastMergeMethod(),
+      legacy: (project) => preferences?.legacyProjectMergeMethod(project) ?? void 0,
+      remember: (value) => {
+        const method = MERGE_METHODS.find((candidate) => candidate === value);
+        if (method === void 0) return;
+        if (preferences === null) setLocal(method);
+        else preferences.setLastMergeMethod(method);
+      }
+    };
+  }
   function PullRequestsPanel(props) {
     const { host, session, visible, selected, onSelect } = props;
     const [tick, setTick] = (0, import_react2.useState)(0);
@@ -11884,7 +12085,7 @@ ${writeKey}`;
     const writeOps = write.kind === "ready" ? write.operations : null;
     const [drafts, setDrafts] = (0, import_react2.useState)({});
     const [writeState, setWriteState] = (0, import_react2.useState)(null);
-    const [lastMergeMethod, setLastMergeMethod] = (0, import_react2.useState)(null);
+    const rememberedMergeMethod = useRememberedMergeMethod(host);
     const [openError, setOpenError] = (0, import_react2.useState)(null);
     const [stackConfirm, setStackConfirm] = (0, import_react2.useState)(null);
     const stackMergeOpener = (0, import_react2.useRef)(null);
@@ -11973,6 +12174,9 @@ ${writeKey}`;
         if (toast === null || lost) showInline(receipt2);
         else toast.settleWith(receiptToast(receipt2));
       };
+    };
+    const reportResult = (receipt2, showInline) => {
+      if (!toasts.report(receiptToast(receipt2), () => showInline(receipt2))) showInline(receipt2);
     };
     const startCheckout = (url, mode) => {
       if (selectedKey === null || handoff !== null) return;
@@ -12151,21 +12355,26 @@ ${thread.id}`;
       stackError: sections.stackError
     });
     const repositoryUrl = detail === null ? null : prsRepositoryUrl(detail.url);
+    const selectedEntry = selectedKey === null ? void 0 : list.entries.find((entry) => prsRefKey(entry) === selectedKey);
     const checksRollup = detail === null ? null : prsReconcileChecks(
       detail.checks,
-      list.entries.find((entry) => selectedKey !== null && prsRefKey(entry) === selectedKey)?.checksState
+      { ...detail, receivedAt: sections.detailReceivedAt },
+      selectedEntry === void 0 || selectedKey === null ? void 0 : { ...selectedEntry, receivedAt: list.receivedAt[selectedKey] ?? 0 }
     );
     const checksHeading = detail === null || checksRollup === null ? null : checksRollup.stale ? prsChecksIcon(checksRollup.state)?.label ?? "No checks reported" : prsChecksSummary(detail.checks);
     const allowedMergeMethods = detail === null ? [] : prsAllowedMergeMethods(detail);
     const mergeMethod = prsResolveMergeMethod(
       allowedMergeMethods,
       draft("method:merge") || null,
-      detail?.preferredMergeMethod,
-      lastMergeMethod
+      detail === null ? void 0 : detail.preferredMergeMethod ?? rememberedMergeMethod.legacy({
+        environmentId: session.context.resource.environmentId,
+        projectId: detail.projectId
+      }),
+      rememberedMergeMethod.last
     );
     const pickMergeMethod = (value) => {
       setDraft("method:merge", value);
-      setLastMergeMethod(value);
+      rememberedMergeMethod.remember(value);
     };
     const stackMerge = detail !== null && selected !== null && sections.stack !== null && sections.stackFresh && sections.stackError === null && write.kind === "ready" && prsCanMergeStack(detail, write) ? prsStackMergePlan(sections.stack, selected.number, mergeMethod) : null;
     const stackRebase = detail !== null && sections.stack !== null && sections.stack.layers.length > 0 && sections.stackFresh && sections.stackError === null && write.kind === "ready" && prsCanRebaseStack(detail, write) ? prsStackRebasePlan(sections.stack) : null;
@@ -12174,7 +12383,7 @@ ${thread.id}`;
       const opener = action === "merge" ? stackMergeOpener : stackRebaseOpener;
       setStackConfirm({ refKey: selectedKey, action, opener: opener.current });
     };
-    const confirmPlan = stackConfirm === null || stackConfirm.refKey !== selectedKey ? null : stackConfirm.action === "merge" ? stackMerge : stackRebase;
+    const confirmPlan = stackConfirm === null || stackConfirm.refKey !== selectedKey ? null : stackConfirm.running ?? (stackConfirm.action === "merge" ? stackMerge : stackRebase);
     const confirming = confirmPlan !== null ? stackConfirm : null;
     const stackActionPending = confirming !== null && writePending(`stack:${confirming.action}`);
     const runStackAction = () => {
@@ -12183,19 +12392,18 @@ ${thread.id}`;
       const ref = selected;
       const refKey = selectedKey;
       const { action } = confirming;
+      setStackConfirm({ ...confirming, running: confirmPlan });
       setStackReceipt(null);
-      const report = beginReport(
-        action === "merge" ? "Merge stack" : "Rebase stack",
-        void 0,
-        (receipt2) => setStackReceipt({ refKey, receipt: receipt2 })
-      );
       runWrite(
         `stack:${action}`,
         (signal) => writeApi().invoke("runAction", { ...ref, ...confirmPlan.input }, signal),
         void 0,
         (outcome) => {
           setStackConfirm(null);
-          report(action === "merge" ? prsStackMergeReceipt(outcome) : prsStackRebaseReceipt(outcome));
+          reportResult(
+            action === "merge" ? prsStackMergeReceipt(outcome) : prsStackRebaseReceipt(outcome),
+            (receipt2) => setStackReceipt({ refKey, receipt: receipt2 })
+          );
         }
       );
     };

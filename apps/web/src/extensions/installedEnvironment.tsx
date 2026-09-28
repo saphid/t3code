@@ -49,6 +49,7 @@ import { createKeybindingsHostBridge } from "./keybindingsHostBridge";
 import { hostCodeView } from "./codeView/hostCodeView";
 import { hostTooltip } from "./hostTooltip";
 import { hostFloatingLayer } from "./floatingLayer/hostFloatingLayer";
+import { hostPullRequestPreferences } from "./hostPullRequestPreferences";
 import {
   CLIENT_PROVIDER_CLIENT_TAG,
   CLIENT_PROVIDER_DESCRIPTORS,
@@ -457,6 +458,7 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
       codeView: hostCodeView,
       tooltip: hostTooltip,
       floatingLayer: hostFloatingLayer,
+      pullRequestPreferences: hostPullRequestPreferences,
       register: (extension, client) => {
         const unregister = registerWorkspaceExtension(
           extension,
