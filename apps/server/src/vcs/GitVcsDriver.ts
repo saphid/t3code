@@ -199,7 +199,14 @@ export interface GitFetchPullRequestBranchInput {
 
 export interface GitFetchPullRequestHeadCommitInput {
   cwd: string;
+  remoteName: string;
   prNumber: number;
+}
+
+export interface GitResolveRepositoryRemoteInput {
+  cwd: string;
+  /** A repository key as `normalizeGitRemoteUrl` produces it. */
+  repositoryKey: string;
 }
 
 export interface GitResolveCommitInput {
@@ -347,6 +354,10 @@ export class GitVcsDriver extends Context.Service<
     ) => Effect.Effect<GitRefreshCheckedOutBranchResult, GitCommandError>;
     readonly ensureRemote: (input: GitEnsureRemoteInput) => Effect.Effect<string, GitCommandError>;
     readonly resolvePrimaryRemoteName: (cwd: string) => Effect.Effect<string, GitCommandError>;
+    /** The remote whose configured URL names the repository, or null when none does. */
+    readonly resolveRepositoryRemoteName: (
+      input: GitResolveRepositoryRemoteInput,
+    ) => Effect.Effect<string | null, GitCommandError>;
     readonly resolveDefaultBranchName: (
       cwd: string,
       remoteName: string,

@@ -11025,10 +11025,12 @@ ${writeKey}`;
     destructive: "var(--t3-version-control-error, var(--destructive, #b42318))",
     warning: "var(--warning, #b54708)"
   };
-  var TABBABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+  var FOCUSABLE = 'a[href],button,input:not([type="hidden"]),select,textarea,[tabindex]';
   function tabbablesIn(root) {
     if (typeof root.querySelectorAll !== "function") return [];
-    return [...root.querySelectorAll(TABBABLE)];
+    return [...root.querySelectorAll(FOCUSABLE)].filter(
+      (element) => element.tabIndex >= 0 && !element.matches(":disabled") && element.closest("[hidden],[inert]") === null
+    );
   }
   function tabbableAfter(from, popup) {
     const order = tabbablesIn(from.ownerDocument).filter(

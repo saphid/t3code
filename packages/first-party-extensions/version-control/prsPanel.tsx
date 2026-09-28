@@ -877,13 +877,21 @@ type LazyChecks =
   | { readonly status: "ready"; readonly checks: readonly PrsCheck[] }
   | { readonly status: "error"; readonly detail: string };
 
-const TABBABLE =
-  'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+const FOCUSABLE = 'a[href],button,input:not([type="hidden"]),select,textarea,[tabindex]';
 
-/** The controls Tab visits inside `root`, in document order. */
+/**
+ * The controls Tab visits inside `root`, in document order: focusable ones
+ * whose tabIndex keeps them in the Tab order, and that no disabled state,
+ * `hidden` or `inert` ancestor takes out of it.
+ */
 function tabbablesIn(root: Element | Document): HTMLElement[] {
   if (typeof root.querySelectorAll !== "function") return [];
-  return [...root.querySelectorAll<HTMLElement>(TABBABLE)];
+  return [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+    (element) =>
+      element.tabIndex >= 0 &&
+      !element.matches(":disabled") &&
+      element.closest("[hidden],[inert]") === null,
+  );
 }
 
 /**

@@ -388,7 +388,7 @@ describe("checks popover", () => {
       url: `https://ci.example/${name}`,
     }) as PrsCheck;
 
-  async function renderChecks() {
+  async function renderChecks(between: React.ReactNode = null) {
     await act(async () =>
       root.render(
         <>
@@ -399,6 +399,7 @@ describe("checks popover", () => {
             checks={[check("lint"), check("test")]}
             onOpenLink={() => {}}
           />
+          {between}
           <button type="button">After</button>
         </>,
       ),
@@ -420,6 +421,27 @@ describe("checks popover", () => {
     expect(popover()).toBeNull();
     expect(document.activeElement?.textContent).toBe("After");
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("tabs past controls that are not Tab stops", async () => {
+    await renderChecks(
+      <>
+        <button type="button" tabIndex={-1}>
+          Not a Tab stop
+        </button>
+        <button type="button" hidden>
+          Hidden
+        </button>
+        <div inert>
+          <button type="button">Inert</button>
+        </div>
+      </>,
+    );
+    await press("Enter");
+    await press("Tab");
+    await press("Tab");
+    expect(popover()).toBeNull();
+    expect(document.activeElement?.textContent).toBe("After");
   });
 
   it("Shift-Tab and Escape close it back onto the trigger", async () => {

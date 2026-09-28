@@ -4472,6 +4472,12 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const pullHead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
       yield* runGit(repoDir, ["push", "origin", `HEAD:refs/pull/${number}/head`]);
       yield* runGit(repoDir, ["reset", "--hard", firstCommit]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://github.com/pingdotgg/codething-mvp.git",
+        remoteDir,
+      );
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
           pullRequest: {
@@ -4592,6 +4598,12 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       }
       yield* runGit(repoDir, ["reset", "--hard", firstCommit]);
       yield* runGit(repoDir, ["checkout", "main"]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://bitbucket.org/owner/repo.git",
+        remoteDir,
+      );
       const { service } = createGitHubCliWithFakeGh();
       const base = yield* GitHubSourceControlProvider.make.pipe(
         Effect.provide(Layer.succeed(GitHubCli.GitHubCli, service)),
@@ -4717,7 +4729,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
   );
 
   it.effect(
-    "local PR checkout reports, and keeps, local commits on a differently named checkout branch",
+    "local PR checkout refuses, and keeps, local commits on a differently named checkout branch",
     () =>
       Effect.gen(function* () {
         const { repoDir, manager } = yield* setUpSwitchOnlyPullRequest({
@@ -4734,14 +4746,165 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         const localCommit = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
         yield* runGit(repoDir, ["checkout", "main"]);
 
-        const result = yield* preparePullRequestThread(manager, {
+        const outcome = yield* preparePullRequestThread(manager, {
           cwd: repoDir,
           reference: "98",
           mode: "local",
+        }).pipe(
+          Effect.match({
+            onFailure: (error) => error.message,
+            onSuccess: () => "checked out",
+          }),
+        );
+
+        expect(outcome).toContain("The local branch pulls/98 has commits");
+        expect((yield* runGit(repoDir, ["rev-parse", "pulls/98"])).stdout.trim()).toBe(localCommit);
+        expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe("main");
+      }),
+  );
+
+  it.effect(
+    "local PR checkout ignores a divergent local branch named after the head when the provider checks out another",
+    () =>
+      Effect.gen(function* () {
+        const { repoDir, manager, pullHead } = yield* setUpSwitchOnlyPullRequest({
+          number: 197,
+          headBranch: "feature/source",
+          localBranch: "pulls/197",
+          publishPullRef: true,
+          pushHeadBranch: false,
+        });
+        yield* runGit(repoDir, ["checkout", "-b", "feature/source"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "unrelated.txt"), "unrelated local work\n");
+        yield* runGit(repoDir, ["add", "unrelated.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Unrelated local source-name branch"]);
+        const unrelated = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["checkout", "main"]);
+
+        const outcome = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "197",
+          mode: "local",
+        }).pipe(
+          Effect.match({
+            onFailure: (error) => ({ error: error.message }),
+            onSuccess: (result) => result,
+          }),
+        );
+
+        expect(outcome).toMatchObject({ branch: "pulls/197", isOnPullRequestHead: true });
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(pullHead);
+        expect((yield* runGit(repoDir, ["rev-parse", "feature/source"])).stdout.trim()).toBe(
+          unrelated,
+        );
+      }),
+  );
+
+  // origin is a fork holding a different pull request under the same number as the upstream one
+  // the provider resolved.
+  const setUpCollidingPullRequestNumbers = (input: { readonly visibleUrls: boolean }) =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      const upstreamDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["remote", "add", "upstream", upstreamDir]);
+      yield* runGit(repoDir, ["push", "origin", "main"]);
+      yield* runGit(repoDir, ["push", "upstream", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/right-pr"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "right.txt"), "wanted PR\n");
+      yield* runGit(repoDir, ["add", "right.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Wanted PR"]);
+      const wanted = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, [
+        "push",
+        "upstream",
+        "HEAD:refs/heads/feature/right-pr",
+        "HEAD:refs/pull/198/head",
+      ]);
+      yield* runGit(repoDir, ["checkout", "-b", "wrong-origin-pr"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "wrong.txt"), "unrelated PR in origin\n");
+      yield* runGit(repoDir, ["add", "wrong.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Different PR sharing the number"]);
+      yield* runGit(repoDir, ["push", "origin", "HEAD:refs/pull/198/head"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      if (input.visibleUrls) {
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          "https://github.com/fork/repo.git",
+          originDir,
+        );
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "upstream",
+          "https://github.com/upstream/repo.git",
+          upstreamDir,
+        );
+      }
+      const { service } = createGitHubCliWithFakeGh();
+      const base = yield* GitHubSourceControlProvider.make.pipe(
+        Effect.provide(Layer.succeed(GitHubCli.GitHubCli, service)),
+      );
+      const provider: SourceControlProvider["Service"] = {
+        ...base,
+        getChangeRequest: () =>
+          Effect.succeed({
+            provider: "github" as const,
+            number: 198,
+            title: "Wanted upstream PR",
+            url: "https://github.com/upstream/repo/pull/198",
+            baseRefName: "main",
+            headRefName: "feature/right-pr",
+            state: "open" as const,
+            isCrossRepository: false,
+            headRepositoryNameWithOwner: "upstream/repo",
+            headRepositoryOwnerLogin: "upstream",
+            updatedAt: Option.none(),
+          }),
+        getRepositoryCloneUrls: () =>
+          Effect.succeed({ nameWithOwner: "upstream/repo", url: upstreamDir, sshUrl: upstreamDir }),
+        checkoutChangeRequest: (checkout) =>
+          Effect.sync(() => runGitSyncForFakeGh(checkout.cwd, ["checkout", "feature/right-pr"])),
+      };
+      const { manager } = yield* makeManager({ sourceControlProvider: provider });
+      return { repoDir, manager, wanted };
+    });
+
+  it.effect("local PR checkout reads the pull ref only from the pull request's repository", () =>
+    Effect.gen(function* () {
+      const { repoDir, manager, wanted } = yield* setUpCollidingPullRequestNumbers({
+        visibleUrls: true,
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "https://github.com/upstream/repo/pull/198",
+        mode: "local",
+      });
+
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(wanted);
+      expect(result.isOnPullRequestHead).toBe(true);
+    }),
+  );
+
+  it.effect(
+    "local PR checkout falls back to the provider's head repository, not a same-number ref on origin",
+    () =>
+      Effect.gen(function* () {
+        const { repoDir, manager, wanted } = yield* setUpCollidingPullRequestNumbers({
+          visibleUrls: false,
         });
 
-        expect(result.isOnPullRequestHead).toBe(false);
-        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(localCommit);
+        const result = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "https://github.com/upstream/repo/pull/198",
+          mode: "local",
+        });
+
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(wanted);
+        expect(result.isOnPullRequestHead).toBe(true);
       }),
   );
 
@@ -5655,6 +5818,12 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* runGit(repoDir, ["push", "origin", "HEAD:refs/pull/90/head"]);
       yield* runGit(repoDir, ["checkout", "main"]);
       yield* runGit(repoDir, ["branch", "-D", "feature/pr-ref-only"]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://github.com/pingdotgg/codething-mvp.git",
+        remoteDir,
+      );
 
       const { manager } = yield* makeManager({
         ghScenario: {
