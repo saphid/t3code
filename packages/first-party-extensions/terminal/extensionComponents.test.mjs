@@ -2027,7 +2027,7 @@ NodeTest.describe("toolbar hover help", () => {
     "terminal.close": "⌘W",
   };
 
-  async function renderToolbar(restoreState) {
+  async function renderToolbar(restoreState, metadata = {}) {
     const ids = restoreState.terminalIds;
     const host = {
       React,
@@ -2038,7 +2038,12 @@ NodeTest.describe("toolbar hover help", () => {
       subscribeApi: (request, signal) => ({
         async *[Symbol.asyncIterator]() {
           if (request.id === "t3.terminal/sessions" && request.name === "list")
-            yield { value: { kind: "snapshot", terminals: ids.map(sessionMetadata) } };
+            yield {
+              value: {
+                kind: "snapshot",
+                terminals: ids.map((id) => ({ ...sessionMetadata(id), ...metadata[id] })),
+              },
+            };
           await new Promise((resolve) =>
             signal.aborted ? resolve() : signal.addEventListener("abort", resolve, { once: true }),
           );
@@ -2074,7 +2079,20 @@ NodeTest.describe("toolbar hover help", () => {
         return [name, tooltip.props];
       }),
     );
-    return { help, unmount: () => act(async () => renderer.unmount()) };
+    // Each session button's accessible name: aria-label, else its text.
+    const sessionNames = Object.fromEntries(
+      renderer.root
+        .findAll((node) => node.type === "li" && node.props["data-t3-terminal-session"])
+        .map((row) => {
+          const button = row.findByType("button");
+          return [
+            row.props["data-t3-terminal-session"],
+            button.props["aria-label"] ??
+              button.children.filter((child) => typeof child === "string").join(""),
+          ];
+        }),
+    );
+    return { help, sessionNames, unmount: () => act(async () => renderer.unmount()) };
   }
 
   NodeTest.test("each toolbar and session action names itself and its shortcut", async () => {
@@ -2096,6 +2114,21 @@ NodeTest.describe("toolbar hover help", () => {
       });
       // Native's action popovers open below their trigger.
       for (const props of view.help.values()) NodeAssert.equal(props.side, "bottom");
+    } finally {
+      await view.unmount();
+    }
+  });
+
+  NodeTest.test("a session button announces its status, not only its hover help", async () => {
+    // The status tooltip is visual; screen readers navigating an inactive
+    // exited session must still hear why it is not running.
+    const view = await renderToolbar(
+      { terminalIds: ["a", "b"], activeTerminalId: "a" },
+      { b: { status: "exited", exitCode: 2 } },
+    );
+    try {
+      NodeAssert.equal(view.sessionNames.a, "a");
+      NodeAssert.match(view.sessionNames.b, /^b — .*exited \(code 2\)/);
     } finally {
       await view.unmount();
     }

@@ -1508,11 +1508,13 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
             {group.terminalIds.map((terminalId) => {
               const tab = tabById.get(terminalId);
               if (!tab) return null;
+              const status = sessionStatusText(tab);
               return (
                 <li key={tab.terminalId} data-t3-terminal-session={tab.terminalId}>
-                  <Tooltip host={host} label={sessionStatusText(tab) ?? tab.label} side="bottom">
+                  <Tooltip host={host} label={status ?? tab.label} side="bottom">
                     <button
                       type="button"
+                      aria-label={status ? [tab.label, status].join(" — ") : undefined}
                       aria-current={tab.terminalId === activeId ? "true" : undefined}
                       onClick={() => panel.activate(tab.terminalId)}
                       style={{
