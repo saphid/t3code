@@ -59,6 +59,8 @@ export function SelectedApiPresentation(props: {
     record?: ViewRecord;
     storageKey?: string;
     navigation?: { readonly id: string; readonly restoreState: Json };
+    /** A later open that failed; the view it could not navigate stays. */
+    navigationError?: string;
     error?: string;
     legacy?: boolean;
   }>();
@@ -131,29 +133,32 @@ export function SelectedApiPresentation(props: {
           fallback: "Selected presentation unavailable",
         };
         const storageKey = presentationStateKey(JSON.stringify([request, context]), record);
-        // The same surface is navigated in place, keeping its session and
-        // edits; only a first or different view restores saved state.
-        setState((previous) => ({
+        // The same surface is navigated in place, keeping its session, edits
+        // and saved state, which moves to the new request's key; only a first
+        // or different view restores saved state.
+        const previous = latest.current;
+        const kept =
+          previous?.key === key && previous.record?.surfaceId === record.surfaceId
+            ? previous.record
+            : undefined;
+        if (kept) savePresentationState(storageKey, kept);
+        setState({
           key,
           storageKey,
           navigation: { id: requestKey, restoreState: record.restoreState },
-          record:
-            previous?.key === key && previous.record?.surfaceId === record.surfaceId
-              ? record
-              : restorePresentationState(storageKey, record),
-        }));
+          record: kept ?? restorePresentationState(storageKey, record),
+        });
       } catch (error) {
-        // A failed navigation leaves the mounted view as it was.
-        if (!controller.signal.aborted)
-          setState((previous) =>
-            previous?.key === key && previous.record
-              ? previous
-              : {
-                  key,
-                  error:
-                    error instanceof Error ? error.message : "Selected presentation unavailable",
-                },
-          );
+        if (controller.signal.aborted) return;
+        const message =
+          error instanceof Error ? error.message : "Selected presentation unavailable";
+        // A failed navigation keeps the mounted view and its edits, and says
+        // the open failed.
+        setState((previous) =>
+          previous?.key === key && previous.record
+            ? { ...previous, navigationError: message }
+            : { key, error: message },
+        );
       }
     })();
     return () => controller.abort();
@@ -162,21 +167,28 @@ export function SelectedApiPresentation(props: {
   if (state.error) return <div role="status">{state.error}</div>;
   if (state.legacy) return props.fallback;
   return state.record ? (
-    <WorkspaceExtensionSurface
-      record={state.record}
-      visible={props.visible}
-      {...(state.navigation ? { navigation: state.navigation } : {})}
-      onRecordChange={(record) => {
-        const current = latest.current;
-        if (current?.key !== key || current.storageKey === undefined) return;
-        try {
-          savePresentationState(current.storageKey, record);
-        } catch {
-          setState({ key, error: "Could not save presentation state" });
-          return;
-        }
-        setState({ ...current, record });
-      }}
-    />
+    <>
+      {state.navigationError ? (
+        <div role="alert" className="border-b px-3 py-2 text-destructive text-xs">
+          {state.navigationError}
+        </div>
+      ) : null}
+      <WorkspaceExtensionSurface
+        record={state.record}
+        visible={props.visible}
+        {...(state.navigation ? { navigation: state.navigation } : {})}
+        onRecordChange={(record) => {
+          const current = latest.current;
+          if (current?.key !== key || current.storageKey === undefined) return;
+          try {
+            savePresentationState(current.storageKey, record);
+          } catch {
+            setState({ key, error: "Could not save presentation state" });
+            return;
+          }
+          setState({ ...current, record });
+        }}
+      />
+    </>
   ) : null;
 }

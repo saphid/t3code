@@ -384,10 +384,15 @@ function useFilePreferences(host: ClientHost, session: ViewSession, visible: boo
   // host without the preference. Until then the saved HTML choice is unknown.
   const [answered, setAnswered] = useState(false);
   const [writeError, setWriteError] = useState<string | null>(null);
+  // Counts the user's own HTML choices. A first answer begun before the
+  // latest one is older than it and leaves the HTML choice alone.
+  const htmlChoices = useRef(0);
   useEffect(() => {
     if (!visible) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
+    const begunAt = htmlChoices.current;
+    const current = () => htmlChoices.current === begunAt;
     let subscribed = false;
     let streamAnswered = false;
     void watchPreferences({
@@ -396,7 +401,7 @@ function useFilePreferences(host: ClientHost, session: ViewSession, visible: boo
       signal,
       apply: (preferences) => {
         setValue(preferences?.wordWrap ?? null);
-        if (preferences?.renderBrowserFile !== undefined)
+        if (preferences?.renderBrowserFile !== undefined && (streamAnswered || current()))
           setRenderHtml(preferences.renderBrowserFile);
         // The clear watchPreferences makes synchronously as it subscribes is
         // not an answer; every later call is.
@@ -415,7 +420,7 @@ function useFilePreferences(host: ClientHost, session: ViewSession, visible: boo
       .then(
         (preferences) => {
           if (signal.aborted || streamAnswered) return;
-          if (preferences.renderBrowserFile !== undefined)
+          if (preferences.renderBrowserFile !== undefined && current())
             setRenderHtml(preferences.renderBrowserFile);
           setAnswered(true);
         },
@@ -437,7 +442,10 @@ function useFilePreferences(host: ClientHost, session: ViewSession, visible: boo
       if (!session.signal.aborted) setWriteError(error);
     });
   };
-  return { wordWrap: { value, writeError, toggle }, renderHtml, answered };
+  const chooseHtml = () => {
+    htmlChoices.current++;
+  };
+  return { wordWrap: { value, writeError, toggle }, renderHtml, answered, chooseHtml };
 }
 
 /**
@@ -1490,6 +1498,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     const next = selectedKind !== "html";
     setRenderHtml(next);
     setHtmlChosen(true);
+    preferences.chooseHtml();
     if (next) setRevealRequest(null);
     void writeRenderHtml({
       client: host,

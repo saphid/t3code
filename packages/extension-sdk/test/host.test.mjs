@@ -78,12 +78,14 @@ NodeTest.test("navigate reaches a listening view in place and restarts one witho
   const received = [];
   // `?.` keeps a host without navigation failing on the assertions below.
   f.sessions[0].onNavigate?.((state) => received.push(state));
+  f.sessions[0].save({ count: 7 });
   await f.host.navigate?.(a, { count: 2 });
   await f.host.navigate?.(a, { count: 2 });
   NodeAssert.deepEqual(received, [{ count: 2 }, { count: 2 }]);
   NodeAssert.equal(f.sessions.length, 1);
   NodeAssert.equal(f.sessions[0].signal.aborted, false);
-  NodeAssert.deepEqual(f.host.snapshot(a).record.restoreState, { count: 2 });
+  // The navigation is an intent; the view's saved state is its own to change.
+  NodeAssert.deepEqual(f.host.snapshot(a).record.restoreState, { count: 7 });
   const b = await f.host.open(record());
   await f.host.navigate?.(b, { count: 5 });
   NodeAssert.equal(f.sessions.length, 3);

@@ -450,7 +450,8 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
   /**
    * Whether the connection's `apiId` area carries `range`. Additions to an
    * area render only on a client that registered a version inside it; an
-   * older one would reject the frame. An unlisted version is taken as current.
+   * older one would reject the frame. A client that lists no version for the
+   * area has none of its additions.
    */
   const clientSupports = async (
     connectionId: string,

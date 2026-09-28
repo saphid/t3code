@@ -108,12 +108,18 @@ interface Disk {
   readonly files: Record<string, string>;
   /** The selected presentation provider's version; the pack's own by default. */
   readonly presentationVersion?: string;
+  /** Rejects the presentation provider's `open` while it returns an error. */
+  readonly presentationError?: () => Error | undefined;
   /** The save outcome for the nth save (1-based). */
   readonly save?: (count: number) => unknown;
   /** Preference frames; a promise holds the stream until it settles. */
   readonly preferences?: Promise<Frame | Error>;
   /** The unary preference read; follows the stream unless given. */
   readonly preferencesRead?: Promise<Frame | Error>;
+  /** A later preference change the stream carries after its first frame. */
+  readonly preferenceChange?: Promise<Frame>;
+  /** The preference write's receipt; unavailable unless given. */
+  readonly preferenceWrite?: Promise<unknown>;
 }
 
 type Calls = {
@@ -159,9 +165,18 @@ function packHost(disk: Disk, calls: Calls) {
     async invokeApi(request, signal) {
       calls.log.push([request.id, request.method]);
       if (request.id === "t3.file/presentation") calls.presentations.push(request);
+      const presentationError =
+        request.id === "t3.file/presentation" ? disk.presentationError?.() : undefined;
+      if (presentationError) throw presentationError;
       if (request.id === "t3.file/presentation")
         return filesServer.apis[0]!.methods[0]!.invoke(request.input, { signal });
       if (request.id === "t3.ui/navigation") return navigation.invoke(request, signal);
+      if (
+        request.id === "t3.ui/preferences" &&
+        request.method === "setPreferences" &&
+        disk.preferenceWrite
+      )
+        return disk.preferenceWrite;
       if (request.id === "t3.ui/preferences" && request.method === "getPreferences") {
         const frame = await (disk.preferencesRead ?? preferenceFrame(disk));
         if (frame instanceof Error) throw frame;
@@ -188,6 +203,7 @@ function packHost(disk: Disk, calls: Calls) {
           const frame = await preferenceFrame(disk);
           if (frame instanceof Error) throw frame;
           yield frame;
+          if (disk.preferenceChange) yield await disk.preferenceChange;
           await pending(signal);
         } else if (request.id === "t3.workspace/tree") {
           const entries = Object.keys(disk.files).map((path) => ({ path, kind: "file" }));
@@ -297,6 +313,11 @@ async function mountPanel(disk: Disk) {
   return {
     calls,
     textarea,
+    /** Remounts the panel from its persisted state, as a reload does. */
+    async reload() {
+      await act(async () => tree.update(<></>));
+      await act(async () => tree.update(<App />));
+    },
     /** A host file link: the navigation provider's `openFile`. */
     async navigation(input: { relativePath: string; line?: number }) {
       await navigation.invoke({
@@ -501,6 +522,152 @@ describe("a file link to the open file view", () => {
       });
       await act(async () => panel.navigation({ relativePath: "closed.txt" }));
       expect(editorState(panel)).toEqual({ contents: "disk copy", conflict: false, saves: 1 });
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
+
+// Review repros (proof-host-10 P2): a failed open is shown beside the view
+// it could not navigate, which keeps its unsaved edits.
+describe("a file link the presentation provider rejects", () => {
+  const failing = (files: Record<string, string>) => {
+    const outage = { on: false };
+    return {
+      outage,
+      disk: {
+        files,
+        presentationError: () => (outage.on ? new Error("provider offline") : undefined),
+      },
+    };
+  };
+
+  it("reports a failed change of file and clears it once an open succeeds", async () => {
+    vi.useFakeTimers();
+    const { outage, disk } = failing({ "a.txt": "file A", "b.txt": "file B" });
+    const panel = await mountPanel(disk);
+    try {
+      await act(async () => panel.navigation({ relativePath: "a.txt" }));
+      await act(async () => panel.button("b.txt")!.props.onClick());
+      await act(async () => panel.editor().props.onChange({ target: { value: "unsaved B" } }));
+      outage.on = true;
+      await act(async () => panel.navigation({ relativePath: "a.txt", line: 2 }));
+      expect(panel.editor().props.value).toBe("unsaved B");
+      expect(panel.text()).toContain("provider offline");
+      outage.on = false;
+      await act(async () => panel.navigation({ relativePath: "b.txt" }));
+      expect(panel.editor().props.value).toBe("unsaved B");
+      expect(panel.text()).not.toContain("provider offline");
+    } finally {
+      await panel.unmount();
+    }
+  });
+
+  it("reports a failed repeated line reveal and keeps the pending edit", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("HTMLTextAreaElement", FakeTextArea);
+    vi.stubGlobal("getComputedStyle", () => ({ paddingTop: "0px", lineHeight: "16px" }));
+    const { outage, disk } = failing({ "lines.txt": "one\ntwo\nthree" });
+    const panel = await mountPanel(disk);
+    try {
+      await act(async () => panel.navigation({ relativePath: "lines.txt", line: 2 }));
+      await act(async () => panel.editor().props.onChange({ target: { value: "one\ntwo!" } }));
+      outage.on = true;
+      await act(async () => panel.navigation({ relativePath: "lines.txt", line: 2 }));
+      expect(editorState(panel)).toEqual({ contents: "one\ntwo!", conflict: false, saves: 0 });
+      expect(panel.text()).toContain("provider offline");
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
+
+// Review repro (proof-host-10 P2): an in-place open carries the view's saved
+// settings; it does not replace them with the open's path.
+describe("a file link to the path the view already shows", () => {
+  it("keeps the view's saved choices across a reload", async () => {
+    const panel = await mountPanel({ files: { "a.md": "# heading" } });
+    try {
+      await act(async () => panel.navigation({ relativePath: "a.md" }));
+      await act(async () => panel.button("Show rendered markdown")!.props.onClick());
+      await act(async () => panel.navigation({ relativePath: "a.md" }));
+      expect(panel.button("Show markdown source")).toBeDefined();
+      await panel.reload();
+      expect({
+        rendered: !!panel.button("Show markdown source"),
+        source: !!panel.button("Show rendered markdown"),
+      }).toEqual({ rendered: true, source: false });
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
+
+// Review repros (proof-host-10 P2): the preference's first answer, begun
+// before the user chose, does not undo that choice; later changes still apply.
+describe("an HTML file whose first preference answer arrives after a choice", () => {
+  const view = { frames: 0, editors: 1 };
+  const page = { frames: 1, editors: 0 };
+  const rendered: Frame = {
+    type: "snapshot",
+    value: { wordWrap: false, renderBrowserFile: true },
+  };
+  const stubFetch = () =>
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(0) })),
+    );
+
+  it.each(["read", "stream"] as const)(
+    "keeps the source when the %s answers late",
+    async (kind) => {
+      stubFetch();
+      let answer!: (frame: Frame) => void;
+      const held = new Promise<Frame>((resolve) => {
+        answer = resolve;
+      });
+      const silent = new Promise<Frame>(() => {});
+      const panel = await mountPanel({
+        files: { "late.html": "<p>source</p>" },
+        preferences: kind === "stream" ? held : silent,
+        preferencesRead: kind === "read" ? held : silent,
+        preferenceWrite: new Promise(() => {}),
+      });
+      try {
+        await act(async () => panel.navigation({ relativePath: "late.html" }));
+        await act(async () => panel.button("Show HTML source")!.props.onClick());
+        expect({ frames: panel.frames(), editors: panel.editors() }).toEqual(view);
+        await act(async () => answer(rendered));
+        expect({ frames: panel.frames(), editors: panel.editors() }).toEqual(view);
+      } finally {
+        await panel.unmount();
+      }
+    },
+  );
+
+  it("still follows a later change of the shared preference", async () => {
+    stubFetch();
+    let answer!: (frame: Frame) => void;
+    const held = new Promise<Frame>((resolve) => {
+      answer = resolve;
+    });
+    let change!: (frame: Frame) => void;
+    const panel = await mountPanel({
+      files: { "late.html": "<p>source</p>" },
+      preferences: held,
+      preferencesRead: new Promise(() => {}),
+      preferenceChange: new Promise((resolve) => {
+        change = resolve;
+      }),
+      preferenceWrite: new Promise(() => {}),
+    });
+    try {
+      await act(async () => panel.navigation({ relativePath: "late.html" }));
+      await act(async () => panel.button("Show HTML source")!.props.onClick());
+      await act(async () => answer(rendered));
+      expect({ frames: panel.frames(), editors: panel.editors() }).toEqual(view);
+      await act(async () => change({ ...rendered, type: "data" }));
+      expect({ frames: panel.frames(), editors: panel.editors() }).toEqual(page);
     } finally {
       await panel.unmount();
     }
