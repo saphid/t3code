@@ -15,6 +15,8 @@ import {
 import {
   PRS_WRITE,
   VCS_ACTIONS_API,
+  VCS_HANDOFF,
+  VCS_MUTATE,
   type VcsActionProgressEvent,
   type VcsActionPublishResult,
   type VcsActionResolvePullRequestResult,
@@ -365,10 +367,22 @@ export function createVcsActionsApiProvider(
       Effect.flatMap((ok) => (ok ? Effect.void : Effect.fail(grantDenied(operation, grant)))),
     );
 
-  const handoffAvailable = (metadata: HostApiInvocationMetadata) =>
-    dependencies.prHandoffClient === undefined || metadata.principal?.kind === "provider-session"
-      ? Effect.succeed(false)
-      : dependencies.prHandoffClient.available(metadata);
+  /**
+   * Reported only where the call would be let through: the handoff grant is
+   * optional on install, and a pack told "no" keeps its plain checkout.
+   */
+  const handoffAvailable = (context: ViewContext, metadata: HostApiInvocationMetadata) => {
+    const client = dependencies.prHandoffClient;
+    if (client === undefined || metadata.principal?.kind === "provider-session")
+      return Effect.succeed(false);
+    return Effect.all([
+      requireChainGrant("vcs.actions.getCapabilities", VCS_MUTATE, context, metadata),
+      requireChainGrant("vcs.actions.getCapabilities", VCS_HANDOFF, context, metadata),
+    ]).pipe(
+      Effect.andThen(client.available(metadata)),
+      Effect.orElseSucceed(() => false),
+    );
+  };
 
   const actions = new Map<string, ActionRecord>();
 
@@ -641,10 +655,10 @@ export function createVcsActionsApiProvider(
         operation: "vcs.actions.getCapabilities",
         requiredScope: AuthOrchestrationReadScope,
         decode: emptyInput,
-        run: (_safe, scope, { metadata }) =>
+        run: (_safe, scope, { context, metadata }) =>
           Effect.all([
             dependencies.vcsRegistry.detect({ cwd: scope.cwd }),
-            handoffAvailable(metadata),
+            handoffAvailable(context, metadata),
           ]).pipe(
             Effect.map(([handle, handoff]): VcsActionsCapabilitiesResult => {
               const git = handle?.kind === "git";

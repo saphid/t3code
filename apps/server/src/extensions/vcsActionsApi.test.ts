@@ -21,7 +21,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { PRS_WRITE } from "@t3tools/extension-sdk/catalogue";
+import { PRS_WRITE, VCS_HANDOFF, VCS_MUTATE } from "@t3tools/extension-sdk/catalogue";
 import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { HostApiProvider } from "@t3tools/extension-runtime";
@@ -521,7 +521,7 @@ const subscribeError = (
 it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
   it.effect("reports per-operation support for git, jj, and undetected workspaces", () =>
     Effect.gen(function* () {
-      const git = makeProvider({ kind: "git" });
+      const git = makeProvider({ kind: "git", grants: [VCS_MUTATE, VCS_HANDOFF] });
       const caps = (yield* invoke(git.provider, "getCapabilities", {})) as {
         detected: boolean;
         kind: string | null;
@@ -1272,9 +1272,11 @@ it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
               ],
           ),
         );
-      expect(yield* caps(makeProvider())).toBe(true);
-      expect(yield* caps(makeProvider({ kind: "jj" }))).toBe(false);
+      const granted = [VCS_MUTATE, VCS_HANDOFF];
+      expect(yield* caps(makeProvider({ grants: granted }))).toBe(true);
+      expect(yield* caps(makeProvider({ kind: "jj", grants: granted }))).toBe(false);
       const noClient = makeProvider({
+        grants: granted,
         prHandoffClient: {
           available: () => Effect.succeed(false),
           start: () => Effect.die("unreachable"),
@@ -1289,6 +1291,22 @@ it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
       });
       expect(error.detail).toContain("client-provider-unavailable");
       expect(unbridged.handoffStarts).toEqual([]);
+    }),
+  );
+
+  // The handoff grant is optional on install; without it the pack keeps its
+  // plain checkout rather than routing every checkout into a denied handoff.
+  it.effect("reports the handoff only to a caller chain holding its grants", () =>
+    Effect.gen(function* () {
+      const caps = (grants: ReadonlyArray<string>) =>
+        invoke(makeProvider({ grants }).provider, "getCapabilities", {}).pipe(
+          Effect.map((value) => (value as { operations: Record<string, boolean> }).operations),
+        );
+      const withoutHandoff = yield* caps([VCS_MUTATE]);
+      expect(withoutHandoff["actions.handoffPullRequest"]).toBe(false);
+      expect(withoutHandoff["actions.preparePullRequestThread"]).toBe(true);
+      expect((yield* caps([VCS_HANDOFF]))["actions.handoffPullRequest"]).toBe(false);
+      expect((yield* caps([VCS_MUTATE, VCS_HANDOFF]))["actions.handoffPullRequest"]).toBe(true);
     }),
   );
 
