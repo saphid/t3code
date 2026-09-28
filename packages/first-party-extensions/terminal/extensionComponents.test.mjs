@@ -3,7 +3,7 @@
  * esbuild with the Ghostty surface replaced by a recording stub. These pin
  * these regression shapes as tests: cold-restore stream budget, group-switch
  * waiter wake, focused-chord capture against the real host keymap resolver,
- * and path-link activation through t3.ui/panels.openFile.
+ * and path-link activation through t3.ui/editor.openPath.
  *
  * The bundle is written to the system tmpdir, never into the package, so
  * the shipped tree stays free of test-only builds.
@@ -522,11 +522,8 @@ NodeTest.describe("two full views sidebar switch", () => {
       NodeAssert.equal(active.size, 8);
       const leftTree = renderer.root.findAllByType(bundle.TerminalView)[0];
       const selectB = leftTree
-        .findAllByType("li")
-        .find((node) =>
-          node.findAllByType("button").some((button) => button.props["aria-label"] === "Close b"),
-        )
-        .findAllByType("button")[0];
+        .find((node) => node.type === "li" && node.props["data-t3-terminal-session"] === "b")
+        .findByType("button");
       await act(async () => selectB.props.onClick());
       const visible = leftTree
         .findAllByType(bundle.TerminalPane)
@@ -1289,8 +1286,11 @@ NodeTest.describe("session list with many sessions (Terminal 27b)", () => {
         .map((child) => `${child.type}:${child.props["aria-label"] ?? child.props.role ?? ""}`);
       const within = (ancestor, node) =>
         ancestor.findAll((candidate) => candidate === node).length > 0;
+      const aboveBody = (node) =>
+        column.slice(0, column.indexOf(body)).some((child) => within(child, node));
       return {
         ids,
+        aboveBody,
         body,
         list,
         chromeAbove,
@@ -1314,15 +1314,39 @@ NodeTest.describe("session list with many sessions (Terminal 27b)", () => {
       // Like the native drawer, the selector sits beside the panes in the
       // body, so ten sessions stack no more above the panes than two do.
       NodeAssert.deepEqual(ten.chromeAbove, two.chromeAbove);
-      NodeAssert.ok(!ten.chromeAbove.includes("ul:Terminal sessions"));
+      NodeAssert.ok(!ten.aboveBody(ten.list));
       NodeAssert.ok(ten.within(ten.body, ten.list) && ten.within(ten.body, ten.panes));
-      NodeAssert.equal(
-        ten.list.findAll(
-          (node) => node.type === "button" && node.props["aria-label"]?.startsWith("Restart "),
-        ).length,
-        ten.ids.length,
+      // Like native, rows are selectable labels only; the session actions
+      // live once in the sidebar header and act on the active session.
+      const rows = ten.list.findAll(
+        (node) => node.type === "li" && node.props["data-t3-terminal-session"],
       );
-      // The list scrolls inside the body's height; the body keeps a floor.
+      NodeAssert.equal(rows.length, ten.ids.length);
+      for (const row of rows)
+        NodeAssert.equal(row.findAll((node) => node.type === "button").length, 1);
+      const sidebar = ten.body.find(
+        (node) => node.type === "aside" && node.props["aria-label"] === "Terminal session list",
+      );
+      const actions = sidebar.find(
+        (node) => node.props.role === "toolbar" && node.props["aria-label"] === "Session actions",
+      );
+      NodeAssert.ok(!ten.within(ten.list, actions));
+      const restart = actions.find(
+        (node) => node.type === "button" && node.props["aria-label"] === "Restart many1",
+      );
+      await act(async () => {
+        restart.props.onClick();
+      });
+      NodeAssert.ok(
+        actions.findAll(
+          (node) => node.type === "button" && node.props["aria-label"] === "Confirm restart many1",
+        ).length === 1,
+        "the header asks to confirm restarting the active session",
+      );
+      // Native's fixed 144px selector, so the terminal keeps the width; the
+      // list scrolls inside the body's height; the body keeps a floor.
+      NodeAssert.equal(sidebar.props.style.width, 144);
+      NodeAssert.ok(ten.panes.parent.props.style.minWidth >= 160);
       NodeAssert.equal(ten.list.props.style.overflowY, "auto");
       NodeAssert.ok(ten.body.props.style.minHeight >= 120);
     } finally {
@@ -1336,7 +1360,7 @@ NodeTest.describe("session list with many sessions (Terminal 27b)", () => {
     async () => {
       const one = await renderSessions(1);
       try {
-        NodeAssert.ok(one.chromeAbove.includes("ul:Terminal sessions"));
+        NodeAssert.ok(one.aboveBody(one.list));
         NodeAssert.ok(!one.within(one.body, one.list));
       } finally {
         await one.unmount();
@@ -1348,55 +1372,67 @@ NodeTest.describe("session list with many sessions (Terminal 27b)", () => {
 NodeTest.describe("exit UX (Terminal 29)", () => {
   const drain = () => new Promise((resolve) => setImmediate(resolve));
   const stubSurfaces = () => globalThis.__T3_TERMINAL_SURFACE_STUB__.surfaces;
+  const assetHost = {
+    readAsset: async (path) => ({
+      bytes: new Uint8Array([1, 2, 3]),
+      mediaType: path.endsWith(".woff2")
+        ? "font/woff2"
+        : path.endsWith(".txt")
+          ? "text/plain"
+          : "application/wasm",
+      sha256: "0".repeat(64),
+    }),
+  };
+  const outputSnapshot = (terminalId, streamEpoch, status, contents = "$ ") => ({
+    streamId: `${streamEpoch}-${status}`,
+    sequence: 1,
+    value: {
+      terminalId,
+      streamEpoch,
+      kind: "snapshot",
+      status,
+      contents,
+      retainedByteLength: contents.length,
+      truncated: false,
+      clearGeneration: 0,
+      contentsUnitStart: 0,
+      boundarySequence: 1,
+    },
+  });
+  const outputExit = (terminalId, streamEpoch, exitCode) => ({
+    streamId: `${streamEpoch}-running`,
+    sequence: 2,
+    value: { terminalId, streamEpoch, kind: "exit", sequence: 2, exitCode, exitSignal: null },
+  });
 
-  NodeTest.test("an output-stream exit writes the code and closes the session", async () => {
+  /**
+   * Renders one session. Each output-events subscription plays the next
+   * script: its frames, then (unless it ends the stream as the server does
+   * after an exit or an ended snapshot) it stays open until aborted.
+   */
+  async function renderSession({ terminalId, listed, scripts, invoke = async () => ({}) }) {
     const invokes = [];
-    let releaseExit;
-    const exitReady = new Promise((resolve) => (releaseExit = resolve));
+    let outputSubscriptions = 0;
     const host = {
-      readAsset: async (path) => ({
-        bytes: new Uint8Array([1, 2, 3]),
-        mediaType: path.endsWith(".woff2")
-          ? "font/woff2"
-          : path.endsWith(".txt")
-            ? "text/plain"
-            : "application/wasm",
-        sha256: "0".repeat(64),
-      }),
+      ...assetHost,
       invokeApi: async (request) => {
         invokes.push({ id: request.id, method: request.method, input: request.input });
         if (request.id === "t3.ui/theme" && request.method === "getTokens")
           return { tokens: {}, cssVars: {} };
-        if (request.id === "t3.terminal/control") return {};
+        if (request.id === "t3.terminal/control") return invoke(request);
         return { commandSetToken: "token", results: [] };
       },
       subscribeApi: (request, signal) => ({
         async *[Symbol.asyncIterator]() {
           if (request.id === "t3.terminal/sessions" && request.name === "list")
-            yield { value: { kind: "snapshot", terminals: [sessionMetadata("ex1")] } };
+            yield { value: { kind: "snapshot", terminals: [listed] } };
           if (request.id === "t3.terminal/output-events") {
-            const base = { terminalId: "ex1", streamEpoch: "epoch-1" };
-            yield {
-              streamId: "s1",
-              sequence: 1,
-              value: {
-                ...base,
-                kind: "snapshot",
-                status: "running",
-                contents: "$ ",
-                retainedByteLength: 2,
-                truncated: false,
-                clearGeneration: 0,
-                contentsUnitStart: 0,
-                boundarySequence: 1,
-              },
-            };
-            await exitReady;
-            yield {
-              streamId: "s1",
-              sequence: 2,
-              value: { ...base, kind: "exit", sequence: 2, exitCode: 3, exitSignal: null },
-            };
+            const script = scripts[outputSubscriptions++] ?? { frames: [], ends: false };
+            for (const next of script.frames) {
+              if (typeof next === "function") await next();
+              else yield next;
+            }
+            if (script.ends) return;
           }
           await new Promise((resolve) =>
             signal.aborted ? resolve() : signal.addEventListener("abort", resolve, { once: true }),
@@ -1414,7 +1450,7 @@ NodeTest.describe("exit UX (Terminal 29)", () => {
       save() {},
       onVisibility: () => () => {},
       bindCommands: () => () => {},
-      restoreState: { terminalIds: ["ex1"], activeTerminalId: "ex1" },
+      restoreState: { terminalIds: [terminalId], activeTerminalId: terminalId },
     };
     stubSurfaces().length = 0;
     let renderer;
@@ -1423,43 +1459,163 @@ NodeTest.describe("exit UX (Terminal 29)", () => {
         createNodeMock: nodeMock,
       });
     });
-    try {
-      for (let attempt = 0; stubSurfaces().length === 0 && attempt < 20; attempt++) {
-        await act(async () => {
-          await drain();
-        });
-      }
-      const surface = stubSurfaces()[0];
-      NodeAssert.ok(surface, "terminal surface never mounted");
-      await act(async () => {
-        releaseExit();
-        for (let index = 0; index < 5; index++) await drain();
-        // The panel closes on its next scheduled tick (a zero-delay timer).
+    const settle = () =>
+      act(async () => {
+        for (let index = 0; index < 8; index++) await drain();
         await new Promise((resolve) => setTimeout(resolve, 0));
         await drain();
       });
+    for (let attempt = 0; stubSurfaces().length === 0 && attempt < 20; attempt++) await settle();
+    return {
+      renderer,
+      invokes,
+      settle,
+      outputSubscriptions: () => outputSubscriptions,
+      closes: () =>
+        invokes.filter((entry) => entry.id === "t3.terminal/control" && entry.method === "close"),
+      rows: () =>
+        renderer.root
+          .find((node) => node.type === "ul" && node.props["aria-label"] === "Terminal sessions")
+          .findAll((node) => node.type === "li" && node.props["data-t3-terminal-session"]).length,
+      unmount: () =>
+        act(async () => {
+          renderer.unmount();
+        }),
+    };
+  }
+
+  NodeTest.test("an output-stream exit writes the code and closes the session", async () => {
+    let releaseExit;
+    const exitReady = new Promise((resolve) => (releaseExit = resolve));
+    const view = await renderSession({
+      terminalId: "ex1",
+      listed: sessionMetadata("ex1"),
+      scripts: [
+        {
+          frames: [
+            outputSnapshot("ex1", "epoch-1", "running"),
+            () => exitReady,
+            outputExit("ex1", "epoch-1", 3),
+          ],
+          ends: true,
+        },
+        // The resubscription reads the server's current state: still exited.
+        { frames: [outputSnapshot("ex1", "epoch-1", "exited")], ends: true },
+      ],
+    });
+    try {
+      const surface = stubSurfaces()[0];
+      NodeAssert.ok(surface, "terminal surface never mounted");
+      releaseExit();
+      await view.settle();
       NodeAssert.ok(
         surface.writes.some((data) => data.includes("Process exited (code 3)")),
         "exit code written on the surface",
       );
-      NodeAssert.deepEqual(
-        invokes.filter((entry) => entry.id === "t3.terminal/control" && entry.method === "close"),
-        [
-          {
-            id: "t3.terminal/control",
-            method: "close",
-            input: { terminalId: "ex1", deleteHistory: true },
-          },
-        ],
-      );
-      const list = renderer.root.find(
-        (node) => node.type === "ul" && node.props["aria-label"] === "Terminal sessions",
-      );
-      NodeAssert.equal(list.findAll((node) => node.type === "li").length, 0);
+      NodeAssert.deepEqual(view.closes(), [
+        {
+          id: "t3.terminal/control",
+          method: "close",
+          input: { terminalId: "ex1", deleteHistory: true },
+        },
+      ]);
+      NodeAssert.equal(view.rows(), 0);
     } finally {
-      await act(async () => {
-        renderer.unmount();
+      await view.unmount();
+    }
+  });
+
+  NodeTest.test(
+    "an exit whose resubscription finds a replacement keeps it, then closes its exit",
+    async () => {
+      // Another client restarted the session between the old process's exit
+      // and this pane reading it: the fresh snapshot is the new process.
+      let releaseExit;
+      const exitReady = new Promise((resolve) => (releaseExit = resolve));
+      let releaseSecondExit;
+      const secondExitReady = new Promise((resolve) => (releaseSecondExit = resolve));
+      const view = await renderSession({
+        terminalId: "ex2",
+        listed: sessionMetadata("ex2"),
+        scripts: [
+          {
+            frames: [
+              outputSnapshot("ex2", "epoch-1", "running"),
+              () => exitReady,
+              outputExit("ex2", "epoch-1", 0),
+            ],
+            ends: true,
+          },
+          {
+            frames: [
+              outputSnapshot("ex2", "epoch-2", "running", "$ new"),
+              () => secondExitReady,
+              outputExit("ex2", "epoch-2", 7),
+            ],
+            ends: true,
+          },
+          { frames: [outputSnapshot("ex2", "epoch-2", "exited")], ends: true },
+        ],
       });
+      try {
+        const surface = stubSurfaces()[0];
+        NodeAssert.ok(surface, "terminal surface never mounted");
+        releaseExit();
+        await view.settle();
+        await view.settle();
+        NodeAssert.deepEqual(view.closes(), []);
+        NodeAssert.equal(view.rows(), 1);
+        NodeAssert.equal(view.outputSubscriptions(), 2);
+        NodeAssert.ok(surface.writes.includes("$ new"), "the replacement's output renders");
+        releaseSecondExit();
+        await view.settle();
+        NodeAssert.equal(view.closes().length, 1);
+        NodeAssert.equal(view.rows(), 0);
+      } finally {
+        await view.unmount();
+      }
+    },
+  );
+
+  NodeTest.test("Start on a failed session reattaches its output", async () => {
+    const view = await renderSession({
+      terminalId: "retry1",
+      listed: { ...sessionMetadata("retry1"), status: "error" },
+      invoke: async (request) =>
+        request.method === "attach" ? sessionMetadata(request.input.terminalId) : {},
+      scripts: [
+        { frames: [outputSnapshot("retry1", "epoch-1", "error", "")], ends: true },
+        { frames: [outputSnapshot("retry1", "epoch-2", "running", "$ ready")], ends: false },
+      ],
+    });
+    try {
+      const surface = stubSurfaces()[0];
+      NodeAssert.ok(surface, "terminal surface never mounted");
+      await view.settle();
+      NodeAssert.equal(view.outputSubscriptions(), 1);
+      const start = view.renderer.root.find(
+        (node) => node.type === "button" && node.props["aria-label"] === "Start retry1",
+      );
+      await act(async () => {
+        start.props.onClick();
+      });
+      await view.settle();
+      NodeAssert.equal(
+        view.invokes.filter((entry) => entry.method === "attach").length,
+        1,
+        "Start attached once",
+      );
+      NodeAssert.equal(view.outputSubscriptions(), 2, "output reattached after Start");
+      NodeAssert.ok(surface.writes.includes("$ ready"), "the restarted shell's output renders");
+      const status = view.renderer.root.findAll(
+        (node) => node.type === "output" && node.props["aria-label"] === "Output status",
+      );
+      NodeAssert.ok(
+        status.some((node) => node.children.join("").includes("Watching live output")),
+        "pane status is live",
+      );
+    } finally {
+      await view.unmount();
     }
   });
 });

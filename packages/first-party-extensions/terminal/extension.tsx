@@ -71,6 +71,7 @@ import {
   type TerminalCommandActions,
   type TerminalControlOps,
   type TerminalPanelSnapshot,
+  type TerminalTabState,
 } from "./viewModel.ts";
 
 const manifestId = "t3.terminal";
@@ -88,9 +89,10 @@ const GHOSTTY_WRITE_PTY_ASSET = "assets/ghostty-write-pty.wasm";
 const SYMBOLS_FONT_ASSET = "assets/SymbolsNerdFontMono-Regular.woff2";
 /** The terminal body never shrinks below this, however many sessions or notices. */
 const TERMINAL_BODY_MIN_HEIGHT = 120;
-/** The multi-session sidebar: native's w-36 at the narrowest, wider for row actions. */
-const SESSION_SIDEBAR_MIN_WIDTH = 144;
-const SESSION_SIDEBAR_WIDTH = 240;
+/** The multi-session sidebar: native's fixed w-36 selector. */
+const SESSION_SIDEBAR_WIDTH = 144;
+/** Beside the sidebar the panes keep at least this width; a narrower body scrolls. */
+const TERMINAL_PANES_MIN_WIDTH = 160;
 
 interface RestoredGroup {
   readonly id: string;
@@ -608,6 +610,8 @@ function TerminalPane(props: {
   /** Member of the visible split group — hidden panes stay mounted offscreen. */
   readonly shown: boolean;
   readonly visible: boolean;
+  /** The session reports a running process; reattaches an ended stream (Start). */
+  readonly running: boolean;
   readonly assets: GhosttyAssets;
   readonly themeVars: Record<string, string> | null;
   readonly appearanceVars: Record<string, string> | null;
@@ -622,6 +626,7 @@ function TerminalPane(props: {
     active,
     shown,
     visible,
+    running,
     assets,
     themeVars,
     appearanceVars,
@@ -665,10 +670,14 @@ function TerminalPane(props: {
   // slot says so honestly and retries when one frees.
   const [streamBlocked, setStreamBlocked] = useState(false);
   const acquireStreamRef = useRef((_mandatory: boolean) => {});
+  const resumeStreamRef = useRef(() => {});
   useEffect(() => {
     if (!visible) return;
     let stopped = false;
     let run: { controller: AbortController; lease: TerminalPaneLease } | null = null;
+    // The stream ended on its own (a failed start's error snapshot): a new
+    // process later needs a fresh subscription, which resumeStreamRef makes.
+    let ended = false;
     let retryRegistration: (() => void) | null = null;
     // Broker refusals are capacity this hub cannot see (another client
     // document of the installation, or the environment's 64-stream pool):
@@ -738,8 +747,12 @@ function TerminalPane(props: {
                 if (value.kind === "closed" && value.reason !== "overflow") {
                   panel.resetInput(terminalId);
                 }
-                // Terminal 29: like the native drawer, say the process exited
-                // and close it — this stream usually beats the sessions list.
+                // Terminal 29: like the native drawer, this pane's own stream
+                // decides exits. An exit is written here; the pump then
+                // resubscribes and the fresh snapshot says whether the
+                // session's current process is the exited one (close it) or
+                // a restart that replaced it.
+                if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);
                 if (value.kind === "exit") {
                   const surface = surfaceRef.current;
                   if (surface !== null)
@@ -779,6 +792,7 @@ function TerminalPane(props: {
           if (run?.controller === controller) {
             run = null;
             lease.release();
+            if (!refused) ended = true;
           }
           // The stream this lease admitted has fully drained — exactly the
           // report any admission evicted for this slot is gated on.
@@ -796,13 +810,25 @@ function TerminalPane(props: {
       }
       run.lease.setPriority(mandatory);
     };
+    resumeStreamRef.current = () => {
+      if (!ended || stopped || run !== null) return;
+      ended = false;
+      acquire(shownRef.current);
+    };
     acquire(shownRef.current);
     return () => {
       stopped = true;
       acquireStreamRef.current = () => {};
+      resumeStreamRef.current = () => {};
       stopRun();
     };
   }, [host, session, panel, terminalId, attachment, visible, streamKeyPrefix]);
+
+  // Start on a failed session runs a new process whose output the ended
+  // stream will never carry: reattach once the session reports running.
+  useEffect(() => {
+    if (running) resumeStreamRef.current();
+  }, [running]);
 
   // Group switches inside the view re-prioritize the pane's slot: shown
   // promotes to mandatory (re-acquiring after an eviction), hidden demotes
@@ -1029,12 +1055,19 @@ function TerminalPane(props: {
 /* Text fallback for hosts without package-asset reads                 */
 /* ------------------------------------------------------------------ */
 
-/** Live output via the public output-events stream; chunk groups reassemble in the view model. */
+/**
+ * Live output via the public output-events stream; chunk groups reassemble in
+ * the view model. Exits are decided as in the VT pane: an exit resubscribes
+ * and the fresh snapshot goes to the panel. `running` turning true
+ * resubscribes a stream a failed start ended.
+ */
 function useTerminalOutput(
   host: ClientHost,
   session: ViewSession,
+  panel: TerminalPanel,
   terminalId: string | null,
   visible: boolean,
+  running: boolean,
 ) {
   const [state, setState] = useState<{ terminalId: string; buffer: OutputBuffer } | null>(null);
   const pendingRef = useRef<{ sequence: number; count: number; parts: string[] } | null>(null);
@@ -1060,6 +1093,7 @@ function useTerminalOutput(
             if (signal.aborted) return;
             const value = frame.value as TerminalOutputEventsValue;
             streak = noteOutputFrameForStreak(value, streak, Date.now());
+            if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);
             if (value.kind === "closed") {
               overflowClose = value.reason === "overflow";
               resurrect = isResumableOutputClose(value.reason, streak.attempts);
@@ -1081,6 +1115,12 @@ function useTerminalOutput(
             pendingRef.current = applied.pending;
             stateRef.current = applied.buffer;
             setState({ terminalId, buffer: applied.buffer });
+            if (value.kind === "exit") {
+              panel.noteExit(terminalId, value.exitCode);
+              overflowClose = false;
+              resurrect = true;
+              break;
+            }
           }
           if (!signal.aborted && !resurrect && pendingRef.current !== null) {
             stateRef.current = {
@@ -1110,7 +1150,7 @@ function useTerminalOutput(
       }
     })();
     return () => controller.abort();
-  }, [host, session, terminalId, visible]);
+  }, [host, session, panel, terminalId, visible, running]);
   return state?.terminalId === terminalId ? state.buffer : null;
 }
 
@@ -1139,6 +1179,21 @@ function useFitResize(
 /* ------------------------------------------------------------------ */
 /* View                                                                */
 /* ------------------------------------------------------------------ */
+
+/** A session's state beyond its label, or null when it is simply running. */
+function sessionStatusText(tab: TerminalTabState): string | null {
+  const parts: string[] = [];
+  if (tab.exitBanner !== null) parts.push(tab.exitBanner);
+  else if (tab.status !== "running")
+    parts.push(
+      tab.status === "exited" && tab.exitCode !== null
+        ? `exited (code ${tab.exitCode})`
+        : tab.status,
+    );
+  if (tab.error !== null) parts.push(tab.error);
+  if (tab.queuedInputCount > 0) parts.push(`queued ${tab.queuedInputCount}`);
+  return parts.length === 0 ? null : parts.join(" · ");
+}
 
 /*
  * Native control idiom (cert term-8): the native terminal chrome leaves its
@@ -1267,8 +1322,10 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
   const output = useTerminalOutput(
     host,
     session,
+    panel,
     textFallback ? activeId : null,
     visible && textFallback,
+    activeTab?.status === "running",
   );
   useFitResize(panel, textFallback ? activeId : null, outputRef);
   const outputContents = output?.contents ?? "";
@@ -1353,19 +1410,18 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
               const tab = tabById.get(terminalId);
               if (!tab) return null;
               return (
-                <li
-                  key={tab.terminalId}
-                  style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}
-                >
+                <li key={tab.terminalId} data-t3-terminal-session={tab.terminalId}>
                   <button
                     type="button"
                     aria-current={tab.terminalId === activeId ? "true" : undefined}
+                    title={sessionStatusText(tab) ?? tab.label}
                     onClick={() => panel.activate(tab.terminalId)}
                     style={{
-                      flex: 1,
-                      minWidth: 0,
+                      display: "block",
+                      width: "100%",
+                      height: 24,
                       textAlign: "left",
-                      padding: "4px 6px",
+                      padding: "0 6px",
                       border: "1px solid transparent",
                       borderRadius: 5,
                       cursor: "pointer",
@@ -1374,7 +1430,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
-                      color: "inherit",
+                      color: tab.terminalId === activeId ? "inherit" : muted,
                       background:
                         tab.terminalId === activeId
                           ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))"
@@ -1383,77 +1439,6 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
                   >
                     {tab.label}
                   </button>
-                  <span style={{ color: muted, fontSize: 11 }}>
-                    {tab.status}
-                    {tab.hasRunningSubprocess ? " · running" : ""}
-                    {tab.queuedInputCount > 0 ? ` · queued ${tab.queuedInputCount}` : ""}
-                  </span>
-                  {tab.confirmAction === null ? (
-                    <>
-                      {(tab.status === "exited" ||
-                        tab.status === "error" ||
-                        tab.status === "closed") && (
-                        <button
-                          type="button"
-                          aria-label={`Start ${tab.terminalId}`}
-                          onClick={() => void panel.startSession(tab.terminalId)}
-                          style={control}
-                        >
-                          Start
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        aria-label={`Clear ${tab.terminalId}`}
-                        onClick={() => panel.requestAction(tab.terminalId, "clear")}
-                        style={control}
-                      >
-                        Clear
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`Restart ${tab.terminalId}`}
-                        onClick={() => panel.requestAction(tab.terminalId, "restart")}
-                        style={control}
-                      >
-                        Restart
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`Close ${tab.terminalId}`}
-                        onClick={() => panel.requestAction(tab.terminalId, "close")}
-                        style={control}
-                      >
-                        ×
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <span style={{ color: muted, fontSize: 12 }}>
-                        {tab.confirmAction === "close"
-                          ? "Close this terminal?"
-                          : tab.confirmAction === "restart"
-                            ? "Restart this terminal?"
-                            : "Clear history?"}
-                      </span>
-                      <button
-                        type="button"
-                        aria-label={`Confirm ${tab.confirmAction} ${tab.terminalId}`}
-                        onClick={() => void panel.confirmAction(tab.terminalId)}
-                        style={control}
-                      >
-                        Confirm
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`Cancel ${tab.confirmAction} ${tab.terminalId}`}
-                        onClick={() => panel.cancelAction(tab.terminalId)}
-                        style={control}
-                      >
-                        Cancel
-                      </button>
-                    </>
-                  )}
                 </li>
               );
             })}
@@ -1461,6 +1446,114 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
         </li>
       ))}
     </ul>
+  );
+  // Native drawer: session actions sit once in the selector's header and act
+  // on the active session, so rows stay single-line labels at any width.
+  const iconControl = { ...control, padding: "0 6px", fontSize: 13, lineHeight: "22px" };
+  const activeStatus = activeTab === null ? null : sessionStatusText(activeTab);
+  const sessionActions = activeTab !== null && (
+    <div
+      role="toolbar"
+      aria-label="Session actions"
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        justifyContent: "flex-end",
+        gap: 2,
+        padding: "0 4px",
+        minHeight: 22,
+        flexShrink: 0,
+        fontSize: 12,
+        ...(sessionSidebar ? { borderBottom: border } : {}),
+      }}
+    >
+      {activeTab.confirmAction === null ? (
+        <>
+          {activeStatus !== null && (
+            <span
+              style={{
+                flex: 1,
+                minWidth: 0,
+                color: muted,
+                fontSize: 11,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {activeStatus}
+            </span>
+          )}
+          {(activeTab.status === "exited" ||
+            activeTab.status === "error" ||
+            activeTab.status === "closed") && (
+            <button
+              type="button"
+              aria-label={`Start ${activeTab.terminalId}`}
+              title="Start"
+              onClick={() => void panel.startSession(activeTab.terminalId)}
+              style={iconControl}
+            >
+              ▶
+            </button>
+          )}
+          <button
+            type="button"
+            aria-label={`Clear ${activeTab.terminalId}`}
+            title="Clear history"
+            onClick={() => panel.requestAction(activeTab.terminalId, "clear")}
+            style={iconControl}
+          >
+            ⌫
+          </button>
+          <button
+            type="button"
+            aria-label={`Restart ${activeTab.terminalId}`}
+            title="Restart"
+            onClick={() => panel.requestAction(activeTab.terminalId, "restart")}
+            style={iconControl}
+          >
+            ↻
+          </button>
+          <button
+            type="button"
+            aria-label={`Close ${activeTab.terminalId}`}
+            title="Close"
+            onClick={() => panel.requestAction(activeTab.terminalId, "close")}
+            style={iconControl}
+          >
+            ×
+          </button>
+        </>
+      ) : (
+        <>
+          <span style={{ flex: "1 1 100%", color: muted, fontSize: 12 }}>
+            {activeTab.confirmAction === "close"
+              ? "Close this terminal?"
+              : activeTab.confirmAction === "restart"
+                ? "Restart this terminal?"
+                : "Clear history?"}
+          </span>
+          <button
+            type="button"
+            aria-label={`Confirm ${activeTab.confirmAction} ${activeTab.terminalId}`}
+            onClick={() => void panel.confirmAction(activeTab.terminalId)}
+            style={{ ...control, fontSize: 12, padding: "2px 6px" }}
+          >
+            Confirm
+          </button>
+          <button
+            type="button"
+            aria-label={`Cancel ${activeTab.confirmAction} ${activeTab.terminalId}`}
+            onClick={() => panel.cancelAction(activeTab.terminalId)}
+            style={{ ...control, fontSize: 12, padding: "2px 6px" }}
+          >
+            Cancel
+          </button>
+        </>
+      )}
+    </div>
   );
   return (
     <section
@@ -1554,7 +1647,12 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
               : ""}
         </span>
       </header>
-      {!sessionSidebar && sessionList}
+      {!sessionSidebar && (
+        <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>{sessionList}</div>
+          {sessionActions}
+        </div>
+      )}
       {snapshot.tabs.length === 0 && (
         <p style={{ padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }}>
           No terminals yet. New terminal opens a shell in this workspace.
@@ -1615,6 +1713,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
           flex: 1,
           minHeight: TERMINAL_BODY_MIN_HEIGHT,
           minWidth: 0,
+          ...(sessionSidebar ? { overflowX: "auto" } : {}),
         }}
       >
         <div
@@ -1622,7 +1721,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
             display: "flex",
             flexDirection: "column",
             flex: "1 1 0",
-            minWidth: 0,
+            minWidth: sessionSidebar ? TERMINAL_PANES_MIN_WIDTH : 0,
             minHeight: 0,
           }}
         >
@@ -1684,6 +1783,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
                       active={focused}
                       shown={shown}
                       visible={visible}
+                      running={tabById.get(terminalId)?.status === "running"}
                       assets={assets}
                       themeVars={themeVars}
                       appearanceVars={appearanceVars}
@@ -1774,12 +1874,13 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
             style={{
               display: "flex",
               flexDirection: "column",
-              flex: `0 1 ${SESSION_SIDEBAR_WIDTH}px`,
-              minWidth: SESSION_SIDEBAR_MIN_WIDTH,
+              width: SESSION_SIDEBAR_WIDTH,
+              flexShrink: 0,
               minHeight: 0,
               borderLeft: border,
             }}
           >
+            {sessionActions}
             {sessionList}
           </aside>
         )}

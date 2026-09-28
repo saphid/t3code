@@ -386,11 +386,6 @@ function deferred() {
   const promise = new Promise((res, rej) => ((resolve = res), (reject = rej)));
   return { promise, resolve, reject };
 }
-/** Manual scheduler: returns the queued callbacks so tests drive the exit tick. */
-function manualScheduler() {
-  const pending = [];
-  return { pending, schedule: (cb) => pending.push(cb) };
-}
 
 NodeTest.describe("terminal panel — reconciliation + tabs", () => {
   NodeTest.it("keeps the lag rule and reconcile identical to native", () => {
@@ -683,7 +678,7 @@ NodeTest.describe("terminal panel — input, resize, lifecycle", () => {
 
   NodeTest.it("restart and clear go through confirm; cancel backs out", async () => {
     const control = fakeControl();
-    const panel = new TerminalPanel({ control, launch, schedule: manualScheduler().schedule });
+    const panel = new TerminalPanel({ control, launch });
     panel.applySessionsEvent({
       kind: "snapshot",
       terminals: [meta("term-1", { status: "exited" })],
@@ -707,54 +702,74 @@ NodeTest.describe("terminal panel — input, resize, lifecycle", () => {
 });
 
 NodeTest.describe("terminal panel — exit UX", () => {
-  NodeTest.it("banners a live→exited transition then removes the tab on the tick", async () => {
+  /** Lets any deferred (zero-delay timer) exit handling run. */
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  NodeTest.it("list rows never close a session; its output snapshot does", async () => {
+    // Native closes only from the attached terminal's own stream. An exited
+    // list row is metadata: it may describe an older process than the one
+    // running now, so the pane's fresh output snapshot decides.
     const control = fakeControl();
-    const scheduler = manualScheduler();
-    const panel = new TerminalPanel({ control, launch, schedule: scheduler.schedule });
+    const panel = new TerminalPanel({ control, launch });
     panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
     panel.applySessionsEvent({
       kind: "upsert",
       terminal: meta("term-1", { status: "exited", exitCode: 3 }),
     });
-    const tab = panel.snapshot.tabs[0];
-    NodeAssert.equal(tab.exitBanner, "Process exited (code 3)");
-    NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
-    scheduler.pending.forEach((cb) => cb());
-    NodeAssert.deepEqual(panel.snapshot.terminalIds, []);
-    NodeAssert.equal(panel.snapshot.activeTerminalId, null);
-    // Like the native drawer's close, the server session goes too, so it
-    // cannot come back as an exited row on the next mount.
-    NodeAssert.deepEqual(control.calls, [["close", { terminalId: "term-1", deleteHistory: true }]]);
-    panel.dispose();
-  });
-
-  NodeTest.it("closes a session that exited while no view was attached", () => {
-    const control = fakeControl();
-    const scheduler = manualScheduler();
-    const panel = new TerminalPanel({ control, launch, schedule: scheduler.schedule });
     panel.applySessionsEvent({
       kind: "snapshot",
       terminals: [meta("term-1"), meta("term-2", { status: "exited", exitCode: 0 })],
     });
-    NodeAssert.equal(panel.snapshot.tabs[1].exitBanner, "Process exited (code 0)");
-    scheduler.pending.forEach((cb) => cb());
-    NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
+    await tick();
+    NodeAssert.deepEqual(control.calls, []);
+    NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1", "term-2"]);
+    // The pane (re)subscribed and the server says this id's process is exited.
+    panel.noteOutputSnapshot("term-2", "exited");
     NodeAssert.deepEqual(control.calls, [["close", { terminalId: "term-2", deleteHistory: true }]]);
+    NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
     panel.dispose();
   });
 
-  NodeTest.it("an output-stream exit closes the session before the list reports it", () => {
+  NodeTest.it(
+    "a delayed old exit after the list reconnects never closes the new process",
+    async () => {
+      // Review proof-terminal-3 repro: the list reconnects and reports a newer
+      // running process before the pane delivers the old process's exit.
+      const control = fakeControl();
+      const panel = new TerminalPanel({ control, launch });
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+      panel.markStreamDisconnected("list dropped");
+      panel.beginListStream();
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+      panel.noteExit("term-1", 0);
+      NodeAssert.equal(panel.snapshot.tabs[0].exitBanner, "Process exited (code 0)");
+      await tick();
+      NodeAssert.deepEqual(control.calls, []);
+      NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
+      // The pane's resubscription finds the replacement running: the banner
+      // belonged to the old process.
+      panel.noteOutputSnapshot("term-1", "running");
+      NodeAssert.equal(panel.snapshot.tabs[0].exitBanner, null);
+      await tick();
+      NodeAssert.deepEqual(control.calls, []);
+      // The replacement's own exit still closes it.
+      panel.noteExit("term-1", 7);
+      panel.noteOutputSnapshot("term-1", "exited");
+      NodeAssert.deepEqual(control.calls, [
+        ["close", { terminalId: "term-1", deleteHistory: true }],
+      ]);
+      NodeAssert.deepEqual(panel.snapshot.terminalIds, []);
+      panel.dispose();
+    },
+  );
+
+  NodeTest.it("a closing session's stale rows stay closed until the server removes it", () => {
     const control = fakeControl();
-    const scheduler = manualScheduler();
-    const panel = new TerminalPanel({ control, launch, schedule: scheduler.schedule });
+    const panel = new TerminalPanel({ control, launch });
     panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
-    panel.noteExit("term-1", 3);
-    NodeAssert.equal(panel.snapshot.tabs[0].exitBanner, "Process exited (code 3)");
-    scheduler.pending.forEach((cb) => cb());
+    panel.noteOutputSnapshot("term-1", "exited");
     NodeAssert.deepEqual(panel.snapshot.terminalIds, []);
-    NodeAssert.deepEqual(control.calls, [["close", { terminalId: "term-1", deleteHistory: true }]]);
-    // The list's later exited upsert (and a stale snapshot) for the closing
-    // id change nothing; the server's remove ends the closing state.
+    NodeAssert.equal(panel.snapshot.activeTerminalId, null);
     panel.applySessionsEvent({
       kind: "upsert",
       terminal: meta("term-1", { status: "exited", exitCode: 3 }),
@@ -763,7 +778,6 @@ NodeTest.describe("terminal panel — exit UX", () => {
       kind: "snapshot",
       terminals: [meta("term-1", { status: "exited", exitCode: 3 })],
     });
-    scheduler.pending.forEach((cb) => cb());
     NodeAssert.deepEqual(panel.snapshot.terminalIds, []);
     NodeAssert.equal(control.calls.length, 1);
     NodeAssert.ok(panel.allocatableTerminalIds.includes("term-1"));
@@ -772,17 +786,25 @@ NodeTest.describe("terminal panel — exit UX", () => {
     panel.dispose();
   });
 
-  NodeTest.it("a start before the tick keeps the session", async () => {
-    const control = fakeControl();
-    const scheduler = manualScheduler();
-    const panel = new TerminalPanel({ control, launch, schedule: scheduler.schedule });
+  NodeTest.it("an exited snapshot during Start keeps the session", async () => {
+    const attach = deferred();
+    const control = fakeControl({
+      attach(input) {
+        control.calls.push(["attach", input]);
+        return attach.promise;
+      },
+    });
+    const panel = new TerminalPanel({ control, launch });
     panel.applySessionsEvent({
       kind: "snapshot",
       terminals: [meta("term-1", { status: "exited", exitCode: 0 })],
     });
-    await panel.startSession("term-1");
-    scheduler.pending.forEach((cb) => cb());
+    const starting = panel.startSession("term-1");
+    panel.noteOutputSnapshot("term-1", "exited");
+    attach.resolve(meta("term-1"));
+    await starting;
     NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
+    NodeAssert.equal(panel.snapshot.tabs[0].status, "running");
     NodeAssert.deepEqual(
       control.calls.map(([method]) => method),
       ["attach"],
@@ -790,96 +812,16 @@ NodeTest.describe("terminal panel — exit UX", () => {
     panel.dispose();
   });
 
-  NodeTest.it("a restart from another client before the tick keeps the new session", () => {
+  NodeTest.it("a failed-start session keeps its error and retry", async () => {
     const control = fakeControl();
-    const scheduler = manualScheduler();
-    const panel = new TerminalPanel({ control, launch, schedule: scheduler.schedule });
-    panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
-    panel.applySessionsEvent({
-      kind: "upsert",
-      terminal: meta("term-1", { status: "exited", exitCode: 0 }),
-    });
-    panel.applySessionsEvent({ kind: "upsert", terminal: meta("term-1") });
-    NodeAssert.equal(panel.snapshot.tabs[0].exitBanner, null);
-    scheduler.pending.forEach((cb) => cb());
-    NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
-    NodeAssert.equal(panel.snapshot.tabs[0].status, "running");
-    NodeAssert.deepEqual(control.calls, []);
-    panel.dispose();
-  });
-
-  NodeTest.it("an output-stream exit is cancelled by a running upsert before the tick", () => {
-    const control = fakeControl();
-    const scheduler = manualScheduler();
-    const panel = new TerminalPanel({ control, launch, schedule: scheduler.schedule });
-    panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
-    panel.noteExit("term-1", 0);
-    panel.applySessionsEvent({
-      kind: "upsert",
-      terminal: meta("term-1", { status: "exited", exitCode: 0 }),
-    });
-    panel.applySessionsEvent({ kind: "upsert", terminal: meta("term-1") });
-    scheduler.pending.forEach((cb) => cb());
-    NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
-    NodeAssert.deepEqual(control.calls, []);
-    panel.dispose();
-  });
-
-  NodeTest.it("a late output exit for a restarted session never closes the new one", () => {
-    const control = fakeControl();
-    const scheduler = manualScheduler();
-    const panel = new TerminalPanel({ control, launch, schedule: scheduler.schedule });
-    panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
-    // The list reports the exit and the restart before the pane's (possibly
-    // remounted) output stream delivers the old process's exit.
-    panel.applySessionsEvent({
-      kind: "upsert",
-      terminal: meta("term-1", { status: "exited", exitCode: 0 }),
-    });
-    panel.applySessionsEvent({ kind: "upsert", terminal: meta("term-1") });
-    panel.noteExit("term-1", 0);
-    scheduler.pending.forEach((cb) => cb());
-    NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
-    NodeAssert.equal(panel.snapshot.tabs[0].exitBanner, null);
-    NodeAssert.deepEqual(control.calls, []);
-    // The new incarnation's own exit still closes it.
-    scheduler.pending.length = 0;
-    panel.noteExit("term-1", 7);
-    NodeAssert.equal(panel.snapshot.tabs[0].exitBanner, "Process exited (code 7)");
-    scheduler.pending.forEach((cb) => cb());
-    NodeAssert.deepEqual(panel.snapshot.terminalIds, []);
-    NodeAssert.deepEqual(control.calls, [["close", { terminalId: "term-1", deleteHistory: true }]]);
-    panel.dispose();
-  });
-
-  NodeTest.it("a pending exit never closes a re-added session under the same id", () => {
-    const control = fakeControl();
-    const scheduler = manualScheduler();
-    const panel = new TerminalPanel({ control, launch, schedule: scheduler.schedule });
-    panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
-    panel.applySessionsEvent({
-      kind: "upsert",
-      terminal: meta("term-1", { status: "exited", exitCode: 0 }),
-    });
-    panel.applySessionsEvent({ kind: "remove", terminalId: "term-1" });
-    panel.applySessionsEvent({ kind: "upsert", terminal: meta("term-1") });
-    scheduler.pending.forEach((cb) => cb());
-    NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
-    NodeAssert.deepEqual(control.calls, []);
-    panel.dispose();
-  });
-
-  NodeTest.it("a failed-start session keeps its error and retry on mount", async () => {
-    const control = fakeControl();
-    const scheduler = manualScheduler();
-    const panel = new TerminalPanel({ control, launch, schedule: scheduler.schedule });
+    const panel = new TerminalPanel({ control, launch });
     panel.applySessionsEvent({
       kind: "snapshot",
       terminals: [meta("term-1", { status: "error" }), meta("term-2")],
     });
-    // A live session that then fails is kept the same way.
     panel.applySessionsEvent({ kind: "upsert", terminal: meta("term-2", { status: "error" }) });
-    scheduler.pending.forEach((cb) => cb());
+    panel.noteOutputSnapshot("term-1", "error");
+    await tick();
     NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1", "term-2"]);
     NodeAssert.deepEqual(
       panel.snapshot.tabs.map((tab) => [tab.status, tab.exitBanner]),
@@ -889,7 +831,6 @@ NodeTest.describe("terminal panel — exit UX", () => {
       ],
     );
     NodeAssert.deepEqual(control.calls, []);
-    // Start still retries it in place.
     await panel.startSession("term-1");
     NodeAssert.deepEqual(
       control.calls.map(([method]) => method),

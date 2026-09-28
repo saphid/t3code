@@ -11958,7 +11958,6 @@ var __t3Client = (() => {
     #control;
     #launch;
     #canAllocatePaneStream;
-    #schedule;
     #onChange;
     #ids;
     #active;
@@ -11978,7 +11977,6 @@ var __t3Client = (() => {
       this.#control = options.control;
       this.#launch = options.launch;
       this.#canAllocatePaneStream = options.canAllocatePaneStream;
-      this.#schedule = options.schedule ?? ((callback) => setTimeout(callback, 0));
       this.#onChange = options.onChange;
       this.#ids = normalizeTerminalIds(options.restored?.terminalIds ?? []);
       this.#active = resolveActiveTerminalId(this.#ids, options.restored?.activeTerminalId ?? null);
@@ -12059,12 +12057,7 @@ var __t3Client = (() => {
           meta: null,
           starting: false,
           input: this.#newInputQueue(terminalId),
-          exiting: false,
           exitBanner: null,
-          generation: 0,
-          listStatus: null,
-          listExits: 0,
-          streamExits: 0,
           confirm: null,
           error: null,
           resizeInFlight: null,
@@ -12130,55 +12123,41 @@ var __t3Client = (() => {
       this.#emit();
     }
     /**
-     * Absorbs server metadata (a list row or control result). Like native,
-     * only `exited` closes the session; an `error` (a failed start) stays with
-     * its diagnostic and Start. A live row is a newer incarnation: it cancels
-     * any pending exit.
+     * Absorbs server metadata (a list row or control result). It never closes
+     * a session: a row can describe an older process than the one running
+     * now, so exits are decided by the pane's output stream (noteOutputSnapshot).
      */
     #observeMeta(next) {
-      const tab = this.#tab(next.terminalId);
-      const listPrevious = tab.listStatus;
-      tab.listStatus = next.status;
-      tab.meta = next;
-      if (next.status === "running" || next.status === "starting") {
-        if (listPrevious !== "running" && listPrevious !== "starting") tab.generation += 1;
-        tab.exiting = false;
-        tab.exitBanner = null;
-        return;
-      }
-      if (next.status !== "exited") return;
-      if (listPrevious !== "exited") tab.listExits += 1;
-      this.#beginExit(next.terminalId, tab, next.exitCode);
+      this.#tab(next.terminalId).meta = next;
     }
-    /** Banner, then close + remove on the next tick, for an exited session (native #29). */
-    #beginExit(terminalId, tab, exitCode) {
-      if (tab.exiting || tab.starting) return;
-      tab.exiting = true;
+    /** The pane's output stream saw a process exit: banner only, pending its fresh snapshot. */
+    noteExit(terminalId, exitCode) {
+      const tab = this.#tabs.get(terminalId);
+      if (this.#disposed || !tab) return;
       tab.exitBanner = `Process exited (code ${exitCode ?? "unknown"})`;
-      const generation = tab.generation;
-      this.#schedule(() => {
-        if (this.#disposed || this.#tabs.get(terminalId) !== tab || !tab.exiting || tab.generation !== generation)
-          return;
+      this.#emit();
+    }
+    /**
+     * A pane's output snapshot is the server's current state for this id —
+     * the authority the native drawer's attach stream is. `exited` closes the
+     * session like the native drawer does (a failed close still leaves the
+     * tab, like a user close); an `error` (failed start) keeps its diagnostic
+     * and Start; anything live means any exit banner was an older process's.
+     */
+    noteOutputSnapshot(terminalId, status) {
+      const tab = this.#tabs.get(terminalId);
+      if (this.#disposed || !tab) return;
+      if (status === "exited") {
+        if (tab.starting) return;
         this.#closing.add(terminalId);
         void this.#control.close({ terminalId, deleteHistory: true }).catch(() => this.#closing.delete(terminalId));
         this.#removeTab(terminalId);
-      });
-    }
-    /**
-     * The pane's output stream saw the process exit. It usually lands before
-     * the sessions list's upsert, so the exit handling starts here — unless
-     * the list already reported this exit, in which case a live row is a newer
-     * incarnation this late exit must not touch.
-     */
-    noteExit(terminalId, exitCode) {
-      const tab = this.#tabs.get(terminalId);
-      if (this.#disposed || !tab?.meta) return;
-      tab.streamExits += 1;
-      if (tab.streamExits <= tab.listExits) return;
-      if (tab.meta.status !== "running" && tab.meta.status !== "starting") return;
-      tab.meta = { ...tab.meta, status: "exited", exitCode };
-      this.#beginExit(terminalId, tab, exitCode);
-      this.#emit();
+        return;
+      }
+      if (status !== "error" && tab.exitBanner !== null) {
+        tab.exitBanner = null;
+        this.#emit();
+      }
     }
     applySessionsEvent(event) {
       if (this.#disposed) return;
@@ -12327,7 +12306,6 @@ var __t3Client = (() => {
       if (tab.meta !== null && tab.meta.status !== "exited" && tab.meta.status !== "error") return;
       tab.starting = true;
       this.#liveInput(terminalId, tab).setReady(false);
-      tab.exiting = false;
       tab.exitBanner = null;
       tab.error = null;
       this.#emit();
@@ -12467,7 +12445,6 @@ var __t3Client = (() => {
           });
           tab.starting = false;
           tab.input.setReady(true);
-          tab.exiting = false;
           tab.exitBanner = null;
           this.#observeMeta(meta);
           await this.#drain(terminalId);
@@ -14368,6 +14345,10 @@ var __t3Client = (() => {
           if (signal.aborted) return;
           streak = noteOutputFrameForStreak(frame.value, streak, now());
           attachment.applyFrame(frame, frame.value);
+          if (frame.value.kind === "exit") {
+            resurrect = true;
+            break;
+          }
           if (frame.value.kind === "closed") {
             overflowClose = frame.value.reason === "overflow";
             resurrect = isResumableOutputClose(
@@ -14402,8 +14383,8 @@ var __t3Client = (() => {
   var GHOSTTY_WRITE_PTY_ASSET = "assets/ghostty-write-pty.wasm";
   var SYMBOLS_FONT_ASSET = "assets/SymbolsNerdFontMono-Regular.woff2";
   var TERMINAL_BODY_MIN_HEIGHT = 120;
-  var SESSION_SIDEBAR_MIN_WIDTH = 144;
-  var SESSION_SIDEBAR_WIDTH = 240;
+  var SESSION_SIDEBAR_WIDTH = 144;
+  var TERMINAL_PANES_MIN_WIDTH = 160;
   var RESTORED_GROUP_KEYS = /* @__PURE__ */ new Set(["id", "terminalIds", "splitDirection"]);
   function isRestoredGroup(value) {
     if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -14708,6 +14689,7 @@ var __t3Client = (() => {
       active,
       shown,
       visible,
+      running,
       assets,
       themeVars,
       appearanceVars,
@@ -14736,10 +14718,13 @@ var __t3Client = (() => {
     const [streamBlocked, setStreamBlocked] = (0, import_react2.useState)(false);
     const acquireStreamRef = (0, import_react2.useRef)((_mandatory) => {
     });
+    const resumeStreamRef = (0, import_react2.useRef)(() => {
+    });
     (0, import_react2.useEffect)(() => {
       if (!visible) return;
       let stopped = false;
       let run = null;
+      let ended = false;
       let retryRegistration = null;
       let brokerRefusals = 0;
       let brokerRefusalTimer = null;
@@ -14790,6 +14775,7 @@ var __t3Client = (() => {
                   if (value.kind === "closed" && value.reason !== "overflow") {
                     panel.resetInput(terminalId);
                   }
+                  if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);
                   if (value.kind === "exit") {
                     const surface = surfaceRef.current;
                     if (surface !== null)
@@ -14822,6 +14808,7 @@ var __t3Client = (() => {
             if (run?.controller === controller) {
               run = null;
               lease.release();
+              if (!refused) ended = true;
             }
             lease.streamSettled();
             if (!refused) brokerRefusals = 0;
@@ -14835,14 +14822,24 @@ var __t3Client = (() => {
         }
         run.lease.setPriority(mandatory);
       };
+      resumeStreamRef.current = () => {
+        if (!ended || stopped || run !== null) return;
+        ended = false;
+        acquire(shownRef.current);
+      };
       acquire(shownRef.current);
       return () => {
         stopped = true;
         acquireStreamRef.current = () => {
         };
+        resumeStreamRef.current = () => {
+        };
         stopRun();
       };
     }, [host, session, panel, terminalId, attachment, visible, streamKeyPrefix]);
+    (0, import_react2.useEffect)(() => {
+      if (running) resumeStreamRef.current();
+    }, [running]);
     (0, import_react2.useEffect)(() => {
       acquireStreamRef.current(shown && visible);
     }, [shown, visible]);
@@ -15030,7 +15027,7 @@ var __t3Client = (() => {
       }
     );
   }
-  function useTerminalOutput(host, session, terminalId, visible) {
+  function useTerminalOutput(host, session, panel, terminalId, visible, running) {
     const [state2, setState] = (0, import_react2.useState)(null);
     const pendingRef = (0, import_react2.useRef)(null);
     (0, import_react2.useEffect)(() => {
@@ -15055,6 +15052,7 @@ var __t3Client = (() => {
               if (signal.aborted) return;
               const value = frame.value;
               streak = noteOutputFrameForStreak(value, streak, Date.now());
+              if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);
               if (value.kind === "closed") {
                 overflowClose = value.reason === "overflow";
                 resurrect = isResumableOutputClose(value.reason, streak.attempts);
@@ -15076,6 +15074,12 @@ var __t3Client = (() => {
               pendingRef.current = applied.pending;
               stateRef.current = applied.buffer;
               setState({ terminalId, buffer: applied.buffer });
+              if (value.kind === "exit") {
+                panel.noteExit(terminalId, value.exitCode);
+                overflowClose = false;
+                resurrect = true;
+                break;
+              }
             }
             if (!signal.aborted && !resurrect && pendingRef.current !== null) {
               stateRef.current = {
@@ -15105,7 +15109,7 @@ var __t3Client = (() => {
         }
       })();
       return () => controller.abort();
-    }, [host, session, terminalId, visible]);
+    }, [host, session, panel, terminalId, visible, running]);
     return state2?.terminalId === terminalId ? state2.buffer : null;
   }
   function useFitResize(panel, terminalId, ref) {
@@ -15123,6 +15127,17 @@ var __t3Client = (() => {
       observer.observe(element);
       return () => observer.disconnect();
     }, [panel, terminalId, ref]);
+  }
+  function sessionStatusText(tab) {
+    const parts = [];
+    if (tab.exitBanner !== null) parts.push(tab.exitBanner);
+    else if (tab.status !== "running")
+      parts.push(
+        tab.status === "exited" && tab.exitCode !== null ? `exited (code ${tab.exitCode})` : tab.status
+      );
+    if (tab.error !== null) parts.push(tab.error);
+    if (tab.queuedInputCount > 0) parts.push(`queued ${tab.queuedInputCount}`);
+    return parts.length === 0 ? null : parts.join(" \xB7 ");
   }
   var control = {
     padding: "4px 8px",
@@ -15225,8 +15240,10 @@ var __t3Client = (() => {
     const output = useTerminalOutput(
       host,
       session,
+      panel,
       textFallback ? activeId : null,
-      visible && textFallback
+      visible && textFallback,
+      activeTab?.status === "running"
     );
     useFitResize(panel, textFallback ? activeId : null, outputRef);
     const outputContents = output?.contents ?? "";
@@ -15297,113 +15314,141 @@ var __t3Client = (() => {
               children: group.terminalIds.map((terminalId) => {
                 const tab = tabById.get(terminalId);
                 if (!tab) return null;
-                return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
-                  "li",
+                return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("li", { "data-t3-terminal-session": tab.terminalId, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                  "button",
                   {
-                    style: { display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" },
-                    children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                        "button",
-                        {
-                          type: "button",
-                          "aria-current": tab.terminalId === activeId ? "true" : void 0,
-                          onClick: () => panel.activate(tab.terminalId),
-                          style: {
-                            flex: 1,
-                            minWidth: 0,
-                            textAlign: "left",
-                            padding: "4px 6px",
-                            border: "1px solid transparent",
-                            borderRadius: 5,
-                            cursor: "pointer",
-                            font: "inherit",
-                            fontSize: 12,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                            color: "inherit",
-                            background: tab.terminalId === activeId ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))" : "transparent"
-                          },
-                          children: tab.label
-                        }
-                      ),
-                      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { color: muted, fontSize: 11 }, children: [
-                        tab.status,
-                        tab.hasRunningSubprocess ? " \xB7 running" : "",
-                        tab.queuedInputCount > 0 ? ` \xB7 queued ${tab.queuedInputCount}` : ""
-                      ] }),
-                      tab.confirmAction === null ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
-                        (tab.status === "exited" || tab.status === "error" || tab.status === "closed") && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                          "button",
-                          {
-                            type: "button",
-                            "aria-label": `Start ${tab.terminalId}`,
-                            onClick: () => void panel.startSession(tab.terminalId),
-                            style: control,
-                            children: "Start"
-                          }
-                        ),
-                        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                          "button",
-                          {
-                            type: "button",
-                            "aria-label": `Clear ${tab.terminalId}`,
-                            onClick: () => panel.requestAction(tab.terminalId, "clear"),
-                            style: control,
-                            children: "Clear"
-                          }
-                        ),
-                        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                          "button",
-                          {
-                            type: "button",
-                            "aria-label": `Restart ${tab.terminalId}`,
-                            onClick: () => panel.requestAction(tab.terminalId, "restart"),
-                            style: control,
-                            children: "Restart"
-                          }
-                        ),
-                        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                          "button",
-                          {
-                            type: "button",
-                            "aria-label": `Close ${tab.terminalId}`,
-                            onClick: () => panel.requestAction(tab.terminalId, "close"),
-                            style: control,
-                            children: "\xD7"
-                          }
-                        )
-                      ] }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted, fontSize: 12 }, children: tab.confirmAction === "close" ? "Close this terminal?" : tab.confirmAction === "restart" ? "Restart this terminal?" : "Clear history?" }),
-                        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                          "button",
-                          {
-                            type: "button",
-                            "aria-label": `Confirm ${tab.confirmAction} ${tab.terminalId}`,
-                            onClick: () => void panel.confirmAction(tab.terminalId),
-                            style: control,
-                            children: "Confirm"
-                          }
-                        ),
-                        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                          "button",
-                          {
-                            type: "button",
-                            "aria-label": `Cancel ${tab.confirmAction} ${tab.terminalId}`,
-                            onClick: () => panel.cancelAction(tab.terminalId),
-                            style: control,
-                            children: "Cancel"
-                          }
-                        )
-                      ] })
-                    ]
-                  },
-                  tab.terminalId
-                );
+                    type: "button",
+                    "aria-current": tab.terminalId === activeId ? "true" : void 0,
+                    title: sessionStatusText(tab) ?? tab.label,
+                    onClick: () => panel.activate(tab.terminalId),
+                    style: {
+                      display: "block",
+                      width: "100%",
+                      height: 24,
+                      textAlign: "left",
+                      padding: "0 6px",
+                      border: "1px solid transparent",
+                      borderRadius: 5,
+                      cursor: "pointer",
+                      font: "inherit",
+                      fontSize: 12,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      color: tab.terminalId === activeId ? "inherit" : muted,
+                      background: tab.terminalId === activeId ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))" : "transparent"
+                    },
+                    children: tab.label
+                  }
+                ) }, tab.terminalId);
               })
             }
           )
         ] }, group.id))
+      }
+    );
+    const iconControl = { ...control, padding: "0 6px", fontSize: 13, lineHeight: "22px" };
+    const activeStatus = activeTab === null ? null : sessionStatusText(activeTab);
+    const sessionActions = activeTab !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+      "div",
+      {
+        role: "toolbar",
+        "aria-label": "Session actions",
+        style: {
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          gap: 2,
+          padding: "0 4px",
+          minHeight: 22,
+          flexShrink: 0,
+          fontSize: 12,
+          ...sessionSidebar ? { borderBottom: border } : {}
+        },
+        children: activeTab.confirmAction === null ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+          activeStatus !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+            "span",
+            {
+              style: {
+                flex: 1,
+                minWidth: 0,
+                color: muted,
+                fontSize: 11,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap"
+              },
+              children: activeStatus
+            }
+          ),
+          (activeTab.status === "exited" || activeTab.status === "error" || activeTab.status === "closed") && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+            "button",
+            {
+              type: "button",
+              "aria-label": `Start ${activeTab.terminalId}`,
+              title: "Start",
+              onClick: () => void panel.startSession(activeTab.terminalId),
+              style: iconControl,
+              children: "\u25B6"
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+            "button",
+            {
+              type: "button",
+              "aria-label": `Clear ${activeTab.terminalId}`,
+              title: "Clear history",
+              onClick: () => panel.requestAction(activeTab.terminalId, "clear"),
+              style: iconControl,
+              children: "\u232B"
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+            "button",
+            {
+              type: "button",
+              "aria-label": `Restart ${activeTab.terminalId}`,
+              title: "Restart",
+              onClick: () => panel.requestAction(activeTab.terminalId, "restart"),
+              style: iconControl,
+              children: "\u21BB"
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+            "button",
+            {
+              type: "button",
+              "aria-label": `Close ${activeTab.terminalId}`,
+              title: "Close",
+              onClick: () => panel.requestAction(activeTab.terminalId, "close"),
+              style: iconControl,
+              children: "\xD7"
+            }
+          )
+        ] }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { flex: "1 1 100%", color: muted, fontSize: 12 }, children: activeTab.confirmAction === "close" ? "Close this terminal?" : activeTab.confirmAction === "restart" ? "Restart this terminal?" : "Clear history?" }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+            "button",
+            {
+              type: "button",
+              "aria-label": `Confirm ${activeTab.confirmAction} ${activeTab.terminalId}`,
+              onClick: () => void panel.confirmAction(activeTab.terminalId),
+              style: { ...control, fontSize: 12, padding: "2px 6px" },
+              children: "Confirm"
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+            "button",
+            {
+              type: "button",
+              "aria-label": `Cancel ${activeTab.confirmAction} ${activeTab.terminalId}`,
+              onClick: () => panel.cancelAction(activeTab.terminalId),
+              style: { ...control, fontSize: 12, padding: "2px 6px" },
+              children: "Cancel"
+            }
+          )
+        ] })
       }
     );
     return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
@@ -15496,7 +15541,10 @@ var __t3Client = (() => {
               ]
             }
           ),
-          !sessionSidebar && sessionList,
+          !sessionSidebar && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { display: "flex", alignItems: "center", flexShrink: 0 }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { flex: 1, minWidth: 0 }, children: sessionList }),
+            sessionActions
+          ] }),
           snapshot.tabs.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: "No terminals yet. New terminal opens a shell in this workspace." }),
           snapshot.panelError && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "output",
@@ -15562,7 +15610,8 @@ var __t3Client = (() => {
                 display: "flex",
                 flex: 1,
                 minHeight: TERMINAL_BODY_MIN_HEIGHT,
-                minWidth: 0
+                minWidth: 0,
+                ...sessionSidebar ? { overflowX: "auto" } : {}
               },
               children: [
                 /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
@@ -15572,7 +15621,7 @@ var __t3Client = (() => {
                       display: "flex",
                       flexDirection: "column",
                       flex: "1 1 0",
-                      minWidth: 0,
+                      minWidth: sessionSidebar ? TERMINAL_PANES_MIN_WIDTH : 0,
                       minHeight: 0
                     },
                     children: [
@@ -15617,6 +15666,7 @@ var __t3Client = (() => {
                                     active: focused,
                                     shown,
                                     visible,
+                                    running: tabById.get(terminalId)?.status === "running",
                                     assets,
                                     themeVars,
                                     appearanceVars,
@@ -15718,19 +15768,22 @@ var __t3Client = (() => {
                     ]
                   }
                 ),
-                sessionSidebar && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                sessionSidebar && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                   "aside",
                   {
                     "aria-label": "Terminal session list",
                     style: {
                       display: "flex",
                       flexDirection: "column",
-                      flex: `0 1 ${SESSION_SIDEBAR_WIDTH}px`,
-                      minWidth: SESSION_SIDEBAR_MIN_WIDTH,
+                      width: SESSION_SIDEBAR_WIDTH,
+                      flexShrink: 0,
                       minHeight: 0,
                       borderLeft: border
                     },
-                    children: sessionList
+                    children: [
+                      sessionActions,
+                      sessionList
+                    ]
                   }
                 )
               ]

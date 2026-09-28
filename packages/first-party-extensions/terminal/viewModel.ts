@@ -1,4 +1,3 @@
-// @effect-diagnostics globalTimers:off -- The default scheduler defers notifications by one macrotask in extension-host code, outside any Effect fiber.
 import {
   uiKeybindingsApi,
   uiThemeApi,
@@ -11,6 +10,7 @@ import {
   type TerminalControlRestartInput,
   type TerminalControlWriteInput,
   type TerminalOutputEventsClosed,
+  type TerminalOutputEventsSnapshot,
   type TerminalOutputEventsValue,
   type TerminalSessionMetadata,
   type TerminalSessionResult,
@@ -691,15 +691,7 @@ interface TabInternal {
   meta: TerminalSessionMetadata | null;
   starting: boolean;
   input: TerminalInputQueue;
-  exiting: boolean;
   exitBanner: string | null;
-  /** Bumped per observed incarnation; a deferred exit only closes its own. */
-  generation: number;
-  /** The last status the sessions list reported, and how many exits it has. */
-  listStatus: TerminalSessionMetadata["status"] | null;
-  listExits: number;
-  /** Exits the pane's output stream reported. */
-  streamExits: number;
   confirm: TerminalConfirmAction | null;
   error: string | null;
   resizeInFlight: { cols: number; rows: number } | null;
@@ -713,17 +705,16 @@ const clampDimension = (value: number, max: number) =>
 /**
  * Framework-free terminal panel state. The view feeds the sessions list
  * stream and user gestures in; the panel calls the injected control ops and
- * reports immutable snapshots. Exit handling mirrors the native drawer: an
- * exited session — seen on the list or the pane's output stream, including
- * one that exited while nothing was attached — writes a banner, then on the
- * next scheduled tick closes the server session and removes the tab;
- * `remove` rows drop tabs immediately.
+ * reports immutable snapshots. Exit handling mirrors the native drawer,
+ * which decides from the attached terminal's own stream: an output snapshot
+ * saying the session's current process is exited — including one that
+ * exited while nothing was attached — closes the server session and removes
+ * the tab. List rows are metadata only; `remove` rows drop tabs immediately.
  */
 export class TerminalPanel {
   readonly #control: TerminalControlOps;
   readonly #launch: TerminalLaunchContext | null;
   readonly #canAllocatePaneStream: (() => boolean) | undefined;
-  readonly #schedule: (callback: () => void) => void;
   readonly #onChange: (() => void) | undefined;
   #ids: string[];
   #active: string | null;
@@ -759,13 +750,11 @@ export class TerminalPanel {
      * before any PTY spawns (the view supplies streamHub's answer).
      */
     readonly canAllocatePaneStream?: () => boolean;
-    readonly schedule?: (callback: () => void) => void;
     readonly onChange?: () => void;
   }) {
     this.#control = options.control;
     this.#launch = options.launch;
     this.#canAllocatePaneStream = options.canAllocatePaneStream;
-    this.#schedule = options.schedule ?? ((callback) => setTimeout(callback, 0));
     this.#onChange = options.onChange;
     this.#ids = normalizeTerminalIds(options.restored?.terminalIds ?? []);
     this.#active = resolveActiveTerminalId(this.#ids, options.restored?.activeTerminalId ?? null);
@@ -852,12 +841,7 @@ export class TerminalPanel {
         meta: null,
         starting: false,
         input: this.#newInputQueue(terminalId),
-        exiting: false,
         exitBanner: null,
-        generation: 0,
-        listStatus: null,
-        listExits: 0,
-        streamExits: 0,
         confirm: null,
         error: null,
         resizeInFlight: null,
@@ -944,68 +928,45 @@ export class TerminalPanel {
   }
 
   /**
-   * Absorbs server metadata (a list row or control result). Like native,
-   * only `exited` closes the session; an `error` (a failed start) stays with
-   * its diagnostic and Start. A live row is a newer incarnation: it cancels
-   * any pending exit.
+   * Absorbs server metadata (a list row or control result). It never closes
+   * a session: a row can describe an older process than the one running
+   * now, so exits are decided by the pane's output stream (noteOutputSnapshot).
    */
   #observeMeta(next: TerminalSessionMetadata) {
-    const tab = this.#tab(next.terminalId);
-    const listPrevious = tab.listStatus;
-    tab.listStatus = next.status;
-    tab.meta = next;
-    if (next.status === "running" || next.status === "starting") {
-      if (listPrevious !== "running" && listPrevious !== "starting") tab.generation += 1;
-      tab.exiting = false;
-      tab.exitBanner = null;
-      return;
-    }
-    if (next.status !== "exited") return;
-    if (listPrevious !== "exited") tab.listExits += 1;
-    this.#beginExit(next.terminalId, tab, next.exitCode);
+    this.#tab(next.terminalId).meta = next;
   }
 
-  /** Banner, then close + remove on the next tick, for an exited session (native #29). */
-  #beginExit(terminalId: string, tab: TabInternal, exitCode: number | null) {
-    if (tab.exiting || tab.starting) return;
-    tab.exiting = true;
+  /** The pane's output stream saw a process exit: banner only, pending its fresh snapshot. */
+  noteExit(terminalId: string, exitCode: number | null) {
+    const tab = this.#tabs.get(terminalId);
+    if (this.#disposed || !tab) return;
     tab.exitBanner = `Process exited (code ${exitCode ?? "unknown"})`;
-    const generation = tab.generation;
-    this.#schedule(() => {
-      // Only the incarnation that exited: a restart (from any client) or a
-      // re-added tab under the same id is a different session.
-      if (
-        this.#disposed ||
-        this.#tabs.get(terminalId) !== tab ||
-        !tab.exiting ||
-        tab.generation !== generation
-      )
-        return;
-      // Native closes an exited terminal outright; a failed close still
-      // leaves the tab, like a user close.
+    this.#emit();
+  }
+
+  /**
+   * A pane's output snapshot is the server's current state for this id —
+   * the authority the native drawer's attach stream is. `exited` closes the
+   * session like the native drawer does (a failed close still leaves the
+   * tab, like a user close); an `error` (failed start) keeps its diagnostic
+   * and Start; anything live means any exit banner was an older process's.
+   */
+  noteOutputSnapshot(terminalId: string, status: TerminalOutputEventsSnapshot["status"]) {
+    const tab = this.#tabs.get(terminalId);
+    if (this.#disposed || !tab) return;
+    if (status === "exited") {
+      if (tab.starting) return;
       this.#closing.add(terminalId);
       void this.#control
         .close({ terminalId, deleteHistory: true })
         .catch(() => this.#closing.delete(terminalId));
       this.#removeTab(terminalId);
-    });
-  }
-
-  /**
-   * The pane's output stream saw the process exit. It usually lands before
-   * the sessions list's upsert, so the exit handling starts here — unless
-   * the list already reported this exit, in which case a live row is a newer
-   * incarnation this late exit must not touch.
-   */
-  noteExit(terminalId: string, exitCode: number | null) {
-    const tab = this.#tabs.get(terminalId);
-    if (this.#disposed || !tab?.meta) return;
-    tab.streamExits += 1;
-    if (tab.streamExits <= tab.listExits) return;
-    if (tab.meta.status !== "running" && tab.meta.status !== "starting") return;
-    tab.meta = { ...tab.meta, status: "exited", exitCode };
-    this.#beginExit(terminalId, tab, exitCode);
-    this.#emit();
+      return;
+    }
+    if (status !== "error" && tab.exitBanner !== null) {
+      tab.exitBanner = null;
+      this.#emit();
+    }
   }
 
   applySessionsEvent(event: TerminalSessionsListEvent) {
@@ -1180,7 +1141,6 @@ export class TerminalPanel {
     if (tab.meta !== null && tab.meta.status !== "exited" && tab.meta.status !== "error") return;
     tab.starting = true;
     this.#liveInput(terminalId, tab).setReady(false);
-    tab.exiting = false;
     tab.exitBanner = null;
     tab.error = null;
     this.#emit();
@@ -1331,7 +1291,6 @@ export class TerminalPanel {
         });
         tab.starting = false;
         tab.input.setReady(true);
-        tab.exiting = false;
         tab.exitBanner = null;
         this.#observeMeta(meta);
         await this.#drain(terminalId);
