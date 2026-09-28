@@ -8,7 +8,7 @@ import { Input } from "../components/ui/input";
 import { Checkbox } from "../components/ui/checkbox";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../components/ui/menu";
 import { useEnvironments } from "../state/environments";
-import { useEnvironmentSessionState } from "../state/session";
+import { useEnvironmentSessionState, usePreparedConnection } from "../state/session";
 import { environmentProjects } from "../state/projects";
 import {
   installEnvironmentExtension,
@@ -21,6 +21,7 @@ import {
 function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }) {
   const snapshot = useInstalledExtensions(environmentId);
   const session = useEnvironmentSessionState(environmentId);
+  const connected = usePreparedConnection(environmentId)._tag === "Some";
   const canManage =
     session.data?.authenticated === true &&
     session.data.scopes?.includes(AuthAccessWriteScope) === true;
@@ -159,6 +160,11 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
             {api.id}: {api.reason?.detail}
           </p>
         ))}
+      {!connected && snapshot.installations.length ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          Disconnected. Showing the last known installations.
+        </p>
+      ) : null}
       {!snapshot.loading && !snapshot.installations.length ? (
         <p className="text-sm text-muted-foreground">No installed extensions.</p>
       ) : null}

@@ -10,6 +10,7 @@ import {
 import { InstalledExtensionsSettings } from "./InstalledExtensionsSettings";
 const fixture = vi.hoisted(() => ({
   manage: true,
+  connected: true,
   install: vi.fn(async () => ({})),
   update: vi.fn(async () => ({})),
   refresh: vi.fn(async () => {}),
@@ -35,6 +36,7 @@ vi.mock("../state/session", () => ({
   useEnvironmentSessionState: () => ({
     data: { authenticated: true, scopes: fixture.manage ? [AuthAccessWriteScope] : [] },
   }),
+  usePreparedConnection: () => (fixture.connected ? { _tag: "Some", value: {} } : { _tag: "None" }),
 }));
 vi.mock("./installedEnvironment", () => ({
   useInstalledExtensions: () => ({
@@ -186,6 +188,41 @@ describe("installed package settings", () => {
       fixture.manage = true;
     }
   });
+});
+
+it("labels a disconnected environment's installations as last known", async () => {
+  fixture.installations = [
+    {
+      id: "example.files",
+      enabled: true,
+      contentHash: "a".repeat(64),
+      grants: { capabilities: [], projectIds: [] },
+      package: {
+        format: 1,
+        manifest: { id: "example.files", version: "1.0.0", apiVersion: 1, surfaces: [] },
+        serverEntry: "server.mjs",
+        tools: [],
+      },
+    },
+  ];
+  const label = "Disconnected. Showing the last known installations.";
+  let root!: ReactTestRenderer;
+  try {
+    fixture.connected = false;
+    await act(async () => {
+      root = create(<InstalledExtensionsSettings />);
+    });
+    expect(JSON.stringify(root.toJSON())).toContain(label);
+    fixture.connected = true;
+    await act(async () => {
+      root.update(<InstalledExtensionsSettings />);
+    });
+    expect(JSON.stringify(root.toJSON())).not.toContain(label);
+  } finally {
+    await act(async () => root?.unmount());
+    fixture.connected = true;
+    fixture.installations = [];
+  }
 });
 
 it("selects a package-provided API explicitly without changing installation grants", async () => {
