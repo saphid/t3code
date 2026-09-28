@@ -435,6 +435,52 @@ NodeTest.describe("terminal panel — reconciliation + tabs", () => {
     },
   );
 
+  NodeTest.it(
+    "racing restores never relaunch a session another restore just failed (fix-d9 r2)",
+    async () => {
+      // One server, two clients. The fake mirrors Manager.openOrAttach: an
+      // absent session launches; an existing one without a process relaunches
+      // only for restartIfNotRunning. Every launch fails and is retained as an
+      // error row, as the server does.
+      let launches = 0;
+      const sessions = new Map();
+      const serverAttach = (input) => {
+        const existing = sessions.get(input.terminalId);
+        if (existing && input.restartIfNotRunning !== true) return Promise.resolve(existing);
+        launches += 1;
+        const failed = meta(input.terminalId, { status: "error" });
+        sessions.set(input.terminalId, failed);
+        return Promise.resolve(failed);
+      };
+      const clients = [0, 1].map(
+        () =>
+          new TerminalPanel({
+            control: fakeControl({ attach: serverAttach }),
+            launch,
+            restored: { terminalIds: ["term-1"], activeTerminalId: "term-1" },
+          }),
+      );
+      // Both see the restarted server's empty list before either attach lands.
+      for (const panel of clients) panel.applySessionsEvent({ kind: "snapshot", terminals: [] });
+      for (const panel of clients) panel.startMissingSessions(["term-1"]);
+      await new Promise(setImmediate);
+      NodeAssert.equal(launches, 1);
+      for (const panel of clients) {
+        NodeAssert.equal(
+          panel.snapshot.tabs.find((tab) => tab.terminalId === "term-1")?.status,
+          "error",
+        );
+        // Observed now: a repeated restore is a no-op; only Start relaunches.
+        panel.startMissingSessions(["term-1"]);
+      }
+      await new Promise(setImmediate);
+      NodeAssert.equal(launches, 1);
+      await clients[1].startSession("term-1");
+      NodeAssert.equal(launches, 2);
+      for (const panel of clients) panel.dispose();
+    },
+  );
+
   NodeTest.it("a restored tab order survives reconcile and is what gets saved", () => {
     const saved = [];
     let panel;

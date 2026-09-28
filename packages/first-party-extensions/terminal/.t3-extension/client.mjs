@@ -12859,18 +12859,24 @@ var __t3Client = (() => {
      * its launch cwd, which spawns a fresh shell for a missing session; this
      * does the same once the list is live, so the pane does not sit closed
      * until Start. A server row (even an exited one) or a failed start is left
-     * for the user, as native leaves it.
+     * for the user, as native leaves it. Like native's automatic attach, this
+     * never asks the server to restart: another client's restore may have
+     * already created (and failed or exited) the session since our snapshot,
+     * and only Start may relaunch it.
      */
     startMissingSessions(terminalIds) {
       if (this.#disposed || this.#stream !== "live") return;
       for (const terminalId of terminalIds) {
         const tab = this.#tabs.get(terminalId);
         if (tab && tab.meta === null && !tab.starting && tab.error === null)
-          void this.startSession(terminalId);
+          void this.#attach(terminalId, false);
       }
     }
-    /** Attach a tracked id that has no live metadata (restore/edge). */
-    async startSession(terminalId) {
+    /** Start: attach a tracked id that has no live metadata, restarting a stopped session. */
+    startSession(terminalId) {
+      return this.#attach(terminalId, true);
+    }
+    async #attach(terminalId, restartIfNotRunning) {
       const launch = this.#launch;
       const tab = this.#tabs.get(terminalId);
       if (!tab || !launch || tab.starting) return;
@@ -12885,7 +12891,7 @@ var __t3Client = (() => {
           terminalId,
           cwd: launch.cwd,
           worktreePath: launch.worktreePath,
-          restartIfNotRunning: true,
+          ...restartIfNotRunning ? { restartIfNotRunning: true } : {},
           ...launch.cols !== void 0 ? { cols: launch.cols } : {},
           ...launch.rows !== void 0 ? { rows: launch.rows } : {},
           ...launch.env !== void 0 ? { env: launch.env } : {}
