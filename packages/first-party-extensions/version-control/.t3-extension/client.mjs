@@ -5732,7 +5732,8 @@ var __t3Client = (() => {
           // `mode: "local"` in this repository; `resolve-conflicts` always takes
           // a worktree and refuses a mode, and from a view beside a thread
           // drafts into that thread instead, as native does. The pack names a
-          // task, never text.
+          // task, never text. The host reports every outcome in native's toasts,
+          // which survive the move to the new thread, so the pack adds none.
           name: "handoffPullRequest",
           effect: "write",
           requiredGrants: [VCS_MUTATE, VCS_HANDOFF],
@@ -10267,56 +10268,6 @@ ${ref.number}`;
       disabled: handoff !== null
     };
   }
-  function prsHandoffReceipt(task, outcome, mode = "worktree") {
-    if (!outcome.ok)
-      return {
-        tone: "error",
-        title: "Could not prepare the pull request checkout",
-        description: outcome.detail
-      };
-    const result = outcome.value;
-    if (result.status === "drafted")
-      return {
-        tone: "success",
-        title: "Added to the composer",
-        description: "The task is in the composer \u2014 read it over, then send."
-      };
-    if (result.status === "failed") {
-      if (result.stage === "thread")
-        return {
-          tone: "error",
-          title: "Could not open a thread for the checkout",
-          description: "Try again from the project, or open a thread first."
-        };
-      if (result.stage === "checkout")
-        return {
-          tone: "error",
-          title: "Could not prepare the pull request checkout",
-          description: result.detail ?? null
-        };
-      return {
-        tone: "error",
-        title: "Checked out, but the thread stayed where it was",
-        description: `The checkout is ready on \`${result.branch ?? "its branch"}\`. Point a thread at it from the branch picker, then ask again.`
-      };
-    }
-    if (!result.isOnPullRequestHead) return STALE_CHECKOUT_RECEIPT;
-    if (task === "checkout")
-      return mode === "local" ? {
-        tone: "success",
-        title: "Checked out here",
-        description: "This repository is on the pull request's branch, with a thread open on it."
-      } : {
-        tone: "success",
-        title: "Checked out",
-        description: "The pull request is in its own worktree, with a thread open on it."
-      };
-    return {
-      tone: "success",
-      title: "Checkout ready",
-      description: "The task is in the composer \u2014 read it over, then send."
-    };
-  }
   function prsBranchChips(detail, stacked) {
     return {
       base: {
@@ -12655,27 +12606,26 @@ ${writeKey}`;
       const refKey = selectedKey;
       setHandoff(task === "checkout" ? `checkout:${mode}` : "conflicts");
       setHandoffReceipt(null);
-      const drafting = task === "resolve-conflicts" && session.context.resource.threadId;
-      const report = beginReport(
-        task === "checkout" ? "Check out" : "Resolve conflicts",
-        drafting ? void 0 : "Preparing the pull request checkout...",
-        (receipt2) => setHandoffReceipt({ refKey, receipt: receipt2 })
-      );
       void bindApi(vcsActionsApi, host, session.context, "^1.1.0").invoke(
         "handoffPullRequest",
         task === "checkout" ? { reference: url, task, mode } : { reference: url, task },
         session.signal
       ).then(
-        (value) => ({ ok: true, value }),
-        (error) => ({
-          ok: false,
-          detail: error instanceof Error ? error.message : null
-        })
-      ).then((outcome) => {
-        if (session.signal.aborted) return;
-        setHandoff(null);
-        report(prsHandoffReceipt(task, outcome, mode));
-      });
+        () => {
+          if (!session.signal.aborted) setHandoff(null);
+        },
+        (error) => {
+          if (session.signal.aborted) return;
+          setHandoff(null);
+          reportResult(
+            prsCheckoutReceipt(mode, {
+              ok: false,
+              detail: error instanceof Error ? error.message : null
+            }),
+            (receipt2) => setHandoffReceipt({ refKey, receipt: receipt2 })
+          );
+        }
+      );
     };
     const startCheckout = (url, mode) => {
       if (checkoutSupport.handoff) return startHandoff(url, "checkout", mode);

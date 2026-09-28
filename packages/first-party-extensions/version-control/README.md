@@ -65,8 +65,10 @@ The PR browser consumes the `t3.prs/read` grant:
   `t3.vcs/handoff` grant), both options run as native's do: the host opens
   a thread, checks out (`mode` names where), runs the setup script, and
   points the thread at the checkout, so the worktree option reads "Its own
-  folder and thread". Without it, the pack checks out alone and the worktree
-  option promises only the folder;
+  folder and thread". The host shows native's toasts for it, which stay on
+  screen on the new thread; the pack reports only a call the host refused.
+  Without it, the pack checks out alone and the worktree option promises
+  only the folder;
 - Resolve conflicts (the same handoff, on an open pull request that
   conflicts with its base): the pack names the task and the host writes
   native's prompt into a composer — beside a thread, that thread's; otherwise

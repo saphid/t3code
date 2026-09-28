@@ -74,7 +74,6 @@ import {
   prsCheckoutLabel,
   prsCheckoutOptions,
   prsCheckoutReceipt,
-  prsHandoffReceipt,
   prsResolveConflictsControl,
   prsCommitUrl,
   prsHeadRepositoryUrl,
@@ -2452,8 +2451,9 @@ export function PullRequestsPanel(props: {
 
   /**
    * The host runs native's handoff (`handoffPullRequest`): it opens the thread,
-   * checks out, and writes any task into the composer. The pack names the
-   * task only; the receipt says what the host did.
+   * checks out, writes any task into the composer, and reports each outcome
+   * in native's toasts on the thread it opened. The pack names the task only,
+   * and speaks only for a call the host refused.
    */
   const startHandoff = (
     url: string,
@@ -2464,14 +2464,6 @@ export function PullRequestsPanel(props: {
     const refKey = selectedKey;
     setHandoff(task === "checkout" ? `checkout:${mode}` : "conflicts");
     setHandoffReceipt(null);
-    // Beside a thread native writes the task straight into its composer, with
-    // nothing to wait for; everywhere else the checkout is.
-    const drafting = task === "resolve-conflicts" && session.context.resource.threadId;
-    const report = beginReport(
-      task === "checkout" ? "Check out" : "Resolve conflicts",
-      drafting ? undefined : "Preparing the pull request checkout...",
-      (receipt) => setHandoffReceipt({ refKey, receipt }),
-    );
     void bindApi(vcsActionsApi, host, session.context, "^1.1.0")
       .invoke(
         "handoffPullRequest",
@@ -2479,17 +2471,21 @@ export function PullRequestsPanel(props: {
         session.signal,
       )
       .then(
-        (value) => ({ ok: true as const, value }),
-        (error: unknown) => ({
-          ok: false as const,
-          detail: error instanceof Error ? error.message : null,
-        }),
-      )
-      .then((outcome) => {
-        if (session.signal.aborted) return;
-        setHandoff(null);
-        report(prsHandoffReceipt(task, outcome, mode));
-      });
+        () => {
+          if (!session.signal.aborted) setHandoff(null);
+        },
+        (error: unknown) => {
+          if (session.signal.aborted) return;
+          setHandoff(null);
+          reportResult(
+            prsCheckoutReceipt(mode, {
+              ok: false,
+              detail: error instanceof Error ? error.message : null,
+            }),
+            (receipt) => setHandoffReceipt({ refKey, receipt }),
+          );
+        },
+      );
   };
 
   /** `t3.vcs/actions` prepares the checkout; the receipt names where it landed. */

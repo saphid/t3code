@@ -42,9 +42,7 @@ import type {
   PrsWriteOperationsSupport,
   PrsWriteUpdateMethod,
   PrsWriteVerdict,
-  VcsActionHandoffResult,
   VcsActionPrepareThreadResult,
-  VcsPullRequestHandoffTask,
   VcsRefEntry,
 } from "@t3tools/extension-sdk/catalogue";
 
@@ -502,69 +500,6 @@ export function prsResolveConflictsControl(
     visible: detail.state === "open" && detail.mergeability === "conflicting",
     label: handoff === "conflicts" ? "Preparing..." : "Resolve conflicts",
     disabled: handoff !== null,
-  };
-}
-
-/**
- * Native's handoff toasts as one receipt, for the task the pack asked the host
- * to run and, for a checkout, where it asked for it.
- */
-export function prsHandoffReceipt(
-  task: VcsPullRequestHandoffTask,
-  outcome:
-    | { readonly ok: true; readonly value: VcsActionHandoffResult }
-    | { readonly ok: false; readonly detail: string | null },
-  mode: PrsCheckoutMode = "worktree",
-): PrsReceipt {
-  if (!outcome.ok)
-    return {
-      tone: "error",
-      title: "Could not prepare the pull request checkout",
-      description: outcome.detail,
-    };
-  const result = outcome.value;
-  if (result.status === "drafted")
-    return {
-      tone: "success",
-      title: "Added to the composer",
-      description: "The task is in the composer — read it over, then send.",
-    };
-  if (result.status === "failed") {
-    if (result.stage === "thread")
-      return {
-        tone: "error",
-        title: "Could not open a thread for the checkout",
-        description: "Try again from the project, or open a thread first.",
-      };
-    if (result.stage === "checkout")
-      return {
-        tone: "error",
-        title: "Could not prepare the pull request checkout",
-        description: result.detail ?? null,
-      };
-    return {
-      tone: "error",
-      title: "Checked out, but the thread stayed where it was",
-      description: `The checkout is ready on \`${result.branch ?? "its branch"}\`. Point a thread at it from the branch picker, then ask again.`,
-    };
-  }
-  if (!result.isOnPullRequestHead) return STALE_CHECKOUT_RECEIPT;
-  if (task === "checkout")
-    return mode === "local"
-      ? {
-          tone: "success",
-          title: "Checked out here",
-          description: "This repository is on the pull request's branch, with a thread open on it.",
-        }
-      : {
-          tone: "success",
-          title: "Checked out",
-          description: "The pull request is in its own worktree, with a thread open on it.",
-        };
-  return {
-    tone: "success",
-    title: "Checkout ready",
-    description: "The task is in the composer — read it over, then send.",
   };
 }
 
