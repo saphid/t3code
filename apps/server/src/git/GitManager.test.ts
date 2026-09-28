@@ -5624,6 +5624,55 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("local PR checkout adds no remote for a fork clone URL that is not HTTPS or SSH", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      const forkDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-file-fork"]);
+      yield* runGit(repoDir, ["push", forkDir, "feature/pr-file-fork"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* runGit(repoDir, ["branch", "-D", "feature/pr-file-fork"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 83,
+            title: "File fork PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/83",
+            baseRefName: "main",
+            headRefName: "feature/pr-file-fork",
+            state: "open",
+            isCrossRepository: true,
+            headRepositoryNameWithOwner: "octocat/codething-mvp",
+            headRepositoryOwnerLogin: "octocat",
+          },
+          repositoryCloneUrls: {
+            "octocat/codething-mvp": {
+              url: `file://${forkDir}`,
+              sshUrl: `file://${forkDir}`,
+            },
+          },
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "83",
+        mode: "local",
+      });
+
+      expect(result.branch).toBe("feature/pr-file-fork");
+      expect((yield* runGit(repoDir, ["remote"])).stdout.trim()).toBe("origin");
+      expect(
+        (yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "@{upstream}"], true)).exitCode,
+      ).not.toBe(0);
+    }),
+  );
+
   it.effect("derives fork repository identity from PR URL when GitHub omits nameWithOwner", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

@@ -328,6 +328,25 @@ function sanitizeRemoteName(value: string): string {
   return sanitized.length > 0 ? sanitized : "fork";
 }
 
+// Only transports that reach a hosting service: a `file://`, `ext::` or bare-path URL from a
+// provider would read the local disk or run a command. A leading `-` would be an option.
+function isHostedRepositoryUrl(url: string): boolean {
+  return !/^-|\s/u.test(url) && (/^https:\/\//iu.test(url) || isSshRemoteUrl(url));
+}
+
+// The repository a remote URL names, across SSH and HTTPS spellings. An HTTP(S) port is kept:
+// unlike an SSH port, it can be a different server with the same repository path.
+function remoteRepositoryKey(url: string): string {
+  const key = normalizeGitRemoteUrl(url);
+  if (!/^https?:\/\//iu.test(url.trim())) return key;
+  try {
+    const port = new URL(url.trim()).port;
+    return port.length > 0 ? `${key}#${port}` : key;
+  } catch {
+    return key;
+  }
+}
+
 function parseRemoteFetchUrls(stdout: string): Map<string, string> {
   const remotes = new Map<string, string>();
   for (const line of stdout.split("\n")) {
@@ -1489,7 +1508,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     "ensureRemote",
   )(function* (input) {
     const preferredName = sanitizeRemoteName(input.preferredName);
-    const normalizedTargetUrl = normalizeGitRemoteUrl(input.url);
+    const targetKey = remoteRepositoryKey(input.url);
     const remoteFetchUrls = yield* runGitStdout(
       "GitVcsDriver.ensureRemote.listRemoteUrls",
       input.cwd,
@@ -1497,11 +1516,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ).pipe(Effect.map((stdout) => parseRemoteFetchUrls(stdout)));
 
     for (const [remoteName, remoteUrl] of remoteFetchUrls.entries()) {
-      if (normalizeGitRemoteUrl(remoteUrl) === normalizedTargetUrl) {
+      if (remoteRepositoryKey(remoteUrl) === targetKey) {
         return remoteName;
       }
     }
 
+    // A remote the user configured is theirs to trust; one added here takes its URL from the
+    // provider, so it must be a hosting service's.
+    if (!isHostedRepositoryUrl(input.url)) {
+      return yield* new GitCommandError({
+        operation: "GitVcsDriver.ensureRemote",
+        command: "git remote add",
+        cwd: input.cwd,
+        detail: "Refusing to add a remote whose URL is not HTTPS or SSH.",
+      });
+    }
     let remoteName = preferredName;
     let suffix = 1;
     while (remoteFetchUrls.has(remoteName)) {
@@ -3221,11 +3250,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const fetchCommit: GitVcsDriver.GitVcsDriver["Service"]["fetchCommit"] = Effect.fn("fetchCommit")(
     function* (input) {
-      // Only transports that reach a hosting service: a `file://`, `ext::` or bare-path URL from a
-      // provider would read the local disk or run a command. A leading `-` would be an option.
       const url = input.url;
-      const fetchable = !/^-|\s/u.test(url) && (/^https:\/\//iu.test(url) || isSshRemoteUrl(url));
-      if (!fetchable || !input.ref.startsWith("refs/") || input.ref.includes(":")) {
+      if (
+        !isHostedRepositoryUrl(url) ||
+        !input.ref.startsWith("refs/") ||
+        input.ref.includes(":")
+      ) {
         return yield* new GitCommandError({
           operation: "GitVcsDriver.fetchCommit",
           command: "git fetch",
