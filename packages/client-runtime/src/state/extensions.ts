@@ -18,6 +18,7 @@ import type {
   ExtensionManageInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import {
   request as rpcRequest,
@@ -152,14 +153,21 @@ export function environmentResumableExtensionApiStream(
   return Stream.unwrap(
     Effect.gen(function* () {
       const registry = yield* EnvironmentRegistry;
-      return registry.followStream(
-        environmentId,
-        subscribeDynamicUntilCompleteWithSuspensions(
-          WS_METHODS.subscribeExtensionApi,
-          () => Effect.sync(makePayload),
-          { streamBufferSize: 1 },
-        ),
-      );
+      // followStream never completes on its own, so the source's completion
+      // is carried out as a final `none` that ends the outer stream.
+      return registry
+        .followStream(
+          environmentId,
+          subscribeDynamicUntilCompleteWithSuspensions(
+            WS_METHODS.subscribeExtensionApi,
+            () => Effect.sync(makePayload),
+            { streamBufferSize: 1 },
+          ).pipe(Stream.map(Option.some), Stream.concat(Stream.succeed(Option.none()))),
+        )
+        .pipe(
+          Stream.takeWhile(Option.isSome),
+          Stream.map((frame) => frame.value),
+        );
     }),
   );
 }

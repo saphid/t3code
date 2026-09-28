@@ -154,6 +154,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
       target: ConnectionTarget,
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
     readonly initialDisabled?: ReadonlyArray<EnvironmentId>;
+    readonly finiteExtensionApi?: boolean;
   },
 ) {
   const storedTargets = yield* Ref.make(
@@ -387,7 +388,10 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
             // Extension API streams name the target whose session serves them.
             client: {
               [WS_METHODS.subscribeExtensionApi]: () =>
-                Stream.concat(Stream.succeed(target.label), Stream.never),
+                Stream.concat(
+                  Stream.succeed(target.label),
+                  options?.finiteExtensionApi ? Stream.empty : Stream.never,
+                ),
             } as unknown as RpcSession.RpcSession["client"],
             initialConfig: Effect.die(new Error("Config is not used by registry tests.")),
             subscribeServerConfig: () =>
@@ -1111,6 +1115,43 @@ describe("EnvironmentRegistry", () => {
         yield* Fiber.interrupt(subscription);
 
         expect(yield* Ref.get(labels)).toEqual([RELAY_TARGET.label, replacement.label]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.live("completes a resumable extension stream when its source completes", () =>
+    Effect.gen(function* () {
+      const replacement = new RelayConnectionTarget({
+        environmentId: RELAY_TARGET.environmentId,
+        label: "Replacement relay environment",
+      });
+      const harness = yield* makeHarness([RELAY_TARGET], [], [], { finiteExtensionApi: true });
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          RELAY_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+
+        const labels = yield* environmentResumableExtensionApiStream(
+          RELAY_TARGET.environmentId,
+          () => ({}) as never,
+        ).pipe(
+          Stream.filter(Option.isSome),
+          Stream.map((frame) => frame.value as unknown as string),
+          Stream.runCollect,
+          Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
+          Effect.timeoutOption("1 second"),
+        );
+        // A later re-registration must not reopen the completed subscription.
+        yield* registry.register(new RelayConnectionRegistration({ target: replacement }));
+
+        expect(Option.map(labels, (values) => [...values])).toEqual(
+          Option.some([RELAY_TARGET.label]),
+        );
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
