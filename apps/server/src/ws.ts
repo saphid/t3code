@@ -3662,6 +3662,12 @@ const makeWsRpcLayer = (
             browserEngineHosts.commandResult(engineHostSocket, input),
             { "rpc.aggregate": "browser-engine-host" },
           ),
+        [WS_METHODS.browserEngineHostProfiles]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.browserEngineHostProfiles,
+            browserEngineHosts.publishProfiles(engineHostSocket, input),
+            { "rpc.aggregate": "browser-engine-host" },
+          ),
         [WS_METHODS.browserFramesCloseInput]: (input) =>
           observeRpcEffect(
             WS_METHODS.browserFramesCloseInput,

@@ -228,6 +228,14 @@ export const BROWSER_ENGINE_PROFILE_LIST_MAX = BROWSER_PROFILE_MAX_COUNT + 2;
 export const BROWSER_ENGINE_IMPORT_SOURCE_MAX = 16;
 export const BROWSER_ENGINE_IMPORT_SOURCE_PROFILE_MAX = 32;
 
+/** The profile list as a host reports it: ids and names only, plus the default. */
+const BrowserEngineProfileListFields = {
+  profiles: Schema.Array(Schema.Struct({ id: BrowserProfileId, name: ProfileNameField })).check(
+    Schema.isMaxLength(BROWSER_ENGINE_PROFILE_LIST_MAX),
+  ),
+  defaultProfileId: BrowserProfileId,
+};
+
 /**
  * Answers to profile commands. `profiles` answers `listProfiles`,
  * `import-sources` answers `listImportSources`; `imported`, `declined`
@@ -235,13 +243,7 @@ export const BROWSER_ENGINE_IMPORT_SOURCE_PROFILE_MAX = 32;
  * `importCookies`; `applied` answers a clear.
  */
 export const BrowserEngineProfileAnswer = Schema.Union([
-  Schema.Struct({
-    outcome: Schema.Literal("profiles"),
-    profiles: Schema.Array(Schema.Struct({ id: BrowserProfileId, name: ProfileNameField })).check(
-      Schema.isMaxLength(BROWSER_ENGINE_PROFILE_LIST_MAX),
-    ),
-    defaultProfileId: BrowserProfileId,
-  }),
+  Schema.Struct({ outcome: Schema.Literal("profiles"), ...BrowserEngineProfileListFields }),
   Schema.Struct({
     outcome: Schema.Literal("import-sources"),
     sources: Schema.Array(
@@ -285,6 +287,17 @@ export const BrowserEngineHostCommandResultInput = Schema.Struct({
   ]),
 });
 export type BrowserEngineHostCommandResultInput = typeof BrowserEngineHostCommandResultInput.Type;
+
+/**
+ * The host's profile list, published once registered and again whenever the
+ * desktop's profile settings change. It feeds `t3.browser/profiles`'
+ * `changes` stream; the server drops a publication equal to the last one.
+ */
+export const BrowserEngineHostProfilesInput = Schema.Struct({
+  hostConnectionId: BrowserEngineHostConnectionId,
+  ...BrowserEngineProfileListFields,
+});
+export type BrowserEngineHostProfilesInput = typeof BrowserEngineHostProfilesInput.Type;
 
 export class BrowserEngineHostError extends Schema.TaggedError<BrowserEngineHostError>()(
   "BrowserEngineHostError",

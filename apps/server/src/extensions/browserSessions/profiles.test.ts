@@ -18,6 +18,7 @@ import {
   BROWSER_PROFILES,
   BROWSER_SESSIONS,
   browserProfilesApi,
+  browserProfilesApiV1,
 } from "@t3tools/extension-sdk/catalogue";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type {
@@ -26,7 +27,9 @@ import type {
   HostApiRootAuthority,
 } from "@t3tools/extension-runtime";
 import { createExtensionRuntime } from "@t3tools/extension-runtime";
+import { Ajv } from "ajv";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
@@ -53,6 +56,8 @@ const ENV_ID = "env";
 const PROJECT_ID = "project";
 const THREAD_ID = "thread";
 const WORKSPACE = "/repo/workspace";
+/** `createExtensionRuntime`'s default broker deadline. */
+const BROKER_DEFAULT_TIMEOUT_MS = 10_000;
 const DESKTOP_SOCKET = { socketId: "desktop-ws", grantMethod: "desktop-bootstrap" } as const;
 
 class InvokeRejection extends Data.TaggedError("InvokeRejection")<{ readonly cause: unknown }> {}
@@ -879,41 +884,65 @@ describe("browser profiles grants through the broker", () => {
 
   it.effect("an import outlives the broker's default deadline and still returns its outcome", () =>
     Effect.gen(function* () {
-      const { profiles, engineHosts } = yield* harnessWith({ importAckTimeoutMs: 400 });
+      const { profiles, engineHosts } = yield* harness;
       const host = yield* attachProfileHost(engineHosts, () => "silent");
+      // Installation finishes on the worker's ready handshake in real time;
+      // only then do the deadlines move to a clock this test advances.
       const { call } = yield* brokerRuntime(profiles, {
-        timeoutMs: 50,
         grants: [BROWSER_PROFILES, BROWSER_IMPORT_COOKIES],
       });
+      yield* Effect.acquireRelease(
+        Effect.sync(() => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] })),
+        () => Effect.sync(() => vi.useRealTimers()),
+      );
 
       // The user takes longer than the default deadline to confirm: a list
       // issued after the import expires under that deadline first.
       const importing = call("importCookies", IMPORT_INPUT);
-      yield* Queue.take(host.arrivals);
-      const listed = yield* settled(call("list", {}));
-      expect(listed).toEqual({ error: "API deadline exceeded" });
+      expect((yield* Queue.take(host.arrivals))._tag).toBe("importCookies");
+      const listing = settled(call("list", {}));
+      expect((yield* Queue.take(host.arrivals))._tag).toBe("listProfiles");
+      vi.advanceTimersByTime(BROKER_DEFAULT_TIMEOUT_MS);
+      expect(yield* listing).toEqual({ error: "API deadline exceeded" });
       yield* host.respond(0, { outcome: "confirmed" });
       expect(yield* Queue.take(host.controls)).toMatchObject({ type: "profile-command-proceed" });
       yield* host.respond(0, { outcome: "imported", imported: 5, skipped: 1 });
       expect(yield* settled(importing)).toEqual({
         value: { outcome: "imported", profileId: "work", imported: 5, skipped: 1 },
       });
-
-      // A prompt nobody answers expires on the import wait, not the broker's:
-      // the caller gets `unknown` and the host is told to take it down.
-      const abandoned = call("importCookies", IMPORT_INPUT);
-      yield* Queue.take(host.arrivals);
-      expect(yield* settled(abandoned)).toEqual({
-        value: { outcome: "unknown", profileId: "work" },
-      });
-      expect(yield* Queue.take(host.controls)).toEqual({
-        type: "profile-command-cancel",
-        commandId: host.commandIds.at(-1),
-      });
     }).pipe(
       Effect.scoped,
       Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer))),
     ),
+  );
+
+  it.effect("a prompt nobody answers expires on the import wait, not the broker's", () =>
+    Effect.gen(function* () {
+      const { profiles, engineHosts } = yield* harness;
+      const host = yield* attachProfileHost(engineHosts, () => "silent");
+      yield* Effect.acquireRelease(
+        Effect.sync(() => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] })),
+        () => Effect.sync(() => vi.useRealTimers()),
+      );
+      // The provider runner itself, as the broker calls it: its import wait
+      // is armed before the frame reaches the host.
+      const abandoned = settled(
+        Promise.resolve(
+          profiles.invoke("importCookies", IMPORT_INPUT, context(), signal, meta(profiles)),
+        ),
+      );
+      yield* Queue.take(host.arrivals);
+      // The broker's deadline for an import lies beyond the import wait.
+      expect(profiles.deadlineMs!("importCookies")).toBeGreaterThan(
+        BrowserEngineHosts.IMPORT_ACK_TIMEOUT_MS,
+      );
+      vi.advanceTimersByTime(BrowserEngineHosts.IMPORT_ACK_TIMEOUT_MS);
+      expect(yield* Queue.take(host.controls)).toEqual({
+        type: "profile-command-cancel",
+        commandId: host.commandIds[0],
+      });
+      expect(yield* abandoned).toEqual({ value: { outcome: "unknown", profileId: "work" } });
+    }),
   );
 
   it.effect("revoking the grant while the prompt is open cancels the import on the host", () =>
@@ -943,5 +972,317 @@ describe("browser profiles grants through the broker", () => {
       Effect.scoped,
       Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer))),
     ),
+  );
+});
+
+describe("browser profiles changes stream (1.1.0)", () => {
+  const LIST = {
+    profiles: [
+      { id: "default", name: "Default" },
+      { id: "work", name: "Work" },
+    ],
+    defaultProfileId: "default",
+  };
+  const RENAMED = {
+    ...LIST,
+    profiles: [LIST.profiles[0]!, { id: "work", name: "Client work" }],
+  };
+  const DELETED = { ...LIST, profiles: [LIST.profiles[0]!] };
+  const NEW_DEFAULT = { ...RENAMED, defaultProfileId: "work" };
+
+  /** Opens `changes` as the broker would; `next` pulls one event. */
+  const openChanges = (provider: HostApiProvider, metadata = meta(provider)) =>
+    Effect.sync(() => {
+      const iterator = provider.subscribe!("changes", {}, context(), signal, metadata)[
+        Symbol.asyncIterator
+      ]();
+      return {
+        next: Effect.promise(() => iterator.next()),
+        close: Effect.promise(async () => {
+          await iterator.return?.();
+        }),
+      };
+    });
+
+  const publish = (
+    engineHosts: BrowserEngineHosts.BrowserEngineHosts["Service"],
+    hostConnectionId: string,
+    list: typeof LIST,
+  ) => engineHosts.publishProfiles(DESKTOP_SOCKET, { hostConnectionId, ...list });
+
+  /** A window that answers a list read with whatever it last published. */
+  const attachWindow = Effect.fn("test.attachWindow")(function* (
+    engineHosts: BrowserEngineHosts.BrowserEngineHosts["Service"],
+  ) {
+    let published: typeof LIST | null = null;
+    const host = yield* attachProfileHost(engineHosts, (command) =>
+      command._tag === "listProfiles" && published !== null
+        ? { outcome: "profiles", ...published }
+        : "silent",
+    );
+    return {
+      ...host,
+      publish: (list: typeof LIST) => {
+        published = list;
+        return publish(engineHosts, host.hostConnectionId(), list);
+      },
+    };
+  });
+
+  const listed = (profiles: HostApiProvider) => invoke(profiles, "list", {});
+
+  it.effect("declares the stream under the list grant, with 1.0.0 kept frozen", () =>
+    Effect.sync(() => {
+      expect(browserProfilesApi.definition.version).toBe("1.1.0");
+      expect(browserProfilesApi.baseline).toBe("1.0.0");
+      expect(browserProfilesApi.definition.streams).toEqual([
+        expect.objectContaining({ name: "changes", requiredGrants: [BROWSER_PROFILES] }),
+      ]);
+      expect(browserProfilesApiV1.definition.version).toBe("1.0.0");
+      expect(browserProfilesApiV1.definition.streams).toBeUndefined();
+      expect(browserProfilesApiV1.definition.methods).toEqual(
+        browserProfilesApi.definition.methods,
+      );
+    }),
+  );
+
+  it.effect("an event is a list or null, as strict validation reads the schema", () =>
+    Effect.sync(() => {
+      const validate = new Ajv({ strict: true, addUsedSchema: false }).compile(
+        browserProfilesApi.definition.streams![0]!.eventSchema,
+      );
+      expect(validate({ list: LIST })).toBe(true);
+      expect(validate({ list: null })).toBe(true);
+      expect(validate({ list: { profiles: [], defaultProfileId: "default" } })).toBe(true);
+      expect(validate(LIST)).toBe(false);
+      expect(validate({})).toBe(false);
+      expect(validate({ list: { profiles: [] } })).toBe(false);
+    }),
+  );
+
+  it.effect("starts from the published list, then sends each change and no repeats", () =>
+    Effect.gen(function* () {
+      const { profiles, engineHosts } = yield* harness;
+      const host = yield* attachWindow(engineHosts);
+      yield* host.publish(LIST);
+      const changes = yield* openChanges(profiles);
+      expect(yield* changes.next).toEqual({
+        done: false,
+        value: { type: "snapshot", value: { list: LIST } },
+      });
+      // An unchanged publication (another settings edit) sends nothing: the
+      // next event is the rename that follows it.
+      yield* host.publish(LIST);
+      yield* host.publish(RENAMED);
+      expect(yield* changes.next).toEqual({
+        done: false,
+        value: { type: "data", value: { list: RENAMED } },
+      });
+      yield* host.publish(DELETED);
+      expect((yield* changes.next).value).toEqual({ type: "data", value: { list: DELETED } });
+      yield* host.publish(NEW_DEFAULT);
+      expect((yield* changes.next).value).toEqual({ type: "data", value: { list: NEW_DEFAULT } });
+      yield* changes.close;
+    }),
+  );
+
+  it.effect("a change published from any window reaches every subscriber and `list`", () =>
+    Effect.gen(function* () {
+      const { profiles, engineHosts } = yield* harness;
+      const windowA = yield* attachWindow(engineHosts);
+      const windowB = yield* attachWindow(engineHosts);
+      yield* windowA.publish(LIST);
+      yield* windowB.publish(LIST);
+      const changes = yield* openChanges(profiles);
+      expect((yield* changes.next).value).toEqual({ type: "snapshot", value: { list: LIST } });
+
+      // Rename, delete and a new default, each edited in window B while
+      // window A (registered first) has not yet heard of it.
+      for (const edit of [RENAMED, DELETED, NEW_DEFAULT]) {
+        yield* windowB.publish(edit);
+        expect((yield* changes.next).value).toEqual({ type: "data", value: { list: edit } });
+        expect(yield* listed(profiles)).toEqual(edit);
+      }
+      // Window A catches up with the same list: nothing new.
+      yield* windowA.publish(NEW_DEFAULT);
+      // An edit made back in window A is just as current.
+      yield* windowA.publish(LIST);
+      expect((yield* changes.next).value).toEqual({ type: "data", value: { list: LIST } });
+      expect(yield* listed(profiles)).toEqual(LIST);
+      // Window A leaves: B's list (caught up) is the same, so nothing new;
+      // B leaving too makes the list unavailable, and a window that connects
+      // again brings it back.
+      yield* windowB.publish(LIST);
+      yield* Fiber.interrupt(windowA.fiber);
+      yield* Fiber.interrupt(windowB.fiber);
+      expect((yield* changes.next).value).toEqual({ type: "data", value: { list: null } });
+      const windowC = yield* attachWindow(engineHosts);
+      yield* windowC.publish(RENAMED);
+      expect((yield* changes.next).value).toEqual({ type: "data", value: { list: RENAMED } });
+      expect(yield* listed(profiles)).toEqual(RENAMED);
+      yield* changes.close;
+    }),
+  );
+
+  it.effect(
+    "a window registered before any publication does not answer for one that published",
+    () =>
+      Effect.gen(function* () {
+        const { profiles, engineHosts } = yield* harness;
+        // Registered first, never published; it would answer a read with WORK_PROFILES.
+        const early = yield* attachProfileHost(
+          engineHosts,
+          listProfilesOr(() => "silent"),
+        );
+        const late = yield* attachWindow(engineHosts);
+        yield* late.publish(RENAMED);
+        const changes = yield* openChanges(profiles);
+        expect((yield* changes.next).value).toEqual({ type: "snapshot", value: { list: RENAMED } });
+        expect(yield* listed(profiles)).toEqual(RENAMED);
+        expect(early.received).toEqual([]);
+        yield* changes.close;
+      }),
+  );
+
+  it.effect(
+    "says when no desktop is connected: at start, on the last one leaving, until one returns",
+    () =>
+      Effect.gen(function* () {
+        const { profiles, engineHosts } = yield* harness;
+        const changes = yield* openChanges(profiles);
+        // A web-only environment learns at once that there is no list to show.
+        expect(yield* changes.next).toEqual({
+          done: false,
+          value: { type: "snapshot", value: { list: null } },
+        });
+        const first = yield* attachWindow(engineHosts);
+        yield* first.publish(LIST);
+        expect((yield* changes.next).value).toEqual({ type: "data", value: { list: LIST } });
+        yield* Fiber.interrupt(first.fiber);
+        expect((yield* changes.next).value).toEqual({ type: "data", value: { list: null } });
+        const second = yield* attachWindow(engineHosts);
+        yield* second.publish(LIST);
+        expect((yield* changes.next).value).toEqual({ type: "data", value: { list: LIST } });
+        // An available list with no profiles is not the same as none at all.
+        const empty = { profiles: [], defaultProfileId: "default" };
+        yield* second.publish(empty);
+        expect((yield* changes.next).value).toEqual({ type: "data", value: { list: empty } });
+        yield* changes.close;
+      }),
+  );
+
+  it.effect("a connected desktop that has not published yet is loading, not absent", () =>
+    Effect.gen(function* () {
+      const { profiles, engineHosts } = yield* harness;
+      /** What a subscriber joining now is handed first. */
+      const state = Stream.runHead(engineHosts.profileChanges).pipe(Effect.map(Option.getOrThrow));
+      expect(yield* state).toBeNull();
+      const host = yield* attachWindow(engineHosts);
+      expect(yield* state).toBe("pending");
+      // The view hears nothing until it publishes: its first event is the list.
+      const changes = yield* openChanges(profiles);
+      const first = yield* Effect.forkChild(changes.next);
+      yield* host.publish(LIST);
+      expect(yield* Fiber.join(first)).toEqual({
+        done: false,
+        value: { type: "snapshot", value: { list: LIST } },
+      });
+      // A reload: the new window registers before the old one leaves, and has
+      // not read its settings yet. That is still loading, not "no desktop".
+      const reloaded = yield* attachWindow(engineHosts);
+      yield* Fiber.interrupt(host.fiber);
+      expect(yield* state).toBe("pending");
+      yield* reloaded.publish(RENAMED);
+      expect((yield* changes.next).value).toEqual({ type: "data", value: { list: RENAMED } });
+      yield* Fiber.interrupt(reloaded.fiber);
+      expect(yield* state).toBeNull();
+      expect((yield* changes.next).value).toEqual({ type: "data", value: { list: null } });
+      yield* changes.close;
+    }),
+  );
+
+  it.effect("a change from any window reaches every subscriber, early or late", () =>
+    Effect.gen(function* () {
+      const { profiles, engineHosts } = yield* harness;
+      const early = yield* openChanges(profiles);
+      expect((yield* early.next).value).toEqual({ type: "snapshot", value: { list: null } });
+      const windowA = yield* attachWindow(engineHosts);
+      const windowB = yield* attachWindow(engineHosts);
+      yield* windowA.publish(LIST);
+      expect((yield* early.next).value).toEqual({ type: "data", value: { list: LIST } });
+      const late = yield* openChanges(profiles);
+      expect((yield* late.next).value).toEqual({ type: "snapshot", value: { list: LIST } });
+      const everyone = Effect.fn("test.everyone")(function* (list: typeof LIST) {
+        for (const changes of [early, late]) {
+          expect((yield* changes.next).value).toEqual({ type: "data", value: { list } });
+        }
+        expect(yield* listed(profiles)).toEqual(list);
+      });
+      yield* windowB.publish(RENAMED);
+      yield* everyone(RENAMED);
+      yield* windowA.publish(DELETED);
+      yield* everyone(DELETED);
+      // Window C registers; the others leave before it has published, which
+      // leaves the list loading rather than absent.
+      const windowC = yield* attachWindow(engineHosts);
+      // B's older list leaves first, so no older list resurfaces.
+      yield* Fiber.interrupt(windowB.fiber);
+      yield* Fiber.interrupt(windowA.fiber);
+      yield* windowC.publish(NEW_DEFAULT);
+      yield* everyone(NEW_DEFAULT);
+      yield* early.close;
+      yield* late.close;
+    }),
+  );
+
+  it.effect("a stalled subscriber keeps only the latest list, not every change it missed", () =>
+    Effect.gen(function* () {
+      const { profiles, engineHosts } = yield* harness;
+      const host = yield* attachWindow(engineHosts);
+      yield* host.publish(LIST);
+      const changes = yield* openChanges(profiles);
+      expect((yield* changes.next).value).toEqual({ type: "snapshot", value: { list: LIST } });
+      const edits = Array.from({ length: 256 }, (_, index) => ({
+        profiles: [{ id: "default", name: `Default ${index + 1}` }],
+        defaultProfileId: "default",
+      }));
+      for (const edit of edits) yield* host.publish(edit);
+      // Resuming yields the current list; the 255 before it were dropped.
+      expect((yield* changes.next).value).toEqual({ type: "data", value: { list: edits[255] } });
+      yield* host.publish(LIST);
+      expect((yield* changes.next).value).toEqual({ type: "data", value: { list: LIST } });
+      yield* changes.close;
+    }),
+  );
+
+  it.effect("only the registered desktop socket can publish", () =>
+    Effect.gen(function* () {
+      const { engineHosts } = yield* harness;
+      const host = yield* attachProfileHost(engineHosts, () => "silent");
+      const foreign = yield* Effect.flip(
+        engineHosts.publishProfiles(
+          { socketId: "other-ws", grantMethod: "desktop-bootstrap" },
+          { hostConnectionId: host.hostConnectionId(), ...LIST },
+        ),
+      );
+      expect(foreign.reason).toBe("host-not-registered");
+      const web = yield* Effect.flip(
+        engineHosts.publishProfiles(
+          { socketId: "desktop-ws", grantMethod: undefined },
+          { hostConnectionId: host.hostConnectionId(), ...LIST },
+        ),
+      );
+      expect(web.reason).toBe("desktop-required");
+    }),
+  );
+
+  it.effect("refuses a caller without read authority, and unknown streams", () =>
+    Effect.gen(function* () {
+      const { profiles } = yield* harness;
+      expect(() =>
+        profiles.subscribe!("changes", {}, context(), signal, meta(profiles, [])),
+      ).toThrow();
+      expect(() => profiles.subscribe!("events", {}, context(), signal, meta(profiles))).toThrow();
+    }),
   );
 });

@@ -240,6 +240,7 @@ import {
   BrowserEngineHostClaimInput,
   BrowserEngineHostCommandResultInput,
   BrowserEngineHostError,
+  BrowserEngineHostProfilesInput,
   BrowserEngineHostRegisterInput,
   BrowserEngineHostReleaseInput,
   BrowserEngineHostReportInput,
@@ -384,6 +385,7 @@ export const WS_METHODS = {
   browserEngineHostRelease: "browserEngineHost.release",
   browserEngineHostReport: "browserEngineHost.report",
   browserEngineHostCommandResult: "browserEngineHost.commandResult",
+  browserEngineHostProfiles: "browserEngineHost.profiles",
 
   // Device methods
   deviceConfigure: "device.configure",
@@ -1289,6 +1291,11 @@ const WsBrowserEngineHostCommandResultRpc = Rpc.make(WS_METHODS.browserEngineHos
   error: BrowserEngineHostRpcError,
 });
 
+const WsBrowserEngineHostProfilesRpc = Rpc.make(WS_METHODS.browserEngineHostProfiles, {
+  payload: BrowserEngineHostProfilesInput,
+  error: BrowserEngineHostRpcError,
+});
+
 const WsExtensionsClientProvidersConnectRpc = Rpc.make(
   WS_METHODS.extensionsClientProvidersConnect,
   {
@@ -1644,6 +1651,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsBrowserEngineHostReleaseRpc,
   WsBrowserEngineHostReportRpc,
   WsBrowserEngineHostCommandResultRpc,
+  WsBrowserEngineHostProfilesRpc,
   WsExtensionsClientProvidersConnectRpc,
   WsExtensionsClientProvidersRespondRpc,
   WsExtensionsClientProvidersEmitRpc,

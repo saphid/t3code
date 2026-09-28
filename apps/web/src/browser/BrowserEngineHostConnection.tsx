@@ -6,13 +6,18 @@ import { Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
 
 import { previewBridge } from "~/components/preview/previewBridge";
+import { subscribeClientSettings } from "~/hooks/useSettings";
 import { readLocalApi } from "~/localApi";
 import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { resolveBrowserDefaults } from "./browserDefaults";
-import { createEngineHostEventHandler, useBrowserEngineHostStore } from "./browserEngineHost";
+import {
+  createEngineHostEventHandler,
+  publishHostProfiles,
+  useBrowserEngineHostStore,
+} from "./browserEngineHost";
 
 /** Profiles as the settings list shows them, read once client settings have loaded. */
 const hostProfiles = async () => {
@@ -43,15 +48,34 @@ function BrowserEngineHostConnectionInner(props: { readonly environmentId: Envir
   const commandResult = useAtomCommand(previewEnvironment.engineHostCommandResult, {
     reportFailure: false,
   });
+  const sendProfiles = useAtomCommand(previewEnvironment.engineHostProfiles, {
+    reportFailure: false,
+  });
   const consumerAtom = useMemo(() => {
     const registrationAtom = previewEnvironment.engineHostRegistration({
       environmentId,
       input: {},
     });
     return Atom.make((get) => {
-      get.addFinalizer(() =>
-        useBrowserEngineHostStore.getState().setHostConnectionId(environmentId, null),
-      );
+      // Profile publication follows the registration: each new host id gets
+      // its own publisher, and a lost registration stops it.
+      let stopPublishing: (() => void) | null = null;
+      const onRegistration = (hostConnectionId: string | null) => {
+        stopPublishing?.();
+        stopPublishing =
+          hostConnectionId === null
+            ? null
+            : publishHostProfiles({
+                hostConnectionId,
+                profiles: hostProfiles,
+                subscribe: subscribeClientSettings,
+                send: (input) => sendProfiles({ environmentId, input }),
+              });
+      };
+      get.addFinalizer(() => {
+        onRegistration(null);
+        useBrowserEngineHostStore.getState().setHostConnectionId(environmentId, null);
+      });
       get.subscribe(
         registrationAtom,
         createEngineHostEventHandler({
@@ -60,11 +84,12 @@ function BrowserEngineHostConnectionInner(props: { readonly environmentId: Envir
           sendResult: (input) => commandResult({ environmentId, input }),
           profiles: hostProfiles,
           confirm: hostConfirm,
+          onRegistration,
         }),
         { immediate: true },
       );
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`preview:engine-host:${environmentId}`));
-  }, [commandResult, environmentId]);
+  }, [commandResult, environmentId, sendProfiles]);
   useAtomValue(consumerAtom);
   return null;
 }

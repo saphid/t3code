@@ -3,6 +3,7 @@ import {
   type BrowserEngineCommand,
   type BrowserEngineHostStreamEvent,
   type BrowserImportSource,
+  type BrowserProfile,
   type DesktopPreviewTabState,
   EnvironmentId,
   ThreadId,
@@ -20,6 +21,7 @@ import {
   forgetHostedTab,
   HANDLED_COMMANDS_LIMIT,
   nextEnginePageReport,
+  publishHostProfiles,
   recordHostedTabState,
   toEnginePageStatus,
   useBrowserEngineHostStore,
@@ -453,6 +455,92 @@ describe("createEngineHostEventHandler", () => {
     deliver(command("command-0"));
     await settle();
     expect(bridge.refresh).toHaveBeenCalledTimes(HANDLED_COMMANDS_LIMIT + 2);
+  });
+});
+
+describe("publishHostProfiles", () => {
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const WORK: BrowserProfile = { id: "work", name: "Work", kind: "persistent" };
+
+  /** A settings store whose listeners the test fires, as useSettings does on any change. */
+  const setup = () => {
+    let settings = { profiles: [WORK], defaultProfileId: "default" };
+    const listeners = new Set<() => void>();
+    const send = vi.fn();
+    const stop = publishHostProfiles({
+      hostConnectionId: "host-1",
+      profiles: async () => settings,
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      send,
+    });
+    const change = async (next?: typeof settings) => {
+      if (next) settings = next;
+      for (const listener of listeners) listener();
+      await settle();
+    };
+    return { send, stop, change, listeners };
+  };
+
+  it("publishes once registered, then only when the profile list changes", async () => {
+    const { send, change } = setup();
+    await settle();
+    expect(send.mock.calls).toEqual([
+      [
+        {
+          hostConnectionId: "host-1",
+          profiles: [{ id: "work", name: "Work" }],
+          defaultProfileId: "default",
+        },
+      ],
+    ]);
+    // Another setting (zoom, viewport…) changed: the list did not.
+    await change();
+    expect(send).toHaveBeenCalledTimes(1);
+    await change({ profiles: [{ ...WORK, name: "Client work" }], defaultProfileId: "default" });
+    await change({ profiles: [{ ...WORK, name: "Client work" }], defaultProfileId: "work" });
+    await change({ profiles: [], defaultProfileId: "default" });
+    expect(send.mock.calls.slice(1).map(([input]) => input)).toEqual([
+      {
+        hostConnectionId: "host-1",
+        profiles: [{ id: "work", name: "Client work" }],
+        defaultProfileId: "default",
+      },
+      {
+        hostConnectionId: "host-1",
+        profiles: [{ id: "work", name: "Client work" }],
+        defaultProfileId: "work",
+      },
+      { hostConnectionId: "host-1", profiles: [], defaultProfileId: "default" },
+    ]);
+  });
+
+  it("stops listening and publishing once stopped", async () => {
+    const { send, stop, change, listeners } = setup();
+    await settle();
+    stop();
+    expect(listeners.size).toBe(0);
+    await change({ profiles: [], defaultProfileId: "default" });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("follows the registration: a new host id publishes afresh, a lost one stops", () => {
+    const registrations: Array<string | null> = [];
+    const onResult = createEngineHostEventHandler({
+      environmentId: EnvironmentId.make("env-publish"),
+      bridge: null,
+      sendResult: vi.fn(),
+      profiles: async () => ({ profiles: [], defaultProfileId: "default" }),
+      confirm: async () => false,
+      onRegistration: (hostConnectionId) => registrations.push(hostConnectionId),
+    });
+    onResult(AsyncResult.success({ type: "registered", hostConnectionId: "host-1" }));
+    onResult(AsyncResult.failure(Cause.fail("desktop-required")));
+    onResult(AsyncResult.success({ type: "registered", hostConnectionId: "host-2" }));
+    expect(registrations).toEqual(["host-1", null, "host-2"]);
+    useBrowserEngineHostStore.getState().setHostConnectionId("env-publish", null);
   });
 });
 

@@ -32,3 +32,34 @@ export function AnnotateButton(props: {
     </Tooltip>
   );
 }
+
+/**
+ * The header's screenshot button. Native says "Screenshot · Shift-click to
+ * record"; this pack has no recording, so it keeps only the part that is
+ * true here. A failed page disables it without a description: native's
+ * failed-page reason belongs to the pick control beside it.
+ */
+export function ScreenshotButton(props: {
+  host: ClientHost;
+  blockReason: string | null;
+  capturing: BrowserCaptureTarget | null;
+  pageFailed: boolean;
+  onCapture: () => void;
+  style: CSSProperties;
+}) {
+  const { host, blockReason, capturing, pageFailed, onCapture, style } = props;
+  return (
+    <Tooltip host={host} label="Screenshot">
+      <button
+        type="button"
+        aria-label="Capture screenshot"
+        aria-description={pageFailed ? undefined : (blockReason ?? undefined)}
+        disabled={blockReason !== null || capturing !== null}
+        onClick={onCapture}
+        style={style}
+      >
+        ▣
+      </button>
+    </Tooltip>
+  );
+}

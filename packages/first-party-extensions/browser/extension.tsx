@@ -29,7 +29,8 @@ import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { AnnotateButton } from "./annotateButton.js";
+import { AddressInput, committedAddress } from "./addressInput.js";
+import { AnnotateButton, ScreenshotButton } from "./annotateButton.js";
 import { capturePageView, useBrowserCapture } from "./capture.js";
 import { mintWorkspaceFileUrl } from "./fileOpen.js";
 import {
@@ -71,12 +72,13 @@ import {
 import { floatingLayers } from "./floating.js";
 import { PageMenu, ZoomIndicator } from "./pageMenu.js";
 import { panelPopover, type PanelFloating } from "./popover.js";
-import { bindProfilesApi, ProfileSection } from "./profileMenu.js";
-import { profileFailureMessage, reopenRequest } from "./profiles.js";
+import { bindProfilesApi, ProfileBadge, ProfileSection } from "./profileMenu.js";
+import { createProfileListStore, profileFailureMessage, reopenRequest } from "./profiles.js";
 import {
   BrowserViewportToolbar,
   ViewportDeviceFrame,
   ViewportResizeRails,
+  useAspectLocks,
   useElementSize,
   useViewportRails,
 } from "./viewportToolbar.js";
@@ -85,6 +87,7 @@ import {
   ViewportTargetChangedError,
   createViewportCommitter,
   deviceViewportLayout,
+  lockedAspectRatio,
   notifyViewportResizeFailure,
   responsiveViewportForToggle,
   viewportFailureMessage,
@@ -292,8 +295,12 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const [viewportPending, setViewportPending] = useState(false);
   const viewportCommitter = useRef<ViewportCommitter | null>(null);
   const themeVars = useThemeVars(host, session, visible);
-  // Stable per view: the profile group reads the list once per menu open.
   const profilesApi = useMemo(() => bindProfilesApi(host, session.context), [host, session]);
+  // One list per view for the badge and the page menu.
+  const profiles = useMemo(
+    () => createProfileListStore(profilesApi, session.signal),
+    [profilesApi, session.signal],
+  );
   const localServers = useLocalServers(host, session, visible && held === null);
   // Project-shared history (`t3.browser/history`); the view's own list stands
   // in until it arrives and whenever the contract cannot serve it.
@@ -582,17 +589,22 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const deviceMode = viewportSetting !== null && viewportSetting._tag !== "fill";
   const viewportSlot = contentSize ?? FALLBACK_RESPONSIVE_VIEWPORT_SIZE;
   const pageZoom = live?.zoomFactor ?? 1;
+  const fixedViewport =
+    viewportSetting !== null && viewportSetting._tag !== "fill" ? viewportSetting : null;
+  const aspectLocks = useAspectLocks(tabs, held);
+  const aspectLocked = aspectLocks.isLocked(held);
   const rails = useViewportRails({
-    setting: viewportSetting !== null && viewportSetting._tag !== "fill" ? viewportSetting : null,
+    setting: fixedViewport,
     target: held?.tabId ?? null,
     slot: viewportSlot,
     zoomFactor: pageZoom,
+    aspectRatio: lockedAspectRatio(fixedViewport, aspectLocked),
     commit: commitViewport,
   });
   /** Toolbar and toggle changes supersede any rail edit still pending, like native. */
   const commitViewportChange = (next: BrowserSessionViewport) => {
     rails.cancel();
-    void commitViewport(next);
+    return commitViewport(next);
   };
 
   /**
@@ -1054,7 +1066,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             if (!viewportSetting) return;
             // Native toggle semantics: non-fill → fill; fill → a responsive
             // freeform sized from the panel this slot fills.
-            commitViewportChange(
+            void commitViewportChange(
               viewportSetting._tag !== "fill"
                 ? { _tag: "fill" }
                 : responsiveViewportForToggle(contentSize),
@@ -1069,20 +1081,14 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         >
           ⛶
         </button>
-        {/* Native says "Screenshot · Shift-click to record"; this pack has no
-            recording, so it keeps only the part that is true here. */}
-        <Tooltip host={host} label="Screenshot">
-          <button
-            type="button"
-            aria-label="Capture screenshot"
-            aria-description={capture.blockReason ?? undefined}
-            disabled={capture.blockReason !== null || capture.state.kind === "capturing"}
-            onClick={() => capture.capture("page")}
-            style={buttonStyle}
-          >
-            ▣
-          </button>
-        </Tooltip>
+        <ScreenshotButton
+          host={host}
+          blockReason={capture.blockReason}
+          capturing={capture.state.kind === "capturing" ? capture.state.target : null}
+          pageFailed={capturePage === "failed"}
+          onCapture={() => capture.capture("page")}
+          style={buttonStyle}
+        />
         <AnnotateButton
           host={host}
           blockReason={capture.blockReason}
@@ -1091,17 +1097,19 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           onPick={() => capture.capture("element")}
           style={buttonStyle}
         />
-        <input
-          type="text"
-          aria-label="Address"
-          placeholder="Search or enter address"
-          ref={addressRef}
+        {held && live && (
+          <ProfileBadge host={host} session={live} profiles={profiles} visible={visible} />
+        )}
+        <AddressInput
+          inputRef={addressRef}
           value={address}
-          onChange={(event) => setAddress(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") submit(address);
-            if (event.key === "Escape") event.currentTarget.blur();
-          }}
+          committed={committedAddress({
+            fileSource,
+            pageUrl: live ? (live.navigation.url ?? live.requestedUrl ?? null) : null,
+            target: currentUrl(state),
+          })}
+          onValueChange={setAddress}
+          onSubmit={submit}
           style={{
             flex: 1,
             minWidth: 0,
@@ -1147,6 +1155,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             <ProfileSection
               session={live}
               api={profilesApi}
+              profiles={profiles}
               signal={session.signal}
               onOpenInProfile={openInProfile}
               report={setNotice}
@@ -1265,9 +1274,12 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                * plugin chrome and engine chrome never stack.
                */}
               <BrowserViewportToolbar
+                host={host}
                 setting={rails.displayed}
                 pending={viewportPending}
                 onCommit={commitViewportChange}
+                aspectLocked={aspectLocked}
+                onAspectLockedChange={(locked) => aspectLocks.setLocked(held, locked)}
                 zIndex={layers.deviceChrome}
               />
               <ViewportDeviceFrame

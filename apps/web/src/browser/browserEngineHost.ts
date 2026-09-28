@@ -18,6 +18,7 @@ import {
   type BrowserEngineProfileCommand,
   type BrowserProfile,
   type BrowserEngineHostCommandResultInput,
+  type BrowserEngineHostProfilesInput,
   type BrowserEngineHostStreamEvent,
   type BrowserEnginePageStatus,
   type DesktopPreviewBridge,
@@ -243,6 +244,56 @@ export interface ProfileCommandDeps {
   readonly proceed: () => Promise<boolean>;
 }
 
+/** The list as the server takes it: ids and names only, bounded. */
+async function hostProfileList(profiles: ProfileCommandDeps["profiles"]) {
+  const { profiles: list, defaultProfileId } = await profiles();
+  return {
+    profiles: list
+      .slice(0, BROWSER_ENGINE_PROFILE_LIST_MAX)
+      .map((profile) => ({ id: profile.id, name: profile.name })),
+    defaultProfileId,
+  };
+}
+
+/**
+ * Publishes this host's profile list for `t3.browser/profiles`' `changes`
+ * stream: once now, then after each settings change that alters it. A
+ * settings change elsewhere (zoom, viewport…) sends nothing. Returns the stop
+ * function; a registration publishes under its own host id only.
+ */
+export function publishHostProfiles(input: {
+  readonly hostConnectionId: string;
+  readonly profiles: ProfileCommandDeps["profiles"];
+  /** Calls `listener` whenever the underlying settings may have changed. */
+  readonly subscribe: (listener: () => void) => () => void;
+  readonly send: (input: BrowserEngineHostProfilesInput) => unknown;
+}): () => void {
+  let stopped = false;
+  let read = 0;
+  let last: string | null = null;
+  const publish = () => {
+    const current = ++read;
+    void hostProfileList(input.profiles).then(
+      (list) => {
+        // Only the newest read may land; an older one is an older list.
+        if (stopped || current !== read) return;
+        const key = JSON.stringify(list);
+        if (key === last) return;
+        last = key;
+        input.send({ hostConnectionId: input.hostConnectionId, ...list });
+      },
+      // Unreadable settings publish nothing; the list reads still answer.
+      () => undefined,
+    );
+  };
+  const unsubscribe = input.subscribe(publish);
+  publish();
+  return () => {
+    stopped = true;
+    unsubscribe();
+  };
+}
+
 const IMPORT_LABEL_MAX = 128;
 /**
  * Firefox names an unnamed profile after its directory, which may be an
@@ -278,14 +329,7 @@ export async function executeProfileCommand(
   const { bridge, environmentId } = deps;
   try {
     if (command._tag === "listProfiles") {
-      const { profiles, defaultProfileId } = await deps.profiles();
-      return {
-        outcome: "profiles",
-        profiles: profiles
-          .slice(0, BROWSER_ENGINE_PROFILE_LIST_MAX)
-          .map((profile) => ({ id: profile.id, name: profile.name })),
-        defaultProfileId,
-      };
+      return { outcome: "profiles", ...(await hostProfileList(deps.profiles)) };
     }
     if (command._tag === "listImportSources") {
       if (!bridge.listBrowserImportSources) return rejected("not-applicable");
@@ -378,6 +422,8 @@ export function createEngineHostEventHandler(input: {
   readonly sendResult: (result: BrowserEngineHostCommandResultInput) => unknown;
   readonly profiles: ProfileCommandDeps["profiles"];
   readonly confirm: ProfileCommandDeps["confirm"];
+  /** Told the registered host id, or null once the registration is lost. */
+  readonly onRegistration?: (hostConnectionId: string | null) => void;
 }): (result: AsyncResult.AsyncResult<BrowserEngineHostStreamEvent, unknown>) => void {
   const { environmentId, bridge, sendResult } = input;
   const handled = new Set<string>();
@@ -399,6 +445,7 @@ export function createEngineHostEventHandler(input: {
     if (AsyncResult.isFailure(result)) {
       cancelRunning();
       setHostConnectionId(environmentId, null);
+      input.onRegistration?.(null);
       return;
     }
     if (!AsyncResult.isSuccess(result)) return;
@@ -406,6 +453,7 @@ export function createEngineHostEventHandler(input: {
     if (event.type === "registered") {
       cancelRunning();
       setHostConnectionId(environmentId, event.hostConnectionId);
+      input.onRegistration?.(event.hostConnectionId);
       return;
     }
     if (event.type === "profile-command-proceed" || event.type === "profile-command-cancel") {

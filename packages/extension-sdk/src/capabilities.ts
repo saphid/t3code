@@ -118,17 +118,23 @@ export function resolveResumableStreams(host: {
     : null;
 }
 export type ApiMethodTypes = Record<string, { input: Json; output: Json }>;
-/** An optional method input member, or a whole method, a minor release added after `baseline`. */
-export interface ApiAddition {
-  /** The release that added the member. */
-  readonly version: string;
-  readonly method: string;
-  /**
-   * Dotted input path; `[]` steps into array items, as in `"actions[].keepOpen"`.
-   * Omitted when the release added the method itself.
-   */
-  readonly input?: string;
-}
+/** An optional method input member, a whole method, or a stream a minor release added after `baseline`. */
+export type ApiAddition =
+  | {
+      /** The release that added the member. */
+      readonly version: string;
+      readonly method: string;
+      /**
+       * Dotted input path; `[]` steps into array items, as in `"actions[].keepOpen"`.
+       * Omitted when the release added the method itself.
+       */
+      readonly input?: string;
+    }
+  | {
+      /** The release that added the stream. */
+      readonly version: string;
+      readonly stream: string;
+    };
 /** Phantom method types accompany an immutable, serializable runtime descriptor. */
 export interface TypedApi<T extends ApiMethodTypes> {
   readonly definition: ApiDefinition;
@@ -159,8 +165,8 @@ function hasInput(value: unknown, path: readonly string[]): boolean {
 /**
  * `baseline` is the oldest version of this major that `requireApi` and
  * `bindApi` ask for by default. Set it when a minor release only adds
- * optional members or methods, so existing consumers keep loading on older
- * hosts, and list every such member in `additions` (a new method is an
+ * optional members, methods or streams, so existing consumers keep loading on
+ * older hosts, and list every such member in `additions` (a new method is an
  * addition without `input`): a binding whose range admits a
  * version before an addition refuses calls that use it with
  * `ApiVersionError`, so a pack cannot declare the baseline and ship the new
@@ -194,13 +200,26 @@ export function defineApi<T extends ApiMethodTypes>(
     if (
       compareVersions(added, baseline) <= 0 ||
       compareVersions(added, version) > 0 ||
-      !validated.methods?.some((method) => method.name === addition.method) ||
-      (addition.input !== undefined &&
-        !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(addition.input))
+      ("stream" in addition
+        ? !validated.streams?.some((stream) => stream.name === addition.stream)
+        : !validated.methods?.some((method) => method.name === addition.method) ||
+          (addition.input !== undefined &&
+            !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(addition.input)))
     )
       throw new Error("Invalid API addition: " + JSON.stringify(addition));
   }
   return { definition: validated, baseline: options.baseline, additions };
+}
+/** Additions `versionRange` does not guarantee; see `defineApi`. */
+function unnegotiatedAdditions(
+  api: { readonly additions?: readonly ApiAddition[] },
+  versionRange: string,
+): readonly ApiAddition[] {
+  const floor = rangeFloor(versionRange);
+  return (api.additions ?? []).filter((addition) => {
+    const added = parseVersion(addition.version);
+    return !floor || !added || compareVersions(floor, added) < 0;
+  });
 }
 /** The range a consumer asks for when it names none: `^baseline`, else `^version`. */
 export function defaultVersionRange(api: {
@@ -215,12 +234,7 @@ export function bindApi<T extends ApiMethodTypes>(
   context: ViewContext,
   versionRange = defaultVersionRange(api),
 ) {
-  // Additions this range does not guarantee; see `defineApi`.
-  const floor = rangeFloor(versionRange);
-  const unnegotiated = (api.additions ?? []).filter((addition) => {
-    const added = parseVersion(addition.version);
-    return !floor || !added || compareVersions(floor, added) < 0;
-  });
+  const unnegotiated = unnegotiatedAdditions(api, versionRange);
   return {
     invoke<K extends keyof T & string>(
       method: K,
@@ -228,7 +242,8 @@ export function bindApi<T extends ApiMethodTypes>(
       signal: AbortSignal,
     ): Promise<T[K]["output"]> {
       const addition = unnegotiated.find(
-        (item) =>
+        (item): item is Extract<ApiAddition, { method: string }> =>
+          "method" in item &&
           item.method === method &&
           (item.input === undefined || hasInput(input, item.input.split("."))),
       );
@@ -250,6 +265,9 @@ export type ApiStreamTypes = Record<string, { input: Json; event: Json }>;
 /** Public stream types accompany the descriptor validated by the host at delivery. */
 export interface TypedStreamApi<T extends ApiStreamTypes> {
   readonly definition: ApiDefinition;
+  /** See `defineApi`; an API mixing methods and streams declares these there. */
+  readonly baseline?: string;
+  readonly additions?: readonly ApiAddition[];
   readonly streamTypes?: T;
 }
 export type TypedApiStreamFrame<T extends Json> = Omit<ApiStreamFrame, "value"> & {
@@ -273,6 +291,7 @@ export function bindStreamApi<T extends ApiStreamTypes>(
   context: ViewContext,
   versionRange = defaultVersionRange(api),
 ) {
+  const unnegotiated = unnegotiatedAdditions(api, versionRange);
   return {
     subscribe<K extends keyof T & string>(
       name: K,
@@ -284,6 +303,12 @@ export function bindStreamApi<T extends ApiStreamTypes>(
         readonly resume?: "fresh-snapshot";
       },
     ): AsyncIterable<TypedApiStreamFrame<T[K]["event"]>> {
+      const addition = unnegotiated.find((item) => "stream" in item && item.stream === name);
+      if (addition)
+        throw new ApiVersionError(
+          `${api.definition.id} stream ${name} needs ^${addition.version}, ` +
+            `but this binding asks for ${versionRange}; probe the host version, then bind at ^${addition.version}`,
+        );
       let subscribeApi = client.subscribeApi.bind(client);
       if (options?.resume === "fresh-snapshot") {
         const resumable = resolveResumableStreams(client);

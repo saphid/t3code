@@ -21,6 +21,7 @@ import {
   type BrowserEngineCommandRejection,
   type BrowserEngineHostClaimInput,
   type BrowserEngineHostCommandResultInput,
+  type BrowserEngineHostProfilesInput,
   type BrowserEngineHostReleaseInput,
   type BrowserEngineHostReportInput,
   type BrowserEngineHostStreamEvent,
@@ -95,12 +96,40 @@ export type BrowserEngineProfileDispatchOutcome =
 
 type HostAnswer = BrowserEngineHostCommandResultInput["result"] | { readonly outcome: "unknown" };
 
+/** A host's published profile list, without the host id. */
+export type BrowserEngineProfileList = Omit<BrowserEngineHostProfilesInput, "hostConnectionId">;
+
 interface HostConnection {
   readonly hostConnectionId: string;
   readonly socketId: string;
   readonly queue: Queue.Queue<BrowserEngineHostStreamEvent, Cause.Done>;
   readonly pending: Map<string, Deferred.Deferred<HostAnswer>>;
+  /** The host's last published profile list; null until it publishes. */
+  profiles: BrowserEngineProfileList | null;
+  /** Orders publications across hosts; the newest one is the environment's list. */
+  profilesPublication: number;
 }
+
+/**
+ * The environment's profiles: a list, null while no host is connected, or
+ * "pending" while hosts are connected but none has published yet.
+ */
+export type BrowserEngineProfileState = BrowserEngineProfileList | null | "pending";
+
+/** Same ids, names, order and default. */
+export const sameProfileList = (
+  a: BrowserEngineProfileList | null,
+  b: BrowserEngineProfileList | null,
+) =>
+  a === b ||
+  (a !== null &&
+    b !== null &&
+    a.defaultProfileId === b.defaultProfileId &&
+    a.profiles.length === b.profiles.length &&
+    a.profiles.every(
+      (profile, index) =>
+        profile.id === b.profiles[index]!.id && profile.name === b.profiles[index]!.name,
+    ));
 
 export class BrowserEngineHosts extends Context.Service<
   BrowserEngineHosts,
@@ -124,6 +153,24 @@ export class BrowserEngineHosts extends Context.Service<
       socket: BrowserEngineHostSocket,
       input: BrowserEngineHostCommandResultInput,
     ) => Effect.Effect<void, BrowserEngineHostError>;
+    /** Records a host's current profile list. */
+    readonly publishProfiles: (
+      socket: BrowserEngineHostSocket,
+      input: BrowserEngineHostProfilesInput,
+    ) => Effect.Effect<void, BrowserEngineHostError>;
+    /**
+     * The environment's profile list: the newest publication from any
+     * connected host. The desktop app owns the settings file and has one app
+     * window; a second host only overlaps briefly (a reload), and the newest
+     * publication is the newest settings. Null while no connected host has
+     * published.
+     */
+    readonly currentProfiles: Effect.Effect<BrowserEngineProfileList | null>;
+    /**
+     * The profile state now, then each different one. A slow subscriber
+     * keeps only the latest state it has not taken, never a backlog.
+     */
+    readonly profileChanges: Stream.Stream<BrowserEngineProfileState>;
     /** Sends a command to the owning host and waits for its bounded acknowledgement. */
     readonly dispatch: (
       input: BrowserEngineDispatchInput,
@@ -153,6 +200,47 @@ const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const hosts = yield* Ref.make(new Map<string, HostConnection>());
   const importAckTimeoutMs = yield* ImportAckTimeoutMs;
+  let profilePublications = 0;
+  let profiles: BrowserEngineProfileState = null;
+  /**
+   * One sliding slot per subscriber: one that falls behind holds the newest
+   * list only, never the history it missed.
+   */
+  const profileSubscribers = new Set<Queue.Queue<BrowserEngineProfileState>>();
+  /** Recomputes the environment's list after a host published or left. */
+  const refreshProfiles = Effect.sync(() => {
+    const connected = Ref.getUnsafe(hosts);
+    let newest: HostConnection | undefined;
+    for (const host of connected.values()) {
+      if (
+        host.profiles !== null &&
+        (newest === undefined || host.profilesPublication > newest.profilesPublication)
+      ) {
+        newest = host;
+      }
+    }
+    const next = newest?.profiles ?? (connected.size > 0 ? "pending" : null);
+    // An equal state is not published, so subscribers never see a repeat.
+    if (next === profiles) return;
+    if (next !== "pending" && profiles !== "pending" && sameProfileList(profiles, next)) return;
+    profiles = next;
+    for (const subscriber of profileSubscribers) Queue.offerUnsafe(subscriber, next);
+  });
+  const profileChanges = Stream.unwrap(
+    Effect.acquireRelease(
+      Effect.flatMap(Queue.sliding<BrowserEngineProfileState>(1), (subscriber) =>
+        Effect.sync(() => {
+          Queue.offerUnsafe(subscriber, profiles);
+          profileSubscribers.add(subscriber);
+          return subscriber;
+        }),
+      ),
+      (subscriber) =>
+        Effect.sync(() => profileSubscribers.delete(subscriber)).pipe(
+          Effect.andThen(Queue.shutdown(subscriber)),
+        ),
+    ).pipe(Effect.map((subscriber) => Stream.fromQueue(subscriber))),
+  );
   const randomId = crypto.randomUUIDv4.pipe(Effect.orDie);
 
   const desktopRequired = new BrowserEngineHostError({
@@ -188,6 +276,7 @@ const make = Effect.gen(function* () {
       }
       host.pending.clear();
       yield* preview.releaseEngineHost(host.hostConnectionId);
+      yield* refreshProfiles;
       yield* Queue.shutdown(host.queue);
     });
 
@@ -205,9 +294,12 @@ const make = Effect.gen(function* () {
                   socketId: socket.socketId,
                   queue,
                   pending: new Map(),
+                  profiles: null,
+                  profilesPublication: 0,
                 };
                 yield* Queue.offer(queue, { type: "registered", hostConnectionId });
                 yield* Ref.update(hosts, (current) => new Map(current).set(hostConnectionId, host));
+                yield* refreshProfiles;
                 return host;
               }),
               disconnect,
@@ -234,6 +326,13 @@ const make = Effect.gen(function* () {
       if (deferred === undefined) return Effect.void;
       host.pending.delete(input.commandId);
       return Deferred.succeed(deferred, input.result).pipe(Effect.asVoid);
+    });
+
+  const publishProfiles: BrowserEngineHosts["Service"]["publishProfiles"] = (socket, input) =>
+    Effect.flatMap(authorizeHost(socket, input.hostConnectionId), (host) => {
+      host.profiles = { profiles: input.profiles, defaultProfileId: input.defaultProfileId };
+      host.profilesPublication = ++profilePublications;
+      return refreshProfiles;
     });
 
   /**
@@ -264,13 +363,12 @@ const make = Effect.gen(function* () {
         return deferred;
       });
       const first = yield* awaitAnswer;
-      const offered = yield* Queue.offer(host.queue, frame(commandId));
-      // The host disconnected between lookup and offer; nothing was sent.
-      if (!offered) {
-        host.pending.delete(commandId);
-        return { outcome: "unknown" } as HostAnswer;
-      }
+      // The wait covers the offer too, so it is armed before the host can
+      // see the frame.
       const exchange = Effect.gen(function* () {
+        const offered = yield* Queue.offer(host.queue, frame(commandId));
+        // The host disconnected between lookup and offer; nothing was sent.
+        if (!offered) return { outcome: "unknown" } as HostAnswer;
         const answer = yield* Deferred.await(first);
         if (answer.outcome !== "confirmed") return answer;
         if (beforeProceed === undefined) return { outcome: "rejected", reason: "failed" } as const;
@@ -342,6 +440,9 @@ const make = Effect.gen(function* () {
     release,
     report,
     commandResult,
+    publishProfiles,
+    currentProfiles: Effect.sync(() => (profiles === "pending" ? null : profiles)),
+    profileChanges,
     dispatch,
     dispatchProfile,
     hasHost: Effect.map(Ref.get(hosts), (current) => current.size > 0),

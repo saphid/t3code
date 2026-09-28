@@ -282,3 +282,17 @@ NodeTest.test("a huge prerelease identifier cannot declare or bind an addition",
     [">=1.1.0-9007199254740992"],
   );
 });
+
+NodeTest.test("a stream addition must name one of the API's streams", () => {
+  const definition = {
+    id: "example.test/streams",
+    version: "1.1.0",
+    methods: [],
+    streams: [{ name: "changes", requiredGrants: [], inputSchema: {}, eventSchema: {} }],
+  };
+  const define = (stream) =>
+    defineApi(definition, { baseline: "1.0.0", additions: [{ version: "1.1.0", stream }] });
+  NodeAssert.doesNotThrow(() => define("changes"));
+  NodeAssert.equal(define("changes").baseline, "1.0.0");
+  NodeAssert.throws(() => define("missing"), /Invalid API addition/);
+});
