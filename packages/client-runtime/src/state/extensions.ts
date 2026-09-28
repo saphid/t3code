@@ -36,14 +36,18 @@ import {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+/** The server broker's deadline for a whole `t3.vcs/actions` pull request handoff. */
+export const PULL_REQUEST_HANDOFF_DEADLINE_MS = 6 * 60_000;
+
 /**
- * API methods that wait on the user. Each HTTP deadline exceeds the server
- * broker's deadline for that method, so the broker's answer (or its deadline
- * error) always reaches the caller. Cookie import: 5-minute host wait plus
- * 30 seconds of post-checks on the server.
+ * Long-running API methods. Each HTTP deadline exceeds the server broker's
+ * deadline for that method, so the broker's answer (or its deadline error)
+ * always reaches the caller. Cookie import: 5-minute host wait plus 30 seconds
+ * of post-checks on the server.
  */
 const API_INVOKE_TIMEOUT_MS: Readonly<Record<string, number>> = {
   "t3.browser/profiles#importCookies": 6 * 60_000,
+  "t3.vcs/actions#handoffPullRequest": PULL_REQUEST_HANDOFF_DEADLINE_MS + 30_000,
 };
 
 function request<A, E, R>(

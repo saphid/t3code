@@ -28,6 +28,7 @@ import {
   type VcsActionsOperationsSupport,
 } from "@t3tools/extension-sdk/catalogue";
 import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
+import { PULL_REQUEST_HANDOFF_DEADLINE_MS } from "@t3tools/client-runtime/state/extensions";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type {
   HostApiInvocationMetadata,
@@ -83,10 +84,10 @@ const MAX_PR_TITLE = 2_048;
 const MAX_BRANCH_NAME = 4_096;
 const MAX_PR_URL = 4_096;
 const MAX_WORKTREE_PATH = 32_768;
-/** A handoff opens a thread and checks out; like native, it is not raced against a short deadline. */
-const HANDOFF_TIMEOUT_MS = 5 * 60_000;
 /** The broker's deadline for the whole handoff: the pull request lookup, then the client's own wait. */
-const HANDOFF_DEADLINE_MS = HANDOFF_TIMEOUT_MS + 60_000;
+const HANDOFF_DEADLINE_MS = PULL_REQUEST_HANDOFF_DEADLINE_MS;
+/** A handoff opens a thread and checks out; like native, it is not raced against a short deadline. */
+const HANDOFF_TIMEOUT_MS = HANDOFF_DEADLINE_MS - 60_000;
 const CLIENT_PR_HANDOFF = "t3.client/pr-handoff";
 
 const decode = <A, I>(schema: Schema.Codec<A, I>) =>

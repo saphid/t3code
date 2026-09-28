@@ -115,11 +115,11 @@ describe("binary installed package assets", () => {
 });
 
 describe("extension API invocation deadlines", () => {
-  const invocation = (method: string) => ({
+  const invocation = (method: string, id = "t3.browser/profiles") => ({
     installationId: "example.browser",
     expectedContentHash: "a".repeat(64),
     request: {
-      id: "t3.browser/profiles",
+      id,
       versionRange: "^1.0.0",
       method,
       input: {},
@@ -155,6 +155,22 @@ describe("extension API invocation deadlines", () => {
       server.answer(Response.json({ result: { imported: 3 } }));
       const result = yield* Fiber.join(fiber);
       expect(result.result).toEqual({ imported: 3 });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("a pull request handoff outlives a checkout held past the default deadline", () =>
+    Effect.gen(function* () {
+      const server = delayedServer();
+      const fiber = yield* environmentExtensionsHttp
+        .invokeApi(prepared, invocation("handoffPullRequest", "t3.vcs/actions"))
+        .pipe(Effect.provide(server.layer), Effect.result, Effect.forkChild);
+      yield* Effect.promise(() => server.started);
+      // Just inside the server broker's whole handoff deadline.
+      yield* TestClock.adjust("359 seconds");
+      server.answer(Response.json({ result: { status: "drafted" } }));
+      const result = yield* Fiber.join(fiber);
+      expect(result._tag).toBe("Success");
+      if (result._tag === "Success") expect(result.success.result).toEqual({ status: "drafted" });
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
