@@ -67,8 +67,11 @@ const firstProfile = (sources: readonly BrowserImportSourceSummary[], sourceId: 
 
 /**
  * Native's profile badge beside the address bar: names the tab's profile,
- * which is otherwise invisible, when it is not the default. The list is read
- * once per held profile; a refused read shows no badge (the page menu's
+ * which is otherwise invisible, when it is not the default. Profiles and the
+ * default are desktop settings with no change stream, so the list is re-read
+ * whenever they may have changed: per held profile, each time the panel is
+ * shown again, and when the window regains focus (Settings, in this window
+ * or another, takes it away). A refused read shows no badge (the page menu's
  * profile group names the refusal).
  */
 export function ProfileBadge(props: {
@@ -76,27 +79,36 @@ export function ProfileBadge(props: {
   session: BrowserSession;
   api: ProfilesApi;
   signal: AbortSignal;
+  visible: boolean;
 }) {
-  const { host, session, api, signal } = props;
+  const { host, session, api, signal, visible } = props;
   const profileId = sessionProfileId(session);
   const [list, setList] = useState<BrowserProfileList | null>(null);
   useEffect(() => {
-    let live = true;
-    void api.invoke("list", {}, signal).then(
-      (value) => {
-        if (live) setList(value);
-      },
-      () => {
-        if (live) setList(null);
-      },
-    );
+    if (!visible) return;
+    // Only the newest read may land; an older answer is an older list.
+    let read = 0;
+    const refresh = () => {
+      const current = ++read;
+      void api.invoke("list", {}, signal).then(
+        (value) => {
+          if (current === read) setList(value);
+        },
+        () => {
+          if (current === read) setList(null);
+        },
+      );
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
     return () => {
-      live = false;
+      read = -1;
+      window.removeEventListener("focus", refresh);
     };
     // Re-read per held profile: one created after this view mounted would
     // otherwise read as "Removed profile".
     // oxlint-disable-next-line react/exhaustive-effect-dependencies
-  }, [api, signal, profileId]);
+  }, [api, signal, profileId, visible]);
   const name = profileBadgeName(list, profileId);
   if (name === null) return null;
   // Capped like native's `max-w-28`: an unbounded badge would take its width

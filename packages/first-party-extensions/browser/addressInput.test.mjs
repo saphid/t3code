@@ -52,9 +52,14 @@ NodeTest.before(async () => {
   }
 });
 
-function mountAddress(committed) {
+/**
+ * Mounts the field under a host that owns the draft like the panel and
+ * whose committed address can move (guest navigation, redirects, history).
+ */
+function mountAddress(initial) {
   const submits = [];
-  let value = committed;
+  let committed = initial;
+  let value = initial;
   let renderer;
   const render = () =>
     React.createElement(AddressInput, {
@@ -75,6 +80,17 @@ function mountAddress(committed) {
   return {
     submits,
     value: () => input().props.value,
+    /** The page the session shows changes without the field's involvement. */
+    navigate(next) {
+      committed = next;
+      act(() => renderer.update(render()));
+    },
+    focus() {
+      act(() => input().props.onFocus?.({}));
+    },
+    blur() {
+      act(() => input().props.onBlur?.({}));
+    },
     type(next) {
       act(() => input().props.onChange({ target: { value: next } }));
     },
@@ -89,6 +105,7 @@ function mountAddress(committed) {
         currentTarget: {
           blur() {
             event.blurred = true;
+            input().props.onBlur?.({});
           },
         },
       };
@@ -101,6 +118,7 @@ function mountAddress(committed) {
 NodeTest.describe("address field keys", () => {
   NodeTest.it("Escape cancels the edit: the draft returns to the page and focus leaves", () => {
     const address = mountAddress("https://example.com/");
+    address.focus();
     address.type("https://exam");
     const escape = address.key("Escape");
     NodeAssert.equal(address.value(), "https://example.com/");
@@ -111,9 +129,60 @@ NodeTest.describe("address field keys", () => {
 
   NodeTest.it("Enter submits the draft", () => {
     const address = mountAddress("https://example.com/");
+    address.focus();
     address.type("localhost:3000");
     address.key("Enter");
     NodeAssert.deepEqual(address.submits, ["localhost:3000"]);
+  });
+
+  NodeTest.it("follows guest navigation, redirects and history while unfocused", () => {
+    const address = mountAddress("https://a.test/");
+    address.navigate("https://b.test/");
+    NodeAssert.equal(address.value(), "https://b.test/");
+    // A redirect, then Back: each lands in the field, as native's `url` does.
+    address.navigate("https://b.test/landing");
+    NodeAssert.equal(address.value(), "https://b.test/landing");
+    address.navigate("https://a.test/");
+    NodeAssert.equal(address.value(), "https://a.test/");
+  });
+
+  NodeTest.it("starts an edit from the page shown now, not an older one", () => {
+    const address = mountAddress("https://a.test/");
+    address.navigate("https://b.test/");
+    address.focus();
+    NodeAssert.equal(address.value(), "https://b.test/");
+    address.key("Enter");
+    NodeAssert.deepEqual(address.submits, ["https://b.test/"]);
+  });
+
+  NodeTest.it("keeps the user's draft while the page navigates under the edit", () => {
+    const address = mountAddress("https://a.test/");
+    address.focus();
+    address.type("https://typed.test/");
+    address.navigate("https://b.test/");
+    NodeAssert.equal(address.value(), "https://typed.test/");
+  });
+
+  NodeTest.it("shows the page again once the field loses focus without submitting", () => {
+    const address = mountAddress("https://a.test/");
+    address.focus();
+    address.type("https://unsent.test/");
+    address.blur();
+    NodeAssert.equal(address.value(), "https://a.test/");
+    address.navigate("https://b.test/");
+    NodeAssert.equal(address.value(), "https://b.test/");
+    NodeAssert.deepEqual(address.submits, []);
+  });
+
+  NodeTest.it("Escape returns to the page shown now after it navigated mid-edit", () => {
+    const address = mountAddress("https://a.test/");
+    address.focus();
+    address.type("https://typed.test/");
+    address.navigate("https://b.test/");
+    address.key("Escape");
+    NodeAssert.equal(address.value(), "https://b.test/");
+    address.navigate("https://c.test/");
+    NodeAssert.equal(address.value(), "https://c.test/");
   });
 
   NodeTest.it("returns to the file on show, then the page, then the target", () => {

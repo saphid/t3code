@@ -38,6 +38,7 @@ class FakeNode {
 globalThis.Node = FakeNode;
 
 let BrowserViewportToolbar;
+let useAspectLocks;
 
 NodeTest.before(async () => {
   const built = await build({
@@ -63,7 +64,9 @@ NodeTest.before(async () => {
   const bundlePath = NodePath.join(bundleDir, "bundle.mjs");
   try {
     await NodeFSP.writeFile(bundlePath, built.outputFiles[0].text);
-    ({ BrowserViewportToolbar } = await import(NodeURL.pathToFileURL(bundlePath).href));
+    ({ BrowserViewportToolbar, useAspectLocks } = await import(
+      NodeURL.pathToFileURL(bundlePath).href
+    ));
   } finally {
     await NodeFSP.rm(bundleDir, { recursive: true, force: true });
   }
@@ -80,6 +83,8 @@ function mountToolbar(setting) {
   let current = setting;
   let pending = false;
   let locked = false;
+  // Each commit's acceptance, settled by `land()` / `reject()` like the panel's.
+  const settles = [];
   let renderer;
   const render = () =>
     React.createElement(BrowserViewportToolbar, {
@@ -96,6 +101,7 @@ function mountToolbar(setting) {
         commits.push(next);
         pending = true;
         renderer.update(render());
+        return new Promise((resolve) => settles.push(resolve));
       },
     });
   act(() => {
@@ -104,12 +110,21 @@ function mountToolbar(setting) {
   return {
     commits,
     locked: () => locked,
-    land() {
+    async land() {
       const next = commits.at(-1);
-      act(() => {
+      await act(async () => {
         pending = false;
         if (next._tag !== "fill") current = next;
         renderer.update(render());
+        settles.shift()?.(true);
+      });
+    },
+    /** The commit is denied, times out or fails: the setting never changes. */
+    async reject() {
+      await act(async () => {
+        pending = false;
+        renderer.update(render());
+        settles.shift()?.(false);
       });
     },
     find: (label) => renderer.root.find((node) => node.props["aria-label"] === label),
@@ -204,11 +219,11 @@ NodeTest.describe("device toolbar dimension edits", () => {
     NodeAssert.deepEqual(toolbar.commits, [{ _tag: "freeform", width: 667, height: 420 }]);
   });
 
-  NodeTest.it("retires the edit once the committed size lands", () => {
+  NodeTest.it("retires the edit once the committed size lands", async () => {
     const toolbar = mountToolbar(IPHONE_SE);
     typeInto(toolbar, "Viewport width", "420");
     dispatch(toolbar.find("Viewport width"), "onKeyDown", { key: "Enter" });
-    toolbar.land();
+    await toolbar.land();
     NodeAssert.equal(toolbar.find("Viewport width").props.value, "420");
     NodeAssert.equal(toolbar.find("Viewport width").props.disabled, false);
   });
@@ -251,11 +266,95 @@ NodeTest.describe("device toolbar aspect-ratio lock", () => {
     NodeAssert.equal(toolbar.find(LOCK).props.disabled, true);
   });
 
-  NodeTest.it("releases when the device toolbar closes", () => {
+  NodeTest.it("stays locked while Close is pending, releasing once it is accepted", async () => {
     const toolbar = mountToolbar(IPHONE_SE);
     click(toolbar, LOCK, "Viewport width");
     click(toolbar, "Close device toolbar", "Viewport width");
-    NodeAssert.equal(toolbar.locked(), false);
     NodeAssert.deepEqual(toolbar.commits, [{ _tag: "fill" }]);
+    NodeAssert.equal(toolbar.locked(), true);
+    await toolbar.land();
+    NodeAssert.equal(toolbar.locked(), false);
+  });
+
+  NodeTest.it("keeps the lock when Close is rejected, like native", async () => {
+    const toolbar = mountToolbar(IPHONE_SE);
+    click(toolbar, LOCK, "Viewport width");
+    click(toolbar, "Close device toolbar", "Viewport width");
+    await toolbar.reject();
+    NodeAssert.equal(toolbar.locked(), true);
+    NodeAssert.equal(toolbar.find(UNLOCK).props["aria-pressed"], true);
+  });
+});
+
+/**
+ * The panel's lock state across tabs it adopts through its tab strip: the
+ * hook as the panel holds it, fed the snapshot's tabs.
+ */
+function mountLocks(tabs) {
+  let current = tabs;
+  const hook = {};
+  let renderer;
+  function Probe() {
+    hook.locks = useAspectLocks(current);
+    return null;
+  }
+  act(() => {
+    renderer = create(React.createElement(Probe));
+  });
+  return {
+    isLocked: (tab) => hook.locks.isLocked(tab),
+    set(tab, locked) {
+      act(() => hook.locks.setLocked(tab, locked));
+    },
+    snapshot(nextTabs) {
+      current = nextTabs;
+      act(() => renderer.update(React.createElement(Probe)));
+    },
+  };
+}
+
+NodeTest.describe("aspect-ratio lock per tab", () => {
+  const A = { tabId: "tab-a", serverEpoch: "epoch-1" };
+  const B = { tabId: "tab-b", serverEpoch: "epoch-1" };
+
+  NodeTest.it("keeps A's lock through A → B → A with both locked", () => {
+    const locks = mountLocks([A, B]);
+    locks.set(A, true);
+    // Adopt B: it starts unlocked, then locks independently.
+    NodeAssert.equal(locks.isLocked(B), false);
+    locks.set(B, true);
+    // Back to A.
+    NodeAssert.equal(locks.isLocked(A), true);
+    NodeAssert.equal(locks.isLocked(B), true);
+  });
+
+  NodeTest.it("closing B's device toolbar releases only B", () => {
+    const locks = mountLocks([A, B]);
+    locks.set(A, true);
+    locks.set(B, false);
+    NodeAssert.equal(locks.isLocked(A), true);
+    locks.set(B, true);
+    locks.set(B, false);
+    NodeAssert.equal(locks.isLocked(A), true);
+    NodeAssert.equal(locks.isLocked(B), false);
+  });
+
+  NodeTest.it("belongs to the epoch that minted the tab", () => {
+    const locks = mountLocks([A]);
+    locks.set(A, true);
+    NodeAssert.equal(locks.isLocked({ ...A, serverEpoch: "epoch-2" }), false);
+  });
+
+  NodeTest.it("is dropped once the tab's session ends", () => {
+    const locks = mountLocks([A, B]);
+    locks.set(A, true);
+    locks.set(B, true);
+    locks.snapshot([B]);
+    NodeAssert.equal(locks.isLocked(A), false);
+    NodeAssert.equal(locks.isLocked(B), true);
+    // A new server epoch ends every session of the old one.
+    const restarted = { ...B, serverEpoch: "epoch-2" };
+    locks.snapshot([restarted]);
+    NodeAssert.equal(locks.isLocked(restarted), false);
   });
 });

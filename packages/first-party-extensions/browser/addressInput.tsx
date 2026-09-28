@@ -1,4 +1,4 @@
-import type { CSSProperties, Ref } from "react";
+import { useState, type CSSProperties, type Ref } from "react";
 
 /**
  * The address a cancelled edit returns to: the workspace file on show (its
@@ -14,8 +14,11 @@ export function committedAddress(input: {
 }
 
 /**
- * The address field. Native keys: Enter submits the draft; Escape cancels
- * the edit — the draft returns to `committed` and focus leaves the field.
+ * The address field, like native's: unfocused it shows `committed`, so it
+ * follows guest navigation, redirects and Back/Forward; focusing starts the
+ * edit from that address, and live navigation never overwrites the draft
+ * being typed. Enter submits the draft; Escape cancels the edit — the draft
+ * returns to `committed` and focus leaves the field.
  */
 export function AddressInput(props: {
   readonly value: string;
@@ -26,14 +29,20 @@ export function AddressInput(props: {
   readonly style: CSSProperties;
 }) {
   const { value, committed, onValueChange, onSubmit, inputRef, style } = props;
+  const [focused, setFocused] = useState(false);
   return (
     <input
       type="text"
       aria-label="Address"
       placeholder="Search or enter address"
       ref={inputRef}
-      value={value}
+      value={focused ? value : committed}
       onChange={(event) => onValueChange(event.target.value)}
+      onFocus={() => {
+        onValueChange(committed);
+        setFocused(true);
+      }}
+      onBlur={() => setFocused(false)}
       onKeyDown={(event) => {
         if (event.key === "Enter") onSubmit(value);
         if (event.key === "Escape") {

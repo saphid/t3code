@@ -79,6 +79,7 @@ import {
   BrowserViewportToolbar,
   ViewportDeviceFrame,
   ViewportResizeRails,
+  useAspectLocks,
   useElementSize,
   useViewportRails,
 } from "./viewportToolbar.js";
@@ -587,10 +588,8 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const pageZoom = live?.zoomFactor ?? 1;
   const fixedViewport =
     viewportSetting !== null && viewportSetting._tag !== "fill" ? viewportSetting : null;
-  // The tab whose aspect ratio is locked: native keeps the lock per webview,
-  // so another tab starts unlocked.
-  const [aspectLockTab, setAspectLockTab] = useState<string | null>(null);
-  const aspectLocked = held !== null && aspectLockTab === held.tabId;
+  const aspectLocks = useAspectLocks(tabs);
+  const aspectLocked = aspectLocks.isLocked(held);
   const rails = useViewportRails({
     setting: fixedViewport,
     target: held?.tabId ?? null,
@@ -602,7 +601,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   /** Toolbar and toggle changes supersede any rail edit still pending, like native. */
   const commitViewportChange = (next: BrowserSessionViewport) => {
     rails.cancel();
-    void commitViewport(next);
+    return commitViewport(next);
   };
 
   /**
@@ -1064,7 +1063,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             if (!viewportSetting) return;
             // Native toggle semantics: non-fill → fill; fill → a responsive
             // freeform sized from the panel this slot fills.
-            commitViewportChange(
+            void commitViewportChange(
               viewportSetting._tag !== "fill"
                 ? { _tag: "fill" }
                 : responsiveViewportForToggle(contentSize),
@@ -1096,7 +1095,13 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           style={buttonStyle}
         />
         {held && live && (
-          <ProfileBadge host={host} session={live} api={profilesApi} signal={session.signal} />
+          <ProfileBadge
+            host={host}
+            session={live}
+            api={profilesApi}
+            signal={session.signal}
+            visible={visible}
+          />
         )}
         <AddressInput
           inputRef={addressRef}
@@ -1276,7 +1281,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                 pending={viewportPending}
                 onCommit={commitViewportChange}
                 aspectLocked={aspectLocked}
-                onAspectLockedChange={(locked) => setAspectLockTab(locked ? held.tabId : null)}
+                onAspectLockedChange={(locked) => aspectLocks.setLocked(held, locked)}
                 zIndex={layers.deviceChrome}
               />
               <ViewportDeviceFrame

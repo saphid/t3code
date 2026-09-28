@@ -8120,11 +8120,11 @@ var __t3Client = (() => {
     return covering.some((node) => !element.contains(node) && !(typeof node.closest === "function" && (node.closest("[data-preview-viewport]") !== null || node.closest(`[${BROWSER_SURFACE_OVERLAY_ATTRIBUTE}]`) !== null)));
   }
   function useBrowserSurfaceSlot(host, session, options) {
-    const { useCallback: useCallback2, useLayoutEffect, useRef: useRef4, useState: useState7 } = host.React;
-    const [element, setElement] = useState7(null);
-    const [result2, setResult] = useState7(null);
-    const [shown, setShown] = useState7(false);
-    const [, setLeaseVersion] = useState7(0);
+    const { useCallback: useCallback2, useLayoutEffect, useRef: useRef4, useState: useState8 } = host.React;
+    const [element, setElement] = useState8(null);
+    const [result2, setResult] = useState8(null);
+    const [shown, setShown] = useState8(false);
+    const [, setLeaseVersion] = useState8(0);
     const targetKey = options.session ? `${options.session.serverEpoch}${options.session.tabId}` : "";
     const presentationRef = useRef4({
       visible: options.visible,
@@ -8274,10 +8274,10 @@ var __t3Client = (() => {
     };
   }
   function useRemoteBrowserFrames(host, session, options) {
-    const { useCallback: useCallback2, useEffect: useEffect7, useRef: useRef4, useState: useState7 } = host.React;
-    const [element, setElement] = useState7(null);
-    const [status, setStatus] = useState7({ kind: "idle" });
-    const [view, setView] = useState7({
+    const { useCallback: useCallback2, useEffect: useEffect7, useRef: useRef4, useState: useState8 } = host.React;
+    const [element, setElement] = useState8(null);
+    const [status, setStatus] = useState8({ kind: "idle" });
+    const [view, setView] = useState8({
       status: "connecting",
       inputConnected: false,
       droppedFrames: 0,
@@ -8462,15 +8462,17 @@ var __t3Client = (() => {
   }
 
   // extension.tsx
-  var import_react7 = __toESM(require_react(), 1);
+  var import_react8 = __toESM(require_react(), 1);
 
   // addressInput.tsx
+  var import_react = __toESM(require_react(), 1);
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
   function committedAddress(input) {
     return input.fileSource ?? input.pageUrl ?? input.target ?? "";
   }
   function AddressInput(props) {
     const { value, committed, onValueChange, onSubmit, inputRef, style } = props;
+    const [focused, setFocused] = (0, import_react.useState)(false);
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
       "input",
       {
@@ -8478,8 +8480,13 @@ var __t3Client = (() => {
         "aria-label": "Address",
         placeholder: "Search or enter address",
         ref: inputRef,
-        value,
+        value: focused ? value : committed,
         onChange: (event) => onValueChange(event.target.value),
+        onFocus: () => {
+          onValueChange(committed);
+          setFocused(true);
+        },
+        onBlur: () => setFocused(false),
         onKeyDown: (event) => {
           if (event.key === "Enter") onSubmit(value);
           if (event.key === "Escape") {
@@ -8562,7 +8569,7 @@ var __t3Client = (() => {
   };
 
   // capture.ts
-  var import_react = __toESM(require_react(), 1);
+  var import_react2 = __toESM(require_react(), 1);
   function capturePageView(lease, presentedVisible, navigation) {
     if (lease?.state.kind !== "active" || !lease.state.presentation.supported || !presentedVisible)
       return "hidden";
@@ -8844,9 +8851,9 @@ var __t3Client = (() => {
     }
   }
   function useBrowserCapture(host, session, held, page = "shown", onStatus) {
-    const [state2, setState] = (0, import_react.useState)({ kind: "idle" });
-    const latestRun = (0, import_react.useRef)(0);
-    const cancelRun = (0, import_react.useRef)(null);
+    const [state2, setState] = (0, import_react2.useState)({ kind: "idle" });
+    const latestRun = (0, import_react2.useRef)(0);
+    const cancelRun = (0, import_react2.useRef)(null);
     const blockReason = captureUnavailableReason(host, held, session.context.resource.threadId, page);
     const picking = state2.kind === "capturing" && state2.target === "element";
     const capture = (target) => {
@@ -14696,7 +14703,7 @@ ${ind(d)}}`;
   }
 
   // favicon.tsx
-  var import_react2 = __toESM(require_react(), 1);
+  var import_react3 = __toESM(require_react(), 1);
 
   // faviconReads.ts
   var SETTLED_REFS_MAX = 4096;
@@ -15065,7 +15072,7 @@ ${ind(d)}}`;
     if (rendered === cache.resolved) commit(applyResolvedFaviconRefs(cache, sessions, Date.now()));
   }
   function useFaviconCache() {
-    (0, import_react2.useSyncExternalStore)(subscribe, () => version);
+    (0, import_react3.useSyncExternalStore)(subscribe, () => version);
     return cache;
   }
   function subscribe(listener) {
@@ -15075,8 +15082,8 @@ ${ind(d)}}`;
     };
   }
   function useFaviconResolution(url, ref) {
-    (0, import_react2.useSyncExternalStore)(subscribe, () => version);
-    (0, import_react2.useEffect)(() => {
+    (0, import_react3.useSyncExternalStore)(subscribe, () => version);
+    (0, import_react3.useEffect)(() => {
       commit(expireStaleFaviconFailure(cache, url, Date.now()));
     }, [url]);
     return resolveFavicon(cache, url, ref);
@@ -15224,7 +15231,7 @@ ${ind(d)}}`;
   }
 
   // landing.tsx
-  var import_react3 = __toESM(require_react(), 1);
+  var import_react4 = __toESM(require_react(), 1);
 
   // localServers.ts
   var LOCAL_SERVERS_HINT = "Select a live local server to open it in this browser tab.";
@@ -15319,13 +15326,13 @@ ${ind(d)}}`;
   var muted2 = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
   var headingStyle = { margin: 0, fontSize: 12, fontWeight: 500, color: muted2 };
   function useLocalServers(host, session, active) {
-    const [state2, setState] = (0, import_react3.useState)(LOADING);
-    const [run2, setRun] = (0, import_react3.useState)({ host, session, active });
+    const [state2, setState] = (0, import_react4.useState)(LOADING);
+    const [run2, setRun] = (0, import_react4.useState)({ host, session, active });
     if (run2.host !== host || run2.session !== session || run2.active !== active) {
       setRun({ host, session, active });
       setState(LOADING);
     }
-    (0, import_react3.useEffect)(() => {
+    (0, import_react4.useEffect)(() => {
       if (!active) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -15597,7 +15604,7 @@ ${ind(d)}}`;
   var floatingOverPage = { [BROWSER_SURFACE_OVERLAY_ATTRIBUTE]: "" };
 
   // pageMenu.tsx
-  var import_react4 = __toESM(require_react(), 1);
+  var import_react5 = __toESM(require_react(), 1);
   var import_jsx_runtime5 = __toESM(require_jsx_runtime(), 1);
   var muted3 = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
   var border = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
@@ -15618,9 +15625,9 @@ ${ind(d)}}`;
   var ZOOM_INDICATOR_MS = 1500;
   function ZoomIndicator(props) {
     const { zoomFactor, anchor, floating, visible } = props;
-    const [shown, setShown] = (0, import_react4.useState)(null);
-    const last = (0, import_react4.useRef)(zoomFactor);
-    (0, import_react4.useEffect)(() => {
+    const [shown, setShown] = (0, import_react5.useState)(null);
+    const last = (0, import_react5.useRef)(zoomFactor);
+    (0, import_react5.useEffect)(() => {
       if (zoomFactor === null || last.current === zoomFactor) {
         last.current = zoomFactor;
         return;
@@ -15658,12 +15665,12 @@ ${ind(d)}}`;
   }
   function PageMenu(props) {
     const { host, session, blockReason, run: run2, zoomStep, floating, visible, children } = props;
-    const [open, setOpen] = (0, import_react4.useState)(false);
+    const [open, setOpen] = (0, import_react5.useState)(false);
     if (open && !visible) setOpen(false);
-    const [trigger, setTrigger] = (0, import_react4.useState)(null);
-    const root = (0, import_react4.useRef)(null);
-    const menu = (0, import_react4.useRef)(null);
-    (0, import_react4.useEffect)(() => {
+    const [trigger, setTrigger] = (0, import_react5.useState)(null);
+    const root = (0, import_react5.useRef)(null);
+    const menu = (0, import_react5.useRef)(null);
+    (0, import_react5.useEffect)(() => {
       if (!open) return;
       const onPointer = (event) => {
         const target = event.target;
@@ -15890,7 +15897,7 @@ ${ind(d)}}`;
   }
 
   // profileMenu.tsx
-  var import_react5 = __toESM(require_react(), 1);
+  var import_react6 = __toESM(require_react(), 1);
 
   // profiles.ts
   var DEFAULT_PROFILE_ID = "default";
@@ -15997,23 +16004,30 @@ ${ind(d)}}`;
   };
   var firstProfile = (sources, sourceId) => sources.find((source) => source.id === sourceId)?.profiles[0]?.handle ?? "";
   function ProfileBadge(props) {
-    const { host, session, api, signal } = props;
+    const { host, session, api, signal, visible } = props;
     const profileId = sessionProfileId(session);
-    const [list, setList] = (0, import_react5.useState)(null);
-    (0, import_react5.useEffect)(() => {
-      let live = true;
-      void api.invoke("list", {}, signal).then(
-        (value) => {
-          if (live) setList(value);
-        },
-        () => {
-          if (live) setList(null);
-        }
-      );
-      return () => {
-        live = false;
+    const [list, setList] = (0, import_react6.useState)(null);
+    (0, import_react6.useEffect)(() => {
+      if (!visible) return;
+      let read = 0;
+      const refresh = () => {
+        const current = ++read;
+        void api.invoke("list", {}, signal).then(
+          (value) => {
+            if (current === read) setList(value);
+          },
+          () => {
+            if (current === read) setList(null);
+          }
+        );
       };
-    }, [api, signal, profileId]);
+      refresh();
+      window.addEventListener("focus", refresh);
+      return () => {
+        read = -1;
+        window.removeEventListener("focus", refresh);
+      };
+    }, [api, signal, profileId, visible]);
     const name = profileBadgeName(list, profileId);
     if (name === null) return null;
     return /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(Tooltip, { host, label: name, children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
@@ -16039,11 +16053,11 @@ ${ind(d)}}`;
   function ProfileSection(props) {
     const { session, api, signal, onOpenInProfile, report } = props;
     const profileId = sessionProfileId(session);
-    const [list, setList] = (0, import_react5.useState)(null);
-    const [listNote, setListNote] = (0, import_react5.useState)(null);
-    const [busy, setBusy] = (0, import_react5.useState)(null);
-    const [importer, setImporter] = (0, import_react5.useState)({ kind: "closed" });
-    (0, import_react5.useEffect)(() => {
+    const [list, setList] = (0, import_react6.useState)(null);
+    const [listNote, setListNote] = (0, import_react6.useState)(null);
+    const [busy, setBusy] = (0, import_react6.useState)(null);
+    const [importer, setImporter] = (0, import_react6.useState)({ kind: "closed" });
+    (0, import_react6.useEffect)(() => {
       let live = true;
       void api.invoke("list", {}, signal).then(
         (value) => {
@@ -16211,7 +16225,7 @@ ${ind(d)}}`;
   }
 
   // viewportToolbar.tsx
-  var import_react6 = __toESM(require_react(), 1);
+  var import_react7 = __toESM(require_react(), 1);
 
   // viewport.ts
   var PREVIEW_VIEWPORT_MIN_DIMENSION = 240;
@@ -16660,10 +16674,10 @@ ${ind(d)}}`;
     color: "inherit"
   };
   function useElementSize(element) {
-    const [size, setSize] = (0, import_react6.useState)(
+    const [size, setSize] = (0, import_react7.useState)(
       null
     );
-    (0, import_react6.useEffect)(() => {
+    (0, import_react7.useEffect)(() => {
       if (!element) return;
       const observer = new ResizeObserver((entries) => {
         const box = entries[0]?.contentRect;
@@ -16699,10 +16713,23 @@ ${ind(d)}}`;
       }
     );
   }
+  function useAspectLocks(tabs) {
+    const [locks, setLocks] = (0, import_react7.useState)(() => /* @__PURE__ */ new Map());
+    const live = (tabId) => tabs.some((tab) => tab.tabId === tabId);
+    return {
+      isLocked: (tab) => tab !== null && locks.get(tab.tabId) === tab.serverEpoch && live(tab.tabId),
+      setLocked: (tab, locked) => setLocks((current) => {
+        const next = new Map([...current].filter(([tabId]) => live(tabId)));
+        if (locked) next.set(tab.tabId, tab.serverEpoch);
+        else next.delete(tab.tabId);
+        return next;
+      })
+    };
+  }
   function BrowserViewportToolbar(props) {
     const { host, setting, pending, onCommit, aspectLocked, onAspectLockedChange, zIndex } = props;
     const aspectRatio = lockedAspectRatio(setting, aspectLocked);
-    const [edit, setEdit] = (0, import_react6.useState)(null);
+    const [edit, setEdit] = (0, import_react7.useState)(null);
     const committedKey = viewportSettingKey(setting);
     const customSize = edit !== null && edit.key === committedKey ? { width: edit.width, height: edit.height } : null;
     const presentedSize = customSize ?? {
@@ -16718,7 +16745,7 @@ ${ind(d)}}`;
         setEdit(null);
         return;
       }
-      onCommit({ _tag: "freeform", width: customWidth, height: customHeight });
+      void onCommit({ _tag: "freeform", width: customWidth, height: customHeight });
     };
     const keepFocus = (event) => event.preventDefault();
     const updateDimension = (axis, value) => {
@@ -16744,11 +16771,11 @@ ${ind(d)}}`;
     const selectViewport = (value) => {
       if (value === "responsive") {
         if (setting._tag === "freeform") return;
-        onCommit(freeformFromSetting(setting));
+        void onCommit(freeformFromSetting(setting));
         return;
       }
       const preset = presetViewport(value);
-      if (preset) onCommit(preset);
+      if (preset) void onCommit(preset);
     };
     return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
       "div",
@@ -16879,7 +16906,7 @@ ${ind(d)}}`;
               "aria-label": "Rotate viewport",
               disabled: pending,
               onMouseDown: keepFocus,
-              onClick: () => onCommit(
+              onClick: () => void onCommit(
                 rotateViewport(
                   setting,
                   customValid ? { width: customWidth, height: customHeight } : null
@@ -16898,8 +16925,9 @@ ${ind(d)}}`;
               onMouseDown: keepFocus,
               onClick: () => {
                 setEdit(null);
-                onAspectLockedChange(false);
-                onCommit({ _tag: "fill" });
+                void onCommit({ _tag: "fill" }).then((accepted) => {
+                  if (accepted) onAspectLockedChange(false);
+                });
               },
               style: { ...chromeButton, marginLeft: "auto" },
               children: "\xD7"
@@ -16965,12 +16993,12 @@ ${ind(d)}}`;
   }
   function useViewportRails(options) {
     const { setting, target, slot, zoomFactor, aspectRatio, commit: commit2 } = options;
-    const [preview, setPreview] = (0, import_react6.useState)(null);
-    const [gestures] = (0, import_react6.useState)(() => createRailGestures(setPreview));
-    (0, import_react6.useEffect)(() => gestures.bindCommit(commit2), [gestures, commit2]);
+    const [preview, setPreview] = (0, import_react7.useState)(null);
+    const [gestures] = (0, import_react7.useState)(() => createRailGestures(setPreview));
+    (0, import_react7.useEffect)(() => gestures.bindCommit(commit2), [gestures, commit2]);
     const committedKey = setting === null ? null : viewportSettingKey(setting);
-    (0, import_react6.useEffect)(() => gestures.observe(target, committedKey), [gestures, target, committedKey]);
-    (0, import_react6.useEffect)(() => () => gestures.dispose(), [gestures]);
+    (0, import_react7.useEffect)(() => gestures.observe(target, committedKey), [gestures, target, committedKey]);
+    (0, import_react7.useEffect)(() => () => gestures.dispose(), [gestures]);
     const displayed = setting === null ? null : preview === null ? setting : { _tag: "freeform", width: preview.width, height: preview.height };
     const onPointerDown = (direction, event) => {
       if (displayed === null || setting === null || target === null) return;
@@ -17306,8 +17334,8 @@ ${ind(d)}}`;
     color: "inherit"
   };
   function useThemeVars(host, session, visible) {
-    const [vars, setVars] = (0, import_react7.useState)(null);
-    (0, import_react7.useEffect)(() => {
+    const [vars, setVars] = (0, import_react8.useState)(null);
+    (0, import_react8.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       watchThemeVars(
@@ -17352,47 +17380,47 @@ ${ind(d)}}`;
   function BrowserView(props) {
     const { host, session } = props;
     const restored = restoreState(session.restoreState) ? session.restoreState : null;
-    const [state2, setState] = (0, import_react7.useState)(
+    const [state2, setState] = (0, import_react8.useState)(
       () => restored?.url ? submitAddress(initialNavigationState, restored.url) : initialNavigationState
     );
-    const [fileSource, setFileSource] = (0, import_react7.useState)(
+    const [fileSource, setFileSource] = (0, import_react8.useState)(
       restored?.url ? null : restored?.relativePath ?? null
     );
-    const fileSourceRef = (0, import_react7.useRef)(fileSource);
-    const fileLeaseUrl = (0, import_react7.useRef)(null);
-    const fileRun = (0, import_react7.useRef)(null);
-    const [address, setAddress] = (0, import_react7.useState)(restored?.url ?? restored?.relativePath ?? "");
-    const [history, setHistory] = (0, import_react7.useState)(
+    const fileSourceRef = (0, import_react8.useRef)(fileSource);
+    const fileLeaseUrl = (0, import_react8.useRef)(null);
+    const fileRun = (0, import_react8.useRef)(null);
+    const [address, setAddress] = (0, import_react8.useState)(restored?.url ?? restored?.relativePath ?? "");
+    const [history, setHistory] = (0, import_react8.useState)(
       () => sanitizeHistoryEntries(restored?.history)
     );
-    const [held, setHeld] = (0, import_react7.useState)(
+    const [held, setHeld] = (0, import_react8.useState)(
       () => restored?.tabId && restored?.serverEpoch ? {
         tabId: restored.tabId,
         serverEpoch: restored.serverEpoch,
         engineGeneration: null
       } : null
     );
-    const [live, setLive] = (0, import_react7.useState)(null);
-    const [tabs, setTabs] = (0, import_react7.useState)([]);
-    const tabsEpoch = (0, import_react7.useRef)(null);
-    const [notice, setNotice] = (0, import_react7.useState)(null);
-    const [visible, setVisible] = (0, import_react7.useState)(session.visible);
-    const heldRef = (0, import_react7.useRef)(held);
-    const historyRef = (0, import_react7.useRef)(history);
-    const lastRevision = (0, import_react7.useRef)(-1);
-    const heldRevision = (0, import_react7.useRef)(-1);
-    const addressRef = (0, import_react7.useRef)(null);
-    const [contentElement, setContentElement] = (0, import_react7.useState)(null);
+    const [live, setLive] = (0, import_react8.useState)(null);
+    const [tabs, setTabs] = (0, import_react8.useState)([]);
+    const tabsEpoch = (0, import_react8.useRef)(null);
+    const [notice, setNotice] = (0, import_react8.useState)(null);
+    const [visible, setVisible] = (0, import_react8.useState)(session.visible);
+    const heldRef = (0, import_react8.useRef)(held);
+    const historyRef = (0, import_react8.useRef)(history);
+    const lastRevision = (0, import_react8.useRef)(-1);
+    const heldRevision = (0, import_react8.useRef)(-1);
+    const addressRef = (0, import_react8.useRef)(null);
+    const [contentElement, setContentElement] = (0, import_react8.useState)(null);
     const contentSize = useElementSize(contentElement);
-    const [viewportPending, setViewportPending] = (0, import_react7.useState)(false);
-    const viewportCommitter = (0, import_react7.useRef)(null);
+    const [viewportPending, setViewportPending] = (0, import_react8.useState)(false);
+    const viewportCommitter = (0, import_react8.useRef)(null);
     const themeVars = useThemeVars(host, session, visible);
-    const profilesApi = (0, import_react7.useMemo)(() => bindProfilesApi(host, session.context), [host, session]);
+    const profilesApi = (0, import_react8.useMemo)(() => bindProfilesApi(host, session.context), [host, session]);
     const localServers = useLocalServers(host, session, visible && held === null);
-    const [projectHistoryState, setProjectHistoryState] = (0, import_react7.useState)({
+    const [projectHistoryState, setProjectHistoryState] = (0, import_react8.useState)({
       kind: "loading"
     });
-    const projectHistory = (0, import_react7.useMemo)(
+    const projectHistory = (0, import_react8.useMemo)(
       () => createProjectHistory(
         bindApi(browserHistoryApi, host, session.context),
         session.signal,
@@ -17400,17 +17428,17 @@ ${ind(d)}}`;
       ),
       [host, session]
     );
-    (0, import_react7.useEffect)(() => {
+    (0, import_react8.useEffect)(() => {
       if (visible) projectHistory.refresh();
     }, [projectHistory, visible]);
-    (0, import_react7.useEffect)(() => {
+    (0, import_react8.useEffect)(() => {
       heldRef.current = held;
     }, [held]);
-    (0, import_react7.useEffect)(() => {
+    (0, import_react8.useEffect)(() => {
       historyRef.current = history;
     }, [history]);
-    (0, import_react7.useEffect)(() => session.onVisibility(setVisible), [session]);
-    (0, import_react7.useEffect)(() => {
+    (0, import_react8.useEffect)(() => session.onVisibility(setVisible), [session]);
+    (0, import_react8.useEffect)(() => {
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       void (async () => {
@@ -17495,7 +17523,7 @@ ${ind(d)}}`;
       return () => controller.abort();
     }, [host, session]);
     const faviconCache = useFaviconCache();
-    (0, import_react7.useEffect)(() => {
+    (0, import_react8.useEffect)(() => {
       resolveSessionFavicons(
         bindApi(browserSessionsApi, host, session.context),
         tabs,
@@ -17503,8 +17531,8 @@ ${ind(d)}}`;
       );
     }, [host, session, tabs]);
     const resolvedFaviconRefs = faviconCache.resolved;
-    (0, import_react7.useEffect)(() => applySessionFavicons(resolvedFaviconRefs, tabs), [resolvedFaviconRefs, tabs]);
-    (0, import_react7.useEffect)(() => {
+    (0, import_react8.useEffect)(() => applySessionFavicons(resolvedFaviconRefs, tabs), [resolvedFaviconRefs, tabs]);
+    (0, import_react8.useEffect)(() => {
       if (typeof session.setTabIndicators !== "function") return;
       const indicators = panelTabIndicators(faviconCache, live, tabs);
       try {
@@ -17526,8 +17554,8 @@ ${ind(d)}}`;
       cornerRadius: 8
     });
     const layers = floatingLayers(overlayZIndex);
-    const Popover = (0, import_react7.useMemo)(() => panelPopover(host, layers.transient), [host, layers.transient]);
-    const floating = (0, import_react7.useMemo)(
+    const Popover = (0, import_react8.useMemo)(() => panelPopover(host, layers.transient), [host, layers.transient]);
+    const floating = (0, import_react8.useMemo)(
       () => ({
         Popover,
         style: {
@@ -17545,7 +17573,7 @@ ${ind(d)}}`;
       session: held,
       enabled: visible && remoteEligible && surfaceLease?.state.kind !== "ended"
     });
-    (0, import_react7.useEffect)(() => {
+    (0, import_react8.useEffect)(() => {
       const api = bindApi(browserSessionsApi, host, session.context);
       viewportCommitter.current = createViewportCommitter((viewport, signal, target) => {
         const current = heldRef.current;
@@ -17616,8 +17644,8 @@ ${ind(d)}}`;
     const viewportSlot = contentSize ?? FALLBACK_RESPONSIVE_VIEWPORT_SIZE;
     const pageZoom = live?.zoomFactor ?? 1;
     const fixedViewport = viewportSetting !== null && viewportSetting._tag !== "fill" ? viewportSetting : null;
-    const [aspectLockTab, setAspectLockTab] = (0, import_react7.useState)(null);
-    const aspectLocked = held !== null && aspectLockTab === held.tabId;
+    const aspectLocks = useAspectLocks(tabs);
+    const aspectLocked = aspectLocks.isLocked(held);
     const rails = useViewportRails({
       setting: fixedViewport,
       target: held?.tabId ?? null,
@@ -17628,7 +17656,7 @@ ${ind(d)}}`;
     });
     const commitViewportChange = (next) => {
       rails.cancel();
-      void commitViewport(next);
+      return commitViewport(next);
     };
     const persist = (entries, url, heldSession) => {
       const base = {
@@ -17721,7 +17749,7 @@ ${ind(d)}}`;
         })
       );
     };
-    const adopt = (0, import_react7.useCallback)(
+    const adopt = (0, import_react8.useCallback)(
       (tab) => {
         const serverEpoch = tabsEpoch.current;
         if (!serverEpoch) return;
@@ -17779,12 +17807,12 @@ ${ind(d)}}`;
         }
       );
     };
-    (0, import_react7.useEffect)(() => {
+    (0, import_react8.useEffect)(() => {
       if (fileSourceRef.current && !heldRef.current) openFile(fileSourceRef.current);
       return () => fileRun.current?.abort();
     }, []);
-    const pendingZoom = (0, import_react7.useRef)(null);
-    (0, import_react7.useEffect)(() => {
+    const pendingZoom = (0, import_react8.useRef)(null);
+    (0, import_react8.useEffect)(() => {
       if (live?.zoomFactor === pendingZoom.current) pendingZoom.current = null;
     }, [live?.zoomFactor]);
     const runPage = (verb, tab) => {
@@ -17835,9 +17863,9 @@ ${ind(d)}}`;
       else commit2(reload(state2));
       runPage({ method });
     };
-    const runViewCommand = (0, import_react7.useRef)(() => {
+    const runViewCommand = (0, import_react8.useRef)(() => {
     });
-    (0, import_react7.useEffect)(() => {
+    (0, import_react8.useEffect)(() => {
       runViewCommand.current = (commandId) => {
         if (commandId === "reload") {
           if (held || fileSourceRef.current) command("reload");
@@ -17851,7 +17879,7 @@ ${ind(d)}}`;
         }
       };
     });
-    (0, import_react7.useEffect)(() => {
+    (0, import_react8.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -17871,8 +17899,8 @@ ${ind(d)}}`;
     const titled = titleUpdate(live?.navigation ?? null, fileSource !== null, isLeaseUrl);
     const titledUrl = titled?.url ?? null;
     const titledTitle = titled?.title ?? null;
-    const lastTitled = (0, import_react7.useRef)(null);
-    (0, import_react7.useEffect)(() => {
+    const lastTitled = (0, import_react8.useRef)(null);
+    (0, import_react8.useEffect)(() => {
       if (titledUrl === null || titledTitle === null) return;
       if (projectHistoryState.kind !== "ready" || projectHistoryState.entries.length === 0) return;
       const key = `${titledUrl}
@@ -17969,7 +17997,7 @@ ${titledTitle}`;
                     disabled: !held || viewportPending,
                     onClick: () => {
                       if (!viewportSetting) return;
-                      commitViewportChange(
+                      void commitViewportChange(
                         viewportSetting._tag !== "fill" ? { _tag: "fill" } : responsiveViewportForToggle(contentSize)
                       );
                     },
@@ -18002,7 +18030,16 @@ ${titledTitle}`;
                     style: buttonStyle
                   }
                 ),
-                held && live && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(ProfileBadge, { host, session: live, api: profilesApi, signal: session.signal }),
+                held && live && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+                  ProfileBadge,
+                  {
+                    host,
+                    session: live,
+                    api: profilesApi,
+                    signal: session.signal,
+                    visible
+                  }
+                ),
                 /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
                   AddressInput,
                   {
@@ -18182,7 +18219,7 @@ ${titledTitle}`;
                   pending: viewportPending,
                   onCommit: commitViewportChange,
                   aspectLocked,
-                  onAspectLockedChange: (locked) => setAspectLockTab(locked ? held.tabId : null),
+                  onAspectLockedChange: (locked) => aspectLocks.setLocked(held, locked),
                   zIndex: layers.deviceChrome
                 }
               ),

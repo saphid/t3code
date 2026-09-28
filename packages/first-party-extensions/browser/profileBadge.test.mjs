@@ -72,6 +72,7 @@ async function badgeFor(profileId, list = Promise.resolve(LIST)) {
         session: profileId === undefined ? {} : { profileId },
         api,
         signal: new AbortController().signal,
+        visible: true,
       }),
     );
   });
@@ -82,6 +83,56 @@ async function badgeFor(profileId, list = Promise.resolve(LIST)) {
     (node) => node.type === "span" && node.props["data-t3-browser-profile-badge"] === true,
   );
   return badge.length === 0 ? null : badge[0];
+}
+
+// The badge re-reads when the client window regains focus (Settings may be
+// another window); node has no window, so stand one in.
+globalThis.window ??= new EventTarget();
+
+/**
+ * Mounts one badge and keeps it mounted: `setList` changes what the next
+ * read answers, `rerender` passes new props to the same instance.
+ */
+async function mountBadge(profileId, list) {
+  let current = list;
+  const reads = [];
+  const api = {
+    invoke: (method) => {
+      reads.push(method);
+      return method === "list" ? Promise.resolve(current) : Promise.reject(new Error(method));
+    },
+  };
+  const signal = new AbortController().signal;
+  const session = { profileId };
+  let renderer;
+  const element = (visible) =>
+    React.createElement(ProfileBadge, { host: { React }, session, api, signal, visible });
+  await act(async () => {
+    renderer = create(element(true));
+  });
+  const badge = () => {
+    const found = renderer.root.findAll(
+      (node) => node.type === "span" && node.props["data-t3-browser-profile-badge"] === true,
+    );
+    return found.length === 0 ? null : text(found[0]);
+  };
+  return {
+    reads,
+    badge,
+    setList(next) {
+      current = next;
+    },
+    async focusWindow() {
+      await act(async () => {
+        globalThis.window.dispatchEvent(new Event("focus"));
+      });
+    },
+    async rerender(visible) {
+      await act(async () => {
+        renderer.update(element(visible));
+      });
+    },
+  };
 }
 
 const text = (node) =>
@@ -119,5 +170,45 @@ NodeTest.describe("profile badge", () => {
       ),
       null,
     );
+  });
+
+  NodeTest.describe("follows profile settings without a remount or a new profile", () => {
+    NodeTest.it("renames the held profile when the window regains focus", async () => {
+      const mounted = await mountBadge("work", LIST);
+      NodeAssert.equal(mounted.badge(), "Work account");
+      mounted.setList({
+        ...LIST,
+        profiles: [LIST.profiles[0], { id: "work", name: "Client work" }],
+      });
+      await mounted.focusWindow();
+      NodeAssert.equal(mounted.badge(), "Client work");
+    });
+
+    NodeTest.it("reads a profile deleted in Settings as Removed profile", async () => {
+      const mounted = await mountBadge("work", LIST);
+      mounted.setList({ ...LIST, profiles: [LIST.profiles[0]] });
+      await mounted.focusWindow();
+      NodeAssert.equal(mounted.badge(), "Removed profile");
+    });
+
+    NodeTest.it("hides once the held profile becomes the default, and back", async () => {
+      const mounted = await mountBadge("work", LIST);
+      mounted.setList({ ...LIST, defaultProfileId: "work" });
+      await mounted.focusWindow();
+      NodeAssert.equal(mounted.badge(), null);
+      mounted.setList(LIST);
+      await mounted.focusWindow();
+      NodeAssert.equal(mounted.badge(), "Work account");
+    });
+
+    NodeTest.it("re-reads when the panel is shown again, not while hidden", async () => {
+      const mounted = await mountBadge("work", LIST);
+      mounted.setList({ ...LIST, defaultProfileId: "work" });
+      await mounted.rerender(false);
+      const hiddenReads = mounted.reads.length;
+      await mounted.rerender(true);
+      NodeAssert.equal(mounted.reads.length, hiddenReads + 1);
+      NodeAssert.equal(mounted.badge(), null);
+    });
   });
 });

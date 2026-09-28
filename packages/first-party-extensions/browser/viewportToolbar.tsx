@@ -118,6 +118,33 @@ function AspectLockIcon(props: { readonly locked: boolean }) {
   );
 }
 
+/** A held runtime tab: its id within the server epoch that minted it. */
+export type AspectLockTab = { readonly tabId: string; readonly serverEpoch: string };
+
+/**
+ * The view's aspect-ratio locks, one per runtime tab like native's
+ * per-webview flag: adopting another tab or closing its device toolbar
+ * leaves every other tab's lock alone. Transient view state, never saved. A
+ * tab outside the snapshot `tabs` has ended and holds no lock; its entry is
+ * dropped with the next change.
+ */
+export function useAspectLocks(tabs: readonly { readonly tabId: string }[]) {
+  // Locked tab id → the server epoch it was locked under.
+  const [locks, setLocks] = useState<ReadonlyMap<string, string>>(() => new Map());
+  const live = (tabId: string) => tabs.some((tab) => tab.tabId === tabId);
+  return {
+    isLocked: (tab: AspectLockTab | null) =>
+      tab !== null && locks.get(tab.tabId) === tab.serverEpoch && live(tab.tabId),
+    setLocked: (tab: AspectLockTab, locked: boolean) =>
+      setLocks((current) => {
+        const next = new Map([...current].filter(([tabId]) => live(tabId)));
+        if (locked) next.set(tab.tabId, tab.serverEpoch);
+        else next.delete(tab.tabId);
+        return next;
+      }),
+  };
+}
+
 /**
  * The device toolbar, overlaying the top strip of the slot area (the height
  * the host's engine view already reserves, `DEVICE_TOOLBAR_HEIGHT`). Native
@@ -127,13 +154,14 @@ function AspectLockIcon(props: { readonly locked: boolean }) {
  * applies optimistically, so a rejected commit leaves the toolbar showing the
  * session's last setting. The lock is view state, like native's per-webview
  * flag: while it is on, typing one dimension derives the other and the rails
- * keep the shape; closing the toolbar releases it.
+ * keep the shape; an accepted Close releases it.
  */
 export function BrowserViewportToolbar(props: {
   readonly host: Pick<ClientHost, "React" | "tooltip">;
   readonly setting: FixedViewport;
   readonly pending: boolean;
-  readonly onCommit: (next: BrowserSessionViewport) => void;
+  /** Settles true once the server accepted the change for this toolbar's tab. */
+  readonly onCommit: (next: BrowserSessionViewport) => Promise<boolean>;
   readonly aspectLocked: boolean;
   readonly onAspectLockedChange: (locked: boolean) => void;
   /** Stacks the toolbar over the composited page (`floatingLayers().deviceChrome`). */
@@ -172,7 +200,7 @@ export function BrowserViewportToolbar(props: {
       setEdit(null);
       return;
     }
-    onCommit({ _tag: "freeform", width: customWidth, height: customHeight });
+    void onCommit({ _tag: "freeform", width: customWidth, height: customHeight });
   };
 
   // Toolbar actions keep focus where it is. A clicked button takes no focus
@@ -217,11 +245,11 @@ export function BrowserViewportToolbar(props: {
     if (value === "responsive") {
       // Already freeform: the size is the user's to edit, nothing to switch.
       if (setting._tag === "freeform") return;
-      onCommit(freeformFromSetting(setting));
+      void onCommit(freeformFromSetting(setting));
       return;
     }
     const preset = presetViewport(value);
-    if (preset) onCommit(preset);
+    if (preset) void onCommit(preset);
   };
 
   return (
@@ -358,7 +386,7 @@ export function BrowserViewportToolbar(props: {
         disabled={pending}
         onMouseDown={keepFocus}
         onClick={() =>
-          onCommit(
+          void onCommit(
             rotateViewport(
               setting,
               customValid ? { width: customWidth, height: customHeight } : null,
@@ -376,8 +404,10 @@ export function BrowserViewportToolbar(props: {
         onMouseDown={keepFocus}
         onClick={() => {
           setEdit(null);
-          onAspectLockedChange(false);
-          onCommit({ _tag: "fill" });
+          // Like native, the lock outlives a Close the server did not accept.
+          void onCommit({ _tag: "fill" }).then((accepted) => {
+            if (accepted) onAspectLockedChange(false);
+          });
         }}
         style={{ ...chromeButton, marginLeft: "auto" }}
       >
