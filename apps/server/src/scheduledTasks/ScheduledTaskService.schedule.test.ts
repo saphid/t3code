@@ -1,6 +1,13 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
-import { ScheduledTaskUpsertInput } from "@t3tools/contracts";
+import {
+  CommandId,
+  ProjectId,
+  ProviderInstanceId,
+  ScheduledTaskUpsertInput,
+  ThreadId,
+  type OrchestrationV2ThreadProjection,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -13,6 +20,19 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 
 const decodeUpsertInput = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
+
+const launchingDependencies = Layer.mergeAll(
+  NodeCrypto.layer,
+  Layer.mock(ThreadLaunchService)({
+    launch: () =>
+      Effect.succeed({
+        threadId: ThreadId.make("thread:scheduled-run"),
+        projection: {} as unknown as OrchestrationV2ThreadProjection,
+        resumed: false,
+      }),
+  }),
+  Layer.mock(ThreadManagementService)({}),
+);
 
 it.effect("rejects a stale form save after deletion while preserving explicit-id creates", () =>
   Effect.gen(function* () {
@@ -31,7 +51,7 @@ it.effect("rejects a stale form save after deletion while preserving explicit-id
         schedule: { type: "interval", everyMs: 60_000 },
         projectId: "project-stale-schedule",
         workspaceStrategy: { type: "root" },
-        modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
         runtimeMode: "full-access",
         interactionMode: "default",
       });
@@ -72,7 +92,7 @@ it.effect("preserves a due run when a save only pads the scheduled hour", () =>
         schedule: { type: "fixed_time", timeOfDay: "9:00" },
         projectId: "project-schedule-time-format",
         workspaceStrategy: { type: "root" },
-        modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
         runtimeMode: "full-access",
         interactionMode: "default",
         creationSource: "mcp",
@@ -100,5 +120,84 @@ it.effect("preserves a due run when a save only pads the scheduled hour", () =>
         DateTime.formatIso(DateTime.toUtc(DateTime.add(dueAt, { minutes: 30 }))),
       );
     }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(dependencies))));
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("a maxRuns cap pauses the task when reached and re-arms when raised", () =>
+  Effect.gen(function* () {
+    const mondayOpen = DateTime.makeZonedUnsafe(
+      { year: 2026, month: 9, day: 28, hour: 9, minute: 0, second: 0, millisecond: 0 },
+      { timeZone: DateTime.zoneMakeLocal(), adjustForTimeZone: true },
+    );
+    const halfHourLater = DateTime.formatIso(
+      DateTime.toUtc(DateTime.add(mondayOpen, { minutes: 30 })),
+    );
+    yield* TestClock.setTime(DateTime.toEpochMillis(mondayOpen));
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const created = yield* service.upsert({
+        commandId: CommandId.make("schedule-run-cap"),
+        title: "Half-hourly check",
+        prompt: "Check the queue.",
+        enabled: true,
+        schedule: {
+          type: "interval",
+          everyMs: 1_800_000,
+          weekdays: [1, 2, 3, 4, 5],
+          window: { start: "09:00", end: "17:00" },
+          maxRuns: 2,
+        },
+        projectId: ProjectId.make("project-schedule-run-cap"),
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        creationSource: "mcp",
+      });
+      const id = created.task.id;
+      expect(created.task.nextRunAt).toBe(halfHourLater);
+
+      const first = yield* service.runNow({ id });
+      expect(first.task.runCount).toBe(1);
+      expect(first.task.enabled).toBe(true);
+      // The interval recomputes from the completion instant (still 09:00 on the test clock).
+      expect(first.task.nextRunAt).toBe(halfHourLater);
+
+      const second = yield* service.runNow({ id });
+      expect(second.task.runCount).toBe(2);
+      // The cap is reached: the task pauses itself instead of staying armed.
+      expect(second.task.enabled).toBe(false);
+      expect(second.task.nextRunAt).toBe(null);
+      const stored = (yield* service.list()).tasks.find((task) => task.id === id);
+      expect(stored?.enabled).toBe(false);
+      expect(stored?.nextRunAt).toBe(null);
+
+      // Re-enabling a capped task cannot arm it while the cap is reached.
+      const reenabled = yield* service.setEnabled({ id, enabled: true });
+      expect(reenabled.task.enabled).toBe(true);
+      expect(reenabled.task.nextRunAt).toBe(null);
+
+      // Raising the cap is the explicit way back: the run clock restarts.
+      const raised = yield* service.update({
+        id,
+        projectId: created.task.projectId,
+        schedule: { type: "interval", everyMs: 1_800_000, maxRuns: 3 },
+      });
+      expect(raised._tag).toBe("Some");
+      expect(raised._tag === "Some" && raised.value.task.nextRunAt).toBe(halfHourLater);
+
+      // Removing the cap from an automatically paused task resumes it
+      // without a separate enable: the pause was the cap's doing.
+      const third = yield* service.runNow({ id });
+      expect(third.task.runCount).toBe(3);
+      expect(third.task.enabled).toBe(false);
+      const uncapped = yield* service.update({
+        id,
+        projectId: created.task.projectId,
+        schedule: { type: "interval", everyMs: 1_800_000 },
+      });
+      expect(uncapped._tag === "Some" && uncapped.value.task.enabled).toBe(true);
+      expect(uncapped._tag === "Some" && uncapped.value.task.nextRunAt).toBe(halfHourLater);
+    }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(launchingDependencies))));
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
