@@ -138,6 +138,10 @@ function makeDeps(
 }
 
 const signal = new AbortController().signal;
+const unusedPrHandoff = {
+  openThread: async () => null,
+  prepare: async () => ({ ok: false as const, detail: null }),
+};
 
 function invokeCall(
   method: string,
@@ -1947,7 +1951,7 @@ describe("keybindings provider", () => {
 
   it("rejects callers without the keybindings grant and registers for granted ones", () => {
     configureExtensionCommandEnvironment(ENV, keybindingsDeps());
-    const providers = createClientProviders(makeDeps([]), async () => {});
+    const providers = createClientProviders(makeDeps([]), async () => {}, unusedPrHandoff);
     const denied = providers.get("t3.client/keybindings")!;
     expectDenied(() =>
       denied.invoke(
@@ -1956,9 +1960,11 @@ describe("keybindings provider", () => {
         }),
       ),
     );
-    const granted = createClientProviders(makeDeps(["t3.ui/keybindings"]), async () => {}).get(
-      "t3.client/keybindings",
-    )!;
+    const granted = createClientProviders(
+      makeDeps(["t3.ui/keybindings"]),
+      async () => {},
+      unusedPrHandoff,
+    ).get("t3.client/keybindings")!;
     const registered = granted.invoke(
       invokeCall("registerCommands", {
         commands: [{ id: "run", title: "Run", scope: "surface" }],

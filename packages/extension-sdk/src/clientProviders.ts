@@ -1210,6 +1210,89 @@ export const CLIENT_NAVIGATION_API = validateApiDefinition({
 /** The navigation range that carries `openFile`. */
 export const CLIENT_NAVIGATION_V11_RANGE = "^1.1.0";
 
+/**
+ * The closed set of pull-request tasks the host hands off. Each names a flow
+ * the host already runs natively; the host writes any prompt text itself.
+ */
+export const CLIENT_PR_HANDOFF_TASKS = ["checkout", "resolve-conflicts"] as const;
+
+/** What a handoff did. No variant carries prompt text or claims a send. */
+export const prHandoffResultSchema = {
+  oneOf: [
+    {
+      // The task is in the caller's own thread's composer, for the reader to send.
+      type: "object",
+      additionalProperties: false,
+      required: ["status"],
+      properties: { status: { const: "drafted" } },
+    },
+    {
+      // Checked out into its own worktree with a thread open on it; a task
+      // other than checkout is in that thread's composer.
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "branch", "worktreePath", "isOnPullRequestHead"],
+      properties: {
+        status: { const: "ready" },
+        branch: { type: "string", minLength: 1, maxLength: 4096 },
+        worktreePath: { type: ["string", "null"], minLength: 1, maxLength: 32768 },
+        isOnPullRequestHead: { type: "boolean" },
+      },
+    },
+    {
+      // `thread`: no thread could be opened, so nothing was checked out.
+      // `checkout`: the checkout failed; `detail` is the host's own sentence.
+      // `thread-move`: checked out on `branch`, but the thread stayed put.
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "stage"],
+      properties: {
+        status: { const: "failed" },
+        stage: { enum: ["thread", "checkout", "thread-move"] },
+        branch: { type: "string", minLength: 1, maxLength: 4096 },
+        detail: { type: "string", minLength: 1, maxLength: 2048 },
+      },
+    },
+  ],
+} as const;
+
+/**
+ * Backs `t3.vcs/actions#handoffPullRequest`. The adapter resolves the pull
+ * request itself and forwards only its host-resolved identity with a closed
+ * task kind; the client opens the thread, prepares the checkout (which runs
+ * the setup script for that thread), and writes its own prompt into the
+ * composer. It never sends.
+ */
+export const CLIENT_PR_HANDOFF_API = validateApiDefinition({
+  id: "t3.client/pr-handoff",
+  version: "1.0.0",
+  methods: [
+    {
+      name: "start",
+      effect: "write",
+      requiredGrants: [],
+      inputSchema: withTarget(
+        {
+          task: { enum: [...CLIENT_PR_HANDOFF_TASKS] },
+          pullRequest: {
+            type: "object",
+            additionalProperties: false,
+            required: ["number", "url", "headBranch", "baseBranch"],
+            properties: {
+              number: { type: "integer", minimum: 1 },
+              url: { type: "string", minLength: 1, maxLength: 4096 },
+              headBranch: { type: "string", minLength: 1, maxLength: 4096 },
+              baseBranch: { type: "string", minLength: 1, maxLength: 4096 },
+            },
+          },
+        },
+        ["task", "pullRequest"],
+      ),
+      outputSchema: prHandoffResultSchema,
+    },
+  ],
+});
+
 /** Host-owned client-provider definitions, keyed by area id. */
 export const CLIENT_PROVIDER_APIS: ReadonlyMap<string, ApiDefinition> = new Map(
   [
@@ -1224,6 +1307,7 @@ export const CLIENT_PROVIDER_APIS: ReadonlyMap<string, ApiDefinition> = new Map(
     CLIENT_EDITOR_API,
     CLIENT_BROWSER_HISTORY_API,
     CLIENT_NAVIGATION_API,
+    CLIENT_PR_HANDOFF_API,
   ].map((definition) => [definition.id, definition]),
 );
 

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { useRouter } from "@tanstack/react-router";
 import { createCatalogueRefreshQueue } from "./catalogueRefresh";
@@ -54,6 +54,7 @@ import {
   CLIENT_PROVIDER_CLIENT_TAG,
   CLIENT_PROVIDER_DESCRIPTORS,
   createClientProviders,
+  nativePrHandoffPrepare,
 } from "./clientProviders";
 import {
   currentClientConnectionId,
@@ -76,6 +77,7 @@ import type { Json } from "@t3tools/extension-sdk/contracts";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { readThreadShell } from "../state/entities";
 import { buildThreadRouteParams } from "../threadRoutes";
+import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 
 const decodeInvoke = Schema.decodeSync(ExtensionInvokeInput);
@@ -164,6 +166,12 @@ export async function installEnvironmentExtension(
 }
 function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId }) {
   const router = useRouter();
+  // Read when a pull-request handoff runs, so a new handler never re-registers the providers.
+  const newThread = useNewThreadHandler();
+  const newThreadRef = useRef(newThread);
+  useEffect(() => {
+    newThreadRef.current = newThread;
+  }, [newThread]);
   const prepared = usePreparedConnection(environmentId);
   const installed = useInstalledExtensions(environmentId);
   const catalogue = useAtomValue(
@@ -187,6 +195,10 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
       },
       (ref) =>
         router.navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) }),
+      {
+        openThread: (projectRef, workspace) => newThreadRef.current(projectRef, workspace),
+        prepare: nativePrHandoffPrepare,
+      },
     );
     const flushStagedCommands = async (signal: AbortSignal) => {
       const snapshot = snapshots.get(environmentId);
