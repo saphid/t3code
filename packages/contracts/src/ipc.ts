@@ -1185,6 +1185,8 @@ export interface DesktopBridge {
   getLocalEnvironmentBearerToken: () => Promise<string>;
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;
+  /** Settings another window saved; returns the unsubscribe. */
+  onClientSettingsChanged?: (listener: (settings: ClientSettings) => void) => () => void;
   getConnectionCatalog?: () => Promise<string | null>;
   setConnectionCatalog?: (catalog: string) => Promise<boolean>;
   clearConnectionCatalog?: () => Promise<void>;
@@ -1440,5 +1442,11 @@ export interface LocalApi {
   persistence: {
     getClientSettings: () => Promise<ClientSettings | null>;
     setClientSettings: (settings: ClientSettings) => Promise<void>;
+    /**
+     * Settings saved elsewhere (another desktop window) that now replace
+     * this client's copy; returns the unsubscribe. Absent where nothing
+     * else can save them.
+     */
+    onClientSettingsChanged?: (listener: (settings: ClientSettings) => void) => () => void;
   };
 }

@@ -28,6 +28,7 @@ import {
   browserProfilesApi,
   type BrowserImportCookiesResult,
   type BrowserImportFailureReason,
+  type BrowserProfileChange,
   type BrowserProfileClearResult,
   type BrowserProfileList,
   type BrowserSessionReceipt,
@@ -97,12 +98,19 @@ const publicImportFailure = (reason: string): BrowserImportFailureReason => {
   }
 };
 
+/** A host's list as the API returns it: ids and names only. */
+const projectList = (list: BrowserEngineHosts.BrowserEngineProfileList) =>
+  ({
+    profiles: list.profiles.map((profile) => ({ id: profile.id, name: profile.name })),
+    defaultProfileId: list.defaultProfileId,
+  }) satisfies BrowserProfileList;
+
 export function createBrowserProfilesApiProvider(
   dependencies: Parameters<typeof makeExtensionScopeResolver>[0] & {
     readonly preview: Pick<PreviewManager.PreviewManager["Service"], "open" | "listDetails">;
     readonly engineHosts: Pick<
       BrowserEngineHosts.BrowserEngineHosts["Service"],
-      "dispatchProfile" | "profileChanges"
+      "dispatchProfile" | "currentProfiles" | "profileChanges"
     >;
     /** The host's import wait (`BrowserEngineHosts.ImportAckTimeoutMs`). */
     readonly importAckTimeoutMs: number;
@@ -207,7 +215,13 @@ export function createBrowserProfilesApiProvider(
           `the desktop answered '${method}' with an unexpected result.`,
         );
 
+      /**
+       * The list `changes` streams, so a read and the stream never disagree;
+       * a host is asked only before any has published.
+       */
       const listProfiles = Effect.fn("BrowserProfiles.listProfiles")(function* () {
+        const published = yield* dependencies.engineHosts.currentProfiles;
+        if (published !== null) return projectList(published);
         const answer = yield* host({ _tag: "listProfiles" });
         if (answer.outcome === "unknown") {
           return yield* named(
@@ -217,10 +231,7 @@ export function createBrowserProfilesApiProvider(
           );
         }
         if (answer.outcome !== "profiles") return yield* unexpected();
-        return {
-          profiles: answer.profiles.map((profile) => ({ id: profile.id, name: profile.name })),
-          defaultProfileId: answer.defaultProfileId,
-        } satisfies BrowserProfileList;
+        return projectList(answer);
       });
 
       const clear = Effect.fn("BrowserProfiles.clear")(function* (
@@ -385,9 +396,10 @@ export function createBrowserProfilesApiProvider(
     });
 
   /**
-   * `changes`: the list the desktop last published, then each different one.
-   * Nothing is sent until a desktop has published, nothing while none is
-   * connected, and never a list equal to the last one sent.
+   * `changes`: the environment's current list, then each different one —
+   * `{ list: null }` while no desktop is connected, so a web-only client
+   * learns that at once and hears when a desktop arrives or the last one
+   * leaves. Never a value equal to the last one sent.
    */
   const subscribe = (
     name: string,
@@ -426,13 +438,8 @@ export function createBrowserProfilesApiProvider(
     const events = Stream.unwrap(
       Effect.map(resolve(context), (scope) =>
         dependencies.engineHosts.profileChanges.pipe(
-          Stream.filter(
-            (list): list is BrowserEngineHosts.BrowserEngineProfileList => list !== null,
-          ),
           // A host that reconnects republishes; an equal list is not news.
-          Stream.changesWith<BrowserEngineHosts.BrowserEngineProfileList>(
-            BrowserEngineHosts.sameProfileList,
-          ),
+          Stream.changesWith(BrowserEngineHosts.sameProfileList),
           // Authority and scope are rechecked before each list is delivered.
           Stream.mapEffect((list) =>
             Effect.gen(function* () {
@@ -444,9 +451,8 @@ export function createBrowserProfilesApiProvider(
           Stream.map((list, index): ApiStreamEvent => ({
             type: index === 0 ? "snapshot" : "data",
             value: {
-              profiles: list.profiles.map((profile) => ({ id: profile.id, name: profile.name })),
-              defaultProfileId: list.defaultProfileId,
-            } satisfies BrowserProfileList,
+              list: list === null ? null : projectList(list),
+            } satisfies BrowserProfileChange,
           })),
         ),
       ),

@@ -6535,7 +6535,12 @@ var __t3Client = (() => {
           name: "changes",
           requiredGrants: [BROWSER_PROFILES],
           inputSchema: browserSessionEmptyInput,
-          eventSchema: browserProfileListSchema
+          eventSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["list"],
+            properties: { list: { ...browserProfileListSchema, type: ["object", "null"] } }
+          }
         }
       ]
     },
@@ -16021,6 +16026,9 @@ ${ind(d)}}`;
       (profile, index) => profile.id === b.profiles[index].id && profile.name === b.profiles[index].name
     );
   }
+  var DESKTOP_REQUIRED = new Error(
+    "no desktop browser engine is connected to this environment (desktop-required)."
+  );
   function createProfileListStore(source, signal) {
     let snapshot = { list: null, error: null };
     let mode = "idle";
@@ -16053,8 +16061,11 @@ ${ind(d)}}`;
       }
       mode = "live";
       try {
-        for await (const list of changes) set({ list, error: null });
-      } catch {
+        for await (const { list } of changes) {
+          set(list === null ? { list: null, error: DESKTOP_REQUIRED } : { list, error: null });
+        }
+      } catch (error) {
+        if (!signal.aborted) set({ list: null, error });
       }
       if (!signal.aborted) mode = "idle";
     };

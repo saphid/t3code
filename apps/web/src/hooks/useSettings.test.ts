@@ -6,10 +6,22 @@ import {
 import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts/settings";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const persistenceMocks = vi.hoisted(() => ({
-  getClientSettings: vi.fn<() => Promise<ClientSettings | null>>(),
-  setClientSettings: vi.fn<(settings: ClientSettings) => Promise<void>>(),
-}));
+const persistenceMocks = vi.hoisted(() => {
+  const changeListeners = new Set<(settings: ClientSettings) => void>();
+  return {
+    getClientSettings: vi.fn<() => Promise<ClientSettings | null>>(),
+    setClientSettings: vi.fn<(settings: ClientSettings) => Promise<void>>(),
+    changeListeners,
+    onClientSettingsChanged: (listener: (settings: ClientSettings) => void) => {
+      changeListeners.add(listener);
+      return () => changeListeners.delete(listener);
+    },
+  };
+});
+/** Another desktop window saved `settings`. */
+const savedElsewhere = (settings: ClientSettings) => {
+  for (const listener of persistenceMocks.changeListeners) listener(settings);
+};
 
 vi.mock("~/localApi", () => ({
   ensureLocalApi: () => ({ persistence: persistenceMocks }),
@@ -21,6 +33,7 @@ import {
   ensureClientSettingsHydrated,
   getClientSettings,
   mergeEnvironmentSettings,
+  subscribeClientSettings,
   persistClientSettingsPatch,
   persistClientSettingsUpdate,
   resolveEnvironmentIdentificationMode,
@@ -156,6 +169,49 @@ describe("client settings hydration", () => {
     const expected = { ...savedSettings, onboardingCompletedAt, wordWrap: true };
     expect(getClientSettings()).toEqual(expected);
     expect(durableSettings).toEqual(expected);
+  });
+});
+
+describe("settings saved in another desktop window", () => {
+  const profile = { id: "work", name: "Work", kind: "persistent" as const };
+  const renamed = {
+    ...DEFAULT_CLIENT_SETTINGS,
+    browserProfiles: [{ ...profile, name: "Client work" }],
+  };
+
+  it("replace this window's copy and reach every subscriber", async () => {
+    persistenceMocks.getClientSettings.mockResolvedValue({
+      ...DEFAULT_CLIENT_SETTINGS,
+      browserProfiles: [profile],
+    });
+    const listener = vi.fn();
+    subscribeClientSettings(listener);
+    await ensureClientSettingsHydrated();
+    listener.mockClear();
+
+    savedElsewhere(renamed);
+    expect(getClientSettings()).toEqual(renamed);
+    expect(listener).toHaveBeenCalledTimes(1);
+    // A later edit here builds on them rather than writing the old copy back.
+    await persistClientSettingsPatch({ timestampFormat: "24-hour" });
+    expect(persistenceMocks.setClientSettings).toHaveBeenLastCalledWith({
+      ...renamed,
+      timestampFormat: "24-hour",
+    });
+  });
+
+  it("win over a read that was still in flight", async () => {
+    let resolveRead!: (settings: ClientSettings) => void;
+    persistenceMocks.getClientSettings.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRead = resolve;
+      }),
+    );
+    const hydrated = ensureClientSettingsHydrated();
+    savedElsewhere(renamed);
+    resolveRead({ ...DEFAULT_CLIENT_SETTINGS, browserProfiles: [profile] });
+    await hydrated;
+    expect(getClientSettings()).toEqual(renamed);
   });
 });
 

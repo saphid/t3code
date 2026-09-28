@@ -40,7 +40,6 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
-import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as PreviewManager from "./Manager.ts";
 
@@ -107,6 +106,8 @@ interface HostConnection {
   readonly pending: Map<string, Deferred.Deferred<HostAnswer>>;
   /** The host's last published profile list; null until it publishes. */
   profiles: BrowserEngineProfileList | null;
+  /** Orders publications across hosts; the newest one is the environment's list. */
+  profilesPublication: number;
 }
 
 /** Same ids, names, order and default. */
@@ -152,10 +153,15 @@ export class BrowserEngineHosts extends Context.Service<
       input: BrowserEngineHostProfilesInput,
     ) => Effect.Effect<void, BrowserEngineHostError>;
     /**
-     * The environment's profile list — the one `dispatchProfile` would ask,
-     * i.e. the earliest registered host that has published — starting with
-     * the current value. Null while no host has published. Consecutive values
-     * always differ.
+     * The environment's profile list: the newest publication from any
+     * connected host. Every desktop window holds the same settings (the
+     * desktop broadcasts each save to all of them), so whichever window saved
+     * last is current. Null while no connected host has published.
+     */
+    readonly currentProfiles: Effect.Effect<BrowserEngineProfileList | null>;
+    /**
+     * `currentProfiles`, then each different value. A slow subscriber keeps
+     * only the latest value it has not taken, never a backlog.
      */
     readonly profileChanges: Stream.Stream<BrowserEngineProfileList | null>;
     /** Sends a command to the owning host and waits for its bounded acknowledgement. */
@@ -187,21 +193,45 @@ const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const hosts = yield* Ref.make(new Map<string, HostConnection>());
   const importAckTimeoutMs = yield* ImportAckTimeoutMs;
-  const profileList = yield* SubscriptionRef.make<BrowserEngineProfileList | null>(null);
+  let profilePublications = 0;
+  let currentProfiles: BrowserEngineProfileList | null = null;
+  /**
+   * One sliding slot per subscriber: one that falls behind holds the newest
+   * list only, never the history it missed.
+   */
+  const profileSubscribers = new Set<Queue.Queue<BrowserEngineProfileList | null>>();
   /** Recomputes the environment's list after a host published or left. */
-  const refreshProfiles = Effect.flatMap(Ref.get(hosts), (current) => {
-    let next: BrowserEngineProfileList | null = null;
-    for (const host of current.values()) {
-      if (host.profiles !== null) {
-        next = host.profiles;
-        break;
+  const refreshProfiles = Effect.sync(() => {
+    let newest: HostConnection | undefined;
+    for (const host of Ref.getUnsafe(hosts).values()) {
+      if (
+        host.profiles !== null &&
+        (newest === undefined || host.profilesPublication > newest.profilesPublication)
+      ) {
+        newest = host;
       }
     }
+    const next = newest?.profiles ?? null;
     // An equal list is not published, so subscribers never see a repeat.
-    return SubscriptionRef.updateSome(profileList, (previous) =>
-      sameProfileList(previous, next) ? Option.none() : Option.some(next),
-    );
+    if (sameProfileList(currentProfiles, next)) return;
+    currentProfiles = next;
+    for (const subscriber of profileSubscribers) Queue.offerUnsafe(subscriber, next);
   });
+  const profileChanges = Stream.unwrap(
+    Effect.acquireRelease(
+      Effect.flatMap(Queue.sliding<BrowserEngineProfileList | null>(1), (subscriber) =>
+        Effect.sync(() => {
+          Queue.offerUnsafe(subscriber, currentProfiles);
+          profileSubscribers.add(subscriber);
+          return subscriber;
+        }),
+      ),
+      (subscriber) =>
+        Effect.sync(() => profileSubscribers.delete(subscriber)).pipe(
+          Effect.andThen(Queue.shutdown(subscriber)),
+        ),
+    ).pipe(Effect.map((subscriber) => Stream.fromQueue(subscriber))),
+  );
   const randomId = crypto.randomUUIDv4.pipe(Effect.orDie);
 
   const desktopRequired = new BrowserEngineHostError({
@@ -256,6 +286,7 @@ const make = Effect.gen(function* () {
                   queue,
                   pending: new Map(),
                   profiles: null,
+                  profilesPublication: 0,
                 };
                 yield* Queue.offer(queue, { type: "registered", hostConnectionId });
                 yield* Ref.update(hosts, (current) => new Map(current).set(hostConnectionId, host));
@@ -290,6 +321,7 @@ const make = Effect.gen(function* () {
   const publishProfiles: BrowserEngineHosts["Service"]["publishProfiles"] = (socket, input) =>
     Effect.flatMap(authorizeHost(socket, input.hostConnectionId), (host) => {
       host.profiles = { profiles: input.profiles, defaultProfileId: input.defaultProfileId };
+      host.profilesPublication = ++profilePublications;
       return refreshProfiles;
     });
 
@@ -321,13 +353,12 @@ const make = Effect.gen(function* () {
         return deferred;
       });
       const first = yield* awaitAnswer;
-      const offered = yield* Queue.offer(host.queue, frame(commandId));
-      // The host disconnected between lookup and offer; nothing was sent.
-      if (!offered) {
-        host.pending.delete(commandId);
-        return { outcome: "unknown" } as HostAnswer;
-      }
+      // The wait covers the offer too, so it is armed before the host can
+      // see the frame.
       const exchange = Effect.gen(function* () {
+        const offered = yield* Queue.offer(host.queue, frame(commandId));
+        // The host disconnected between lookup and offer; nothing was sent.
+        if (!offered) return { outcome: "unknown" } as HostAnswer;
         const answer = yield* Deferred.await(first);
         if (answer.outcome !== "confirmed") return answer;
         if (beforeProceed === undefined) return { outcome: "rejected", reason: "failed" } as const;
@@ -400,7 +431,8 @@ const make = Effect.gen(function* () {
     report,
     commandResult,
     publishProfiles,
-    profileChanges: SubscriptionRef.changes(profileList),
+    currentProfiles: Effect.sync(() => currentProfiles),
+    profileChanges,
     dispatch,
     dispatchProfile,
     hasHost: Effect.map(Ref.get(hosts), (current) => current.size > 0),

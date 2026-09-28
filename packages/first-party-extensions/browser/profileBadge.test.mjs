@@ -80,12 +80,16 @@ const settle = async () => {
 /** A fresh copy per answer, as a real transport delivers. */
 const clone = (value) => structuredClone(value);
 
+/** A `changes` event: the list, or null while no desktop is connected. */
+const change = (list) => ({ list: list === null ? null : clone(list) });
+
 /**
  * A stubbed `t3.browser/profiles`. With `stream`, `watch` opens a `changes`
- * subscription that starts with the current list, as the server does;
- * without it the host predates 1.1.0 and only answers reads.
+ * subscription that starts with the current list (null: no desktop), as the
+ * server does; without it the host predates 1.1.0 and only answers reads.
+ * `streamFailure` makes the stream throw instead, as a denied grant does.
  */
-function fakeProfiles({ stream, list = LIST, refuse = null }) {
+function fakeProfiles({ stream, list = LIST, refuse = null, streamFailure = null }) {
   let current = list;
   const reads = [];
   const subscriptions = [];
@@ -97,12 +101,15 @@ function fakeProfiles({ stream, list = LIST, refuse = null }) {
     },
     async watch() {
       if (!stream) return null;
-      const queue = [clone(current)];
+      if (streamFailure !== null) {
+        return { [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(streamFailure) }) };
+      }
+      const queue = [change(current)];
       let wake = null;
       let ended = false;
       const subscription = {
         push(value) {
-          queue.push(clone(value));
+          queue.push(change(value));
           wake?.();
         },
         end() {
@@ -359,5 +366,121 @@ NodeTest.describe("on a host without the changes stream", () => {
     // The show itself is one commit; the unchanged answer adds none.
     NodeAssert.equal(mounted.commits(), settled + 1);
     NodeAssert.equal(mounted.badge(), "Work account");
+  });
+});
+
+/** Mounts the page menu's profile group over `fake`, as the page menu does. */
+async function mountSection(profileId, fake) {
+  const signal = new AbortController().signal;
+  const profiles = createProfileListStore(fake.source, signal);
+  let renderer;
+  await act(async () => {
+    renderer = create(
+      React.createElement(
+        React.Fragment,
+        null,
+        React.createElement(ProfileBadge, {
+          host: { React },
+          session: { profileId },
+          profiles,
+          visible: true,
+        }),
+        React.createElement(ProfileSection, {
+          session: { profileId },
+          api: fake.source,
+          profiles,
+          signal,
+          onOpenInProfile() {},
+          report() {},
+        }),
+      ),
+    );
+    await settle();
+  });
+  const find = (predicate) => renderer.root.findAll(predicate);
+  return {
+    note() {
+      const notes = find((node) => node.type === "p" && node.props.role === "note");
+      return notes.length === 0 ? null : notes.map(text).join(" ");
+    },
+    heading() {
+      return text(
+        find(
+          (node) =>
+            node.type === "span" &&
+            typeof node.children[0] === "string" &&
+            node.children[0] === "Profile: ",
+        )[0],
+      );
+    },
+    badge() {
+      const found = find(
+        (node) => node.type === "span" && node.props["data-t3-browser-profile-badge"] === true,
+      );
+      return found.length === 0 ? null : text(found[0]);
+    },
+    openIn: () =>
+      find((node) => node.type === "select" && node.props["aria-label"] === "Open page in profile")
+        .length > 0,
+  };
+}
+
+const DESKTOP_REQUIRED_NOTE =
+  "Listing browser profiles needs the T3 Code desktop app — no desktop browser engine is connected (desktop-required).";
+
+NodeTest.describe("when no desktop can answer for profiles", () => {
+  NodeTest.it("a web-only environment says the desktop is required, without a read", async () => {
+    const fake = fakeProfiles({ stream: true, list: null });
+    const mounted = await mountSection("work", fake);
+    NodeAssert.equal(mounted.note(), DESKTOP_REQUIRED_NOTE);
+    NodeAssert.equal(mounted.badge(), null);
+    NodeAssert.equal(mounted.openIn(), false);
+    NodeAssert.deepEqual(fake.reads, []);
+  });
+
+  NodeTest.it(
+    "the last desktop leaving says so, and one arriving brings the list back",
+    async () => {
+      const fake = fakeProfiles({ stream: true });
+      const mounted = await mountSection("work", fake);
+      NodeAssert.equal(mounted.note(), null);
+      NodeAssert.equal(mounted.badge(), "Work account");
+      NodeAssert.equal(mounted.openIn(), true);
+
+      await fake.change(null);
+      // The old list is not passed off as current: no badge, no other profiles.
+      NodeAssert.equal(mounted.note(), DESKTOP_REQUIRED_NOTE);
+      NodeAssert.equal(mounted.badge(), null);
+      NodeAssert.equal(mounted.openIn(), false);
+
+      await fake.change(RENAMED);
+      NodeAssert.equal(mounted.note(), null);
+      NodeAssert.equal(mounted.heading(), "Profile: Client work");
+      NodeAssert.equal(mounted.badge(), "Client work");
+      NodeAssert.equal(fake.subscriptions.length, 1);
+    },
+  );
+
+  NodeTest.it("a desktop with no profiles yet is not reported as missing", async () => {
+    const fake = fakeProfiles({
+      stream: true,
+      list: { profiles: [], defaultProfileId: "default" },
+    });
+    const mounted = await mountSection("work", fake);
+    NodeAssert.equal(mounted.note(), null);
+    NodeAssert.equal(mounted.heading(), "Profile: Removed profile");
+  });
+
+  NodeTest.it("a denied stream names the missing grant", async () => {
+    const fake = fakeProfiles({
+      stream: true,
+      streamFailure: new Error("API capability denied: t3.browser/profiles"),
+    });
+    const mounted = await mountSection("work", fake);
+    NodeAssert.equal(
+      mounted.note(),
+      "Listing browser profiles needs the t3.browser/profiles grant — this installation is missing it.",
+    );
+    NodeAssert.equal(mounted.badge(), null);
   });
 });

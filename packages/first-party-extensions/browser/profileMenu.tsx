@@ -12,7 +12,7 @@ import {
   BROWSER_PROFILES,
   browserProfilesApi,
   type BrowserImportSourceSummary,
-  type BrowserProfileList,
+  type BrowserProfileChange,
   type BrowserSession,
 } from "@t3tools/extension-sdk/catalogue";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
@@ -44,7 +44,7 @@ export const bindProfilesApi = (
   context: ViewContext,
 ) => ({
   ...bindApi(browserProfilesApi, host, context),
-  async watch(signal: AbortSignal): Promise<AsyncIterable<BrowserProfileList> | null> {
+  async watch(signal: AbortSignal): Promise<AsyncIterable<BrowserProfileChange> | null> {
     const selected = (await host.discoverApis(context, signal)).find(
       (api) => api.id === BROWSER_PROFILES && api.selected,
     );

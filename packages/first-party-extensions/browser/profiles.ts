@@ -14,6 +14,7 @@ import {
   type BrowserImportCookiesResult,
   type BrowserImportFailureReason,
   type BrowserImportSourceSummary,
+  type BrowserProfileChange,
   type BrowserProfileClearResult,
   type BrowserProfileList,
   type BrowserSession,
@@ -198,9 +199,17 @@ export function sameProfileList(a: BrowserProfileList | null, b: BrowserProfileL
 
 export type ProfileListSnapshot = {
   readonly list: BrowserProfileList | null;
-  /** The last read's failure, while no list is known. */
+  /**
+   * Why no list is known: the last read's or the stream's failure, or no
+   * desktop connected to own profiles.
+   */
   readonly error: unknown;
 };
+
+/** The stream's "no desktop" state, worded as the list read's refusal is. */
+const DESKTOP_REQUIRED = new Error(
+  "no desktop browser engine is connected to this environment (desktop-required).",
+);
 
 export interface ProfileListSource {
   readonly invoke: (
@@ -212,7 +221,7 @@ export interface ProfileListSource {
    * The host's `changes` stream, or null when the host predates it
    * (`t3.browser/profiles` below 1.1.0).
    */
-  readonly watch: (signal: AbortSignal) => Promise<AsyncIterable<BrowserProfileList> | null>;
+  readonly watch: (signal: AbortSignal) => Promise<AsyncIterable<BrowserProfileChange> | null>;
 }
 
 export interface ProfileListStore {
@@ -231,7 +240,9 @@ export interface ProfileListStore {
  * serving the `changes` stream pushes each change, so the view never asks;
  * an older host is read when the view calls `refresh` (on show, per held
  * profile, per menu open). An unchanged list keeps its snapshot, so nothing
- * re-renders for it.
+ * re-renders for it. With no desktop connected, or a stream that failed,
+ * there is no list and `error` says why; an old list is never kept as if it
+ * were current.
  */
 export function createProfileListStore(
   source: ProfileListSource,
@@ -270,9 +281,12 @@ export function createProfileListStore(
     }
     mode = "live";
     try {
-      for await (const list of changes) set({ list, error: null });
-    } catch {
-      // A dropped stream is resubscribed on the next refresh.
+      for await (const { list } of changes) {
+        set(list === null ? { list: null, error: DESKTOP_REQUIRED } : { list, error: null });
+      }
+    } catch (error) {
+      // Resubscribed on the next refresh; until then the menu names the failure.
+      if (!signal.aborted) set({ list: null, error });
     }
     if (!signal.aborted) mode = "idle";
   };

@@ -86,6 +86,8 @@ function createBrowserLocalApi(): LocalApi {
         }
         writeBrowserClientSettings(settings);
       },
+      onClientSettingsChanged: (listener) =>
+        window.desktopBridge?.onClientSettingsChanged?.(listener) ?? (() => undefined),
     },
   };
 }

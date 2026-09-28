@@ -6591,8 +6591,14 @@ type BrowserProfilesMethods = {
   };
   importCookies: { input: BrowserImportCookiesInput; output: BrowserImportCookiesResult };
 };
+/**
+ * One `changes` event: the environment's profile list, or null while no
+ * desktop app is connected to own profiles (desktop-required). An available
+ * list with no profiles is `{ list: { profiles: [], … } }`, never null.
+ */
+export type BrowserProfileChange = { readonly list: BrowserProfileList | null };
 type BrowserProfilesStreams = {
-  changes: { input: Record<string, never>; event: BrowserProfileList };
+  changes: { input: Record<string, never>; event: BrowserProfileChange };
 };
 const browserProfileListSchema = {
   type: "object",
@@ -6765,7 +6771,12 @@ export const browserProfilesApi: TypedApi<BrowserProfilesMethods> &
         name: "changes",
         requiredGrants: [BROWSER_PROFILES],
         inputSchema: browserSessionEmptyInput,
-        eventSchema: browserProfileListSchema,
+        eventSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["list"],
+          properties: { list: { ...browserProfileListSchema, type: ["object", "null"] } },
+        },
       },
     ],
   },

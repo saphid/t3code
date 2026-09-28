@@ -59,6 +59,7 @@ let clientSettingsHydrationPromise: Promise<void> | null = null;
 let clientSettingsHydrationGeneration = 0;
 let clientSettingsPersistenceQueue: Promise<void> = Promise.resolve();
 let deferredClientSettingsPatchCount = 0;
+let stopFollowingClientSettings: (() => void) | null = null;
 
 function emitClientSettingsChange() {
   for (const listener of clientSettingsListeners) {
@@ -118,7 +119,22 @@ function subscribeClientSettingsHydration(listener: () => void): () => void {
   };
 }
 
+/**
+ * Takes settings another desktop window saved: they are the file's current
+ * contents, so they replace this copy and outrank a read still in flight.
+ */
+function followClientSettingsSavedElsewhere(): void {
+  if (stopFollowingClientSettings) return;
+  stopFollowingClientSettings =
+    ensureLocalApi().persistence.onClientSettingsChanged?.((settings) => {
+      clientSettingsHydrationGeneration += 1;
+      replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...settings });
+      setClientSettingsHydrationStatus("ready");
+    }) ?? (() => undefined);
+}
+
 async function hydrateClientSettings(): Promise<void> {
+  followClientSettingsSavedElsewhere();
   if (clientSettingsHydrationStatus === "ready") {
     return;
   }
@@ -511,6 +527,8 @@ export function useUpdateClientSettings() {
 }
 
 export function __resetClientSettingsPersistenceForTests(): void {
+  stopFollowingClientSettings?.();
+  stopFollowingClientSettings = null;
   clientSettingsHydrationGeneration += 1;
   clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
   clientSettingsHydrationStatus = "pending";

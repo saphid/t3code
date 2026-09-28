@@ -76,6 +76,8 @@ The panel renders through public contracts only:
   menu share one profile list: a host serving `t3.browser/profiles` 1.1.0
   pushes each rename, deletion or default change over its `changes` stream;
   an older host is read again when the panel is shown or the menu opens.
+  With no desktop connected, or a refused stream, the menu names why
+  (`desktop-required` or the missing grant) rather than showing an old list.
 - `t3.browser/capture` (host capability on `ClientHost.browserCapture`;
   `t3.browser/sessions` + `t3.browser/capture` grants) backs the header's
   two capture buttons: screenshot the page, or pick an element with the
