@@ -116,6 +116,46 @@ export async function presentSelected(
   };
 }
 
+/** The view identity: its API, context and selected provider; a new request only navigates it. */
+function presentationViewKey(
+  apiId: string,
+  method: string,
+  context: ViewContext,
+  revision: string,
+) {
+  return JSON.stringify([apiId, method, context, revision]);
+}
+
+/**
+ * The last explicit navigation the host presented before opening its view,
+ * for that view to take rather than ask the provider again. It names its
+ * navigation, context and provider revision, so any other view asks.
+ */
+let presented: { readonly key: string; readonly record: ViewRecord | null } | undefined;
+
+/**
+ * `presentSelected` for a view the host is about to open with this request,
+ * which must carry its `navigationId`. Rejects, leaving no view, when the
+ * provider cannot present it.
+ */
+export async function presentBeforeOpen(
+  request: PresentationRequest,
+  context: ViewContext,
+  signal: AbortSignal,
+): Promise<void> {
+  const key = JSON.stringify([
+    presentationViewKey(
+      request.apiId,
+      request.method,
+      context,
+      installedApiSelectionRevision(context.resource.environmentId, request.apiId),
+    ),
+    request.navigationId,
+  ]);
+  const record = await presentSelected(request, context, signal);
+  presented = { key, record };
+}
+
 /** Domain adapters supply requests; this component knows no panel kinds or plugin ids. */
 export function SelectedApiPresentation(props: {
   request: PresentationRequest;
@@ -130,7 +170,12 @@ export function SelectedApiPresentation(props: {
   const revision = useSyncExternalStore(subscribeInstalledApiClients, getRevision, getRevision);
   // The view lives as long as its API, context and provider; a new request
   // only navigates it.
-  const key = JSON.stringify([props.request.apiId, props.request.method, props.context, revision]);
+  const key = presentationViewKey(
+    props.request.apiId,
+    props.request.method,
+    props.context,
+    revision,
+  );
   const requestKey = JSON.stringify(props.request);
   const [state, setState] = useState<{
     key: string;
@@ -154,7 +199,12 @@ export function SelectedApiPresentation(props: {
     const context = JSON.parse(key)[2] as ViewContext;
     void (async () => {
       try {
-        const record = await presentSelected(request, context, controller.signal);
+        const handed =
+          presented?.key === JSON.stringify([key, request.navigationId]) ? presented : undefined;
+        const record = handed
+          ? handed.record
+          : await presentSelected(request, context, controller.signal);
+        controller.signal.throwIfAborted();
         if (!record) {
           setState({ key, legacy: true });
           return;

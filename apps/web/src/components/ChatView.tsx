@@ -1,4 +1,4 @@
-import { installedWorkspaceContext } from "../extensions/installedContext";
+import { installedWorkspaceContext, rightPanelViewContext } from "../extensions/installedContext";
 import {
   dispatchExtensionCommand,
   extensionCommandForKeydown,
@@ -9180,18 +9180,14 @@ export default function ChatView(props: ChatViewProps) {
         threadRef={activeThreadRef}
         surface={renderedRightPanelSurface}
         visible={rightPanelOpen}
-        context={
-          installedExtensionContext ?? {
-            client: isElectron ? "desktop" : "web",
-            resource: {
-              namespace: "t3.workspace",
-              id: "right-panel",
-              environmentId: activeThreadRef.environmentId,
-              projectId: activeThread.projectId,
-              threadId: activeThreadRef.threadId,
-            },
-          }
-        }
+        context={rightPanelViewContext({
+          environmentId: activeThreadRef.environmentId,
+          projectId: activeThread.projectId,
+          threadId: activeThreadRef.threadId,
+          projectWorkspaceRoot: activeProjectCwd,
+          threadWorktreePath: activeThread.worktreePath ?? null,
+          client: isElectron ? "desktop" : "web",
+        })}
         bindings={{
           browser:
             renderedRightPanelSurface.kind === "preview"

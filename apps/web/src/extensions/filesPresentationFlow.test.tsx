@@ -17,6 +17,7 @@ import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { selectSelectedRightPanelSurface, useRightPanelStore } from "../rightPanelStore";
 import { createNavigationClientProvider } from "./clientProviders";
 import { registerInstalledApiClient, setInstalledApiPolicy } from "./installedApiClients";
+import { installedWorkspaceContext } from "./installedContext";
 import { NativeRightPanel } from "./nativePanels";
 import { registerWorkspaceExtension } from "./workspaceRegistry";
 
@@ -282,6 +283,15 @@ const context: ViewContext = {
   },
 };
 const ref = scopeThreadRef(EnvironmentId.make("files-flow"), ThreadId.make("t"));
+/** ChatView's right panel context for the mocked thread and project. */
+const panelContext = installedWorkspaceContext({
+  environmentId: "files-flow",
+  projectId: "p",
+  threadId: "t",
+  projectWorkspaceRoot: "/fixture",
+  threadWorktreePath: null,
+  client: "web",
+});
 
 /** Mounts the right panel with Files selected for `t3.file/presentation`. */
 async function mountPanel(disk: Disk) {
@@ -347,7 +357,7 @@ async function mountPanel(disk: Disk) {
       <NativeRightPanel
         surface={surface as Parameters<typeof NativeRightPanel>[0]["surface"]}
         threadRef={ref}
-        context={context}
+        context={panelContext}
         visible
         bindings={{ files: { surface, hasProject: true, cwd: "/fixture" } } as never}
       />
@@ -551,8 +561,7 @@ describe("a file link to the open file view", () => {
         await act(async () => finishSave(outcome));
         expect(editorState(panel)).toEqual({ contents: "one\ntwo\n3", conflict, saves: 1 });
         expect(panel.calls.reads).toBe(1);
-        // Each open is asked twice: before the host opens it, then by the view.
-        expect(panel.calls.presentations).toHaveLength(6);
+        expect(panel.calls.presentations).toHaveLength(3);
       } finally {
         await panel.unmount();
       }
@@ -846,11 +855,7 @@ describe("a presentation provider on 1.0.0", () => {
       await act(async () => panel.navigation({ relativePath: "a.txt", line: 3 }));
       expect(
         panel.calls.presentations.map(({ versionRange, input }) => ({ versionRange, input })),
-      ).toEqual([
-        // Asked before the host opens the file, then by the view.
-        { versionRange: "^1.0.0", input: { relativePath: "a.txt" } },
-        { versionRange: "^1.0.0", input: { relativePath: "a.txt" } },
-      ]);
+      ).toEqual([{ versionRange: "^1.0.0", input: { relativePath: "a.txt" } }]);
     } finally {
       await panel.unmount();
     }
@@ -1173,6 +1178,29 @@ describe("hiding the file explorer", () => {
       expect(explorer(panel)).toEqual({ tree: false, search: false, hide: undefined, show: false });
       await act(async () => panel.button("Show file explorer")!.props.onClick());
       expect(explorer(panel)).toEqual({ tree: true, search: true, hide: true, show: undefined });
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
+
+// Review repro (fix-w-files20 P2): the host presents a file once, before
+// opening its view, and the view takes that presentation rather than asking
+// the provider (server discovery and package verification) again.
+describe("opening a file in the panel", () => {
+  it("asks the presentation provider once per open", async () => {
+    const panel = await mountPanel({ files: { "a.txt": "file A", "app.ts": "app" } });
+    try {
+      await act(async () => panel.navigation({ relativePath: "a.txt" }));
+      expect(panel.calls.presentations).toHaveLength(1);
+      expect(panel.editor().props.value).toBe("file A");
+      await act(async () => useRightPanelStore.getState().open(ref, "files"));
+      await act(async () => panel.button("app.ts")!.props.onClick());
+      const before = panel.calls.presentations.length;
+      // The Files pack's own open, with its own view context.
+      await act(async () => panel.button("Open in panel")!.props.onClick());
+      expect(panel.calls.presentations).toHaveLength(before + 1);
+      expect(panel.editor().props.value).toBe("app");
     } finally {
       await panel.unmount();
     }
