@@ -7,7 +7,10 @@ import {
   AGENT_SESSIONS_SCAN,
   filePresentationApi,
 } from "@t3tools/extension-sdk/catalogue";
-import { InstalledExtensionsSettings } from "./InstalledExtensionsSettings";
+import {
+  InstalledExtensionsSettings,
+  PERMISSION_SUGGESTION_NOTE,
+} from "./InstalledExtensionsSettings";
 const fixture = vi.hoisted(() => ({
   manage: true,
   install: vi.fn(async () => ({})),
@@ -356,20 +359,14 @@ it("grants exactly the missing required permissions and never removes a held one
       .findAllByProps({ role: "status" })
       .find((node) => node.children.join("").includes("permissions it"));
     expect(status?.children.join("")).toBe("This version can use 2 permissions it does not have:");
+    expect(JSON.stringify(root.toJSON())).toContain(PERMISSION_SUGGESTION_NOTE);
     await act(async () => buttonIn(root, "Grant 2 new permissions").props.onClick());
     expect(fixture.update).toHaveBeenCalledTimes(1);
     expect(fixture.update).toHaveBeenLastCalledWith("env-a", {
       id: "example.agents",
-      action: "grants",
-      grants: {
-        capabilities: [
-          "t3.workspace/read-text",
-          "example.custom/grant",
-          AGENT_SESSIONS_SCAN,
-          AGENT_SESSIONS_IMPORT,
-        ],
-        projectIds,
-      },
+      // Only the additions go over the wire; the server unions them with its current grants.
+      action: "addGrants",
+      grants: { capabilities: [AGENT_SESSIONS_SCAN, AGENT_SESSIONS_IMPORT], projectIds: [] },
     });
     // Nothing is offered once everything required is held, or by a server that does not say.
     fixture.installations = [

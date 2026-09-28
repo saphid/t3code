@@ -261,8 +261,8 @@ export function createApiBroker(options: {
   }
   /**
    * Every grant a method or stream of the installation's declared APIs checks,
-   * read from the provider each resolves to now. A ceiling, not what the
-   * package calls: Settings offers it for explicit consent, never auto-grants.
+   * read from the provider each resolves to now. An approximation, not what
+   * the package calls: Settings offers it for explicit consent, never auto-grants.
    * Grants a provider asks for dynamically and host services are not included.
    */
   function requiredGrants(record: Installation): string[] {

@@ -445,6 +445,10 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
           if (!input.grants) throw new Error("Permission changes require the complete grant set.");
           return installation(await runtime.updateGrants(input.id, input.grants));
         }
+        if (input.action === "addGrants") {
+          if (!input.grants) throw new Error("Adding permissions requires the permissions to add.");
+          return installation(await runtime.addGrants(input.id, input.grants));
+        }
         if (input.action === "remove") {
           await runtime.remove(input.id);
           return null;

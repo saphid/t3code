@@ -92,6 +92,8 @@ export interface ExtensionRuntime {
     pluginResolution: ReturnType<typeof resolveCapabilities>["plugins"];
   };
   updateGrants(id: string, grants: InstallationGrants): Promise<Installation>;
+  /** Unions `additions` with the stored grants, so a concurrent change is never undone. */
+  addGrants(id: string, additions: InstallationGrants): Promise<Installation>;
   /** Grants the installation's declared APIs check at call time; see the broker. */
   requiredGrants(id: string): readonly string[];
   enable(id: string): Promise<Installation>;
@@ -1217,6 +1219,24 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
       return mutate(async () => {
         const record = required(id);
         const next = { ...record, grants: grants(requested) };
+        await replace(record, next);
+        return clone(next);
+      });
+    },
+    addGrants(id, additions) {
+      return mutate(async () => {
+        const record = required(id);
+        const added = grants(additions);
+        const union = (held: readonly string[], more: readonly string[]) => [
+          ...new Set([...held, ...more]),
+        ];
+        const next = {
+          ...record,
+          grants: grants({
+            capabilities: union(record.grants.capabilities, added.capabilities),
+            projectIds: union(record.grants.projectIds, added.projectIds),
+          }),
+        };
         await replace(record, next);
         return clone(next);
       });

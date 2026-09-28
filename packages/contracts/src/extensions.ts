@@ -20,9 +20,10 @@ export const ExtensionInstallation = Schema.Struct({
   /**
    * Grants the installed version's declared APIs check at call time, derived
    * by the server. Settings offers the missing ones for explicit consent;
-   * absent from older servers.
+   * absent from older servers. Unbounded: valid API metadata can derive any
+   * number, and one oversized entry must not fail the whole list.
    */
-  requiredGrants: Schema.optional(Schema.Array(Identity).check(Schema.isMaxLength(256))),
+  requiredGrants: Schema.optional(Schema.Array(Identity)),
 });
 export type ExtensionInstallation = typeof ExtensionInstallation.Type;
 export const ExtensionViewContext = Schema.Struct({
@@ -45,7 +46,16 @@ export const ExtensionInstallInput = Schema.Struct({
 export type ExtensionInstallInput = typeof ExtensionInstallInput.Type;
 export const ExtensionManageInput = Schema.Struct({
   id: Identity,
-  action: Schema.Literals(["enable", "disable", "remove", "update", "rollback", "grants"]),
+  /** `grants` replaces the complete set; `addGrants` unions `grants` with the stored set. */
+  action: Schema.Literals([
+    "enable",
+    "disable",
+    "remove",
+    "update",
+    "rollback",
+    "grants",
+    "addGrants",
+  ]),
   grants: Schema.optional(ExtensionGrants),
   sourceDir: Schema.optional(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096))),
   trusted: Schema.optional(Schema.Literal(true)),

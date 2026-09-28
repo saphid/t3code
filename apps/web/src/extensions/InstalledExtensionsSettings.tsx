@@ -129,6 +129,9 @@ function GrantList({ grants }: { grants: readonly string[] }) {
   );
 }
 
+export const PERMISSION_SUGGESTION_NOTE =
+  "Suggested from the APIs it declares. Some may go unused, and some features can still ask for more; add those with Edit permissions.";
+
 /**
  * An installation's permissions. Only explicit clicks here add grants: the
  * editor starts from the current set so applying it never silently revokes,
@@ -165,11 +168,19 @@ function InstallationPermissions(props: {
             does not have:
           </p>
           <GrantList grants={missing} />
+          <p className="text-sm text-muted-foreground">{PERMISSION_SUGGESTION_NOTE}</p>
           <Button
             variant="outline"
             disabled={disabled}
             onClick={() =>
-              void apply({ ...current, capabilities: [...current.capabilities, ...missing] })
+              // Additive on the server, so a grant another client just changed is never undone.
+              void act(() =>
+                manageInstalledExtension(environmentId, {
+                  id: item.id,
+                  action: "addGrants",
+                  grants: { capabilities: missing, projectIds: [] },
+                }),
+              )
             }
           >
             Grant {missing.length} new permission{missing.length === 1 ? "" : "s"}

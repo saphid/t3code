@@ -4,6 +4,8 @@ import {
   ExtensionApiSubscribeInput,
   ExtensionApiStreamFrame,
   ExtensionGrants,
+  ExtensionInstallation,
+  ExtensionManageInput,
 } from "./extensions.ts";
 const input = {
   installationId: "test.consumer",
@@ -55,5 +57,30 @@ describe("extension installation grants", () => {
     const atCap = { capabilities: capabilities(32), projectIds: [] };
     expect(decode(atCap)).toEqual(atCap);
     expect(() => decode({ capabilities: capabilities(33), projectIds: [] })).toThrow();
+  });
+});
+const decodeInstallation = Schema.decodeUnknownSync(ExtensionInstallation);
+const decodeManage = Schema.decodeUnknownSync(ExtensionManageInput);
+describe("extension installation listing", () => {
+  it("accepts any number of derived required grants so one install cannot fail the list", () => {
+    // 17 methods x 16 distinct grants is valid API metadata and derives 272.
+    const requiredGrants = Array.from({ length: 272 }, (_, index) => `t3.cap${index}/use`);
+    const entry = {
+      id: "test.consumer",
+      contentHash: "a".repeat(64),
+      package: {},
+      enabled: true,
+      grants: { capabilities: [], projectIds: [] },
+      requiredGrants,
+    };
+    expect(decodeInstallation(entry).requiredGrants).toHaveLength(272);
+  });
+  it("accepts an additive grant action", () => {
+    const input = {
+      id: "test.consumer",
+      action: "addGrants",
+      grants: { capabilities: ["t3.cap/use"], projectIds: [] },
+    };
+    expect(decodeManage(input)).toEqual(input);
   });
 });

@@ -934,3 +934,34 @@ NodeTest.test(
     NodeAssert.deepEqual(f.runtime.requiredGrants(provider.id), []);
   },
 );
+
+NodeTest.test(
+  "adding grants unions with the current stored grants, keeping another client's changes",
+  async (t) => {
+    const f = await fixture(t);
+    const record = await f.install(metadata("test.alpha"), undefined, {
+      capabilities: ["test.a/read"],
+      projectIds: ["project-a"],
+    });
+    // Another client changes the grants after this one rendered them.
+    await f.runtime.updateGrants(record.id, {
+      capabilities: ["test.a/read", "test.b/concurrent"],
+      projectIds: ["project-a", "project-b"],
+    });
+    const added = await f.runtime.addGrants(record.id, {
+      capabilities: ["test.c/new", "test.a/read"],
+      projectIds: [],
+    });
+    const expected = {
+      capabilities: ["test.a/read", "test.b/concurrent", "test.c/new"],
+      projectIds: ["project-a", "project-b"],
+    };
+    NodeAssert.deepEqual(added.grants, expected);
+    NodeAssert.deepEqual(f.runtime.list().find((item) => item.id === record.id).grants, expected);
+    await NodeAssert.rejects(
+      f.runtime.addGrants(record.id, { capabilities: [""], projectIds: [] }),
+      /grant|identity|id/i,
+    );
+    NodeAssert.deepEqual(f.runtime.list().find((item) => item.id === record.id).grants, expected);
+  },
+);
