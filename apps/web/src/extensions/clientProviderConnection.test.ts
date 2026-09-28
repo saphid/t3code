@@ -555,13 +555,45 @@ describe("client connection hint on early calls", () => {
     expect(send).toHaveBeenCalledOnce();
   });
 
-  it("releases held calls unstamped when the connect fails (server without the seam)", async () => {
-    start({ stream: Stream.die(new Error("unknown rpc")) });
-    const send = vi.fn(async (hint: string | undefined) => hint);
-    await expect(withClientConnectionId(ENV, new AbortController().signal, send)).resolves.toBe(
-      undefined,
-    );
-    expect(send).toHaveBeenCalledOnce();
+  it("holds a call made before the transport is up until the reconnect registers", async () => {
+    // A restored panel calls before the environment's first session exists:
+    // that connect fails, and the call must wait for the next one.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const queue = new Mailbox();
+      mocks.providersStream.mockReturnValueOnce(Stream.fail(new Error("no session")));
+      start({ stream: queue.stream });
+      mocks.stateChanges.mockReturnValue(Stream.make({ phase: "connected" }));
+      const hints: (string | undefined)[] = [];
+      const result = withClientConnectionId(ENV, new AbortController().signal, async (hint) => {
+        hints.push(hint);
+        if (hint === undefined) throw targetRequired();
+        return { theme: "dark" };
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(hints).toEqual([]);
+      queue.offer(registered);
+      await expect(result).resolves.toEqual({ theme: "dark" });
+      expect(hints).toEqual(["conn-early"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("releases held calls unstamped after the bound when the connect keeps failing (server without the seam)", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      start({ stream: Stream.die(new Error("unknown rpc")) });
+      const send = vi.fn(async (hint: string | undefined) => hint);
+      const call = withClientConnectionId(ENV, new AbortController().signal, send);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(send).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(9_000);
+      await expect(call).resolves.toBe(undefined);
+      expect(send).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("releases a held call unstamped after the bound, and never on abort", async () => {

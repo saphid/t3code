@@ -72,10 +72,11 @@ function settleConnecting(environmentId: string, owner: object) {
 }
 
 /**
- * The hint for an outbound call. While the seam's connect is in flight the
- * call is held (bounded) so it leaves stamped the first time; calls are never
- * replayed, because the server may already have run them. A seam that is down,
- * absent, or unsupported by the server releases the call unstamped.
+ * The hint for an outbound call. Until a live seam registers — including while
+ * it waits for the transport's first or next session — the call is held
+ * (bounded) so it leaves stamped the first time; calls are never replayed,
+ * because the server may already have run them. An absent seam releases the
+ * call at once, and one the server never registers releases it at the bound.
  */
 async function clientConnectionIdForCall(
   environmentId: string,
@@ -166,7 +167,10 @@ export function startClientProviderConnection(
    */
   const teardownIteration = () => {
     iteration.disposed = true;
-    settleConnecting(deps.environmentId, owner);
+    // A live loop reconnects, so calls made meanwhile keep waiting for its
+    // next registration; only a stopped loop releases them.
+    if (lifecycle.signal.aborted) settleConnecting(deps.environmentId, owner);
+    else markConnecting(deps.environmentId, owner);
     if (connectionOwners.get(deps.environmentId) === owner) {
       // Only the owner may clear the identity it minted — a replacement loop
       // reusing the same socket-derived id keeps it across this teardown.
