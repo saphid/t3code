@@ -1080,6 +1080,8 @@ export type FilesViewState = {
   readonly renderMarkdown?: boolean;
   /** Absent means rendered, the native default; only a source preference is saved. */
   readonly renderHtml?: boolean;
+  /** A file link's line, from `t3.file/presentation.open`; never saved back. */
+  readonly line?: number;
 };
 
 /** validateRestore for the Files view: null or a well-formed FilesViewState. */
@@ -1092,7 +1094,8 @@ export function isFilesViewState(value: unknown): value is FilesViewState | null
       key !== "relativePath" &&
       key !== "expanded" &&
       key !== "renderMarkdown" &&
-      key !== "renderHtml"
+      key !== "renderHtml" &&
+      key !== "line"
     )
       return false;
   if (typeof record.relativePath !== "string") return false;
@@ -1107,8 +1110,17 @@ export function isFilesViewState(value: unknown): value is FilesViewState | null
     return false;
   return (
     (record.renderMarkdown === undefined || typeof record.renderMarkdown === "boolean") &&
-    (record.renderHtml === undefined || typeof record.renderHtml === "boolean")
+    (record.renderHtml === undefined || typeof record.renderHtml === "boolean") &&
+    (record.line === undefined || (Number.isInteger(record.line) && (record.line as number) >= 1))
   );
+}
+
+/** The line a restored view reveals in its selected file, if a file link named one. */
+export function restoredRevealLine(restoreState: unknown): number | null {
+  if (!isFilesViewState(restoreState) || restoreState === null) return null;
+  return restoreState.relativePath !== "" && restoreState.line !== undefined
+    ? restoreState.line
+    : null;
 }
 
 /** Expanded directories a restored view reopens; empty for anything malformed. */
@@ -1392,13 +1404,15 @@ async function writePreference(
   },
   patch: Partial<UiPreferences>,
   label: string,
+  versionRange?: string,
 ): Promise<string | null> {
   try {
-    const receipt = await bindApi(uiPreferencesApi, options.client, options.context).invoke(
-      "setPreferences",
-      patch,
-      options.signal,
-    );
+    const receipt = await bindApi(
+      uiPreferencesApi,
+      options.client,
+      options.context,
+      versionRange,
+    ).invoke("setPreferences", patch, options.signal);
     return receipt.applied ? null : `${label} not saved — ${receipt.reason ?? "rejected"}`;
   } catch (error) {
     return `${label} not saved — ${error instanceof Error ? error.message : String(error)}`;
@@ -1418,6 +1432,8 @@ export function writeWordWrap(options: {
 /**
  * Writes the HTML rendered/source choice to the client preference the native
  * file preview reads, so every presentation starts from it; see `writePreference`.
+ * The key is `t3.ui/preferences` 1.1.0: a 1.0.0 host refuses the write and the
+ * view keeps its own choice.
  */
 export function writeRenderHtml(options: {
   readonly client: Pick<ApiClient, "invokeApi">;
@@ -1425,7 +1441,12 @@ export function writeRenderHtml(options: {
   readonly signal: AbortSignal;
   readonly renderHtml: boolean;
 }): Promise<string | null> {
-  return writePreference(options, { renderBrowserFile: options.renderHtml }, "HTML preview choice");
+  return writePreference(
+    options,
+    { renderBrowserFile: options.renderHtml },
+    "HTML preview choice",
+    "^1.1.0",
+  );
 }
 
 // ---------------------------------------------------------------------------

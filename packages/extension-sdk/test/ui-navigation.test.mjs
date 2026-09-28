@@ -9,6 +9,7 @@ import {
 } from "../dist/catalogue.js";
 import * as Catalogue from "../dist/catalogue.js";
 import { CLIENT_PROVIDER_APIS } from "../dist/clientProviders.js";
+import { ApiVersionError, bindApi } from "../dist/capabilities.js";
 
 NodeTest.test("t3.ui/navigation is a shared catalogue contract behind its own grant", () => {
   NodeAssert.ok(GENERIC_API_CATALOGUE.includes(uiNavigationApi.definition));
@@ -113,6 +114,7 @@ NodeTest.test(
     const context = { client: "web", resource: { namespace: "ext", id: "ext.a" } };
     const requests = [];
     const client = {
+      discoverApis: async () => [{ id: "t3.ui/navigation", version: "1.1.0" }],
       invokeApi: (request) => {
         requests.push(request);
         return Promise.resolve({ status: "opened", relativePath: request.input.relativePath });
@@ -130,10 +132,11 @@ NodeTest.test(
       { status: "opened", relativePath: "src/a.ts" },
     );
     NodeAssert.deepEqual(
-      requests.map(({ id, method, input }) => ({ id, method, input })),
+      requests.map(({ id, versionRange, method, input }) => ({ id, versionRange, method, input })),
       [
         {
           id: "t3.ui/navigation",
+          versionRange: "^1.1.0",
           method: "openFile",
           input: { relativePath: "src/a.ts", line: 3 },
         },
@@ -144,3 +147,76 @@ NodeTest.test(
       NodeAssert.match(Catalogue.describeOpenFileRefusal(reason), /\S/);
   },
 );
+
+// Review finding (proof-host-6 P3): openFile shipped inside the immutable
+// 1.0.0. It is a 1.1.0 addition: packs keep loading on a 1.0.0 host and
+// probe before they call it.
+NodeTest.test("openFile is a 1.1.0 addition over the 1.0.0 baseline", async () => {
+  NodeAssert.equal(uiNavigationApi.definition.version, "1.1.0");
+  NodeAssert.equal(uiNavigationApi.baseline, "1.0.0");
+  NodeAssert.equal(CLIENT_PROVIDER_APIS.get("t3.client/navigation").version, "1.1.0");
+  const requests = [];
+  const client = {
+    invokeApi: (request) => {
+      requests.push(request);
+      return Promise.resolve({ status: "opened", threadId: "t" });
+    },
+  };
+  const context = { client: "web", resource: { namespace: "ext", id: "ext.a" } };
+  const signal = new AbortController().signal;
+  const baseline = bindApi(uiNavigationApi, client, context);
+  await NodeAssert.rejects(
+    baseline.invoke("openFile", { relativePath: "a.ts" }, signal),
+    (error) => error instanceof ApiVersionError,
+  );
+  await baseline.invoke("openThread", { threadId: "t" }, signal);
+  NodeAssert.deepEqual(
+    requests.map(({ method, versionRange }) => ({ method, versionRange })),
+    [{ method: "openThread", versionRange: "^1.0.0" }],
+  );
+});
+
+NodeTest.test("openWorkspaceFile degrades on a host older than 1.1.0", async () => {
+  NodeAssert.equal(typeof Catalogue.openWorkspaceFile, "function");
+  const requests = [];
+  const client = {
+    discoverApis: async () => [{ id: "t3.ui/navigation", version: "1.0.0" }],
+    invokeApi: (request) => {
+      requests.push(request);
+      return Promise.resolve({ status: "opened", relativePath: request.input.relativePath });
+    },
+  };
+  const context = { client: "web", resource: { namespace: "ext", id: "ext.a" } };
+  NodeAssert.deepEqual(
+    await Catalogue.openWorkspaceFile(client, context, "src/a.ts", {
+      signal: new AbortController().signal,
+    }),
+    { status: "refused", reason: "host-unsupported" },
+  );
+  NodeAssert.equal(requests.length, 0);
+  NodeAssert.match(Catalogue.describeOpenFileRefusal("host-unsupported"), /\S/);
+});
+
+// Review finding (proof-host-6 P5): a file link's line reaches the selected
+// presentation. `open.line` is a 1.1.0 addition; 1.0.0 providers keep matching.
+NodeTest.test("t3.file/presentation 1.1.0 adds open.line and keeps 1.0.0 frozen", async () => {
+  const { filePresentationApi } = Catalogue;
+  NodeAssert.equal(filePresentationApi.definition.version, "1.1.0");
+  NodeAssert.equal(filePresentationApi.baseline, "1.0.0");
+  const frozen = GENERIC_API_CATALOGUE.find(
+    (api) => api.id === "t3.file/presentation" && api.version === "1.0.0",
+  );
+  NodeAssert.ok(frozen, "the published 1.0.0 stays in the catalogue");
+  NodeAssert.deepEqual(Object.keys(frozen.methods[0].inputSchema.properties), ["relativePath"]);
+  NodeAssert.doesNotThrow(() => Catalogue.assertProvidedApiOwner("other.plugin", frozen));
+  const context = { client: "web", resource: { namespace: "ext", id: "ext.a" } };
+  const client = { invokeApi: () => Promise.resolve({}) };
+  await NodeAssert.rejects(
+    bindApi(filePresentationApi, client, context).invoke(
+      "open",
+      { relativePath: "a.ts", line: 2 },
+      new AbortController().signal,
+    ),
+    (error) => error instanceof ApiVersionError,
+  );
+});

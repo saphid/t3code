@@ -88,6 +88,7 @@ import {
   isFilesViewState,
   restoredExpanded,
   restoredRenderHtml,
+  restoredRevealLine,
   restoredRenderMarkdown,
   restoredSelection,
   watchThemeVars,
@@ -379,10 +380,14 @@ function useThemeVars(
 function useFilePreferences(host: ClientHost, session: ViewSession, visible: boolean) {
   const [value, setValue] = useState<boolean | null>(null);
   const [renderHtml, setRenderHtml] = useState<boolean | undefined>(undefined);
+  // False until the feed first answers — with a value, or with "none" from a
+  // host without the preference. Until then the saved HTML choice is unknown.
+  const [answered, setAnswered] = useState(false);
   const [writeError, setWriteError] = useState<string | null>(null);
   useEffect(() => {
     if (!visible) return;
     const controller = new AbortController();
+    let subscribed = false;
     void watchPreferences({
       client: host,
       context: session.context,
@@ -391,8 +396,12 @@ function useFilePreferences(host: ClientHost, session: ViewSession, visible: boo
         setValue(preferences?.wordWrap ?? null);
         if (preferences?.renderBrowserFile !== undefined)
           setRenderHtml(preferences.renderBrowserFile);
+        // The clear watchPreferences makes synchronously as it subscribes is
+        // not an answer; every later call is.
+        if (subscribed) setAnswered(true);
       },
     });
+    subscribed = true;
     return () => controller.abort();
   }, [host, session, visible]);
   const toggle = () => {
@@ -407,7 +416,7 @@ function useFilePreferences(host: ClientHost, session: ViewSession, visible: boo
       if (!session.signal.aborted) setWriteError(error);
     });
   };
-  return { wordWrap: { value, writeError, toggle }, renderHtml };
+  return { wordWrap: { value, writeError, toggle }, renderHtml, answered };
 }
 
 /**
@@ -1201,13 +1210,19 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   // The latest centered line reveal request — set by search hits and
   // link targets, tracked as handled once the content surface scrolls.
   // `id` tells repeated requests for the same line apart for the host view.
+  // A file link's line arrives with the view (`t3.file/presentation.open`)
+  // as request 1; later requests count on from there.
+  const revealSequence = useRef(1);
   const [revealRequest, setRevealRequest] = useState<{
     path: string;
     line: number;
     id: number;
-  } | null>(null);
+  } | null>(() => {
+    const path = restoredSelection(session.restoreState);
+    const line = restoredRevealLine(session.restoreState);
+    return path !== null && line !== null ? { path, line, id: 1 } : null;
+  });
   const handledRevealRef = useRef<{ path: string; line: number; id: number } | null>(null);
-  const revealSequence = useRef(0);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const readOnlyRef = useRef<HTMLPreElement | null>(null);
   const treeListRef = useRef<HTMLUListElement | null>(null);
@@ -1223,10 +1238,23 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     if (preferences.renderHtml !== undefined) setRenderHtml(preferences.renderHtml);
   }
   const selectedKind: PreviewKind = selected
-    ? presentedPreviewKind(selected, { renderHtml, revealPath: revealRequest?.path ?? null })
+    ? presentedPreviewKind(selected, {
+        // Until the preference answers, an HTML file is held on the page side
+        // with nothing loaded, so neither the page nor its source flashes.
+        renderHtml: renderHtml || !preferences.answered,
+        revealPath: revealRequest?.path ?? null,
+      })
     : "text";
+  const awaitingHtmlChoice = selectedKind === "html" && !preferences.answered;
   const editor = useFileEditor(host, session, selected, selectedKind, revision, visible);
-  const media = useMediaLease(host, session, selected, selectedKind, revision, visible);
+  const media = useMediaLease(
+    host,
+    session,
+    selected,
+    selectedKind,
+    revision,
+    visible && !awaitingHtmlChoice,
+  );
   const currentRead = read?.relativePath === selected && read.revision === revision ? read : null;
   const changes = useWorkspaceChanges(host, session, visible);
   // Native parity: a bump while the selected file's save state is latched

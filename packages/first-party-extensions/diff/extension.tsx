@@ -2268,22 +2268,6 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
           )}
         </div>
       )}
-
-      <output
-        aria-label="Slice notice"
-        style={{
-          padding: "6px 10px",
-          color: muted,
-          fontSize: 11,
-          borderTop: `1px solid ${ui.border}`,
-          flexShrink: 0,
-        }}
-      >
-        Read-only diff on t3.vcs/diff 1.1 + t3.orchestration: unary small previews, sha256-verified
-        streams for large payloads and turn diffs, status-driven refresh. Checkpoint diffs are
-        view-only — revert runs through t3.orchestration/control. Line comments ride
-        t3.messages/enrichment into the composer draft.
-      </output>
     </section>
   );
 }

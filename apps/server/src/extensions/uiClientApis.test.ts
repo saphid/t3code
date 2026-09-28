@@ -197,6 +197,7 @@ describe("preferences adapter", () => {
       target: { kind: "connection", connectionId: "conn-1" },
       writer: "ext.a",
       patch: { wordWrap: false },
+      include: ["renderBrowserFile"],
     });
   });
 
@@ -216,7 +217,10 @@ describe("preferences adapter", () => {
       {
         apiId: "t3.client/preferences",
         name: "watchPreferences",
-        input: { target: { kind: "connection", connectionId: "conn-1" } },
+        input: {
+          target: { kind: "connection", connectionId: "conn-1" },
+          include: ["renderBrowserFile"],
+        },
         coalesce: true,
       },
     ]);
@@ -493,6 +497,87 @@ describe("navigation adapter openFile", () => {
         resource: { ...context.resource, threadId: "thread-other" },
       } as ViewContext),
     ).resolves.toEqual({ status: "refused", reason: "out-of-scope" });
+    expect(bridge.invoked).toHaveLength(0);
+  });
+});
+
+// Review finding (proof-host-6 P3): openFile and renderBrowserFile are 1.1.0
+// additions to the client seam. A client still on 1.0.0 never sees a frame it
+// cannot validate, and an older server never gets a field it would reject.
+describe("1.1.0 client seam additions", () => {
+  const seam = (navigation: string, preferences: string) =>
+    fakeBridge({
+      targets: [
+        {
+          connectionId: "conn-1",
+          providers: [
+            { id: "t3.client/navigation", version: navigation },
+            { id: "t3.client/preferences", version: preferences },
+          ],
+        },
+      ],
+    });
+
+  it("refuses openFile for a client whose navigation predates it", async () => {
+    const bridge = seam("1.0.0", "1.0.0");
+    await expect(
+      makeProviders(bridge).navigation.invoke(
+        "openFile",
+        { relativePath: "a.ts" } as Json,
+        context,
+        signal,
+        metadata(),
+      ),
+    ).rejects.toMatchObject({ code: "provider-rejected" });
+    expect(bridge.invoked).toHaveLength(0);
+  });
+
+  it("asks only a 1.1.0 client for renderBrowserFile", async () => {
+    const drain = async (preferences: HostApiProvider) => {
+      for await (const _event of preferences.subscribe!(
+        "subscribePreferences",
+        {},
+        context,
+        signal,
+        metadata(),
+      ));
+    };
+    const inputs = async (version: string) => {
+      const bridge = seam("1.1.0", version);
+      const { preferences } = makeProviders(bridge);
+      await preferences.invoke("getPreferences", {} as Json, context, signal, metadata());
+      await preferences.invoke(
+        "setPreferences",
+        { wordWrap: true } as Json,
+        context,
+        signal,
+        metadata(),
+      );
+      await drain(preferences);
+      return [
+        ...bridge.invoked.map(({ input }) => (input as { include?: unknown }).include),
+        ...bridge.subscribed.map(({ input }) => (input as { include?: unknown }).include),
+      ];
+    };
+    expect(await inputs("1.1.0")).toEqual([
+      ["renderBrowserFile"],
+      ["renderBrowserFile"],
+      ["renderBrowserFile"],
+    ]);
+    expect(await inputs("1.0.0")).toEqual([undefined, undefined, undefined]);
+  });
+
+  it("refuses a renderBrowserFile write to a client that predates it", async () => {
+    const bridge = seam("1.1.0", "1.0.0");
+    await expect(
+      makeProviders(bridge).preferences.invoke(
+        "setPreferences",
+        { renderBrowserFile: false } as Json,
+        context,
+        signal,
+        metadata(),
+      ),
+    ).rejects.toMatchObject({ code: "provider-rejected" });
     expect(bridge.invoked).toHaveLength(0);
   });
 });

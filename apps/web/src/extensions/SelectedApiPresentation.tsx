@@ -1,5 +1,14 @@
 import type { Json, ViewContext, ViewRecord } from "@t3tools/extension-sdk/contracts";
-import { useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
+import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import {
   presentationStateKey,
   restorePresentationState,
@@ -18,6 +27,13 @@ export interface PresentationRequest {
   readonly input: Json;
   /** Host-local explicit navigation identity; never forwarded as API input. */
   readonly navigationId?: string;
+  /**
+   * Sent instead of `input` when the selected provider is at `version` or a
+   * later minor (a minor-release addition such as a file link's line). It is
+   * part of the navigation, read when one starts: a change alone never
+   * reopens the presentation, a new `navigationId` does.
+   */
+  readonly newerInput?: { readonly version: string; readonly input: Json };
 }
 
 /** Domain adapters supply requests; this component knows no panel kinds or plugin ids. */
@@ -32,8 +48,13 @@ export function SelectedApiPresentation(props: {
     [props.context.resource.environmentId, props.request.apiId],
   );
   const revision = useSyncExternalStore(subscribeInstalledApiClients, getRevision, getRevision);
-  const requestKey = JSON.stringify([props.request, props.context]);
-  const key = JSON.stringify([props.request, props.context, revision]);
+  const { newerInput, ...identity } = props.request;
+  const newerInputRef = useRef(newerInput);
+  useLayoutEffect(() => {
+    newerInputRef.current = newerInput;
+  });
+  const requestKey = JSON.stringify([identity, props.context]);
+  const key = JSON.stringify([identity, props.context, revision]);
   const [state, setState] = useState<{
     key: string;
     record?: ViewRecord;
@@ -55,12 +76,16 @@ export function SelectedApiPresentation(props: {
           setState({ key, legacy: true });
           return;
         }
+        const newer = newerInputRef.current;
+        const upgrade =
+          newer !== undefined &&
+          satisfiesSemverRange(selected.discovery.version, "^" + newer.version);
         const value = await selected.client.invokeApi(
           {
             id: request.apiId,
-            versionRange: "^1.0.0",
+            versionRange: upgrade ? "^" + newer.version : "^1.0.0",
             method: request.method,
-            input: request.input,
+            input: upgrade ? newer.input : request.input,
             context,
             expectedGeneration: selected.discovery.generation,
           },

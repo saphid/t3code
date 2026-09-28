@@ -7,12 +7,15 @@ resource lease (HTML toggles to source, as in the native panel), and a
 package-owned rendered-markdown preview — all through public contracts only
 (`t3.workspace/tree`, `t3.workspace/files`, `t3.workspace/search`,
 `t3.workspace/text-edits`, `t3.resources/lease`). It also provides
-`t3.file/presentation`, the only first-party provider of it, so the
-ordinary Files open path resolves here with no selection, and
-exposes an "Open in panel" file action: `t3.ui/navigation@^1.0.0`
-`openFile` (grant `t3.ui/navigation.open`) opens the file in this view's
-thread where the host's own file links land, presented by whichever provider
-the host selected for `t3.file/presentation`. Breadcrumbs over the
+`t3.file/presentation@1.1.0`, the only first-party provider of it, so the
+ordinary Files open path resolves here with no selection; a file link's
+line opens the source at that line. It exposes an "Open in panel" file
+action: `t3.ui/navigation` `openFile` (1.1.0, grant `t3.ui/navigation.open`)
+opens the file in this view's thread where the host's own file links land,
+presented by whichever provider the host selected for `t3.file/presentation`.
+Reopening the file already shown there only focuses it. The pack probes for
+`openFile`, so it still loads on a 1.0.0 host, which answers that it cannot
+open files. Breadcrumbs over the
 tree snapshot, workspace link resolution in rendered markdown, centered line
 reveals for search hits and `#L…`/`path:line` targets, and composer-mention
 drags are package-owned; the drag payload uses the MIME the host
@@ -52,8 +55,9 @@ without its grant or provider):
   through `setPreferences`; the view changes only when the persisted value
   arrives. Without the read grant the toggle is hidden and wrapping stays as
   before. The HTML rendered/source choice rides the same preference
-  (`renderBrowserFile`, the native preview's own), so it carries across files,
-  presentations and reloads; hosts without it keep the choice per view.
+  (`renderBrowserFile`, 1.1.0, the native preview's own), so it carries across
+  files, presentations and reloads; an HTML file loads nothing until the
+  preference first answers. Hosts without it keep the choice per view.
 
 Files the editor cannot open (past the edit bound, binary-adjacent,
 non-UTF-8) show read-only. Where the host offers `ClientHost.codeView`, that

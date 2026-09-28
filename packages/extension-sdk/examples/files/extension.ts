@@ -1,5 +1,5 @@
 import { defineExtension, requireApi } from "@t3tools/extension-sdk/authoring";
-import { filePresentationApi, workspaceFilesApi } from "@t3tools/extension-sdk/catalogue";
+import { filePresentationApiV1, workspaceFilesApi } from "@t3tools/extension-sdk/catalogue";
 import { bindApi } from "@t3tools/extension-sdk/capabilities";
 import type { WorkspaceListEntriesResult } from "@t3tools/extension-sdk/catalogue";
 import type { WorkspaceReadTextResult } from "@t3tools/extension-sdk/workspace";
@@ -128,7 +128,8 @@ function restoredPath(state: unknown) {
 export default defineExtension({
   id: "example.files",
   version: "1.0.2",
-  provides: [filePresentationApi.definition, infoApi.definition],
+  // Mirrors the independently published installable-files package at 1.0.0.
+  provides: [filePresentationApiV1.definition, infoApi.definition],
   requires: [requireApi(workspaceFilesApi)],
   serverEntry: "server.ts",
   surfaces: [

@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeTest from "node:test";
 import { copyJson } from "@t3tools/extension-sdk/contracts";
 import server from "./server.ts";
+import * as ViewModel from "./viewModel.ts";
 import {
   applyResourceReadEvent,
   collectResourceRead,
@@ -18,7 +19,6 @@ import {
   describeSaveState,
   describeSearch,
   describeSnapshot,
-  documentFrameSandbox,
   editorSavePending,
   fileOpenFailed,
   filterEntries,
@@ -43,10 +43,8 @@ import {
   MAX_PERSISTED_EXPANDED,
   MAX_PERSISTED_EXPANDED_BYTES,
   restoredExpanded,
-  restoredRenderHtml,
   restoredRenderMarkdown,
   restoredSelection,
-  presentedPreviewKind,
   previewKind,
   selectMediaLease,
   sha256HexPortable,
@@ -220,54 +218,73 @@ NodeTest.describe("mediaPreviewNotice", () => {
   });
 });
 
+// The HTML preview helpers are reached through the module namespace and
+// checked first, so a build without them fails on an assertion, not at import.
 NodeTest.describe("HTML preview", () => {
+  NodeTest.beforeEach(() => {
+    for (const name of ["presentedPreviewKind", "documentFrameSandbox", "restoredRenderHtml"])
+      NodeAssert.equal(typeof ViewModel[name], "function", `viewModel exports ${name}`);
+  });
+
   NodeTest.it("renders HTML by default, like the native Files panel", () => {
     for (const path of ["site/index.html", "page.HTM"]) {
-      NodeAssert.equal(presentedPreviewKind(path, { renderHtml: true, revealPath: null }), "html");
+      NodeAssert.equal(
+        ViewModel.presentedPreviewKind(path, { renderHtml: true, revealPath: null }),
+        "html",
+      );
       NodeAssert.deepEqual(selectMediaLease({ path, hasThread: true }), { status: "minting" });
     }
   });
 
   NodeTest.it("switches to source when toggled off or when a line reveal targets the file", () => {
     NodeAssert.equal(
-      presentedPreviewKind("site/index.html", { renderHtml: false, revealPath: null }),
+      ViewModel.presentedPreviewKind("site/index.html", { renderHtml: false, revealPath: null }),
       "text",
     );
     // A line only exists in the source; a reveal for another path does not apply.
     NodeAssert.equal(
-      presentedPreviewKind("site/index.html", { renderHtml: true, revealPath: "site/index.html" }),
+      ViewModel.presentedPreviewKind("site/index.html", {
+        renderHtml: true,
+        revealPath: "site/index.html",
+      }),
       "text",
     );
     NodeAssert.equal(
-      presentedPreviewKind("site/index.html", { renderHtml: true, revealPath: "other.html" }),
+      ViewModel.presentedPreviewKind("site/index.html", {
+        renderHtml: true,
+        revealPath: "other.html",
+      }),
       "html",
     );
   });
 
   NodeTest.it("leaves other files on their own presentation", () => {
     const options = { renderHtml: true, revealPath: null };
-    NodeAssert.equal(presentedPreviewKind("src/app.ts", options), "text");
-    NodeAssert.equal(presentedPreviewKind("README.md", options), "text");
-    NodeAssert.equal(presentedPreviewKind("docs/spec.pdf", options), "binary");
-    NodeAssert.equal(presentedPreviewKind("a.png", options), "image");
+    NodeAssert.equal(ViewModel.presentedPreviewKind("src/app.ts", options), "text");
+    NodeAssert.equal(ViewModel.presentedPreviewKind("README.md", options), "text");
+    NodeAssert.equal(ViewModel.presentedPreviewKind("docs/spec.pdf", options), "binary");
+    NodeAssert.equal(ViewModel.presentedPreviewKind("a.png", options), "image");
   });
 
   NodeTest.it("sandboxes HTML to an opaque origin and leaves the PDF viewer unsandboxed", () => {
     // No allow-same-origin: the page cannot reach the app's session or storage.
     NodeAssert.equal(
-      documentFrameSandbox("html"),
+      ViewModel.documentFrameSandbox("html"),
       "allow-scripts allow-forms allow-popups allow-modals",
     );
-    NodeAssert.equal(documentFrameSandbox("document"), undefined);
+    NodeAssert.equal(ViewModel.documentFrameSandbox("document"), undefined);
   });
 
   NodeTest.it("persists the source preference and defaults to rendered", () => {
-    NodeAssert.equal(restoredRenderHtml(null), true);
-    NodeAssert.equal(restoredRenderHtml({ relativePath: "a.html" }), true);
+    NodeAssert.equal(ViewModel.restoredRenderHtml(null), true);
+    NodeAssert.equal(ViewModel.restoredRenderHtml({ relativePath: "a.html" }), true);
     const source = copyJson(filesViewState("a.html", new Set(), false, false));
     NodeAssert.equal(isFilesViewState(source), true);
-    NodeAssert.equal(restoredRenderHtml(source), false);
-    NodeAssert.equal(restoredRenderHtml(filesViewState("a.html", new Set(), false, true)), true);
+    NodeAssert.equal(ViewModel.restoredRenderHtml(source), false);
+    NodeAssert.equal(
+      ViewModel.restoredRenderHtml(filesViewState("a.html", new Set(), false, true)),
+      true,
+    );
     NodeAssert.equal(isFilesViewState({ relativePath: "a", renderHtml: "no" }), false);
   });
 });

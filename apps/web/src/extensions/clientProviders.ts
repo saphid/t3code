@@ -1241,21 +1241,35 @@ function renderBrowserFile(): boolean {
   }
 }
 
-function preferencesSnapshot(): Json {
-  return { wordWrap: getClientSettings().wordWrap, renderBrowserFile: renderBrowserFile() };
+/**
+ * The preferences this client holds. `renderBrowserFile` (1.1.0) goes only to
+ * a server that asked for it: an older server rejects an unknown key, which
+ * would break word wrap too.
+ */
+function preferencesSnapshot(withRenderBrowserFile: boolean): Json {
+  const { wordWrap } = getClientSettings();
+  return withRenderBrowserFile
+    ? { wordWrap, renderBrowserFile: renderBrowserFile() }
+    : { wordWrap };
+}
+
+/** Whether the server's call asked for the 1.1.0 `renderBrowserFile` key. */
+function asksRenderBrowserFile(input: Json): boolean {
+  const include = readInputObject(input ?? {}).include;
+  return Array.isArray(include) && include.includes("renderBrowserFile");
 }
 
 /**
  * Reads wait for hydration: the pre-hydration snapshot is schema defaults,
  * and a pack must not render (or persist over) a value the user never chose.
  */
-async function hydratedPreferences(): Promise<Json> {
+async function hydratedPreferences(withRenderBrowserFile: boolean): Promise<Json> {
   try {
     await ensureClientSettingsHydrated();
   } catch {
     throw new ClientProviderOpError("client-provider-unavailable", "Client settings did not load");
   }
-  return preferencesSnapshot();
+  return preferencesSnapshot(withRenderBrowserFile);
 }
 
 export function createPreferencesClientProvider(deps: ClientProviderDeps): ClientLocalProvider {
@@ -1268,10 +1282,11 @@ export function createPreferencesClientProvider(deps: ClientProviderDeps): Clien
       switch (call.method) {
         case "getPreferences":
           read(call);
-          return hydratedPreferences();
+          return hydratedPreferences(asksRenderBrowserFile(call.input));
         case "applyPreferences": {
           write(call);
           const input = readInputObject(call.input);
+          const asked = asksRenderBrowserFile(call.input);
           if (readInputString(input, "writer") !== call.caller.installationId)
             throw new ClientProviderOpError(
               "client-target-denied",
@@ -1287,7 +1302,7 @@ export function createPreferencesClientProvider(deps: ClientProviderDeps): Clien
             return {
               applied: false,
               reason: "empty-patch",
-              preferences: await hydratedPreferences(),
+              preferences: await hydratedPreferences(asked),
             } as unknown as Json;
           // Persist-then-publish: the receipt reports only what storage holds,
           // and the watch stream sees each change through its own store.
@@ -1299,14 +1314,14 @@ export function createPreferencesClientProvider(deps: ClientProviderDeps): Clien
               setLocalStorageItem(RENDER_BROWSER_FILE_STORAGE_KEY, renderHtml, Schema.Boolean);
               dispatchLocalStorageChange(RENDER_BROWSER_FILE_STORAGE_KEY);
             }
-            return { applied: true, preferences: preferencesSnapshot() } as unknown as Json;
+            return { applied: true, preferences: preferencesSnapshot(asked) } as unknown as Json;
           } catch {
             // Hydrated like every read: a failure caused by hydration itself
             // must not report schema defaults as the stored value.
             return {
               applied: false,
               reason: "persist-failed",
-              preferences: await hydratedPreferences(),
+              preferences: await hydratedPreferences(asked),
             } as unknown as Json;
           }
         }
@@ -1324,11 +1339,12 @@ export function createPreferencesClientProvider(deps: ClientProviderDeps): Clien
           "client-provider-unavailable",
           `Unknown preferences stream ${call.name}`,
         );
-      const snapshot = await hydratedPreferences();
+      const asked = asksRenderBrowserFile(call.input);
+      const snapshot = await hydratedPreferences(asked);
       call.emit({ type: "snapshot", value: snapshot });
       let last = JSON.stringify(snapshot);
       const push = () => {
-        const next = preferencesSnapshot();
+        const next = preferencesSnapshot(asked);
         const encoded = JSON.stringify(next);
         if (encoded === last) return;
         last = encoded;
@@ -1581,10 +1597,10 @@ export const CLIENT_PROVIDER_DESCRIPTORS = [
   { id: "t3.client/panels", version: "1.0.0" },
   { id: "t3.client/composer", version: "1.2.0" },
   { id: "t3.client/terminal-appearance", version: "1.0.0" },
-  { id: "t3.client/preferences", version: "1.0.0" },
+  { id: "t3.client/preferences", version: "1.1.0" },
   { id: "t3.client/external", version: "1.0.0" },
   { id: "t3.client/browser-history", version: "1.1.0" },
-  { id: "t3.client/navigation", version: "1.0.0" },
+  { id: "t3.client/navigation", version: "1.1.0" },
 ] as const;
 
 export const CLIENT_PROVIDER_CLIENT_TAG = isElectron ? "desktop" : "web";

@@ -8,12 +8,12 @@ import {
   UI_PREFERENCES_WRITE,
   assertProvidedApiOwner,
 } from "../dist/catalogue.js";
-import { validateApiDefinition } from "../dist/capabilities.js";
+import { ApiVersionError, bindApi, validateApiDefinition } from "../dist/capabilities.js";
+import { uiPreferencesApi } from "../dist/catalogue.js";
 import { CLIENT_PREFERENCES_API, CLIENT_PROVIDER_APIS } from "../dist/clientProviders.js";
 
 NodeTest.test("t3.ui/preferences is a canonical catalogue contract", () => {
   NodeAssert.equal(UI_PREFERENCES_API.id, UI_PREFERENCES);
-  NodeAssert.equal(UI_PREFERENCES_API.version, "1.0.0");
   NodeAssert.ok(GENERIC_API_CATALOGUE.includes(UI_PREFERENCES_API));
   NodeAssert.deepEqual(validateApiDefinition(UI_PREFERENCES_API), UI_PREFERENCES_API);
   NodeAssert.doesNotThrow(() => assertProvidedApiOwner("other.plugin", UI_PREFERENCES_API));
@@ -64,4 +64,40 @@ NodeTest.test("renderBrowserFile is an optional boolean so older hosts stay vali
   NodeAssert.deepEqual(publicMethods.setPreferences.inputSchema.properties.renderBrowserFile, {
     type: "boolean",
   });
+});
+
+// Review finding (proof-host-6 P3): renderBrowserFile shipped inside the
+// immutable 1.0.0. It is a 1.1.0 addition over a 1.0.0 baseline, and the
+// client seam moves with it.
+NodeTest.test("renderBrowserFile is a 1.1.0 addition over the 1.0.0 baseline", async () => {
+  NodeAssert.equal(UI_PREFERENCES_API.version, "1.1.0");
+  NodeAssert.equal(uiPreferencesApi.baseline, "1.0.0");
+  NodeAssert.equal(CLIENT_PREFERENCES_API.version, "1.1.0");
+  const requests = [];
+  const client = {
+    invokeApi: (request) => {
+      requests.push(request);
+      return Promise.resolve({ applied: true, preferences: { wordWrap: true } });
+    },
+  };
+  const context = { client: "web", resource: { namespace: "ext", id: "ext.a" } };
+  const signal = new AbortController().signal;
+  const baseline = bindApi(uiPreferencesApi, client, context);
+  await NodeAssert.rejects(
+    baseline.invoke("setPreferences", { renderBrowserFile: false }, signal),
+    (error) => error instanceof ApiVersionError,
+  );
+  await baseline.invoke("setPreferences", { wordWrap: true }, signal);
+  await bindApi(uiPreferencesApi, client, context, "^1.1.0").invoke(
+    "setPreferences",
+    { renderBrowserFile: false },
+    signal,
+  );
+  NodeAssert.deepEqual(
+    requests.map(({ versionRange, input }) => ({ versionRange, input })),
+    [
+      { versionRange: "^1.0.0", input: { wordWrap: true } },
+      { versionRange: "^1.1.0", input: { renderBrowserFile: false } },
+    ],
+  );
 });

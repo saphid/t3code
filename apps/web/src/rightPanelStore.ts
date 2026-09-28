@@ -999,11 +999,15 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               (surface): surface is Extract<RightPanelSurface, { kind: "file" }> =>
                 surface.id === surfaceId && surface.kind === "file",
             );
+            const revealLine = normalizeRevealLine(line);
             const surface = fileSurface(
               relativePath,
-              normalizeRevealLine(line),
+              revealLine,
               (existing?.revealRequestId ?? 0) + 1,
-              randomUUID(),
+              // Reopening an open file without a line keeps its presentation:
+              // the view, its buffer and unresolved save state stay mounted.
+              // A line is a new reveal, so a new presentation request.
+              (revealLine === null ? existing?.presentationRequestId : undefined) ?? randomUUID(),
             );
             return {
               isOpen: true,

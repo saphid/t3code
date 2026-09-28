@@ -37,9 +37,10 @@ This is a read-oriented panel. It consumes `t3.vcs/read` plus the
   is what makes a `truncated:true` body deliverable at all,
 - B-slice chrome: grouped file tree with directory collapse, collapse/
   expand-all, reveal-in-file (select → uncollapse → scroll), copy path,
-  open via `t3.ui/navigation.openFile` — like the native primary action,
-  the file opens in the thread's file panel, presented by the selected
-  `t3.file/presentation` provider,
+  open via `t3.ui/navigation.openFile` (1.1.0, probed; an older host says it
+  cannot open files) — like the native primary action, the file opens in the
+  thread's file panel, presented by the selected `t3.file/presentation`
+  provider,
   base-ref picker over `t3.vcs/refs.list`, ignore-whitespace and
   word-wrap toggles, unified/split layout toggle — the layout persists
   per view through `session.save` (records saved before split shipped

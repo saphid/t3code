@@ -19,7 +19,11 @@ import {
 } from "@t3tools/extension-sdk/catalogue";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
-import { CLIENT_NOTIFICATIONS_V11_RANGE } from "@t3tools/extension-sdk/clientProviders";
+import {
+  CLIENT_NAVIGATION_V11_RANGE,
+  CLIENT_NOTIFICATIONS_V11_RANGE,
+  CLIENT_PREFERENCES_V11_RANGE,
+} from "@t3tools/extension-sdk/clientProviders";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import type { HostApiInvocationMetadata, HostApiProvider } from "@t3tools/extension-runtime";
 import * as Clock from "effect/Clock";
@@ -154,13 +158,16 @@ const openClientStream = (
     readonly context: ViewContext;
     readonly metadata: HostApiInvocationMetadata;
     readonly coalesce?: boolean;
+    /** Pre-resolved target, as in `invokeClient`. */
+    readonly connectionId?: string;
   },
 ): Effect.Effect<
   { readonly events: AsyncIterable<ApiStreamEvent>; readonly close: () => Effect.Effect<void> },
   ClientProvidersError
 > =>
   Effect.gen(function* () {
-    const connectionId = yield* resolveConnectionId(deps, request.metadata);
+    const connectionId =
+      request.connectionId ?? (yield* resolveConnectionId(deps, request.metadata));
     return yield* deps.clientApiProviders.openSubscription({
       connectionId,
       apiId: request.apiId,
@@ -192,17 +199,21 @@ const streamThrough = (
     readonly signal: AbortSignal;
     readonly metadata: HostApiInvocationMetadata;
     readonly coalesce?: boolean;
+    /** Resolves the target (and the input for it) before the stream opens. */
+    readonly prepare?: () => Promise<{ readonly connectionId: string; readonly input: Json }>;
   },
 ): AsyncIterable<ApiStreamEvent> =>
   (async function* () {
+    const prepared = await request.prepare?.();
     const subscription = await Effect.runPromise(
       openClientStream(deps, {
         apiId: request.apiId,
         name: request.clientName,
-        input: request.input,
+        input: prepared?.input ?? request.input,
         context: request.context,
         metadata: request.metadata,
         ...(request.coalesce !== undefined ? { coalesce: request.coalesce } : {}),
+        ...(prepared ? { connectionId: prepared.connectionId } : {}),
       }),
       { signal: request.signal },
     );
@@ -437,12 +448,14 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
   };
 
   /**
-   * `keepOpen` and `flashAction` only render on a 1.1.0 client; an older one
-   * would reject the frame, so name the gap instead.
+   * Whether the connection's `apiId` area carries `range`. Additions to an
+   * area render only on a client that registered a version inside it; an
+   * older one would reject the frame. An unlisted version is taken as current.
    */
-  const requireNotificationsV11 = async (
+  const clientSupports = async (
     connectionId: string,
-    operation: string,
+    apiId: string,
+    range: string,
     signal: AbortSignal,
   ) => {
     const targets = await Effect.runPromise(
@@ -451,12 +464,49 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
     );
     const version = targets
       .find((target) => target.connectionId === connectionId)
-      ?.providers.find((provider) => provider.id === CLIENT_NOTIFICATIONS)?.version;
-    if (version !== undefined && !satisfiesSemverRange(version, CLIENT_NOTIFICATIONS_V11_RANGE))
+      ?.providers.find((provider) => provider.id === apiId)?.version;
+    return { ok: version === undefined || satisfiesSemverRange(version, range), version };
+  };
+
+  /** Names the gap instead of sending a client a frame its area predates. */
+  const requireClient = async (
+    connectionId: string,
+    apiId: string,
+    range: string,
+    operation: string,
+    signal: AbortSignal,
+  ) => {
+    const { ok, version } = await clientSupports(connectionId, apiId, range, signal);
+    if (!ok)
       throw providerError(
         "provider-rejected",
-        `${operation} needs t3.client/notifications ${CLIENT_NOTIFICATIONS_V11_RANGE}; this client runs ${version}.`,
+        `${operation} needs ${apiId} ${range}; this client runs ${version}.`,
       );
+  };
+
+  const requireNotificationsV11 = (connectionId: string, operation: string, signal: AbortSignal) =>
+    requireClient(
+      connectionId,
+      CLIENT_NOTIFICATIONS,
+      CLIENT_NOTIFICATIONS_V11_RANGE,
+      operation,
+      signal,
+    );
+
+  /**
+   * The preferences target plus the 1.1.0 keys it may answer with. A 1.0.0
+   * client is never asked, and a 1.0.0 server never asks, so neither side
+   * sees a field its closed shapes reject.
+   */
+  const preferencesTarget = async (metadata: HostApiInvocationMetadata, signal: AbortSignal) => {
+    const connectionId = await Effect.runPromise(resolveConnectionId(deps, metadata), { signal });
+    const { ok } = await clientSupports(
+      connectionId,
+      CLIENT_PREFERENCES,
+      CLIENT_PREFERENCES_V11_RANGE,
+      signal,
+    );
+    return { connectionId, include: ok ? { include: ["renderBrowserFile"] } : {} };
   };
 
   const themeProvider: HostApiProvider = {
@@ -925,23 +975,33 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
             metadata,
           );
         case "getPreferences":
-          return forward(deps, CLIENT_PREFERENCES, "getPreferences")(
-            method,
-            input,
-            context,
-            signal,
-            metadata,
-          );
-        case "setPreferences": {
-          const writer = callerOf(metadata).installationId;
-          return forward(deps, CLIENT_PREFERENCES, "applyPreferences")(
-            method,
-            { writer, patch: input } as Json,
-            context,
-            signal,
-            metadata,
-          );
-        }
+        case "setPreferences":
+          return (async () => {
+            const { connectionId, include } = await preferencesTarget(metadata, signal);
+            const write = method === "setPreferences";
+            if (write && (input as { renderBrowserFile?: unknown }).renderBrowserFile !== undefined)
+              await requireClient(
+                connectionId,
+                CLIENT_PREFERENCES,
+                CLIENT_PREFERENCES_V11_RANGE,
+                "renderBrowserFile",
+                signal,
+              );
+            return Effect.runPromise(
+              invokeClient(deps, {
+                apiId: CLIENT_PREFERENCES,
+                method: write ? "applyPreferences" : "getPreferences",
+                input: (write
+                  ? { writer: callerOf(metadata).installationId, patch: input, ...include }
+                  : include) as Json,
+                context,
+                metadata,
+                signal,
+                connectionId,
+              }),
+              { signal },
+            );
+          })();
         default:
           return Promise.reject(
             providerError("client-provider-unavailable", `Unknown preferences op: ${method}`),
@@ -958,6 +1018,10 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
           signal,
           metadata,
           coalesce: true,
+          prepare: async () => {
+            const { connectionId, include } = await preferencesTarget(metadata, signal);
+            return { connectionId, input: include as Json };
+          },
         });
       throw providerError("client-provider-unavailable", `Unknown preferences stream: ${name}`);
     },
@@ -1066,12 +1130,27 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
             return { status: "refused", reason: "unknown-thread" } satisfies Json;
           if (project !== context.resource.projectId)
             return { status: "refused", reason: "out-of-scope" } satisfies Json;
-          return forward(deps, CLIENT_NAVIGATION, "openFile")(
-            method,
-            { relativePath, ...(line === undefined ? {} : { line }) },
-            context,
+          const connectionId = await Effect.runPromise(resolveConnectionId(deps, metadata), {
             signal,
-            metadata,
+          });
+          await requireClient(
+            connectionId,
+            CLIENT_NAVIGATION,
+            CLIENT_NAVIGATION_V11_RANGE,
+            "openFile",
+            signal,
+          );
+          return Effect.runPromise(
+            invokeClient(deps, {
+              apiId: CLIENT_NAVIGATION,
+              method: "openFile",
+              input: { relativePath, ...(line === undefined ? {} : { line }) },
+              context,
+              metadata,
+              signal,
+              connectionId,
+            }),
+            { signal },
           );
         })();
       if (method !== "openThread")

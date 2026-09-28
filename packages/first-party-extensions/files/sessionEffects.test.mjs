@@ -397,6 +397,166 @@ NodeTest.describe("useFileEditor across the HTML source/rendered toggle", () => 
       if (root) await act(async () => root.unmount());
     }
   });
+
+  // Review repro (proof-host-6 P2): the rendered page cancels a source read
+  // still in flight; coming back to source must read again, not sit unloaded.
+  NodeTest.it("restarts an open read the rendered page cancelled", async () => {
+    let reads = 0;
+    let resolveRead;
+    const host = {
+      invokeApi(request) {
+        if (request.method !== "readSnapshot")
+          return Promise.reject(new Error(`unexpected ${request.method}`));
+        reads++;
+        return new Promise((resolve) => {
+          resolveRead = resolve;
+        });
+      },
+    };
+    let editor;
+    function Probe(props) {
+      editor = useFileEditor(host, session, "index.html", props.kind, 0, true);
+      return null;
+    }
+    let root;
+    try {
+      await act(async () => {
+        root = create(e(Probe, { kind: "text" }));
+      });
+      await act(async () => root.update(e(Probe, { kind: "html" })));
+      // The cancelled read lands late; its answer must not count.
+      await act(async () =>
+        resolveRead({ kind: "editable", contents: "<p>stale</p>", revision: "r1" }),
+      );
+      await act(async () => root.update(e(Probe, { kind: "text" })));
+      NodeAssert.equal(reads, 2, "returning to source must restart the cancelled read");
+      await act(async () =>
+        resolveRead({ kind: "editable", contents: "<p>disk copy</p>", revision: "r1" }),
+      );
+      NodeAssert.equal(editor.surface?.contents, "<p>disk copy</p>");
+    } finally {
+      if (root) await act(async () => root.unmount());
+    }
+  });
+});
+
+// Review repro (proof-host-6 P1): a reveal or reopen that remounts the file's
+// presentation must not trade a conflicted buffer for the disk copy. Dispose
+// never saves a conflict, so the next view of the same file adopts it.
+NodeTest.describe("useFileEditor across a remounted view", () => {
+  const USER_EDIT = "user unsaved edit";
+
+  NodeTest.it("hands a conflicted buffer to the next view of the same file", async () => {
+    const calls = { reads: 0, saves: [] };
+    const host = {
+      invokeApi(request) {
+        if (request.method === "readSnapshot") {
+          calls.reads++;
+          return Promise.resolve({
+            kind: "editable",
+            contents: "disk copy",
+            revision: `disk-rev-${calls.reads}`,
+          });
+        }
+        if (request.method === "save") {
+          calls.saves.push(request.input);
+          return Promise.resolve(
+            calls.saves.length === 1 ? { kind: "conflict" } : { kind: "saved", revision: "mine" },
+          );
+        }
+        return Promise.reject(new Error(`unexpected ${request.method}`));
+      },
+    };
+    const viewSession = () => ({ ...session, signal: new AbortController().signal });
+    let editor;
+    function Probe(props) {
+      editor = useFileEditor(host, props.session, props.path, "text", 0, true);
+      return null;
+    }
+    let first;
+    let second;
+    try {
+      const firstSession = viewSession();
+      await act(async () => {
+        first = create(e(Probe, { session: firstSession, path: "remount.txt" }));
+      });
+      await act(async () => {
+        editor.change(USER_EDIT);
+        editor.retry();
+      });
+      NodeAssert.equal(editor.surface.saveState.kind, "conflict");
+      await act(async () => first.unmount());
+      first = undefined;
+
+      await act(async () => {
+        second = create(e(Probe, { session: viewSession(), path: "remount.txt" }));
+      });
+      NodeAssert.deepEqual(
+        { contents: editor.surface?.contents, state: editor.surface?.saveState.kind },
+        { contents: USER_EDIT, state: "conflict" },
+      );
+      // Keep mine still writes the adopted buffer, through the new view.
+      await act(async () => editor.keepMine());
+      await act(async () => {});
+      NodeAssert.equal(calls.saves.at(-1)?.contents, USER_EDIT);
+      NodeAssert.equal(editor.surface.saveState.kind, "saved");
+    } finally {
+      if (first) await act(async () => first.unmount());
+      if (second) await act(async () => second.unmount());
+    }
+  });
+
+  NodeTest.it("does not hand a conflict to another file or another thread", async () => {
+    const host = {
+      invokeApi(request) {
+        if (request.method === "readSnapshot")
+          return Promise.resolve({ kind: "editable", contents: "disk copy", revision: "r" });
+        if (request.method === "save") return Promise.resolve({ kind: "conflict" });
+        return Promise.reject(new Error(`unexpected ${request.method}`));
+      },
+    };
+    const otherThread = {
+      ...session,
+      signal: new AbortController().signal,
+      context: {
+        ...session.context,
+        resource: { ...session.context.resource, threadId: "other-thread" },
+      },
+    };
+    let editor;
+    function Probe(props) {
+      editor = useFileEditor(host, props.session, props.path, "text", 0, true);
+      return null;
+    }
+    let root;
+    try {
+      await act(async () => {
+        root = create(e(Probe, { session, path: "scoped.txt" }));
+      });
+      await act(async () => {
+        editor.change(USER_EDIT);
+        editor.retry();
+      });
+      NodeAssert.equal(editor.surface.saveState.kind, "conflict");
+      await act(async () => root.unmount());
+      for (const props of [
+        { session: otherThread, path: "scoped.txt" },
+        { session, path: "other.txt" },
+      ]) {
+        await act(async () => {
+          root = create(e(Probe, props));
+        });
+        NodeAssert.deepEqual(
+          { contents: editor.surface?.contents, state: editor.surface?.saveState.kind },
+          { contents: "disk copy", state: "clean" },
+        );
+        await act(async () => root.unmount());
+      }
+      root = undefined;
+    } finally {
+      if (root) await act(async () => root.unmount());
+    }
+  });
 });
 
 NodeTest.describe("useMutationRefresh", () => {

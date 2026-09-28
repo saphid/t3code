@@ -148,6 +148,46 @@ async function openRead(
   return describeResourceRead(read);
 }
 
+/** One path's live editor session, rebound to whichever view shows it. */
+interface ActiveEditor {
+  readonly path: string;
+  coordinator: FileEditCoordinator;
+  baseBytes: number;
+  view: {
+    readonly host: ClientHost;
+    readonly session: ViewSession;
+    readonly setSurface: (update: (previous: EditorSurface | null) => EditorSurface | null) => void;
+  };
+}
+
+/**
+ * Conflicted sessions whose view went away. Disposal never saves a conflict,
+ * so a reveal or reopen that remounted the file's presentation would trade
+ * the user's buffer for the disk copy; the next view of the same file in the
+ * same thread adopts it instead. Bounded: the oldest is dropped past the cap.
+ */
+const orphanedConflicts = new Map<string, ActiveEditor>();
+const ORPHANED_CONFLICTS_CAP = 16;
+
+const orphanKey = (session: ViewSession, path: string) => {
+  const { environmentId, projectId, threadId } = session.context.resource;
+  return JSON.stringify([environmentId, projectId ?? null, threadId ?? null, path]);
+};
+
+/** A view letting go of its session: flush it, or keep a conflict for the next view. */
+function releaseEditor(active: ActiveEditor) {
+  if (active.coordinator.state().kind !== "conflict") {
+    active.coordinator.dispose();
+    return;
+  }
+  orphanedConflicts.set(orphanKey(active.view.session, active.path), active);
+  for (const [key, orphan] of orphanedConflicts) {
+    if (orphanedConflicts.size <= ORPHANED_CONFLICTS_CAP) break;
+    orphanedConflicts.delete(key);
+    orphan.coordinator.dispose();
+  }
+}
+
 export function useFileEditor(
   host: ClientHost,
   session: ViewSession,
@@ -163,11 +203,7 @@ export function useFileEditor(
    * switch (dispose flushes pending edits into an in-flight persist) must
    * never corrupt the next file's baseline.
    */
-  const activeRef = useRef<{
-    path: string;
-    coordinator: FileEditCoordinator;
-    baseBytes: number;
-  } | null>(null);
+  const activeRef = useRef<ActiveEditor | null>(null);
   const lastRefreshRef = useRef(-1);
   const editing = selected !== null && selectedKind === "text" && visible;
   // An HTML file's rendered page is the same file: its editor session (buffer,
@@ -179,7 +215,7 @@ export function useFileEditor(
     if (!editing || selected === null) {
       if (retained && active?.path === selected) return;
       if (active) {
-        active.coordinator.dispose();
+        releaseEditor(active);
         activeRef.current = null;
       }
       // A stale surface is filtered at render (`surface.path === selected`), so
@@ -197,19 +233,23 @@ export function useFileEditor(
     const signal = AbortSignal.any([controller.signal, session.signal]);
     let current = activeRef.current;
     const pathChanged = !current || current.path !== path;
-    // Re-read the snapshot on open and on every tree refresh; identical
-    // revisions skip the network round-trip.
+    // Re-read the snapshot on open and on every tree refresh; a revision
+    // already read skips the round-trip. Only a read that finished counts —
+    // one cancelled mid-flight (the rendered HTML page) must run again.
     if (!pathChanged && refreshRevision === lastRefreshRef.current) {
       return () => controller.abort();
     }
-    lastRefreshRef.current = refreshRevision;
-    if (pathChanged) {
+    const view = { host, session, setSurface };
+    const orphan = pathChanged ? orphanedConflicts.get(orphanKey(session, path)) : undefined;
+    if (orphan) {
       current?.coordinator.dispose();
-      const record = { path, baseBytes: 0 } as {
-        path: string;
-        coordinator: FileEditCoordinator;
-        baseBytes: number;
-      };
+      orphanedConflicts.delete(orphanKey(session, path));
+      orphan.view = view;
+      current = orphan;
+      activeRef.current = current;
+    } else if (pathChanged) {
+      current?.coordinator.dispose();
+      const record = { path, baseBytes: 0, view } as ActiveEditor;
       record.coordinator = new FileEditCoordinator({
         debounceMs: FILE_SAVE_DEBOUNCE_MS,
         persist: async (contents, expectedRevision) => {
@@ -220,6 +260,7 @@ export function useFileEditor(
             // take the resource path. The revision format is identical across
             // both contracts either way.
             const nextBytes = textEncoder.encode(contents).byteLength;
+            const { host, session } = record.view;
             if (
               nextBytes <= EDITABLE_TEXT_MAX_BYTES &&
               record.baseBytes <= EDITABLE_TEXT_MAX_BYTES
@@ -249,7 +290,7 @@ export function useFileEditor(
           }
         },
         onStateChange: (saveState) =>
-          setSurface((previous) =>
+          record.view.setSurface((previous) =>
             previous && previous.path === path ? { ...previous, saveState } : previous,
           ),
       });
@@ -262,6 +303,7 @@ export function useFileEditor(
       try {
         const open = await openRead(host, session, path, signal);
         if (open === null || signal.aborted) return;
+        lastRefreshRef.current = refreshRevision;
         if (!open.editable) {
           setSurface({ path, open, contents: "", saveState: coordinator.state() });
           return;
@@ -288,6 +330,7 @@ export function useFileEditor(
           });
         }
       } catch (error) {
+        if (!signal.aborted) lastRefreshRef.current = refreshRevision;
         if (!signal.aborted)
           setSurface((previous) => ({
             path,
@@ -305,11 +348,13 @@ export function useFileEditor(
   }, [host, session, selected, editing, retained, refreshRevision]);
 
   // Unmount flush: pending edits persist, exactly like the native panel's
-  // coordinator disposal.
+  // coordinator disposal. A conflict, which disposal would drop, waits for
+  // the file's next view instead.
   useEffect(
     () => () => {
-      activeRef.current?.coordinator.dispose();
+      const active = activeRef.current;
       activeRef.current = null;
+      if (active) releaseEditor(active);
     },
     [],
   );

@@ -3,7 +3,12 @@ import { EnvironmentId, ProjectId, ThreadId, type ClientProviderCaller } from "@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
-import { createNavigationClientProvider, type ExternalOpener } from "./clientProviders";
+import { CLIENT_PROVIDER_APIS } from "@t3tools/extension-sdk/clientProviders";
+import {
+  CLIENT_PROVIDER_DESCRIPTORS,
+  createNavigationClientProvider,
+  type ExternalOpener,
+} from "./clientProviders";
 import { ClientProviderOpError, type ClientProviderInvokeCall } from "./clientProviderTypes";
 import type { InstalledPackage } from "./installedController";
 
@@ -337,4 +342,14 @@ describe("navigation provider", () => {
         expect(panelOf(threadId).surfaces.some((surface) => surface.kind === "file")).toBe(false);
     });
   });
+});
+
+// Review finding (proof-host-6 P3): the server sends openFile and asks for
+// renderBrowserFile only when this client registered the 1.1.0 areas.
+it("registers the 1.1.0 navigation and preferences areas", () => {
+  for (const id of ["t3.client/navigation", "t3.client/preferences"])
+    expect(CLIENT_PROVIDER_DESCRIPTORS.find((descriptor) => descriptor.id === id)?.version).toBe(
+      CLIENT_PROVIDER_APIS.get(id)?.version,
+    );
+  expect(CLIENT_PROVIDER_APIS.get("t3.client/navigation")?.version).toBe("1.1.0");
 });

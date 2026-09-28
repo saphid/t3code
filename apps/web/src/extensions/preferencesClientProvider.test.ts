@@ -93,7 +93,6 @@ describe("preferences client provider", () => {
     const provider = createPreferencesClientProvider(makeDeps([READ]));
     await expect(provider.invoke(invokeCall("getPreferences", {}))).resolves.toEqual({
       wordWrap: false,
-      renderBrowserFile: true,
     });
   });
 
@@ -127,7 +126,7 @@ describe("preferences client provider", () => {
     );
     expect(receipt).toEqual({
       applied: true,
-      preferences: { wordWrap: true, renderBrowserFile: true },
+      preferences: { wordWrap: true },
     });
     expect(persistenceMocks.setClientSettings).toHaveBeenCalledWith({
       ...DEFAULT_CLIENT_SETTINGS,
@@ -145,7 +144,7 @@ describe("preferences client provider", () => {
     expect(receipt).toEqual({
       applied: false,
       reason: "persist-failed",
-      preferences: { wordWrap: false, renderBrowserFile: true },
+      preferences: { wordWrap: false },
     });
     expect(getClientSettings().wordWrap).toBe(false);
   });
@@ -168,7 +167,7 @@ describe("preferences client provider", () => {
     ).resolves.toEqual({
       applied: false,
       reason: "empty-patch",
-      preferences: { wordWrap: false, renderBrowserFile: true },
+      preferences: { wordWrap: false },
     });
     expect(persistenceMocks.setClientSettings).not.toHaveBeenCalled();
   });
@@ -183,16 +182,14 @@ describe("preferences client provider", () => {
       caller,
       emit: (event) => events.push(event),
     });
-    expect(events).toEqual([
-      { type: "snapshot", value: { wordWrap: false, renderBrowserFile: true } },
-    ]);
+    expect(events).toEqual([{ type: "snapshot", value: { wordWrap: false } }]);
     // An unrelated setting is not a preference change.
     await persistClientSettingsPatch({ fontSizeTerminal: 20 }, async () => {});
     expect(events).toHaveLength(1);
     await persistClientSettingsPatch({ wordWrap: true }, async () => {});
     expect(events).toEqual([
-      { type: "snapshot", value: { wordWrap: false, renderBrowserFile: true } },
-      { type: "data", value: { wordWrap: true, renderBrowserFile: true } },
+      { type: "snapshot", value: { wordWrap: false } },
+      { type: "data", value: { wordWrap: true } },
     ]);
     close();
     await persistClientSettingsPatch({ wordWrap: false }, async () => {});
@@ -200,13 +197,46 @@ describe("preferences client provider", () => {
   });
 
   describe("HTML render preference", () => {
+    /** A 1.1.0 server asks for the key; an older one never does. */
+    const INCLUDE = { include: ["renderBrowserFile"] };
+
+    // Review finding (proof-host-6 P3): an older server validates the client's
+    // answers against its closed 1.0.0 shapes, so the key only goes to a
+    // server that asked for it — word wrap keeps working across the skew.
+    it("answers a server that did not ask with the 1.0.0 shape", async () => {
+      setLocalStorageItem(RENDER_BROWSER_FILE_KEY, false, Schema.Boolean);
+      const provider = createPreferencesClientProvider(makeDeps([READ, WRITE]));
+      await expect(provider.invoke(invokeCall("getPreferences", {}))).resolves.toEqual({
+        wordWrap: false,
+      });
+      await expect(
+        provider.invoke(
+          invokeCall("applyPreferences", { writer: INSTALL, patch: { wordWrap: true } }),
+        ),
+      ).resolves.toEqual({ applied: true, preferences: { wordWrap: true } });
+      const events: ClientProviderEmitEvent[] = [];
+      const close = await provider.openStream!({
+        name: "watchPreferences",
+        input: null,
+        context,
+        caller,
+        emit: (event) => events.push(event),
+      });
+      await persistClientSettingsPatch({ wordWrap: false }, async () => {});
+      expect(events).toEqual([
+        { type: "snapshot", value: { wordWrap: true } },
+        { type: "data", value: { wordWrap: false } },
+      ]);
+      close();
+    });
+
     it("reads the native file preview's stored choice, rendered when never chosen", async () => {
       const provider = createPreferencesClientProvider(makeDeps([READ]));
-      await expect(provider.invoke(invokeCall("getPreferences", {}))).resolves.toMatchObject({
+      await expect(provider.invoke(invokeCall("getPreferences", INCLUDE))).resolves.toMatchObject({
         renderBrowserFile: true,
       });
       setLocalStorageItem(RENDER_BROWSER_FILE_KEY, false, Schema.Boolean);
-      await expect(provider.invoke(invokeCall("getPreferences", {}))).resolves.toEqual({
+      await expect(provider.invoke(invokeCall("getPreferences", INCLUDE))).resolves.toEqual({
         wordWrap: false,
         renderBrowserFile: false,
       });
@@ -216,7 +246,11 @@ describe("preferences client provider", () => {
       const writer = createPreferencesClientProvider(makeDeps([READ, WRITE]));
       await expect(
         writer.invoke(
-          invokeCall("applyPreferences", { writer: INSTALL, patch: { renderBrowserFile: false } }),
+          invokeCall("applyPreferences", {
+            writer: INSTALL,
+            patch: { renderBrowserFile: false },
+            ...INCLUDE,
+          }),
         ),
       ).resolves.toEqual({
         applied: true,
@@ -227,7 +261,7 @@ describe("preferences client provider", () => {
       expect(persistenceMocks.setClientSettings).not.toHaveBeenCalled();
       // A new provider stands in for a reloaded client or another view.
       const fresh = createPreferencesClientProvider(makeDeps([READ]));
-      await expect(fresh.invoke(invokeCall("getPreferences", {}))).resolves.toMatchObject({
+      await expect(fresh.invoke(invokeCall("getPreferences", INCLUDE))).resolves.toMatchObject({
         renderBrowserFile: false,
       });
     });
@@ -257,7 +291,7 @@ describe("preferences client provider", () => {
         const events: ClientProviderEmitEvent[] = [];
         const close = await provider.openStream!({
           name: "watchPreferences",
-          input: null,
+          input: INCLUDE,
           context,
           caller,
           emit: (event) => events.push(event),
