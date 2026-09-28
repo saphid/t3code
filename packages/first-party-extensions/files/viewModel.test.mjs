@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeTest from "node:test";
 import { copyJson } from "@t3tools/extension-sdk/contracts";
 import server from "./server.ts";
+import * as ViewModel from "./viewModel.ts";
 import {
   applyResourceReadEvent,
   collectResourceRead,
@@ -12,7 +13,6 @@ import {
   describeContentSearch,
   describeFileOpen,
   describeMediaLease,
-  describePresentation,
   describeResourcePreview,
   describeResourceRead,
   describeRead,
@@ -218,6 +218,77 @@ NodeTest.describe("mediaPreviewNotice", () => {
   });
 });
 
+// The HTML preview helpers are reached through the module namespace and
+// checked first, so a build without them fails on an assertion, not at import.
+NodeTest.describe("HTML preview", () => {
+  NodeTest.beforeEach(() => {
+    for (const name of ["presentedPreviewKind", "documentFrameSandbox", "restoredRenderHtml"])
+      NodeAssert.equal(typeof ViewModel[name], "function", `viewModel exports ${name}`);
+  });
+
+  NodeTest.it("renders HTML by default, like the native Files panel", () => {
+    for (const path of ["site/index.html", "page.HTM"]) {
+      NodeAssert.equal(
+        ViewModel.presentedPreviewKind(path, { renderHtml: true, revealPath: null }),
+        "html",
+      );
+      NodeAssert.deepEqual(selectMediaLease({ path, hasThread: true }), { status: "minting" });
+    }
+  });
+
+  NodeTest.it("switches to source when toggled off or when a line reveal targets the file", () => {
+    NodeAssert.equal(
+      ViewModel.presentedPreviewKind("site/index.html", { renderHtml: false, revealPath: null }),
+      "text",
+    );
+    // A line only exists in the source; a reveal for another path does not apply.
+    NodeAssert.equal(
+      ViewModel.presentedPreviewKind("site/index.html", {
+        renderHtml: true,
+        revealPath: "site/index.html",
+      }),
+      "text",
+    );
+    NodeAssert.equal(
+      ViewModel.presentedPreviewKind("site/index.html", {
+        renderHtml: true,
+        revealPath: "other.html",
+      }),
+      "html",
+    );
+  });
+
+  NodeTest.it("leaves other files on their own presentation", () => {
+    const options = { renderHtml: true, revealPath: null };
+    NodeAssert.equal(ViewModel.presentedPreviewKind("src/app.ts", options), "text");
+    NodeAssert.equal(ViewModel.presentedPreviewKind("README.md", options), "text");
+    NodeAssert.equal(ViewModel.presentedPreviewKind("docs/spec.pdf", options), "binary");
+    NodeAssert.equal(ViewModel.presentedPreviewKind("a.png", options), "image");
+  });
+
+  NodeTest.it("sandboxes HTML to an opaque origin and leaves the PDF viewer unsandboxed", () => {
+    // No allow-same-origin: the page cannot reach the app's session or storage.
+    NodeAssert.equal(
+      ViewModel.documentFrameSandbox("html"),
+      "allow-scripts allow-forms allow-popups allow-modals",
+    );
+    NodeAssert.equal(ViewModel.documentFrameSandbox("document"), undefined);
+  });
+
+  NodeTest.it("persists the source preference and defaults to rendered", () => {
+    NodeAssert.equal(ViewModel.restoredRenderHtml(null), true);
+    NodeAssert.equal(ViewModel.restoredRenderHtml({ relativePath: "a.html" }), true);
+    const source = copyJson(filesViewState("a.html", new Set(), false, false));
+    NodeAssert.equal(isFilesViewState(source), true);
+    NodeAssert.equal(ViewModel.restoredRenderHtml(source), false);
+    NodeAssert.equal(
+      ViewModel.restoredRenderHtml(filesViewState("a.html", new Set(), false, true)),
+      true,
+    );
+    NodeAssert.equal(isFilesViewState({ relativePath: "a", renderHtml: "no" }), false);
+  });
+});
+
 NodeTest.describe("media lease preview", () => {
   const minted = { url: "/api/assets/token/name.png", expiresAt: 4_000_000 };
 
@@ -226,9 +297,9 @@ NodeTest.describe("media lease preview", () => {
       NodeAssert.equal(leasePreviewMode(path), "image");
     NodeAssert.equal(leasePreviewMode("docs/spec.pdf"), "document");
     NodeAssert.equal(leasePreviewMode("docs/SPEC.PDF"), "document");
-    // Mintable-by-the-host but intentionally not lease-previewed here:
-    // browser documents stay on the text path (t3.browser's lane).
-    NodeAssert.equal(leasePreviewMode("page.html"), null);
+    // HTML renders from the same lease as native, in its own sandboxed mode.
+    NodeAssert.equal(leasePreviewMode("page.html"), "html");
+    NodeAssert.equal(leasePreviewMode("site/INDEX.HTM"), "html");
     for (const path of [
       "clip.mp4",
       "song.mp3",
@@ -618,27 +689,16 @@ NodeTest.describe("open in presentation", () => {
     NodeAssert.equal(restoredRenderMarkdown(restored), true);
   });
 
-  NodeTest.it("describePresentation reports the resolved descriptor", () => {
-    NodeAssert.equal(
-      describePresentation({ surfaceId: "t3.files/view", placement: "side-panel" }),
-      "opens in t3.files/view · side-panel",
-    );
-  });
-
-  NodeTest.it("fileOpenFailed names the t3.file/open grant denial", () => {
-    const state = fileOpenFailed(new Error("API capability denied: t3.file/open"));
+  NodeTest.it("fileOpenFailed names the t3.ui/navigation.open grant denial", () => {
+    const state = fileOpenFailed(new Error("API capability denied: t3.ui/navigation.open"));
     NodeAssert.equal(state.status, "denied");
-    NodeAssert.match(state.message, /t3\.file\/open grant/);
+    NodeAssert.match(state.message, /t3\.ui\/navigation\.open grant/);
   });
 
-  NodeTest.it("fileOpenFailed maps resolution failures to unavailable", () => {
-    NodeAssert.equal(
-      fileOpenFailed(new Error("provider-selection-required")).status,
-      "unavailable",
-    );
+  NodeTest.it("fileOpenFailed maps a host without the open API to unavailable", () => {
     NodeAssert.match(
-      fileOpenFailed(new Error("provider-selection-required")).message,
-      /pick one for t3\.file\/presentation/,
+      fileOpenFailed(new Error("Unknown navigation op openFile")).message,
+      /cannot open files for extensions/,
     );
     NodeAssert.equal(fileOpenFailed(new Error("missing-api")).status, "unavailable");
     NodeAssert.equal(
@@ -656,7 +716,7 @@ NodeTest.describe("open in presentation", () => {
 
   NodeTest.it("describeFileOpen labels every state", () => {
     NodeAssert.equal(describeFileOpen({ status: "idle" }), "");
-    NodeAssert.equal(describeFileOpen({ status: "resolving" }), "Resolving presentation…");
+    NodeAssert.equal(describeFileOpen({ status: "resolving" }), "Opening…");
     NodeAssert.equal(
       describeFileOpen({ status: "resolved", message: "opens in x · y" }),
       "opens in x · y",

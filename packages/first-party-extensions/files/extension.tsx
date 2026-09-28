@@ -1,10 +1,13 @@
 import {
   composerContextApi,
+  describeOpenFileRefusal,
   filePresentationApi,
   messagesEnrichmentApi,
+  openWorkspaceFile,
   resourcesLeaseApi,
   textEditsApi,
   uiKeybindingsApi,
+  uiNavigationApi,
   uiNotificationsApi,
   uiPreferencesApi,
   uiThemeApi,
@@ -60,10 +63,10 @@ import {
   describeContentSearch,
   describeFileOpen,
   describeMediaLease,
-  describePresentation,
   describeResourcePreview,
   describeSaveState,
   describeSearch,
+  documentFrameSandbox,
   editorSavePending,
   fileOpenFailed,
   FILES_VIEW_COMMANDS,
@@ -81,16 +84,19 @@ import {
   selectMediaLease,
   parentPath,
   presentationPath,
-  previewKind,
+  presentedPreviewKind,
   filesViewState,
   isFilesViewState,
   restoredExpanded,
+  restoredRenderHtml,
+  restoredRevealLine,
   restoredRenderMarkdown,
   restoredSelection,
   watchThemeVars,
   toggleExpanded,
   visibleRows,
   watchPreferences,
+  writeRenderHtml,
   writeWordWrap,
   type ContentSearchResults,
   type FileOpenState,
@@ -102,7 +108,6 @@ import {
 } from "./viewModel.js";
 
 const manifestId = "t3.files";
-const PACKAGE_ASSET_PATH = "assets/asset-fixture.png";
 const SEARCH_LIMIT = 100;
 const SEARCH_DEBOUNCE_MS = 150;
 
@@ -187,44 +192,6 @@ function useWorkspaceTree(host: ClientHost, session: ViewSession) {
 }
 
 /**
- * Verified package-asset read: `readAsset` re-resolves and
- * re-verifies bytes on every call, so a stale object URL is renewed by
- * re-running the effect rather than trusting a cached URL.
- */
-function usePackageAsset(host: ClientHost, session: ViewSession, visible: boolean) {
-  const [asset, setAsset] = useState<{ url: string; status: string } | null>(null);
-  useEffect(() => {
-    if (!visible) return;
-    const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, session.signal]);
-    let url: string | null = null;
-    void (async () => {
-      try {
-        if (!host.readAsset) throw new Error("This host cannot load package assets.");
-        const result = await host.readAsset(PACKAGE_ASSET_PATH, signal);
-        if (signal.aborted) return;
-        url = URL.createObjectURL(new Blob([result.bytes as BlobPart], { type: "image/png" }));
-        setAsset({
-          url,
-          status: `Package asset verified — ${result.bytes.byteLength.toLocaleString("en-US")} bytes, sha256 ${result.sha256.slice(0, 12)}…`,
-        });
-      } catch (error) {
-        if (!signal.aborted)
-          setAsset({
-            url: "",
-            status: error instanceof Error ? error.message : "Package asset unavailable",
-          });
-      }
-    })();
-    return () => {
-      controller.abort();
-      if (url !== null) URL.revokeObjectURL(url);
-    };
-  }, [host, session, visible]);
-  return asset;
-}
-
-/**
  * Workspace media preview via `t3.resources/lease`. Selecting a
  * previewable media file mints a signed `/api/assets/*` URL rendered
  * document-relative; the lease renews `MEDIA_LEASE_RENEWAL_SKEW_MS` before
@@ -296,7 +263,7 @@ function useMediaLease(
           signal,
         );
         if (signal.aborted) return;
-        if (leasePreviewMode(path) === "document") {
+        if (leasePreviewMode(path) !== "image") {
           // An iframe does not reliably fire onerror for failed documents —
           // preflight the lease so a 404 lands in the named state. The frame
           // gets the minted URL itself: a blob: URL would be refused by
@@ -403,25 +370,66 @@ function useThemeVars(
 }
 
 /**
- * `t3.ui/preferences` consumer for the client's word-wrap setting — the same
- * value (and the same toggle) the native file preview uses. `value` is null
- * while the preference is unavailable (ungranted, provider-less host, lost
- * stream): the panel then keeps its pre-contract wrapping and hides the
- * toggle. Toggling writes through `setPreferences`; the displayed value
- * changes only when the stream carries the persisted one, never optimistically.
+ * `t3.ui/preferences` consumer for the client settings the native file
+ * preview honors. `wordWrap.value` is null while the preference is
+ * unavailable (ungranted, provider-less host, lost stream): the panel then
+ * keeps its pre-contract wrapping and hides the toggle. Toggling writes
+ * through `setPreferences`; the displayed value changes only when the stream
+ * carries the persisted one, never optimistically. `renderHtml` is the last
+ * HTML rendered/source choice the host reported, undefined until it reports
+ * one (older hosts never do).
  */
-function useWordWrap(host: ClientHost, session: ViewSession, visible: boolean) {
+function useFilePreferences(host: ClientHost, session: ViewSession, visible: boolean) {
   const [value, setValue] = useState<boolean | null>(null);
+  const [renderHtml, setRenderHtml] = useState<boolean | undefined>(undefined);
+  // False until the feed first answers — with a value, or with "none" from a
+  // host without the preference. Until then the saved HTML choice is unknown.
+  const [answered, setAnswered] = useState(false);
   const [writeError, setWriteError] = useState<string | null>(null);
+  // Counts the user's own HTML choices. A first answer begun before the
+  // latest one is older than it and leaves the HTML choice alone.
+  const htmlChoices = useRef(0);
   useEffect(() => {
     if (!visible) return;
     const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    const begunAt = htmlChoices.current;
+    const current = () => htmlChoices.current === begunAt;
+    let subscribed = false;
+    let streamAnswered = false;
     void watchPreferences({
       client: host,
       context: session.context,
-      signal: AbortSignal.any([controller.signal, session.signal]),
-      apply: (preferences) => setValue(preferences?.wordWrap ?? null),
+      signal,
+      apply: (preferences) => {
+        setValue(preferences?.wordWrap ?? null);
+        if (preferences?.renderBrowserFile !== undefined && (streamAnswered || current()))
+          setRenderHtml(preferences.renderBrowserFile);
+        // The clear watchPreferences makes synchronously as it subscribes is
+        // not an answer; every later call is.
+        if (subscribed) {
+          streamAnswered = true;
+          setAnswered(true);
+        }
+      },
     });
+    subscribed = true;
+    // The stream has no first-frame deadline; this read has the request's. A
+    // silent stream still settles the HTML choice: the saved one, or, when
+    // the read fails too, the view's own.
+    bindApi(uiPreferencesApi, host, session.context)
+      .invoke("getPreferences", {}, signal)
+      .then(
+        (preferences) => {
+          if (signal.aborted || streamAnswered) return;
+          if (preferences.renderBrowserFile !== undefined && current())
+            setRenderHtml(preferences.renderBrowserFile);
+          setAnswered(true);
+        },
+        () => {
+          if (!signal.aborted && !streamAnswered) setAnswered(true);
+        },
+      );
     return () => controller.abort();
   }, [host, session, visible]);
   const toggle = () => {
@@ -436,7 +444,10 @@ function useWordWrap(host: ClientHost, session: ViewSession, visible: boolean) {
       if (!session.signal.aborted) setWriteError(error);
     });
   };
-  return { value, writeError, toggle };
+  const chooseHtml = () => {
+    htmlChoices.current++;
+  };
+  return { wordWrap: { value, writeError, toggle }, renderHtml, answered, chooseHtml };
 }
 
 /**
@@ -1215,7 +1226,8 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     session,
   );
   const themeVars = useThemeVars(host, session, visible);
-  const wordWrap = useWordWrap(host, session, visible);
+  const preferences = useFilePreferences(host, session, visible);
+  const wordWrap = preferences.wordWrap;
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() =>
     restoredExpanded(session.restoreState),
   );
@@ -1241,24 +1253,53 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   // The latest centered line reveal request — set by search hits and
   // link targets, tracked as handled once the content surface scrolls.
   // `id` tells repeated requests for the same line apart for the host view.
+  // A file link's line arrives with the view (`t3.file/presentation.open`)
+  // as request 1; later requests count on from there.
+  const revealSequence = useRef(1);
   const [revealRequest, setRevealRequest] = useState<{
     path: string;
     line: number;
     id: number;
-  } | null>(null);
+  } | null>(() => {
+    const path = restoredSelection(session.restoreState);
+    const line = restoredRevealLine(session.restoreState);
+    return path !== null && line !== null ? { path, line, id: 1 } : null;
+  });
   const handledRevealRef = useRef<{ path: string; line: number; id: number } | null>(null);
-  const revealSequence = useRef(0);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const readOnlyRef = useRef<HTMLPreElement | null>(null);
   const treeListRef = useRef<HTMLUListElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
-  const selectedKind: PreviewKind = selected ? previewKind(selected) : "text";
+  // HTML renders by default; a pending line reveal shows the source it
+  // scrolls. The choice is the client's shared preference — the native
+  // panel's own — so it carries across files, presentations and reloads; the
+  // view record keeps it too for hosts that predate the preference.
+  const [renderHtml, setRenderHtml] = useState(() => restoredRenderHtml(session.restoreState));
+  // The user's own toggle settles the choice without waiting for the preference.
+  const [htmlChosen, setHtmlChosen] = useState(false);
+  const htmlUnsettled = !preferences.answered && !htmlChosen;
+  const [reportedRenderHtml, setReportedRenderHtml] = useState(preferences.renderHtml);
+  if (preferences.renderHtml !== reportedRenderHtml) {
+    setReportedRenderHtml(preferences.renderHtml);
+    if (preferences.renderHtml !== undefined) setRenderHtml(preferences.renderHtml);
+  }
+  const selectedKind: PreviewKind = selected
+    ? presentedPreviewKind(selected, {
+        // Until the preference answers, an HTML file is held on the page side
+        // with nothing loaded, so neither the page nor its source flashes.
+        renderHtml: renderHtml || htmlUnsettled,
+        revealPath: revealRequest?.path ?? null,
+      })
+    : "text";
+  const awaitingHtmlChoice = selectedKind === "html" && htmlUnsettled;
   const editor = useFileEditor(host, session, selected, selectedKind, revision, visible);
-  const media = useMediaLease(host, session, selected, selectedKind, revision, visible);
-  const packageAsset = usePackageAsset(
+  const media = useMediaLease(
     host,
     session,
-    visible && selected !== null && selectedKind !== "text",
+    selected,
+    selectedKind,
+    revision,
+    visible && !awaitingHtmlChoice,
   );
   const currentRead = read?.relativePath === selected && read.revision === revision ? read : null;
   const changes = useWorkspaceChanges(host, session, visible);
@@ -1287,7 +1328,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   // `session.save`; the ref skips re-saving a state that is already stored.
   const savedViewStateRef = useRef<string | null>(null);
   useEffect(() => {
-    const state = filesViewState(selected, expanded, renderMarkdown);
+    const state = filesViewState(selected, expanded, renderMarkdown, renderHtml);
     const serialized = JSON.stringify(state);
     // The first run only records the restored state — nothing changed yet.
     if (savedViewStateRef.current === null) {
@@ -1296,7 +1337,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     }
     if (serialized === savedViewStateRef.current) return;
     if (session.save(state)) savedViewStateRef.current = serialized;
-  }, [session, selected, expanded, renderMarkdown]);
+  }, [session, selected, expanded, renderMarkdown, renderHtml]);
 
   // Row 14: review comments on file lines. The textarea's character selection
   // expands to full lines; submit lands a real composer draft review comment
@@ -1465,6 +1506,22 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       ? search
       : null;
 
+  // Choosing the rendered page also settles a reveal that forced the source.
+  // A failed preference write (an older host) leaves the per-view choice.
+  const toggleHtml = () => {
+    const next = selectedKind !== "html";
+    setRenderHtml(next);
+    setHtmlChosen(true);
+    preferences.chooseHtml();
+    if (next) setRevealRequest(null);
+    void writeRenderHtml({
+      client: host,
+      context: session.context,
+      signal: session.signal,
+      renderHtml: next,
+    });
+  };
+
   const select = (path: string, line?: number) => {
     setSelected(path);
     // Selecting is navigating: any held selection and any open draft die
@@ -1486,6 +1543,21 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     if (ancestors.length) setExpanded((previous) => new Set([...previous, ...ancestors]));
   };
 
+  // A later open of this view (a file link, "Open in panel") arrives in
+  // place: it selects the named file, and a line reveals in the editor that
+  // is already open, so pending edits and save state stay with it. A path
+  // already shown without a line only focuses the view.
+  const navigate = (state: unknown) => {
+    const path = restoredSelection(state);
+    const line = restoredRevealLine(state) ?? undefined;
+    if (path !== null && (line !== undefined || path !== selected)) select(path, line);
+  };
+  const navigateRef = useRef(navigate);
+  useLayoutEffect(() => {
+    navigateRef.current = navigate;
+  });
+  useEffect(() => session.onNavigate?.((state) => navigateRef.current(state)), [session]);
+
   // Rows drag a serialized composer mention on the MIME the host
   // composer claims — the drop handler there does the insertion, so the
   // plugin needs no composer contract. No text/plain fallback, matching the
@@ -1500,13 +1572,11 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     event.dataTransfer.effectAllowed = "copy";
   };
 
-  // The public open path is `t3.file/presentation.open` — the host's
-  // provider selection is the picker, so this resolves the descriptor and
-  // reports it (or the named failure) verbatim. Requires stays without the
-  // self-provided API: files provides t3.file/presentation, and a
-  // self-requirement would trip the resolver's cyclic-dependency check.
+  // "Open in panel" opens the file where the host's own file links land —
+  // `t3.ui/navigation.openFile` on this view's thread, presented by the
+  // selected t3.file/presentation provider (this pack, by default).
   // Native parity: a failed open toasts (the native panel raises a thread
-  // toast on preview-open failure) while resolving/resolved stay inline.
+  // toast on preview-open failure) while opening/opened stay inline.
   // When `t3.ui/notifications` is unavailable the inline row stands as the
   // degraded surface — the failure is never dropped silently.
   const failFileOpen = (path: string, state: FileOpenState) => {
@@ -1535,7 +1605,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       );
   };
 
-  const openInPresentation = () => {
+  const openInPanel = () => {
     if (selected === null) return;
     const path = presentationPath(selected);
     if (path === null) {
@@ -1548,14 +1618,16 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
     setFileOpen({ path, state: { status: "resolving" } });
-    void bindApi(filePresentationApi, host, session.context)
-      .invoke("open", { relativePath: path }, signal)
+    void openWorkspaceFile(host, session.context, path, { signal })
       .then(
-        (result) => {
-          if (!signal.aborted)
-            setFileOpen({
-              path,
-              state: { status: "resolved", message: describePresentation(result) },
+        (receipt) => {
+          if (signal.aborted) return;
+          if (receipt.status === "opened")
+            setFileOpen({ path, state: { status: "resolved", message: `Opened ${path}` } });
+          else
+            failFileOpen(path, {
+              status: "unavailable",
+              message: `${path} cannot be opened — ${describeOpenFileRefusal(receipt.reason)}`,
             });
         },
         (error) => {
@@ -1571,10 +1643,11 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   useFilesCommands(host, session, visible, {
     refresh,
     focusSearch: () => searchRef.current?.focus(),
-    openIn: openInPresentation,
+    openIn: openInPanel,
     toggleMarkdown: () => {
       if (selected !== null && isMarkdownPath(selected) && selectedKind === "text")
         setRenderMarkdown((value) => !value);
+      else if (selected !== null && leasePreviewMode(selected) === "html") toggleHtml();
     },
   });
 
@@ -2029,8 +2102,8 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
             flexShrink: 0,
           }}
         >
-          <button type="button" onClick={openInPresentation}>
-            Open in…
+          <button type="button" onClick={openInPanel}>
+            Open in panel
           </button>
           {addChat.blockReason === null ? (
             <button
@@ -2075,6 +2148,11 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                 {renderMarkdown ? "Show markdown source" : "Show rendered markdown"}
               </button>
             </Tooltip>
+          )}
+          {leasePreviewMode(selected) === "html" && (
+            <button type="button" aria-pressed={selectedKind === "html"} onClick={toggleHtml}>
+              {selectedKind === "html" ? "Show HTML source" : "Show rendered page"}
+            </button>
           )}
           {selectedKind === "text" && markdownBlocks === null && wordWrap.value !== null && (
             <Tooltip host={host} label={wordWrap.value ? "Disable word wrap" : "Enable word wrap"}>
@@ -2397,40 +2475,17 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               style={{ maxWidth: "100%", objectFit: "contain", alignSelf: "flex-start" }}
             />
           ) : null}
-          {media.mode === "document" && media.url !== null ? (
-            // The built-in PDF viewer needs an unsandboxed frame — parity with
-            // the native FilePreviewPanel; the lease only serves workspace-owned bytes.
-            // oxlint-disable-next-line react/iframe-missing-sandbox
+          {(media.mode === "document" || media.mode === "html") && media.url !== null ? (
+            // HTML is sandboxed to an opaque origin; the built-in PDF viewer
+            // needs an unsandboxed frame — parity with the native FilePreviewPanel.
             <iframe
+              key={media.url}
               src={media.url}
               title={selected.split("/").at(-1)}
+              sandbox={documentFrameSandbox(media.mode)}
               style={{ flex: 1, minHeight: 0, width: "100%", border: 0, background: "#fff" }}
             />
           ) : null}
-        </figure>
-      )}
-      {selected && selectedKind !== "text" && (
-        <figure
-          aria-label="Package asset preview"
-          style={{
-            margin: 0,
-            padding: 12,
-            borderTop: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
-            display: "grid",
-            gap: 8,
-            justifyItems: "start",
-          }}
-        >
-          {packageAsset?.url ? (
-            <img
-              src={packageAsset.url}
-              alt="Verified package asset rendered through the public asset surface"
-              style={{ imageRendering: "pixelated", width: 64, height: 64 }}
-            />
-          ) : null}
-          <figcaption style={{ color: muted, fontSize: 12 }}>
-            {packageAsset?.status ?? "Loading package asset"}
-          </figcaption>
         </figure>
       )}
     </section>
@@ -2441,7 +2496,6 @@ export default defineExtension({
   id: manifestId,
   version: "0.9.0",
   provides: [filePresentationApi.definition],
-  assets: [{ path: PACKAGE_ASSET_PATH, mediaType: "application/octet-stream" }],
   serverEntry: "server.ts",
   requires: [
     requireApi(workspaceTreeApi),
@@ -2455,6 +2509,7 @@ export default defineExtension({
     requireApi(uiKeybindingsApi, "^1.1.0"),
     requireApi(uiNotificationsApi),
     requireApi(uiPreferencesApi),
+    requireApi(uiNavigationApi),
     requireApi(messagesEnrichmentApi),
     requireApi(composerContextApi),
   ],

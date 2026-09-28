@@ -999,6 +999,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               (surface): surface is Extract<RightPanelSurface, { kind: "file" }> =>
                 surface.id === surfaceId && surface.kind === "file",
             );
+            // Every explicit open is a new navigation; an open view takes it in place.
             const surface = fileSurface(
               relativePath,
               normalizeRevealLine(line),

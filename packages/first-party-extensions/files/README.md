@@ -2,13 +2,20 @@
 
 First-party Files panel as an installable extension package. It renders the
 workspace tree, name and file-contents search, text editing with revisioned
-autosave, media previews through the workspace resource lease, and a
+autosave, media, PDF and sandboxed HTML previews through the workspace
+resource lease (HTML toggles to source, as in the native panel), and a
 package-owned rendered-markdown preview — all through public contracts only
 (`t3.workspace/tree`, `t3.workspace/files`, `t3.workspace/search`,
 `t3.workspace/text-edits`, `t3.resources/lease`). It also provides
-`t3.file/presentation` so the ordinary Files open path can select it, and
-exposes an "Open in…" file action that resolves through whichever provider
-the host selected for that API (grant `t3.file/open`). Breadcrumbs over the
+`t3.file/presentation@1.1.0`, the only first-party provider of it, so the
+ordinary Files open path resolves here with no selection; a file link's
+line opens the source at that line. It exposes an "Open in panel" file
+action: `t3.ui/navigation` `openFile` (1.1.0, grant `t3.ui/navigation.open`)
+opens the file in this view's thread where the host's own file links land,
+presented by whichever provider the host selected for `t3.file/presentation`.
+Reopening the file already shown there only focuses it. The pack probes for
+`openFile`, so it still loads on a 1.0.0 host, which answers that it cannot
+open files. Breadcrumbs over the
 tree snapshot, workspace link resolution in rendered markdown, centered line
 reveals for search hits and `#L…`/`path:line` targets, and composer-mention
 drags are package-owned; the drag payload uses the MIME the host
@@ -34,11 +41,11 @@ without its grant or provider):
   losing it — renders the pre-contract appearance unchanged.
 - `t3.ui/keybindings@^1.0.0` — under `t3.ui/keybindings`: the panel's actions
   register as a `surface`-scope command set (Refresh files `mod+r`, Focus
-  file search `mod+f`, Open file in…, Toggle rendered markdown) bound through
+  file search `mod+f`, Open file in panel, Toggle rendered preview) bound through
   the view session, so the host's arbitration decides dispatch — user rules
   and native defaults outrank the plugin `defaultKey`s, which fire only while
   the panel is focused. Element-local keys (Escape) stay element-local.
-- `t3.ui/notifications@^1.0.0` — under `t3.ui/notify`: a failed "Open in…"
+- `t3.ui/notifications@^1.0.0` — under `t3.ui/notify`: a failed "Open in panel"
   toasts, matching the native panel's thread toast; every other status stays
   inline because the native panel keeps it there.
 - `t3.ui/preferences@^1.0.0` — under `t3.ui/preferences.read`: the client's
@@ -47,7 +54,10 @@ without its grant or provider):
   `t3.ui/preferences.write` the toolbar's word-wrap toggle writes it back
   through `setPreferences`; the view changes only when the persisted value
   arrives. Without the read grant the toggle is hidden and wrapping stays as
-  before.
+  before. The HTML rendered/source choice rides the same preference
+  (`renderBrowserFile`, 1.1.0, the native preview's own), so it carries across
+  files, presentations and reloads; an HTML file loads nothing until the
+  preference first answers. Hosts without it keep the choice per view.
 
 Files the editor cannot open (past the edit bound, binary-adjacent,
 non-UTF-8) show read-only. Where the host offers `ClientHost.codeView`, that
@@ -70,5 +80,5 @@ image resolution; task checkboxes are read-only. Contents search reports the
 contract's match lines and truncation verbatim. The breadcrumb root is
 labeled "Workspace" — no contract reports the project title to this view —
 and crumbs are non-navigable when the selected path is host-absolute.
-"Open in…" resolves the presentation descriptor the selected
-provider returns; mounting that surface is the host's concern.
+"Open in panel" needs a thread-scoped view context; a view opened without a
+thread reports the refusal inline. It is not an external-editor launch.

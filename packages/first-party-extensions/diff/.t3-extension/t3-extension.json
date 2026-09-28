@@ -42,10 +42,6 @@
       "versionRange": "^1.0.0"
     },
     {
-      "id": "t3.file/presentation",
-      "versionRange": "^1.0.0"
-    },
-    {
       "id": "t3.orchestration/status",
       "versionRange": "^1.0.0"
     },
@@ -71,6 +67,10 @@
     },
     {
       "id": "t3.ui/notifications",
+      "versionRange": "^1.0.0"
+    },
+    {
+      "id": "t3.ui/navigation",
       "versionRange": "^1.0.0"
     }
   ],

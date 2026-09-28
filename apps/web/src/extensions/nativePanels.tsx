@@ -104,6 +104,18 @@ const filesEntry = entry(
           input: {
             relativePath: bindings.surface.kind === "file" ? bindings.surface.relativePath : "",
           },
+          // A file link's line reaches a provider that takes it (1.1.0).
+          ...(bindings.surface.kind === "file" && bindings.surface.revealLine !== null
+            ? {
+                newerInput: {
+                  version: "1.1.0",
+                  input: {
+                    relativePath: bindings.surface.relativePath,
+                    line: bindings.surface.revealLine,
+                  },
+                },
+              }
+            : {}),
         },
 );
 /** Legacy resource records remain domain-owned; the shell resolves registered presentations. */

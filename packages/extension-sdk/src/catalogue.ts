@@ -5,8 +5,10 @@ import {
 } from "./orchestration.js";
 export * from "./orchestration.js";
 import {
+  bindApi,
   defineApi,
   defineStreamApi,
+  type ApiClient,
   type ApiDefinition,
   type ApiMethod,
   type TypedApi,
@@ -16,7 +18,8 @@ import type { JsonObject } from "./environment.js";
 import type { GlobalCommandDescriptor } from "./environment.js";
 import { MAX_PAYLOAD_BYTES, type ViewContext } from "./contracts.js";
 import type { WorkspaceReadTextInput, WorkspaceReadTextResult } from "./workspace.js";
-import { textEditsApi, textEditsApiV1 } from "./textEdits.js";
+import { compareVersions, parseVersion } from "./semver.js";
+import { textEditsApi, textEditsApiV1, validateEditableRelativePath } from "./textEdits.js";
 import { workspaceResourcesApi, WORKSPACE_RESOURCES } from "./workspaceResources.js";
 import { agentSessionsApi } from "./agentSessions.js";
 import {
@@ -31,6 +34,8 @@ import {
   uiExternalOpenReceiptSchema,
   uiEditorOpenReceiptSchema,
   browserHistoryEntriesSchema,
+  uiNavigationFileInputProperties,
+  uiNavigationFileReceiptSchema,
   uiNavigationReceiptSchema,
   uiNavigationSessionReceiptSchema,
 } from "./clientProviders.js";
@@ -389,7 +394,11 @@ export type WorkspaceListEntriesResult = {
   readonly entries: readonly WorkspaceEntry[];
   readonly nextCursor: string | null;
 };
-export type FilePresentationInput = { readonly relativePath: string };
+export type FilePresentationInput = {
+  readonly relativePath: string;
+  /** 1.1.0: the 1-based line a file link targets; the presentation reveals it. */
+  readonly line?: number;
+};
 export type FilePresentationResult = {
   readonly surfaceId: string;
   readonly placement: "side-panel" | "bottom-dock" | "full-page" | "compact-detail";
@@ -618,8 +627,49 @@ export const workspaceFilesApi = defineApi<{
     },
   ],
 });
+const filePresentationOutputSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["surfaceId", "placement", "restoreState"],
+  properties: {
+    surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+    placement: { enum: ["side-panel", "bottom-dock", "full-page", "compact-detail"] },
+    restoreState: { type: "object" },
+  },
+} as const;
+/**
+ * `t3.file/presentation`. 1.1.0 adds `open.line`, the line a file link
+ * targets; hosts send it only to a provider at 1.1.0 or later.
+ */
 export const filePresentationApi = defineApi<{
   open: { input: FilePresentationInput; output: FilePresentationResult };
+}>(
+  {
+    id: FILE_PRESENTATION,
+    version: "1.1.0",
+    methods: [
+      {
+        name: "open",
+        effect: "read",
+        requiredGrants: [FILE_PRESENTATION_OPEN],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["relativePath"],
+          properties: {
+            relativePath: path,
+            line: { type: "integer", minimum: 1, maximum: 10_000_000 },
+          },
+        },
+        outputSchema: filePresentationOutputSchema,
+      },
+    ],
+  },
+  { baseline: "1.0.0", additions: [{ version: "1.1.0", method: "open", input: "line" }] },
+);
+/** Frozen published 1.0.0 definition; shared definitions are immutable per version. */
+export const filePresentationApiV1 = defineApi<{
+  open: { input: { readonly relativePath: string }; output: FilePresentationResult };
 }>({
   id: FILE_PRESENTATION,
   version: "1.0.0",
@@ -634,16 +684,7 @@ export const filePresentationApi = defineApi<{
         required: ["relativePath"],
         properties: { relativePath: path },
       },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["surfaceId", "placement", "restoreState"],
-        properties: {
-          surfaceId: { type: "string", minLength: 1, maxLength: 160 },
-          placement: { enum: ["side-panel", "bottom-dock", "full-page", "compact-detail"] },
-          restoreState: { type: "object" },
-        },
-      },
+      outputSchema: filePresentationOutputSchema,
     },
   ],
 });
@@ -8905,12 +8946,19 @@ export const uiPanelsApi = defineApi<{
 /** The client preferences a pack can read — see `clientPreferencesSchema`. */
 export type UiPreferences = {
   readonly wordWrap: boolean;
+  /**
+   * 1.1.0: HTML files open rendered (true) or as source (false) — the native
+   * file preview's own choice. Absent on hosts that predate it.
+   */
+  readonly renderBrowserFile?: boolean;
 };
 
 /**
  * `t3.ui/preferences` — typed read, change stream and write receipt for a
  * named subset of the target client's persisted settings. The stream emits a
- * snapshot, then one frame per actual change; it never polls.
+ * snapshot, then one frame per actual change; it never polls. 1.1.0 adds
+ * `renderBrowserFile`; a 1.0.0 host omits it from reads and rejects it in a
+ * write, so bind `setPreferences` at ^1.1.0 to send it.
  */
 export const uiPreferencesApi = defineApi<{
   getCapabilities: { input: Record<string, never>; output: UiCapabilities };
@@ -8918,6 +8966,69 @@ export const uiPreferencesApi = defineApi<{
   setPreferences: {
     input: Partial<UiPreferences>;
     output: { applied: boolean; reason?: string; preferences: UiPreferences };
+  };
+}>(
+  {
+    id: UI_PREFERENCES,
+    version: "1.1.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput([
+          "getPreferences",
+          "setPreferences",
+          "subscribePreferences",
+        ]),
+      },
+      {
+        name: "getPreferences",
+        effect: "read",
+        requiredGrants: [UI_PREFERENCES_READ],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: clientPreferencesSchema,
+      },
+      {
+        name: "setPreferences",
+        effect: "write",
+        requiredGrants: [UI_PREFERENCES_WRITE],
+        inputSchema: clientPreferencesPatchSchema,
+        outputSchema: clientPreferencesReceiptSchema,
+      },
+    ],
+    streams: [
+      {
+        name: "subscribePreferences",
+        inputSchema: composerEmptyInputSchema,
+        eventSchema: clientPreferencesSchema,
+        requiredGrants: [UI_PREFERENCES_READ],
+      },
+    ],
+  },
+  // Consumers keep loading on a 1.0.0 host; probe before writing the 1.1.0 key.
+  {
+    baseline: "1.0.0",
+    additions: [{ version: "1.1.0", method: "setPreferences", input: "renderBrowserFile" }],
+  },
+);
+
+/** 1.0.0's closed preference shape, before `renderBrowserFile`. */
+const uiPreferencesV1Schema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["wordWrap"],
+  properties: { wordWrap: { type: "boolean" } },
+} as const;
+
+/** Frozen published 1.0.0 definition, before `renderBrowserFile`; providers may still declare it. */
+export const uiPreferencesApiV1 = defineApi<{
+  getCapabilities: { input: Record<string, never>; output: UiCapabilities };
+  getPreferences: { input: Record<string, never>; output: { readonly wordWrap: boolean } };
+  setPreferences: {
+    input: { readonly wordWrap?: boolean };
+    output: { applied: boolean; reason?: string; preferences: { readonly wordWrap: boolean } };
   };
 }>({
   id: UI_PREFERENCES,
@@ -8939,21 +9050,30 @@ export const uiPreferencesApi = defineApi<{
       effect: "read",
       requiredGrants: [UI_PREFERENCES_READ],
       inputSchema: composerEmptyInputSchema,
-      outputSchema: clientPreferencesSchema,
+      outputSchema: uiPreferencesV1Schema,
     },
     {
       name: "setPreferences",
       effect: "write",
       requiredGrants: [UI_PREFERENCES_WRITE],
-      inputSchema: clientPreferencesPatchSchema,
-      outputSchema: clientPreferencesReceiptSchema,
+      inputSchema: {
+        ...clientPreferencesPatchSchema,
+        properties: { wordWrap: { type: "boolean" } },
+      },
+      outputSchema: {
+        ...clientPreferencesReceiptSchema,
+        properties: {
+          ...clientPreferencesReceiptSchema.properties,
+          preferences: uiPreferencesV1Schema,
+        },
+      },
     },
   ],
   streams: [
     {
       name: "subscribePreferences",
       inputSchema: composerEmptyInputSchema,
-      eventSchema: clientPreferencesSchema,
+      eventSchema: uiPreferencesV1Schema,
       requiredGrants: [UI_PREFERENCES_READ],
     },
   ],
@@ -9132,6 +9252,45 @@ export type UiNavigationSessionReceipt =
   | { readonly status: "refused"; readonly reason: UiNavigationSessionRefusalReason };
 
 /**
+ * Closed refusal set for `openFile`: `unknown-thread` (the caller's context
+ * names no live thread), `out-of-scope` (that thread is outside the caller's
+ * project), `invalid-path` (not a safe workspace-relative path).
+ */
+export type UiNavigationFileRefusalReason = "unknown-thread" | "out-of-scope" | "invalid-path";
+
+export type UiNavigationFileReceipt =
+  | { readonly status: "opened"; readonly relativePath: string }
+  | { readonly status: "refused"; readonly reason: UiNavigationFileRefusalReason };
+
+const uiNavigationOpenThreadMethod = {
+  name: "openThread",
+  effect: "write",
+  requiredGrants: [UI_NAVIGATION_OPEN],
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["threadId"],
+    properties: {
+      threadId: { type: "string", minLength: 1, maxLength: 128 },
+      surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+    },
+  },
+  outputSchema: uiNavigationReceiptSchema,
+} as const;
+const uiNavigationOpenAgentSessionMethod = {
+  name: "openAgentSession",
+  effect: "write",
+  requiredGrants: [UI_NAVIGATION_OPEN_SESSION],
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["agentId"],
+    properties: { agentId: { type: "string", minLength: 1, maxLength: 256 } },
+  },
+  outputSchema: uiNavigationSessionReceiptSchema,
+} as const;
+
+/**
  * Moves the caller's own client to a thread in the caller's project, and
  * optionally opens one of the caller's own surfaces there. The pack names a
  * thread, never a URL or route; the host resolves and performs the
@@ -9142,8 +9301,60 @@ export type UiNavigationSessionReceipt =
  * caller's own thread. The pack names the agent; the host resolves its
  * session URL from its own roster and hands it to the OS opener, so the pack
  * never supplies a URL. It needs its own `t3.ui/navigation.open-session` grant.
+ *
+ * `openFile` (1.1.0) opens a workspace file in the caller's own thread exactly
+ * where the host's native file links land: the host's file panel, presented by
+ * the selected `t3.file/presentation` provider (or the native preview). The
+ * pack names a path, never a surface or provider. `openWorkspaceFile` probes
+ * for it, so a pack keeps its 1.0.0 requirement.
  */
 export const uiNavigationApi = defineApi<{
+  getCapabilities: { input: Record<string, never>; output: UiCapabilities };
+  openThread: {
+    input: { threadId: string; surfaceId?: string };
+    output: UiNavigationReceipt;
+  };
+  openAgentSession: {
+    input: { agentId: string };
+    output: UiNavigationSessionReceipt;
+  };
+  openFile: {
+    input: { relativePath: string; line?: number };
+    output: UiNavigationFileReceipt;
+  };
+}>(
+  {
+    id: UI_NAVIGATION,
+    version: "1.1.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput(["openThread", "openAgentSession", "openFile"]),
+      },
+      uiNavigationOpenThreadMethod,
+      uiNavigationOpenAgentSessionMethod,
+      {
+        name: "openFile",
+        effect: "write",
+        requiredGrants: [UI_NAVIGATION_OPEN],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["relativePath"],
+          properties: uiNavigationFileInputProperties,
+        },
+        outputSchema: uiNavigationFileReceiptSchema,
+      },
+    ],
+  },
+  // Consumers keep loading on a 1.0.0 host; probe before calling openFile.
+  { baseline: "1.0.0", additions: [{ version: "1.1.0", method: "openFile" }] },
+);
+/** Frozen published 1.0.0 definition, before `openFile`; providers may still declare it. */
+export const uiNavigationApiV1 = defineApi<{
   getCapabilities: { input: Record<string, never>; output: UiCapabilities };
   openThread: {
     input: { threadId: string; surfaceId?: string };
@@ -9164,35 +9375,71 @@ export const uiNavigationApi = defineApi<{
       inputSchema: composerEmptyInputSchema,
       outputSchema: uiCapabilitiesOutput(["openThread", "openAgentSession"]),
     },
-    {
-      name: "openThread",
-      effect: "write",
-      requiredGrants: [UI_NAVIGATION_OPEN],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["threadId"],
-        properties: {
-          threadId: { type: "string", minLength: 1, maxLength: 128 },
-          surfaceId: { type: "string", minLength: 1, maxLength: 160 },
-        },
-      },
-      outputSchema: uiNavigationReceiptSchema,
-    },
-    {
-      name: "openAgentSession",
-      effect: "write",
-      requiredGrants: [UI_NAVIGATION_OPEN_SESSION],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["agentId"],
-        properties: { agentId: { type: "string", minLength: 1, maxLength: 256 } },
-      },
-      outputSchema: uiNavigationSessionReceiptSchema,
-    },
+    uiNavigationOpenThreadMethod,
+    uiNavigationOpenAgentSessionMethod,
   ],
 });
+
+/** Whether `path` is a safe workspace-relative path `openFile` will accept. */
+export function isWorkspaceFilePath(path: string): boolean {
+  try {
+    validateEditableRelativePath(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `openWorkspaceFile`'s outcome: the host's receipt, or `host-unsupported`
+ * when the host's `t3.ui/navigation` predates `openFile` (1.1.0).
+ */
+export type OpenWorkspaceFileReceipt =
+  | UiNavigationFileReceipt
+  | { readonly status: "refused"; readonly reason: "host-unsupported" };
+
+/**
+ * Opens a workspace file in the caller's own thread through
+ * `t3.ui/navigation.openFile` (grant `t3.ui/navigation.open`). An unsafe path
+ * is refused here without a host round trip; the host checks again. The host
+ * is probed first, so an older one answers `host-unsupported` instead of
+ * failing. Rejects only when discovery or the invoke itself fails.
+ */
+export async function openWorkspaceFile(
+  client: Pick<ApiClient, "invokeApi" | "discoverApis">,
+  context: ViewContext,
+  relativePath: string,
+  options: { readonly line?: number; readonly signal: AbortSignal },
+): Promise<OpenWorkspaceFileReceipt> {
+  if (!isWorkspaceFilePath(relativePath)) return { status: "refused", reason: "invalid-path" };
+  const discovered = await client.discoverApis(context, options.signal);
+  const opensFiles = discovered.some((api) => {
+    const version = api.id === UI_NAVIGATION ? parseVersion(api.version) : null;
+    return version !== null && version[0] === 1 && compareVersions(version, [1, 1, 0]) >= 0;
+  });
+  if (!opensFiles) return { status: "refused", reason: "host-unsupported" };
+  return bindApi(uiNavigationApi, client, context, "^1.1.0").invoke(
+    "openFile",
+    { relativePath, ...(options.line === undefined ? {} : { line: options.line }) },
+    options.signal,
+  );
+}
+
+/** One user-facing sentence per `openWorkspaceFile` refusal. */
+export function describeOpenFileRefusal(
+  reason: UiNavigationFileRefusalReason | "host-unsupported",
+): string {
+  switch (reason) {
+    case "unknown-thread":
+      return "Files open in a thread — this view has none";
+    case "out-of-scope":
+      return "The thread is outside this extension's project";
+    case "invalid-path":
+      return "Not a workspace-relative path";
+    case "host-unsupported":
+      return "This version of T3 Code cannot open files for extensions";
+  }
+}
 
 export const UI_NOTIFICATIONS_API = uiNotificationsApi.definition;
 export const UI_PANELS_API = uiPanelsApi.definition;
@@ -9227,6 +9474,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   textEditsApi.definition,
   textEditsApiV1.definition,
   filePresentationApi.definition,
+  filePresentationApiV1.definition,
   terminalSessionsApi.definition,
   terminalOutputApi.definition,
   terminalOutputEventsApi.definition,
@@ -9254,9 +9502,11 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   uiNotificationsApi.definition,
   uiPanelsApi.definition,
   uiPreferencesApi.definition,
+  uiPreferencesApiV1.definition,
   uiExternalApi.definition,
   uiEditorApi.definition,
   uiNavigationApi.definition,
+  uiNavigationApiV1.definition,
   agentSessionsApi.definition,
 ];
 function canonical(value: unknown): string {

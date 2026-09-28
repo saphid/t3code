@@ -1414,7 +1414,7 @@ export function toggleCollapsedKey(
 /* ---------------- file presentation (open-in-editor) ---------------- */
 
 /**
- * Safety check before `t3.file/presentation.open`: the path must be
+ * Safety check before `t3.ui/navigation.openFile`: the path must be
  * workspace-relative — the safety half of the native
  * `resolveDiffPathForWorkspace` (reject absolute, empty, and `..`
  * segments). No repo-root remap exists on the public surface, so paths
@@ -1430,14 +1430,6 @@ export function presentationPath(path: string): string | null {
     return null;
   }
   return path;
-}
-
-/** Honest report of a resolved `t3.file/presentation.open` descriptor. */
-export function describePresentation(result: {
-  readonly surfaceId: string;
-  readonly placement: string;
-}): string {
-  return `opens in ${result.surfaceId} · ${result.placement}`;
 }
 
 /* ---------------- turn/checkpoint mode (t3.orchestration) ---------------- */

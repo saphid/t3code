@@ -170,10 +170,14 @@ export function useFileEditor(
   } | null>(null);
   const lastRefreshRef = useRef(-1);
   const editing = selected !== null && selectedKind === "text" && visible;
+  // An HTML file's rendered page is the same file: its editor session (buffer,
+  // save state, recovery actions) outlives the source/rendered switch.
+  const retained = selectedKind === "html" && visible;
 
   useEffect(() => {
     const active = activeRef.current;
     if (!editing || selected === null) {
+      if (retained && active?.path === selected) return;
       if (active) {
         active.coordinator.dispose();
         activeRef.current = null;
@@ -193,12 +197,12 @@ export function useFileEditor(
     const signal = AbortSignal.any([controller.signal, session.signal]);
     let current = activeRef.current;
     const pathChanged = !current || current.path !== path;
-    // Re-read the snapshot on open and on every tree refresh; identical
-    // revisions skip the network round-trip.
+    // Re-read the snapshot on open and on every tree refresh; a revision
+    // already read skips the round-trip. Only a read that finished counts —
+    // one cancelled mid-flight (the rendered HTML page) must run again.
     if (!pathChanged && refreshRevision === lastRefreshRef.current) {
       return () => controller.abort();
     }
-    lastRefreshRef.current = refreshRevision;
     if (pathChanged) {
       current?.coordinator.dispose();
       const record = { path, baseBytes: 0 } as {
@@ -258,12 +262,13 @@ export function useFileEditor(
       try {
         const open = await openRead(host, session, path, signal);
         if (open === null || signal.aborted) return;
+        lastRefreshRef.current = refreshRevision;
         if (!open.editable) {
           setSurface({ path, open, contents: "", saveState: coordinator.state() });
           return;
         }
         const kind = coordinator.state().kind;
-        if (kind === "dirty" || kind === "saving" || kind === "error") {
+        if (kind === "dirty" || kind === "saving" || kind === "error" || kind === "conflict") {
           // Refresh reconciliation: the remote file moved under pending edits —
           // latch the conflict rather than clobbering the user's buffer.
           coordinator.noteRemoteRevision(open.revision);
@@ -284,6 +289,7 @@ export function useFileEditor(
           });
         }
       } catch (error) {
+        if (!signal.aborted) lastRefreshRef.current = refreshRevision;
         if (!signal.aborted)
           setSurface((previous) => ({
             path,
@@ -298,7 +304,7 @@ export function useFileEditor(
       }
     })();
     return () => controller.abort();
-  }, [host, session, selected, editing, refreshRevision]);
+  }, [host, session, selected, editing, retained, refreshRevision]);
 
   // Unmount flush: pending edits persist, exactly like the native panel's
   // coordinator disposal.

@@ -118,13 +118,16 @@ export function resolveResumableStreams(host: {
     : null;
 }
 export type ApiMethodTypes = Record<string, { input: Json; output: Json }>;
-/** An optional method input member a minor release added after `baseline`. */
+/** An optional method input member, or a whole method, a minor release added after `baseline`. */
 export interface ApiAddition {
   /** The release that added the member. */
   readonly version: string;
   readonly method: string;
-  /** Dotted input path; `[]` steps into array items, as in `"actions[].keepOpen"`. */
-  readonly input: string;
+  /**
+   * Dotted input path; `[]` steps into array items, as in `"actions[].keepOpen"`.
+   * Omitted when the release added the method itself.
+   */
+  readonly input?: string;
 }
 /** Phantom method types accompany an immutable, serializable runtime descriptor. */
 export interface TypedApi<T extends ApiMethodTypes> {
@@ -156,8 +159,9 @@ function hasInput(value: unknown, path: readonly string[]): boolean {
 /**
  * `baseline` is the oldest version of this major that `requireApi` and
  * `bindApi` ask for by default. Set it when a minor release only adds
- * optional members, so existing consumers keep loading on older hosts, and
- * list every such member in `additions`: a binding whose range admits a
+ * optional members or methods, so existing consumers keep loading on older
+ * hosts, and list every such member in `additions` (a new method is an
+ * addition without `input`): a binding whose range admits a
  * version before an addition refuses calls that use it with
  * `ApiVersionError`, so a pack cannot declare the baseline and ship the new
  * member unprobed. The version, baseline and additions are plain `X.Y.Z`, and
@@ -191,7 +195,8 @@ export function defineApi<T extends ApiMethodTypes>(
       compareVersions(added, baseline) <= 0 ||
       compareVersions(added, version) > 0 ||
       !validated.methods?.some((method) => method.name === addition.method) ||
-      !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(addition.input)
+      (addition.input !== undefined &&
+        !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(addition.input))
     )
       throw new Error("Invalid API addition: " + JSON.stringify(addition));
   }
@@ -223,12 +228,14 @@ export function bindApi<T extends ApiMethodTypes>(
       signal: AbortSignal,
     ): Promise<T[K]["output"]> {
       const addition = unnegotiated.find(
-        (item) => item.method === method && hasInput(input, item.input.split(".")),
+        (item) =>
+          item.method === method &&
+          (item.input === undefined || hasInput(input, item.input.split("."))),
       );
       if (addition)
         return Promise.reject(
           new ApiVersionError(
-            `${api.definition.id}#${method} ${addition.input} needs ^${addition.version}, ` +
+            `${api.definition.id}#${method}${addition.input === undefined ? "" : " " + addition.input} needs ^${addition.version}, ` +
               `but this binding asks for ${versionRange}; probe the host version, then bind at ^${addition.version}`,
           ),
         );

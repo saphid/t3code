@@ -5,6 +5,7 @@ import type {
 } from "@t3tools/extension-sdk/context";
 import {
   validateManifest,
+  type Json,
   type ViewContext,
   type ViewRecord,
 } from "@t3tools/extension-sdk/contracts";
@@ -139,6 +140,7 @@ export function WorkspaceExtensionSurface(props: {
   readonly record: ViewRecord;
   readonly visible: boolean;
   readonly onRecordChange?: (record: ViewRecord) => void;
+  readonly navigation?: { readonly id: string; readonly restoreState: Json };
 }) {
   const get = useCallback(
     () =>
@@ -158,6 +160,7 @@ export function WorkspaceExtensionSurface(props: {
       visible={props.visible}
       bindings={null}
       {...(props.onRecordChange ? { onRecordChange: props.onRecordChange } : {})}
+      {...(props.navigation ? { navigation: props.navigation } : {})}
       retainHiddenPresentation
     />
   ) : (

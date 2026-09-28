@@ -11,6 +11,7 @@ import {
   watchThemeVars,
   writeWordWrap,
 } from "./viewModel.ts";
+import * as ViewModel from "./viewModel.ts";
 
 NodeTest.describe("watchPreferences", () => {
   const viewContext = { resource: { environmentId: "env-1", threadId: "thread-1" } };
@@ -54,6 +55,71 @@ NodeTest.describe("watchPreferences", () => {
       apply: (value) => applied.push(value),
     });
     NodeAssert.deepEqual(applied, [null, { wordWrap: true }, null]);
+  });
+});
+
+// proof-host-4 P2: the HTML source/rendered choice lives in the shared client
+// preference, like the native panel's, so a fresh presentation starts from it.
+NodeTest.describe("HTML render preference", () => {
+  const viewContext = { resource: { environmentId: "env-1", threadId: "thread-1" } };
+
+  NodeTest.it("watchPreferences carries renderBrowserFile when the host has it", async () => {
+    const applied = [];
+    await watchPreferences({
+      client: {
+        subscribeApi: () =>
+          (async function* () {
+            yield { type: "snapshot", value: { wordWrap: true, renderBrowserFile: false } };
+            yield { type: "data", value: { wordWrap: true } };
+          })(),
+      },
+      context: viewContext,
+      signal: new AbortController().signal,
+      apply: (value) => applied.push(value),
+    });
+    // An older host omits the key; the panel then keeps its per-view choice.
+    NodeAssert.deepEqual(applied, [
+      null,
+      { wordWrap: true, renderBrowserFile: false },
+      { wordWrap: true },
+      null,
+    ]);
+  });
+
+  NodeTest.it("writeRenderHtml writes the shared preference and names a refusal", async () => {
+    NodeAssert.equal(typeof ViewModel.writeRenderHtml, "function");
+    const inputs = [];
+    const client = (result) => ({
+      invokeApi: (request) => {
+        NodeAssert.equal(request.id, "t3.ui/preferences");
+        NodeAssert.equal(request.method, "setPreferences");
+        inputs.push(request.input);
+        return result;
+      },
+    });
+    const write = (target) =>
+      ViewModel.writeRenderHtml({
+        client: target,
+        context: viewContext,
+        signal: new AbortController().signal,
+        renderHtml: false,
+      });
+    NodeAssert.equal(
+      await write(
+        client(
+          Promise.resolve({
+            applied: true,
+            preferences: { wordWrap: true, renderBrowserFile: false },
+          }),
+        ),
+      ),
+      null,
+    );
+    NodeAssert.deepEqual(inputs, [{ renderBrowserFile: false }]);
+    NodeAssert.equal(
+      await write(client(Promise.reject(new Error("Missing grant t3.ui/preferences.write")))),
+      "HTML preview choice not saved — Missing grant t3.ui/preferences.write",
+    );
   });
 });
 

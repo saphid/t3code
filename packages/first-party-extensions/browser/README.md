@@ -14,8 +14,11 @@ The panel renders through public contracts only:
   `t3.browser/surface` installation grants are required; denials and
   unsupported clients (`desktop-required`) render as named states, never
   silence.
-- `t3.file/presentation.open` routes browser-previewable files
-  (`.html`/`.htm`/`.pdf`) to `t3.browser/view`. The view mints a
+- Workspace `.html`/`.htm`/`.pdf` paths typed in the address bar (or
+  restored as `relativePath`) open in `t3.browser/view`. The pack does not
+  provide `t3.file/presentation`: that API opens any file, so a second
+  provider next to t3.files would make every consumer need an explicit
+  selection. The view mints a
   `t3.resources/lease` `workspace-file` URL (`t3.workspace/resources` grant),
   resolves it on the document's own origin and opens it in a session; sibling
   assets load under the same token. The token lives 1 h, so the view keeps the

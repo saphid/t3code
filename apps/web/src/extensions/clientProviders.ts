@@ -8,10 +8,12 @@ import {
   BROWSER_RECORD_HISTORY,
   checkExternalUrl,
   fitBrowserHistoryList,
+  isWorkspaceFilePath,
   UI_EDITOR_OPEN,
   UI_EXTERNAL_OPEN,
   UI_NAVIGATION_OPEN,
   UI_NAVIGATION_OPEN_SESSION,
+  type UiNavigationFileReceipt,
   type UiNavigationReceipt,
   type UiNavigationSessionReceipt,
   type UiNavigationRefusalReason,
@@ -31,7 +33,6 @@ import {
   type ThemePreferenceMode,
 } from "../themePalette";
 import { themeStore } from "../hooks/useTheme";
-import { getLocalStorageItem, subscribeLocalStorageItem } from "../hooks/useLocalStorage";
 import {
   resolveTerminalFontPreference,
   resolveTerminalFontSizePreference,
@@ -43,6 +44,13 @@ import {
   persistClientSettingsUpdate,
   subscribeClientSettings,
 } from "../hooks/useSettings";
+import {
+  dispatchLocalStorageChange,
+  getLocalStorageItem,
+  setLocalStorageItem,
+  subscribeLocalStorageKey,
+} from "../hooks/useLocalStorage";
+import { RENDER_BROWSER_FILE_STORAGE_KEY } from "../components/files/filePreviewMode";
 import { createElement } from "react";
 import { toastManager, type ThreadToastData } from "../components/ui/toast";
 import { Spinner } from "../components/ui/spinner";
@@ -1244,7 +1252,7 @@ export function createTerminalAppearanceClientProvider(
       const unsubs = [
         themeStore.subscribe(push),
         subscribeClientSettings(push),
-        subscribeLocalStorageItem(TYPOGRAPHY_ADVANCED_STORAGE_KEY, push),
+        subscribeLocalStorageKey(TYPOGRAPHY_ADVANCED_STORAGE_KEY, push),
       ];
       const observer =
         typeof MutationObserver !== "undefined" && typeof document !== "undefined"
@@ -1265,21 +1273,44 @@ export function createTerminalAppearanceClientProvider(
 // ---------------------------------------------------------------------------
 // Preferences — a named subset of the persisted client settings.
 
-function preferencesSnapshot(): Json {
-  return { wordWrap: getClientSettings().wordWrap };
+/** The native file preview's own choice; unset means rendered, as there. */
+function renderBrowserFile(): boolean {
+  try {
+    return getLocalStorageItem(RENDER_BROWSER_FILE_STORAGE_KEY, Schema.Boolean) ?? true;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * The preferences this client holds. `renderBrowserFile` (1.1.0) goes only to
+ * a server that asked for it: an older server rejects an unknown key, which
+ * would break word wrap too.
+ */
+function preferencesSnapshot(withRenderBrowserFile: boolean): Json {
+  const { wordWrap } = getClientSettings();
+  return withRenderBrowserFile
+    ? { wordWrap, renderBrowserFile: renderBrowserFile() }
+    : { wordWrap };
+}
+
+/** Whether the server's call asked for the 1.1.0 `renderBrowserFile` key. */
+function asksRenderBrowserFile(input: Json): boolean {
+  const include = readInputObject(input ?? {}).include;
+  return Array.isArray(include) && include.includes("renderBrowserFile");
 }
 
 /**
  * Reads wait for hydration: the pre-hydration snapshot is schema defaults,
  * and a pack must not render (or persist over) a value the user never chose.
  */
-async function hydratedPreferences(): Promise<Json> {
+async function hydratedPreferences(withRenderBrowserFile: boolean): Promise<Json> {
   try {
     await ensureClientSettingsHydrated();
   } catch {
     throw new ClientProviderOpError("client-provider-unavailable", "Client settings did not load");
   }
-  return preferencesSnapshot();
+  return preferencesSnapshot(withRenderBrowserFile);
 }
 
 export function createPreferencesClientProvider(deps: ClientProviderDeps): ClientLocalProvider {
@@ -1292,37 +1323,46 @@ export function createPreferencesClientProvider(deps: ClientProviderDeps): Clien
       switch (call.method) {
         case "getPreferences":
           read(call);
-          return hydratedPreferences();
+          return hydratedPreferences(asksRenderBrowserFile(call.input));
         case "applyPreferences": {
           write(call);
           const input = readInputObject(call.input);
+          const asked = asksRenderBrowserFile(call.input);
           if (readInputString(input, "writer") !== call.caller.installationId)
             throw new ClientProviderOpError(
               "client-target-denied",
               "Writer must be the calling installation",
             );
           const patch = readInputObject(input.patch ?? null);
-          const wordWrap = patch.wordWrap;
+          const { wordWrap, renderBrowserFile: renderHtml } = patch;
           if (wordWrap !== undefined && typeof wordWrap !== "boolean")
             throw new ClientProviderOpError("provider-rejected", "Invalid wordWrap");
-          if (wordWrap === undefined)
+          if (renderHtml !== undefined && typeof renderHtml !== "boolean")
+            throw new ClientProviderOpError("provider-rejected", "Invalid renderBrowserFile");
+          if (wordWrap === undefined && renderHtml === undefined)
             return {
               applied: false,
               reason: "empty-patch",
-              preferences: await hydratedPreferences(),
+              preferences: await hydratedPreferences(asked),
             } as unknown as Json;
           // Persist-then-publish: the receipt reports only what storage holds,
-          // and the watch stream sees the change through the settings store.
+          // and the watch stream sees each change through its own store.
           try {
-            const next = await persistClientSettingsUpdate((current) => ({ ...current, wordWrap }));
-            return { applied: true, preferences: { wordWrap: next.wordWrap } } as unknown as Json;
+            await ensureClientSettingsHydrated();
+            if (wordWrap !== undefined)
+              await persistClientSettingsUpdate((current) => ({ ...current, wordWrap }));
+            if (renderHtml !== undefined) {
+              setLocalStorageItem(RENDER_BROWSER_FILE_STORAGE_KEY, renderHtml, Schema.Boolean);
+              dispatchLocalStorageChange(RENDER_BROWSER_FILE_STORAGE_KEY);
+            }
+            return { applied: true, preferences: preferencesSnapshot(asked) } as unknown as Json;
           } catch {
             // Hydrated like every read: a failure caused by hydration itself
             // must not report schema defaults as the stored value.
             return {
               applied: false,
               reason: "persist-failed",
-              preferences: await hydratedPreferences(),
+              preferences: await hydratedPreferences(asked),
             } as unknown as Json;
           }
         }
@@ -1340,16 +1380,24 @@ export function createPreferencesClientProvider(deps: ClientProviderDeps): Clien
           "client-provider-unavailable",
           `Unknown preferences stream ${call.name}`,
         );
-      const snapshot = await hydratedPreferences();
+      const asked = asksRenderBrowserFile(call.input);
+      const snapshot = await hydratedPreferences(asked);
       call.emit({ type: "snapshot", value: snapshot });
       let last = JSON.stringify(snapshot);
-      return subscribeClientSettings(() => {
-        const next = preferencesSnapshot();
+      const push = () => {
+        const next = preferencesSnapshot(asked);
         const encoded = JSON.stringify(next);
         if (encoded === last) return;
         last = encoded;
         call.emit({ type: "data", value: next });
-      });
+      };
+      const unsubs = [
+        subscribeClientSettings(push),
+        subscribeLocalStorageKey(RENDER_BROWSER_FILE_STORAGE_KEY, push),
+      ];
+      return () => {
+        for (const unsub of unsubs) unsub();
+      };
     },
   };
 }
@@ -1531,7 +1579,9 @@ export function createNavigationClientProvider(
   opener: () => ExternalOpener | undefined = localExternalOpener,
 ): ClientLocalProvider {
   return {
-    async invoke(call): Promise<UiNavigationReceipt | UiNavigationSessionReceipt> {
+    async invoke(
+      call,
+    ): Promise<UiNavigationReceipt | UiNavigationSessionReceipt | UiNavigationFileReceipt> {
       if (call.method === "openSession") {
         authorizeCaller(deps, call.caller, call.context, [UI_NAVIGATION_OPEN_SESSION]);
         // The adapter resolved this URL from the caller's own thread roster;
@@ -1550,6 +1600,26 @@ export function createNavigationClientProvider(
         return { status: "opened", agentId, opener: target.kind };
       }
       const installation = authorizeCaller(deps, call.caller, call.context, [UI_NAVIGATION_OPEN]);
+      if (call.method === "openFile") {
+        const input = readInputObject(call.input);
+        const relativePath = readInputString(input, "relativePath")!;
+        const line = typeof input.line === "number" ? input.line : undefined;
+        if (!isWorkspaceFilePath(relativePath))
+          return { status: "refused", reason: "invalid-path" } as UiNavigationFileReceipt;
+        const threadId = call.context.resource.threadId;
+        const ref = threadId ? scopeThreadRef(deps.environmentId, ThreadId.make(threadId)) : null;
+        const shell = ref ? readThreadShell(ref) : null;
+        if (!ref || !shell?.projectId) return refused("unknown-thread");
+        if (
+          shell.projectId !== call.context.resource.projectId ||
+          !installation.grants.projectIds.some((id) => id === shell.projectId)
+        )
+          return refused("out-of-scope");
+        // The native file-link path: the file surface resolves the selected
+        // t3.file/presentation provider (SelectedApiPresentation) or native.
+        useRightPanelStore.getState().openFile(ref, relativePath, line);
+        return { status: "opened", relativePath } as UiNavigationFileReceipt;
+      }
       if (call.method !== "openThread")
         throw new ClientProviderOpError(
           "client-provider-unavailable",
@@ -1627,11 +1697,11 @@ export const CLIENT_PROVIDER_DESCRIPTORS = [
   { id: "t3.client/panels", version: "1.0.0" },
   { id: "t3.client/composer", version: "1.2.0" },
   { id: "t3.client/terminal-appearance", version: "1.0.0" },
-  { id: "t3.client/preferences", version: "1.0.0" },
+  { id: "t3.client/preferences", version: "1.1.0" },
   { id: "t3.client/external", version: "1.0.0" },
   { id: "t3.client/editor", version: "1.0.0" },
   { id: "t3.client/browser-history", version: "1.1.0" },
-  { id: "t3.client/navigation", version: "1.0.0" },
+  { id: "t3.client/navigation", version: "1.1.0" },
 ] as const;
 
 export const CLIENT_PROVIDER_CLIENT_TAG = isElectron ? "desktop" : "web";

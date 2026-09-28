@@ -1,4 +1,5 @@
 import { ClientProvidersError } from "@t3tools/contracts";
+import { CLIENT_PROVIDER_APIS } from "@t3tools/extension-sdk/clientProviders";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type {
   HostApiInvocationMetadata,
@@ -63,6 +64,11 @@ function fakeBridge(options?: {
           agentId: (request.input as { agentId: string }).agentId,
           opener: "desktop-shell",
         });
+      if (request.method === "openFile")
+        return Effect.succeed({
+          status: "opened",
+          relativePath: (request.input as { relativePath: string }).relativePath,
+        });
       if (request.method === "openThread")
         return Effect.succeed({
           status: "opened",
@@ -99,9 +105,18 @@ function fakeBridge(options?: {
       correlations.delete(correlationId);
       return Effect.void;
     },
+    // By default the one client runs every current area, as a real one lists them.
     listTargets: () =>
       Effect.succeed(
-        (options?.targets ?? []) as readonly import("@t3tools/contracts").ClientTargetInfo[],
+        (options?.targets ?? [
+          {
+            connectionId: "conn-1",
+            providers: [...CLIENT_PROVIDER_APIS.values()].map(({ id, version }) => ({
+              id,
+              version,
+            })),
+          },
+        ]) as readonly import("@t3tools/contracts").ClientTargetInfo[],
       ),
     resolveTarget: (_environmentId, _principal, hint) =>
       options?.resolveFailure
@@ -193,6 +208,7 @@ describe("preferences adapter", () => {
       target: { kind: "connection", connectionId: "conn-1" },
       writer: "ext.a",
       patch: { wordWrap: false },
+      include: ["renderBrowserFile"],
     });
   });
 
@@ -212,7 +228,10 @@ describe("preferences adapter", () => {
       {
         apiId: "t3.client/preferences",
         name: "watchPreferences",
-        input: { target: { kind: "connection", connectionId: "conn-1" } },
+        input: {
+          target: { kind: "connection", connectionId: "conn-1" },
+          include: ["renderBrowserFile"],
+        },
         coalesce: true,
       },
     ]);
@@ -423,7 +442,7 @@ describe("navigation adapter", () => {
       navigation.invoke("getCapabilities", {}, context, signal, metadata()),
     ).resolves.toMatchObject({
       adapter: "host.ui.navigation",
-      operations: { openThread: true, openAgentSession: true },
+      operations: { openThread: true, openAgentSession: true, openFile: true },
     });
   });
 
@@ -470,6 +489,147 @@ describe("navigation adapter", () => {
       open("workflow-1", { ...context, resource: unthreaded } as ViewContext),
     ).resolves.toEqual({ status: "refused", reason: "unknown-thread" });
     expect(bridge.invoked).toHaveLength(0);
+  });
+});
+
+describe("navigation adapter openFile", () => {
+  const openFile = (input: Record<string, unknown>, ctx: ViewContext = context) =>
+    makeProviders(bridge).navigation.invoke("openFile", input as Json, ctx, signal, metadata());
+  let bridge = fakeBridge();
+
+  it("forwards a workspace path to the caller's own client for its context thread", async () => {
+    bridge = fakeBridge();
+    await expect(openFile({ relativePath: "src/app.ts", line: 12 })).resolves.toEqual({
+      status: "opened",
+      relativePath: "src/app.ts",
+    });
+    expect(bridge.invoked).toEqual([
+      {
+        connectionId: "conn-1",
+        apiId: "t3.client/navigation",
+        method: "openFile",
+        input: {
+          target: { kind: "connection", connectionId: "conn-1" },
+          relativePath: "src/app.ts",
+          line: 12,
+        },
+      },
+    ]);
+  });
+
+  it("refuses unsafe paths and foreign or missing threads before any client frame", async () => {
+    bridge = fakeBridge();
+    for (const relativePath of ["../secret", "/etc/passwd", "a//b", "a\\b", "src/../x"])
+      await expect(openFile({ relativePath })).resolves.toEqual({
+        status: "refused",
+        reason: "invalid-path",
+      });
+    const { threadId: _dropped, ...unthreaded } = context.resource;
+    await expect(
+      openFile({ relativePath: "a.ts" }, { ...context, resource: unthreaded } as ViewContext),
+    ).resolves.toEqual({ status: "refused", reason: "unknown-thread" });
+    await expect(
+      openFile({ relativePath: "a.ts" }, {
+        ...context,
+        resource: { ...context.resource, threadId: "thread-other" },
+      } as ViewContext),
+    ).resolves.toEqual({ status: "refused", reason: "out-of-scope" });
+    expect(bridge.invoked).toHaveLength(0);
+  });
+});
+
+// Review finding (proof-host-6 P3): openFile and renderBrowserFile are 1.1.0
+// additions to the client seam. A client still on 1.0.0 never sees a frame it
+// cannot validate, and an older server never gets a field it would reject.
+describe("1.1.0 client seam additions", () => {
+  const seam = (navigation: string, preferences: string) =>
+    fakeBridge({
+      targets: [
+        {
+          connectionId: "conn-1",
+          providers: [
+            { id: "t3.client/navigation", version: navigation },
+            { id: "t3.client/preferences", version: preferences },
+          ],
+        },
+      ],
+    });
+
+  it("refuses openFile for a client whose navigation predates it", async () => {
+    const bridge = seam("1.0.0", "1.0.0");
+    await expect(
+      makeProviders(bridge).navigation.invoke(
+        "openFile",
+        { relativePath: "a.ts" } as Json,
+        context,
+        signal,
+        metadata(),
+      ),
+    ).rejects.toMatchObject({ code: "provider-rejected" });
+    expect(bridge.invoked).toHaveLength(0);
+  });
+
+  it("asks only a 1.1.0 client for renderBrowserFile", async () => {
+    const drain = async (preferences: HostApiProvider) => {
+      for await (const _event of preferences.subscribe!(
+        "subscribePreferences",
+        {},
+        context,
+        signal,
+        metadata(),
+      ));
+    };
+    const inputs = async (version: string) => {
+      const bridge = seam("1.1.0", version);
+      const { preferences } = makeProviders(bridge);
+      await preferences.invoke("getPreferences", {} as Json, context, signal, metadata());
+      await preferences.invoke(
+        "setPreferences",
+        { wordWrap: true } as Json,
+        context,
+        signal,
+        metadata(),
+      );
+      await drain(preferences);
+      return [
+        ...bridge.invoked.map(({ input }) => (input as { include?: unknown }).include),
+        ...bridge.subscribed.map(({ input }) => (input as { include?: unknown }).include),
+      ];
+    };
+    expect(await inputs("1.1.0")).toEqual([
+      ["renderBrowserFile"],
+      ["renderBrowserFile"],
+      ["renderBrowserFile"],
+    ]);
+    expect(await inputs("1.0.0")).toEqual([undefined, undefined, undefined]);
+  });
+
+  it("refuses a renderBrowserFile write to a client that predates it", async () => {
+    const bridge = seam("1.1.0", "1.0.0");
+    await expect(
+      makeProviders(bridge).preferences.invoke(
+        "setPreferences",
+        { renderBrowserFile: false } as Json,
+        context,
+        signal,
+        metadata(),
+      ),
+    ).rejects.toMatchObject({ code: "provider-rejected" });
+    expect(bridge.invoked).toHaveLength(0);
+  });
+
+  // Review finding (proof-host-8 P3): an unlisted version is not a current one.
+  it("treats a client that lists no version as predating the additions", async () => {
+    const bridge = fakeBridge({ targets: [{ connectionId: "conn-1", providers: [] }] });
+    const { navigation, preferences } = makeProviders(bridge);
+    await expect(
+      navigation.invoke("openFile", { relativePath: "a.ts" } as Json, context, signal, metadata()),
+    ).rejects.toMatchObject({ code: "provider-rejected" });
+    await preferences.invoke("getPreferences", {} as Json, context, signal, metadata());
+    // Only the read went out, and it asked for no 1.1.0 key.
+    expect(
+      bridge.invoked.map(({ method, input }) => [method, (input as { include?: unknown }).include]),
+    ).toEqual([["getPreferences", undefined]]);
   });
 });
 

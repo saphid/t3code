@@ -165,7 +165,7 @@ export function describeStatus(state: NavigationState): string {
 /**
  * Browser-previewable workspace files — same rule as the native
  * `isBrowserPreviewFile` (the native openFileInPreview module, line 32).
- * Package-owned so the presentation provider and the view agree.
+ * Package-owned so the address bar and restore state agree.
  */
 export function isBrowserPreviewFile(path: string): boolean {
   return /\.(?:html?|pdf)$/i.test(path.split(/[?#]/, 1)[0] ?? "");

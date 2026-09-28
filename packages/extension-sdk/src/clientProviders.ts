@@ -836,8 +836,27 @@ export const clientPreferencesSchema = {
   required: ["wordWrap"],
   properties: {
     wordWrap: { type: "boolean" },
+    // 1.1.0, and only when the server asks for it (`include`).
+    renderBrowserFile: { type: "boolean" },
   },
 } as const;
+
+/**
+ * 1.1.0 keys a server asks for. A 1.0.0 server validates answers against its
+ * closed shapes, so a client includes a 1.1.0 key only when asked; a server
+ * asks only a client whose area satisfies `CLIENT_PREFERENCES_V11_RANGE`.
+ */
+const preferencesIncludeProperty = {
+  include: {
+    type: "array",
+    maxItems: 1,
+    uniqueItems: true,
+    items: { enum: ["renderBrowserFile"] },
+  },
+} as const;
+
+/** The range that carries `renderBrowserFile` and `include`. */
+export const CLIENT_PREFERENCES_V11_RANGE = "^1.1.0";
 
 /** The writable subset of `clientPreferencesSchema`. */
 export const clientPreferencesPatchSchema = {
@@ -845,6 +864,7 @@ export const clientPreferencesPatchSchema = {
   additionalProperties: false,
   properties: {
     wordWrap: { type: "boolean" },
+    renderBrowserFile: { type: "boolean" },
   },
 } as const;
 
@@ -862,13 +882,13 @@ export const clientPreferencesReceiptSchema = {
 
 export const CLIENT_PREFERENCES_API = validateApiDefinition({
   id: "t3.client/preferences",
-  version: "1.0.0",
+  version: "1.1.0",
   methods: [
     {
       name: "getPreferences",
       effect: "read",
       requiredGrants: [],
-      inputSchema: withTarget({}),
+      inputSchema: withTarget(preferencesIncludeProperty),
       outputSchema: clientPreferencesSchema,
     },
     {
@@ -879,6 +899,7 @@ export const CLIENT_PREFERENCES_API = validateApiDefinition({
         {
           writer: { type: "string", minLength: 1, maxLength: 160 },
           patch: clientPreferencesPatchSchema,
+          ...preferencesIncludeProperty,
         },
         ["writer", "patch"],
       ),
@@ -888,7 +909,7 @@ export const CLIENT_PREFERENCES_API = validateApiDefinition({
   streams: [
     {
       name: "watchPreferences",
-      inputSchema: withTarget({}),
+      inputSchema: withTarget(preferencesIncludeProperty),
       eventSchema: clientPreferencesSchema,
       requiredGrants: [],
     },
@@ -1083,6 +1104,36 @@ export const uiNavigationReceiptSchema = {
   ],
 } as const;
 
+/** The `t3.ui/navigation` file-open receipt, shared by the public and private areas. */
+export const uiNavigationFileReceiptSchema = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "relativePath"],
+      properties: {
+        status: { const: "opened" },
+        relativePath: { type: "string", minLength: 1, maxLength: 512 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "reason"],
+      properties: {
+        status: { const: "refused" },
+        reason: { enum: ["unknown-thread", "out-of-scope", "invalid-path"] },
+      },
+    },
+  ],
+} as const;
+
+/** `openFile` input: a workspace-relative path and an optional 1-based line. */
+export const uiNavigationFileInputProperties = {
+  relativePath: { type: "string", minLength: 1, maxLength: 512 },
+  line: { type: "integer", minimum: 1, maximum: 10_000_000 },
+} as const;
+
 /** The `t3.ui/navigation` agent-session receipt, shared by the public and private areas. */
 export const uiNavigationSessionReceiptSchema = {
   oneOf: [
@@ -1110,12 +1161,15 @@ export const uiNavigationSessionReceiptSchema = {
 
 /**
  * Backs `t3.ui/navigation`. The adapter forwards only threads it resolved in
- * the caller's own project, and only session URLs it resolved from the
- * caller's own thread roster; the client re-checks before routing or opening.
+ * the caller's own project, only session URLs it resolved from the caller's
+ * own thread roster, and only safe workspace paths for the caller's own
+ * thread; the client re-checks before routing or opening. `openFile` is
+ * 1.1.0: the adapter sends it only to a client satisfying
+ * `CLIENT_NAVIGATION_V11_RANGE`.
  */
 export const CLIENT_NAVIGATION_API = validateApiDefinition({
   id: "t3.client/navigation",
-  version: "1.0.0",
+  version: "1.1.0",
   methods: [
     {
       name: "openThread",
@@ -1143,8 +1197,18 @@ export const CLIENT_NAVIGATION_API = validateApiDefinition({
       ),
       outputSchema: uiNavigationSessionReceiptSchema,
     },
+    {
+      name: "openFile",
+      effect: "write",
+      requiredGrants: [],
+      inputSchema: withTarget(uiNavigationFileInputProperties, ["relativePath"]),
+      outputSchema: uiNavigationFileReceiptSchema,
+    },
   ],
 });
+
+/** The navigation range that carries `openFile`. */
+export const CLIENT_NAVIGATION_V11_RANGE = "^1.1.0";
 
 /** Host-owned client-provider definitions, keyed by area id. */
 export const CLIENT_PROVIDER_APIS: ReadonlyMap<string, ApiDefinition> = new Map(
