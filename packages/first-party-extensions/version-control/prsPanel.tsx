@@ -53,7 +53,11 @@ import {
   mergePrsDiffSegment,
   mergePrsEntries,
   prsActorLabel,
+  prsAllowedMergeMethods,
   prsAuthoredByViewer,
+  prsCanMergeStack,
+  prsStackMergePlan,
+  prsStackMergeReceipt,
   prsBranchUrl,
   prsCheckoutLabel,
   prsCheckoutReceipt,
@@ -1745,6 +1749,12 @@ export function PullRequestsPanel(props: {
   const [openError, setOpenError] = useState<string | null>(null);
   // The handoff in flight (native's `handoff` key: `checkout:<mode>`), and
   // the last one's receipt, bound to the PR it answered.
+  // An armed stack merge (the PR it was armed on) and its last receipt.
+  const [stackConfirm, setStackConfirm] = useState<string | null>(null);
+  const [stackReceipt, setStackReceipt] = useState<{
+    readonly refKey: string;
+    readonly receipt: PrsReceipt;
+  } | null>(null);
   const [handoff, setHandoff] = useState<string | null>(null);
   const [handoffReceipt, setHandoffReceipt] = useState<{
     readonly refKey: string;
@@ -1863,6 +1873,9 @@ export function PullRequestsPanel(props: {
     key: string,
     invoke: (signal: AbortSignal) => Promise<unknown>,
     settled?: readonly { readonly key: string; readonly submitted: string }[],
+    onSettled?: (
+      outcome: { readonly ok: true } | { readonly ok: false; readonly detail: string },
+    ) => void,
   ) => {
     if (writeState?.pending) return;
     const controller = new AbortController();
@@ -1880,15 +1893,14 @@ export function PullRequestsPanel(props: {
             ),
           );
         }
+        onSettled?.({ ok: true });
         runInvalidate();
       },
       (error) => {
-        if (!signal.aborted)
-          setWriteState({
-            key,
-            pending: false,
-            error: message(error, "Pull-request write failed"),
-          });
+        if (signal.aborted) return;
+        const detail = message(error, "Pull-request write failed");
+        setWriteState({ key, pending: false, error: detail });
+        onSettled?.({ ok: false, detail });
       },
     );
   };
@@ -2049,6 +2061,39 @@ export function PullRequestsPanel(props: {
   const detail = sections.detail;
   const activity = sections.activity;
   const repositoryUrl = detail === null ? null : prsRepositoryUrl(detail.url);
+  const allowedMergeMethods = detail === null ? [] : prsAllowedMergeMethods(detail);
+  const stackMergeMethod = allowedMergeMethods.includes(
+    draft("method:merge") as (typeof allowedMergeMethods)[number],
+  )
+    ? draft("method:merge")
+    : (allowedMergeMethods[0] ?? "merge");
+  // Native requires a fresh stack read: a stack that failed to re-read offers no merge.
+  const stackMerge =
+    detail !== null &&
+    selected !== null &&
+    sections.stack !== null &&
+    sections.stackError === null &&
+    write.kind === "ready" &&
+    prsCanMergeStack(detail, write)
+      ? prsStackMergePlan(sections.stack, selected.number, stackMergeMethod)
+      : null;
+  const stackMergePending = writePending("stack:merge");
+  const runStackMerge = () => {
+    if (selected === null || selectedKey === null || stackMerge === null || stackMerge.disabled)
+      return;
+    const ref = selected;
+    const refKey = selectedKey;
+    setStackReceipt(null);
+    runWrite(
+      "stack:merge",
+      (signal) => writeApi().invoke("runAction", { ...ref, ...stackMerge.input }, signal),
+      undefined,
+      (outcome) => {
+        setStackConfirm(null);
+        setStackReceipt({ refKey, receipt: prsStackMergeReceipt(outcome) });
+      },
+    );
+  };
   const commitUrl = (oid: string) =>
     detail === null ? null : prsCommitUrl(detail.provider, repositoryUrl, oid);
 
@@ -2508,6 +2553,86 @@ export function PullRequestsPanel(props: {
                         </li>
                       ))}
                     </ul>
+                    {stackMerge !== null && stackMerge.visible && (
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          flexWrap: "wrap",
+                          padding: "2px 10px",
+                        }}
+                      >
+                        <Tooltip host={host} side="top" label={stackMerge.tooltip} showWhenDisabled>
+                          <button
+                            type="button"
+                            disabled={stackMerge.disabled || writeState?.pending === true}
+                            onClick={() => setStackConfirm(selectedKey)}
+                            style={{ ...control, fontSize: 12, border }}
+                          >
+                            {stackMerge.label}
+                          </button>
+                        </Tooltip>
+                        {stackMerge.blockedNote !== null && (
+                          <span style={{ color: muted, fontSize: 12 }}>
+                            {stackMerge.blockedNote}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {stackMerge !== null && stackConfirm === selectedKey && (
+                      <div
+                        role="dialog"
+                        aria-labelledby="t3-vc-stack-merge-title"
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape" && !stackMergePending) {
+                            event.preventDefault();
+                            setStackConfirm(null);
+                          }
+                        }}
+                        style={{
+                          margin: "4px 10px",
+                          padding: "6px 8px",
+                          border,
+                          borderRadius: 6,
+                          fontSize: 12,
+                        }}
+                      >
+                        <strong id="t3-vc-stack-merge-title">{stackMerge.confirmTitle}</strong>
+                        <p style={{ margin: "4px 0", color: muted }}>
+                          {stackMerge.confirmDescription}
+                        </p>
+                        <ul style={{ listStyle: "none", margin: "4px 0", padding: 0 }}>
+                          {stackMerge.layers.map((layer) => (
+                            <li key={layer.number}>
+                              #{layer.number} {layer.title ?? layer.headBranch}
+                            </li>
+                          ))}
+                        </ul>
+                        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                          <button
+                            type="button"
+                            disabled={stackMergePending}
+                            onClick={() => setStackConfirm(null)}
+                            style={{ ...control, fontSize: 12, border }}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            autoFocus
+                            disabled={stackMergePending}
+                            onClick={runStackMerge}
+                            style={{ ...control, fontSize: 12, border }}
+                          >
+                            {stackMergePending ? "Working…" : "Merge stack"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    <ReceiptLine
+                      receipt={stackReceipt?.refKey === selectedKey ? stackReceipt.receipt : null}
+                    />
                   </section>
                 )}
 

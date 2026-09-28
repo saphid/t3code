@@ -35,6 +35,7 @@ import type {
   PrsReviewThread,
   PrsStack,
   PrsStackMembership,
+  PrsWriteActionInput,
   PrsWriteActionKind,
   PrsWriteCapabilitiesResult,
   PrsWriteMergeMethod,
@@ -1330,6 +1331,100 @@ export function prsWriteActionOffers(
     if (revert !== null) offers.push(revert);
   }
   return offers;
+}
+
+/* ---------------- stack merge ---------------- */
+
+/** The strategies the host offers, narrowed to the ones the repository allows (native order). */
+export function prsAllowedMergeMethods(detail: {
+  readonly capabilities: { readonly mergeMethods: readonly PrsWriteMergeMethod[] };
+  readonly mergeCapabilities: Readonly<Record<PrsWriteMergeMethod, boolean>>;
+}): readonly PrsWriteMergeMethod[] {
+  return detail.capabilities.mergeMethods.filter((method) => detail.mergeCapabilities[method]);
+}
+
+/**
+ * Native's `canMerge` for the stack menu: the host does stacks and stack
+ * actions, both the host and this viewer may merge, the repository allows a
+ * method, and the write probe declares the action.
+ */
+export function prsCanMergeStack(
+  detail: {
+    readonly capabilities: {
+      readonly actions: readonly string[];
+      readonly mergeMethods: readonly PrsWriteMergeMethod[];
+      readonly stacks?: boolean;
+      readonly stackActions?: boolean;
+    };
+    readonly viewerPermissions: { readonly actions: readonly string[] };
+    readonly mergeCapabilities: Readonly<Record<PrsWriteMergeMethod, boolean>>;
+  },
+  write: {
+    readonly operations: { readonly "prs.runAction": boolean };
+    readonly actions: readonly PrsWriteActionKind[];
+  },
+): boolean {
+  return (
+    detail.capabilities.stacks === true &&
+    detail.capabilities.stackActions === true &&
+    detail.capabilities.actions.includes("merge") &&
+    detail.viewerPermissions.actions.includes("merge") &&
+    prsAllowedMergeMethods(detail).length > 0 &&
+    write.operations["prs.runAction"] &&
+    write.actions.includes("merge")
+  );
+}
+
+/**
+ * Native's Merge stack (PullRequestStackMenu): this layer and every
+ * unmerged layer below it, each pinned to the head the reader saw so a
+ * moved branch fails rather than merges unseen code.
+ */
+export function prsStackMergePlan(stack: PrsStack, number: number, mergeMethod: string) {
+  const position = stack.layers.findIndex((layer) => layer.number === number) + 1;
+  const selected = position > 0 ? stack.layers[position - 1] : undefined;
+  const layers = stack.layers.slice(0, position).filter((layer) => layer.state !== "merged");
+  const unready = layers.some((layer) => layer.state !== "open" || layer.isDraft === true);
+  const count = layers.length;
+  const input: Omit<PrsWriteActionInput, "repository" | "host"> = {
+    number,
+    action: "merge",
+    mergeMethod: mergeMethod as PrsWriteMergeMethod,
+    stackNumber: stack.number,
+    expectedStackHeads: layers.flatMap((layer) =>
+      layer.headSha ? [{ number: layer.number, headSha: layer.headSha }] : [],
+    ),
+  };
+  return {
+    visible: selected?.state === "open",
+    disabled:
+      selected?.state !== "open" ||
+      count === 0 ||
+      unready ||
+      layers.some((layer) => !layer.headSha),
+    layers,
+    input,
+    label: "Merge stack",
+    tooltip: `Merge stack through #${number} into ${stack.base} (${count} ${
+      count === 1 ? "pull request" : "pull requests"
+    })`,
+    confirmTitle: `Merge ${count} pull requests?`,
+    confirmDescription: `Merge #${number} and its unmerged layers below into ${stack.base} using ${mergeMethod}. GitHub checks their rules before merging or queueing them and rebases the remaining stack after merging.`,
+    blockedNote: unready ? "Every layer being merged must be open and ready for review." : null,
+  };
+}
+
+/** Native's stack-merge toasts as a receipt. */
+export function prsStackMergeReceipt(
+  outcome: { readonly ok: true } | { readonly ok: false; readonly detail: string | null },
+): PrsReceipt {
+  return outcome.ok
+    ? {
+        tone: "success",
+        title: "Stack merge request completed",
+        description: "GitHub merged the stack or added it to its merge queue.",
+      }
+    : { tone: "error", title: "Stack operation did not complete", description: outcome.detail };
 }
 
 /** Review verdicts the host accepts, as picker options in the native order. */

@@ -10105,6 +10105,46 @@ ${ref.number}`;
     }
     return offers;
   }
+  function prsAllowedMergeMethods(detail) {
+    return detail.capabilities.mergeMethods.filter((method) => detail.mergeCapabilities[method]);
+  }
+  function prsCanMergeStack(detail, write) {
+    return detail.capabilities.stacks === true && detail.capabilities.stackActions === true && detail.capabilities.actions.includes("merge") && detail.viewerPermissions.actions.includes("merge") && prsAllowedMergeMethods(detail).length > 0 && write.operations["prs.runAction"] && write.actions.includes("merge");
+  }
+  function prsStackMergePlan(stack, number, mergeMethod) {
+    const position = stack.layers.findIndex((layer) => layer.number === number) + 1;
+    const selected = position > 0 ? stack.layers[position - 1] : void 0;
+    const layers = stack.layers.slice(0, position).filter((layer) => layer.state !== "merged");
+    const unready = layers.some((layer) => layer.state !== "open" || layer.isDraft === true);
+    const count = layers.length;
+    const input = {
+      number,
+      action: "merge",
+      mergeMethod,
+      stackNumber: stack.number,
+      expectedStackHeads: layers.flatMap(
+        (layer) => layer.headSha ? [{ number: layer.number, headSha: layer.headSha }] : []
+      )
+    };
+    return {
+      visible: selected?.state === "open",
+      disabled: selected?.state !== "open" || count === 0 || unready || layers.some((layer) => !layer.headSha),
+      layers,
+      input,
+      label: "Merge stack",
+      tooltip: `Merge stack through #${number} into ${stack.base} (${count} ${count === 1 ? "pull request" : "pull requests"})`,
+      confirmTitle: `Merge ${count} pull requests?`,
+      confirmDescription: `Merge #${number} and its unmerged layers below into ${stack.base} using ${mergeMethod}. GitHub checks their rules before merging or queueing them and rebases the remaining stack after merging.`,
+      blockedNote: unready ? "Every layer being merged must be open and ready for review." : null
+    };
+  }
+  function prsStackMergeReceipt(outcome) {
+    return outcome.ok ? {
+      tone: "success",
+      title: "Stack merge request completed",
+      description: "GitHub merged the stack or added it to its merge queue."
+    } : { tone: "error", title: "Stack operation did not complete", description: outcome.detail };
+  }
   function prsWriteVerdictOptions(verdicts) {
     const order = ["comment", "approve", "request-changes"];
     const labels = {
@@ -11329,6 +11369,8 @@ ${writeKey}`;
     const [drafts, setDrafts] = (0, import_react.useState)({});
     const [writeState, setWriteState] = (0, import_react.useState)(null);
     const [openError, setOpenError] = (0, import_react.useState)(null);
+    const [stackConfirm, setStackConfirm] = (0, import_react.useState)(null);
+    const [stackReceipt, setStackReceipt] = (0, import_react.useState)(null);
     const [handoff, setHandoff] = (0, import_react.useState)(null);
     const [handoffReceipt, setHandoffReceipt] = (0, import_react.useState)(null);
     const openOnHost = (url) => {
@@ -11409,7 +11451,7 @@ ${writeKey}`;
     const draftKey = (key) => prsDraftKey(selectedKey, key);
     const draft = (key) => drafts[draftKey(key)] ?? "";
     const setDraft = (key, value) => setDrafts((current) => ({ ...current, [draftKey(key)]: value }));
-    const runWrite = (key, invoke, settled) => {
+    const runWrite = (key, invoke, settled, onSettled) => {
       if (writeState?.pending) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -11426,15 +11468,14 @@ ${writeKey}`;
               )
             );
           }
+          onSettled?.({ ok: true });
           runInvalidate();
         },
         (error) => {
-          if (!signal.aborted)
-            setWriteState({
-              key,
-              pending: false,
-              error: message(error, "Pull-request write failed")
-            });
+          if (signal.aborted) return;
+          const detail2 = message(error, "Pull-request write failed");
+          setWriteState({ key, pending: false, error: detail2 });
+          onSettled?.({ ok: false, detail: detail2 });
         }
       );
     };
@@ -11556,6 +11597,28 @@ ${thread.id}`;
     const detail = sections.detail;
     const activity = sections.activity;
     const repositoryUrl = detail === null ? null : prsRepositoryUrl(detail.url);
+    const allowedMergeMethods = detail === null ? [] : prsAllowedMergeMethods(detail);
+    const stackMergeMethod = allowedMergeMethods.includes(
+      draft("method:merge")
+    ) ? draft("method:merge") : allowedMergeMethods[0] ?? "merge";
+    const stackMerge = detail !== null && selected !== null && sections.stack !== null && sections.stackError === null && write.kind === "ready" && prsCanMergeStack(detail, write) ? prsStackMergePlan(sections.stack, selected.number, stackMergeMethod) : null;
+    const stackMergePending = writePending("stack:merge");
+    const runStackMerge = () => {
+      if (selected === null || selectedKey === null || stackMerge === null || stackMerge.disabled)
+        return;
+      const ref = selected;
+      const refKey = selectedKey;
+      setStackReceipt(null);
+      runWrite(
+        "stack:merge",
+        (signal) => writeApi().invoke("runAction", { ...ref, ...stackMerge.input }, signal),
+        void 0,
+        (outcome) => {
+          setStackConfirm(null);
+          setStackReceipt({ refKey, receipt: prsStackMergeReceipt(outcome) });
+        }
+      );
+    };
     const commitUrl = (oid) => detail === null ? null : prsCommitUrl(detail.provider, repositoryUrl, oid);
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "div",
@@ -11911,7 +11974,91 @@ ${thread.id}`;
                       ]
                     },
                     layer.number
-                  )) })
+                  )) }),
+                  stackMerge !== null && stackMerge.visible && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                    "div",
+                    {
+                      style: {
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        flexWrap: "wrap",
+                        padding: "2px 10px"
+                      },
+                      children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: stackMerge.tooltip, showWhenDisabled: true, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                          "button",
+                          {
+                            type: "button",
+                            disabled: stackMerge.disabled || writeState?.pending === true,
+                            onClick: () => setStackConfirm(selectedKey),
+                            style: { ...control, fontSize: 12, border },
+                            children: stackMerge.label
+                          }
+                        ) }),
+                        stackMerge.blockedNote !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, fontSize: 12 }, children: stackMerge.blockedNote })
+                      ]
+                    }
+                  ),
+                  stackMerge !== null && stackConfirm === selectedKey && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                    "div",
+                    {
+                      role: "dialog",
+                      "aria-labelledby": "t3-vc-stack-merge-title",
+                      onKeyDown: (event) => {
+                        if (event.key === "Escape" && !stackMergePending) {
+                          event.preventDefault();
+                          setStackConfirm(null);
+                        }
+                      },
+                      style: {
+                        margin: "4px 10px",
+                        padding: "6px 8px",
+                        border,
+                        borderRadius: 6,
+                        fontSize: 12
+                      },
+                      children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { id: "t3-vc-stack-merge-title", children: stackMerge.confirmTitle }),
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: "4px 0", color: muted }, children: stackMerge.confirmDescription }),
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: "4px 0", padding: 0 }, children: stackMerge.layers.map((layer) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { children: [
+                          "#",
+                          layer.number,
+                          " ",
+                          layer.title ?? layer.headBranch
+                        ] }, layer.number)) }),
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { display: "flex", gap: 6, justifyContent: "flex-end" }, children: [
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                            "button",
+                            {
+                              type: "button",
+                              disabled: stackMergePending,
+                              onClick: () => setStackConfirm(null),
+                              style: { ...control, fontSize: 12, border },
+                              children: "Cancel"
+                            }
+                          ),
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                            "button",
+                            {
+                              type: "button",
+                              autoFocus: true,
+                              disabled: stackMergePending,
+                              onClick: runStackMerge,
+                              style: { ...control, fontSize: 12, border },
+                              children: stackMergePending ? "Working\u2026" : "Merge stack"
+                            }
+                          )
+                        ] })
+                      ]
+                    }
+                  ),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    ReceiptLine,
+                    {
+                      receipt: stackReceipt?.refKey === selectedKey ? stackReceipt.receipt : null
+                    }
+                  )
                 ] }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Checks", style: { paddingBottom: 4 }, children: [
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("h3", { style: headingStyle, children: [

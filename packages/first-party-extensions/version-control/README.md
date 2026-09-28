@@ -24,7 +24,12 @@ The PR browser consumes the `t3.prs/read` grant:
 - freshness via `prs.subscribeRefreshes` and an explicit Refresh that
   calls `prs.invalidate` then re-reads the list;
 - the PR's stack via `prs.stack`, shown as a Stack section with its base
-  and layers when the host supports it;
+  and layers when the host supports it, plus native's Merge stack: this
+  layer and every unmerged layer below it, pinned to the heads the reader
+  saw (`runAction` `merge` with `stackNumber`/`expectedStackHeads`), offered
+  only when the host does stack actions, host and viewer may merge, the
+  repository allows a method, and the stack read is fresh — confirmed inline
+  before it runs. Rebase stack stays deferred;
 - `prs.reviewerCandidates`/`prs.labelCandidates`/`prs.listStats` remain
   unwired — nothing in the panel needs them yet;
 - open-on-host links for the repository, the PR number, both branch chips
