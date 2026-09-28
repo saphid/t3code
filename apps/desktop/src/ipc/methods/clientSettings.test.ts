@@ -5,11 +5,8 @@ import * as Layer from "effect/Layer";
 import { expect, vi } from "vite-plus/test";
 
 const windows = vi.hoisted(() =>
-  [1, 2, 3].map((id) => ({
-    destroyed: false,
-    isDestroyed() {
-      return this.destroyed;
-    },
+  [1, 2].map((id) => ({
+    isDestroyed: () => false,
     webContents: { id, send: vi.fn() },
   })),
 );
@@ -17,26 +14,18 @@ vi.mock("electron", () => ({ BrowserWindow: { getAllWindows: () => windows } }))
 
 import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
 import * as DesktopSnapShot from "../../snapShot/DesktopSnapShot.ts";
-import { CLIENT_SETTINGS_CHANGED_CHANNEL } from "../channels.ts";
 import { setClientSettings } from "./clientSettings.ts";
 
-it.effect("a save in one window reaches every other open window, after it is written", () => {
+it.effect("a save is written once and sent to no window, so none saves again in reply", () => {
   const written: unknown[] = [];
-  windows[2]!.destroyed = true;
   const settings = {
     ...DEFAULT_CLIENT_SETTINGS,
     browserProfiles: [{ id: "work", name: "Client work", kind: "persistent" as const }],
   };
   return Effect.gen(function* () {
-    yield* setClientSettings.handler(settings, { sender: { id: 1 } });
+    yield* setClientSettings.handler(settings, { sender: { id: 1 } } as never);
     expect(written).toEqual([settings]);
-    // The saving window already has them; a closed one gets nothing.
-    expect(windows[0]!.webContents.send).not.toHaveBeenCalled();
-    expect(windows[1]!.webContents.send).toHaveBeenCalledWith(
-      CLIENT_SETTINGS_CHANGED_CHANNEL,
-      settings,
-    );
-    expect(windows[2]!.webContents.send).not.toHaveBeenCalled();
+    for (const window of windows) expect(window.webContents.send).not.toHaveBeenCalled();
   }).pipe(
     Effect.provide(
       Layer.mergeAll(

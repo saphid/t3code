@@ -11,6 +11,10 @@ const persistenceMocks = vi.hoisted(() => {
   return {
     getClientSettings: vi.fn<() => Promise<ClientSettings | null>>(),
     setClientSettings: vi.fn<(settings: ClientSettings) => Promise<void>>(),
+    /**
+     * A feed of saves made in other desktop windows. The desktop offers none;
+     * it is here so a store that listened to one would be caught doing so.
+     */
     changeListeners,
     onClientSettingsChanged: (listener: (settings: ClientSettings) => void) => {
       changeListeners.add(listener);
@@ -18,9 +22,9 @@ const persistenceMocks = vi.hoisted(() => {
     },
   };
 });
-/** Another desktop window saved `settings`. */
+/** Another desktop window saved `settings`, as a window-to-window broadcast would say. */
 const savedElsewhere = (settings: ClientSettings) => {
-  for (const listener of persistenceMocks.changeListeners) listener(settings);
+  for (const listener of persistenceMocks.changeListeners) listener(structuredClone(settings));
 };
 
 vi.mock("~/localApi", () => ({
@@ -33,7 +37,6 @@ import {
   ensureClientSettingsHydrated,
   getClientSettings,
   mergeEnvironmentSettings,
-  subscribeClientSettings,
   persistClientSettingsPatch,
   persistClientSettingsUpdate,
   resolveEnvironmentIdentificationMode,
@@ -172,46 +175,84 @@ describe("client settings hydration", () => {
   });
 });
 
-describe("settings saved in another desktop window", () => {
+describe("two desktop windows", () => {
   const profile = { id: "work", name: "Work", kind: "persistent" as const };
-  const renamed = {
-    ...DEFAULT_CLIENT_SETTINGS,
-    browserProfiles: [{ ...profile, name: "Client work" }],
+  const initial = { ...DEFAULT_CLIENT_SETTINGS, browserProfiles: [profile] };
+  const renamedHere = [{ ...profile, name: "Renamed here" }];
+
+  /** Holds the next write until `release`; `arrived` settles once it starts. */
+  const holdNextWrite = () => {
+    let release!: () => void;
+    let arrived!: () => void;
+    const arrival = new Promise<void>((resolve) => {
+      arrived = resolve;
+    });
+    persistenceMocks.setClientSettings.mockImplementationOnce(async () => {
+      arrived();
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    });
+    return { arrival, release: () => release() };
   };
 
-  it("replace this window's copy and reach every subscriber", async () => {
-    persistenceMocks.getClientSettings.mockResolvedValue({
-      ...DEFAULT_CLIENT_SETTINGS,
-      browserProfiles: [profile],
-    });
-    const listener = vi.fn();
-    subscribeClientSettings(listener);
+  it("an edit queued behind a slow save keeps its value when another window saves", async () => {
+    persistenceMocks.getClientSettings.mockResolvedValue(initial);
     await ensureClientSettingsHydrated();
-    listener.mockClear();
-
-    savedElsewhere(renamed);
-    expect(getClientSettings()).toEqual(renamed);
-    expect(listener).toHaveBeenCalledTimes(1);
-    // A later edit here builds on them rather than writing the old copy back.
-    await persistClientSettingsPatch({ timestampFormat: "24-hour" });
-    expect(persistenceMocks.setClientSettings).toHaveBeenLastCalledWith({
-      ...renamed,
-      timestampFormat: "24-hour",
-    });
+    const write = holdNextWrite();
+    const first = persistClientSettingsPatch({ wordWrap: false });
+    await write.arrival;
+    const rename = persistClientSettingsPatch({ browserProfiles: renamedHere });
+    savedElsewhere({ ...initial, timestampFormat: "24-hour" });
+    write.release();
+    await Promise.all([first, rename]);
+    expect(persistenceMocks.setClientSettings).toHaveBeenCalledTimes(2);
+    expect(persistenceMocks.setClientSettings.mock.calls[1]![0].browserProfiles).toEqual(
+      renamedHere,
+    );
+    expect(getClientSettings().browserProfiles).toEqual(renamedHere);
   });
 
-  it("win over a read that was still in flight", async () => {
-    let resolveRead!: (settings: ClientSettings) => void;
-    persistenceMocks.getClientSettings.mockReturnValue(
-      new Promise((resolve) => {
-        resolveRead = resolve;
-      }),
-    );
-    const hydrated = ensureClientSettingsHydrated();
-    savedElsewhere(renamed);
-    resolveRead({ ...DEFAULT_CLIENT_SETTINGS, browserProfiles: [profile] });
-    await hydrated;
-    expect(getClientSettings()).toEqual(renamed);
+  it("a save in flight is not rolled back in its own window by another window's save", async () => {
+    persistenceMocks.getClientSettings.mockResolvedValue(initial);
+    await ensureClientSettingsHydrated();
+    const write = holdNextWrite();
+    const rename = persistClientSettingsPatch({ browserProfiles: renamedHere });
+    await write.arrival;
+    savedElsewhere({ ...initial, timestampFormat: "24-hour" });
+    write.release();
+    await rename;
+    expect(persistenceMocks.setClientSettings).toHaveBeenCalledTimes(1);
+    expect(getClientSettings().browserProfiles).toEqual(renamedHere);
+  });
+
+  it("overlapping updates in two windows write exactly once each", async () => {
+    await ensureClientSettingsHydrated();
+    const [hearA] = persistenceMocks.changeListeners;
+    // A second window: its own copy of the settings store.
+    vi.resetModules();
+    const windowB = await import("./useSettings");
+    await windowB.ensureClientSettingsHydrated();
+    const hearB = [...persistenceMocks.changeListeners].find((listener) => listener !== hearA);
+    let writes = 0;
+    // Each write reaches the other window, if it listens, before the saver
+    // hears back; capped so a store that loops still ends.
+    const saveTo =
+      (other: ((settings: ClientSettings) => void) | undefined) =>
+      async (settings: ClientSettings) => {
+        writes += 1;
+        await Promise.resolve();
+        if (writes < 40) queueMicrotask(() => other?.(structuredClone(settings)));
+      };
+    await Promise.all([
+      persistClientSettingsUpdate((current) => ({ ...current, wordWrap: false }), saveTo(hearB)),
+      windowB.persistClientSettingsUpdate(
+        (current) => ({ ...current, timestampFormat: "24-hour" }),
+        saveTo(hearA),
+      ),
+    ]);
+    windowB.__resetClientSettingsPersistenceForTests();
+    expect(writes).toBe(2);
   });
 });
 

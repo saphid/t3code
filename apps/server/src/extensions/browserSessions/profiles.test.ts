@@ -1171,6 +1171,70 @@ describe("browser profiles changes stream (1.1.0)", () => {
       }),
   );
 
+  it.effect("a connected desktop that has not published yet is loading, not absent", () =>
+    Effect.gen(function* () {
+      const { profiles, engineHosts } = yield* harness;
+      /** What a subscriber joining now is handed first. */
+      const state = Stream.runHead(engineHosts.profileChanges).pipe(Effect.map(Option.getOrThrow));
+      expect(yield* state).toBeNull();
+      const host = yield* attachWindow(engineHosts);
+      expect(yield* state).toBe("pending");
+      // The view hears nothing until it publishes: its first event is the list.
+      const changes = yield* openChanges(profiles);
+      const first = yield* Effect.forkChild(changes.next);
+      yield* host.publish(LIST);
+      expect(yield* Fiber.join(first)).toEqual({
+        done: false,
+        value: { type: "snapshot", value: { list: LIST } },
+      });
+      // A reload: the new window registers before the old one leaves, and has
+      // not read its settings yet. That is still loading, not "no desktop".
+      const reloaded = yield* attachWindow(engineHosts);
+      yield* Fiber.interrupt(host.fiber);
+      expect(yield* state).toBe("pending");
+      yield* reloaded.publish(RENAMED);
+      expect((yield* changes.next).value).toEqual({ type: "data", value: { list: RENAMED } });
+      yield* Fiber.interrupt(reloaded.fiber);
+      expect(yield* state).toBeNull();
+      expect((yield* changes.next).value).toEqual({ type: "data", value: { list: null } });
+      yield* changes.close;
+    }),
+  );
+
+  it.effect("a change from any window reaches every subscriber, early or late", () =>
+    Effect.gen(function* () {
+      const { profiles, engineHosts } = yield* harness;
+      const early = yield* openChanges(profiles);
+      expect((yield* early.next).value).toEqual({ type: "snapshot", value: { list: null } });
+      const windowA = yield* attachWindow(engineHosts);
+      const windowB = yield* attachWindow(engineHosts);
+      yield* windowA.publish(LIST);
+      expect((yield* early.next).value).toEqual({ type: "data", value: { list: LIST } });
+      const late = yield* openChanges(profiles);
+      expect((yield* late.next).value).toEqual({ type: "snapshot", value: { list: LIST } });
+      const everyone = Effect.fn("test.everyone")(function* (list: typeof LIST) {
+        for (const changes of [early, late]) {
+          expect((yield* changes.next).value).toEqual({ type: "data", value: { list } });
+        }
+        expect(yield* listed(profiles)).toEqual(list);
+      });
+      yield* windowB.publish(RENAMED);
+      yield* everyone(RENAMED);
+      yield* windowA.publish(DELETED);
+      yield* everyone(DELETED);
+      // Window C registers; the others leave before it has published, which
+      // leaves the list loading rather than absent.
+      const windowC = yield* attachWindow(engineHosts);
+      // B's older list leaves first, so no older list resurfaces.
+      yield* Fiber.interrupt(windowB.fiber);
+      yield* Fiber.interrupt(windowA.fiber);
+      yield* windowC.publish(NEW_DEFAULT);
+      yield* everyone(NEW_DEFAULT);
+      yield* early.close;
+      yield* late.close;
+    }),
+  );
+
   it.effect("a stalled subscriber keeps only the latest list, not every change it missed", () =>
     Effect.gen(function* () {
       const { profiles, engineHosts } = yield* harness;

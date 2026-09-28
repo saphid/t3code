@@ -399,7 +399,9 @@ export function createBrowserProfilesApiProvider(
    * `changes`: the environment's current list, then each different one —
    * `{ list: null }` while no desktop is connected, so a web-only client
    * learns that at once and hears when a desktop arrives or the last one
-   * leaves. Never a value equal to the last one sent.
+   * leaves. A desktop that is connected but has not published yet sends
+   * nothing, so the view stays loading rather than saying there is none.
+   * Never a value equal to the last one sent.
    */
   const subscribe = (
     name: string,
@@ -438,6 +440,10 @@ export function createBrowserProfilesApiProvider(
     const events = Stream.unwrap(
       Effect.map(resolve(context), (scope) =>
         dependencies.engineHosts.profileChanges.pipe(
+          Stream.filter(
+            (state): state is BrowserEngineHosts.BrowserEngineProfileList | null =>
+              state !== "pending",
+          ),
           // A host that reconnects republishes; an equal list is not news.
           Stream.changesWith(BrowserEngineHosts.sameProfileList),
           // Authority and scope are rechecked before each list is delivered.

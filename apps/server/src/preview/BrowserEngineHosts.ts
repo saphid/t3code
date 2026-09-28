@@ -110,6 +110,12 @@ interface HostConnection {
   profilesPublication: number;
 }
 
+/**
+ * The environment's profiles: a list, null while no host is connected, or
+ * "pending" while hosts are connected but none has published yet.
+ */
+export type BrowserEngineProfileState = BrowserEngineProfileList | null | "pending";
+
 /** Same ids, names, order and default. */
 export const sameProfileList = (
   a: BrowserEngineProfileList | null,
@@ -154,16 +160,17 @@ export class BrowserEngineHosts extends Context.Service<
     ) => Effect.Effect<void, BrowserEngineHostError>;
     /**
      * The environment's profile list: the newest publication from any
-     * connected host. Every desktop window holds the same settings (the
-     * desktop broadcasts each save to all of them), so whichever window saved
-     * last is current. Null while no connected host has published.
+     * connected host. The desktop app owns the settings file and has one app
+     * window; a second host only overlaps briefly (a reload), and the newest
+     * publication is the newest settings. Null while no connected host has
+     * published.
      */
     readonly currentProfiles: Effect.Effect<BrowserEngineProfileList | null>;
     /**
-     * `currentProfiles`, then each different value. A slow subscriber keeps
-     * only the latest value it has not taken, never a backlog.
+     * The profile state now, then each different one. A slow subscriber
+     * keeps only the latest state it has not taken, never a backlog.
      */
-    readonly profileChanges: Stream.Stream<BrowserEngineProfileList | null>;
+    readonly profileChanges: Stream.Stream<BrowserEngineProfileState>;
     /** Sends a command to the owning host and waits for its bounded acknowledgement. */
     readonly dispatch: (
       input: BrowserEngineDispatchInput,
@@ -194,16 +201,17 @@ const make = Effect.gen(function* () {
   const hosts = yield* Ref.make(new Map<string, HostConnection>());
   const importAckTimeoutMs = yield* ImportAckTimeoutMs;
   let profilePublications = 0;
-  let currentProfiles: BrowserEngineProfileList | null = null;
+  let profiles: BrowserEngineProfileState = null;
   /**
    * One sliding slot per subscriber: one that falls behind holds the newest
    * list only, never the history it missed.
    */
-  const profileSubscribers = new Set<Queue.Queue<BrowserEngineProfileList | null>>();
+  const profileSubscribers = new Set<Queue.Queue<BrowserEngineProfileState>>();
   /** Recomputes the environment's list after a host published or left. */
   const refreshProfiles = Effect.sync(() => {
+    const connected = Ref.getUnsafe(hosts);
     let newest: HostConnection | undefined;
-    for (const host of Ref.getUnsafe(hosts).values()) {
+    for (const host of connected.values()) {
       if (
         host.profiles !== null &&
         (newest === undefined || host.profilesPublication > newest.profilesPublication)
@@ -211,17 +219,18 @@ const make = Effect.gen(function* () {
         newest = host;
       }
     }
-    const next = newest?.profiles ?? null;
-    // An equal list is not published, so subscribers never see a repeat.
-    if (sameProfileList(currentProfiles, next)) return;
-    currentProfiles = next;
+    const next = newest?.profiles ?? (connected.size > 0 ? "pending" : null);
+    // An equal state is not published, so subscribers never see a repeat.
+    if (next === profiles) return;
+    if (next !== "pending" && profiles !== "pending" && sameProfileList(profiles, next)) return;
+    profiles = next;
     for (const subscriber of profileSubscribers) Queue.offerUnsafe(subscriber, next);
   });
   const profileChanges = Stream.unwrap(
     Effect.acquireRelease(
-      Effect.flatMap(Queue.sliding<BrowserEngineProfileList | null>(1), (subscriber) =>
+      Effect.flatMap(Queue.sliding<BrowserEngineProfileState>(1), (subscriber) =>
         Effect.sync(() => {
-          Queue.offerUnsafe(subscriber, currentProfiles);
+          Queue.offerUnsafe(subscriber, profiles);
           profileSubscribers.add(subscriber);
           return subscriber;
         }),
@@ -290,6 +299,7 @@ const make = Effect.gen(function* () {
                 };
                 yield* Queue.offer(queue, { type: "registered", hostConnectionId });
                 yield* Ref.update(hosts, (current) => new Map(current).set(hostConnectionId, host));
+                yield* refreshProfiles;
                 return host;
               }),
               disconnect,
@@ -431,7 +441,7 @@ const make = Effect.gen(function* () {
     report,
     commandResult,
     publishProfiles,
-    currentProfiles: Effect.sync(() => currentProfiles),
+    currentProfiles: Effect.sync(() => (profiles === "pending" ? null : profiles)),
     profileChanges,
     dispatch,
     dispatchProfile,
