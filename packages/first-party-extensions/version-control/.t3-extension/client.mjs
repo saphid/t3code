@@ -10059,7 +10059,10 @@ ${ref.number}`;
   function prsCheckTooltip(check) {
     return check.description ?? check.name;
   }
-  function prsWriteActionOffers(detail, write) {
+  function prsSingleMergeAllowed(input) {
+    return !input.supportsStackActions || !input.hasStack && !input.stackPending && input.stackError === null;
+  }
+  function prsWriteActionOffers(detail, write, options = {}) {
     const declared = new Set(write.actions);
     const offer = (action, extra) => declared.has(action) ? {
       action,
@@ -10068,10 +10071,13 @@ ${ref.number}`;
       ...extra?.methods !== void 0 ? { methods: extra.methods } : {},
       ...extra?.updateMethods !== void 0 ? { updateMethods: extra.updateMethods } : {}
     } : null;
+    const mergeCapabilities = detail.mergeCapabilities;
+    const mergeMethods = mergeCapabilities === void 0 ? write.mergeMethods : write.mergeMethods.filter((method) => mergeCapabilities[method]);
+    const canMerge = !detail.isDraft && detail.mergeability !== "conflicting" && mergeMethods.length > 0 && options.singleMergeAllowed !== false;
     const offers = [];
     if (detail.state === "open") {
       if (!detail.isDraft) {
-        const merge = offer("merge", { methods: write.mergeMethods });
+        const merge = canMerge ? offer("merge", { methods: mergeMethods }) : null;
         if (merge !== null) offers.push(merge);
         const draft = offer("draft");
         if (draft !== null) offers.push(draft);
@@ -10086,8 +10092,8 @@ ${ref.number}`;
       if (detail.autoMergeEnabled === true) {
         const disarm = offer("disable-auto-merge");
         if (disarm !== null) offers.push(disarm);
-      } else if (detail.autoMergeEnabled === false) {
-        const arm = offer("enable-auto-merge", { methods: write.mergeMethods });
+      } else if (detail.autoMergeEnabled === false && canMerge) {
+        const arm = offer("enable-auto-merge", { methods: mergeMethods });
         if (arm !== null) offers.push(arm);
       }
       const close = offer("close");
@@ -10468,7 +10474,8 @@ ${writeKey}`;
     linked: null,
     linkedError: null,
     stack: null,
-    stackError: null
+    stackError: null,
+    stackKey: null
   };
   function usePrsDetail(host, session, ref, operations, revision2) {
     const refKey = ref === null ? null : prsRefKey(ref);
@@ -10489,7 +10496,8 @@ ${writeKey}`;
                 key,
                 refKey,
                 [field]: value,
-                [errorField]: null
+                [errorField]: null,
+                ...field === "stack" ? { stackKey: key } : {}
               }));
           },
           (error) => {
@@ -10524,7 +10532,8 @@ ${writeKey}`;
       read("stack", "stackError", operations["prs.stack"], () => api.invoke("stack", ref, signal));
       return () => controller.abort();
     }, [host, session, ref, refKey, operations, key]);
-    return sections?.refKey === refKey && refKey !== null ? sections : { key: key ?? "", refKey: refKey ?? "", ...EMPTY_SECTIONS };
+    const current = sections?.refKey === refKey && refKey !== null ? sections : { key: key ?? "", refKey: refKey ?? "", ...EMPTY_SECTIONS };
+    return { ...current, stackFresh: key !== null && current.stackKey === key };
   }
   function prsDiffFailure(detail) {
     switch (detail.kind) {
@@ -11596,12 +11605,18 @@ ${thread.id}`;
     };
     const detail = sections.detail;
     const activity = sections.activity;
+    const singleMergeAllowed = prsSingleMergeAllowed({
+      supportsStackActions: ops?.["prs.stack"] === true && detail?.capabilities.stacks === true && detail.capabilities.stackActions === true,
+      hasStack: sections.stack !== null && sections.stack.layers.length > 0,
+      stackPending: !sections.stackFresh,
+      stackError: sections.stackError
+    });
     const repositoryUrl = detail === null ? null : prsRepositoryUrl(detail.url);
     const allowedMergeMethods = detail === null ? [] : prsAllowedMergeMethods(detail);
     const stackMergeMethod = allowedMergeMethods.includes(
       draft("method:merge")
     ) ? draft("method:merge") : allowedMergeMethods[0] ?? "merge";
-    const stackMerge = detail !== null && selected !== null && sections.stack !== null && sections.stackError === null && write.kind === "ready" && prsCanMergeStack(detail, write) ? prsStackMergePlan(sections.stack, selected.number, stackMergeMethod) : null;
+    const stackMerge = detail !== null && selected !== null && sections.stack !== null && sections.stackFresh && sections.stackError === null && write.kind === "ready" && prsCanMergeStack(detail, write) ? prsStackMergePlan(sections.stack, selected.number, stackMergeMethod) : null;
     const stackMergePending = writePending("stack:merge");
     const runStackMerge = () => {
       if (selected === null || selectedKey === null || stackMerge === null || stackMerge.disabled)
@@ -11926,7 +11941,7 @@ ${thread.id}`;
                     },
                     children: [
                       writeOps !== null && writeOps["prs.runAction"] !== true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12, padding: 0 }, children: "This host takes no pull-request actions." }),
-                      writeOps?.["prs.runAction"] === true && prsWriteActionOffers(detail, write).map((offer) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      writeOps?.["prs.runAction"] === true && prsWriteActionOffers(detail, write, { singleMergeAllowed }).map((offer) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                         PrsActionButton,
                         {
                           host,

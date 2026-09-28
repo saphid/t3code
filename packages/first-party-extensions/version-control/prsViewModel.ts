@@ -1262,15 +1262,38 @@ export interface PrsWriteActionOffer {
 }
 
 /**
+ * Native's `allowsSinglePullRequestMerge`: a host with stack actions must
+ * finish stack discovery before offering a single-PR merge or auto-merge,
+ * since on a stack layer that would merge the layer alone into its base.
+ */
+export function prsSingleMergeAllowed(input: {
+  readonly supportsStackActions: boolean;
+  readonly hasStack: boolean;
+  readonly stackPending: boolean;
+  readonly stackError: string | null;
+}): boolean {
+  return (
+    !input.supportsStackActions ||
+    (!input.hasStack && !input.stackPending && input.stackError === null)
+  );
+}
+
+/**
  * The actions bar for a loaded detail: state decides which writes are
  * even sensible (a closed change request has no merge to offer), then the
  * host's declared `actions` intersects that set — nothing is drawn that
  * the provider did not claim, which is the native panel's own rule.
+ * Merging and arming auto-merge follow native eligibility: never on a
+ * draft or conflicting change request, only with a method the repository
+ * allows, and only once stack discovery allows a single merge. Disarming
+ * an armed auto-merge is always offered.
  */
 export function prsWriteActionOffers(
   detail: {
     readonly state: "open" | "closed" | "merged";
     readonly isDraft: boolean;
+    readonly mergeability?: "mergeable" | "conflicting" | "unknown";
+    readonly mergeCapabilities?: Readonly<Record<PrsWriteMergeMethod, boolean>>;
     readonly baseComparison?: "ahead" | "behind" | "diverged" | "up-to-date" | string;
     readonly autoMergeEnabled?: boolean;
     readonly workflowApprovalsRequired?: number;
@@ -1280,6 +1303,7 @@ export function prsWriteActionOffers(
     readonly mergeMethods: readonly PrsWriteMergeMethod[];
     readonly updateMethods: readonly PrsWriteUpdateMethod[];
   },
+  options: { readonly singleMergeAllowed?: boolean } = {},
 ): readonly PrsWriteActionOffer[] {
   const declared = new Set(write.actions);
   const offer = (
@@ -1295,10 +1319,20 @@ export function prsWriteActionOffers(
           ...(extra?.updateMethods !== undefined ? { updateMethods: extra.updateMethods } : {}),
         }
       : null;
+  const mergeCapabilities = detail.mergeCapabilities;
+  const mergeMethods =
+    mergeCapabilities === undefined
+      ? write.mergeMethods
+      : write.mergeMethods.filter((method) => mergeCapabilities[method]);
+  const canMerge =
+    !detail.isDraft &&
+    detail.mergeability !== "conflicting" &&
+    mergeMethods.length > 0 &&
+    options.singleMergeAllowed !== false;
   const offers: PrsWriteActionOffer[] = [];
   if (detail.state === "open") {
     if (!detail.isDraft) {
-      const merge = offer("merge", { methods: write.mergeMethods });
+      const merge = canMerge ? offer("merge", { methods: mergeMethods }) : null;
       if (merge !== null) offers.push(merge);
       const draft = offer("draft");
       if (draft !== null) offers.push(draft);
@@ -1313,8 +1347,8 @@ export function prsWriteActionOffers(
     if (detail.autoMergeEnabled === true) {
       const disarm = offer("disable-auto-merge");
       if (disarm !== null) offers.push(disarm);
-    } else if (detail.autoMergeEnabled === false) {
-      const arm = offer("enable-auto-merge", { methods: write.mergeMethods });
+    } else if (detail.autoMergeEnabled === false && canMerge) {
+      const arm = offer("enable-auto-merge", { methods: mergeMethods });
       if (arm !== null) offers.push(arm);
     }
     const close = offer("close");

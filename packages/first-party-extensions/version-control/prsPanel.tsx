@@ -98,6 +98,7 @@ import {
   prsReviewTooltip,
   prsStackTooltip,
   prsWriteActionOffers,
+  prsSingleMergeAllowed,
   prsWriteGate,
   prsWriteUnavailableNote,
   prsWriteVerdictOptions,
@@ -524,6 +525,12 @@ interface PrsDetailSections {
   linkedError: string | null;
   stack: PrsStack | null;
   stackError: string | null;
+  /**
+   * The detail key the stack was last read for. The stack section keeps its
+   * last answer across a refresh, so this — not the shared `key`, which any
+   * sibling read advances — is what says the stack is fresh.
+   */
+  stackKey: string | null;
 }
 
 const EMPTY_SECTIONS: Omit<PrsDetailSections, "key" | "refKey"> = {
@@ -535,6 +542,7 @@ const EMPTY_SECTIONS: Omit<PrsDetailSections, "key" | "refKey"> = {
   linkedError: null,
   stack: null,
   stackError: null,
+  stackKey: null,
 };
 
 /**
@@ -578,6 +586,7 @@ function usePrsDetail(
               refKey,
               [field]: value,
               [errorField]: null,
+              ...(field === "stack" ? { stackKey: key } : {}),
             }));
         },
         (error: unknown) => {
@@ -604,9 +613,13 @@ function usePrsDetail(
     return () => controller.abort();
     // ref identity is folded into key.
   }, [host, session, ref, refKey, operations, key]);
-  return sections?.refKey === refKey && refKey !== null
-    ? sections
-    : { key: key ?? "", refKey: refKey ?? "", ...EMPTY_SECTIONS };
+  const current =
+    sections?.refKey === refKey && refKey !== null
+      ? sections
+      : { key: key ?? "", refKey: refKey ?? "", ...EMPTY_SECTIONS };
+  // Only a stack read that answered this very key is fresh: a retained stack
+  // may be one refresh old while its re-read is still in flight.
+  return { ...current, stackFresh: key !== null && current.stackKey === key };
 }
 
 type PrsDiffState =
@@ -2060,6 +2073,17 @@ export function PullRequestsPanel(props: {
 
   const detail = sections.detail;
   const activity = sections.activity;
+  // On a stack layer a plain merge would land this layer alone into its base,
+  // so single merges wait until the stack lookup says there is no stack.
+  const singleMergeAllowed = prsSingleMergeAllowed({
+    supportsStackActions:
+      ops?.["prs.stack"] === true &&
+      detail?.capabilities.stacks === true &&
+      detail.capabilities.stackActions === true,
+    hasStack: sections.stack !== null && sections.stack.layers.length > 0,
+    stackPending: !sections.stackFresh,
+    stackError: sections.stackError,
+  });
   const repositoryUrl = detail === null ? null : prsRepositoryUrl(detail.url);
   const allowedMergeMethods = detail === null ? [] : prsAllowedMergeMethods(detail);
   const stackMergeMethod = allowedMergeMethods.includes(
@@ -2067,11 +2091,13 @@ export function PullRequestsPanel(props: {
   )
     ? draft("method:merge")
     : (allowedMergeMethods[0] ?? "merge");
-  // Native requires a fresh stack read: a stack that failed to re-read offers no merge.
+  // Native requires a fresh stack read: a stack that failed to re-read, or whose
+  // re-read is still in flight, offers no merge.
   const stackMerge =
     detail !== null &&
     selected !== null &&
     sections.stack !== null &&
+    sections.stackFresh &&
     sections.stackError === null &&
     write.kind === "ready" &&
     prsCanMergeStack(detail, write)
@@ -2495,7 +2521,7 @@ export function PullRequestsPanel(props: {
                       </p>
                     )}
                     {writeOps?.["prs.runAction"] === true &&
-                      prsWriteActionOffers(detail, write).map((offer) => (
+                      prsWriteActionOffers(detail, write, { singleMergeAllowed }).map((offer) => (
                         <PrsActionButton
                           key={offer.action}
                           host={host}
