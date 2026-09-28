@@ -47,7 +47,9 @@ const connectionIds = new Map<string, string>();
 /** The loop instance that minted the current connection id — a stale teardown must not clear a replacement's identity. */
 const connectionOwners = new Map<string, object>();
 
-/** Wakes callers waiting for an environment's seam to register. */
+/** Loops whose connect is in flight: a registration (or its failure) is imminent. */
+const connectingSeams = new Map<string, Set<object>>();
+/** Wakes calls held until the in-flight connect settles. */
 const connectionWaiters = new Map<string, Set<() => void>>();
 
 /** The socket-bound id the server minted for this environment's live seam, if any. */
@@ -55,15 +57,35 @@ export function currentClientConnectionId(environmentId: string): string | undef
   return connectionIds.get(environmentId);
 }
 
-/** Resolves with the seam's connection id once registered, or undefined on abort or timeout. */
-function waitForClientConnectionId(
+function markConnecting(environmentId: string, owner: object) {
+  const owners = connectingSeams.get(environmentId) ?? new Set();
+  owners.add(owner);
+  connectingSeams.set(environmentId, owners);
+}
+
+/** The connect registered or ended: release held calls either way. */
+function settleConnecting(environmentId: string, owner: object) {
+  const owners = connectingSeams.get(environmentId);
+  if (!owners?.delete(owner)) return;
+  if (owners.size === 0) connectingSeams.delete(environmentId);
+  for (const wake of connectionWaiters.get(environmentId) ?? []) wake();
+}
+
+/**
+ * The hint for an outbound call. While the seam's connect is in flight the
+ * call is held (bounded) so it leaves stamped the first time; calls are never
+ * replayed, because the server may already have run them. A seam that is down,
+ * absent, or unsupported by the server releases the call unstamped.
+ */
+async function clientConnectionIdForCall(
   environmentId: string,
   signal: AbortSignal,
   timeoutMs = 10_000,
 ): Promise<string | undefined> {
+  signal.throwIfAborted();
   const current = connectionIds.get(environmentId);
-  if (current !== undefined || signal.aborted) return Promise.resolve(current);
-  return new Promise((resolve) => {
+  if (current !== undefined || !connectingSeams.has(environmentId)) return current;
+  await new Promise<void>((resolve) => {
     const waiters = connectionWaiters.get(environmentId) ?? new Set();
     connectionWaiters.set(environmentId, waiters);
     const done = () => {
@@ -72,77 +94,32 @@ function waitForClientConnectionId(
       waiters.delete(done);
       if (waiters.size === 0 && connectionWaiters.get(environmentId) === waiters)
         connectionWaiters.delete(environmentId);
-      resolve(connectionIds.get(environmentId));
+      resolve();
     };
     const timer = setTimeout(done, timeoutMs);
     signal.addEventListener("abort", done, { once: true });
     waiters.add(done);
   });
+  signal.throwIfAborted();
+  return connectionIds.get(environmentId);
 }
 
-function isClientTargetRequired(error: unknown): boolean {
-  let current = error;
-  for (let depth = 0; depth < 4 && typeof current === "object" && current !== null; depth++) {
-    const { detail, message, cause } = current as {
-      detail?: unknown;
-      message?: unknown;
-      cause?: unknown;
-    };
-    for (const text of [detail, message])
-      if (typeof text === "string" && text.includes("client-target-required")) return true;
-    current = cause;
-  }
-  return false;
-}
-
-/**
- * Sends an installed-API call stamped with this client's connection hint. A
- * call made before the seam registers (a restored panel's first calls) goes
- * out without one; when the server answers that the call needs it, wait for
- * registration and send once more.
- */
+/** Sends an installed-API call once, stamped with this client's connection hint when it has one. */
 export async function withClientConnectionId<A>(
   environmentId: string,
   signal: AbortSignal,
   send: (clientConnectionId: string | undefined) => Promise<A>,
 ): Promise<A> {
-  const hint = currentClientConnectionId(environmentId);
-  try {
-    return await send(hint);
-  } catch (error) {
-    if (hint !== undefined || !isClientTargetRequired(error)) throw error;
-    const registered = await waitForClientConnectionId(environmentId, signal);
-    if (registered === undefined) throw error;
-    return send(registered);
-  }
+  return send(await clientConnectionIdForCall(environmentId, signal));
 }
 
-/** `withClientConnectionId` for streams: only a failure before the first frame reopens. */
+/** `withClientConnectionId` for streams. */
 export async function* withClientConnectionIdFrames<A>(
   environmentId: string,
   signal: AbortSignal,
   open: (clientConnectionId: string | undefined) => AsyncIterable<A>,
 ): AsyncGenerator<A, void> {
-  let hint = currentClientConnectionId(environmentId);
-  let iterator = open(hint)[Symbol.asyncIterator]();
-  try {
-    let result: IteratorResult<A>;
-    try {
-      result = await iterator.next();
-    } catch (error) {
-      if (hint !== undefined || !isClientTargetRequired(error)) throw error;
-      hint = await waitForClientConnectionId(environmentId, signal);
-      if (hint === undefined) throw error;
-      iterator = open(hint)[Symbol.asyncIterator]();
-      result = await iterator.next();
-    }
-    while (!result.done) {
-      yield result.value;
-      result = await iterator.next();
-    }
-  } finally {
-    await iterator.return?.();
-  }
+  yield* open(await clientConnectionIdForCall(environmentId, signal));
 }
 
 /** Provider-facing emit — fire-and-forget over the current session. */
@@ -189,6 +166,7 @@ export function startClientProviderConnection(
    */
   const teardownIteration = () => {
     iteration.disposed = true;
+    settleConnecting(deps.environmentId, owner);
     if (connectionOwners.get(deps.environmentId) === owner) {
       // Only the owner may clear the identity it minted — a replacement loop
       // reusing the same socket-derived id keeps it across this teardown.
@@ -218,9 +196,11 @@ export function startClientProviderConnection(
     if (!connectionIds.has(deps.environmentId) || lifecycle.signal.aborted) return;
     void deps.flushGlobalCommands(lifecycle.signal).catch(() => {});
   };
-  void runConnectionLoop(deps, lifecycle.signal, owner, iteration, teardownIteration).catch(
-    () => {},
-  );
+  // Calls made before the first connect registers are held, not rejected.
+  markConnecting(deps.environmentId, owner);
+  void runConnectionLoop(deps, lifecycle.signal, owner, iteration, teardownIteration)
+    .catch(() => {})
+    .finally(() => settleConnecting(deps.environmentId, owner));
   return {
     stop: () => {
       lifecycle.abort();
@@ -258,6 +238,7 @@ async function runConnectionLoop(
     iteration.subscriptions = new Map();
     iteration.pending = new Map();
     iteration.disposed = false;
+    markConnecting(deps.environmentId, owner);
     try {
       const iterable = Stream.toAsyncIterableWith(
         environmentClientProvidersStream(deps.environmentId, {
@@ -318,7 +299,7 @@ function handleFrame(
       connectionIds.set(deps.environmentId, frame.connectionId);
       connectionOwners.set(deps.environmentId, owner);
       iteration.connectionId = frame.connectionId;
-      for (const wake of [...(connectionWaiters.get(deps.environmentId) ?? [])]) wake();
+      settleConnecting(deps.environmentId, owner);
       // A new connection epoch: prior registrations stay fenced until the
       // flush replays them onto this socket.
       noteClientProviderConnection(deps.environmentId, true);

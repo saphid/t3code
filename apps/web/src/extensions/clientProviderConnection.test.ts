@@ -497,7 +497,7 @@ describe("client connection hint on early calls", () => {
     rejected: [],
   } as ClientProviderServerFrame;
 
-  it("resends a call made before the seam registered once it has the hint", async () => {
+  it("holds a call made before the seam registers and sends it once, stamped", async () => {
     const queue = new Mailbox();
     start({ stream: queue.stream });
     const hints: (string | undefined)[] = [];
@@ -506,15 +506,38 @@ describe("client connection hint on early calls", () => {
       if (hint === undefined) throw targetRequired();
       return { theme: "dark" };
     });
-    await vi.waitFor(() => expect(hints).toEqual([undefined]));
+    await Promise.resolve();
+    expect(hints).toEqual([]);
     queue.offer(registered);
     await expect(result).resolves.toEqual({ theme: "dark" });
-    expect(hints).toEqual([undefined, "conn-early"]);
+    expect(hints).toEqual(["conn-early"]);
   });
 
-  it("does not resend other failures", async () => {
+  it("runs a write whose nested client call needs the hint exactly once", async () => {
+    // An installed provider appends a record, then its nested client call
+    // fails without the hint; the outer write must never be replayed.
     const queue = new Mailbox();
     start({ stream: queue.stream });
+    let writes = 0;
+    const hints: (string | undefined)[] = [];
+    const result = withClientConnectionId(ENV, new AbortController().signal, async (hint) => {
+      hints.push(hint);
+      writes += 1;
+      if (hint === undefined) throw targetRequired();
+      return { appended: writes };
+    });
+    await Promise.resolve();
+    queue.offer(registered);
+    await result.catch(() => {});
+    expect(writes).toBe(1);
+    expect(hints).toEqual(["conn-early"]);
+  });
+
+  it("does not resend failures", async () => {
+    const queue = new Mailbox();
+    start({ stream: queue.stream });
+    queue.offer(registered);
+    await vi.waitFor(() => expect(currentClientConnectionId(ENV)).toBe("conn-early"));
     const send = vi.fn(async () => {
       throw new Error("client-target-denied: Missing grant t3.ui/read");
     });
@@ -524,7 +547,43 @@ describe("client connection hint on early calls", () => {
     expect(send).toHaveBeenCalledOnce();
   });
 
-  it("reopens a stream rejected before its first frame once the seam registers", async () => {
+  it("sends at once, unstamped, when no seam is starting", async () => {
+    const send = vi.fn(async (hint: string | undefined) => hint);
+    await expect(withClientConnectionId(ENV, new AbortController().signal, send)).resolves.toBe(
+      undefined,
+    );
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it("releases held calls unstamped when the connect fails (server without the seam)", async () => {
+    start({ stream: Stream.die(new Error("unknown rpc")) });
+    const send = vi.fn(async (hint: string | undefined) => hint);
+    await expect(withClientConnectionId(ENV, new AbortController().signal, send)).resolves.toBe(
+      undefined,
+    );
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it("releases a held call unstamped after the bound, and never on abort", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      start({ stream: new Mailbox().stream });
+      const send = vi.fn(async (hint: string | undefined) => hint);
+      const late = withClientConnectionId(ENV, new AbortController().signal, send);
+      const controller = new AbortController();
+      const aborted = withClientConnectionId(ENV, controller.signal, send);
+      controller.abort();
+      await expect(aborted).rejects.toThrow();
+      expect(send).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(10_000);
+      await expect(late).resolves.toBe(undefined);
+      expect(send).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("opens a stream started before the seam registers once, stamped", async () => {
     const queue = new Mailbox();
     start({ stream: queue.stream });
     const hints: (string | undefined)[] = [];
@@ -536,13 +595,14 @@ describe("client connection hint on early calls", () => {
       })();
     });
     const first = frames.next();
-    await vi.waitFor(() => expect(hints).toEqual([undefined]));
+    await Promise.resolve();
+    expect(hints).toEqual([]);
     queue.offer(registered);
     await expect(first).resolves.toEqual({
       done: false,
       value: { type: "snapshot", value: { wordWrap: false } },
     });
-    expect(hints).toEqual([undefined, "conn-early"]);
+    expect(hints).toEqual(["conn-early"]);
     await frames.return();
   });
 });
