@@ -420,7 +420,7 @@ NodeTest.describe("media lease preview", () => {
     const ready = mediaLeaseMinted(minted);
     const early = mediaLeaseAssetFailed(ready, minted.expiresAt - 1);
     NodeAssert.equal(early.status, "unavailable");
-    NodeAssert.match(early.message, /did not resolve on this origin/);
+    NodeAssert.match(early.message, /could not be loaded/);
     NodeAssert.deepEqual(mediaLeaseAssetFailed(ready, minted.expiresAt), {
       status: "expired",
       url: minted.url,

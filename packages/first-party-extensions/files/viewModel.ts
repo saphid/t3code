@@ -492,9 +492,8 @@ export function mediaLeaseRenewing(state: MediaLeaseState): MediaLeaseState {
 /**
  * A rendered `<img>`/document load failure. Past `expiresAt` the token simply
  * stopped serving — `expired` triggers a re-mint. Before expiry the fetch
- * failed for another reason (the file moved, the view is remote to the
- * environment, or the URL otherwise did not resolve on this origin) — named,
- * never a broken image.
+ * failed for another reason (the file moved, or the environment is
+ * unreachable) — named, never a broken image.
  */
 export function mediaLeaseAssetFailed(state: MediaLeaseState, now: number): MediaLeaseState {
   if (state.status !== "ready") return state;
@@ -502,7 +501,7 @@ export function mediaLeaseAssetFailed(state: MediaLeaseState, now: number): Medi
   return {
     status: "unavailable",
     message:
-      "Preview could not be loaded — the minted URL did not resolve on this origin (the file may have moved, or this view is remote to the environment)",
+      "Preview could not be loaded — the file may have moved, or the environment is unreachable",
   };
 }
 

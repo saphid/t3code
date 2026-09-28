@@ -45,6 +45,7 @@ import { createBrowserCaptureBridge } from "./browserCaptureBridge";
 import { createBrowserSurfaceBridge } from "./browserSurfaceBridge";
 import { createBrowserFramesBridge } from "./browserFramesBridge";
 import { createKeybindingsHostBridge } from "./keybindingsHostBridge";
+import { resolveLeasePresentationUrl } from "./leasePresentationUrl";
 import { hostCodeView } from "./codeView/hostCodeView";
 import { hostTooltip } from "./hostTooltip";
 import { hostFloatingLayer } from "./floatingLayer/hostFloatingLayer";
@@ -382,8 +383,11 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
             request:
               clientConnectionId === undefined ? request : { ...request, clientConnectionId },
           });
-          return (await run(environmentExtensionsHttp.invokeApi(connection, payload), signal))
-            .result;
+          const { result } = await run(
+            environmentExtensionsHttp.invokeApi(connection, payload),
+            signal,
+          );
+          return resolveLeasePresentationUrl(request, result, connection.httpBaseUrl);
         }),
       subscribeApi: (installationId, expectedContentHash, request, signal) =>
         withClientConnectionIdFrames(environmentId, signal, (clientConnectionId) =>

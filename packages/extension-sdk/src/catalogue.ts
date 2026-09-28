@@ -2898,7 +2898,11 @@ export type ResourceLeaseRef =
     };
 export type ResourceLeaseCreatePresentationUrlInput = { readonly resource: ResourceLeaseRef };
 export type ResourceLeasePresentationUrl = {
-  /** Server-relative minted path — resolve against the environment origin. */
+  /**
+   * Loadable URL on the environment's HTTP origin — the host resolves the
+   * minted path, so use it as-is from any client. `browser-surface` stays the
+   * server-relative claim path, which is a credential and is never loaded.
+   */
   readonly url: string;
   readonly expiresAt: number;
   readonly kind: ResourceLeaseClaimKind;

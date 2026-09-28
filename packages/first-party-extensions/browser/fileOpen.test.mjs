@@ -12,6 +12,7 @@ import {
 import { isLeaseUrl } from "./viewModel.ts";
 
 const TOKEN_URL = "/api/assets/eyJ2.sig/index.html";
+const ENV_URL = "http://127.0.0.1:47951/api/assets/eyJ2.sig/index.html";
 
 NodeTest.describe("fileLeaseRef", () => {
   NodeTest.it("builds a workspace-file ref for a workspace HTML path", () => {
@@ -40,26 +41,24 @@ NodeTest.describe("fileLeaseRef", () => {
 });
 
 NodeTest.describe("resolveLeaseUrl", () => {
-  NodeTest.it("resolves the server-relative URL on the document origin", () => {
+  NodeTest.it("keeps the host-resolved environment URL on any client origin", () => {
+    // The host resolves the lease against the environment's HTTP base, so the
+    // desktop renderer (t3code://app) and app.t3.codes both get the backend URL.
+    for (const documentUrl of ["t3code://app/#/env/thread", "https://app.t3.codes/", undefined])
+      NodeAssert.deepEqual(resolveLeaseUrl(ENV_URL, documentUrl), { ok: true, url: ENV_URL });
+  });
+
+  NodeTest.it("resolves a server-relative URL on an HTTP document origin", () => {
     NodeAssert.deepEqual(resolveLeaseUrl(TOKEN_URL, "http://100.64.0.2:3773/#/env/thread"), {
       ok: true,
       url: "http://100.64.0.2:3773/api/assets/eyJ2.sig/index.html",
     });
   });
 
-  NodeTest.it("names a non-HTTP document (the desktop renderer) as foreign origin", () => {
+  NodeTest.it("names a relative URL it cannot place on the web as foreign origin", () => {
     const result = resolveLeaseUrl(TOKEN_URL, "t3code://app/#/env/thread");
     NodeAssert.equal(result.ok, false);
     NodeAssert.equal(result.reason, "foreign-origin");
-    NodeAssert.match(result.message, /t3code:\/\/app/);
-  });
-
-  NodeTest.it("names an absolute URL on another origin and a missing base", () => {
-    NodeAssert.equal(
-      resolveLeaseUrl("https://elsewhere.test/api/assets/x/a.html", "http://localhost:3773/")
-        .reason,
-      "foreign-origin",
-    );
     NodeAssert.equal(resolveLeaseUrl(TOKEN_URL, undefined).reason, "foreign-origin");
   });
 });
@@ -141,16 +140,25 @@ NodeTest.describe("mintWorkspaceFileUrl", () => {
     NodeAssert.deepEqual(fetched, [result.url]);
   });
 
-  NodeTest.it("a foreign-origin client never mints", async () => {
-    const api = lease();
+  NodeTest.it("the desktop renderer opens the host-resolved environment URL", async () => {
+    const fetched = [];
     const result = await mintWorkspaceFileUrl({
       ...base,
       documentUrl: "t3code://app/",
-      lease: api,
-      fetch: okFetch,
+      lease: lease({
+        createPresentationUrl: async () => ({
+          url: ENV_URL,
+          expiresAt: 1_700_000_000_000,
+          kind: "workspace-file",
+        }),
+      }),
+      fetch: async (url) => {
+        fetched.push(url);
+        return okFetch();
+      },
     });
-    NodeAssert.equal(result.reason, "foreign-origin");
-    NodeAssert.deepEqual(api.calls, []);
+    NodeAssert.deepEqual(result, { ok: true, url: ENV_URL, expiresAt: 1_700_000_000_000 });
+    NodeAssert.deepEqual(fetched, [ENV_URL]);
   });
 
   NodeTest.it("a preflight miss is foreign origin, not an engine 404 page", async () => {

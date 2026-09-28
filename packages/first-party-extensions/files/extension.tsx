@@ -217,13 +217,12 @@ function useWorkspaceTree(host: ClientHost, session: ViewSession) {
 
 /**
  * Workspace media preview via `t3.resources/lease`. Selecting a
- * previewable media file mints a signed `/api/assets/*` URL rendered
- * document-relative; the lease renews `MEDIA_LEASE_RENEWAL_SKEW_MS` before
- * expiry while visible, re-mints on tree refresh, and every named denial maps
- * to an explicit state — a broken element is never the error UI. The minted
- * URL resolves on the environment's own origin; a foreign-origin presentation
- * 404s the foreign-signed token and the element's load failure lands in the
- * named unavailable state instead of a broken image.
+ * previewable media file mints a signed `/api/assets/*` URL, which the host
+ * resolves against the environment's HTTP origin; the lease renews
+ * `MEDIA_LEASE_RENEWAL_SKEW_MS` before expiry while visible, re-mints on tree
+ * refresh, and every named denial maps to an explicit state — a broken
+ * element is never the error UI. A load failure lands in the named
+ * unavailable state instead of a broken image.
  */
 function useMediaLease(
   host: ClientHost,
@@ -290,10 +289,9 @@ function useMediaLease(
         if (leasePreviewMode(path) !== "image") {
           // An iframe does not reliably fire onerror for failed documents —
           // preflight the lease so a 404 lands in the named state. The frame
-          // gets the minted URL itself: a blob: URL would be refused by
-          // desktop's frame-src 'self' CSP. The route's private max-age cache
-          // dedupes the frame's fetch on web; the t3code:// scheme has no
-          // HTTP cache, so desktop re-fetches once through the local proxy.
+          // gets the minted URL itself so the page's relative subresources
+          // resolve under the lease. The route's private max-age cache
+          // dedupes the frame's fetch.
           const response = await fetch(minted.url, { signal });
           if (signal.aborted) return;
           if (!response.ok) {
