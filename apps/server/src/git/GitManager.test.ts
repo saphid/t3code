@@ -4559,6 +4559,187 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  // A host that publishes no `refs/pull/<n>/head` (Bitbucket) or checks the pull request out on
+  // a branch of its own name (Forgejo's `pulls/<n>`): the scripted provider only switches to the
+  // local branch, as both do for a branch that already exists, without moving it.
+  const setUpSwitchOnlyPullRequest = (input: {
+    readonly number: number;
+    readonly headBranch: string;
+    readonly localBranch?: string;
+    readonly publishPullRef?: boolean;
+    readonly pushHeadBranch?: boolean;
+  }) =>
+    Effect.gen(function* () {
+      const localBranch = input.localBranch ?? input.headBranch;
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", localBranch]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "pr.txt"), "first\n");
+      yield* runGit(repoDir, ["add", "pr.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "PR first"]);
+      const firstCommit = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      NodeFS.writeFileSync(NodePath.join(repoDir, "pr.txt"), "second\n");
+      yield* runGit(repoDir, ["commit", "-am", "PR second"]);
+      const pullHead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      if (input.pushHeadBranch !== false) {
+        yield* runGit(repoDir, ["push", "origin", `HEAD:refs/heads/${input.headBranch}`]);
+      }
+      if (input.publishPullRef === true) {
+        yield* runGit(repoDir, ["push", "origin", `HEAD:refs/pull/${input.number}/head`]);
+      }
+      yield* runGit(repoDir, ["reset", "--hard", firstCommit]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      const { service } = createGitHubCliWithFakeGh();
+      const base = yield* GitHubSourceControlProvider.make.pipe(
+        Effect.provide(Layer.succeed(GitHubCli.GitHubCli, service)),
+      );
+      const provider: SourceControlProvider["Service"] = {
+        ...base,
+        kind: "bitbucket",
+        getChangeRequest: () =>
+          Effect.succeed({
+            provider: "bitbucket" as const,
+            number: input.number,
+            title: "Switch-only checkout PR",
+            url: `https://bitbucket.org/owner/repo/pull-requests/${input.number}`,
+            baseRefName: "main",
+            headRefName: input.headBranch,
+            state: "open" as const,
+            updatedAt: Option.none(),
+          }),
+        checkoutChangeRequest: (checkout) =>
+          runGit(checkout.cwd, ["checkout", localBranch]).pipe(Effect.orDie, Effect.asVoid),
+      };
+      const { manager } = yield* makeManager({ sourceControlProvider: provider });
+      return { repoDir, manager, firstCommit, pullHead };
+    });
+
+  it.effect(
+    "local PR checkout fast-forwards a branch the provider left behind on a host without pull refs",
+    () =>
+      Effect.gen(function* () {
+        const { repoDir, manager, pullHead } = yield* setUpSwitchOnlyPullRequest({
+          number: 94,
+          headBranch: "feature/pr-switch-only",
+        });
+
+        const result = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "94",
+          mode: "local",
+        });
+
+        expect(result.isOnPullRequestHead).toBe(true);
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(pullHead);
+      }),
+  );
+
+  it.effect(
+    "local PR checkout refuses a branch with commits the PR lacks on a host without pull refs",
+    () =>
+      Effect.gen(function* () {
+        const { repoDir, manager } = yield* setUpSwitchOnlyPullRequest({
+          number: 95,
+          headBranch: "feature/pr-switch-diverged",
+        });
+        yield* runGit(repoDir, ["checkout", "feature/pr-switch-diverged"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "mine.txt"), "mine\n");
+        yield* runGit(repoDir, ["add", "mine.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "My local commit"]);
+        const localCommit = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["checkout", "main"]);
+
+        const error = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "95",
+          mode: "local",
+        }).pipe(Effect.flip);
+
+        expect(error.message).toContain("commits that are not on pull request #95");
+        expect(
+          (yield* runGit(repoDir, [
+            "rev-parse",
+            "refs/heads/feature/pr-switch-diverged",
+          ])).stdout.trim(),
+        ).toBe(localCommit);
+        expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe("main");
+      }),
+  );
+
+  it.effect("local PR checkout does not claim the head when the head cannot be read", () =>
+    Effect.gen(function* () {
+      const { repoDir, manager, firstCommit } = yield* setUpSwitchOnlyPullRequest({
+        number: 96,
+        headBranch: "feature/pr-switch-unreadable",
+        pushHeadBranch: false,
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "96",
+        mode: "local",
+      });
+
+      expect(result.isOnPullRequestHead).toBe(false);
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(firstCommit);
+    }),
+  );
+
+  it.effect(
+    "local PR checkout verifies a differently named checkout branch against the pull ref",
+    () =>
+      Effect.gen(function* () {
+        const { repoDir, manager, pullHead } = yield* setUpSwitchOnlyPullRequest({
+          number: 97,
+          headBranch: "feature/pr-renamed",
+          localBranch: "pulls/97",
+          publishPullRef: true,
+          pushHeadBranch: false,
+        });
+
+        const result = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "97",
+          mode: "local",
+        });
+
+        expect(result).toMatchObject({ branch: "pulls/97", isOnPullRequestHead: true });
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(pullHead);
+      }),
+  );
+
+  it.effect(
+    "local PR checkout reports, and keeps, local commits on a differently named checkout branch",
+    () =>
+      Effect.gen(function* () {
+        const { repoDir, manager } = yield* setUpSwitchOnlyPullRequest({
+          number: 98,
+          headBranch: "feature/pr-renamed-ahead",
+          localBranch: "pulls/98",
+          publishPullRef: true,
+          pushHeadBranch: false,
+        });
+        yield* runGit(repoDir, ["checkout", "pulls/98"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "mine.txt"), "mine\n");
+        yield* runGit(repoDir, ["add", "mine.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "My local commit"]);
+        const localCommit = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["checkout", "main"]);
+
+        const result = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "98",
+          mode: "local",
+        });
+
+        expect(result.isOnPullRequestHead).toBe(false);
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(localCommit);
+      }),
+  );
+
   it.effect(
     "restores same-repository upstream tracking after local PR checkout without a remote ref",
     () =>

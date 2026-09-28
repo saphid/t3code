@@ -843,49 +843,46 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  // The remote the pull request's head branch lives on, added when it is a fork. Null for a
+  // cross-repository head whose repository the provider did not name.
+  const resolvePullRequestHeadRemoteName = Effect.fn("resolvePullRequestHeadRemoteName")(function* (
+    cwd: string,
+    pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
+  ) {
+    const repositoryNameWithOwner = resolveHeadRepositoryNameWithOwner(pullRequest) ?? "";
+    if (repositoryNameWithOwner.length === 0) {
+      return pullRequest.isCrossRepository === true
+        ? null
+        : yield* gitCore.resolvePrimaryRemoteName(cwd);
+    }
+
+    const cloneUrls = yield* (yield* sourceControlProvider(cwd)).getRepositoryCloneUrls({
+      cwd,
+      repository: repositoryNameWithOwner,
+    });
+    const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
+    const remoteUrl = shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url;
+    const preferredRemoteName =
+      pullRequest.headRepositoryOwnerLogin?.trim() ||
+      repositoryNameWithOwner.split("/")[0]?.trim() ||
+      "fork";
+    return yield* gitCore.ensureRemote({
+      cwd,
+      preferredName: preferredRemoteName,
+      url: remoteUrl,
+    });
+  });
+
   const configurePullRequestHeadUpstreamBase = Effect.fn("configurePullRequestHeadUpstream")(
     function* (
       cwd: string,
       pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
       localBranch = pullRequest.headBranch,
     ) {
-      const repositoryNameWithOwner = resolveHeadRepositoryNameWithOwner(pullRequest) ?? "";
-      if (repositoryNameWithOwner.length === 0 && pullRequest.isCrossRepository !== true) {
-        const remoteName = yield* gitCore.resolvePrimaryRemoteName(cwd);
-        yield* gitCore.fetchRemoteTrackingBranch({
-          cwd,
-          remoteName,
-          remoteBranch: pullRequest.headBranch,
-        });
-        yield* gitCore.setBranchUpstream({
-          cwd,
-          branch: localBranch,
-          remoteName,
-          remoteBranch: pullRequest.headBranch,
-        });
+      const remoteName = yield* resolvePullRequestHeadRemoteName(cwd, pullRequest);
+      if (remoteName === null) {
         return;
       }
-
-      if (repositoryNameWithOwner.length === 0) {
-        return;
-      }
-
-      const cloneUrls = yield* (yield* sourceControlProvider(cwd)).getRepositoryCloneUrls({
-        cwd,
-        repository: repositoryNameWithOwner,
-      });
-      const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
-      const remoteUrl = shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url;
-      const preferredRemoteName =
-        pullRequest.headRepositoryOwnerLogin?.trim() ||
-        repositoryNameWithOwner.split("/")[0]?.trim() ||
-        "fork";
-      const remoteName = yield* gitCore.ensureRemote({
-        cwd,
-        preferredName: preferredRemoteName,
-        url: remoteUrl,
-      });
-
       yield* gitCore.fetchRemoteTrackingBranch({
         cwd,
         remoteName,
@@ -899,6 +896,37 @@ export const make = Effect.gen(function* () {
       });
     },
   );
+
+  // The commit the host publishes as the pull request's head right now: its `refs/pull/<n>/head`
+  // where it has one, otherwise the head branch fetched from the repository it lives in. Null when
+  // neither can be read, so a caller reports the checkout as unverified instead of current.
+  const fetchPullRequestHead = Effect.fn("fetchPullRequestHead")(function* (
+    cwd: string,
+    pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
+  ) {
+    return yield* gitCore.fetchPullRequestHeadCommit({ cwd, prNumber: pullRequest.number }).pipe(
+      Effect.map((resolved): string | null => resolved.commitSha),
+      Effect.catch(() =>
+        Effect.gen(function* () {
+          const remoteName = yield* resolvePullRequestHeadRemoteName(cwd, pullRequest);
+          if (remoteName === null) {
+            return null;
+          }
+          yield* gitCore.fetchRemoteTrackingBranch({
+            cwd,
+            remoteName,
+            remoteBranch: pullRequest.headBranch,
+          });
+          const resolved = yield* gitCore.resolveCommit({
+            cwd,
+            revision: `refs/remotes/${remoteName}/${pullRequest.headBranch}`,
+          });
+          return resolved.commitSha;
+        }),
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+  });
 
   const configurePullRequestHeadUpstream = (
     cwd: string,
@@ -2332,6 +2360,7 @@ export const make = Effect.gen(function* () {
   const ensureLocalCheckoutKeepsWork = Effect.fn("ensureLocalCheckoutKeepsWork")(function* (
     cwd: string,
     pullRequest: { readonly number: number; readonly headBranch: string },
+    pullHead: string | null,
   ) {
     const trackedChanges = yield* gitCore.execute({
       operation: "GitManager.preparePullRequestThread.trackedChanges",
@@ -2352,17 +2381,13 @@ export const make = Effect.gen(function* () {
       allowNonZeroExit: true,
     });
     const localCommit = localBranch.exitCode === 0 ? localBranch.stdout.trim() : null;
-    if (localCommit === null) return;
-    // Hosts without `refs/pull/<n>/head` cannot be compared; the unforced checkout still
-    // leaves their branch as it is.
-    const pullHead = yield* gitCore
-      .fetchPullRequestHeadCommit({ cwd, prNumber: pullRequest.number })
-      .pipe(Effect.orElseSucceed(() => null));
-    if (pullHead === null || pullHead.commitSha === localCommit) return;
+    // An unreadable head cannot be compared; the unforced checkout still leaves the branch as it
+    // is, and the result is reported as not verified on the head.
+    if (localCommit === null || pullHead === null || pullHead === localCommit) return;
     const contained = yield* gitCore.execute({
       operation: "GitManager.preparePullRequestThread.isAncestor",
       cwd,
-      args: ["merge-base", "--is-ancestor", localCommit, pullHead.commitSha],
+      args: ["merge-base", "--is-ancestor", localCommit, pullHead],
       allowNonZeroExit: true,
     });
     if (contained.exitCode !== 0) {
@@ -2407,7 +2432,12 @@ export const make = Effect.gen(function* () {
       const pullRequest = toResolvedPullRequest(pullRequestSummary);
 
       if (input.mode === "local") {
-        yield* ensureLocalCheckoutKeepsWork(input.cwd, pullRequest);
+        const pullRequestWithRemoteInfo = {
+          ...pullRequest,
+          ...toPullRequestHeadRemoteInfo(pullRequestSummary),
+        } as const;
+        const pullHead = yield* fetchPullRequestHead(input.cwd, pullRequestWithRemoteInfo);
+        yield* ensureLocalCheckoutKeepsWork(input.cwd, pullRequest, pullHead);
         // Never forced: `gh pr checkout --force` hard-resets the branch, discarding edits and
         // local commits. Unforced, the provider can only fast-forward, so a race after the
         // checks above fails instead of losing work.
@@ -2418,17 +2448,24 @@ export const make = Effect.gen(function* () {
         const details = yield* gitCore.statusDetails(input.cwd);
         yield* configurePullRequestHeadUpstream(
           input.cwd,
-          {
-            ...pullRequest,
-            ...toPullRequestHeadRemoteInfo(pullRequestSummary),
-          },
+          pullRequestWithRemoteInfo,
           details.branch ?? pullRequest.headBranch,
         );
+        // A successful provider checkout says nothing about the commit it left: some switch to an
+        // existing branch without moving it, and some name the branch differently from the head
+        // branch. Only the head read back from the host proves the checkout is current, and the
+        // branch is only moved onto it by fast-forward.
+        const refreshed =
+          pullHead === null
+            ? { onTarget: false }
+            : yield* gitCore
+                .refreshCheckedOutBranch({ cwd: input.cwd, targetCommit: pullHead })
+                .pipe(Effect.orElseSucceed(() => ({ onTarget: false })));
         return {
           pullRequest,
           branch: details.branch ?? pullRequest.headBranch,
           worktreePath: null,
-          isOnPullRequestHead: true,
+          isOnPullRequestHead: refreshed.onTarget,
         };
       }
 
