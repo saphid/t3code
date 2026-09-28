@@ -92,7 +92,7 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "150c49e3f9996f1dfdaa5e9c2113ae441bd8c7df",
+      "sha": "b89586b1912cb22d0e56427f67c4dc42049f996d",
       "name": "fix(server): keep runs alive when one provider event fails to ingest"
     }
   ]
