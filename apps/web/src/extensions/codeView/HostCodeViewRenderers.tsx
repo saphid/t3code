@@ -42,10 +42,16 @@ export function HostCodeDiff(props: CodeViewDiffProps) {
     () => parseCodeViewPatch(patch, resolvedTheme),
     [patch, resolvedTheme],
   );
+  // Plugins rebuild the fold list every render; key on its contents so an
+  // unrelated plugin re-render hands the viewer the same items.
+  const collapsedKey = collapsedPaths?.join("\u0000") ?? "";
   const files = useMemo(
     () =>
-      buildCodeViewDiffFiles(renderable?.kind === "files" ? renderable.files : [], collapsedPaths),
-    [renderable, collapsedPaths],
+      buildCodeViewDiffFiles(
+        renderable?.kind === "files" ? renderable.files : [],
+        collapsedKey === "" ? [] : collapsedKey.split("\u0000"),
+      ),
+    [renderable, collapsedKey],
   );
   const items = useMemo(() => files.map((file) => file.item), [files]);
   // Plugins rarely memoize callbacks; a fresh loader identity per render would

@@ -25,6 +25,19 @@ const view = vi.hoisted(() => ({
   scrolls: [] as CodeViewScrollTarget[],
 }));
 
+const hashing = vi.hoisted(() => ({ contentVersions: 0 }));
+vi.mock("~/lib/diffRendering", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/lib/diffRendering")>();
+  return {
+    ...actual,
+    buildFileDiffContentVersion: (
+      ...args: Parameters<typeof actual.buildFileDiffContentVersion>
+    ) => {
+      hashing.contentVersions += 1;
+      return actual.buildFileDiffContentVersion(...args);
+    },
+  };
+});
 vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: view.theme }) }));
 vi.mock("~/hooks/useSettings", () => ({
   useClientSettings: <T,>(select: (settings: { wordWrap: boolean }) => T) =>
@@ -152,6 +165,21 @@ describe("host code view: Diff", () => {
     ]);
     await act(async () => buttons[1]!.props.onClick({ stopPropagation() {} }));
     expect(toggles).toEqual(["src/b.ts"]);
+  });
+
+  it("keeps viewer items across plugin re-renders and hashes each file once", async () => {
+    // Plugins rebuild `collapsedPaths` every render; a 10k-line file must not be
+    // re-hashed or handed to the viewer as new items for that (D10, native parity).
+    const patch = PATCH.replace("const c = 4;", "const c = 5;");
+    hashing.contentVersions = 0;
+    await render(<HostCodeDiff {...baseDiff} patch={patch} collapsedPaths={["src/b.ts"]} />);
+    const items = lastCodeView().items;
+    await render(<HostCodeDiff {...baseDiff} patch={patch} collapsedPaths={["src/b.ts"]} />);
+    expect(lastCodeView().items).toBe(items);
+
+    await render(<HostCodeDiff {...baseDiff} patch={patch} collapsedPaths={[]} />);
+    expect(diffItems().map((item) => item.collapsed)).toEqual([false, false]);
+    expect(hashing.contentVersions).toBe(2);
   });
 
   it("has no header controls when the plugin does not own any", async () => {
