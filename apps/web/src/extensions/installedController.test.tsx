@@ -12,6 +12,7 @@ import type { Extension } from "@t3tools/extension-sdk/host";
 import type { SurfaceRenderer } from "@t3tools/extension-sdk/react";
 import type { ViewRecord } from "@t3tools/extension-sdk/contracts";
 import { createCatalogueRefreshQueue } from "./catalogueRefresh";
+import { authorizeCaller } from "./clientProviderTypes";
 import { createInstalledExtensionController, type InstalledSnapshot } from "./installedController";
 import { registerWorkspaceExtension, WorkspaceExtensionSurface } from "./workspaceRegistry";
 
@@ -218,6 +219,41 @@ describe("installed environment controller", () => {
     await h.controller.refresh();
     expect(h.register).not.toHaveBeenCalled();
     expect(h.snapshots.at(-1)?.error).toContain("changed");
+    h.controller.dispose();
+  });
+  it("authorizes a registered client's provider calls while later clients still load", async () => {
+    // A restored panel mounts as soon as its own client registers and calls
+    // client-backed APIs immediately; the provider-side caller check must not
+    // wait for every other installation's client to finish loading.
+    const h = harness();
+    const other = {
+      ...installation,
+      id: "test.other",
+      package: { ...installation.package, manifest: { ...manifest, id: "test.other" }, tools: [] },
+    };
+    h.setCatalog([installation, other]);
+    let releaseOther!: () => void;
+    const otherLoading = new Promise<void>((resolve) => {
+      releaseOther = resolve;
+    });
+    h.options.client.mockImplementation(async (id: string, hash: string) => {
+      if (id === other.id) await otherLoading;
+      return { code: "fixture module", contentHash: hash };
+    });
+    const refreshed = h.controller.refresh();
+    await vi.waitFor(() => expect(h.register).toHaveBeenCalledTimes(1));
+    const deps = {
+      environmentId: "env-a",
+      installations: () => h.snapshots.at(-1)?.installations,
+    };
+    const caller = {
+      installationId: installation.id,
+      contentHash: installation.contentHash,
+      installationGeneration: 1,
+    };
+    expect(() => authorizeCaller(deps, caller, context, [])).not.toThrow();
+    releaseOther();
+    await refreshed;
     h.controller.dispose();
   });
   it("does not unload an unrelated installed package when another client fails", async () => {

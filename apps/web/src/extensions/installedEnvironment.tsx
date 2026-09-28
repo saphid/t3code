@@ -56,6 +56,8 @@ import {
 } from "./clientProviders";
 import {
   currentClientConnectionId,
+  withClientConnectionId,
+  withClientConnectionIdFrames,
   emitClientProviderEvent,
   startClientProviderConnection,
 } from "./clientProviderConnection";
@@ -406,30 +408,32 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
         });
         return (await run(environmentExtensionsHttp.invoke(connection, payload), signal)).result;
       },
-      invokeApi: async (installationId, expectedContentHash, request, signal) => {
-        // The session-validated `self` hint: stamps the socket-bound id the
-        // seam minted so client-provider-backed contracts reach this client.
-        const clientConnectionId = currentClientConnectionId(environmentId);
-        const payload = decodeApiInvoke({
-          installationId,
-          expectedContentHash,
-          request: clientConnectionId === undefined ? request : { ...request, clientConnectionId },
-        });
-        return (await run(environmentExtensionsHttp.invokeApi(connection, payload), signal)).result;
-      },
-      subscribeApi: (installationId, expectedContentHash, request, signal) => {
-        const clientConnectionId = currentClientConnectionId(environmentId);
-        return authenticatedApiFrames(
-          environmentId,
-          decodeApiSubscribe({
+      // The session-validated `self` hint: stamps the socket-bound id the
+      // seam minted so client-provider-backed contracts reach this client.
+      invokeApi: (installationId, expectedContentHash, request, signal) =>
+        withClientConnectionId(environmentId, signal, async (clientConnectionId) => {
+          const payload = decodeApiInvoke({
             installationId,
             expectedContentHash,
             request:
               clientConnectionId === undefined ? request : { ...request, clientConnectionId },
-          }),
-          signal,
-        );
-      },
+          });
+          return (await run(environmentExtensionsHttp.invokeApi(connection, payload), signal))
+            .result;
+        }),
+      subscribeApi: (installationId, expectedContentHash, request, signal) =>
+        withClientConnectionIdFrames(environmentId, signal, (clientConnectionId) =>
+          authenticatedApiFrames(
+            environmentId,
+            decodeApiSubscribe({
+              installationId,
+              expectedContentHash,
+              request:
+                clientConnectionId === undefined ? request : { ...request, clientConnectionId },
+            }),
+            signal,
+          ),
+        ),
       discoverApis: async (installationId, expectedContentHash, context, signal) => {
         const payload = decodeApiDiscover({
           installationId,

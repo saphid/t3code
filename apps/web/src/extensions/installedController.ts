@@ -337,6 +337,10 @@ export function createInstalledExtensionController(options: {
             (item) =>
               item.id + ": This host does not support package format " + item.package.format + ".",
           );
+        // Clients load one by one and a registered client may call client-backed
+        // APIs at once (a restored panel does); the provider-side caller check
+        // reads installations from the snapshot, so publish them before loading.
+        publish({ ...snapshot, installations });
         for (const item of installations) {
           if (!live()) return;
           if (!eligible(item) || !item.package.clientEntry || active.has(item.id)) continue;
