@@ -141,7 +141,9 @@ export function environmentExtensionApiStream(
  * for the next session, emitting `Option.none()` in order with the frames
  * when it starts waiting. `makePayload` only sees state the caller holds,
  * not which session is opening, so it must not carry session-bound hints.
- * The source's own completion or domain failure ends the stream.
+ * The source's own completion or domain failure ends the stream. It follows
+ * the registry entry too, so a same-ID re-registration moves it to the
+ * replacement supervisor instead of leaving it on the retired one.
  */
 export function environmentResumableExtensionApiStream(
   environmentId: EnvironmentId,
@@ -150,7 +152,7 @@ export function environmentResumableExtensionApiStream(
   return Stream.unwrap(
     Effect.gen(function* () {
       const registry = yield* EnvironmentRegistry;
-      return registry.runStream(
+      return registry.followStream(
         environmentId,
         subscribeDynamicUntilCompleteWithSuspensions(
           WS_METHODS.subscribeExtensionApi,
