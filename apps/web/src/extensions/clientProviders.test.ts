@@ -1827,6 +1827,28 @@ describe("terminal appearance provider", () => {
     expect(snapshot.appearance).toBe("light");
   });
 
+  it("resolves terminal fonts through the typography mode, like the native drawer", () => {
+    const baseline = getClientSettings();
+    __setClientSettingsForTests({
+      ...baseline,
+      fontFamilyCode: "Fira Code",
+      fontSizeCode: 17,
+      fontFamilyTerminal: "Courier New",
+      fontSizeTerminal: 12,
+    });
+    try {
+      const provider = createTerminalAppearanceClientProvider(makeDeps(["t3.ui/theme.read"]));
+      const font = () =>
+        (provider.invoke(invokeCall("getAppearance", {})) as { font: unknown }).font;
+      // Simple typography: the terminal is another code surface.
+      expect(font()).toEqual({ family: "Fira Code", size: 17 });
+      window.localStorage.setItem("t3code:typography-advanced", "true");
+      expect(font()).toEqual({ family: "Courier New", size: 12 });
+    } finally {
+      __setClientSettingsForTests(baseline);
+    }
+  });
+
   it("streams a snapshot for watchAppearance", () => {
     const provider = createTerminalAppearanceClientProvider(makeDeps(["t3.ui/theme.read"]));
     const events: ClientProviderEmitEvent[] = [];
@@ -1934,6 +1956,7 @@ describe("terminal appearance settings stream", () => {
   it("a font-only settings update emits appearance and unsubscribe cleans up", async () => {
     const baseline = getClientSettings();
     __setClientSettingsForTests(baseline);
+    window.localStorage.setItem("t3code:typography-advanced", "true");
     const provider = createTerminalAppearanceClientProvider(makeDeps(["t3.ui/theme.read"]));
     const events: ClientProviderEmitEvent[] = [];
     const close = await provider.openStream!({

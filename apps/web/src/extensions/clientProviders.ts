@@ -1,4 +1,5 @@
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ClientProviderEmitEvent } from "@t3tools/contracts";
 import { BROWSER_CAPTURE_ARTIFACT_REF_PATTERN } from "@t3tools/extension-sdk/catalogue";
@@ -29,6 +30,12 @@ import {
   type ThemePreferenceMode,
 } from "../themePalette";
 import { themeStore } from "../hooks/useTheme";
+import { getLocalStorageItem, subscribeLocalStorageItem } from "../hooks/useLocalStorage";
+import {
+  resolveTerminalFontPreference,
+  resolveTerminalFontSizePreference,
+  TYPOGRAPHY_ADVANCED_STORAGE_KEY,
+} from "../appearanceFonts";
 import {
   ensureClientSettingsHydrated,
   getClientSettings,
@@ -1150,9 +1157,29 @@ export function createComposerClientProvider(
 const rgb = (color: { readonly r: number; readonly g: number; readonly b: number }) =>
   `rgb(${color.r}, ${color.g}, ${color.b})`;
 
+function readAdvancedTypography(): boolean {
+  try {
+    return getLocalStorageItem(TYPOGRAPHY_ADVANCED_STORAGE_KEY, Schema.Boolean) ?? false;
+  } catch {
+    return false;
+  }
+}
+
 function terminalAppearanceSnapshot(): Json {
   const theme = terminalThemeFromApp(null);
   const settings = getClientSettings();
+  // Same resolution as the native drawer: simple typography uses the code font.
+  const advanced = readAdvancedTypography();
+  const family = resolveTerminalFontPreference({
+    advanced,
+    code: settings.fontFamilyCode,
+    terminal: settings.fontFamilyTerminal,
+  });
+  const size = resolveTerminalFontSizePreference({
+    advanced,
+    code: settings.fontSizeCode,
+    terminal: settings.fontSizeTerminal,
+  });
   const appearance = document.documentElement.classList.contains("dark") ? "dark" : "light";
   return {
     theme: {
@@ -1164,8 +1191,8 @@ function terminalAppearanceSnapshot(): Json {
         : {}),
     },
     font: {
-      ...(settings.fontFamilyTerminal ? { family: settings.fontFamilyTerminal } : {}),
-      size: settings.fontSizeTerminal,
+      ...(family ? { family } : {}),
+      size,
     },
     appearance,
   } as unknown as Json;
@@ -1202,7 +1229,11 @@ export function createTerminalAppearanceClientProvider(
         last = encoded;
         call.emit({ type: "data", value: next });
       };
-      const unsubs = [themeStore.subscribe(push), subscribeClientSettings(push)];
+      const unsubs = [
+        themeStore.subscribe(push),
+        subscribeClientSettings(push),
+        subscribeLocalStorageItem(TYPOGRAPHY_ADVANCED_STORAGE_KEY, push),
+      ];
       const observer =
         typeof MutationObserver !== "undefined" && typeof document !== "undefined"
           ? new MutationObserver(push)
