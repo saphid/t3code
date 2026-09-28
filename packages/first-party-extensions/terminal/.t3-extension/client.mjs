@@ -7081,6 +7081,8 @@ var __t3Client = (() => {
     ]
   });
   var BROWSER_FRAMES_API = browserFramesApi.definition;
+  var BROWSER_SURFACE = "t3.browser/surface";
+  var BROWSER_CAPTURE = "t3.browser/capture";
   var BROWSER_CAPTURE_ARTIFACT_REF_PATTERN2 = "^pending-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
   var COMPOSER_CONTEXT = "t3.composer/context";
   var COMPOSER_WRITE = "t3.composer/write";
@@ -7504,6 +7506,7 @@ var __t3Client = (() => {
   var UI_THEME_READ = "t3.ui/theme.read";
   var UI_THEME_WRITE = "t3.ui/theme.write";
   var UI_KEYBINDINGS = "t3.ui/keybindings";
+  var UI_KEYBINDINGS_GLOBAL = "t3.ui/keybindings.global";
   var UI_KEYBINDINGS_VERSION = "1.2.0";
   var UI_NOTIFY = "t3.ui/notify";
   var UI_PANELS = "t3.ui/panels";
@@ -8467,6 +8470,11 @@ var __t3Client = (() => {
   var TERMINAL_OUTPUT_API = terminalOutputApi.definition;
   var TERMINAL_OUTPUT_EVENTS_API = terminalOutputEventsApi.definition;
   var TERMINAL_CONTROL_API = terminalControlApi.definition;
+  var API_CALL_TIME_GRANTS = {
+    [BROWSER_SESSIONS]: [BROWSER_SURFACE, BROWSER_CAPTURE],
+    [UI_KEYBINDINGS]: [UI_KEYBINDINGS_GLOBAL],
+    [VCS_ACTIONS]: [PRS_WRITE]
+  };
 
   // node_modules/@t3tools/extension-sdk/dist/environment.js
   var ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
