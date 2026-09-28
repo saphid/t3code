@@ -94,6 +94,9 @@ import {
   restoredSelection,
   watchThemeVars,
   toggleExpanded,
+  treeDirectories,
+  withAllDirectories,
+  allDirectoriesExpanded,
   visibleRows,
   watchPreferences,
   writeRenderHtml,
@@ -1228,8 +1231,17 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const themeVars = useThemeVars(host, session, visible);
   const preferences = useFilePreferences(host, session, visible);
   const wordWrap = preferences.wordWrap;
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() =>
+  const [expandedState, setExpanded] = useState<ReadonlySet<string>>(() =>
     restoredExpanded(session.restoreState),
+  );
+  // Native parity (FileBrowserPanel): one control opens every folder, or
+  // closes them all once they are open. While expand-all stands, folders
+  // that later appear open too; collapsing any folder by hand ends it.
+  const [expandAll, setExpandAll] = useState(false);
+  const directories = useMemo(() => treeDirectories(entries), [entries]);
+  const expanded = useMemo(
+    () => (expandAll ? withAllDirectories(expandedState, directories) : expandedState),
+    [expandAll, expandedState, directories],
   );
   const [query, setQuery] = useState("");
   const [searchMode, setSearchMode] = useState<"names" | "contents">("names");
@@ -1318,6 +1330,12 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const kindByPath = useMemo(() => new Map(entries.map((e) => [e.path, e.kind])), [entries]);
   const searching = query.trim() !== "";
   const rows = useMemo(() => visibleRows(entries, expanded, ""), [entries, expanded]);
+  const everyFolderOpen = expandAll || allDirectoriesExpanded(directories, expanded);
+  const toggleAllDirectories = () => {
+    setExpandAll(!everyFolderOpen);
+    setExpanded(everyFolderOpen ? new Set() : new Set(directories));
+  };
+  const expandAllLabel = everyFolderOpen ? "Collapse all folders" : "Expand all folders";
   const [fileOpen, setFileOpen] = useState<{ path: string; state: FileOpenState } | null>(null);
   // Rendered-vs-source is a preference, not a property of one file — the same
   // shape as the native panel's localStorage flag, persisted with the view.
@@ -1869,6 +1887,18 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           <option value="file">Files</option>
           <option value="directory">Directories</option>
         </select>
+        {directories.length > 0 && (
+          <Tooltip host={host} label={expandAllLabel}>
+            <button
+              type="button"
+              aria-label={expandAllLabel}
+              onClick={toggleAllDirectories}
+              style={toolbarControl}
+            >
+              {expandAllLabel}
+            </button>
+          </Tooltip>
+        )}
       </header>
       <ul
         ref={treeListRef}
@@ -2014,11 +2044,14 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                   aria-current={row.entry.path === selected ? "true" : undefined}
                   draggable
                   onDragStart={(event) => startMentionDrag(event, row.entry.path)}
-                  onClick={() =>
-                    row.expandable
-                      ? setExpanded((previous) => toggleExpanded(previous, row.entry.path))
-                      : select(row.entry.path)
-                  }
+                  onClick={() => {
+                    if (!row.expandable) {
+                      select(row.entry.path);
+                      return;
+                    }
+                    if (expanded.has(row.entry.path)) setExpandAll(false);
+                    setExpanded(toggleExpanded(expanded, row.entry.path));
+                  }}
                   style={{
                     display: "block",
                     width: "100%",

@@ -66,6 +66,29 @@ export function toggleExpanded(expanded: ReadonlySet<string>, directoryPath: str
   return next;
 }
 
+/** Every directory in the tree snapshot: what "Expand all folders" opens. */
+export function treeDirectories(entries: readonly TreeEntry[]): string[] {
+  return entries.filter((entry) => entry.kind === "directory").map((entry) => entry.path);
+}
+
+/** Whether every directory is open, so the control offers to collapse them. */
+export function allDirectoriesExpanded(
+  directories: readonly string[],
+  expanded: ReadonlySet<string>,
+): boolean {
+  return directories.length > 0 && directories.every((path) => expanded.has(path));
+}
+
+/** `expanded` with every directory added; the same set when none was missing. */
+export function withAllDirectories(
+  expanded: ReadonlySet<string>,
+  directories: readonly string[],
+): ReadonlySet<string> {
+  return directories.every((path) => expanded.has(path))
+    ? expanded
+    : new Set([...expanded, ...directories]);
+}
+
 /**
  * Entries matching a case-insensitive substring of the path, plus every
  * ancestor directory needed to render them as a tree.

@@ -106,6 +106,8 @@ class FakeTextArea {
 
 interface Disk {
   readonly files: Record<string, string>;
+  /** Directory entries the tree snapshot lists next to the files. */
+  readonly directories?: readonly string[];
   /** The selected presentation provider's version; the pack's own by default. */
   readonly presentationVersion?: string;
   /** Rejects the presentation provider's `open` while it returns an error. */
@@ -206,7 +208,10 @@ function packHost(disk: Disk, calls: Calls) {
           if (disk.preferenceChange) yield await disk.preferenceChange;
           await pending(signal);
         } else if (request.id === "t3.workspace/tree") {
-          const entries = Object.keys(disk.files).map((path) => ({ path, kind: "file" }));
+          const entries = [
+            ...(disk.directories ?? []).map((path) => ({ path, kind: "directory" })),
+            ...Object.keys(disk.files).map((path) => ({ path, kind: "file" })),
+          ];
           yield { type: "data", value: { kind: "chunk", entries, truncated: false } };
           yield {
             type: "data",
@@ -334,6 +339,14 @@ async function mountPanel(disk: Disk) {
     editors: () => tree.root.findAllByProps({ "aria-label": "File editor" }).length,
     button: (label: string) =>
       tree.root.findAllByType("button").find((button) => button.children.includes(label)),
+    /** The first control whose accessible name is `label`. */
+    labelled: (label: string) => tree.root.findAllByProps({ "aria-label": label }).at(0),
+    /** Visible rows of the workspace tree, as rendered text. */
+    rows: () =>
+      tree.root
+        .findByProps({ "aria-label": "Workspace files" })
+        .findAllByType("button")
+        .map((row) => row.children.join("")),
     async unmount() {
       await act(async () => {
         tree.unmount();
@@ -913,6 +926,67 @@ describe("the Diff panel", () => {
         stop.abort();
         root?.unmount();
       });
+    }
+  });
+});
+
+// Native parity (FileBrowserPanel): one toolbar control expands every folder
+// in the tree, then collapses them all again.
+describe("expanding and collapsing every folder", () => {
+  it("toggles every folder from one control, as the native tree does", async () => {
+    const panel = await mountPanel({
+      directories: ["src", "src/lib", "docs"],
+      files: { "src/lib/deep.ts": "x", "src/top.ts": "y", "docs/guide.md": "z", "root.txt": "r" },
+    });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "root.txt"));
+      expect(panel.rows()).toEqual(["▸ docs/", "▸ src/", "root.txt"]);
+      expect(panel.labelled("Expand all folders")).toBeDefined();
+      await act(async () => panel.labelled("Expand all folders")!.props.onClick());
+      expect(panel.rows()).toEqual([
+        "▾ docs/",
+        "guide.md",
+        "▾ src/",
+        "▾ lib/",
+        "deep.ts",
+        "top.ts",
+        "root.txt",
+      ]);
+      expect(panel.labelled("Expand all folders")).toBeUndefined();
+      await act(async () => panel.labelled("Collapse all folders")!.props.onClick());
+      expect(panel.rows()).toEqual(["▸ docs/", "▸ src/", "root.txt"]);
+      expect(panel.labelled("Expand all folders")).toBeDefined();
+    } finally {
+      await panel.unmount();
+    }
+  });
+
+  it("names the collapse once every folder is open by hand", async () => {
+    const panel = await mountPanel({
+      directories: ["src"],
+      files: { "src/a.ts": "a", "b.ts": "b" },
+    });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "b.ts"));
+      expect(panel.labelled("Expand all folders")).toBeDefined();
+      const folder = panel.labelled("Workspace files")!.findAllByType("button")[0]!;
+      await act(async () => folder.props.onClick());
+      expect(panel.labelled("Collapse all folders")).toBeDefined();
+      await act(async () => folder.props.onClick());
+      expect(panel.labelled("Expand all folders")).toBeDefined();
+    } finally {
+      await panel.unmount();
+    }
+  });
+
+  it("offers no control when the tree has no folders", async () => {
+    const panel = await mountPanel({ files: { "only.txt": "o" } });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "only.txt"));
+      expect(panel.labelled("Expand all folders")).toBeUndefined();
+      expect(panel.labelled("Collapse all folders")).toBeUndefined();
+    } finally {
+      await panel.unmount();
     }
   });
 });
