@@ -56,6 +56,9 @@ import {
   prsAllowedMergeMethods,
   prsAuthoredByViewer,
   prsCanMergeStack,
+  prsCanRebaseStack,
+  prsStackRebasePlan,
+  prsStackRebaseReceipt,
   prsStackMergePlan,
   prsStackMergeReceipt,
   prsBranchUrl,
@@ -1876,9 +1879,11 @@ export function PullRequestsPanel(props: {
   // An armed stack merge (the PR it was armed on) and its last receipt.
   const [stackConfirm, setStackConfirm] = useState<{
     readonly refKey: string;
+    readonly action: "merge" | "rebase";
     readonly opener: HTMLElement | null;
   } | null>(null);
   const stackMergeOpener = useRef<HTMLButtonElement | null>(null);
+  const stackRebaseOpener = useRef<HTMLButtonElement | null>(null);
   const [stackReceipt, setStackReceipt] = useState<{
     readonly refKey: string;
     readonly receipt: PrsReceipt;
@@ -2218,29 +2223,59 @@ export function PullRequestsPanel(props: {
     prsCanMergeStack(detail, write)
       ? prsStackMergePlan(sections.stack, selected.number, stackMergeMethod)
       : null;
-  const stackMergePending = writePending("stack:merge");
-  const runStackMerge = () => {
-    if (selected === null || selectedKey === null || stackMerge === null || stackMerge.disabled)
+  // Native's Rebase stack: the same fresh-stack rule, gated on the viewer's own permission.
+  const stackRebase =
+    detail !== null &&
+    sections.stack !== null &&
+    sections.stack.layers.length > 0 &&
+    sections.stackFresh &&
+    sections.stackError === null &&
+    write.kind === "ready" &&
+    prsCanRebaseStack(detail, write)
+      ? prsStackRebasePlan(sections.stack)
+      : null;
+  const openStackConfirm = (action: "merge" | "rebase") => {
+    if (selectedKey === null) return;
+    const opener = action === "merge" ? stackMergeOpener : stackRebaseOpener;
+    setStackConfirm({ refKey: selectedKey, action, opener: opener.current });
+  };
+  const confirmPlan =
+    stackConfirm === null || stackConfirm.refKey !== selectedKey
+      ? null
+      : stackConfirm.action === "merge"
+        ? stackMerge
+        : stackRebase;
+  const confirming = confirmPlan !== null ? stackConfirm : null;
+  const stackActionPending = confirming !== null && writePending(`stack:${confirming.action}`);
+  const runStackAction = () => {
+    if (
+      selected === null ||
+      selectedKey === null ||
+      confirming === null ||
+      confirmPlan === null ||
+      confirmPlan.disabled
+    )
       return;
     const ref = selected;
     const refKey = selectedKey;
+    const { action } = confirming;
     setStackReceipt(null);
     runWrite(
-      "stack:merge",
-      (signal) => writeApi().invoke("runAction", { ...ref, ...stackMerge.input }, signal),
+      `stack:${action}`,
+      (signal) => writeApi().invoke("runAction", { ...ref, ...confirmPlan.input }, signal),
       undefined,
       (outcome) => {
         setStackConfirm(null);
-        setStackReceipt({ refKey, receipt: prsStackMergeReceipt(outcome) });
+        setStackReceipt({
+          refKey,
+          receipt:
+            action === "merge" ? prsStackMergeReceipt(outcome) : prsStackRebaseReceipt(outcome),
+        });
       },
     );
   };
   const commitUrl = (oid: string) =>
     detail === null ? null : prsCommitUrl(detail.provider, repositoryUrl, oid);
-  const confirming =
-    stackConfirm !== null && stackConfirm.refKey === selectedKey && stackMerge !== null
-      ? stackConfirm
-      : null;
   const closeConfirmation = () => setStackConfirm(null);
 
   return (
@@ -2706,7 +2741,7 @@ export function PullRequestsPanel(props: {
                         </li>
                       ))}
                     </ul>
-                    {stackMerge !== null && stackMerge.visible && (
+                    {((stackMerge !== null && stackMerge.visible) || stackRebase !== null) && (
                       <div
                         style={{
                           display: "flex",
@@ -2716,28 +2751,42 @@ export function PullRequestsPanel(props: {
                           padding: "2px 10px",
                         }}
                       >
-                        <Tooltip host={host} side="top" label={stackMerge.tooltip} showWhenDisabled>
+                        {stackMerge !== null && stackMerge.visible && (
+                          <Tooltip
+                            host={host}
+                            side="top"
+                            label={stackMerge.tooltip}
+                            showWhenDisabled
+                          >
+                            <button
+                              type="button"
+                              disabled={stackMerge.disabled || writeState?.pending === true}
+                              ref={stackMergeOpener}
+                              onClick={() => openStackConfirm("merge")}
+                              style={{ ...control, fontSize: 12, border }}
+                            >
+                              {stackMerge.label}
+                            </button>
+                          </Tooltip>
+                        )}
+                        {stackRebase !== null && (
                           <button
                             type="button"
-                            disabled={stackMerge.disabled || writeState?.pending === true}
-                            ref={stackMergeOpener}
-                            onClick={() =>
-                              selectedKey !== null &&
-                              setStackConfirm({
-                                refKey: selectedKey,
-                                opener: stackMergeOpener.current,
-                              })
-                            }
+                            disabled={stackRebase.disabled || writeState?.pending === true}
+                            ref={stackRebaseOpener}
+                            onClick={() => openStackConfirm("rebase")}
                             style={{ ...control, fontSize: 12, border }}
                           >
-                            {stackMerge.label}
+                            {stackRebase.label}
                           </button>
-                        </Tooltip>
-                        {stackMerge.blockedNote !== null && (
-                          <span style={{ color: muted, fontSize: 12 }}>
-                            {stackMerge.blockedNote}
-                          </span>
                         )}
+                        {stackMerge !== null &&
+                          stackMerge.visible &&
+                          stackMerge.blockedNote !== null && (
+                            <span style={{ color: muted, fontSize: 12 }}>
+                              {stackMerge.blockedNote}
+                            </span>
+                          )}
                       </div>
                     )}
                     <ReceiptLine
@@ -3000,19 +3049,19 @@ export function PullRequestsPanel(props: {
           </>
         )}
       </div>
-      {confirming !== null && stackMerge !== null && (
+      {confirming !== null && confirmPlan !== null && (
         <ConfirmDialog
           host={host}
           anchor={confirming.opener}
-          title={stackMerge.confirmTitle}
-          description={stackMerge.confirmDescription}
-          confirmLabel="Merge stack"
-          pending={stackMergePending}
+          title={confirmPlan.confirmTitle}
+          description={confirmPlan.confirmDescription}
+          confirmLabel={confirmPlan.label}
+          pending={stackActionPending}
           onCancel={closeConfirmation}
-          onConfirm={runStackMerge}
+          onConfirm={runStackAction}
         >
           <ul style={{ listStyle: "none", margin: "4px 0", padding: 0 }}>
-            {stackMerge.layers.map((layer) => (
+            {confirmPlan.layers.map((layer) => (
               <li key={layer.number}>
                 #{layer.number} {layer.title ?? layer.headBranch}
               </li>

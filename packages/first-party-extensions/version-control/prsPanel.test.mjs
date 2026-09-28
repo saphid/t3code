@@ -235,3 +235,84 @@ NodeTest.describe("stack confirmation is a modal dialog", () => {
     view.unmount();
   });
 });
+
+NodeTest.describe("rebase stack", () => {
+  const rebaseHandlers = (overrides = {}) => {
+    const detail = detailOf();
+    return defaultHandlers({
+      "t3.prs/read#detail": () => ({
+        ...detail,
+        viewerPermissions: { ...detail.viewerPermissions, stackRebase: true },
+      }),
+      "t3.prs/write#getCapabilities": () => ({
+        ...defaultHandlers()["t3.prs/write#getCapabilities"](),
+        actions: ["merge", "update-branch"],
+      }),
+      ...overrides,
+    });
+  };
+  const rebaseButton = (view) =>
+    view.byName("Rebase stack").find((node) => node.type === "button") ?? null;
+
+  NodeTest.it("is offered only to a viewer allowed to rebase the stack", async () => {
+    const without = mountPanel(defaultHandlers());
+    await flush();
+    NodeAssert.equal(rebaseButton(without), null);
+    without.unmount();
+    const view = mountPanel(rebaseHandlers());
+    await flush();
+    NodeAssert.equal(rebaseButton(view)?.props.disabled, false);
+    view.unmount();
+  });
+
+  NodeTest.it(
+    "confirms first, then rebases from the top layer with every head pinned",
+    async () => {
+      const view = mountPanel(rebaseHandlers());
+      await flush();
+      dispatch(rebaseButton(view), "onClick");
+      await flush();
+      const dialog = view.renderer.root.find(
+        (node) => typeof node.type === "string" && node.props.role === "dialog",
+      );
+      NodeAssert.match(nodeName(dialog.find((node) => node.type === "strong")), /^Rebase 3 pull/);
+      NodeAssert.deepEqual(view.writes(), []);
+      dispatch(
+        dialog
+          .findAll((node) => node.type === "button")
+          .find((node) => nodeName(node) === "Rebase stack"),
+        "onClick",
+      );
+      await flush();
+      NodeAssert.deepEqual(
+        view.writes().map((call) => call.input),
+        [
+          {
+            ...REF,
+            number: 4,
+            action: "update-branch",
+            updateMethod: "rebase",
+            stackNumber: 40,
+            expectedStackHeads: [
+              { number: 2, headSha: "sha2" },
+              { number: 3, headSha: "sha3" },
+              { number: 4, headSha: "sha4" },
+            ],
+          },
+        ],
+      );
+      view.unmount();
+    },
+  );
+
+  NodeTest.it("waits for a fresh stack read", async () => {
+    const pending = deferred();
+    const view = mountPanel(rebaseHandlers({ "t3.prs/read#stack": () => pending.promise }));
+    await flush();
+    NodeAssert.equal(rebaseButton(view), null);
+    pending.resolve(stackOf([layer(2), layer(3), layer(4)]));
+    await flush();
+    NodeAssert.equal(rebaseButton(view)?.props.disabled, false);
+    view.unmount();
+  });
+});

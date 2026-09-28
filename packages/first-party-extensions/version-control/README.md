@@ -28,8 +28,12 @@ The PR browser consumes the `t3.prs/read` grant:
   layer and every unmerged layer below it, pinned to the heads the reader
   saw (`runAction` `merge` with `stackNumber`/`expectedStackHeads`), offered
   only when the host does stack actions, host and viewer may merge, the
-  repository allows a method, and the stack read is fresh — confirmed inline
-  before it runs. Rebase stack stays deferred;
+  repository allows a method, and the stack read is fresh — confirmed in a
+  modal dialog before it runs. Native's Rebase stack rides the same write
+  (`update-branch`, `rebase`) through the top layer with every unmerged head
+  pinned, offered when the viewer may rebase the stack. While a stack lookup
+  is pending, failed, or finds a stack, the single-PR merge and auto-merge
+  are held back as native does;
 - `prs.reviewerCandidates`/`prs.labelCandidates`/`prs.listStats` remain
   unwired — nothing in the panel needs them yet;
 - open-on-host links for the repository, the PR number, both branch chips

@@ -1461,6 +1461,69 @@ export function prsStackMergeReceipt(
     : { tone: "error", title: "Stack operation did not complete", description: outcome.detail };
 }
 
+/**
+ * Native's `canRebase` for the stack menu: the host does stack actions, this
+ * viewer may rebase the stack, and the write probe declares `update-branch`.
+ */
+export function prsCanRebaseStack(
+  detail: {
+    readonly capabilities: { readonly stacks?: boolean; readonly stackActions?: boolean };
+    readonly viewerPermissions: { readonly stackRebase?: boolean };
+  },
+  write: {
+    readonly operations: { readonly "prs.runAction": boolean };
+    readonly actions: readonly PrsWriteActionKind[];
+  },
+): boolean {
+  return (
+    detail.capabilities.stacks === true &&
+    detail.capabilities.stackActions === true &&
+    detail.viewerPermissions.stackRebase === true &&
+    write.operations["prs.runAction"] &&
+    write.actions.includes("update-branch")
+  );
+}
+
+/**
+ * Native's Rebase stack (PullRequestStackMenu): every unmerged layer, bottom
+ * to top onto the stack base, requested through the top layer with each head
+ * pinned. A closed layer or a head the host did not report disables it.
+ */
+export function prsStackRebasePlan(stack: PrsStack) {
+  const layers = stack.layers.filter((layer) => layer.state !== "merged");
+  const top = stack.layers.at(-1);
+  const count = layers.length;
+  const input: Omit<PrsWriteActionInput, "repository" | "host"> = {
+    number: top?.number ?? 0,
+    action: "update-branch",
+    updateMethod: "rebase",
+    stackNumber: stack.number,
+    expectedStackHeads: layers.flatMap((layer) =>
+      layer.headSha ? [{ number: layer.number, headSha: layer.headSha }] : [],
+    ),
+  };
+  return {
+    disabled:
+      count === 0 ||
+      top === undefined ||
+      layers.some((layer) => layer.state !== "open" || !layer.headSha),
+    layers,
+    input,
+    label: "Rebase stack",
+    confirmTitle: `Rebase ${count} pull requests?`,
+    confirmDescription: `Rebase the remote branches from bottom to top onto ${stack.base}. This rewrites branch history and may restart checks. If a layer fails, earlier updates remain.`,
+  };
+}
+
+/** Native's stack-rebase toasts as a receipt. */
+export function prsStackRebaseReceipt(
+  outcome: { readonly ok: true } | { readonly ok: false; readonly detail: string | null },
+): PrsReceipt {
+  return outcome.ok
+    ? { tone: "success", title: "Stack rebased", description: null }
+    : { tone: "error", title: "Stack operation did not complete", description: outcome.detail };
+}
+
 /** Review verdicts the host accepts, as picker options in the native order. */
 export function prsWriteVerdictOptions(
   verdicts: readonly PrsWriteVerdict[],

@@ -10161,6 +10161,34 @@ ${ref.number}`;
       description: "GitHub merged the stack or added it to its merge queue."
     } : { tone: "error", title: "Stack operation did not complete", description: outcome.detail };
   }
+  function prsCanRebaseStack(detail, write) {
+    return detail.capabilities.stacks === true && detail.capabilities.stackActions === true && detail.viewerPermissions.stackRebase === true && write.operations["prs.runAction"] && write.actions.includes("update-branch");
+  }
+  function prsStackRebasePlan(stack) {
+    const layers = stack.layers.filter((layer) => layer.state !== "merged");
+    const top = stack.layers.at(-1);
+    const count = layers.length;
+    const input = {
+      number: top?.number ?? 0,
+      action: "update-branch",
+      updateMethod: "rebase",
+      stackNumber: stack.number,
+      expectedStackHeads: layers.flatMap(
+        (layer) => layer.headSha ? [{ number: layer.number, headSha: layer.headSha }] : []
+      )
+    };
+    return {
+      disabled: count === 0 || top === void 0 || layers.some((layer) => layer.state !== "open" || !layer.headSha),
+      layers,
+      input,
+      label: "Rebase stack",
+      confirmTitle: `Rebase ${count} pull requests?`,
+      confirmDescription: `Rebase the remote branches from bottom to top onto ${stack.base}. This rewrites branch history and may restart checks. If a layer fails, earlier updates remain.`
+    };
+  }
+  function prsStackRebaseReceipt(outcome) {
+    return outcome.ok ? { tone: "success", title: "Stack rebased", description: null } : { tone: "error", title: "Stack operation did not complete", description: outcome.detail };
+  }
   function prsWriteVerdictOptions(verdicts) {
     const order = ["comment", "approve", "request-changes"];
     const labels = {
@@ -11476,6 +11504,7 @@ ${writeKey}`;
     const [openError, setOpenError] = (0, import_react.useState)(null);
     const [stackConfirm, setStackConfirm] = (0, import_react.useState)(null);
     const stackMergeOpener = (0, import_react.useRef)(null);
+    const stackRebaseOpener = (0, import_react.useRef)(null);
     const [stackReceipt, setStackReceipt] = (0, import_react.useState)(null);
     const [handoff, setHandoff] = (0, import_react.useState)(null);
     const [handoffReceipt, setHandoffReceipt] = (0, import_react.useState)(null);
@@ -11714,25 +11743,36 @@ ${thread.id}`;
       draft("method:merge")
     ) ? draft("method:merge") : allowedMergeMethods[0] ?? "merge";
     const stackMerge = detail !== null && selected !== null && sections.stack !== null && sections.stackFresh && sections.stackError === null && write.kind === "ready" && prsCanMergeStack(detail, write) ? prsStackMergePlan(sections.stack, selected.number, stackMergeMethod) : null;
-    const stackMergePending = writePending("stack:merge");
-    const runStackMerge = () => {
-      if (selected === null || selectedKey === null || stackMerge === null || stackMerge.disabled)
+    const stackRebase = detail !== null && sections.stack !== null && sections.stack.layers.length > 0 && sections.stackFresh && sections.stackError === null && write.kind === "ready" && prsCanRebaseStack(detail, write) ? prsStackRebasePlan(sections.stack) : null;
+    const openStackConfirm = (action) => {
+      if (selectedKey === null) return;
+      const opener = action === "merge" ? stackMergeOpener : stackRebaseOpener;
+      setStackConfirm({ refKey: selectedKey, action, opener: opener.current });
+    };
+    const confirmPlan = stackConfirm === null || stackConfirm.refKey !== selectedKey ? null : stackConfirm.action === "merge" ? stackMerge : stackRebase;
+    const confirming = confirmPlan !== null ? stackConfirm : null;
+    const stackActionPending = confirming !== null && writePending(`stack:${confirming.action}`);
+    const runStackAction = () => {
+      if (selected === null || selectedKey === null || confirming === null || confirmPlan === null || confirmPlan.disabled)
         return;
       const ref = selected;
       const refKey = selectedKey;
+      const { action } = confirming;
       setStackReceipt(null);
       runWrite(
-        "stack:merge",
-        (signal) => writeApi().invoke("runAction", { ...ref, ...stackMerge.input }, signal),
+        `stack:${action}`,
+        (signal) => writeApi().invoke("runAction", { ...ref, ...confirmPlan.input }, signal),
         void 0,
         (outcome) => {
           setStackConfirm(null);
-          setStackReceipt({ refKey, receipt: prsStackMergeReceipt(outcome) });
+          setStackReceipt({
+            refKey,
+            receipt: action === "merge" ? prsStackMergeReceipt(outcome) : prsStackRebaseReceipt(outcome)
+          });
         }
       );
     };
     const commitUrl = (oid) => detail === null ? null : prsCommitUrl(detail.provider, repositoryUrl, oid);
-    const confirming = stackConfirm !== null && stackConfirm.refKey === selectedKey && stackMerge !== null ? stackConfirm : null;
     const closeConfirmation = () => setStackConfirm(null);
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "div",
@@ -12096,7 +12136,7 @@ ${thread.id}`;
                     },
                     layer.number
                   )) }),
-                  stackMerge !== null && stackMerge.visible && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                  (stackMerge !== null && stackMerge.visible || stackRebase !== null) && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
                     "div",
                     {
                       style: {
@@ -12107,21 +12147,38 @@ ${thread.id}`;
                         padding: "2px 10px"
                       },
                       children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: stackMerge.tooltip, showWhenDisabled: true, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                        stackMerge !== null && stackMerge.visible && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                          Tooltip,
+                          {
+                            host,
+                            side: "top",
+                            label: stackMerge.tooltip,
+                            showWhenDisabled: true,
+                            children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                              "button",
+                              {
+                                type: "button",
+                                disabled: stackMerge.disabled || writeState?.pending === true,
+                                ref: stackMergeOpener,
+                                onClick: () => openStackConfirm("merge"),
+                                style: { ...control, fontSize: 12, border },
+                                children: stackMerge.label
+                              }
+                            )
+                          }
+                        ),
+                        stackRebase !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                           "button",
                           {
                             type: "button",
-                            disabled: stackMerge.disabled || writeState?.pending === true,
-                            ref: stackMergeOpener,
-                            onClick: () => selectedKey !== null && setStackConfirm({
-                              refKey: selectedKey,
-                              opener: stackMergeOpener.current
-                            }),
+                            disabled: stackRebase.disabled || writeState?.pending === true,
+                            ref: stackRebaseOpener,
+                            onClick: () => openStackConfirm("rebase"),
                             style: { ...control, fontSize: 12, border },
-                            children: stackMerge.label
+                            children: stackRebase.label
                           }
-                        ) }),
-                        stackMerge.blockedNote !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, fontSize: 12 }, children: stackMerge.blockedNote })
+                        ),
+                        stackMerge !== null && stackMerge.visible && stackMerge.blockedNote !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, fontSize: 12 }, children: stackMerge.blockedNote })
                       ]
                     }
                   ),
@@ -12305,18 +12362,18 @@ ${thread.id}`) === activity,
               ] })
             ] })
           ] }),
-          confirming !== null && stackMerge !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          confirming !== null && confirmPlan !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
             ConfirmDialog,
             {
               host,
               anchor: confirming.opener,
-              title: stackMerge.confirmTitle,
-              description: stackMerge.confirmDescription,
-              confirmLabel: "Merge stack",
-              pending: stackMergePending,
+              title: confirmPlan.confirmTitle,
+              description: confirmPlan.confirmDescription,
+              confirmLabel: confirmPlan.label,
+              pending: stackActionPending,
               onCancel: closeConfirmation,
-              onConfirm: runStackMerge,
-              children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: "4px 0", padding: 0 }, children: stackMerge.layers.map((layer) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { children: [
+              onConfirm: runStackAction,
+              children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: "4px 0", padding: 0 }, children: confirmPlan.layers.map((layer) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { children: [
                 "#",
                 layer.number,
                 " ",
