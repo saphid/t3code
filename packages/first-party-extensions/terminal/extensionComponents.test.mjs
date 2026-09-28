@@ -3,7 +3,7 @@
  * esbuild with the Ghostty surface replaced by a recording stub. These pin
  * these regression shapes as tests: cold-restore stream budget, group-switch
  * waiter wake, focused-chord capture against the real host keymap resolver,
- * and path-link activation through t3.file/presentation.
+ * and path-link activation through t3.ui/panels.openFile.
  *
  * The bundle is written to the system tmpdir, never into the package, so
  * the shipped tree stays free of test-only builds.
@@ -1048,11 +1048,11 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
   // The stub class exists only inside the esbuild bundle; it publishes itself.
   const stubSurfaces = () => globalThis.__T3_TERMINAL_SURFACE_STUB__.surfaces;
   // The count this feature owns — other invokes may share the window.
-  const presentationInvokes = (invokes) =>
-    invokes.filter((entry) => entry.id === "t3.file/presentation");
+  const openFileInvokes = (invokes) =>
+    invokes.filter((entry) => entry.id === "t3.ui/panels" && entry.method === "openFile");
 
   /** A host whose assets resolve, so the pane really mounts its surface. */
-  function linkHost(presentationResult) {
+  function linkHost(openFileResult) {
     const invokes = [];
     const host = {
       readAsset: async (path) => ({
@@ -1065,9 +1065,13 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
         sha256: "0".repeat(64),
       }),
       invokeApi: async (request) => {
-        invokes.push({ id: request.id, method: request.method, input: request.input });
-        if (request.id === "t3.file/presentation" && request.method === "open")
-          return presentationResult;
+        invokes.push({
+          id: request.id,
+          method: request.method,
+          input: request.input,
+          versionRange: request.versionRange,
+        });
+        if (request.id === "t3.ui/panels" && request.method === "openFile") return openFileResult;
         if (request.id === "t3.ui/theme" && request.method === "getTokens")
           return { tokens: {}, cssVars: {} };
         if (request.id === "t3.ui/external" && request.method === "open")
@@ -1104,13 +1108,9 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
   }
 
   NodeTest.test(
-    "path links open through t3.file/presentation, URLs through t3.ui/external; refusals are named",
+    "path links open the host file view, URLs open through t3.ui/external; refusals are named",
     async () => {
-      const { host, invokes } = linkHost({
-        surfaceId: "t3.files/view",
-        placement: "side-panel",
-        restoreState: {},
-      });
+      const { host, invokes } = linkHost({ applied: true });
       stubSurfaces().length = 0;
       let renderer;
       await act(async () => {
@@ -1132,34 +1132,44 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
         NodeAssert.ok(surface, "terminal surface never mounted");
         const activate = surface.options.onLinkActivate;
 
-        // Path link: the position suffix is stripped, the presentation op is
-        // invoked with the workspace-relative path, and the resolved
-        // descriptor is reported on the surface.
+        // Path link: the host opens its file view (the selected
+        // t3.file/presentation) at the workspace-relative path and line, and
+        // like the native drawer a successful open writes nothing.
+        surface.writes.length = 0;
         await act(async () => {
           activate("src/view.tsx:12", { metaKey: true });
           await drain();
         });
+        NodeAssert.deepEqual(openFileInvokes(invokes), [
+          {
+            id: "t3.ui/panels",
+            method: "openFile",
+            input: { relativePath: "src/view.tsx", line: 12, threadId: "t" },
+            versionRange: "^1.1.0",
+          },
+        ]);
         NodeAssert.deepEqual(
           invokes.filter((entry) => entry.id === "t3.file/presentation"),
-          [{ id: "t3.file/presentation", method: "open", input: { relativePath: "src/view.tsx" } }],
+          [],
         );
-        NodeAssert.ok(
-          surface.writes.some((data) =>
-            data.includes("[terminal] src/view.tsx opens in t3.files/view · side-panel"),
-          ),
+        NodeAssert.deepEqual(
+          surface.writes.filter((data) => data.includes("[terminal]")),
+          [],
         );
 
-        // URL link: handed to t3.ui/external, never the presentation op; the
+        // URL link: handed to t3.ui/external, never the file view; the
         // client's refusal is written on the surface by name.
-        const invokesBefore = presentationInvokes(invokes).length;
+        const invokesBefore = openFileInvokes(invokes).length;
         surface.writes.length = 0;
         await act(async () => {
           activate("https://t3.codes/docs", { metaKey: true });
           await drain();
         });
-        NodeAssert.equal(presentationInvokes(invokes).length, invokesBefore);
+        NodeAssert.equal(openFileInvokes(invokes).length, invokesBefore);
         NodeAssert.deepEqual(
-          invokes.filter((entry) => entry.id === "t3.ui/external"),
+          invokes
+            .filter((entry) => entry.id === "t3.ui/external")
+            .map(({ id, method, input }) => ({ id, method, input })),
           [{ id: "t3.ui/external", method: "open", input: { url: "https://t3.codes/docs" } }],
         );
         NodeAssert.ok(
@@ -1174,7 +1184,7 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
           activate("/etc/passwd", { metaKey: true });
           await drain();
         });
-        NodeAssert.equal(presentationInvokes(invokes).length, invokesBefore);
+        NodeAssert.equal(openFileInvokes(invokes).length, invokesBefore);
         NodeAssert.ok(
           surface.writes.some((data) =>
             data.includes(
@@ -1190,14 +1200,14 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
     },
   );
 
-  NodeTest.test("a denied presentation invoke reports the failure on the surface", async () => {
+  NodeTest.test("a denied file open reports the failure on the surface", async () => {
     const { host, invokes } = (() => {
       const inner = linkHost(null);
       const denied = Object.create(inner.host);
       denied.invokeApi = async (request) => {
         inner.invokes.push({ id: request.id, method: request.method, input: request.input });
-        if (request.id === "t3.file/presentation" && request.method === "open")
-          throw new Error("API capability denied: t3.file/open");
+        if (request.id === "t3.ui/panels" && request.method === "openFile")
+          throw new Error("API capability denied: t3.ui/panels.openFile");
         if (request.id === "t3.ui/theme" && request.method === "getTokens")
           return { tokens: {}, cssVars: {} };
         return { commandSetToken: "token", results: [] };
@@ -1226,11 +1236,11 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
         surface.options.onLinkActivate("src/view.tsx", { metaKey: true });
         await drain();
       });
-      NodeAssert.equal(invokes.filter((entry) => entry.id === "t3.file/presentation").length, 1);
+      NodeAssert.equal(openFileInvokes(invokes).length, 1);
       NodeAssert.ok(
         surface.writes.some((data) =>
           data.includes(
-            "[terminal] src/view.tsx could not be opened — API capability denied: t3.file/open",
+            "[terminal] src/view.tsx could not be opened — API capability denied: t3.ui/panels.openFile",
           ),
         ),
       );
@@ -1264,7 +1274,7 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
         surface.options.onLinkActivate("src/a.ts", { metaKey: true });
         await drain();
       });
-      NodeAssert.equal(presentationInvokes(invokes).length, 0);
+      NodeAssert.equal(openFileInvokes(invokes).length, 0);
       NodeAssert.ok(
         surface.writes.some((data) =>
           data.includes("[terminal] src/a.ts cannot be opened — the workspace is not available."),

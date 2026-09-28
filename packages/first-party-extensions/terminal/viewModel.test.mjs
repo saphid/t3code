@@ -1554,12 +1554,16 @@ NodeTest.describe("package requirements — t3.ui/* adoption policy", () => {
         "t3.terminal/output-events",
         "t3.terminal/control",
         "t3.composer/context",
-        "t3.file/presentation",
         "t3.ui/theme",
         "t3.ui/keybindings",
         "t3.ui/panels",
         "t3.ui/external",
       ],
+    );
+    // Path links call openFile, which t3.ui/panels added in 1.1.0.
+    NodeAssert.equal(
+      manifest.requires.find((item) => item.id === "t3.ui/panels").versionRange,
+      "^1.1.0",
     );
   });
 });
@@ -1614,6 +1618,7 @@ NodeTest.describe("terminal path links (Terminal 22 path half)", () => {
     NodeAssert.deepEqual(target("src/view.tsx:12:3", "/ws/root", "/ws/root"), {
       status: "open",
       relativePath: "src/view.tsx",
+      line: 12,
     });
   });
 
@@ -1707,6 +1712,7 @@ NodeTest.describe("terminal path links (Terminal 22 path half)", () => {
     NodeAssert.deepEqual(target("src\\a.ts:4", "C:\\ws\\root", "C:\\ws\\root"), {
       status: "open",
       relativePath: "src/a.ts",
+      line: 4,
     });
     NodeAssert.deepEqual(target("c:\\WS\\ROOT\\src\\a.ts", "C:\\ws\\root", "C:\\ws\\root"), {
       status: "open",

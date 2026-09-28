@@ -174,6 +174,44 @@ function makeProviders(
   };
 }
 
+describe("panels adapter", () => {
+  it("forwards openFile to the client, scoped to the context thread", async () => {
+    const bridge = fakeBridge();
+    const { panels } = makeProviders(bridge);
+    await expect(
+      panels.invoke(
+        "openFile",
+        { relativePath: "src/app.ts", line: 3 } as Json,
+        context,
+        signal,
+        metadata(),
+      ),
+    ).resolves.toEqual({ applied: true });
+    expect(bridge.invoked).toEqual([
+      {
+        connectionId: "conn-1",
+        apiId: "t3.client/panels",
+        method: "openFile",
+        input: {
+          target: { kind: "connection", connectionId: "conn-1" },
+          relativePath: "src/app.ts",
+          line: 3,
+          threadId: "thread-a",
+        },
+      },
+    ]);
+    await expect(
+      panels.invoke(
+        "openFile",
+        { relativePath: "a.ts", threadId: "thread-b" } as Json,
+        context,
+        signal,
+        metadata(),
+      ),
+    ).rejects.toMatchObject({ code: "client-target-denied" });
+  });
+});
+
 describe("preferences adapter", () => {
   it("forwards writes as the broker-verified writer's patch", async () => {
     const bridge = fakeBridge();

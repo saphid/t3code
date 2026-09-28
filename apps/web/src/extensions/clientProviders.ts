@@ -791,6 +791,28 @@ export function createPanelsClientProvider(deps: ClientProviderDeps): ClientLoca
           }
           return { surfaces } as unknown as Json;
         }
+        case "openFile": {
+          const relativePath = readInputString(input, "relativePath")!;
+          // Workspace-relative, '/'-separated, and never climbing out.
+          if (
+            relativePath.startsWith("/") ||
+            relativePath.includes("\\") ||
+            /^[A-Za-z]:/.test(relativePath) ||
+            relativePath.split("/").includes("..")
+          )
+            throw new ClientProviderOpError("provider-rejected", "Not a workspace-relative path");
+          const shell = readThreadShell(ref);
+          if (!shell?.projectId)
+            throw new ClientProviderOpError("panel-surface-not-found", "Unknown thread");
+          const installation = deps
+            .installations()
+            ?.find((item) => item.id === call.caller.installationId);
+          if (!installation?.grants.projectIds.some((id) => id === shell.projectId))
+            throw new ClientProviderOpError("client-target-denied", "Thread outside granted scope");
+          const line = input.line;
+          store.openFile(ref, relativePath, typeof line === "number" ? line : undefined);
+          return { applied: true } as unknown as Json;
+        }
         case "hideDock":
           store.hideExtensionDock(ref);
           return { applied: true } as unknown as Json;
@@ -1553,7 +1575,7 @@ export const CLIENT_PROVIDER_DESCRIPTORS = [
   { id: "t3.client/theme", version: "1.0.0" },
   { id: "t3.client/notifications", version: "1.1.0" },
   { id: "t3.client/keybindings", version: "1.0.0" },
-  { id: "t3.client/panels", version: "1.0.0" },
+  { id: "t3.client/panels", version: "1.1.0" },
   { id: "t3.client/composer", version: "1.2.0" },
   { id: "t3.client/terminal-appearance", version: "1.0.0" },
   { id: "t3.client/preferences", version: "1.0.0" },

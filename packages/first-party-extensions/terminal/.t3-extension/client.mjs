@@ -1551,7 +1551,7 @@ var __t3Client = (() => {
   };
   var CLIENT_PANELS_API = validateApiDefinition({
     id: "t3.client/panels",
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
       {
         name: "openSurface",
@@ -1635,6 +1635,18 @@ var __t3Client = (() => {
         effect: "write",
         requiredGrants: [],
         inputSchema: withTarget({ ...panelThreadInput }, ["threadId"]),
+        outputSchema: okOutput
+      },
+      // 1.1.0: the host's own file view for a workspace-relative path.
+      {
+        name: "openFile",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          relativePath: { type: "string", minLength: 1, maxLength: 512 },
+          line: { type: "integer", minimum: 1, maximum: 1e6 },
+          ...panelThreadInput
+        }, ["relativePath", "threadId"]),
         outputSchema: okOutput
       }
     ]
@@ -7433,155 +7445,181 @@ var __t3Client = (() => {
       ]
     }
   );
-  var uiPanelsApi = defineApi({
-    id: "t3.ui/panels",
-    version: "1.0.0",
-    methods: [
-      {
-        name: "getCapabilities",
-        effect: "read",
-        requiredGrants: [],
-        inputSchema: composerEmptyInputSchema,
-        outputSchema: uiCapabilitiesOutput([
-          "openSurface",
-          "activateSurface",
-          "closeSurface",
-          "listSurfaces",
-          "hideDock",
-          "showDock"
-        ])
-      },
-      {
-        name: "openSurface",
-        effect: "write",
-        requiredGrants: [UI_PANELS],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["surfaceId"],
-          properties: {
-            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
-            title: { type: "string", minLength: 1, maxLength: 200 },
-            placement: { enum: ["side-panel", "bottom-dock"] },
-            threadId: { type: "string", maxLength: 128 }
+  var uiPanelsApi = defineApi(
+    {
+      id: "t3.ui/panels",
+      version: "1.1.0",
+      methods: [
+        {
+          name: "getCapabilities",
+          effect: "read",
+          requiredGrants: [],
+          inputSchema: composerEmptyInputSchema,
+          outputSchema: uiCapabilitiesOutput([
+            "openSurface",
+            "activateSurface",
+            "closeSurface",
+            "listSurfaces",
+            "hideDock",
+            "showDock",
+            "openFile"
+          ])
+        },
+        {
+          name: "openSurface",
+          effect: "write",
+          requiredGrants: [UI_PANELS],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["surfaceId"],
+            properties: {
+              surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+              title: { type: "string", minLength: 1, maxLength: 200 },
+              placement: { enum: ["side-panel", "bottom-dock"] },
+              threadId: { type: "string", maxLength: 128 }
+            }
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["surfaceId"],
+            properties: { surfaceId: { type: "string", maxLength: 160 } }
           }
         },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["surfaceId"],
-          properties: { surfaceId: { type: "string", maxLength: 160 } }
-        }
-      },
-      {
-        name: "activateSurface",
-        effect: "write",
-        requiredGrants: [UI_PANELS],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["surfaceId"],
-          properties: {
-            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
-            threadId: { type: "string", maxLength: 128 }
+        {
+          name: "activateSurface",
+          effect: "write",
+          requiredGrants: [UI_PANELS],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["surfaceId"],
+            properties: {
+              surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+              threadId: { type: "string", maxLength: 128 }
+            }
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["applied"],
+            properties: { applied: { type: "boolean" } }
           }
         },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["applied"],
-          properties: { applied: { type: "boolean" } }
-        }
-      },
-      {
-        name: "closeSurface",
-        effect: "write",
-        requiredGrants: [UI_PANELS],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["surfaceId"],
-          properties: {
-            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
-            threadId: { type: "string", maxLength: 128 }
+        {
+          name: "closeSurface",
+          effect: "write",
+          requiredGrants: [UI_PANELS],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["surfaceId"],
+            properties: {
+              surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+              threadId: { type: "string", maxLength: 128 }
+            }
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["applied"],
+            properties: { applied: { type: "boolean" } }
           }
         },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["applied"],
-          properties: { applied: { type: "boolean" } }
-        }
-      },
-      {
-        name: "listSurfaces",
-        effect: "read",
-        requiredGrants: [UI_PANELS],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["threadId"],
-          properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["surfaces"],
-          properties: {
-            surfaces: {
-              type: "array",
-              maxItems: 64,
-              items: {
-                type: "object",
-                additionalProperties: false,
-                required: ["id", "title", "placement", "active"],
-                properties: {
-                  id: { type: "string", maxLength: 160 },
-                  title: { type: "string", maxLength: 200 },
-                  placement: { enum: ["side-panel", "bottom-dock"] },
-                  active: { type: "boolean" }
+        {
+          name: "listSurfaces",
+          effect: "read",
+          requiredGrants: [UI_PANELS],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["threadId"],
+            properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["surfaces"],
+            properties: {
+              surfaces: {
+                type: "array",
+                maxItems: 64,
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["id", "title", "placement", "active"],
+                  properties: {
+                    id: { type: "string", maxLength: 160 },
+                    title: { type: "string", maxLength: 200 },
+                    placement: { enum: ["side-panel", "bottom-dock"] },
+                    active: { type: "boolean" }
+                  }
                 }
               }
             }
           }
-        }
-      },
-      {
-        name: "hideDock",
-        effect: "write",
-        requiredGrants: [UI_PANELS],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["threadId"],
-          properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
         },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["applied"],
-          properties: { applied: { type: "boolean" } }
-        }
-      },
-      {
-        name: "showDock",
-        effect: "write",
-        requiredGrants: [UI_PANELS],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["threadId"],
-          properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
+        {
+          name: "hideDock",
+          effect: "write",
+          requiredGrants: [UI_PANELS],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["threadId"],
+            properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["applied"],
+            properties: { applied: { type: "boolean" } }
+          }
         },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["applied"],
-          properties: { applied: { type: "boolean" } }
+        {
+          name: "showDock",
+          effect: "write",
+          requiredGrants: [UI_PANELS],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["threadId"],
+            properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["applied"],
+            properties: { applied: { type: "boolean" } }
+          }
+        },
+        {
+          name: "openFile",
+          effect: "write",
+          requiredGrants: [UI_PANELS],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["relativePath"],
+            properties: {
+              relativePath: { type: "string", minLength: 1, maxLength: 512 },
+              line: { type: "integer", minimum: 1, maximum: 1e6 },
+              threadId: { type: "string", maxLength: 128 }
+            }
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["applied"],
+            properties: { applied: { type: "boolean" } }
+          }
         }
-      }
-    ]
-  });
+      ]
+    },
+    // Consumers keep loading on a 1.0.0 host; bind at ^1.1.0 to call openFile.
+    { baseline: "1.0.0", additions: [{ version: "1.1.0", method: "openFile", input: "relativePath" }] }
+  );
   var uiPreferencesApi = defineApi({
     id: UI_PREFERENCES,
     version: "1.0.0",
@@ -11869,7 +11907,7 @@ var __t3Client = (() => {
       return null;
     }
   }
-  var TERMINAL_LINK_POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
+  var TERMINAL_LINK_POSITION_SUFFIX_PATTERN = /:(\d+)(?::\d+)?$/;
   function isHomeRelativeLink(path3) {
     return path3[0] === "~" && path3[1] === "/";
   }
@@ -11907,7 +11945,9 @@ var __t3Client = (() => {
       const expected = windows ? prefix.toLowerCase() : prefix;
       return (windows ? head.toLowerCase() : head) === expected ? absolute2.slice(prefix.length) : null;
     };
-    const path3 = text.replace(TERMINAL_LINK_POSITION_SUFFIX_PATTERN, "");
+    const position = TERMINAL_LINK_POSITION_SUFFIX_PATTERN.exec(text);
+    const line = position ? Number(position[1]) : 0;
+    const path3 = position ? text.slice(0, position.index) : text;
     if (path3.length === 0) return reject();
     let absolute;
     if (isAbsolutePath(path3)) {
@@ -11923,7 +11963,11 @@ var __t3Client = (() => {
     if (relative === null) return reject();
     const segments = terminalLinkSegments(relative, windows);
     if (segments === null) return reject();
-    return { status: "open", relativePath: segments.join("/") };
+    return {
+      status: "open",
+      relativePath: segments.join("/"),
+      ...line >= 1 ? { line } : {}
+    };
   }
   async function openTerminalUrl(external, url, signal) {
     try {
@@ -14328,6 +14372,7 @@ var __t3Client = (() => {
   var GHOSTTY_VT_ASSET = "assets/ghostty-vt.wasm";
   var GHOSTTY_WRITE_PTY_ASSET = "assets/ghostty-write-pty.wasm";
   var SYMBOLS_FONT_ASSET = "assets/SymbolsNerdFontMono-Regular.woff2";
+  var UI_PANELS_OPEN_FILE_RANGE = "^1.1.0";
   var RESTORED_GROUP_KEYS = /* @__PURE__ */ new Set(["id", "terminalIds", "splitDirection"]);
   function isRestoredGroup(value) {
     if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -14807,15 +14852,18 @@ var __t3Client = (() => {
               return;
             }
             const signal = session.signal;
-            void bindApi(filePresentationApi, host, session.context).invoke("open", { relativePath: target.relativePath }, signal).then(
-              (result) => {
-                if (!signal.aborted && surfaceRef.current === paneSurface) {
-                  writeSystemMessage(
-                    paneSurface,
-                    `${target.relativePath} opens in ${result.surfaceId} \xB7 ${result.placement}`
-                  );
-                }
+            const threadId = session.context.resource.threadId;
+            void bindApi(uiPanelsApi, host, session.context, UI_PANELS_OPEN_FILE_RANGE).invoke(
+              "openFile",
+              {
+                relativePath: target.relativePath,
+                ...target.line === void 0 ? {} : { line: target.line },
+                ...threadId === void 0 ? {} : { threadId }
               },
+              signal
+            ).then(
+              // Like the native drawer, a successful open writes nothing.
+              () => void 0,
               (error) => {
                 if (!signal.aborted && surfaceRef.current === paneSurface) {
                   writeSystemMessage(
@@ -15640,10 +15688,6 @@ var __t3Client = (() => {
       // "Add to chat" (insertTerminalContext is 1.1.0). The host provider is
       // always registered; getCapabilities reports whether a composer is there.
       requireApi(composerContextApi),
-      // Path links open through the files pack's presentation provider. A
-      // denied or failing invoke degrades to an honest surface message, so
-      // only a provider-less host (no files installation) blocks the package.
-      requireApi(filePresentationApi),
       // Mandatory requirements — the broker only authorizes invocations for
       // declared APIs, so the t3.ui/* contracts must be declared even though
       // the panel degrades per-call. A host without these providers resolves
@@ -15654,7 +15698,8 @@ var __t3Client = (() => {
       // panel feature-detects (default chords without it), so a 1.0.0 host
       // still loads the panel.
       requireApi(uiKeybindingsApi, "^1.0.0"),
-      requireApi(uiPanelsApi),
+      // 1.1.0 adds openFile, which path links use to open the host file view.
+      requireApi(uiPanelsApi, UI_PANELS_OPEN_FILE_RANGE),
       // Terminal 22 URL half: detected URLs open on the user's own client.
       requireApi(uiExternalApi)
     ],

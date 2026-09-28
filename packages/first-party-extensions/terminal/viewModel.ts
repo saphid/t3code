@@ -582,13 +582,13 @@ export function workspaceLaunchFromRevision(
 
 /* ---------------- path links (Terminal 22 path half) ---------------- */
 
-/** What a terminal path link resolves to for a `t3.file/presentation.open`. */
+/** What a terminal path link resolves to for `t3.ui/panels.openFile`. */
 export type TerminalPathLinkTarget =
-  | { readonly status: "open"; readonly relativePath: string }
+  | { readonly status: "open"; readonly relativePath: string; readonly line?: number }
   | { readonly status: "unopenable"; readonly reason: string };
 
-/** Trailing `:line` / `:line:column` — editor metadata the presentation op cannot carry. */
-const TERMINAL_LINK_POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
+/** Trailing `:line` / `:line:column`; the file view reveals the line, not the column. */
+const TERMINAL_LINK_POSITION_SUFFIX_PATTERN = /:(\d+)(?::\d+)?$/;
 /**
  * Home-relative check spelled as split comparisons: the pack's private-import
  * audit bans the home-link character sequence anywhere in package content,
@@ -634,10 +634,10 @@ function terminalLinkSegments(relative: string, windows: boolean): string[] | nu
 }
 
 /**
- * Terminal link text → the workspace-relative path `t3.file/presentation`
- * accepts, or the named reason it cannot open. The op only carries
- * workspace-relative forward-slash paths, so the position suffix is
- * stripped, `~` and bare-relative links resolve against the launch cwd
+ * Terminal link text → the workspace-relative path (and line) the host file
+ * view opens, or the named reason it cannot open. The op only carries
+ * workspace-relative forward-slash paths, so the position suffix becomes
+ * the line, `~` and bare-relative links resolve against the launch cwd
  * (the contracts expose no live shell cwd), and under a Windows root the
  * link's separators are normalized to the root's style before mapping —
  * Windows tools emit forward-slash and mixed-separator paths. Anything
@@ -664,7 +664,9 @@ export function terminalPathLinkTarget(
       : null;
   };
 
-  const path = text.replace(TERMINAL_LINK_POSITION_SUFFIX_PATTERN, "");
+  const position = TERMINAL_LINK_POSITION_SUFFIX_PATTERN.exec(text);
+  const line = position ? Number(position[1]) : 0;
+  const path = position ? text.slice(0, position.index) : text;
   if (path.length === 0) return reject();
   let absolute: string;
   if (isAbsolutePath(path)) {
@@ -681,7 +683,11 @@ export function terminalPathLinkTarget(
   if (relative === null) return reject();
   const segments = terminalLinkSegments(relative, windows);
   if (segments === null) return reject();
-  return { status: "open", relativePath: segments.join("/") };
+  return {
+    status: "open",
+    relativePath: segments.join("/"),
+    ...(line >= 1 ? { line } : {}),
+  };
 }
 
 /**

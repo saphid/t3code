@@ -1,6 +1,5 @@
 import {
   composerContextApi,
-  filePresentationApi,
   terminalControlApi,
   terminalOutputApi,
   terminalOutputEventsApi,
@@ -86,6 +85,8 @@ const streamHub = new TerminalStreamHub();
 const GHOSTTY_VT_ASSET = "assets/ghostty-vt.wasm";
 const GHOSTTY_WRITE_PTY_ASSET = "assets/ghostty-write-pty.wasm";
 const SYMBOLS_FONT_ASSET = "assets/SymbolsNerdFontMono-Regular.woff2";
+/** `t3.ui/panels` 1.1.0 added `openFile`. */
+const UI_PANELS_OPEN_FILE_RANGE = "^1.1.0";
 
 interface RestoredGroup {
   readonly id: string;
@@ -823,8 +824,9 @@ function TerminalPane(props: {
           handleBeforeKey(event, panel, terminalId, host.keybindings, editingBinding.current),
         onLinkActivate: (text) => {
           // Terminal 22: a detected URL opens through t3.ui/external on the
-          // user's own client; a path link opens through t3.file/presentation
-          // (the files pack's provider). Both report failures on the surface.
+          // user's own client; a path link opens the host's file view (which
+          // renders the selected t3.file/presentation). Both report failures
+          // on the surface.
           if (surface === null) return;
           const paneSurface = surface;
           if (isTerminalUrl(text)) {
@@ -852,17 +854,20 @@ function TerminalPane(props: {
             return;
           }
           const signal = session.signal;
-          void bindApi(filePresentationApi, host, session.context)
-            .invoke("open", { relativePath: target.relativePath }, signal)
-            .then(
-              (result) => {
-                if (!signal.aborted && surfaceRef.current === paneSurface) {
-                  writeSystemMessage(
-                    paneSurface,
-                    `${target.relativePath} opens in ${result.surfaceId} · ${result.placement}`,
-                  );
-                }
+          const threadId = session.context.resource.threadId;
+          void bindApi(uiPanelsApi, host, session.context, UI_PANELS_OPEN_FILE_RANGE)
+            .invoke(
+              "openFile",
+              {
+                relativePath: target.relativePath,
+                ...(target.line === undefined ? {} : { line: target.line }),
+                ...(threadId === undefined ? {} : { threadId }),
               },
+              signal,
+            )
+            .then(
+              // Like the native drawer, a successful open writes nothing.
+              () => undefined,
               (error: unknown) => {
                 if (!signal.aborted && surfaceRef.current === paneSurface) {
                   writeSystemMessage(
@@ -1768,10 +1773,6 @@ const authored = defineExtension({
     // "Add to chat" (insertTerminalContext is 1.1.0). The host provider is
     // always registered; getCapabilities reports whether a composer is there.
     requireApi(composerContextApi),
-    // Path links open through the files pack's presentation provider. A
-    // denied or failing invoke degrades to an honest surface message, so
-    // only a provider-less host (no files installation) blocks the package.
-    requireApi(filePresentationApi),
     // Mandatory requirements — the broker only authorizes invocations for
     // declared APIs, so the t3.ui/* contracts must be declared even though
     // the panel degrades per-call. A host without these providers resolves
@@ -1782,7 +1783,8 @@ const authored = defineExtension({
     // panel feature-detects (default chords without it), so a 1.0.0 host
     // still loads the panel.
     requireApi(uiKeybindingsApi, "^1.0.0"),
-    requireApi(uiPanelsApi),
+    // 1.1.0 adds openFile, which path links use to open the host file view.
+    requireApi(uiPanelsApi, UI_PANELS_OPEN_FILE_RANGE),
     // Terminal 22 URL half: detected URLs open on the user's own client.
     requireApi(uiExternalApi),
   ],

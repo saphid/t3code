@@ -39,12 +39,14 @@ Interactive terminal plugin driven entirely by public contracts:
   command runs it, any other claim goes to the key encoder, and the defaults
   apply on a miss. A host without the resolver holds the default chords
   until registration settles.
-- `t3.ui/panels@^1.0.0` — the dispatched `toggle` closes the hosting surface
-  via `closeSurface`; failures surface on the panel status row.
+- `t3.ui/panels@^1.1.0` — the dispatched `toggle` closes the hosting surface
+  via `closeSurface`; failures surface on the panel status row. Activating a
+  workspace path link calls `openFile`, which opens the host's file view at
+  the linked line; a refusal is written on the pane.
 - `t3.ui/external@^1.0.0` (`t3.ui/external.open` grant) — activating a
   detected `http:`/`https:` link opens it on the user's own client (the OS
   opener on desktop, a new tab on web); a refusal or denied grant is written
-  on the pane. Path links open through `t3.file/presentation` instead.
+  on the pane.
 
 All of these APIs are mandatory requirements — invocation authority only exists
 for declared contracts, so a host without the `t3.ui/*` providers resolves

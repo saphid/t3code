@@ -436,7 +436,7 @@ const panelThreadInput = {
 
 export const CLIENT_PANELS_API = validateApiDefinition({
   id: "t3.client/panels",
-  version: "1.0.0",
+  version: "1.1.0",
   methods: [
     {
       name: "openSurface",
@@ -526,6 +526,21 @@ export const CLIENT_PANELS_API = validateApiDefinition({
       effect: "write",
       requiredGrants: [],
       inputSchema: withTarget({ ...panelThreadInput }, ["threadId"]),
+      outputSchema: okOutput,
+    },
+    // 1.1.0: the host's own file view for a workspace-relative path.
+    {
+      name: "openFile",
+      effect: "write",
+      requiredGrants: [],
+      inputSchema: withTarget(
+        {
+          relativePath: { type: "string", minLength: 1, maxLength: 512 },
+          line: { type: "integer", minimum: 1, maximum: 1_000_000 },
+          ...panelThreadInput,
+        },
+        ["relativePath", "threadId"],
+      ),
       outputSchema: okOutput,
     },
   ],

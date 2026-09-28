@@ -858,6 +858,7 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
             listSurfaces: CLIENT_PANELS,
             hideDock: CLIENT_PANELS,
             showDock: CLIENT_PANELS,
+            openFile: CLIENT_PANELS,
           },
           metadata,
         );
@@ -869,6 +870,7 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
           listSurfaces: "listSurfaces",
           hideDock: "hideDock",
           showDock: "showDock",
+          openFile: "openFile",
         } as Record<string, string>
       )[method];
       if (!clientMethod)
