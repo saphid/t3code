@@ -3,6 +3,7 @@ import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
+  EditorId,
   EnvironmentId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProjectId,
@@ -31,6 +32,7 @@ import { useComposerDraftStore, type ComposerContextInsertionHandler } from "../
 import {
   createClientProviders,
   createComposerClientProvider,
+  createEditorClientProvider,
   createExternalClientProvider,
   createNotificationsClientProvider,
   createPanelsClientProvider,
@@ -45,6 +47,10 @@ import {
   type ExtensionCommandEnvironmentDeps,
 } from "./extensionCommandRegistry";
 import type { InstalledPackage } from "./installedController";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
+import { setLocalStorageItem } from "../hooks/useLocalStorage";
+import { useRightPanelStore } from "../rightPanelStore";
 
 // Base UI keeps ToastStore internal; tests drive the real store to cover its timer rules.
 const requireFromHere = NodeModule.createRequire(import.meta.url);
@@ -1729,6 +1735,61 @@ describe("panels provider", () => {
   });
 });
 
+describe("editor provider", () => {
+  const EDITOR = ["t3.ui/editor.open"];
+  const launcher = (availableEditors: readonly EditorId[], fail?: Error) => {
+    const openInEditor = vi.fn(async (_value: unknown) =>
+      fail ? AsyncResult.failure(Cause.fail(fail)) : AsyncResult.success(undefined),
+    );
+    return { availableEditors: () => availableEditors, openInEditor };
+  };
+  const openPath = (path: string) => invokeCall("openPath", { path, cwd: "/ws/root" });
+
+  it("rejects callers without the editor-open grant", async () => {
+    const fake = launcher([EditorId.make("vscode")]);
+    const provider = createEditorClientProvider(makeDeps(THEME_CAPS), fake);
+    await expect(provider.invoke(openPath("src/app.ts"))).rejects.toMatchObject({
+      code: "client-target-denied",
+    });
+    expect(fake.openInEditor).not.toHaveBeenCalled();
+  });
+
+  it("opens the resolved path and position in the user's saved editor, not the Files view", async () => {
+    const fake = launcher([EditorId.make("cursor"), EditorId.make("zed")]);
+    const provider = createEditorClientProvider(makeDeps(EDITOR), fake);
+    const panels = useRightPanelStore.getState().byThreadKey;
+    setLocalStorageItem("t3code:last-editor", EditorId.make("zed"), EditorId);
+    await expect(provider.invoke(openPath("src/app.ts:3:5"))).resolves.toEqual({
+      status: "opened",
+      path: "/ws/root/src/app.ts:3:5",
+      editor: "zed",
+    });
+    setLocalStorageItem("t3code:last-editor", EditorId.make("cursor"), EditorId);
+    await provider.invoke(openPath("/elsewhere/worktree/b.ts:9"));
+    expect(fake.openInEditor.mock.calls.map(([value]) => value)).toEqual([
+      { environmentId: ENV, input: { cwd: "/ws/root/src/app.ts:3:5", editor: "zed" } },
+      { environmentId: ENV, input: { cwd: "/elsewhere/worktree/b.ts:9", editor: "cursor" } },
+    ]);
+    expect(useRightPanelStore.getState().byThreadKey).toBe(panels);
+  });
+
+  it("reports a missing editor and a failed launch with the native wording", async () => {
+    await expect(
+      createEditorClientProvider(makeDeps(EDITOR), launcher([])).invoke(openPath("a.ts")),
+    ).resolves.toEqual({
+      status: "refused",
+      reason: "no-editor",
+      message: `No available editor can open /ws/root/a.ts in environment ${ENV}.`,
+    });
+    await expect(
+      createEditorClientProvider(
+        makeDeps(EDITOR),
+        launcher([EditorId.make("vscode")], new Error("spawn code ENOENT")),
+      ).invoke(openPath("a.ts")),
+    ).resolves.toEqual({ status: "refused", reason: "open-failed", message: "spawn code ENOENT" });
+  });
+});
+
 describe("external provider", () => {
   const EXTERNAL = ["t3.ui/external.open"];
 
@@ -1825,6 +1886,28 @@ describe("terminal appearance provider", () => {
     };
     expect(snapshot.theme.background).toBe("rgb(10, 20, 30)");
     expect(snapshot.appearance).toBe("light");
+  });
+
+  it("resolves terminal fonts through the typography mode, like the native drawer", () => {
+    const baseline = getClientSettings();
+    __setClientSettingsForTests({
+      ...baseline,
+      fontFamilyCode: "Fira Code",
+      fontSizeCode: 17,
+      fontFamilyTerminal: "Courier New",
+      fontSizeTerminal: 12,
+    });
+    try {
+      const provider = createTerminalAppearanceClientProvider(makeDeps(["t3.ui/theme.read"]));
+      const font = () =>
+        (provider.invoke(invokeCall("getAppearance", {})) as { font: unknown }).font;
+      // Simple typography: the terminal is another code surface.
+      expect(font()).toEqual({ family: "Fira Code", size: 17 });
+      window.localStorage.setItem("t3code:typography-advanced", "true");
+      expect(font()).toEqual({ family: "Courier New", size: 12 });
+    } finally {
+      __setClientSettingsForTests(baseline);
+    }
   });
 
   it("streams a snapshot for watchAppearance", () => {
@@ -1934,6 +2017,7 @@ describe("terminal appearance settings stream", () => {
   it("a font-only settings update emits appearance and unsubscribe cleans up", async () => {
     const baseline = getClientSettings();
     __setClientSettingsForTests(baseline);
+    window.localStorage.setItem("t3code:typography-advanced", "true");
     const provider = createTerminalAppearanceClientProvider(makeDeps(["t3.ui/theme.read"]));
     const events: ClientProviderEmitEvent[] = [];
     const close = await provider.openStream!({

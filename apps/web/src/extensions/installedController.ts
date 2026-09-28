@@ -26,6 +26,7 @@ import type {
   ApiSelection,
   ApiUnavailableReason,
 } from "@t3tools/extension-sdk/capabilities";
+import { RESUMABLE_API_STREAMS } from "@t3tools/extension-sdk/capabilities";
 import type { SurfaceRenderer } from "@t3tools/extension-sdk/react";
 import type * as React from "react";
 import type { BrowserSurfaceBinding } from "./browserSurfaceBridge";
@@ -165,6 +166,16 @@ export function createInstalledExtensionController(options: {
     signal: AbortSignal,
   ) => Promise<Json>;
   readonly subscribeApi?: (
+    id: string,
+    hash: string,
+    request: ApiStreamInvocation,
+    signal: AbortSignal,
+  ) => AsyncIterable<ApiStreamFrame>;
+  /**
+   * Backs `ClientHost.resumableStreams` version 1: the same request, but the
+   * iterable follows transport sessions (see `ResumableApiStreams`).
+   */
+  readonly subscribeResumableApi?: (
     id: string,
     hash: string,
     request: ApiStreamInvocation,
@@ -378,6 +389,41 @@ export function createInstalledExtensionController(options: {
               grants: item.grants,
               lifetime: lifetime.signal,
             });
+            const subscribe = (
+              source: typeof options.subscribeApi,
+              request: ApiStreamInvocation,
+              callerSignal: AbortSignal,
+            ) => {
+              const signal = AbortSignal.any([callerSignal, lifetime.signal]);
+              const context = validateContext(request.context);
+              const validate = () => {
+                if (
+                  !registered ||
+                  disposed ||
+                  signal.aborted ||
+                  context.resource.environmentId !== options.environmentId ||
+                  !context.resource.projectId ||
+                  !item.grants.projectIds.some((id) => id === context.resource.projectId) ||
+                  response.supportsApiStreams !== true ||
+                  !source
+                )
+                  throw new Error("Installed API stream is unavailable in this scope");
+              };
+              return installedStream(
+                (streamSignal) => {
+                  validate();
+                  return source!(
+                    item.id,
+                    item.contentHash,
+                    { ...request, input: copyJson(request.input), context },
+                    streamSignal,
+                  );
+                },
+                signal,
+                validate,
+              );
+            };
+            const subscribeResumableApi = options.subscribeResumableApi;
             const clientHost: ClientHost = {
               React: options.React,
               async invokeApi(request, callerSignal) {
@@ -404,34 +450,7 @@ export function createInstalledExtensionController(options: {
                 return copyJson(result);
               },
               subscribeApi(request, callerSignal) {
-                const signal = AbortSignal.any([callerSignal, lifetime.signal]);
-                const context = validateContext(request.context);
-                const validate = () => {
-                  if (
-                    !registered ||
-                    disposed ||
-                    signal.aborted ||
-                    context.resource.environmentId !== options.environmentId ||
-                    !context.resource.projectId ||
-                    !item.grants.projectIds.some((id) => id === context.resource.projectId) ||
-                    response.supportsApiStreams !== true ||
-                    !options.subscribeApi
-                  )
-                    throw new Error("Installed API stream is unavailable in this scope");
-                };
-                return installedStream(
-                  (streamSignal) => {
-                    validate();
-                    return options.subscribeApi!(
-                      item.id,
-                      item.contentHash,
-                      { ...request, input: copyJson(request.input), context },
-                      streamSignal,
-                    );
-                  },
-                  signal,
-                  validate,
-                );
+                return subscribe(options.subscribeApi, request, callerSignal);
               },
               async discoverApis(context, callerSignal) {
                 const signal = AbortSignal.any([callerSignal, lifetime.signal]);
@@ -541,6 +560,18 @@ export function createInstalledExtensionController(options: {
               ...(options.codeView ? { codeView: options.codeView } : {}),
               ...(options.tooltip ? { tooltip: options.tooltip } : {}),
               ...(options.floatingLayer ? { floatingLayer: options.floatingLayer } : {}),
+              ...(subscribeResumableApi
+                ? {
+                    resumableStreams: {
+                      version: 1,
+                      subscribeApi(request, callerSignal) {
+                        if (!RESUMABLE_API_STREAMS.includes(`${request.id}#${request.name}`))
+                          throw new Error(`${request.id}#${request.name} is not resumable`);
+                        return subscribe(subscribeResumableApi, request, callerSignal);
+                      },
+                    },
+                  }
+                : {}),
             };
             const extension = (factory as ClientFactory)(clientHost);
             if (canonical(extension.manifest) !== canonical(item.package.manifest))

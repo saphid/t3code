@@ -97,6 +97,27 @@ function dispatchLocalStorageChange(key: string) {
   }
 }
 
+/** Calls `onChange` when `key` changes in this tab (via `useLocalStorage`) or another. */
+export function subscribeLocalStorageItem(key: string, onChange: () => void): () => void {
+  const handleStorageChange = (event: StorageEvent) => {
+    if (event.key === key) {
+      onChange();
+    }
+  };
+  const handleLocalChange = (event: CustomEvent<LocalStorageChangeDetail>) => {
+    if (event.detail.key === key) {
+      onChange();
+    }
+  };
+
+  window.addEventListener("storage", handleStorageChange);
+  window.addEventListener(LOCAL_STORAGE_CHANGE_EVENT, handleLocalChange as EventListener);
+  return () => {
+    window.removeEventListener("storage", handleStorageChange);
+    window.removeEventListener(LOCAL_STORAGE_CHANGE_EVENT, handleLocalChange as EventListener);
+  };
+}
+
 export function useLocalStorage<T, E>(
   key: string,
   initialValue: T,
@@ -112,25 +133,7 @@ export function useLocalStorage<T, E>(
   }, [key]);
 
   const subscribe = useCallback(
-    (onStoreChange: () => void) => {
-      const handleStorageChange = (event: StorageEvent) => {
-        if (event.key === key) {
-          onStoreChange();
-        }
-      };
-      const handleLocalChange = (event: CustomEvent<LocalStorageChangeDetail>) => {
-        if (event.detail.key === key) {
-          onStoreChange();
-        }
-      };
-
-      window.addEventListener("storage", handleStorageChange);
-      window.addEventListener(LOCAL_STORAGE_CHANGE_EVENT, handleLocalChange as EventListener);
-      return () => {
-        window.removeEventListener("storage", handleStorageChange);
-        window.removeEventListener(LOCAL_STORAGE_CHANGE_EVENT, handleLocalChange as EventListener);
-      };
-    },
+    (onStoreChange: () => void) => subscribeLocalStorageItem(key, onStoreChange),
     [key],
   );
 

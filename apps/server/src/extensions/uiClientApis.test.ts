@@ -169,6 +169,7 @@ function makeProviders(
     panels: byId("host.ui.panels"),
     preferences: byId("host.ui.preferences"),
     external: byId("host.ui.external"),
+    editor: byId("host.ui.editor"),
     history: byId("host.browser.history"),
     navigation: byId("host.ui.navigation"),
   };
@@ -291,6 +292,32 @@ describe("external adapter", () => {
         input: {
           target: { kind: "connection", connectionId: "conn-1" },
           url: "https://example.com/",
+        },
+      },
+    ]);
+  });
+});
+
+describe("editor adapter", () => {
+  it("forwards openPath to the caller's own client", async () => {
+    const bridge = fakeBridge();
+    const { editor } = makeProviders(bridge);
+    await editor.invoke(
+      "openPath",
+      { path: "src/app.ts:3:5", cwd: "/ws/root" },
+      context,
+      signal,
+      metadata(),
+    );
+    expect(bridge.invoked).toEqual([
+      {
+        connectionId: "conn-1",
+        apiId: "t3.client/editor",
+        method: "openPath",
+        input: {
+          target: { kind: "connection", connectionId: "conn-1" },
+          path: "src/app.ts:3:5",
+          cwd: "/ws/root",
         },
       },
     ]);

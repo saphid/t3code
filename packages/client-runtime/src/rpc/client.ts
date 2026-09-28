@@ -190,6 +190,8 @@ interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
   ) => Effect.Effect<void, never, never>;
   readonly retryExpectedFailureAfter?: Duration.Input;
   readonly resubscribe?: Stream.Stream<unknown, never, never>;
+  /** RPC delivery window per subscription; the RPC client's default when absent. */
+  readonly streamBufferSize?: number;
 }
 
 function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
@@ -226,6 +228,7 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                   : session.client[tag]
               ) as (
                 input: EnvironmentRpcInput<TTag>,
+                rpcOptions?: { readonly streamBufferSize?: number },
               ) => Stream.Stream<
                 EnvironmentRpcStreamValue<TTag>,
                 EnvironmentRpcStreamFailure<TTag>
@@ -240,7 +243,12 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                         method: tag,
                         input,
                       });
-                      const stream = mapStream(session, method(input));
+                      const stream = mapStream(
+                        session,
+                        options?.streamBufferSize === undefined
+                          ? method(input)
+                          : method(input, { streamBufferSize: options.streamBufferSize }),
+                      );
                       // An evicted preview host completes its registration stream.
                       // Re-register only after completion; failures still follow the
                       // session recovery policy and browser actions are never replayed.
@@ -344,6 +352,38 @@ export function subscribeDynamicWithSession<TTag extends EnvironmentSubscription
     makeInput,
     (session, stream) => stream.pipe(Stream.map((value) => [session, value] as const)),
     options,
+  );
+}
+
+/**
+ * `subscribeDynamic` for a source that finishes on its own. A transport
+ * failure still waits for the next session and resubscribes there, but the
+ * source completing ends the whole stream instead of staying attached for a
+ * later session.
+ */
+export function subscribeDynamicUntilComplete<TTag extends EnvironmentSubscriptionRpcTag>(
+  tag: TTag,
+  makeInput: (session: RpcSession) => Effect.Effect<EnvironmentRpcInput<TTag>>,
+  options?: SubscriptionOptions<TTag>,
+): Stream.Stream<
+  EnvironmentRpcStreamValue<TTag>,
+  EnvironmentRpcStreamFailure<TTag>,
+  EnvironmentSupervisor
+> {
+  return subscribeDynamicMapped(
+    tag,
+    makeInput,
+    // The end marker follows only a clean completion; a transport failure
+    // is drained before it and waits for the next session instead.
+    (_session, stream) =>
+      stream.pipe(
+        Stream.map(Option.some),
+        Stream.concat(Stream.succeed(Option.none<EnvironmentRpcStreamValue<TTag>>())),
+      ),
+    options,
+  ).pipe(
+    Stream.takeWhile(Option.isSome),
+    Stream.map((value) => value.value),
   );
 }
 

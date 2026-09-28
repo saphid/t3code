@@ -3,7 +3,7 @@
  * esbuild with the Ghostty surface replaced by a recording stub. These pin
  * these regression shapes as tests: cold-restore stream budget, group-switch
  * waiter wake, focused-chord capture against the real host keymap resolver,
- * and path-link activation through t3.file/presentation.
+ * and path-link activation through t3.ui/editor.openPath.
  *
  * The bundle is written to the system tmpdir, never into the package, so
  * the shipped tree stays free of test-only builds.
@@ -522,11 +522,8 @@ NodeTest.describe("two full views sidebar switch", () => {
       NodeAssert.equal(active.size, 8);
       const leftTree = renderer.root.findAllByType(bundle.TerminalView)[0];
       const selectB = leftTree
-        .findAllByType("li")
-        .find((node) =>
-          node.findAllByType("button").some((button) => button.props["aria-label"] === "Close b"),
-        )
-        .findAllByType("button")[0];
+        .find((node) => node.type === "li" && node.props["data-t3-terminal-session"] === "b")
+        .findByType("button");
       await act(async () => selectB.props.onClick());
       const visible = leftTree
         .findAllByType(bundle.TerminalPane)
@@ -1048,11 +1045,11 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
   // The stub class exists only inside the esbuild bundle; it publishes itself.
   const stubSurfaces = () => globalThis.__T3_TERMINAL_SURFACE_STUB__.surfaces;
   // The count this feature owns — other invokes may share the window.
-  const presentationInvokes = (invokes) =>
-    invokes.filter((entry) => entry.id === "t3.file/presentation");
+  const editorInvokes = (invokes) =>
+    invokes.filter((entry) => entry.id === "t3.ui/editor" && entry.method === "openPath");
 
   /** A host whose assets resolve, so the pane really mounts its surface. */
-  function linkHost(presentationResult) {
+  function linkHost(openPath) {
     const invokes = [];
     const host = {
       readAsset: async (path) => ({
@@ -1066,8 +1063,8 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
       }),
       invokeApi: async (request) => {
         invokes.push({ id: request.id, method: request.method, input: request.input });
-        if (request.id === "t3.file/presentation" && request.method === "open")
-          return presentationResult;
+        if (request.id === "t3.ui/editor" && request.method === "openPath")
+          return openPath(request.input);
         if (request.id === "t3.ui/theme" && request.method === "getTokens")
           return { tokens: {}, cssVars: {} };
         if (request.id === "t3.ui/external" && request.method === "open")
@@ -1093,7 +1090,7 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
       signal: new AbortController().signal,
       context: {
         resource: { threadId: "t", environmentId: "e" },
-        workspaceRevision: JSON.stringify(["/ws/root", null]),
+        workspaceRevision: JSON.stringify(["/ws/root", "/ws/worktrees/feature"]),
       },
       visible: true,
       save() {},
@@ -1103,177 +1100,770 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
     };
   }
 
-  NodeTest.test(
-    "path links open through t3.file/presentation, URLs through t3.ui/external; refusals are named",
-    async () => {
-      const { host, invokes } = linkHost({
-        surfaceId: "t3.files/view",
-        placement: "side-panel",
-        restoreState: {},
-      });
-      stubSurfaces().length = 0;
-      let renderer;
-      await act(async () => {
-        renderer = create(
-          React.createElement(bundle.TerminalView, { host, session: workspaceSession() }),
-          {
-            createNodeMock: nodeMock,
-          },
-        );
-      });
-      try {
-        // The pane's surface mounts only after the shared asset load lands.
-        for (let attempt = 0; stubSurfaces().length === 0 && attempt < 20; attempt++) {
-          await act(async () => {
-            await drain();
-          });
-        }
-        const surface = stubSurfaces()[0];
-        NodeAssert.ok(surface, "terminal surface never mounted");
-        const activate = surface.options.onLinkActivate;
-
-        // Path link: the position suffix is stripped, the presentation op is
-        // invoked with the workspace-relative path, and the resolved
-        // descriptor is reported on the surface.
-        await act(async () => {
-          activate("src/view.tsx:12", { metaKey: true });
-          await drain();
-        });
-        NodeAssert.deepEqual(
-          invokes.filter((entry) => entry.id === "t3.file/presentation"),
-          [{ id: "t3.file/presentation", method: "open", input: { relativePath: "src/view.tsx" } }],
-        );
-        NodeAssert.ok(
-          surface.writes.some((data) =>
-            data.includes("[terminal] src/view.tsx opens in t3.files/view · side-panel"),
-          ),
-        );
-
-        // URL link: handed to t3.ui/external, never the presentation op; the
-        // client's refusal is written on the surface by name.
-        const invokesBefore = presentationInvokes(invokes).length;
-        surface.writes.length = 0;
-        await act(async () => {
-          activate("https://t3.codes/docs", { metaKey: true });
-          await drain();
-        });
-        NodeAssert.equal(presentationInvokes(invokes).length, invokesBefore);
-        NodeAssert.deepEqual(
-          invokes.filter((entry) => entry.id === "t3.ui/external"),
-          [{ id: "t3.ui/external", method: "open", input: { url: "https://t3.codes/docs" } }],
-        );
-        NodeAssert.ok(
-          surface.writes.some((data) =>
-            data.includes("[terminal] https://t3.codes/docs was not opened (opener-refused)."),
-          ),
-        );
-
-        // Outside-workspace path: refuses by name, still no invoke.
-        surface.writes.length = 0;
-        await act(async () => {
-          activate("/etc/passwd", { metaKey: true });
-          await drain();
-        });
-        NodeAssert.equal(presentationInvokes(invokes).length, invokesBefore);
-        NodeAssert.ok(
-          surface.writes.some((data) =>
-            data.includes(
-              "[terminal] /etc/passwd cannot be opened — not a workspace-relative path.",
-            ),
-          ),
-        );
-      } finally {
-        await act(async () => {
-          renderer.unmount();
-        });
-      }
-    },
-  );
-
-  NodeTest.test("a denied presentation invoke reports the failure on the surface", async () => {
-    const { host, invokes } = (() => {
-      const inner = linkHost(null);
-      const denied = Object.create(inner.host);
-      denied.invokeApi = async (request) => {
-        inner.invokes.push({ id: request.id, method: request.method, input: request.input });
-        if (request.id === "t3.file/presentation" && request.method === "open")
-          throw new Error("API capability denied: t3.file/open");
-        if (request.id === "t3.ui/theme" && request.method === "getTokens")
-          return { tokens: {}, cssVars: {} };
-        return { commandSetToken: "token", results: [] };
-      };
-      return { host: denied, invokes: inner.invokes };
-    })();
+  /** Mounts the pane and returns its link activator and surface. */
+  async function mountLinkPane(host, session = workspaceSession()) {
     stubSurfaces().length = 0;
-    let renderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(bundle.TerminalView, { host, session: workspaceSession() }),
-        {
-          createNodeMock: nodeMock,
-        },
-      );
-    });
-    try {
-      for (let attempt = 0; stubSurfaces().length === 0 && attempt < 20; attempt++) {
-        await act(async () => {
-          await drain();
-        });
-      }
-      const surface = stubSurfaces()[0];
-      NodeAssert.ok(surface, "terminal surface never mounted");
-      await act(async () => {
-        surface.options.onLinkActivate("src/view.tsx", { metaKey: true });
-        await drain();
-      });
-      NodeAssert.equal(invokes.filter((entry) => entry.id === "t3.file/presentation").length, 1);
-      NodeAssert.ok(
-        surface.writes.some((data) =>
-          data.includes(
-            "[terminal] src/view.tsx could not be opened — API capability denied: t3.file/open",
-          ),
-        ),
-      );
-    } finally {
-      await act(async () => {
-        renderer.unmount();
-      });
-    }
-  });
-
-  NodeTest.test("a session without a workspace reports it on the surface", async () => {
-    const { host, invokes } = linkHost(null);
-    stubSurfaces().length = 0;
-    const session = workspaceSession();
-    session.context.workspaceRevision = undefined;
     let renderer;
     await act(async () => {
       renderer = create(React.createElement(bundle.TerminalView, { host, session }), {
         createNodeMock: nodeMock,
       });
     });
-    try {
-      for (let attempt = 0; stubSurfaces().length === 0 && attempt < 20; attempt++) {
-        await act(async () => {
-          await drain();
-        });
-      }
-      const surface = stubSurfaces()[0];
-      NodeAssert.ok(surface, "terminal surface never mounted");
+    // The pane's surface mounts only after the shared asset load lands.
+    for (let attempt = 0; stubSurfaces().length === 0 && attempt < 20; attempt++) {
       await act(async () => {
-        surface.options.onLinkActivate("src/a.ts", { metaKey: true });
         await drain();
       });
-      NodeAssert.equal(presentationInvokes(invokes).length, 0);
-      NodeAssert.ok(
-        surface.writes.some((data) =>
-          data.includes("[terminal] src/a.ts cannot be opened — the workspace is not available."),
-        ),
-      );
-    } finally {
+    }
+    const surface = stubSurfaces()[0];
+    NodeAssert.ok(surface, "terminal surface never mounted");
+    const activate = async (text) => {
+      surface.writes.length = 0;
       await act(async () => {
+        surface.options.onLinkActivate(text, { metaKey: true });
+        await drain();
+      });
+      return surface.writes.filter((data) => data.includes("[terminal]"));
+    };
+    const unmount = () =>
+      act(async () => {
         renderer.unmount();
       });
+    return { activate, unmount };
+  }
+
+  NodeTest.test(
+    "path links open the preferred editor at the link position, URLs open through t3.ui/external",
+    async () => {
+      const { host, invokes } = linkHost((input) => ({
+        status: "opened",
+        path: `${input.cwd}/${input.path}`,
+        editor: "zed",
+      }));
+      const pane = await mountLinkPane(host);
+      try {
+        // Like the native drawer: raw link text plus the launch cwd (the
+        // thread worktree), position intact, and a successful open is silent.
+        NodeAssert.deepEqual(await pane.activate("src/view.tsx:12:3"), []);
+        // A path outside the project root is still the user's to open.
+        NodeAssert.deepEqual(await pane.activate("/elsewhere/other.ts:4"), []);
+        NodeAssert.deepEqual(
+          editorInvokes(invokes).map((entry) => entry.input),
+          [
+            { path: "src/view.tsx:12:3", cwd: "/ws/worktrees/feature" },
+            { path: "/elsewhere/other.ts:4", cwd: "/ws/worktrees/feature" },
+          ],
+        );
+        // The Files view and file presentation are never involved.
+        NodeAssert.deepEqual(
+          invokes.filter(
+            (entry) =>
+              entry.id === "t3.file/presentation" ||
+              (entry.id === "t3.ui/panels" && entry.method !== "getCapabilities"),
+          ),
+          [],
+        );
+
+        // URL link: handed to t3.ui/external, never the editor; the
+        // client's refusal is written on the surface by name.
+        const editorCount = editorInvokes(invokes).length;
+        NodeAssert.deepEqual(await pane.activate("https://t3.codes/docs"), [
+          "\r\n[terminal] https://t3.codes/docs was not opened (opener-refused).\r\n",
+        ]);
+        NodeAssert.equal(editorInvokes(invokes).length, editorCount);
+        NodeAssert.deepEqual(
+          invokes
+            .filter((entry) => entry.id === "t3.ui/external")
+            .map(({ id, method, input }) => ({ id, method, input })),
+          [{ id: "t3.ui/external", method: "open", input: { url: "https://t3.codes/docs" } }],
+        );
+      } finally {
+        await pane.unmount();
+      }
+    },
+  );
+
+  NodeTest.test("the host's refusal and a denied open are written on the surface", async () => {
+    let answer = { status: "refused", reason: "no-editor", message: "No available editor." };
+    const { host } = linkHost(() => {
+      if (answer instanceof Error) throw answer;
+      return answer;
+    });
+    const pane = await mountLinkPane(host);
+    try {
+      NodeAssert.deepEqual(await pane.activate("src/view.tsx"), [
+        "\r\n[terminal] No available editor.\r\n",
+      ]);
+      answer = new Error("API capability denied: t3.ui/editor.open");
+      NodeAssert.deepEqual(await pane.activate("src/view.tsx"), [
+        "\r\n[terminal] src/view.tsx could not be opened — API capability denied: t3.ui/editor.open\r\n",
+      ]);
+    } finally {
+      await pane.unmount();
     }
   });
+
+  NodeTest.test("a session without a workspace reports it on the surface", async () => {
+    const { host, invokes } = linkHost(() => {
+      throw new Error("unreachable");
+    });
+    const session = workspaceSession();
+    session.context.workspaceRevision = undefined;
+    const pane = await mountLinkPane(host, session);
+    try {
+      NodeAssert.deepEqual(await pane.activate("src/a.ts"), [
+        "\r\n[terminal] src/a.ts cannot be opened — the workspace is not available.\r\n",
+      ]);
+      NodeAssert.equal(editorInvokes(invokes).length, 0);
+    } finally {
+      await pane.unmount();
+    }
+  });
+});
+
+NodeTest.describe("session list with many sessions (Terminal 27b)", () => {
+  /** Renders the panel over `count` live sessions with a resolving renderer. */
+  async function renderSessions(count) {
+    const ids = Array.from({ length: count }, (_, index) => `many${index + 1}`);
+    const host = {
+      readAsset: async (path) => ({
+        bytes: new Uint8Array([1, 2, 3]),
+        mediaType: path.endsWith(".woff2")
+          ? "font/woff2"
+          : path.endsWith(".txt")
+            ? "text/plain"
+            : "application/wasm",
+        sha256: "0".repeat(64),
+      }),
+      invokeApi: async (request) =>
+        request.id === "t3.ui/theme" && request.method === "getTokens"
+          ? { tokens: {}, cssVars: {} }
+          : { commandSetToken: "token", results: [] },
+      subscribeApi: (request, signal) => ({
+        async *[Symbol.asyncIterator]() {
+          if (request.id === "t3.terminal/sessions" && request.name === "list")
+            yield { value: { kind: "snapshot", terminals: ids.map(sessionMetadata) } };
+          await new Promise((resolve) =>
+            signal.aborted ? resolve() : signal.addEventListener("abort", resolve, { once: true }),
+          );
+        },
+      }),
+    };
+    const session = {
+      signal: new AbortController().signal,
+      context: { resource: { threadId: "t", environmentId: "e" } },
+      visible: true,
+      save() {},
+      onVisibility: () => () => {},
+      bindCommands: () => () => {},
+      restoreState: { terminalIds: ids, activeTerminalId: ids[0] },
+    };
+    let renderer;
+    await act(async () => {
+      renderer = create(React.createElement(bundle.TerminalView, { host, session }), {
+        createNodeMock: nodeMock,
+      });
+    });
+    for (let attempt = 0; attempt < 5; attempt++)
+      await act(async () => {
+        await new Promise((resolve) => setImmediate(resolve));
+      });
+    const unmount = () =>
+      act(async () => {
+        renderer.unmount();
+      });
+    try {
+      const root = renderer.root;
+      const section = root.find((node) => node.type === "section");
+      const body = root.find((node) => node.type === "div" && node.props["data-t3-terminal-body"]);
+      const list = root.find(
+        (node) => node.type === "ul" && node.props["aria-label"] === "Terminal sessions",
+      );
+      // What stacks above the body in the panel's column, in order.
+      const column = section.children.filter((child) => typeof child !== "string");
+      const chromeAbove = column
+        .slice(0, column.indexOf(body))
+        .map((child) => `${child.type}:${child.props["aria-label"] ?? child.props.role ?? ""}`);
+      const within = (ancestor, node) =>
+        ancestor.findAll((candidate) => candidate === node).length > 0;
+      const aboveBody = (node) =>
+        column.slice(0, column.indexOf(body)).some((child) => within(child, node));
+      return {
+        ids,
+        aboveBody,
+        body,
+        list,
+        chromeAbove,
+        within,
+        panes: root.find((node) => node.props["aria-label"] === "Terminal panes"),
+        unmount,
+      };
+    } catch (error) {
+      await unmount();
+      throw error;
+    }
+  }
+
+  NodeTest.test("many sessions list beside the panes and never take their height", async () => {
+    const two = await renderSessions(2);
+    const ten = await renderSessions(10).catch(async (error) => {
+      await two.unmount();
+      throw error;
+    });
+    try {
+      // Like the native drawer, the selector sits beside the panes in the
+      // body, so ten sessions stack no more above the panes than two do.
+      NodeAssert.deepEqual(ten.chromeAbove, two.chromeAbove);
+      NodeAssert.ok(!ten.aboveBody(ten.list));
+      NodeAssert.ok(ten.within(ten.body, ten.list) && ten.within(ten.body, ten.panes));
+      // Like native, rows are selectable labels only; the session actions
+      // live once in the sidebar header and act on the active session.
+      const rows = ten.list.findAll(
+        (node) => node.type === "li" && node.props["data-t3-terminal-session"],
+      );
+      NodeAssert.equal(rows.length, ten.ids.length);
+      for (const row of rows)
+        NodeAssert.equal(row.findAll((node) => node.type === "button").length, 1);
+      const sidebar = ten.body.find(
+        (node) => node.type === "aside" && node.props["aria-label"] === "Terminal session list",
+      );
+      const actions = sidebar.find(
+        (node) => node.props.role === "toolbar" && node.props["aria-label"] === "Session actions",
+      );
+      NodeAssert.ok(!ten.within(ten.list, actions));
+      const restart = actions.find(
+        (node) => node.type === "button" && node.props["aria-label"] === "Restart many1",
+      );
+      await act(async () => {
+        restart.props.onClick();
+      });
+      NodeAssert.ok(
+        actions.findAll(
+          (node) => node.type === "button" && node.props["aria-label"] === "Confirm restart many1",
+        ).length === 1,
+        "the header asks to confirm restarting the active session",
+      );
+      // Native's fixed 144px selector, so the terminal keeps the width; the
+      // list scrolls inside the body's height; the body keeps a floor.
+      NodeAssert.equal(sidebar.props.style.width, 144);
+      NodeAssert.ok(ten.panes.parent.props.style.minWidth >= 160);
+      NodeAssert.equal(ten.list.props.style.overflowY, "auto");
+      NodeAssert.ok(ten.body.props.style.minHeight >= 120);
+    } finally {
+      await two.unmount();
+      await ten.unmount();
+    }
+  });
+
+  NodeTest.test(
+    "a single session keeps its row above the panes, as native has no sidebar",
+    async () => {
+      const one = await renderSessions(1);
+      try {
+        NodeAssert.ok(one.aboveBody(one.list));
+        NodeAssert.ok(!one.within(one.body, one.list));
+      } finally {
+        await one.unmount();
+      }
+    },
+  );
+});
+
+NodeTest.describe("exit UX (Terminal 29)", () => {
+  const drain = () => new Promise((resolve) => setImmediate(resolve));
+  const stubSurfaces = () => globalThis.__T3_TERMINAL_SURFACE_STUB__.surfaces;
+  const assetHost = {
+    readAsset: async (path) => ({
+      bytes: new Uint8Array([1, 2, 3]),
+      mediaType: path.endsWith(".woff2")
+        ? "font/woff2"
+        : path.endsWith(".txt")
+          ? "text/plain"
+          : "application/wasm",
+      sha256: "0".repeat(64),
+    }),
+  };
+  const outputSnapshot = (terminalId, streamEpoch, status, contents = "$ ") => ({
+    streamId: `${streamEpoch}-${status}`,
+    sequence: 1,
+    value: {
+      terminalId,
+      streamEpoch,
+      kind: "snapshot",
+      status,
+      contents,
+      retainedByteLength: contents.length,
+      truncated: false,
+      clearGeneration: 0,
+      contentsUnitStart: 0,
+      boundarySequence: 1,
+    },
+  });
+  /** Script marker: the transport drops here (a host without resumption throws). */
+  const TRANSPORT_DROP = Symbol("transport drop");
+  const outputExit = (terminalId, streamEpoch, exitCode) => ({
+    streamId: `${streamEpoch}-running`,
+    sequence: 2,
+    value: { terminalId, streamEpoch, kind: "exit", sequence: 2, exitCode, exitSignal: null },
+  });
+
+  /**
+   * Renders one session. Each output-events subscription plays the next
+   * script: its frames, then (unless it ends the stream as the server does
+   * after an exit or an ended snapshot) it stays open until aborted.
+   */
+  async function renderSession({
+    terminalId,
+    listed,
+    scripts,
+    invoke = async () => ({}),
+    textFallback = false,
+    resumable = false,
+  }) {
+    const invokes = [];
+    let outputSubscriptions = 0;
+    // Later session-list snapshots, pushed by `relist`.
+    const relisted = [];
+    let wakeList = () => {};
+    const host = {
+      // Without readAsset the view renders the plain-text fallback.
+      ...(textFallback ? {} : assetHost),
+      invokeApi: async (request) => {
+        invokes.push({ id: request.id, method: request.method, input: request.input });
+        if (request.id === "t3.ui/theme" && request.method === "getTokens")
+          return { tokens: {}, cssVars: {} };
+        if (request.id === "t3.terminal/control") return invoke(request);
+        return { commandSetToken: "token", results: [] };
+      },
+      subscribeApi: (request, signal) => ({
+        async *[Symbol.asyncIterator]() {
+          if (request.id === "t3.terminal/sessions" && request.name === "list") {
+            yield { value: { kind: "snapshot", terminals: [listed] } };
+            while (!signal.aborted) {
+              const row = relisted.shift();
+              if (row) yield { value: { kind: "snapshot", terminals: [row] } };
+              else
+                await new Promise((resolve) => {
+                  wakeList = resolve;
+                  signal.addEventListener("abort", resolve, { once: true });
+                });
+            }
+            return;
+          }
+          if (request.id === "t3.terminal/output-events") {
+            const script = scripts[outputSubscriptions++] ?? { frames: [], ends: false };
+            for (const next of script.frames) {
+              if (next === TRANSPORT_DROP) throw new Error("socket closed");
+              if (typeof next === "function") await next();
+              else yield next;
+            }
+            if (script.ends) return;
+          }
+          await new Promise((resolve) =>
+            signal.aborted ? resolve() : signal.addEventListener("abort", resolve, { once: true }),
+          );
+        },
+      }),
+      // Stands in for the host's session-following transport: a drop
+      // suspends the iterable and the next session plays the next script.
+      ...(resumable
+        ? {
+            resumableStreams: {
+              version: 1,
+              subscribeApi: (request, signal) => ({
+                async *[Symbol.asyncIterator]() {
+                  NodeAssert.equal(request.id, "t3.terminal/output-events");
+                  session: for (;;) {
+                    const script = scripts[outputSubscriptions++] ?? { frames: [], ends: false };
+                    for (const next of script.frames) {
+                      if (next === TRANSPORT_DROP) continue session;
+                      if (typeof next === "function") await next();
+                      else yield next;
+                    }
+                    if (script.ends) return;
+                    break;
+                  }
+                  await new Promise((resolve) =>
+                    signal.aborted
+                      ? resolve()
+                      : signal.addEventListener("abort", resolve, { once: true }),
+                  );
+                },
+              }),
+            },
+          }
+        : {}),
+    };
+    const session = {
+      signal: new AbortController().signal,
+      context: {
+        resource: { threadId: "t", environmentId: "e" },
+        workspaceRevision: JSON.stringify(["/ws/root", null]),
+      },
+      visible: true,
+      save() {},
+      onVisibility: () => () => {},
+      bindCommands: () => () => {},
+      restoreState: { terminalIds: [terminalId], activeTerminalId: terminalId },
+    };
+    stubSurfaces().length = 0;
+    let renderer;
+    await act(async () => {
+      renderer = create(React.createElement(bundle.TerminalView, { host, session }), {
+        createNodeMock: nodeMock,
+      });
+    });
+    const settle = () =>
+      act(async () => {
+        for (let index = 0; index < 8; index++) await drain();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await drain();
+      });
+    for (let attempt = 0; stubSurfaces().length === 0 && attempt < 20; attempt++) await settle();
+    return {
+      renderer,
+      invokes,
+      settle,
+      relist: async (row) => {
+        relisted.push(row);
+        wakeList();
+        await settle();
+      },
+      fallbackText: () =>
+        renderer.root
+          .find((node) => node.type === "pre" && node.props["aria-label"] === "Terminal output")
+          .children.join(""),
+      outputSubscriptions: () => outputSubscriptions,
+      closes: () =>
+        invokes.filter((entry) => entry.id === "t3.terminal/control" && entry.method === "close"),
+      rows: () =>
+        renderer.root
+          .find((node) => node.type === "ul" && node.props["aria-label"] === "Terminal sessions")
+          .findAll((node) => node.type === "li" && node.props["data-t3-terminal-session"]).length,
+      unmount: () =>
+        act(async () => {
+          renderer.unmount();
+        }),
+    };
+  }
+
+  const clickStart = async (view, terminalId) => {
+    const start = view.renderer.root.find(
+      (node) => node.type === "button" && node.props["aria-label"] === `Start ${terminalId}`,
+    );
+    await act(async () => {
+      start.props.onClick();
+    });
+    await view.settle();
+  };
+  const gate = () => {
+    let open;
+    const wait = new Promise((resolve) => (open = resolve));
+    return { wait: () => wait, open: () => open() };
+  };
+  const startSucceeds = async (request) =>
+    request.method === "attach" ? sessionMetadata(request.input.terminalId) : {};
+  const paneOutput = (view, textFallback) =>
+    textFallback ? view.fallbackText() : stubSurfaces()[0].writes.join("");
+
+  /**
+   * Output reattach, ported from the native drawer's durable attach
+   * subscription: an ended stream resubscribes once per new session edge
+   * (non-running → running), latched while the old stream drains, and never
+   * replaces a healthy stream. `added` counts subscriptions after mount.
+   */
+  const outputCases = [
+    {
+      name: "delayed Retry: Start after the failed stream ended",
+      listed: "error",
+      invoke: startSucceeds,
+      scripts: (id) => [
+        { frames: [outputSnapshot(id, "epoch-1", "error", "")], ends: true },
+        { frames: [outputSnapshot(id, "epoch-2", "running", "$ ready")], ends: false },
+      ],
+      drive: (view, id) => clickStart(view, id),
+      added: 1,
+      output: "$ ready",
+    },
+    {
+      name: "Start before the old stream ends",
+      listed: "error",
+      invoke: startSucceeds,
+      setup: () => ({ oldEnd: gate() }),
+      scripts: (id, { oldEnd }) => [
+        { frames: [outputSnapshot(id, "epoch-1", "error", ""), oldEnd.wait], ends: true },
+        { frames: [outputSnapshot(id, "epoch-2", "running", "$ ready")], ends: false },
+      ],
+      drive: async (view, id, { oldEnd }, before) => {
+        await clickStart(view, id);
+        NodeAssert.equal(view.outputSubscriptions(), before, "the old stream is still draining");
+        oldEnd.open();
+        await view.settle();
+      },
+      added: 1,
+      output: "$ ready",
+    },
+    {
+      name: "transport drop, then running",
+      listed: "running",
+      setup: () => ({ drop: gate() }),
+      scripts: (id, { drop }) => [
+        {
+          frames: [
+            outputSnapshot(id, "epoch-1", "running", "$ old"),
+            drop.wait,
+            () => {
+              throw new Error("socket closed");
+            },
+          ],
+          ends: true,
+        },
+        { frames: [outputSnapshot(id, "epoch-2", "running", "$ recovered")], ends: false },
+      ],
+      drive: async (view, id, { drop }) => {
+        drop.open();
+        await view.settle();
+        await view.relist({ ...sessionMetadata(id), status: "starting" });
+        await view.relist(sessionMetadata(id));
+      },
+      added: 1,
+      output: "$ recovered",
+    },
+    {
+      name: "stale running row, then a later Start",
+      listed: "running",
+      // The server keeps returning the failed process until Start runs a new one.
+      setup: () => ({ started: false }),
+      invoke: (request, state) => {
+        if (request.method === "attach") state.started = true;
+        return startSucceeds(request);
+      },
+      scripts: (id, state) =>
+        Array.from({ length: 6 }, () => ({
+          get frames() {
+            return [
+              state.started
+                ? outputSnapshot(id, "epoch-2", "running", "$ restarted")
+                : outputSnapshot(id, "epoch-1", "error", ""),
+            ];
+          },
+          get ends() {
+            return !state.started;
+          },
+        })),
+      drive: async (view, id, _state, before) => {
+        NodeAssert.equal(view.outputSubscriptions(), before, "a stale row never resubscribes");
+        await view.relist({ ...sessionMetadata(id), status: "error" });
+        await clickStart(view, id);
+      },
+      added: 1,
+      output: "$ restarted",
+    },
+    {
+      name: "exit closes the session",
+      listed: "running",
+      setup: () => ({ exit: gate() }),
+      scripts: (id, { exit }) => [
+        {
+          frames: [
+            outputSnapshot(id, "epoch-1", "running"),
+            exit.wait,
+            outputExit(id, "epoch-1", 3),
+          ],
+          ends: true,
+        },
+        // The resubscription reads the server's current state: still exited.
+        { frames: [outputSnapshot(id, "epoch-1", "exited")], ends: true },
+      ],
+      drive: async (view, _id, { exit }) => {
+        exit.open();
+        await view.settle();
+      },
+      added: 1,
+      closes: 1,
+      rows: 0,
+    },
+    {
+      name: "replacement process is kept, then its own exit closes",
+      listed: "running",
+      setup: () => ({ exit: gate(), secondExit: gate() }),
+      scripts: (id, { exit, secondExit }) => [
+        {
+          frames: [
+            outputSnapshot(id, "epoch-1", "running"),
+            exit.wait,
+            outputExit(id, "epoch-1", 0),
+          ],
+          ends: true,
+        },
+        {
+          frames: [
+            outputSnapshot(id, "epoch-2", "running", "$ new"),
+            secondExit.wait,
+            outputExit(id, "epoch-2", 7),
+          ],
+          ends: true,
+        },
+        { frames: [outputSnapshot(id, "epoch-2", "exited")], ends: true },
+      ],
+      drive: async (view, _id, { exit, secondExit }, _before, textFallback) => {
+        exit.open();
+        await view.settle();
+        await view.settle();
+        NodeAssert.deepEqual(view.closes(), []);
+        NodeAssert.equal(view.rows(), 1);
+        NodeAssert.ok(paneOutput(view, textFallback).includes("$ new"), "the replacement renders");
+        secondExit.open();
+        await view.settle();
+      },
+      added: 2,
+      closes: 1,
+      rows: 0,
+    },
+    {
+      name: "healthy stream keeps its subscription across status flips",
+      listed: "running",
+      scripts: (id) => [
+        { frames: [outputSnapshot(id, "epoch-1", "running", "$ one")], ends: false },
+        { frames: [outputSnapshot(id, "epoch-1", "running", "$ one")], ends: false },
+      ],
+      drive: async (view, id) => {
+        await view.relist({ ...sessionMetadata(id), status: "starting" });
+        await view.relist(sessionMetadata(id));
+      },
+      added: 0,
+      output: "$ one",
+    },
+  ];
+
+  // A resuming host must not change process Start/exit/replacement handling:
+  // the same table runs against both host kinds.
+  for (const [index, testCase] of outputCases.entries())
+    for (const textFallback of [false, true])
+      for (const resumable of [false, true])
+        NodeTest.test(
+          `output reattach (${textFallback ? "fallback" : "VT"}${resumable ? ", resuming host" : ""}): ${testCase.name}`,
+          async () => {
+            const id = `reattach${index}${textFallback ? "f" : "v"}${resumable ? "r" : ""}`;
+            const state = testCase.setup?.() ?? {};
+            const scripts = testCase.scripts(id, state);
+            const view = await renderSession({
+              terminalId: id,
+              listed: { ...sessionMetadata(id), status: testCase.listed },
+              textFallback,
+              resumable,
+              ...(testCase.invoke ? { invoke: (request) => testCase.invoke(request, state) } : {}),
+              // The fallback first mounts a loading VT pane whose brief
+              // subscription sees the same initial snapshot.
+              scripts: textFallback
+                ? [{ frames: [scripts[0].frames[0]], ends: false }, ...scripts]
+                : scripts,
+            });
+            try {
+              await view.settle();
+              const before = view.outputSubscriptions();
+              await testCase.drive(view, id, state, before, textFallback);
+              if (testCase.output !== undefined)
+                NodeAssert.ok(
+                  paneOutput(view, textFallback).includes(testCase.output),
+                  `renders ${testCase.output}`,
+                );
+              NodeAssert.equal(view.closes().length, testCase.closes ?? 0, "close calls");
+              if (testCase.rows !== undefined) NodeAssert.equal(view.rows(), testCase.rows);
+              NodeAssert.equal(
+                view.outputSubscriptions() - before,
+                testCase.added,
+                "subscriptions added",
+              );
+            } finally {
+              for (const value of Object.values(state)) value?.open?.();
+              await view.unmount();
+            }
+          },
+        );
+
+  /**
+   * A transport drop while the session metadata stays running. Start first
+   * consumes the running edge, so no status edge fires afterwards and only
+   * the host's session-following resumption can recover output. The resumed
+   * stream restarts at sequence 1 with a snapshot of the same process
+   * (unchanged epoch); a chunk group torn by the drop is discarded.
+   */
+  const partialChunk = (terminalId, streamEpoch) => ({
+    streamId: `${streamEpoch}-running`,
+    sequence: 2,
+    value: {
+      terminalId,
+      streamEpoch,
+      kind: "output",
+      sequence: 2,
+      chunkIndex: 0,
+      chunkCount: 2,
+      data: "$ torn",
+    },
+  });
+  for (const torn of [false, true])
+    for (const textFallback of [false, true])
+      NodeTest.test(
+        `host resumption (${textFallback ? "fallback" : "VT"}): transport drop while running recovers output${torn ? " past a torn chunk group" : ""}`,
+        async () => {
+          const id = `resume${torn ? "t" : ""}${textFallback ? "f" : "v"}`;
+          const drop = gate();
+          const failed = { frames: [outputSnapshot(id, "epoch-1", "error", "")], ends: true };
+          const view = await renderSession({
+            terminalId: id,
+            listed: { ...sessionMetadata(id), status: "error" },
+            textFallback,
+            resumable: true,
+            invoke: startSucceeds,
+            scripts: [
+              // The fallback first mounts a loading VT pane.
+              ...(textFallback ? [failed] : []),
+              failed,
+              {
+                frames: [
+                  outputSnapshot(id, "epoch-2", "running", "$ before drop"),
+                  ...(torn ? [partialChunk(id, "epoch-2")] : []),
+                  drop.wait,
+                  TRANSPORT_DROP,
+                ],
+                ends: true,
+              },
+              {
+                frames: [outputSnapshot(id, "epoch-2", "running", "$ before drop\r\n$ recovered")],
+                ends: false,
+              },
+            ],
+          });
+          try {
+            await clickStart(view, id);
+            const before = view.outputSubscriptions();
+            NodeAssert.ok(paneOutput(view, textFallback).includes("$ before drop"), "live first");
+            drop.open();
+            await view.settle();
+            await view.settle();
+            NodeAssert.equal(view.outputSubscriptions() - before, 1, "one resumed subscription");
+            NodeAssert.ok(
+              paneOutput(view, textFallback).includes("$ recovered"),
+              "output recovers without a metadata edge",
+            );
+            if (textFallback) NodeAssert.ok(!paneOutput(view, true).includes("$ torn"));
+            const statuses = view.renderer.root
+              .findAll(
+                (node) => node.type === "output" && node.props["aria-label"] === "Output status",
+              )
+              .map((node) => node.children.join(""));
+            NodeAssert.ok(
+              statuses.every(
+                (status) => !/closed|discontinuous|incomplete|unavailable/i.test(status),
+              ),
+              `no error status: ${JSON.stringify(statuses)}`,
+            );
+            NodeAssert.equal(view.closes().length, 0, "close calls");
+          } finally {
+            drop.open();
+            await view.unmount();
+          }
+        },
+      );
 });

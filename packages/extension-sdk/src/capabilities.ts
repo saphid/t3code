@@ -90,6 +90,33 @@ export interface ApiClient {
   subscribeApi(request: ApiStreamInvocation, signal: AbortSignal): AsyncIterable<ApiStreamFrame>;
   discoverApis(context: ViewContext, signal: AbortSignal): Promise<readonly ApiDiscovery[]>;
 }
+/**
+ * `ClientHost.resumableStreams` version 1: host-managed resumption for streams
+ * whose every subscription opens with a full snapshot (`RESUMABLE_API_STREAMS`).
+ * The host follows its own transport, as native subscriptions do: a dropped
+ * connection suspends the iterable, and each new transport session opens
+ * exactly one fresh subscription for the same request. A resumed subscription
+ * restarts at `sequence` 1 with a snapshot; treat it as a new stream and
+ * reconcile the snapshot instead of appending it. Completion, domain errors
+ * and cancellation still end the iterable and are never retried.
+ */
+export interface ResumableApiStreams {
+  readonly version: 1;
+  subscribeApi(request: ApiStreamInvocation, signal: AbortSignal): AsyncIterable<ApiStreamFrame>;
+}
+/** `id#stream` pairs a version 1 host resumes; it refuses every other stream. */
+export const RESUMABLE_API_STREAMS: readonly string[] = ["t3.terminal/output-events#subscribe"];
+/** The host's stream resumption when it offers version 1 or later, else null (keep your own recovery). */
+export function resolveResumableStreams(host: {
+  readonly resumableStreams?: unknown;
+}): ResumableApiStreams | null {
+  const member: unknown = host.resumableStreams;
+  if (!member || typeof member !== "object") return null;
+  const { version, subscribeApi } = member as Record<string, unknown>;
+  return typeof version === "number" && version >= 1 && typeof subscribeApi === "function"
+    ? (member as ResumableApiStreams)
+    : null;
+}
 export type ApiMethodTypes = Record<string, { input: Json; output: Json }>;
 /** An optional method input member a minor release added after `baseline`. */
 export interface ApiAddition {
@@ -228,10 +255,14 @@ export function defineStreamApi<T extends ApiStreamTypes>(
   if (!validated.streams?.length) throw new Error("Expected API stream definitions");
   return { definition: validated };
 }
-/** Retain the host iterable so return(), cancellation and backpressure keep their ownership. */
+/**
+ * Retain the host iterable so return(), cancellation and backpressure keep their ownership.
+ * `resume: "fresh-snapshot"` subscribes through `ClientHost.resumableStreams`; on a host
+ * without it the iterable fails with `ApiVersionError`, so check `resolveResumableStreams` first.
+ */
 export function bindStreamApi<T extends ApiStreamTypes>(
   api: TypedStreamApi<T>,
-  client: Pick<ApiClient, "subscribeApi">,
+  client: Pick<ApiClient, "subscribeApi"> & { readonly resumableStreams?: unknown },
   context: ViewContext,
   versionRange = defaultVersionRange(api),
 ) {
@@ -240,9 +271,26 @@ export function bindStreamApi<T extends ApiStreamTypes>(
       name: K,
       input: T[K]["input"],
       signal: AbortSignal,
-      options?: { readonly cursor?: string; readonly expectedGeneration?: number },
+      options?: {
+        readonly cursor?: string;
+        readonly expectedGeneration?: number;
+        readonly resume?: "fresh-snapshot";
+      },
     ): AsyncIterable<TypedApiStreamFrame<T[K]["event"]>> {
-      return client.subscribeApi(
+      let subscribeApi = client.subscribeApi.bind(client);
+      if (options?.resume === "fresh-snapshot") {
+        const resumable = resolveResumableStreams(client);
+        if (!resumable) {
+          const error = new ApiVersionError(
+            `${api.definition.id}#${name} asked for host stream resumption, which this host does not offer`,
+          );
+          return {
+            [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(error) }),
+          };
+        }
+        subscribeApi = resumable.subscribeApi.bind(resumable);
+      }
+      return subscribeApi(
         {
           id: api.definition.id,
           versionRange,

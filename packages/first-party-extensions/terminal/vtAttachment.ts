@@ -842,8 +842,9 @@ export interface TerminalOutputFrame {
 
 /**
  * Live output pump: subscribe → apply frames → resubscribe on resumable
- * closes (identity-changed, bounded overflow streaks). Returns when the
- * stream ends for good or the signal aborts.
+ * closes (identity-changed, bounded overflow streaks) and once after an
+ * exit, to read the current process. Returns when the stream ends for good
+ * or the signal aborts.
  */
 export async function pumpTerminalOutput(options: {
   readonly subscribe: (signal: AbortSignal) => AsyncIterable<TerminalOutputFrame>;
@@ -868,11 +869,22 @@ export async function pumpTerminalOutput(options: {
     attachment.beginStream();
     let resurrect = false;
     let overflowClose = false;
+    let started = false;
     try {
       for await (const frame of options.subscribe(signal)) {
         if (signal.aborted) return;
+        // A host-resumed subscription restarts at sequence 1 with a fresh
+        // snapshot; it re-proves itself exactly like a new subscription.
+        if (frame.sequence === 1 && started) attachment.beginStream();
+        started = true;
         streak = noteOutputFrameForStreak(frame.value, streak, now());
         attachment.applyFrame(frame, frame.value);
+        // An exit belongs to one process. Only a fresh snapshot says whether
+        // it is still the session's current one or a restart replaced it.
+        if (frame.value.kind === "exit") {
+          resurrect = true;
+          break;
+        }
         if (frame.value.kind === "closed") {
           overflowClose = frame.value.reason === "overflow";
           resurrect = isResumableOutputClose(

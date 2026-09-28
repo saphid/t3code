@@ -1982,6 +1982,47 @@ var __t3Client = (() => {
       }
     ]
   });
+  var uiEditorOpenReceiptSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "path", "editor"],
+        properties: {
+          status: { const: "opened" },
+          path: { type: "string", minLength: 1, maxLength: 4096 },
+          editor: { type: "string", minLength: 1, maxLength: 64 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "reason", "message"],
+        properties: {
+          status: { const: "refused" },
+          reason: { enum: ["no-editor", "open-failed"] },
+          message: { type: "string", maxLength: 1024 }
+        }
+      }
+    ]
+  };
+  var editorPathInput = {
+    path: { type: "string", minLength: 1, maxLength: 4096 },
+    cwd: { type: "string", minLength: 1, maxLength: 4096 }
+  };
+  var CLIENT_EDITOR_API = validateApiDefinition({
+    id: "t3.client/editor",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "openPath",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget(editorPathInput, ["path", "cwd"]),
+        outputSchema: uiEditorOpenReceiptSchema
+      }
+    ]
+  });
   var browserHistoryEntriesSchema = {
     type: "object",
     additionalProperties: false,
@@ -2120,6 +2161,7 @@ var __t3Client = (() => {
     CLIENT_TERMINAL_APPEARANCE_API,
     CLIENT_PREFERENCES_API,
     CLIENT_EXTERNAL_API,
+    CLIENT_EDITOR_API,
     CLIENT_BROWSER_HISTORY_API,
     CLIENT_NAVIGATION_API
   ].map((definition) => [definition.id, definition]));
@@ -7635,6 +7677,36 @@ var __t3Client = (() => {
       }
     ]
   });
+  var UI_EDITOR = "t3.ui/editor";
+  var UI_EDITOR_OPEN = "t3.ui/editor.open";
+  var uiEditorApi = defineApi({
+    id: UI_EDITOR,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput(["openPath"])
+      },
+      {
+        name: "openPath",
+        effect: "write",
+        requiredGrants: [UI_EDITOR_OPEN],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["path", "cwd"],
+          properties: {
+            path: { type: "string", minLength: 1, maxLength: 4096 },
+            cwd: { type: "string", minLength: 1, maxLength: 4096 }
+          }
+        },
+        outputSchema: uiEditorOpenReceiptSchema
+      }
+    ]
+  });
   var UI_NAVIGATION = "t3.ui/navigation";
   var UI_NAVIGATION_OPEN = "t3.ui/navigation.open";
   var UI_NAVIGATION_OPEN_SESSION = "t3.ui/navigation.open-session";
@@ -7682,6 +7754,7 @@ var __t3Client = (() => {
   var UI_PANELS_API = uiPanelsApi.definition;
   var UI_PREFERENCES_API = uiPreferencesApi.definition;
   var UI_EXTERNAL_API = uiExternalApi.definition;
+  var UI_EDITOR_API = uiEditorApi.definition;
   var UI_NAVIGATION_API = uiNavigationApi.definition;
   var orchestrationStatusApi = defineOrchestrationStatusApi(vcsDiffPreviewStreamEventSchema);
   var ORCHESTRATION_STATUS_API = orchestrationStatusApi.definition;
@@ -7731,6 +7804,7 @@ var __t3Client = (() => {
     uiPanelsApi.definition,
     uiPreferencesApi.definition,
     uiExternalApi.definition,
+    uiEditorApi.definition,
     uiNavigationApi.definition,
     agentSessionsApi.definition
   ];

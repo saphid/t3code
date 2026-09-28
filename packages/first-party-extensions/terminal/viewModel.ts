@@ -1,4 +1,3 @@
-// @effect-diagnostics globalTimers:off -- The default scheduler defers notifications by one macrotask in extension-host code, outside any Effect fiber.
 import {
   uiKeybindingsApi,
   uiThemeApi,
@@ -11,12 +10,14 @@ import {
   type TerminalControlRestartInput,
   type TerminalControlWriteInput,
   type TerminalOutputEventsClosed,
+  type TerminalOutputEventsSnapshot,
   type TerminalOutputEventsValue,
   type TerminalSessionMetadata,
   type TerminalSessionResult,
   type TerminalSessionsListEvent,
   type UiKeybindingChord,
   type UiKeybindingsHost,
+  type UiEditorOpenReceipt,
   type UiExternalOpenReceipt,
   type UiTerminalAppearance,
 } from "@t3tools/extension-sdk/catalogue";
@@ -24,7 +25,6 @@ import { bindApi, bindStreamApi, type ApiClient } from "@t3tools/extension-sdk/c
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { GlobalCommandDescriptor } from "@t3tools/extension-sdk/environment";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
-import { isAbsolutePath, isWindowsAbsolutePath } from "@t3tools/ghostty-terminal/terminal-links";
 
 import { TerminalInputQueue } from "./inputQueue.ts";
 
@@ -77,6 +77,42 @@ export const isResumableOutputClose = (
 ) =>
   reason === "identity-changed" ||
   (reason === "overflow" && overflowAttempts <= OVERFLOW_RESUBSCRIBE_MAX);
+
+/**
+ * When an ended output stream resubscribes for a process that started
+ * (Start, restart, Retry): once on the session report's non-running → running
+ * edge, never on a loop and never replacing a live stream. An edge seen while
+ * the old stream still drains is latched until that stream ends; a
+ * subscription consumes it. Transport drops are not this class's concern on
+ * hosts with stream resumption (`ClientHost.resumableStreams`), which follow
+ * transport sessions like the native drawer's attach; on older hosts a drop
+ * ends the stream and this edge is the only way back.
+ */
+export class OutputReattach {
+  #running: boolean;
+  #pending = false;
+
+  constructor(running: boolean) {
+    this.#running = running;
+  }
+
+  noteRunning(running: boolean) {
+    if (running && !this.#running) this.#pending = true;
+    this.#running = running;
+  }
+
+  /** A subscription reads the current session, so it consumes a latched edge. */
+  subscribed() {
+    this.#pending = false;
+  }
+
+  /** Call only while no stream is attached; true when one should subscribe now. */
+  take(): boolean {
+    const pending = this.#pending;
+    this.#pending = false;
+    return pending;
+  }
+}
 
 export interface SessionRow {
   readonly terminalId: string;
@@ -582,106 +618,31 @@ export function workspaceLaunchFromRevision(
 
 /* ---------------- path links (Terminal 22 path half) ---------------- */
 
-/** What a terminal path link resolves to for a `t3.file/presentation.open`. */
-export type TerminalPathLinkTarget =
-  | { readonly status: "open"; readonly relativePath: string }
-  | { readonly status: "unopenable"; readonly reason: string };
-
-/** Trailing `:line` / `:line:column` — editor metadata the presentation op cannot carry. */
-const TERMINAL_LINK_POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
 /**
- * Home-relative check spelled as split comparisons: the pack's private-import
- * audit bans the home-link character sequence anywhere in package content,
- * and a concatenated constant would fold back into it in the bundle.
+ * Terminal 22, path half: hands the link text and the launch cwd to
+ * `t3.ui/editor`, which resolves them the native way (`~/`, relative, and a
+ * `:line:column` suffix) and opens the user's preferred editor. Resolves null
+ * once opened — native opens silently — or the surface line naming the
+ * refusal (the host's own wording) or the failed invoke.
  */
-function isHomeRelativeLink(path: string): boolean {
-  return path[0] === "~" && path[1] === "/";
-}
-
-function joinPathStyle(base: string, next: string, separator: "/" | "\\"): string {
-  const cleanBase = base.replace(/[\\/]+$/, "");
-  if (separator === "\\") return `${cleanBase}\\${next.replaceAll("/", "\\")}`;
-  return `${cleanBase}/${next.replace(/^\/+/, "")}`;
-}
-
-/** `/Users/<user>`, `/home/<user>` or `C:\Users\<user>` inferred the native way. */
-function inferHomeFromCwd(cwd: string): string | undefined {
-  return (
-    cwd.match(/^\/Users\/([^/]+)/)?.[0] ??
-    cwd.match(/^\/home\/([^/]+)/)?.[0] ??
-    cwd.match(/^([A-Za-z]:\\Users\\[^\\]+)/)?.[1] ??
-    undefined
-  );
-}
-
-/**
- * Lexically normalize one mapped path: `.` and empty segments drop, `..`
- * pops, and a `..` that would climb past the workspace root fails. Returns
- * null when nothing presentable is left.
- */
-function terminalLinkSegments(relative: string, windows: boolean): string[] | null {
-  const segments: string[] = [];
-  for (const segment of relative.split(windows ? /[\\/]/ : /\//)) {
-    if (segment === "" || segment === ".") continue;
-    if (segment === "..") {
-      if (segments.length === 0) return null;
-      segments.pop();
-      continue;
-    }
-    segments.push(segment);
-  }
-  return segments.length > 0 ? segments : null;
-}
-
-/**
- * Terminal link text → the workspace-relative path `t3.file/presentation`
- * accepts, or the named reason it cannot open. The op only carries
- * workspace-relative forward-slash paths, so the position suffix is
- * stripped, `~` and bare-relative links resolve against the launch cwd
- * (the contracts expose no live shell cwd), and under a Windows root the
- * link's separators are normalized to the root's style before mapping —
- * Windows tools emit forward-slash and mixed-separator paths. Anything
- * that lands outside the workspace root — including cross-style absolute
- * paths — refuses by name like the diff panel's Open does.
- */
-export function terminalPathLinkTarget(
-  text: string,
+export async function openTerminalPath(
+  editor: {
+    invoke(
+      method: "openPath",
+      input: { path: string; cwd: string },
+      signal: AbortSignal,
+    ): Promise<UiEditorOpenReceipt>;
+  },
+  path: string,
   cwd: string,
-  workspaceRoot: string,
-): TerminalPathLinkTarget {
-  const reject = (): TerminalPathLinkTarget => ({
-    status: "unopenable",
-    reason: `${text} cannot be opened — not a workspace-relative path.`,
-  });
-  const windows = isWindowsAbsolutePath(workspaceRoot);
-  const root = workspaceRoot.replace(/[\\/]+$/, "");
-  const stripRoot = (absolute: string): string | null => {
-    const prefix = `${root}${windows ? "\\" : "/"}`;
-    const head = absolute.slice(0, prefix.length);
-    const expected = windows ? prefix.toLowerCase() : prefix;
-    return (windows ? head.toLowerCase() : head) === expected
-      ? absolute.slice(prefix.length)
-      : null;
-  };
-
-  const path = text.replace(TERMINAL_LINK_POSITION_SUFFIX_PATTERN, "");
-  if (path.length === 0) return reject();
-  let absolute: string;
-  if (isAbsolutePath(path)) {
-    absolute = path;
-  } else if (isHomeRelativeLink(path)) {
-    const home = inferHomeFromCwd(cwd);
-    if (home === undefined) return reject();
-    absolute = joinPathStyle(home, path.slice(2), home.includes("\\") ? "\\" : "/");
-  } else {
-    absolute = joinPathStyle(cwd, path, isWindowsAbsolutePath(cwd) ? "\\" : "/");
+  signal: AbortSignal,
+): Promise<string | null> {
+  try {
+    const receipt = await editor.invoke("openPath", { path, cwd }, signal);
+    return receipt.status === "opened" ? null : receipt.message;
+  } catch (error) {
+    return `${path} could not be opened — ${error instanceof Error ? error.message : "unavailable"}`;
   }
-
-  const relative = stripRoot(windows ? absolute.replaceAll("/", "\\") : absolute);
-  if (relative === null) return reject();
-  const segments = terminalLinkSegments(relative, windows);
-  if (segments === null) return reject();
-  return { status: "open", relativePath: segments.join("/") };
 }
 
 /**
@@ -766,7 +727,6 @@ interface TabInternal {
   meta: TerminalSessionMetadata | null;
   starting: boolean;
   input: TerminalInputQueue;
-  exiting: boolean;
   exitBanner: string | null;
   confirm: TerminalConfirmAction | null;
   error: string | null;
@@ -781,15 +741,16 @@ const clampDimension = (value: number, max: number) =>
 /**
  * Framework-free terminal panel state. The view feeds the sessions list
  * stream and user gestures in; the panel calls the injected control ops and
- * reports immutable snapshots. Exit handling mirrors the native drawer: a
- * live→exited transition writes a banner and removes the tab on the next
- * scheduled tick; `remove` rows drop tabs immediately.
+ * reports immutable snapshots. Exit handling mirrors the native drawer,
+ * which decides from the attached terminal's own stream: an output snapshot
+ * saying the session's current process is exited — including one that
+ * exited while nothing was attached — closes the server session and removes
+ * the tab. List rows are metadata only; `remove` rows drop tabs immediately.
  */
 export class TerminalPanel {
   readonly #control: TerminalControlOps;
   readonly #launch: TerminalLaunchContext | null;
   readonly #canAllocatePaneStream: (() => boolean) | undefined;
-  readonly #schedule: (callback: () => void) => void;
   readonly #onChange: (() => void) | undefined;
   #ids: string[];
   #active: string | null;
@@ -797,6 +758,11 @@ export class TerminalPanel {
   /** Empty string mirrors the native store's "no active group" sentinel. */
   #activeGroupId = "";
   readonly #tabs = new Map<string, TabInternal>();
+  /**
+   * Exited sessions this panel closed whose server `remove` has not landed:
+   * list frames still describing them are stale and must not re-add a tab.
+   */
+  readonly #closing = new Set<string>();
   #stream: "connecting" | "live" | "closed" = "connecting";
   #panelError: string | null = null;
   #disposed = false;
@@ -820,13 +786,11 @@ export class TerminalPanel {
      * before any PTY spawns (the view supplies streamHub's answer).
      */
     readonly canAllocatePaneStream?: () => boolean;
-    readonly schedule?: (callback: () => void) => void;
     readonly onChange?: () => void;
   }) {
     this.#control = options.control;
     this.#launch = options.launch;
     this.#canAllocatePaneStream = options.canAllocatePaneStream;
-    this.#schedule = options.schedule ?? ((callback) => setTimeout(callback, 0));
     this.#onChange = options.onChange;
     this.#ids = normalizeTerminalIds(options.restored?.terminalIds ?? []);
     this.#active = resolveActiveTerminalId(this.#ids, options.restored?.activeTerminalId ?? null);
@@ -879,7 +843,7 @@ export class TerminalPanel {
 
   /** Ids eligible for allocation: client list plus any tab we are tracking. */
   get allocatableTerminalIds(): readonly string[] {
-    return [...new Set([...this.#ids, ...this.#tabs.keys()])];
+    return [...new Set([...this.#ids, ...this.#tabs.keys(), ...this.#closing])];
   }
 
   #emit() {
@@ -913,7 +877,6 @@ export class TerminalPanel {
         meta: null,
         starting: false,
         input: this.#newInputQueue(terminalId),
-        exiting: false,
         exitBanner: null,
         confirm: null,
         error: null,
@@ -1000,27 +963,45 @@ export class TerminalPanel {
     this.#emit();
   }
 
-  /** Banner + deferred removal on a live→exited/error transition (native #29). */
+  /**
+   * Absorbs server metadata (a list row or control result). It never closes
+   * a session: a row can describe an older process than the one running
+   * now, so exits are decided by the pane's output stream (noteOutputSnapshot).
+   */
   #observeMeta(next: TerminalSessionMetadata) {
-    const tab = this.#tab(next.terminalId);
-    const previous = tab.meta;
-    tab.meta = next;
-    if (
-      !tab.exiting &&
-      (next.status === "exited" || next.status === "error") &&
-      previous !== null &&
-      (previous.status === "starting" || previous.status === "running")
-    ) {
-      tab.exiting = true;
-      tab.exitBanner =
-        next.status === "exited"
-          ? `Process exited (code ${next.exitCode ?? "unknown"})`
-          : "Terminal error";
-      this.#schedule(() => {
-        if (!this.#disposed && this.#tabs.get(next.terminalId)?.exiting) {
-          this.#removeTab(next.terminalId);
-        }
-      });
+    this.#tab(next.terminalId).meta = next;
+  }
+
+  /** The pane's output stream saw a process exit: banner only, pending its fresh snapshot. */
+  noteExit(terminalId: string, exitCode: number | null) {
+    const tab = this.#tabs.get(terminalId);
+    if (this.#disposed || !tab) return;
+    tab.exitBanner = `Process exited (code ${exitCode ?? "unknown"})`;
+    this.#emit();
+  }
+
+  /**
+   * A pane's output snapshot is the server's current state for this id —
+   * the authority the native drawer's attach stream is. `exited` closes the
+   * session like the native drawer does (a failed close still leaves the
+   * tab, like a user close); an `error` (failed start) keeps its diagnostic
+   * and Start; anything live means any exit banner was an older process's.
+   */
+  noteOutputSnapshot(terminalId: string, status: TerminalOutputEventsSnapshot["status"]) {
+    const tab = this.#tabs.get(terminalId);
+    if (this.#disposed || !tab) return;
+    if (status === "exited") {
+      if (tab.starting) return;
+      this.#closing.add(terminalId);
+      void this.#control
+        .close({ terminalId, deleteHistory: true })
+        .catch(() => this.#closing.delete(terminalId));
+      this.#removeTab(terminalId);
+      return;
+    }
+    if (status !== "error" && tab.exitBanner !== null) {
+      tab.exitBanner = null;
+      this.#emit();
     }
   }
 
@@ -1032,9 +1013,15 @@ export class TerminalPanel {
         // Reconcile before absorbing metadata: #observeMeta registers every
         // server id as a tracked tab, which would turn a disjoint server list
         // into a strict subset and let stale restored ids survive (#17).
-        const serverIds = event.terminals.map((terminal) => terminal.terminalId);
+        for (const id of this.#closing)
+          if (!event.terminals.some((terminal) => terminal.terminalId === id))
+            this.#closing.delete(id);
+        const terminals = event.terminals.filter(
+          (terminal) => !this.#closing.has(terminal.terminalId),
+        );
+        const serverIds = terminals.map((terminal) => terminal.terminalId);
         this.#ids = reconcileTerminalIds(this.#ids, serverIds);
-        for (const terminal of event.terminals) this.#observeMeta(terminal);
+        for (const terminal of terminals) this.#observeMeta(terminal);
         for (const id of this.#tabs.keys()) {
           if (!this.#ids.includes(id)) this.#tabs.delete(id);
         }
@@ -1045,12 +1032,14 @@ export class TerminalPanel {
         break;
       }
       case "upsert":
+        if (this.#closing.has(event.terminal.terminalId)) return;
         this.#observeMeta(event.terminal);
         // An upsert for an unknown id appended it to the list — keep the
         // group partition covering every session (new ids earn singletons).
         this.#syncGroups();
         break;
       case "remove":
+        this.#closing.delete(event.terminalId);
         this.#removeTab(event.terminalId);
         return;
       case "closed":
@@ -1188,7 +1177,6 @@ export class TerminalPanel {
     if (tab.meta !== null && tab.meta.status !== "exited" && tab.meta.status !== "error") return;
     tab.starting = true;
     this.#liveInput(terminalId, tab).setReady(false);
-    tab.exiting = false;
     tab.exitBanner = null;
     tab.error = null;
     this.#emit();
@@ -1339,7 +1327,6 @@ export class TerminalPanel {
         });
         tab.starting = false;
         tab.input.setReady(true);
-        tab.exiting = false;
         tab.exitBanner = null;
         this.#observeMeta(meta);
         await this.#drain(terminalId);

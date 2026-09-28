@@ -44,7 +44,11 @@ Interactive terminal plugin driven entirely by public contracts:
 - `t3.ui/external@^1.0.0` (`t3.ui/external.open` grant) — activating a
   detected `http:`/`https:` link opens it on the user's own client (the OS
   opener on desktop, a new tab on web); a refusal or denied grant is written
-  on the pane. Path links open through `t3.file/presentation` instead.
+  on the pane.
+- `t3.ui/editor@^1.0.0` (`t3.ui/editor.open` grant) — activating a path link
+  sends the link text and the launch cwd to `openPath`, which resolves it
+  like the native drawer (`~/`, relative, `:line:column`) and opens the
+  user's preferred editor; a refusal or denied grant is written on the pane.
 
 All of these APIs are mandatory requirements — invocation authority only exists
 for declared contracts, so a host without the `t3.ui/*` providers resolves

@@ -768,6 +768,58 @@ NodeTest.describe("pumpTerminalOutput — recovery", () => {
     },
   );
 
+  NodeTest.it("an exit resubscribes once to read what is running now", async () => {
+    // The exit belongs to one process; only a fresh snapshot says whether that
+    // process is still the session's current one (native closes on its own
+    // attach stream's state, never on a stale event).
+    const vt = new TerminalVtAttachment("term-1");
+    const s = sink();
+    vt.attach(s);
+    const exit = {
+      kind: "exit",
+      terminalId: "term-1",
+      streamEpoch: EPOCH,
+      sequence: 8,
+      exitCode: 0,
+      exitSignal: null,
+    };
+    const streams = [
+      [frame(1, snapshot({ contents: "old" })), frame(2, exit)],
+      [frame(1, snapshot({ contents: "new", streamEpoch: "epoch-2" }), "stream-2")],
+      [frame(1, snapshot({ status: "exited", streamEpoch: "epoch-2" }), "stream-3")],
+    ];
+    let subscribes = 0;
+    await pumpTerminalOutput({
+      subscribe: () => {
+        subscribes += 1;
+        return iterate(streams[subscribes - 1] ?? []);
+      },
+      attachment: vt,
+      signal: new AbortController().signal,
+    });
+    // The replacement's snapshot is live; its stream ending without an exit
+    // does not resubscribe again.
+    NodeAssert.equal(subscribes, 2);
+    NodeAssert.equal(vt.state.status, "live");
+    NodeAssert.deepEqual(s.calls.at(-1), ["resetAndWrite", "new"]);
+  });
+
+  NodeTest.it("an exited snapshot ends the pump without resubscribing", async () => {
+    const vt = new TerminalVtAttachment("term-1");
+    vt.attach(sink());
+    let subscribes = 0;
+    await pumpTerminalOutput({
+      subscribe: () => {
+        subscribes += 1;
+        return iterate([frame(1, snapshot({ status: "exited" }))]);
+      },
+      attachment: vt,
+      signal: new AbortController().signal,
+    });
+    NodeAssert.equal(subscribes, 1);
+    NodeAssert.equal(vt.state.status, "exited");
+  });
+
   NodeTest.it("overflow closes resubscribe up to the streak bound, then stop", async () => {
     const vt = new TerminalVtAttachment("term-1");
     vt.attach(sink());

@@ -1,10 +1,10 @@
 import {
   composerContextApi,
-  filePresentationApi,
   terminalControlApi,
   terminalOutputApi,
   terminalOutputEventsApi,
   terminalSessionsApi,
+  uiEditorApi,
   uiExternalApi,
   uiKeybindingsApi,
   uiPanelsApi,
@@ -13,7 +13,11 @@ import {
   type TerminalSessionsListEvent,
 } from "@t3tools/extension-sdk/catalogue";
 import { defineExtension, requireApi, Tooltip } from "@t3tools/extension-sdk/authoring";
-import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
+import {
+  bindApi,
+  bindStreamApi,
+  resolveResumableStreams,
+} from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
@@ -59,12 +63,13 @@ import {
   dispatchTerminalCommand,
   isResumableOutputClose,
   noteOutputFrameForStreak,
+  openTerminalPath,
+  OutputReattach,
   openTerminalUrl,
   plainTerminalText,
   registerPanelCommands,
   terminalChordAction,
   terminalCloseLabel,
-  terminalPathLinkTarget,
   watchTerminalAppearanceVars,
   watchThemeVars,
   workspaceLaunchFromRevision,
@@ -72,6 +77,7 @@ import {
   type TerminalCommandActions,
   type TerminalControlOps,
   type TerminalPanelSnapshot,
+  type TerminalTabState,
 } from "./viewModel.ts";
 
 const manifestId = "t3.terminal";
@@ -87,6 +93,12 @@ const streamHub = new TerminalStreamHub();
 const GHOSTTY_VT_ASSET = "assets/ghostty-vt.wasm";
 const GHOSTTY_WRITE_PTY_ASSET = "assets/ghostty-write-pty.wasm";
 const SYMBOLS_FONT_ASSET = "assets/SymbolsNerdFontMono-Regular.woff2";
+/** The terminal body never shrinks below this, however many sessions or notices. */
+const TERMINAL_BODY_MIN_HEIGHT = 120;
+/** The multi-session sidebar: native's fixed w-36 selector. */
+const SESSION_SIDEBAR_WIDTH = 144;
+/** Beside the sidebar the panes keep at least this width; a narrower body scrolls. */
+const TERMINAL_PANES_MIN_WIDTH = 160;
 
 interface RestoredGroup {
   readonly id: string;
@@ -604,6 +616,8 @@ function TerminalPane(props: {
   /** Member of the visible split group — hidden panes stay mounted offscreen. */
   readonly shown: boolean;
   readonly visible: boolean;
+  /** The session reports a running process; its rising edge reattaches an ended stream. */
+  readonly running: boolean;
   readonly assets: GhosttyAssets;
   readonly themeVars: Record<string, string> | null;
   readonly appearanceVars: Record<string, string> | null;
@@ -618,6 +632,7 @@ function TerminalPane(props: {
     active,
     shown,
     visible,
+    running,
     assets,
     themeVars,
     appearanceVars,
@@ -640,6 +655,8 @@ function TerminalPane(props: {
     ...(chatSink ? { chat: chatSink } : {}),
   });
   const shownRef = useRef(shown && visible);
+  const runningRef = useRef(running);
+  runningRef.current = running;
   // Latest active/shown state for the async surface creation: a surface
   // finishing after the focus effect last ran must know whether this pane
   // owns focus NOW, not at effect time.
@@ -661,10 +678,12 @@ function TerminalPane(props: {
   // slot says so honestly and retries when one frees.
   const [streamBlocked, setStreamBlocked] = useState(false);
   const acquireStreamRef = useRef((_mandatory: boolean) => {});
+  const runningChangedRef = useRef((_running: boolean) => {});
   useEffect(() => {
     if (!visible) return;
     let stopped = false;
     let run: { controller: AbortController; lease: TerminalPaneLease } | null = null;
+    const reattach = new OutputReattach(runningRef.current);
     let retryRegistration: (() => void) | null = null;
     // Broker refusals are capacity this hub cannot see (another client
     // document of the installation, or the environment's 64-stream pool):
@@ -720,11 +739,8 @@ function TerminalPane(props: {
         let refused = false;
         void pumpTerminalOutput({
           subscribe: (subscribeSignal) => {
-            const source = bindStreamApi(terminalOutputEventsApi, host, session.context).subscribe(
-              "subscribe",
-              { terminalId },
-              subscribeSignal,
-            );
+            reattach.subscribed();
+            const source = subscribeOutput(host, session.context, terminalId, subscribeSignal);
             return (async function* () {
               for await (const frame of source) {
                 const value = frame.value as TerminalOutputEventsValue;
@@ -733,6 +749,21 @@ function TerminalPane(props: {
                 // keeps the same incarnation; a reset is only a screen clear.
                 if (value.kind === "closed" && value.reason !== "overflow") {
                   panel.resetInput(terminalId);
+                }
+                // Terminal 29: like the native drawer, this pane's own stream
+                // decides exits. An exit is written here; the pump then
+                // resubscribes and the fresh snapshot says whether the
+                // session's current process is the exited one (close it) or
+                // a restart that replaced it.
+                if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);
+                if (value.kind === "exit") {
+                  const surface = surfaceRef.current;
+                  if (surface !== null)
+                    writeSystemMessage(
+                      surface,
+                      `Process exited (code ${value.exitCode ?? "unknown"})`,
+                    );
+                  panel.noteExit(terminalId, value.exitCode);
                 }
                 yield { streamId: frame.streamId, sequence: frame.sequence, value };
               }
@@ -761,7 +792,8 @@ function TerminalPane(props: {
         }).finally(() => {
           // The pump ended — the stream finished, or evict/cleanup aborted it
           // and already released the lease (release is idempotent).
-          if (run?.controller === controller) {
+          const endedOnItsOwn = run?.controller === controller;
+          if (endedOnItsOwn) {
             run = null;
             lease.release();
           }
@@ -771,6 +803,8 @@ function TerminalPane(props: {
           // A clean end (stream finished or aborted, never refused) earns a
           // fresh backoff budget; refusals keep escalating to the cap.
           if (!refused) brokerRefusals = 0;
+          // The session may have started running while this stream drained.
+          if (endedOnItsOwn && !refused) resume();
         });
       });
     };
@@ -781,13 +815,27 @@ function TerminalPane(props: {
       }
       run.lease.setPriority(mandatory);
     };
+    const resume = () => {
+      if (!stopped && run === null && reattach.take()) acquire(shownRef.current);
+    };
+    runningChangedRef.current = (next: boolean) => {
+      reattach.noteRunning(next);
+      resume();
+    };
     acquire(shownRef.current);
     return () => {
       stopped = true;
       acquireStreamRef.current = () => {};
+      runningChangedRef.current = () => {};
       stopRun();
     };
   }, [host, session, panel, terminalId, attachment, visible, streamKeyPrefix]);
+
+  // A session that starts running again (Start, restart) has output an ended
+  // stream will never carry: reattach (OutputReattach).
+  useEffect(() => {
+    runningChangedRef.current(running);
+  }, [running]);
 
   // Group switches inside the view re-prioritize the pane's slot: shown
   // promotes to mandatory (re-acquiring after an eviction), hidden demotes
@@ -824,57 +872,33 @@ function TerminalPane(props: {
           handleBeforeKey(event, panel, terminalId, host.keybindings, editingBinding.current),
         onLinkActivate: (text) => {
           // Terminal 22: a detected URL opens through t3.ui/external on the
-          // user's own client; a path link opens through t3.file/presentation
-          // (the files pack's provider). Both report failures on the surface.
+          // user's own client; a path link opens in the user's preferred
+          // editor through t3.ui/editor, like the native drawer. Both report
+          // failures on the surface.
           if (surface === null) return;
           const paneSurface = surface;
+          const signal = session.signal;
+          const report = (failure: string | null) => {
+            if (failure !== null && !signal.aborted && surfaceRef.current === paneSurface)
+              writeSystemMessage(paneSurface, failure);
+          };
           if (isTerminalUrl(text)) {
-            const signal = session.signal;
             void openTerminalUrl(bindApi(uiExternalApi, host, session.context), text, signal).then(
-              (failure) => {
-                if (failure !== null && !signal.aborted && surfaceRef.current === paneSurface)
-                  writeSystemMessage(paneSurface, failure);
-              },
+              report,
             );
             return;
           }
           const workspace = workspaceLaunchFromRevision(session.context.workspaceRevision);
-          const target =
-            workspace === null
-              ? null
-              : terminalPathLinkTarget(text, workspace.cwd, workspace.workspaceRoot);
-          if (target === null || target.status === "unopenable") {
-            writeSystemMessage(
-              paneSurface,
-              target === null
-                ? `${text} cannot be opened — the workspace is not available.`
-                : target.reason,
-            );
+          if (workspace === null) {
+            report(`${text} cannot be opened — the workspace is not available.`);
             return;
           }
-          const signal = session.signal;
-          void bindApi(filePresentationApi, host, session.context)
-            .invoke("open", { relativePath: target.relativePath }, signal)
-            .then(
-              (result) => {
-                if (!signal.aborted && surfaceRef.current === paneSurface) {
-                  writeSystemMessage(
-                    paneSurface,
-                    `${target.relativePath} opens in ${result.surfaceId} · ${result.placement}`,
-                  );
-                }
-              },
-              (error: unknown) => {
-                if (!signal.aborted && surfaceRef.current === paneSurface) {
-                  writeSystemMessage(
-                    paneSurface,
-                    `${text} could not be opened — ${
-                      error instanceof Error ? error.message : "presentation unavailable"
-                    }`,
-                  );
-                }
-              },
-            );
+          void openTerminalPath(
+            bindApi(uiEditorApi, host, session.context),
+            text,
+            workspace.cwd,
+            signal,
+          ).then(report);
         },
       };
       try {
@@ -1038,21 +1062,69 @@ function TerminalPane(props: {
 /* Text fallback for hosts without package-asset reads                 */
 /* ------------------------------------------------------------------ */
 
-/** Live output via the public output-events stream; chunk groups reassemble in the view model. */
+/**
+ * A pane's output stream. A host with stream resumption follows its transport
+ * sessions like the native drawer's attach: a dropped connection suspends the
+ * stream and the next session resumes it with a fresh snapshot at sequence 1.
+ * On older hosts a transport drop ends the stream and output returns on the
+ * next running edge (OutputReattach).
+ */
+function subscribeOutput(
+  host: ClientHost,
+  context: ViewSession["context"],
+  terminalId: string,
+  signal: AbortSignal,
+) {
+  return bindStreamApi(terminalOutputEventsApi, host, context).subscribe(
+    "subscribe",
+    { terminalId },
+    signal,
+    resolveResumableStreams(host) ? { resume: "fresh-snapshot" } : undefined,
+  );
+}
+
+/**
+ * Live output via the public output-events stream; chunk groups reassemble in
+ * the view model. Exits are decided as in the VT pane: an exit resubscribes
+ * and the fresh snapshot goes to the panel. An ended stream resubscribes when
+ * the session starts running again (OutputReattach).
+ */
 function useTerminalOutput(
   host: ClientHost,
   session: ViewSession,
+  panel: TerminalPanel,
   terminalId: string | null,
   visible: boolean,
+  running: boolean,
 ) {
   const [state, setState] = useState<{ terminalId: string; buffer: OutputBuffer } | null>(null);
   const pendingRef = useRef<{ sequence: number; count: number; parts: string[] } | null>(null);
+  const runningRef = useRef(running);
+  runningRef.current = running;
+  const runningChangedRef = useRef((_running: boolean) => {});
   useEffect(() => {
     pendingRef.current = null;
     if (!visible || terminalId === null) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
-    void (async () => {
+    const reattach = new OutputReattach(runningRef.current);
+    let attached = false;
+    const attach = () => {
+      attached = true;
+      void pump().finally(() => {
+        attached = false;
+        // The session may have started running while this stream drained.
+        resume();
+      });
+    };
+    const resume = () => {
+      if (!signal.aborted && !attached && reattach.take()) attach();
+    };
+    runningChangedRef.current = (next: boolean) => {
+      reattach.noteRunning(next);
+      resume();
+    };
+    const pump = async () => {
       let streak = EMPTY_OVERFLOW_STREAK;
       let overflowClose = false;
       while (!signal.aborted) {
@@ -1060,15 +1132,19 @@ function useTerminalOutput(
         const stateRef = { current: EMPTY_OUTPUT_BUFFER as OutputBuffer };
         let resurrect = false;
         try {
-          const stream = bindStreamApi(terminalOutputEventsApi, host, session.context).subscribe(
-            "subscribe",
-            { terminalId },
-            signal,
-          );
+          reattach.subscribed();
+          const stream = subscribeOutput(host, session.context, terminalId, signal);
           for await (const frame of stream) {
             if (signal.aborted) return;
+            // A host-resumed subscription restarts at sequence 1 with a fresh
+            // snapshot: rebase on it and drop any chunk group the drop tore.
+            if (frame.sequence === 1 && stateRef.current.sequence > 0) {
+              pendingRef.current = null;
+              stateRef.current = EMPTY_OUTPUT_BUFFER;
+            }
             const value = frame.value as TerminalOutputEventsValue;
             streak = noteOutputFrameForStreak(value, streak, Date.now());
+            if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);
             if (value.kind === "closed") {
               overflowClose = value.reason === "overflow";
               resurrect = isResumableOutputClose(value.reason, streak.attempts);
@@ -1090,6 +1166,12 @@ function useTerminalOutput(
             pendingRef.current = applied.pending;
             stateRef.current = applied.buffer;
             setState({ terminalId, buffer: applied.buffer });
+            if (value.kind === "exit") {
+              panel.noteExit(terminalId, value.exitCode);
+              overflowClose = false;
+              resurrect = true;
+              break;
+            }
           }
           if (!signal.aborted && !resurrect && pendingRef.current !== null) {
             stateRef.current = {
@@ -1117,9 +1199,16 @@ function useTerminalOutput(
         if (overflowClose && streak.attempts > 1 && !signal.aborted)
           await new Promise((resolve) => setTimeout(resolve, 300 * streak.attempts));
       }
-    })();
-    return () => controller.abort();
-  }, [host, session, terminalId, visible]);
+    };
+    attach();
+    return () => {
+      runningChangedRef.current = () => {};
+      controller.abort();
+    };
+  }, [host, session, panel, terminalId, visible]);
+  useEffect(() => {
+    runningChangedRef.current(running);
+  }, [running]);
   return state?.terminalId === terminalId ? state.buffer : null;
 }
 
@@ -1148,6 +1237,21 @@ function useFitResize(
 /* ------------------------------------------------------------------ */
 /* View                                                                */
 /* ------------------------------------------------------------------ */
+
+/** A session's state beyond its label, or null when it is simply running. */
+function sessionStatusText(tab: TerminalTabState): string | null {
+  const parts: string[] = [];
+  if (tab.exitBanner !== null) parts.push(tab.exitBanner);
+  else if (tab.status !== "running")
+    parts.push(
+      tab.status === "exited" && tab.exitCode !== null
+        ? `exited (code ${tab.exitCode})`
+        : tab.status,
+    );
+  if (tab.error !== null) parts.push(tab.error);
+  if (tab.queuedInputCount > 0) parts.push(`queued ${tab.queuedInputCount}`);
+  return parts.length === 0 ? null : parts.join(" · ");
+}
 
 /*
  * Native control idiom (cert term-8): the native terminal chrome leaves its
@@ -1279,8 +1383,10 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
   const output = useTerminalOutput(
     host,
     session,
+    panel,
     textFallback ? activeId : null,
     visible && textFallback,
+    activeTab?.status === "running",
   );
   useFitResize(panel, textFallback ? activeId : null, outputRef);
   const outputContents = output?.contents ?? "";
@@ -1294,6 +1400,225 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
 
   const muted = "var(--t3-terminal-muted, var(--muted-foreground, #667085))";
   const border = "1px solid var(--t3-terminal-border, var(--border, #dfe3e8))";
+  // Native drawer: with more than one session the selector is a scrolling
+  // sidebar beside the panes; a single session keeps its row above them.
+  const sessionSidebar = snapshot.tabs.length > 1;
+  const sessionList = (
+    <ul
+      aria-label="Terminal sessions"
+      style={{
+        listStyle: "none",
+        margin: 0,
+        padding: 6,
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
+        // In the sidebar the list takes the body's height and scrolls, so
+        // adding sessions never takes height from the panes.
+        ...(sessionSidebar ? { flex: 1, minHeight: 0, overflowY: "auto" } : { flexShrink: 0 }),
+      }}
+    >
+      {snapshot.groups.map((group) => (
+        <li key={group.id} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          {showGroupHeaders && (
+            <button
+              type="button"
+              aria-label={`Activate terminal group ${group.id}`}
+              onClick={() => {
+                const target = group.terminalIds.includes(activeId ?? "")
+                  ? activeId!
+                  : group.terminalIds[0];
+                if (target !== undefined) panel.activate(target);
+              }}
+              style={{
+                display: "flex",
+                gap: 6,
+                alignItems: "center",
+                padding: "2px 6px",
+                border: "1px solid transparent",
+                borderRadius: 5,
+                cursor: "pointer",
+                font: "inherit",
+                fontSize: 11,
+                color: snapshot.activeGroupId === group.id ? "inherit" : muted,
+                background:
+                  snapshot.activeGroupId === group.id
+                    ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))"
+                    : "transparent",
+              }}
+            >
+              <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+                {group.terminalIds.length === 1
+                  ? "Single"
+                  : group.splitDirection === "vertical"
+                    ? "Stacked"
+                    : "Side by side"}
+              </span>
+              <span style={{ fontSize: 10 }}>{group.terminalIds.length}</span>
+            </button>
+          )}
+          <ul
+            style={{
+              listStyle: "none",
+              margin: 0,
+              padding: 0,
+              display: "flex",
+              flexDirection: "column",
+              gap: 2,
+            }}
+          >
+            {group.terminalIds.map((terminalId) => {
+              const tab = tabById.get(terminalId);
+              if (!tab) return null;
+              return (
+                <li key={tab.terminalId} data-t3-terminal-session={tab.terminalId}>
+                  <button
+                    type="button"
+                    aria-current={tab.terminalId === activeId ? "true" : undefined}
+                    title={sessionStatusText(tab) ?? tab.label}
+                    onClick={() => panel.activate(tab.terminalId)}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      height: 24,
+                      textAlign: "left",
+                      padding: "0 6px",
+                      border: "1px solid transparent",
+                      borderRadius: 5,
+                      cursor: "pointer",
+                      font: "inherit",
+                      fontSize: 12,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      color: tab.terminalId === activeId ? "inherit" : muted,
+                      background:
+                        tab.terminalId === activeId
+                          ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))"
+                          : "transparent",
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </li>
+      ))}
+    </ul>
+  );
+  // Native drawer: session actions sit once in the selector's header and act
+  // on the active session, so rows stay single-line labels at any width.
+  const iconControl = { ...control, padding: "0 6px", fontSize: 13, lineHeight: "22px" };
+  const activeStatus = activeTab === null ? null : sessionStatusText(activeTab);
+  const activeCloseLabel =
+    activeTab === null ? "" : terminalCloseLabel(activeTab.label, true, closeShortcutLabel);
+  const sessionActions = activeTab !== null && (
+    <div
+      role="toolbar"
+      aria-label="Session actions"
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        justifyContent: "flex-end",
+        gap: 2,
+        padding: "0 4px",
+        minHeight: 22,
+        flexShrink: 0,
+        fontSize: 12,
+        ...(sessionSidebar ? { borderBottom: border } : {}),
+      }}
+    >
+      {activeTab.confirmAction === null ? (
+        <>
+          {activeStatus !== null && (
+            <span
+              style={{
+                flex: 1,
+                minWidth: 0,
+                color: muted,
+                fontSize: 11,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {activeStatus}
+            </span>
+          )}
+          {(activeTab.status === "exited" ||
+            activeTab.status === "error" ||
+            activeTab.status === "closed") && (
+            <button
+              type="button"
+              aria-label={`Start ${activeTab.terminalId}`}
+              title="Start"
+              onClick={() => void panel.startSession(activeTab.terminalId)}
+              style={iconControl}
+            >
+              ▶
+            </button>
+          )}
+          <button
+            type="button"
+            aria-label={`Clear ${activeTab.terminalId}`}
+            title="Clear history"
+            onClick={() => panel.requestAction(activeTab.terminalId, "clear")}
+            style={iconControl}
+          >
+            ⌫
+          </button>
+          <button
+            type="button"
+            aria-label={`Restart ${activeTab.terminalId}`}
+            title="Restart"
+            onClick={() => panel.requestAction(activeTab.terminalId, "restart")}
+            style={iconControl}
+          >
+            ↻
+          </button>
+          <Tooltip host={host} label={activeCloseLabel}>
+            <button
+              type="button"
+              aria-label={activeCloseLabel}
+              onClick={() => panel.requestAction(activeTab.terminalId, "close")}
+              style={iconControl}
+            >
+              ×
+            </button>
+          </Tooltip>
+        </>
+      ) : (
+        <>
+          <span style={{ flex: "1 1 100%", color: muted, fontSize: 12 }}>
+            {activeTab.confirmAction === "close"
+              ? "Close this terminal?"
+              : activeTab.confirmAction === "restart"
+                ? "Restart this terminal?"
+                : "Clear history?"}
+          </span>
+          <button
+            type="button"
+            aria-label={`Confirm ${activeTab.confirmAction} ${activeTab.terminalId}`}
+            onClick={() => void panel.confirmAction(activeTab.terminalId)}
+            style={{ ...control, fontSize: 12, padding: "2px 6px" }}
+          >
+            Confirm
+          </button>
+          <button
+            type="button"
+            aria-label={`Cancel ${activeTab.confirmAction} ${activeTab.terminalId}`}
+            onClick={() => panel.cancelAction(activeTab.terminalId)}
+            style={{ ...control, fontSize: 12, padding: "2px 6px" }}
+          >
+            Cancel
+          </button>
+        </>
+      )}
+    </div>
+  );
   return (
     <section
       aria-label="Terminal"
@@ -1323,6 +1648,9 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
         display: "flex",
         flexDirection: "column",
         minHeight: 0,
+        // A dock shorter than the chrome plus the body floor scrolls rather
+        // than collapsing the panes.
+        overflowY: "auto",
         color: "var(--t3-terminal-text, var(--foreground, #20252d))",
         background: "var(--t3-terminal-canvas, var(--background, #fff))",
         fontFamily: "var(--font-sans, system-ui, sans-serif)",
@@ -1383,186 +1711,12 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
               : ""}
         </span>
       </header>
-      <ul
-        aria-label="Terminal sessions"
-        style={{
-          listStyle: "none",
-          margin: 0,
-          padding: 6,
-          flexShrink: 0,
-          display: "flex",
-          flexDirection: "column",
-          gap: 2,
-        }}
-      >
-        {snapshot.groups.map((group) => (
-          <li key={group.id} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            {showGroupHeaders && (
-              <button
-                type="button"
-                aria-label={`Activate terminal group ${group.id}`}
-                onClick={() => {
-                  const target = group.terminalIds.includes(activeId ?? "")
-                    ? activeId!
-                    : group.terminalIds[0];
-                  if (target !== undefined) panel.activate(target);
-                }}
-                style={{
-                  display: "flex",
-                  gap: 6,
-                  alignItems: "center",
-                  padding: "2px 6px",
-                  border: "1px solid transparent",
-                  borderRadius: 5,
-                  cursor: "pointer",
-                  font: "inherit",
-                  fontSize: 11,
-                  color: snapshot.activeGroupId === group.id ? "inherit" : muted,
-                  background:
-                    snapshot.activeGroupId === group.id
-                      ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))"
-                      : "transparent",
-                }}
-              >
-                <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
-                  {group.terminalIds.length === 1
-                    ? "Single"
-                    : group.splitDirection === "vertical"
-                      ? "Stacked"
-                      : "Side by side"}
-                </span>
-                <span style={{ fontSize: 10 }}>{group.terminalIds.length}</span>
-              </button>
-            )}
-            <ul
-              style={{
-                listStyle: "none",
-                margin: 0,
-                padding: 0,
-                display: "flex",
-                flexDirection: "column",
-                gap: 2,
-              }}
-            >
-              {group.terminalIds.map((terminalId) => {
-                const tab = tabById.get(terminalId);
-                if (!tab) return null;
-                const closeLabel = terminalCloseLabel(
-                  tab.label,
-                  tab.terminalId === activeId,
-                  closeShortcutLabel,
-                );
-                return (
-                  <li
-                    key={tab.terminalId}
-                    style={{ display: "flex", gap: 6, alignItems: "center" }}
-                  >
-                    <button
-                      type="button"
-                      aria-current={tab.terminalId === activeId ? "true" : undefined}
-                      onClick={() => panel.activate(tab.terminalId)}
-                      style={{
-                        flex: 1,
-                        minWidth: 0,
-                        textAlign: "left",
-                        padding: "4px 6px",
-                        border: "1px solid transparent",
-                        borderRadius: 5,
-                        cursor: "pointer",
-                        font: "inherit",
-                        fontSize: 12,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        color: "inherit",
-                        background:
-                          tab.terminalId === activeId
-                            ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))"
-                            : "transparent",
-                      }}
-                    >
-                      {tab.label}
-                    </button>
-                    <span style={{ color: muted, fontSize: 11 }}>
-                      {tab.status}
-                      {tab.hasRunningSubprocess ? " · running" : ""}
-                      {tab.queuedInputCount > 0 ? ` · queued ${tab.queuedInputCount}` : ""}
-                    </span>
-                    {tab.confirmAction === null ? (
-                      <>
-                        {(tab.status === "exited" ||
-                          tab.status === "error" ||
-                          tab.status === "closed") && (
-                          <button
-                            type="button"
-                            aria-label={`Start ${tab.terminalId}`}
-                            onClick={() => void panel.startSession(tab.terminalId)}
-                            style={control}
-                          >
-                            Start
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          aria-label={`Clear ${tab.terminalId}`}
-                          onClick={() => panel.requestAction(tab.terminalId, "clear")}
-                          style={control}
-                        >
-                          Clear
-                        </button>
-                        <button
-                          type="button"
-                          aria-label={`Restart ${tab.terminalId}`}
-                          onClick={() => panel.requestAction(tab.terminalId, "restart")}
-                          style={control}
-                        >
-                          Restart
-                        </button>
-                        <Tooltip host={host} label={closeLabel}>
-                          <button
-                            type="button"
-                            aria-label={closeLabel}
-                            onClick={() => panel.requestAction(tab.terminalId, "close")}
-                            style={control}
-                          >
-                            ×
-                          </button>
-                        </Tooltip>
-                      </>
-                    ) : (
-                      <>
-                        <span style={{ color: muted, fontSize: 12 }}>
-                          {tab.confirmAction === "close"
-                            ? "Close this terminal?"
-                            : tab.confirmAction === "restart"
-                              ? "Restart this terminal?"
-                              : "Clear history?"}
-                        </span>
-                        <button
-                          type="button"
-                          aria-label={`Confirm ${tab.confirmAction} ${tab.terminalId}`}
-                          onClick={() => void panel.confirmAction(tab.terminalId)}
-                          style={control}
-                        >
-                          Confirm
-                        </button>
-                        <button
-                          type="button"
-                          aria-label={`Cancel ${tab.confirmAction} ${tab.terminalId}`}
-                          onClick={() => panel.cancelAction(tab.terminalId)}
-                          style={control}
-                        >
-                          Cancel
-                        </button>
-                      </>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          </li>
-        ))}
-      </ul>
+      {!sessionSidebar && (
+        <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>{sessionList}</div>
+          {sessionActions}
+        </div>
+      )}
       {snapshot.tabs.length === 0 && (
         <p style={{ padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }}>
           No terminals yet. New terminal opens a shell in this workspace.
@@ -1616,146 +1770,185 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
           VT renderer unavailable ({assets.message}) — showing a plain-text view.
         </output>
       )}
-      {!textFallback && (
-        <div
-          aria-label="Terminal panes"
-          style={{
-            display: "flex",
-            flexDirection: splitDirection === "vertical" ? "column" : "row",
-            flex: 1,
-            minHeight: 0,
-            minWidth: 0,
-          }}
-        >
-          {paneOrder.map((terminalId, index) => {
-            const shown = visibleSet.has(terminalId);
-            const focused = terminalId === activeId;
-            return (
-              <div
-                key={terminalId}
-                data-t3-terminal-pane={terminalId}
-                onMouseDown={
-                  shown && !focused
-                    ? () => {
-                        panel.activate(terminalId);
-                      }
-                    : undefined
-                }
-                style={{
-                  display: shown ? "flex" : "none",
-                  flexDirection: "column",
-                  flex: "1 1 0",
-                  minWidth: 0,
-                  minHeight: 0,
-                  borderLeft:
-                    splitDirection === "horizontal" && index > 0
-                      ? `1px solid ${
-                          focused
-                            ? "var(--t3-terminal-border, var(--border, #dfe3e8))"
-                            : "var(--t3-terminal-muted, var(--border, #dfe3e8))"
-                        }`
-                      : undefined,
-                  borderTop:
-                    splitDirection === "vertical" && index > 0
-                      ? `1px solid ${
-                          focused
-                            ? "var(--t3-terminal-border, var(--border, #dfe3e8))"
-                            : "var(--t3-terminal-muted, var(--border, #dfe3e8))"
-                        }`
-                      : undefined,
-                }}
-              >
-                <TerminalPane
-                  host={host}
-                  session={session}
-                  panel={panel}
-                  terminalId={terminalId}
-                  streamKeyPrefix={streamKeyPrefix}
-                  active={focused}
-                  shown={shown}
-                  visible={visible}
-                  assets={assets}
-                  themeVars={themeVars}
-                  appearanceVars={appearanceVars}
-                  editingBinding={editingBinding}
-                />
-              </div>
-            );
-          })}
-        </div>
-      )}
-      {textFallback && activeId !== null && activeTab !== null && (
+      <div
+        data-t3-terminal-body
+        style={{
+          display: "flex",
+          flex: 1,
+          minHeight: TERMINAL_BODY_MIN_HEIGHT,
+          minWidth: 0,
+          ...(sessionSidebar ? { overflowX: "auto" } : {}),
+        }}
+      >
         <div
           style={{
             display: "flex",
             flexDirection: "column",
-            flex: 1,
+            flex: "1 1 0",
+            minWidth: sessionSidebar ? TERMINAL_PANES_MIN_WIDTH : 0,
             minHeight: 0,
-            borderTop: border,
           }}
         >
-          <output
-            aria-label="Output status"
-            style={{ padding: "6px 10px", color: muted, fontSize: 12, flexShrink: 0 }}
-          >
-            {activeId}: {activeTab.exitBanner ?? output?.statusText ?? "Connecting…"}
-            {activeTab.error ? ` — ${activeTab.error}` : ""}
-          </output>
-          <pre
-            ref={outputRef}
-            aria-label="Terminal output"
-            data-t3-terminal-output
-            style={{
-              flex: 1,
-              minHeight: 0,
-              margin: 0,
-              padding: 12,
-              overflow: "auto",
-              whiteSpace: "pre-wrap",
-              overflowWrap: "anywhere",
-              color: "var(--t3-terminal-foreground, var(--terminal-foreground, inherit))",
-              background: "var(--t3-terminal-background, var(--terminal-background, transparent))",
-              fontFamily:
-                "var(--t3-terminal-font-family, var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace))",
-              fontSize: "var(--t3-terminal-font-size, 12px)",
-              lineHeight: "var(--t3-terminal-line-height, normal)",
-              fontVariantLigatures: "var(--t3-terminal-ligatures, normal)",
-              colorScheme: "var(--t3-terminal-color-scheme, normal)",
-            }}
-          >
-            {plainOutput}
-          </pre>
-          <div
+          {!textFallback && (
+            <div
+              aria-label="Terminal panes"
+              style={{
+                display: "flex",
+                flexDirection: splitDirection === "vertical" ? "column" : "row",
+                flex: 1,
+                minHeight: 0,
+                minWidth: 0,
+              }}
+            >
+              {paneOrder.map((terminalId, index) => {
+                const shown = visibleSet.has(terminalId);
+                const focused = terminalId === activeId;
+                return (
+                  <div
+                    key={terminalId}
+                    data-t3-terminal-pane={terminalId}
+                    onMouseDown={
+                      shown && !focused
+                        ? () => {
+                            panel.activate(terminalId);
+                          }
+                        : undefined
+                    }
+                    style={{
+                      display: shown ? "flex" : "none",
+                      flexDirection: "column",
+                      flex: "1 1 0",
+                      minWidth: 0,
+                      minHeight: 0,
+                      borderLeft:
+                        splitDirection === "horizontal" && index > 0
+                          ? `1px solid ${
+                              focused
+                                ? "var(--t3-terminal-border, var(--border, #dfe3e8))"
+                                : "var(--t3-terminal-muted, var(--border, #dfe3e8))"
+                            }`
+                          : undefined,
+                      borderTop:
+                        splitDirection === "vertical" && index > 0
+                          ? `1px solid ${
+                              focused
+                                ? "var(--t3-terminal-border, var(--border, #dfe3e8))"
+                                : "var(--t3-terminal-muted, var(--border, #dfe3e8))"
+                            }`
+                          : undefined,
+                    }}
+                  >
+                    <TerminalPane
+                      host={host}
+                      session={session}
+                      panel={panel}
+                      terminalId={terminalId}
+                      streamKeyPrefix={streamKeyPrefix}
+                      active={focused}
+                      shown={shown}
+                      visible={visible}
+                      running={tabById.get(terminalId)?.status === "running"}
+                      assets={assets}
+                      themeVars={themeVars}
+                      appearanceVars={appearanceVars}
+                      editingBinding={editingBinding}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {textFallback && activeId !== null && activeTab !== null && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                flex: 1,
+                minHeight: 0,
+                borderTop: border,
+              }}
+            >
+              <output
+                aria-label="Output status"
+                style={{ padding: "6px 10px", color: muted, fontSize: 12, flexShrink: 0 }}
+              >
+                {activeId}: {activeTab.exitBanner ?? output?.statusText ?? "Connecting…"}
+                {activeTab.error ? ` — ${activeTab.error}` : ""}
+              </output>
+              <pre
+                ref={outputRef}
+                aria-label="Terminal output"
+                data-t3-terminal-output
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  margin: 0,
+                  padding: 12,
+                  overflow: "auto",
+                  whiteSpace: "pre-wrap",
+                  overflowWrap: "anywhere",
+                  color: "var(--t3-terminal-foreground, var(--terminal-foreground, inherit))",
+                  background:
+                    "var(--t3-terminal-background, var(--terminal-background, transparent))",
+                  fontFamily:
+                    "var(--t3-terminal-font-family, var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace))",
+                  fontSize: "var(--t3-terminal-font-size, 12px)",
+                  lineHeight: "var(--t3-terminal-line-height, normal)",
+                  fontVariantLigatures: "var(--t3-terminal-ligatures, normal)",
+                  colorScheme: "var(--t3-terminal-color-scheme, normal)",
+                }}
+              >
+                {plainOutput}
+              </pre>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 6,
+                  padding: 8,
+                  borderTop: border,
+                  flexShrink: 0,
+                }}
+              >
+                <input
+                  aria-label="Terminal input"
+                  placeholder={activeTab.starting ? "Starting… input is queued" : "Type a command"}
+                  value={input}
+                  onChange={(event) => setInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") send();
+                  }}
+                  style={{
+                    ...control,
+                    flex: 1,
+                    minWidth: 0,
+                    cursor: "text",
+                    background: "var(--t3-terminal-input, var(--input, transparent))",
+                  }}
+                />
+                <button type="button" onClick={send} style={control}>
+                  Send
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+        {sessionSidebar && (
+          <aside
+            aria-label="Terminal session list"
             style={{
               display: "flex",
-              gap: 6,
-              padding: 8,
-              borderTop: border,
+              flexDirection: "column",
+              width: SESSION_SIDEBAR_WIDTH,
               flexShrink: 0,
+              minHeight: 0,
+              borderLeft: border,
             }}
           >
-            <input
-              aria-label="Terminal input"
-              placeholder={activeTab.starting ? "Starting… input is queued" : "Type a command"}
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") send();
-              }}
-              style={{
-                ...control,
-                flex: 1,
-                minWidth: 0,
-                cursor: "text",
-                background: "var(--t3-terminal-input, var(--input, transparent))",
-              }}
-            />
-            <button type="button" onClick={send} style={control}>
-              Send
-            </button>
-          </div>
-        </div>
-      )}
+            {sessionActions}
+            {sessionList}
+          </aside>
+        )}
+      </div>
       <output
         aria-label="Slice notice"
         style={{ padding: "6px 10px", color: muted, fontSize: 12, flexShrink: 0 }}
@@ -1779,10 +1972,6 @@ const authored = defineExtension({
     // "Add to chat" (insertTerminalContext is 1.1.0). The host provider is
     // always registered; getCapabilities reports whether a composer is there.
     requireApi(composerContextApi),
-    // Path links open through the files pack's presentation provider. A
-    // denied or failing invoke degrades to an honest surface message, so
-    // only a provider-less host (no files installation) blocks the package.
-    requireApi(filePresentationApi),
     // Mandatory requirements — the broker only authorizes invocations for
     // declared APIs, so the t3.ui/* contracts must be declared even though
     // the panel degrades per-call. A host without these providers resolves
@@ -1796,6 +1985,8 @@ const authored = defineExtension({
     requireApi(uiPanelsApi),
     // Terminal 22 URL half: detected URLs open on the user's own client.
     requireApi(uiExternalApi),
+    // Terminal 22 path half: path links open in the user's preferred editor.
+    requireApi(uiEditorApi),
   ],
   assets: [
     { path: GHOSTTY_VT_ASSET, mediaType: "application/wasm" },

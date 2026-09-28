@@ -14,6 +14,7 @@ import {
   UI_THEME_API,
   checkExternalUrl,
   UI_EXTERNAL_API,
+  UI_EDITOR_API,
   UI_NAVIGATION_API,
 } from "@t3tools/extension-sdk/catalogue";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
@@ -313,6 +314,7 @@ const CLIENT_KEYBINDINGS = "t3.client/keybindings";
 const CLIENT_PANELS = "t3.client/panels";
 const CLIENT_PREFERENCES = "t3.client/preferences";
 const CLIENT_EXTERNAL = "t3.client/external";
+const CLIENT_EDITOR = "t3.client/editor";
 const CLIENT_BROWSER_HISTORY = "t3.client/browser-history";
 const CLIENT_NAVIGATION = "t3.client/navigation";
 
@@ -987,6 +989,23 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
     },
   };
 
+  // The preferred editor is client state, so the caller's own client resolves
+  // the path and editor, then launches through its environment like native.
+  const editorProvider: HostApiProvider = {
+    providerId: "host.ui.editor",
+    definition: UI_EDITOR_API,
+    availability: ambient(deps, CLIENT_EDITOR),
+    invoke(method, input, context, signal, metadata): Promise<Json> {
+      if (method === "getCapabilities")
+        return capabilities(deps, "host.ui.editor", { openPath: CLIENT_EDITOR }, metadata);
+      if (method !== "openPath")
+        return Promise.reject(
+          providerError("client-provider-unavailable", `Unknown editor op: ${method}`),
+        );
+      return forward(deps, CLIENT_EDITOR, "openPath")(method, input, context, signal, metadata);
+    },
+  };
+
   // `t3.browser/history` lives with the `t3.ui/*` adapters because it rides the
   // same client-provider seam: history is the client's native per-project store.
   const browserHistoryProvider: HostApiProvider = {
@@ -1080,6 +1099,7 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
     panelsProvider,
     preferencesProvider,
     externalProvider,
+    editorProvider,
     browserHistoryProvider,
     navigationProvider,
   ];

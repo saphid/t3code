@@ -16,14 +16,15 @@ import {
   describeSession,
   fallbackTerminalLabel,
   isResumableOutputClose,
+  OutputReattach,
   missingSessionRow,
   normalizeTerminalIds,
   noteOutputFrameForStreak,
   removeTerminalId,
   resolveActiveTerminalId,
+  openTerminalPath,
   openTerminalUrl,
   terminalCloseLabel,
-  terminalPathLinkTarget,
 } from "./viewModel.ts";
 
 const frame = (sequence, streamId = "stream-1") => ({ streamId, sequence });
@@ -387,11 +388,6 @@ function deferred() {
   const promise = new Promise((res, rej) => ((resolve = res), (reject = rej)));
   return { promise, resolve, reject };
 }
-/** Manual scheduler: returns the queued callbacks so tests drive the exit tick. */
-function manualScheduler() {
-  const pending = [];
-  return { pending, schedule: (cb) => pending.push(cb) };
-}
 
 NodeTest.describe("terminal panel — reconciliation + tabs", () => {
   NodeTest.it("keeps the lag rule and reconcile identical to native", () => {
@@ -708,34 +704,140 @@ NodeTest.describe("terminal panel — input, resize, lifecycle", () => {
 });
 
 NodeTest.describe("terminal panel — exit UX", () => {
-  NodeTest.it("banners a live→exited transition then removes the tab on the tick", async () => {
+  /** Lets any deferred (zero-delay timer) exit handling run. */
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  NodeTest.it("list rows never close a session; its output snapshot does", async () => {
+    // Native closes only from the attached terminal's own stream. An exited
+    // list row is metadata: it may describe an older process than the one
+    // running now, so the pane's fresh output snapshot decides.
     const control = fakeControl();
-    const scheduler = manualScheduler();
-    const panel = new TerminalPanel({ control, launch, schedule: scheduler.schedule });
+    const panel = new TerminalPanel({ control, launch });
     panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
     panel.applySessionsEvent({
       kind: "upsert",
       terminal: meta("term-1", { status: "exited", exitCode: 3 }),
     });
-    const tab = panel.snapshot.tabs[0];
-    NodeAssert.equal(tab.exitBanner, "Process exited (code 3)");
+    panel.applySessionsEvent({
+      kind: "snapshot",
+      terminals: [meta("term-1"), meta("term-2", { status: "exited", exitCode: 0 })],
+    });
+    await tick();
+    NodeAssert.deepEqual(control.calls, []);
+    NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1", "term-2"]);
+    // The pane (re)subscribed and the server says this id's process is exited.
+    panel.noteOutputSnapshot("term-2", "exited");
+    NodeAssert.deepEqual(control.calls, [["close", { terminalId: "term-2", deleteHistory: true }]]);
     NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
-    scheduler.pending.forEach((cb) => cb());
-    NodeAssert.deepEqual(panel.snapshot.terminalIds, []);
-    NodeAssert.equal(panel.snapshot.activeTerminalId, null);
     panel.dispose();
   });
 
-  NodeTest.it("does not banner a session that arrives already exited", () => {
+  NodeTest.it(
+    "a delayed old exit after the list reconnects never closes the new process",
+    async () => {
+      // Review proof-terminal-3 repro: the list reconnects and reports a newer
+      // running process before the pane delivers the old process's exit.
+      const control = fakeControl();
+      const panel = new TerminalPanel({ control, launch });
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+      panel.markStreamDisconnected("list dropped");
+      panel.beginListStream();
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+      panel.noteExit("term-1", 0);
+      NodeAssert.equal(panel.snapshot.tabs[0].exitBanner, "Process exited (code 0)");
+      await tick();
+      NodeAssert.deepEqual(control.calls, []);
+      NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
+      // The pane's resubscription finds the replacement running: the banner
+      // belonged to the old process.
+      panel.noteOutputSnapshot("term-1", "running");
+      NodeAssert.equal(panel.snapshot.tabs[0].exitBanner, null);
+      await tick();
+      NodeAssert.deepEqual(control.calls, []);
+      // The replacement's own exit still closes it.
+      panel.noteExit("term-1", 7);
+      panel.noteOutputSnapshot("term-1", "exited");
+      NodeAssert.deepEqual(control.calls, [
+        ["close", { terminalId: "term-1", deleteHistory: true }],
+      ]);
+      NodeAssert.deepEqual(panel.snapshot.terminalIds, []);
+      panel.dispose();
+    },
+  );
+
+  NodeTest.it("a closing session's stale rows stay closed until the server removes it", () => {
     const control = fakeControl();
-    const scheduler = manualScheduler();
-    const panel = new TerminalPanel({ control, launch, schedule: scheduler.schedule });
+    const panel = new TerminalPanel({ control, launch });
+    panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+    panel.noteOutputSnapshot("term-1", "exited");
+    NodeAssert.deepEqual(panel.snapshot.terminalIds, []);
+    NodeAssert.equal(panel.snapshot.activeTerminalId, null);
+    panel.applySessionsEvent({
+      kind: "upsert",
+      terminal: meta("term-1", { status: "exited", exitCode: 3 }),
+    });
+    panel.applySessionsEvent({
+      kind: "snapshot",
+      terminals: [meta("term-1", { status: "exited", exitCode: 3 })],
+    });
+    NodeAssert.deepEqual(panel.snapshot.terminalIds, []);
+    NodeAssert.equal(control.calls.length, 1);
+    NodeAssert.ok(panel.allocatableTerminalIds.includes("term-1"));
+    panel.applySessionsEvent({ kind: "remove", terminalId: "term-1" });
+    NodeAssert.ok(!panel.allocatableTerminalIds.includes("term-1"));
+    panel.dispose();
+  });
+
+  NodeTest.it("an exited snapshot during Start keeps the session", async () => {
+    const attach = deferred();
+    const control = fakeControl({
+      attach(input) {
+        control.calls.push(["attach", input]);
+        return attach.promise;
+      },
+    });
+    const panel = new TerminalPanel({ control, launch });
     panel.applySessionsEvent({
       kind: "snapshot",
       terminals: [meta("term-1", { status: "exited", exitCode: 0 })],
     });
-    NodeAssert.equal(panel.snapshot.tabs[0].exitBanner, null);
-    NodeAssert.equal(scheduler.pending.length, 0);
+    const starting = panel.startSession("term-1");
+    panel.noteOutputSnapshot("term-1", "exited");
+    attach.resolve(meta("term-1"));
+    await starting;
+    NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
+    NodeAssert.equal(panel.snapshot.tabs[0].status, "running");
+    NodeAssert.deepEqual(
+      control.calls.map(([method]) => method),
+      ["attach"],
+    );
+    panel.dispose();
+  });
+
+  NodeTest.it("a failed-start session keeps its error and retry", async () => {
+    const control = fakeControl();
+    const panel = new TerminalPanel({ control, launch });
+    panel.applySessionsEvent({
+      kind: "snapshot",
+      terminals: [meta("term-1", { status: "error" }), meta("term-2")],
+    });
+    panel.applySessionsEvent({ kind: "upsert", terminal: meta("term-2", { status: "error" }) });
+    panel.noteOutputSnapshot("term-1", "error");
+    await tick();
+    NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1", "term-2"]);
+    NodeAssert.deepEqual(
+      panel.snapshot.tabs.map((tab) => [tab.status, tab.exitBanner]),
+      [
+        ["error", null],
+        ["error", null],
+      ],
+    );
+    NodeAssert.deepEqual(control.calls, []);
+    await panel.startSession("term-1");
+    NodeAssert.deepEqual(
+      control.calls.map(([method]) => method),
+      ["attach"],
+    );
     panel.dispose();
   });
 
@@ -1555,13 +1657,16 @@ NodeTest.describe("package requirements — t3.ui/* adoption policy", () => {
         "t3.terminal/output-events",
         "t3.terminal/control",
         "t3.composer/context",
-        "t3.file/presentation",
         "t3.ui/theme",
         "t3.ui/keybindings",
         "t3.ui/panels",
         "t3.ui/external",
+        "t3.ui/editor",
       ],
     );
+    // No requirement needs a newer contract than its 1.0.0 baseline.
+    for (const item of manifest.requires.filter((entry) => entry.id.startsWith("t3.ui/")))
+      NodeAssert.equal(item.versionRange, "^1.0.0", item.id);
   });
 });
 
@@ -1606,135 +1711,42 @@ NodeTest.describe("terminal URL links (Terminal 22 URL half)", () => {
 });
 
 NodeTest.describe("terminal path links (Terminal 22 path half)", () => {
-  const target = (text, cwd, workspaceRoot) => terminalPathLinkTarget(text, cwd, workspaceRoot);
-  const unopenable = (value) =>
-    value.status === "unopenable" &&
-    value.reason === `${value.text} cannot be opened — not a workspace-relative path.`;
-
-  NodeTest.it("bare-relative link strips its position suffix and opens", () => {
-    NodeAssert.deepEqual(target("src/view.tsx:12:3", "/ws/root", "/ws/root"), {
-      status: "open",
-      relativePath: "src/view.tsx",
-    });
+  const signal = new AbortController().signal;
+  const editor = (answer, calls = []) => ({
+    invoke: async (method, input) => {
+      calls.push({ method, input });
+      if (answer instanceof Error) throw answer;
+      return answer;
+    },
   });
 
-  NodeTest.it("a position suffix of zero still slices off", () => {
-    // The markdown splitter slices the suffix even when the line number is
-    // not keepable, so `a.ts:0` must resolve as `a.ts`, not `a.ts:0`.
-    NodeAssert.deepEqual(target("a.ts:0", "/ws/root", "/ws/root"), {
-      status: "open",
-      relativePath: "a.ts",
-    });
+  NodeTest.it("hands the raw link and launch cwd to t3.ui/editor and opens silently", async () => {
+    const calls = [];
+    const opened = editor({ status: "opened", path: "/ws/root/a.ts:3:5", editor: "zed" }, calls);
+    NodeAssert.equal(await openTerminalPath(opened, "a.ts:3:5", "/ws/root", signal), null);
+    NodeAssert.deepEqual(calls, [
+      { method: "openPath", input: { path: "a.ts:3:5", cwd: "/ws/root" } },
+    ]);
   });
 
-  NodeTest.it("a link that is only a position suffix refuses by name", () => {
-    // Nothing presentable remains once the suffix is stripped.
-    NodeAssert.ok(unopenable({ ...target(":12", "/ws/root", "/ws/root"), text: ":12" }));
-  });
-
-  NodeTest.it("absolute link inside the workspace root opens relative", () => {
-    NodeAssert.deepEqual(target("/ws/root/packages/a.ts", "/ws/root", "/ws/root"), {
-      status: "open",
-      relativePath: "packages/a.ts",
-    });
-  });
-
-  NodeTest.it("absolute link outside the workspace root refuses by name", () => {
-    const value = target("/etc/passwd", "/ws/root", "/ws/root");
-    NodeAssert.ok(unopenable({ ...value, text: "/etc/passwd" }));
-  });
-
-  NodeTest.it("home-relative link resolves through the inferred home", () => {
-    // Spelled concatenated: the pack's audit bans the home-link sequence.
-    const homeLink = (rest) => "~" + "/" + rest;
-    const noHome = "~" + "/srv/none/a.ts";
-    NodeAssert.ok(unopenable({ ...target(noHome, "/srv/app", "/srv/app"), text: noHome }));
-    const inside = target(homeLink("proj/src/a.ts"), "/Users/alex/proj", "/Users/alex/proj");
-    NodeAssert.deepEqual(inside, {
-      status: "open",
-      relativePath: "src/a.ts",
-    });
-    NodeAssert.ok(
-      unopenable({
-        ...target(homeLink("elsewhere/x.ts"), "/Users/alex/proj", "/Users/alex/proj"),
-        text: homeLink("elsewhere/x.ts"),
-      }),
+  NodeTest.it("writes the host's refusal and names a denied invoke", async () => {
+    NodeAssert.equal(
+      await openTerminalPath(
+        editor({ status: "refused", reason: "no-editor", message: "No available editor." }),
+        "a.ts",
+        "/ws/root",
+        signal,
+      ),
+      "No available editor.",
     );
-  });
-
-  NodeTest.it("dot segments normalize while root escapes refuse", () => {
-    NodeAssert.deepEqual(target("./src/./a.ts", "/ws/root", "/ws/root"), {
-      status: "open",
-      relativePath: "src/a.ts",
-    });
-    NodeAssert.deepEqual(target("src/../a.ts", "/ws/root", "/ws/root"), {
-      status: "open",
-      relativePath: "a.ts",
-    });
-    // `..` past the root — including through the root prefix — never opens.
-    NodeAssert.ok(
-      unopenable({ ...target("../outside.ts", "/ws/root", "/ws/root"), text: "../outside.ts" }),
-    );
-    NodeAssert.ok(
-      unopenable({
-        ...target("/ws/root/../escape.ts", "/ws/root", "/ws/root"),
-        text: "/ws/root/../escape.ts",
-      }),
-    );
-  });
-
-  NodeTest.it("the bare workspace root is not a presentable file", () => {
-    NodeAssert.ok(unopenable({ ...target("/ws/root", "/ws/root", "/ws/root"), text: "/ws/root" }));
-  });
-
-  NodeTest.it("a worktree launch cwd cannot express its links as project-relative", () => {
-    // The terminal spawns in the worktree, but the presentation op's paths
-    // are project-root-relative, so worktree paths refuse honestly while
-    // project-root absolutes still open.
-    NodeAssert.ok(unopenable({ ...target("src/a.ts", "/wt/tree", "/ws/root"), text: "src/a.ts" }));
-    NodeAssert.ok(
-      unopenable({
-        ...target("/wt/tree/src/a.ts", "/wt/tree", "/ws/root"),
-        text: "/wt/tree/src/a.ts",
-      }),
-    );
-    NodeAssert.deepEqual(target("/ws/root/src/a.ts", "/wt/tree", "/ws/root"), {
-      status: "open",
-      relativePath: "src/a.ts",
-    });
-  });
-
-  NodeTest.it("windows workspaces map drive-letter links case-insensitively", () => {
-    NodeAssert.deepEqual(target("src\\a.ts:4", "C:\\ws\\root", "C:\\ws\\root"), {
-      status: "open",
-      relativePath: "src/a.ts",
-    });
-    NodeAssert.deepEqual(target("c:\\WS\\ROOT\\src\\a.ts", "C:\\ws\\root", "C:\\ws\\root"), {
-      status: "open",
-      relativePath: "src/a.ts",
-    });
-    NodeAssert.ok(
-      unopenable({
-        ...target("C:\\Other\\a.ts", "C:\\ws\\root", "C:\\ws\\root"),
-        text: "C:\\Other\\a.ts",
-      }),
-    );
-    // Windows tools emit forward-slash and mixed-separator paths; the
-    // resolver normalizes to the root's style before mapping.
-    NodeAssert.deepEqual(target("C:/ws/root/src/a.ts", "C:\\ws\\root", "C:\\ws\\root"), {
-      status: "open",
-      relativePath: "src/a.ts",
-    });
-    NodeAssert.deepEqual(target("c:/WS/root\\src\\a.ts", "C:\\ws\\root", "C:\\ws\\root"), {
-      status: "open",
-      relativePath: "src/a.ts",
-    });
-    // Cross-style: a posix absolute never maps onto a windows root.
-    NodeAssert.ok(
-      unopenable({
-        ...target("/ws/root/src/a.ts", "C:\\ws\\root", "C:\\ws\\root"),
-        text: "/ws/root/src/a.ts",
-      }),
+    NodeAssert.equal(
+      await openTerminalPath(
+        editor(new Error("API capability denied: t3.ui/editor.open")),
+        "a.ts",
+        "/ws/root",
+        signal,
+      ),
+      "a.ts could not be opened — API capability denied: t3.ui/editor.open",
     );
   });
 });
@@ -1743,4 +1755,59 @@ NodeTest.test("terminalCloseLabel names the close shortcut only on the active ta
   NodeAssert.equal(terminalCloseLabel("Terminal 2", true, "⌘W"), "Close Terminal 2 (⌘W)");
   NodeAssert.equal(terminalCloseLabel("Terminal 2", false, "⌘W"), "Close Terminal 2");
   NodeAssert.equal(terminalCloseLabel("Terminal 2", true, null), "Close Terminal 2");
+});
+
+NodeTest.describe("OutputReattach (native durable-attach port)", () => {
+  // Each step: a running report ("run:<bool>"), a subscription ("sub"), or a
+  // stream end asking take() — expected result in the table.
+  const cases = [
+    { name: "a healthy mount never reattaches", running: true, steps: [["take", false]] },
+    {
+      name: "a stale running row spends nothing",
+      running: true,
+      steps: [
+        ["take", false],
+        ["take", false],
+      ],
+    },
+    {
+      name: "Retry after the stream ended",
+      running: false,
+      steps: [["run:true"], ["take", true], ["take", false]],
+    },
+    {
+      name: "an edge latched while the old stream drains",
+      running: false,
+      steps: [["run:true"], ["take", true]],
+    },
+    {
+      name: "transport drop, then starting → running",
+      running: true,
+      steps: [["take", false], ["run:false"], ["run:true"], ["take", true]],
+    },
+    {
+      name: "a later Start after a stale row re-arms",
+      running: true,
+      steps: [["take", false], ["run:false"], ["run:true"], ["take", true]],
+    },
+    {
+      name: "a subscription consumes the edge it read",
+      running: true,
+      steps: [["run:false"], ["run:true"], ["sub"], ["take", false]],
+    },
+    {
+      name: "running → running is no edge",
+      running: false,
+      steps: [["run:true"], ["sub"], ["run:true"], ["take", false]],
+    },
+  ];
+  for (const { name, running, steps } of cases)
+    NodeTest.test(name, () => {
+      const reattach = new OutputReattach(running);
+      for (const [step, expected] of steps) {
+        if (step === "sub") reattach.subscribed();
+        else if (step === "take") NodeAssert.equal(reattach.take(), expected, `${name}: take`);
+        else reattach.noteRunning(step === "run:true");
+      }
+    });
 });

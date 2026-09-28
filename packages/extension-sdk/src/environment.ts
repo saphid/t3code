@@ -10,6 +10,7 @@ import {
   type ApiStreamFrame,
   type ApiDiscovery,
   type ApiStreamEvent,
+  type ResumableApiStreams,
 } from "./capabilities.js";
 import {
   assertProvidedApiOwner,
@@ -425,6 +426,12 @@ export interface ClientHost {
    * through `resolveFloatingLayer` and render in place as the fallback.
    */
   readonly floatingLayer?: ClientFloatingLayer;
+  /**
+   * Host-managed resumption for snapshot-first streams across transport
+   * sessions. Absent on older hosts — read it through
+   * `resolveResumableStreams` and keep the plugin's own recovery there.
+   */
+  readonly resumableStreams?: ResumableApiStreams;
 }
 export type ClientFactory = (host: ClientHost) => Extension<SurfaceRenderer>;
 
